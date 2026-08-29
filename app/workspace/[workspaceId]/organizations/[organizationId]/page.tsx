@@ -27,3 +27,4 @@ export default async function OrganizationModuleRedirectPage({
 
   redirect(`/workspace/${workspaceId}/organizations/${organizationId}/order-management`);
 }
+

@@ -19,9 +19,7 @@ export type SessionUser = {
 
 export const SESSION_COOKIE_NAME = "cc_session";
 const USE_DEV_USER_STORE = process.env.USE_DEV_USER_STORE === "true";
-const isDevBypass =
-  USE_DEV_USER_STORE ||
-  !process.env.DATABASE_URL;
+const isDevBypass = USE_DEV_USER_STORE || !process.env.DATABASE_URL;
 
 export function signValue(value: string) {
   const secret = process.env.AUTH_SECRET || "dev-auth-secret-change-me";
@@ -62,6 +60,19 @@ export function verifySessionToken(token: string | null | undefined) {
   return null;
 }
 
+export async function setSessionCookie(userId: string) {
+  const cookieStore = await cookies();
+  const token = createSessionToken(userId);
+
+  cookieStore.set(SESSION_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 7, // 7 days
+  });
+}
+
 export async function getSessionUser(): Promise<SessionUser | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value ?? null;
@@ -91,25 +102,30 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     };
   }
 
-  const user = await prisma.workspaceUser.findUnique({
-    where: { id: userId },
-  });
+  try {
+    const user = await prisma.workspaceUser.findUnique({
+      where: { id: userId },
+    });
 
-  if (!user) {
+    if (!user) {
+      return null;
+    }
+
+    return {
+      id: user.id,
+      workspace_id: user.workspace_id,
+      profile_name: user.profile_name,
+      full_name: user.full_name,
+      email: user.email,
+      email_verified: user.email_verified,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+      last_login_at: user.last_login_at,
+    };
+  } catch (error) {
+    console.error("Database session retrieval error:", error);
     return null;
   }
-
-  return {
-    id: user.id,
-    workspace_id: user.workspace_id,
-    profile_name: user.profile_name,
-    full_name: user.full_name,
-    email: user.email,
-    email_verified: user.email_verified,
-    created_at: user.created_at,
-    updated_at: user.updated_at,
-    last_login_at: user.last_login_at,
-  };
 }
 
 export async function requireSessionUser() {
