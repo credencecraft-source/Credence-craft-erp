@@ -1,0 +1,711 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model WorkspaceUser {
+  id            String        @id @default(cuid())
+  workspace_id  String        @unique @default(uuid())
+  profile_name  String        @unique @db.VarChar(100)
+  full_name     String        @db.VarChar(255)
+  email         String        @unique @db.VarChar(255)
+  email_verified Boolean       @default(false)
+  created_at    DateTime      @default(now())
+  updated_at    DateTime      @updatedAt
+  last_login_at DateTime?
+  organizations Organization[]
+
+  @@map("workspace_users")
+}
+
+model Organization {
+  id               String         @id @default(cuid())
+  organization_id  String         @unique @default(uuid())
+  workspace_user_id String
+  organization_name String         @db.VarChar(255)
+  gst_number       String         @unique @db.VarChar(50)
+  address_line_1   String?        @db.VarChar(255)
+  address_line_2   String?        @db.VarChar(255)
+  city             String?        @db.VarChar(100)
+  state            String?      @db.VarChar(100)
+  country          String?        @db.VarChar(100)
+  pin_code         String?        @db.VarChar(20)
+  is_active        Boolean        @default(true)
+  created_at       DateTime       @default(now())
+  updated_at       DateTime       @updatedAt
+  workspaceUser    WorkspaceUser  @relation(fields: [workspace_user_id], references: [id], onDelete: Cascade)
+  erpSoftware      ERPSoftware[]
+  masterModules    MasterModule[]
+  merchandisingOrders MerchandisingOrder[]
+  approvalRequests  ApprovalRequest[]
+  masterEntities MasterEntity[]
+  masterCategoryTypes MasterCategoryType[]
+  masterCategories MasterCategory[]
+  masterSubCategories MasterSubCategory[]
+  masterBrands MasterBrand[]
+  masterPreOrderChecklists MasterPreOrderChecklist[]
+  masterCurrencyTypes MasterCurrencyType[]
+  masterBuyers MasterBuyer[]
+  masterSeasons MasterSeason[]
+  masterArticles MasterArticle[]
+  masterColors MasterColor[]
+  masterSizeGroups MasterSizeGroup[]
+  masterSizes MasterSize[]
+  masterUoms MasterUom[]
+  masterRawMaterials MasterRawMaterial[]
+  masterVendors MasterVendor[]
+  masterGstTypes MasterGstType[]
+  masterGsts MasterGst[]
+  masterHsns MasterHsn[]
+  masterMeasurementCharts MasterMeasurementChart[]
+  masterSizeWiseConsumptions MasterSizeWiseConsumption[]
+  masterProducts MasterProduct[]
+  masterProcessTemplates MasterProcessTemplate[]
+  masterMerchandisers MasterMerchandiser[]
+  masterStatuses MasterStatus[]
+  masterOrderVolumes MasterOrderVolume[]
+
+  @@index([workspace_user_id])
+  @@map("organizations")
+}
+
+model ERPSoftware {
+  id            String      @id @default(cuid())
+  software_id   String      @unique @default(uuid())
+  organization_id String
+  software_name String      @default("ERP Software") @db.VarChar(255)
+  status        String      @default("active") @db.VarChar(50)
+  created_at    DateTime    @default(now())
+  updated_at    DateTime    @updatedAt
+  organization  Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  modules       ERPModule[]
+
+  @@index([organization_id])
+  @@map("erp_software")
+}
+
+model ERPModule {
+  id            String        @id @default(cuid())
+  module_id     String        @unique @default(uuid())
+  software_id   String
+  module_key    String        @db.VarChar(100)
+  module_name   String        @db.VarChar(255)
+  status        String        @default("enabled") @db.VarChar(50)
+  settings      Json?
+  created_at    DateTime      @default(now())
+  updated_at    DateTime      @updatedAt
+  software      ERPSoftware   @relation(fields: [software_id], references: [id], onDelete: Cascade)
+  moduleData    ERPModuleData[]
+
+  @@unique([software_id, module_key])
+  @@index([software_id])
+  @@map("erp_modules")
+}
+
+model ERPModuleData {
+  id            String      @id @default(cuid())
+  record_id     String      @unique @default(uuid())
+  module_id     String
+  record_key    String      @db.VarChar(255)
+  payload       Json?
+  created_at    DateTime    @default(now())
+  updated_at    DateTime    @updatedAt
+  module        ERPModule   @relation(fields: [module_id], references: [id], onDelete: Cascade)
+
+  @@index([module_id, record_key])
+  @@map("erp_module_data")
+}
+
+model MasterModule {
+  id            String             @id @default(cuid())
+  module_id     String             @unique @default(uuid())
+  organization_id String
+  module_key    String             @db.VarChar(100)
+  module_name   String             @db.VarChar(255)
+  status        String             @default("active") @db.VarChar(50)
+  description   String?            @db.VarChar(500)
+  sort_order    Int                @default(0)
+  created_at    DateTime           @default(now())
+  updated_at    DateTime           @updatedAt
+  organization  Organization       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  values        MasterModuleValue[]
+
+  @@unique([organization_id, module_key])
+  @@index([organization_id])
+  @@map("master_modules")
+}
+
+model MasterModuleValue {
+  id            String       @id @default(cuid())
+  value_id      String       @unique @default(uuid())
+  module_id     String
+  label         String       @db.VarChar(255)
+  code          String?      @db.VarChar(100)
+  description   String?      @db.VarChar(500)
+  is_active     Boolean      @default(true)
+  metadata      Json?
+  parent_id     String?
+  sort_order    Int          @default(0)
+  created_at    DateTime     @default(now())
+  updated_at    DateTime     @updatedAt
+  module        MasterModule @relation(fields: [module_id], references: [id], onDelete: Cascade)
+
+  @@index([module_id, is_active])
+  @@map("master_module_values")
+}
+
+// Master values live in typed tables. legacy_metadata is retained only for migration auditability.
+model MasterEntity {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  entity_name String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  @@unique([organization_id, entity_name])
+  @@index([organization_id, is_active])
+  @@map("master_entities")
+}
+
+model MasterCategoryType {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  category_type String @db.VarChar(255)
+  books_item_id String? @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  categories MasterCategory[]
+  raw_materials MasterRawMaterial[]
+  @@unique([organization_id, category_type])
+  @@index([organization_id, is_active])
+  @@map("master_category_types")
+}
+
+model MasterCategory {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  category_type_id String?
+  category_name String @db.VarChar(255)
+  maximum_excess_allowed Decimal? @db.Decimal(10,2)
+  create_cost_center Boolean @default(false)
+  status String? @db.VarChar(50)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  category_type MasterCategoryType? @relation(fields: [category_type_id], references: [id])
+  subcategories MasterSubCategory[]
+  raw_materials MasterRawMaterial[]
+  @@unique([organization_id, category_name])
+  @@index([organization_id, is_active])
+  @@map("master_categories")
+}
+
+model MasterSubCategory {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  category_id String?
+  sub_category String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  category MasterCategory? @relation(fields: [category_id], references: [id])
+  raw_materials MasterRawMaterial[]
+  @@unique([organization_id, sub_category])
+  @@index([organization_id, is_active])
+  @@map("master_sub_categories")
+}
+
+model MasterBrand {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  brand String @db.VarChar(255)
+  maximum_allowed_excess Decimal? @db.Decimal(10,2)
+  auto_add_excess_to_rm Boolean @default(false)
+  pre_order_checklist_id String?
+  status String? @db.VarChar(50)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  pre_order_checklist MasterPreOrderChecklist? @relation(fields: [pre_order_checklist_id], references: [id])
+  size_groups MasterSizeGroup[]
+  raw_materials MasterRawMaterial[]
+  @@unique([organization_id, brand])
+  @@index([organization_id, is_active])
+  @@map("master_brands")
+}
+
+model MasterPreOrderChecklist {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  pre_order_checklist String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  brands MasterBrand[]
+  @@unique([organization_id, pre_order_checklist])
+  @@index([organization_id, is_active])
+  @@map("master_pre_order_checklists")
+}
+
+model MasterCurrencyType {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  currency_type String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  buyers MasterBuyer[]
+  @@unique([organization_id, currency_type])
+  @@index([organization_id, is_active])
+  @@map("master_currency_types")
+}
+
+model MasterBuyer {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  buyer_name String @db.VarChar(255)
+  currency_type_id String?
+  status String? @db.VarChar(50)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  currency_type MasterCurrencyType? @relation(fields: [currency_type_id], references: [id])
+  @@unique([organization_id, buyer_name])
+  @@index([organization_id, is_active])
+  @@map("master_buyers")
+}
+
+model MasterSeason {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  season String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  @@unique([organization_id, season])
+  @@index([organization_id, is_active])
+  @@map("master_seasons")
+}
+
+model MasterArticle {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  article String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  @@unique([organization_id, article])
+  @@index([organization_id, is_active])
+  @@map("master_articles")
+}
+
+model MasterColor {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  colors String @db.VarChar(255)
+  status String? @db.VarChar(50)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  raw_materials MasterRawMaterial[]
+  @@unique([organization_id, colors])
+  @@index([organization_id, is_active])
+  @@map("master_colors")
+}
+
+model MasterSizeGroup {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  brand_id String
+  size_group String @db.VarChar(255)
+  measurement_chart_id String?
+  size_id String?
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  brand MasterBrand @relation(fields: [brand_id], references: [id])
+  measurement_chart MasterMeasurementChart? @relation(fields: [measurement_chart_id], references: [id])
+  sizes MasterSize[]
+  @@unique([organization_id, size_group])
+  @@index([organization_id, is_active])
+  @@map("master_size_groups")
+}
+
+model MasterSize {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  size String @db.VarChar(255)
+  size_group_id String?
+  status String? @db.VarChar(50)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  size_group MasterSizeGroup? @relation(fields: [size_group_id], references: [id])
+  @@unique([organization_id, size])
+  @@index([organization_id, is_active])
+  @@map("master_sizes")
+}
+
+model MasterUom {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  uom String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  raw_materials MasterRawMaterial[]
+  @@unique([organization_id, uom])
+  @@index([organization_id, is_active])
+  @@map("master_uoms")
+}
+
+model MasterVendor {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  vendor String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  @@index([organization_id, is_active])
+  @@map("master_vendors")
+}
+
+model MasterGstType {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  gst_type String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  gsts MasterGst[]
+  @@unique([organization_id, gst_type])
+  @@index([organization_id, is_active])
+  @@map("master_gst_types")
+}
+
+model MasterGst {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  name String @db.VarChar(255)
+  gst Decimal? @db.Decimal(10,2)
+  gst_type_id String?
+  zoho_books_tax_id String? @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  gst_type MasterGstType? @relation(fields: [gst_type_id], references: [id])
+  @@index([organization_id, is_active])
+  @@map("master_gsts")
+}
+model MasterHsn {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  hsn_code String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  @@index([organization_id, is_active])
+  @@map("master_hsns")
+}
+model MasterMeasurementChart {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  measurement_chart String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  size_groups MasterSizeGroup[]
+  @@unique([organization_id, measurement_chart])
+  @@index([organization_id, is_active])
+  @@map("master_measurement_charts")
+}
+
+model MasterSizeWiseConsumption {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  bom_template_name String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  raw_materials MasterRawMaterial[]
+  @@unique([organization_id, bom_template_name])
+  @@index([organization_id, is_active])
+  @@map("master_size_wise_consumptions")
+}
+model MasterProduct {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  product_master_name String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  @@unique([organization_id, product_master_name])
+  @@index([organization_id, is_active])
+  @@map("master_products")
+}
+
+model MasterProcessTemplate {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  process_name String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  @@unique([organization_id, process_name])
+  @@index([organization_id, is_active])
+  @@map("master_process_templates")
+}
+
+model MasterMerchandiser {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  merchandiser String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  @@index([organization_id, is_active])
+  @@map("master_merchandisers")
+}
+
+model MasterStatus {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  status String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  @@index([organization_id, is_active])
+  @@map("master_statuses")
+}
+
+model MasterOrderVolume {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  order_volume String @db.VarChar(255)
+  from_value Int?
+  to_value Int?
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  @@index([organization_id, is_active])
+  @@map("master_order_volumes")
+}
+
+model MasterRawMaterial {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  raw_material_name String @db.VarChar(255)
+  category_id String
+  subcategory_id String
+  stock_uom_id String
+  category_type_id String?
+  is_specific_for_brand Boolean @default(false)
+  size_wise_consumption Boolean @default(false)
+  size_wise_consumption_id String?
+  brand_id String?
+  show_all Boolean @default(false)
+  workdrive_image_id String?
+  buyer_item_code String?
+  image_url String?
+  item_code String?
+  colour_id String?
+  create_open_stock String?
+  open_stock Decimal? @db.Decimal(12,2)
+  open_stock_price Decimal? @db.Decimal(12,2)
+  vendor_wise_price_list String?
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  category MasterCategory @relation(fields: [category_id], references: [id])
+  subcategory MasterSubCategory @relation(fields: [subcategory_id], references: [id])
+  stock_uom MasterUom @relation(fields: [stock_uom_id], references: [id])
+  category_type MasterCategoryType? @relation(fields: [category_type_id], references: [id])
+  brand MasterBrand? @relation(fields: [brand_id], references: [id])
+  colour MasterColor? @relation(fields: [colour_id], references: [id])
+  size_wise_consumption_ref MasterSizeWiseConsumption? @relation(fields: [size_wise_consumption_id], references: [id])
+  @@unique([organization_id, raw_material_name])
+  @@index([organization_id, is_active])
+  @@map("master_raw_materials")
+}
+
+model ApprovalRequest {
+  id              String       @id @default(cuid())
+  request_id      String       @unique @default(uuid())
+  organization_id String
+  module_key      String       @db.VarChar(100)
+  module_name     String       @db.VarChar(255)
+  entity_type     String       @db.VarChar(100)
+  entity_key      String       @db.VarChar(255)
+  entity_label    String       @db.VarChar(255)
+  entity_ref_id   String?
+  requested_by    String?
+  status          String       @default("pending") @db.VarChar(50)
+  notes           String?
+  reviewed_by     String?
+  reviewed_at     DateTime?
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id, status])
+  @@index([organization_id, entity_ref_id])
+  @@map("approval_requests")
+}
+
+model MerchandisingOrder {
+  id              String                    @id @default(cuid())
+  organizationId  String?
+  orderNo         String                    @unique @db.VarChar(100)
+  entityName      String?                   @db.VarChar(255)
+  category        String?                   @db.VarChar(255)
+  subCategory     String?                   @db.VarChar(255)
+  season          String?                   @db.VarChar(255)
+  article         String?                   @db.VarChar(255)
+  styleName       String?                   @db.VarChar(255)
+  colors          String?                   @db.VarChar(255)
+  buyer           String?                   @db.VarChar(255)
+  brand           String?                   @db.VarChar(255)
+  sizeGroup       String?                   @db.VarChar(255)
+  haveSizeRatio   Boolean?
+  ratioOrderQty   Int?
+  orderQty        Int?
+  deliveryDate    DateTime?
+  finalStatus     String                    @default("Draft") @db.VarChar(100)
+  processStatus   String?                   @db.VarChar(100)
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  organization    Organization?             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  finishedGoods   FinishedGoodsSizeWise[]
+
+  @@index([organizationId])
+  @@map("merchandising_orders")
+}
+
+model FinishedGoodsSizeWise {
+  id               String             @id @default(cuid())
+  orderId          String
+  order            MerchandisingOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  buyerSize        String?            @db.VarChar(100)
+  size             String?            @db.VarChar(100)
+  beforeExcessQty  Int?
+  excess           Decimal?           @db.Decimal(10,2)
+  excessQty        Int?
+  totalQty         Int?
+  buyerPoPrice     Decimal?           @db.Decimal(12,2)
+  exchangePrice    Decimal?           @db.Decimal(12,2)
+  priceInInr       Decimal?           @db.Decimal(12,2)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([orderId])
+  @@map("finished_goods_size_wise")
+}

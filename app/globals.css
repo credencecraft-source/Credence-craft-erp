@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f3f7f4;
+  --foreground: #153536;
+  --panel: rgba(255, 255, 255, 0.94);
+  --panel-strong: #ffffff;
+  --muted: #607778;
+  --primary: #0f766e;
+  --primary-deep: #115e59;
+  --primary-soft: #e8f6f1;
+  --accent: #d8b36a;
+  --stroke: #d7e5df;
+  --shadow-soft: 0 18px 50px rgba(15, 73, 70, 0.1);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(167, 243, 208, 0.36), transparent 24rem),
+    radial-gradient(circle at 100% 8%, rgba(254, 243, 199, 0.42), transparent 28rem),
+    var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), "Segoe UI", sans-serif;
+  letter-spacing: 0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+input,
+button,
+select,
+textarea {
+  font: inherit;
+}
+
+input,
+select,
+textarea {
+  border-color: var(--stroke);
+}
+
+select[class*="bg-slate-50"],
+select[class*="bg-white"] {
+  appearance: none;
+  background-color: #f7fbf9;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%230f766e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right 0.7rem center;
+  background-repeat: no-repeat;
+  background-size: 1rem;
+  padding-right: 2.5rem;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+select[class*="bg-slate-50"]:hover,
+select[class*="bg-white"]:hover {
+  border-color: #8bc8b7;
+  background-color: #ffffff;
+}
+
+select[class*="bg-slate-50"]:focus,
+select[class*="bg-white"]:focus {
+  background-color: #ffffff;
+}
+
+option {
+  background: #ffffff;
+  color: #153536;
+}
+
+button[class*="bg-emerald-600"],
+button[class*="bg-emerald-700"] {
+  background-color: #0f766e;
+}
+
+button[class*="bg-emerald-600"]:hover,
+button[class*="bg-emerald-700"]:hover {
+  background-color: #115e59;
+}
+
+input[class*="bg-slate-50"],
+textarea[class*="bg-slate-50"] {
+  background-color: #f7fbf9;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: #4ade80;
+  box-shadow: 0 0 0 4px rgba(187, 247, 208, 0.48);
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #22c55e;
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #eef5f0;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid #eef5f0;
+  border-radius: 999px;
+  background: #b8cdbd;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #83a88d;
+}
+
+a {
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(16, 185, 129, 0.25);
+  color: #0b1f18;
+}

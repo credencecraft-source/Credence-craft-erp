@@ -1,0 +1,373 @@
+{
+  "software": [
+    {
+      "id": "dev-software-1787505769217-7783ac054194d",
+      "software_id": "soft-1787505769217-e9cd7a57375b78",
+      "organization_id": "99b55e37-de0b-4cf9-85a4-437d50dc1c34",
+      "software_name": "ERP Software",
+      "status": "active",
+      "created_at": "2026-08-23T17:22:49.217Z",
+      "updated_at": "2026-08-23T17:22:49.217Z"
+    },
+    {
+      "id": "dev-software-1787506124355-943bcab5b4a7a",
+      "software_id": "soft-1787506124355-9e3b8c4779237",
+      "organization_id": "cf117863-91a7-4a56-b696-83d2694a00d7",
+      "software_name": "ERP Software",
+      "status": "active",
+      "created_at": "2026-08-23T17:28:44.355Z",
+      "updated_at": "2026-08-23T17:28:44.355Z"
+    },
+    {
+      "id": "dev-software-1787542233691-cc481e6f549918",
+      "software_id": "soft-1787542233691-cae33ebf43cbb",
+      "organization_id": "068c0ec0-ac33-4cd6-bf83-5be9697b5c97",
+      "software_name": "ERP Software",
+      "status": "active",
+      "created_at": "2026-08-24T03:30:33.691Z",
+      "updated_at": "2026-08-24T03:30:33.691Z"
+    },
+    {
+      "id": "dev-software-1787542243547-880722935cb338",
+      "software_id": "soft-1787542243547-1b7dc038fe3f9",
+      "organization_id": "06669a78-d043-420f-aa02-9988c1ce149c",
+      "software_name": "ERP Software",
+      "status": "active",
+      "created_at": "2026-08-24T03:30:43.547Z",
+      "updated_at": "2026-08-24T03:30:43.547Z"
+    },
+    {
+      "id": "dev-software-1787709925537-48615bfdd2eaf",
+      "software_id": "soft-1787709925538-2f27c0d5f0bdd8",
+      "organization_id": "b1427fd2-361e-4703-b7cd-3b0e143b3e34",
+      "software_name": "ERP Software",
+      "status": "active",
+      "created_at": "2026-08-26T02:05:25.538Z",
+      "updated_at": "2026-08-26T02:05:25.538Z"
+    },
+    {
+      "id": "dev-software-1787714431522-b085d0b7d9298",
+      "software_id": "soft-1787714431522-c85db67b66a0b",
+      "organization_id": "4d4acea8-4880-4d74-a228-2e9d655c190d",
+      "software_name": "ERP Software",
+      "status": "active",
+      "created_at": "2026-08-26T03:20:31.522Z",
+      "updated_at": "2026-08-26T03:20:31.522Z"
+    }
+  ],
+  "modules": [
+    {
+      "id": "dev-module-1787505769217-9e268200d03698",
+      "module_id": "mod-1787505769217-5d2b4455810fa",
+      "software_id": "soft-1787505769217-e9cd7a57375b78",
+      "module_key": "sales",
+      "module_name": "Sales",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-23T17:22:49.217Z",
+      "updated_at": "2026-08-23T17:22:49.217Z"
+    },
+    {
+      "id": "dev-module-1787505769218-b2fb62e3ed8a48",
+      "module_id": "mod-1787505769218-5c5aa36715e428",
+      "software_id": "soft-1787505769217-e9cd7a57375b78",
+      "module_key": "inventory",
+      "module_name": "Inventory",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-23T17:22:49.218Z",
+      "updated_at": "2026-08-23T17:22:49.218Z"
+    },
+    {
+      "id": "dev-module-1787505769218-469ba55074272",
+      "module_id": "mod-1787505769218-e7e14ffa408978",
+      "software_id": "soft-1787505769217-e9cd7a57375b78",
+      "module_key": "finance",
+      "module_name": "Finance",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-23T17:22:49.218Z",
+      "updated_at": "2026-08-23T17:22:49.218Z"
+    },
+    {
+      "id": "dev-module-1787505769218-0c0acf5ae0eae8",
+      "module_id": "mod-1787505769218-9a5f08e369fb68",
+      "software_id": "soft-1787505769217-e9cd7a57375b78",
+      "module_key": "hr",
+      "module_name": "Human Resources",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-23T17:22:49.218Z",
+      "updated_at": "2026-08-23T17:22:49.218Z"
+    },
+    {
+      "id": "dev-module-1787506124355-bcaf856d5f8d7",
+      "module_id": "mod-1787506124355-32682c21f868d8",
+      "software_id": "soft-1787506124355-9e3b8c4779237",
+      "module_key": "sales",
+      "module_name": "Sales",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-23T17:28:44.355Z",
+      "updated_at": "2026-08-23T17:28:44.355Z"
+    },
+    {
+      "id": "dev-module-1787506124355-4f00d1838e7f4",
+      "module_id": "mod-1787506124355-ba11138ef3a11",
+      "software_id": "soft-1787506124355-9e3b8c4779237",
+      "module_key": "inventory",
+      "module_name": "Inventory",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-23T17:28:44.355Z",
+      "updated_at": "2026-08-23T17:28:44.355Z"
+    },
+    {
+      "id": "dev-module-1787506124355-6965df38e8cf2",
+      "module_id": "mod-1787506124355-e594ac6dc012f",
+      "software_id": "soft-1787506124355-9e3b8c4779237",
+      "module_key": "finance",
+      "module_name": "Finance",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-23T17:28:44.355Z",
+      "updated_at": "2026-08-23T17:28:44.355Z"
+    },
+    {
+      "id": "dev-module-1787506124355-2ea7cb44adfca",
+      "module_id": "mod-1787506124355-dfa662292ac12",
+      "software_id": "soft-1787506124355-9e3b8c4779237",
+      "module_key": "hr",
+      "module_name": "Human Resources",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-23T17:28:44.355Z",
+      "updated_at": "2026-08-23T17:28:44.355Z"
+    },
+    {
+      "id": "dev-module-1787542233691-7acf00f8c84698",
+      "module_id": "mod-1787542233691-33ff9307a7ea9",
+      "software_id": "soft-1787542233691-cae33ebf43cbb",
+      "module_key": "sales",
+      "module_name": "Sales",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-24T03:30:33.691Z",
+      "updated_at": "2026-08-24T03:30:33.691Z"
+    },
+    {
+      "id": "dev-module-1787542233691-b67dc9fe9afd28",
+      "module_id": "mod-1787542233691-4b8faf9c1b6f1",
+      "software_id": "soft-1787542233691-cae33ebf43cbb",
+      "module_key": "inventory",
+      "module_name": "Inventory",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-24T03:30:33.691Z",
+      "updated_at": "2026-08-24T03:30:33.691Z"
+    },
+    {
+      "id": "dev-module-1787542233691-e331063d863d68",
+      "module_id": "mod-1787542233691-7321c5b73e70e",
+      "software_id": "soft-1787542233691-cae33ebf43cbb",
+      "module_key": "finance",
+      "module_name": "Finance",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-24T03:30:33.691Z",
+      "updated_at": "2026-08-24T03:30:33.691Z"
+    },
+    {
+      "id": "dev-module-1787542233691-a03b32605773f8",
+      "module_id": "mod-1787542233691-4eace53b6cf69",
+      "software_id": "soft-1787542233691-cae33ebf43cbb",
+      "module_key": "hr",
+      "module_name": "Human Resources",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-24T03:30:33.691Z",
+      "updated_at": "2026-08-24T03:30:33.691Z"
+    },
+    {
+      "id": "dev-module-1787542243547-362fd14aaaf4b",
+      "module_id": "mod-1787542243547-c1b92dd9d65418",
+      "software_id": "soft-1787542243547-1b7dc038fe3f9",
+      "module_key": "sales",
+      "module_name": "Sales",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-24T03:30:43.547Z",
+      "updated_at": "2026-08-24T03:30:43.547Z"
+    },
+    {
+      "id": "dev-module-1787542243547-becca892b45ff",
+      "module_id": "mod-1787542243547-a226ddbaa6cec8",
+      "software_id": "soft-1787542243547-1b7dc038fe3f9",
+      "module_key": "inventory",
+      "module_name": "Inventory",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-24T03:30:43.547Z",
+      "updated_at": "2026-08-24T03:30:43.547Z"
+    },
+    {
+      "id": "dev-module-1787542243547-866735351a9c8",
+      "module_id": "mod-1787542243547-796c56ba5b5868",
+      "software_id": "soft-1787542243547-1b7dc038fe3f9",
+      "module_key": "finance",
+      "module_name": "Finance",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-24T03:30:43.547Z",
+      "updated_at": "2026-08-24T03:30:43.547Z"
+    },
+    {
+      "id": "dev-module-1787542243547-36607192d6db08",
+      "module_id": "mod-1787542243547-bc72a7e6fd4e88",
+      "software_id": "soft-1787542243547-1b7dc038fe3f9",
+      "module_key": "hr",
+      "module_name": "Human Resources",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-24T03:30:43.547Z",
+      "updated_at": "2026-08-24T03:30:43.547Z"
+    },
+    {
+      "id": "dev-module-1787709925538-f6a99b23de674",
+      "module_id": "mod-1787709925538-d953aa01bb3a18",
+      "software_id": "soft-1787709925538-2f27c0d5f0bdd8",
+      "module_key": "sales",
+      "module_name": "Sales",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-26T02:05:25.538Z",
+      "updated_at": "2026-08-26T02:05:25.538Z"
+    },
+    {
+      "id": "dev-module-1787709925538-880a474fe0c348",
+      "module_id": "mod-1787709925538-877801ac4388d8",
+      "software_id": "soft-1787709925538-2f27c0d5f0bdd8",
+      "module_key": "inventory",
+      "module_name": "Inventory",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-26T02:05:25.538Z",
+      "updated_at": "2026-08-26T02:05:25.538Z"
+    },
+    {
+      "id": "dev-module-1787709925538-26bb7a5392765",
+      "module_id": "mod-1787709925538-d041fee305abe8",
+      "software_id": "soft-1787709925538-2f27c0d5f0bdd8",
+      "module_key": "finance",
+      "module_name": "Finance",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-26T02:05:25.538Z",
+      "updated_at": "2026-08-26T02:05:25.538Z"
+    },
+    {
+      "id": "dev-module-1787709925538-b52d1087afdef8",
+      "module_id": "mod-1787709925538-a6643b8611cef",
+      "software_id": "soft-1787709925538-2f27c0d5f0bdd8",
+      "module_key": "hr",
+      "module_name": "Human Resources",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-26T02:05:25.538Z",
+      "updated_at": "2026-08-26T02:05:25.538Z"
+    },
+    {
+      "id": "dev-module-1787714431522-4b8dcc66ab2de8",
+      "module_id": "mod-1787714431522-0772bd09450dd8",
+      "software_id": "soft-1787714431522-c85db67b66a0b",
+      "module_key": "sales",
+      "module_name": "Sales",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-26T03:20:31.522Z",
+      "updated_at": "2026-08-26T03:20:31.522Z"
+    },
+    {
+      "id": "dev-module-1787714431522-06c5f6ef7ff1e8",
+      "module_id": "mod-1787714431522-0d198aa2522348",
+      "software_id": "soft-1787714431522-c85db67b66a0b",
+      "module_key": "inventory",
+      "module_name": "Inventory",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-26T03:20:31.522Z",
+      "updated_at": "2026-08-26T03:20:31.522Z"
+    },
+    {
+      "id": "dev-module-1787714431522-d22389b3ffe02",
+      "module_id": "mod-1787714431522-c0b7523f1a7d08",
+      "software_id": "soft-1787714431522-c85db67b66a0b",
+      "module_key": "finance",
+      "module_name": "Finance",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-26T03:20:31.522Z",
+      "updated_at": "2026-08-26T03:20:31.522Z"
+    },
+    {
+      "id": "dev-module-1787714431522-d4434b8daf32f",
+      "module_id": "mod-1787714431522-1977221b0663c8",
+      "software_id": "soft-1787714431522-c85db67b66a0b",
+      "module_key": "hr",
+      "module_name": "Human Resources",
+      "status": "enabled",
+      "settings": {
+        "group": "core"
+      },
+      "created_at": "2026-08-26T03:20:31.522Z",
+      "updated_at": "2026-08-26T03:20:31.522Z"
+    }
+  ],
+  "moduleData": []
+}
