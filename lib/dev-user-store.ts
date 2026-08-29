@@ -110,11 +110,11 @@ export type DevApprovalRequest = {
   reviewed_at: Date | null;
 };
 
-const DEV_USERS_FILE = path.join(process.cwd(), ".dev-users.json");
-const DEV_ORGANIZATIONS_FILE = path.join(process.cwd(), ".dev-organizations.json");
-const DEV_ERP_FILE = path.join(process.cwd(), ".dev-erp.json");
-const DEV_MASTERS_FILE = path.join(process.cwd(), ".dev-masters.json");
-const DEV_APPROVALS_FILE = path.join(process.cwd(), ".dev-approvals.json");
+const DEV_USERS_FILE = path.join("/tmp", ".dev-users.json");
+const DEV_ORGANIZATIONS_FILE = path.join("/tmp", ".dev-organizations.json");
+const DEV_ERP_FILE = path.join("/tmp", ".dev-erp.json");
+const DEV_MASTERS_FILE = path.join("/tmp", ".dev-masters.json");
+const DEV_APPROVALS_FILE = path.join("/tmp", ".dev-approvals.json");
 
 function normalizeKey(value: string) {
   return value.toLowerCase().trim();
