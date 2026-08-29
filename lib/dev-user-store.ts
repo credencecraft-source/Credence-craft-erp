@@ -436,31 +436,6 @@ export function createDevERPSoftwareForOrganization(organizationId: string) {
   return { software, modules };
 }
 
-export function deleteDevOrganizationCascade(organizationId: string) {
-  const state = readDevERPData();
-  const softwareIds = state.software.filter((entry) => entry.organization_id === organizationId).map((entry) => entry.software_id);
-  const moduleIds = state.modules.filter((entry) => softwareIds.includes(entry.software_id)).map((entry) => entry.module_id);
-
-  const nextState: { software: DevERPSoftware[]; modules: DevERPModule[]; moduleData: DevERPModuleData[] } = {
-    software: state.software.filter((entry: DevERPSoftware) => entry.organization_id !== organizationId),
-    modules: state.modules.filter((entry: DevERPModule) => !softwareIds.includes(entry.software_id)),
-    moduleData: state.moduleData.filter((entry: DevERPModuleData) => !moduleIds.includes(entry.module_id)),
-  };
-
-  writeDevERPData(nextState);
-
-  const organizations = readDevOrganizations().filter((entry) => entry.organization_id !== organizationId);
-  writeDevOrganizations(organizations);
-
-  const masterState = readDevMasterData();
-  writeDevMasterData({
-    modules: masterState.modules.filter((entry) => entry.organization_id !== organizationId),
-    values: masterState.values.filter((entry) => entry.organization_id !== organizationId),
-  });
-
-  return true;
-}
-
 function readDevMasterData() {
   try {
     if (!existsSync(DEV_MASTERS_FILE)) {
@@ -520,6 +495,86 @@ function writeDevMasterData(data: { modules: DevMasterModule[]; values: DevMaste
     modules: data.modules.map((item) => ({ ...item, created_at: item.created_at.toISOString(), updated_at: item.updated_at.toISOString() })),
     values: data.values.map((item) => ({ ...item, created_at: item.created_at.toISOString(), updated_at: item.updated_at.toISOString() })),
   }, null, 2));
+}
+
+function readDevApprovalRequests() {
+  try {
+    if (!existsSync(DEV_APPROVALS_FILE)) {
+      writeFileSync(DEV_APPROVALS_FILE, JSON.stringify([], null, 2));
+      return [] as DevApprovalRequest[];
+    }
+
+    const raw = readFileSync(DEV_APPROVALS_FILE, "utf8");
+    const parsed = raw ? JSON.parse(raw) : [];
+
+    if (!Array.isArray(parsed)) {
+      return [] as DevApprovalRequest[];
+    }
+
+    return parsed.map((item) => ({
+      ...item,
+      id: String(item.id ?? ""),
+      request_id: String(item.request_id ?? ""),
+      organization_id: String(item.organization_id ?? ""),
+      module_key: String(item.module_key ?? ""),
+      module_name: String(item.module_name ?? ""),
+      entity_type: String(item.entity_type ?? "master"),
+      entity_key: String(item.entity_key ?? ""),
+      entity_label: String(item.entity_label ?? ""),
+      entity_ref_id: typeof item.entity_ref_id === "string" ? item.entity_ref_id : null,
+      requested_by: typeof item.requested_by === "string" ? item.requested_by : null,
+      status: item.status === "approved" || item.status === "rejected" ? item.status : "pending",
+      notes: typeof item.notes === "string" ? item.notes : null,
+      created_at: item.created_at ? new Date(item.created_at as string | Date) : new Date(),
+      updated_at: item.updated_at ? new Date(item.updated_at as string | Date) : new Date(),
+      reviewed_by: typeof item.reviewed_by === "string" ? item.reviewed_by : null,
+      reviewed_at: item.reviewed_at ? new Date(item.reviewed_at as string | Date) : null,
+    } satisfies DevApprovalRequest));
+  } catch {
+    return [] as DevApprovalRequest[];
+  }
+}
+
+function writeDevApprovalRequests(data: DevApprovalRequest[]) {
+  mkdirSync(path.dirname(DEV_APPROVALS_FILE), { recursive: true });
+  writeFileSync(
+    DEV_APPROVALS_FILE,
+    JSON.stringify(
+      data.map((item) => ({
+        ...item,
+        created_at: item.created_at.toISOString(),
+        updated_at: item.updated_at.toISOString(),
+        reviewed_at: item.reviewed_at ? item.reviewed_at.toISOString() : null,
+      })),
+      null,
+      2
+    )
+  );
+}
+
+export function deleteDevOrganizationCascade(organizationId: string) {
+  const state = readDevERPData();
+  const softwareIds = state.software.filter((entry) => entry.organization_id === organizationId).map((entry) => entry.software_id);
+  const moduleIds = state.modules.filter((entry) => softwareIds.includes(entry.software_id)).map((entry) => entry.module_id);
+
+  const nextState: { software: DevERPSoftware[]; modules: DevERPModule[]; moduleData: DevERPModuleData[] } = {
+    software: state.software.filter((entry: DevERPSoftware) => entry.organization_id !== organizationId),
+    modules: state.modules.filter((entry: DevERPModule) => !softwareIds.includes(entry.software_id)),
+    moduleData: state.moduleData.filter((entry: DevERPModuleData) => !moduleIds.includes(entry.module_id)),
+  };
+
+  writeDevERPData(nextState);
+
+  const organizations = readDevOrganizations().filter((entry) => entry.organization_id !== organizationId);
+  writeDevOrganizations(organizations);
+
+  const masterState = readDevMasterData();
+  writeDevMasterData({
+    modules: masterState.modules.filter((entry) => entry.organization_id !== organizationId),
+    values: masterState.values.filter((entry) => entry.organization_id !== organizationId),
+  });
+
+  return true;
 }
 
 export function ensureDevMasterModule(organizationId: string, moduleKey: string, moduleName: string, description?: string) {
@@ -647,61 +702,6 @@ export function createDevMasterValue(
 
   writeDevMasterData(nextState);
   return created;
-}
-
-function readDevApprovalRequests() {
-  try {
-    if (!existsSync(DEV_APPROVALS_FILE)) {
-      writeFileSync(DEV_APPROVALS_FILE, JSON.stringify([], null, 2));
-      return [] as DevApprovalRequest[];
-    }
-
-    const raw = readFileSync(DEV_APPROVALS_FILE, "utf8");
-    const parsed = raw ? JSON.parse(raw) : [];
-
-    if (!Array.isArray(parsed)) {
-      return [] as DevApprovalRequest[];
-    }
-
-    return parsed.map((item) => ({
-      ...item,
-      id: String(item.id ?? ""),
-      request_id: String(item.request_id ?? ""),
-      organization_id: String(item.organization_id ?? ""),
-      module_key: String(item.module_key ?? ""),
-      module_name: String(item.module_name ?? ""),
-      entity_type: String(item.entity_type ?? "master"),
-      entity_key: String(item.entity_key ?? ""),
-      entity_label: String(item.entity_label ?? ""),
-      entity_ref_id: typeof item.entity_ref_id === "string" ? item.entity_ref_id : null,
-      requested_by: typeof item.requested_by === "string" ? item.requested_by : null,
-      status: item.status === "approved" || item.status === "rejected" ? item.status : "pending",
-      notes: typeof item.notes === "string" ? item.notes : null,
-      created_at: item.created_at ? new Date(item.created_at as string | Date) : new Date(),
-      updated_at: item.updated_at ? new Date(item.updated_at as string | Date) : new Date(),
-      reviewed_by: typeof item.reviewed_by === "string" ? item.reviewed_by : null,
-      reviewed_at: item.reviewed_at ? new Date(item.reviewed_at as string | Date) : null,
-    } satisfies DevApprovalRequest));
-  } catch {
-    return [] as DevApprovalRequest[];
-  }
-}
-
-function writeDevApprovalRequests(data: DevApprovalRequest[]) {
-  mkdirSync(path.dirname(DEV_APPROVALS_FILE), { recursive: true });
-  writeFileSync(
-    DEV_APPROVALS_FILE,
-    JSON.stringify(
-      data.map((item) => ({
-        ...item,
-        created_at: item.created_at.toISOString(),
-        updated_at: item.updated_at.toISOString(),
-        reviewed_at: item.reviewed_at ? item.reviewed_at.toISOString() : null,
-      })),
-      null,
-      2
-    )
-  );
 }
 
 export function listDevApprovalRequestsForOrganization(organizationId: string) {
