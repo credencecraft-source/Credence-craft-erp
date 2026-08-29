@@ -61,7 +61,7 @@ export default function Home() {
       return;
     }
 
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ email: account.email, name: account.name }));
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ email: account!.email, name: account!.name }));
     setLoading(false);
     router.push("/workspace");
   }
