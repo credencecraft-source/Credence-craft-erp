@@ -189,10 +189,22 @@ export async function POST(request: Request) {
     });
 
     return response;
-  } catch {
-    return NextResponse.json(
-      { error: "Authentication failed." },
-      { status: 500 }
-    );
+} catch (error) {
+  console.error("VERIFY OTP ERROR:");
+  console.error(error);
+
+  if (error instanceof Error) {
+    console.error("MESSAGE:", error.message);
+    console.error("STACK:", error.stack);
   }
+
+  return NextResponse.json(
+    {
+      error: error instanceof Error
+        ? error.message
+        : "Authentication failed.",
+    },
+    { status: 500 }
+  );
+}
 }
