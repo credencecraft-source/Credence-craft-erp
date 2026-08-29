@@ -3,244 +3,86 @@
 :root {
   --background: #f8fafc;
   --foreground: #0f172a;
-  --panel: #ffffff;
-  --panel-strong: #ffffff;
-  --muted: #64748b;
-  --primary: #059669;
-  --primary-deep: #047857;
-  --primary-soft: #ecfdf5;
-  --accent: #10b981;
+  --primary: #047857;
   --stroke: #e2e8f0;
-  --shadow-soft: 0 10px 30px -10px rgba(0, 0, 0, 0.05);
-}
-
-html {
-  scroll-behavior: smooth;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
 body {
   margin: 0;
   background-color: var(--background);
-  background-image: radial-gradient(at 0% 0%, rgba(16, 185, 129, 0.05) 0px, transparent 50%),
-                    radial-gradient(at 100% 0%, rgba(99, 102, 241, 0.05) 0px, transparent 50%);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
-  letter-spacing: -0.01em;
-  min-height: 100vh;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 12px;
 }
 
-* {
-  box-sizing: border-box;
+/* COMPACT GLOBAL INPUTS & BUTTONS */
+input, select, textarea {
+  font-size: 11px !important;
+  height: 28px !important;
+  padding: 2px 8px !important;
+  border-radius: 4px !important;
 }
 
-input,
-button,
-select,
-textarea {
-  font: inherit;
+button {
+  font-size: 11px !important;
+  height: 28px !important;
+  padding: 0 10px !important;
+  border-radius: 4px !important;
 }
 
-/* Crisp Input & Select Styles */
-input,
-select,
-textarea {
-  border-color: var(--stroke);
-  border-radius: 0.75rem;
-  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-select {
-  appearance: none;
-  background-color: #ffffff;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23059669' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-position: right 0.75rem center;
-  background-repeat: no-repeat;
-  background-size: 1rem;
-  padding-right: 2.5rem;
-}
-
-select:hover,
-input:hover,
-textarea:hover {
-  border-color: #cbd5e1;
-}
-
-input:focus,
-select:focus,
-textarea:focus {
-  outline: none;
-  border-color: #10b981;
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
-  background-color: #ffffff;
-}
-
-option {
-  background: #ffffff;
-  color: #0f172a;
-  padding: 0.5rem;
-}
-
-/* Modernized Primary Buttons */
-button[class*="bg-emerald"],
-button[class*="bg-primary"] {
-  background-color: var(--primary);
-  color: #ffffff;
-  font-weight: 500;
-  transition: all 150ms ease;
-}
-
-button[class*="bg-emerald"]:hover,
-button[class*="bg-primary"]:hover {
-  background-color: var(--primary-deep);
-  box-shadow: 0 4px 12px rgba(5, 150, 105, 0.25);
-  transform: translateY(-1px);
-}
-
-button:active {
-  transform: translateY(0);
-}
-
-button,
-a {
-  -webkit-tap-highlight-color: transparent;
-}
-
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid #10b981;
-  outline-offset: 2px;
-}
-
-/* Slim Custom Scrollbars */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: #cbd5e1;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
-a {
-  text-decoration: none;
-}
-
-::selection {
-  background: rgba(16, 185, 129, 0.15);
-  color: #047857;
-}
-
-/* ==========================================================================
-   GLOBAL TABLE TOP CONTROLS & COMPACT BUTTONS
-   ========================================================================== */
-
-/* Status Filter Segmented Control */
+/* COMPACT STATUS TABS BAR */
 .erp-tab-group {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem;
+  gap: 2px;
+  padding: 2px;
   background-color: #f1f5f9;
-  border-radius: 0.75rem;
+  border-radius: 6px;
   border: 1px solid #e2e8f0;
-  width: max-content;
 }
 
 .erp-tab-btn {
-  padding: 0.35rem 0.75rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  border-radius: 0.5rem;
+  padding: 3px 8px !important;
+  height: 24px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  border-radius: 4px !important;
   color: #64748b;
   background: transparent;
   border: none;
-  transition: all 150ms ease;
   cursor: pointer;
   white-space: nowrap;
 }
 
-.erp-tab-btn:hover {
-  color: #0f172a;
-  background-color: rgba(255, 255, 255, 0.6);
-}
-
 .erp-tab-btn.active {
-  background-color: #ffffff;
-  color: #059669;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-}
-
-/* Compact Toolbar Actions Header */
-.erp-table-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.75rem 0;
-  width: 100%;
-}
-
-.erp-search-input {
-  height: 2.125rem;
-  padding: 0 0.75rem 0 2rem;
-  font-size: 0.75rem;
-  border-radius: 0.5rem;
-  border: 1px solid #e2e8f0;
-  background-color: #ffffff;
-  width: 13rem;
-}
-
-.erp-btn-primary {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  height: 2.125rem;
-  padding: 0 0.875rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  border-radius: 0.5rem;
-  background-color: #059669;
-  color: #ffffff;
-  border: none;
-  cursor: pointer;
+  background-color: #ffffff !important;
+  color: #047857 !important;
+  font-weight: 600 !important;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
-.erp-btn-primary:hover {
-  background-color: #047857;
-  box-shadow: 0 3px 8px rgba(5, 150, 105, 0.2);
+/* COMPACT TABLE HEADERS & DENSE ROWS */
+table th {
+  font-size: 10px !important;
+  text-transform: uppercase;
+  padding: 6px 8px !important;
+  background-color: #f8fafc !important;
+  color: #475569 !important;
+  font-weight: 700 !important;
 }
 
-.erp-btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  height: 2.125rem;
-  padding: 0 0.75rem;
-  font-size: 0.75rem;
-  font-weight: 500;
-  border-radius: 0.5rem;
-  background-color: #ffffff;
-  color: #475569;
-  border: 1px solid #e2e8f0;
-  cursor: pointer;
+table td {
+  font-size: 11px !important;
+  padding: 6px 8px !important;
+  height: 32px !important;
 }
 
-.erp-btn-secondary:hover {
-  background-color: #f8fafc;
-  color: #0f172a;
-  border-color: #cbd5e1;
+/* SLIM SCROLLBARS */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
 }

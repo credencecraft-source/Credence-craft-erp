@@ -22,7 +22,6 @@ type SubItem = {
   key: string;
   label: string;
   href: string;
-  count?: number;
 };
 
 type MasterModuleShellProps = {
@@ -45,7 +44,6 @@ export function MasterModuleShell({
   value,
   children,
   modules = [],
-  subItems = [],
 }: MasterModuleShellProps) {
   const pathname = usePathname();
   const [isHovered, setIsHovered] = useState(false);
@@ -67,9 +65,6 @@ export function MasterModuleShell({
       { key: "overview", label: "Overview", href: `/workspace/${workspaceId}/organizations/${organizationId}/settings` },
       { key: "masters", label: "Masters", href: `/workspace/${workspaceId}/organizations/${organizationId}/settings/masters` },
     ],
-    approvals: [
-      { key: "settings", label: "Setting", href: `/workspace/${workspaceId}/organizations/${organizationId}/approvals/setting` },
-    ],
   };
 
   const resolvedModules = modules.length > 0 ? modules : defaultModules[value] ?? [];
@@ -88,47 +83,39 @@ export function MasterModuleShell({
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-100/80 font-sans text-slate-800 antialiased">
-      {/* HOVER ANIMATED LEFT SIDEBAR */}
+    <div className="flex h-screen overflow-hidden bg-slate-100 font-sans text-slate-800 text-xs antialiased">
+      {/* LEFT SIDEBAR */}
       <motion.aside
         initial={false}
-        animate={{ width: isHovered ? 260 : 76 }}
-        transition={{ duration: 0.3, ease: [0.2, 0.8, 0.2, 1] }}
+        animate={{ width: isHovered ? 230 : 64 }}
+        transition={{ duration: 0.2, ease: "easeInOut" }}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        className="relative z-30 flex flex-col border-r border-slate-200/80 bg-white/90 shadow-lg shadow-slate-200/50 backdrop-blur-xl"
+        className="relative z-30 flex flex-col border-r border-slate-200 bg-white shadow-sm"
       >
-        {/* Brand Header */}
-        <div className="flex h-16 items-center justify-between border-b border-slate-200/80 px-4">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-sm font-bold text-white shadow-md shadow-emerald-600/30">
+        <div className="flex h-12 items-center justify-between border-b border-slate-200 px-3">
+          <div className="flex items-center gap-2 overflow-hidden">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-700 text-xs font-bold text-white">
               CC
             </span>
             <AnimatePresence>
               {isHovered && (
                 <motion.div
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -10 }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
                   className="whitespace-nowrap"
                 >
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-700">CREDENCE CRAFT</p>
-                  <h2 className="text-sm font-semibold text-slate-900 truncate max-w-[150px]">{organizationName}</h2>
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-700">CREDENCE CRAFT</p>
+                  <h2 className="text-xs font-semibold text-slate-900 truncate max-w-[130px]">{organizationName}</h2>
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
         </div>
 
-        {/* Navigation Area */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
-          {isHovered && (
-            <p className="px-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-              Sub Modules
-            </p>
-          )}
-
-          <nav className="space-y-1.5">
+        <div className="flex-1 overflow-y-auto p-2 space-y-2">
+          <nav className="space-y-1">
             {resolvedModules.map((subModule) => {
               const subSubItems = subSubItemMap[subModule.key] || [];
               const hasSubSub = subSubItems.length > 0;
@@ -138,53 +125,38 @@ export function MasterModuleShell({
               return (
                 <div key={subModule.key} className="space-y-1">
                   <div
-                    className={`flex items-center justify-between rounded-xl p-2.5 text-xs font-semibold transition-all ${
-                      active
-                        ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20"
-                        : "text-slate-600 hover:bg-slate-100 hover:text-emerald-700"
+                    className={`flex items-center justify-between rounded-md p-1.5 transition-all ${
+                      active ? "bg-emerald-700 text-white font-medium" : "text-slate-600 hover:bg-slate-100"
                     }`}
                   >
-                    <Link href={subModule.href} className="flex items-center gap-3 truncate flex-1">
-                      <span className="h-2 w-2 shrink-0 rounded-full bg-current" />
+                    <Link href={subModule.href} className="flex items-center gap-2 truncate flex-1">
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
                       {isHovered && <span className="truncate">{subModule.label}</span>}
                     </Link>
 
                     {isHovered && hasSubSub && (
-                      <button
-                        type="button"
-                        onClick={() => toggleExpand(subModule.key)}
-                        className="p-1 hover:opacity-80"
-                      >
-                        {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                      <button type="button" onClick={() => toggleExpand(subModule.key)} className="p-0.5">
+                        {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                       </button>
                     )}
                   </div>
 
-                  {/* EXPANDABLE SUB-SUB MODULES */}
                   {isHovered && hasSubSub && isExpanded && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="ml-3 space-y-1 border-l-2 border-slate-200 pl-3"
-                    >
-                      {subSubItems.map((child) => {
-                        const childActive = isActive(child.href);
-                        return (
-                          <Link
-                            key={child.key}
-                            href={child.href}
-                            className={`block rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all ${
-                              childActive
-                                ? "bg-slate-900 text-white font-semibold"
-                                : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-                            }`}
-                          >
-                            {child.label}
-                          </Link>
-                        );
-                      })}
-                    </motion.div>
+                    <div className="ml-2 space-y-0.5 border-l border-slate-200 pl-2">
+                      {subSubItems.map((child) => (
+                        <Link
+                          key={child.key}
+                          href={child.href}
+                          className={`block rounded-md px-2 py-1 text-[11px] transition-all ${
+                            isActive(child.href)
+                              ? "bg-slate-900 text-white font-medium"
+                              : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                          }`}
+                        >
+                          {child.label}
+                        </Link>
+                      ))}
+                    </div>
                   )}
                 </div>
               );
@@ -192,45 +164,40 @@ export function MasterModuleShell({
           </nav>
         </div>
 
-        {/* Sidebar Footer Link */}
-        <div className="border-t border-slate-200/80 p-3">
+        <div className="border-t border-slate-200 p-2">
           <Link
             href={`/workspace/${workspaceId}`}
-            className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs font-medium text-slate-600 transition hover:bg-white hover:text-emerald-700 shadow-sm"
+            className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-1.5 text-[11px] text-slate-600 hover:bg-white"
           >
-            <ArrowLeft className="h-4 w-4 shrink-0 text-slate-500" />
-            {isHovered && <span className="truncate">Back to Workspaces</span>}
+            <ArrowLeft className="h-3.5 w-3.5 shrink-0" />
+            {isHovered && <span className="truncate">Workspaces</span>}
           </Link>
         </div>
       </motion.aside>
 
-      {/* MAIN CONTENT CONTAINER */}
+      {/* MAIN CONTENT AREA */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* TOP BAR */}
-        <header className="flex h-16 items-center justify-between border-b border-slate-200/80 bg-white/80 px-6 backdrop-blur-md">
-          <div className="flex items-center gap-2.5">
-            <div className="rounded-xl bg-emerald-50 p-2 text-emerald-700 border border-emerald-100">
-              <Layers className="h-4 w-4" />
-            </div>
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
+        <header className="flex h-12 items-center justify-between border-b border-slate-200 bg-white px-4">
+          <div className="flex items-center gap-2">
+            <Layers className="h-4 w-4 text-emerald-700" />
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700">
               {value.replace("-", " ")}
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">Master Modules</span>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-1 shadow-inner">
-              <MasterModuleSwitcher
-                value={value}
-                options={MASTER_MODULES.map((m) => ({ key: m.key, label: m.label }))}
-              />
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold uppercase text-emerald-700">Master Modules</span>
+            <MasterModuleSwitcher
+              value={value}
+              options={MASTER_MODULES.map((m) => ({ key: m.key, label: m.label }))}
+            />
           </div>
         </header>
 
-        {/* PAGE CONTENT */}
-        <main className="flex-1 overflow-y-auto p-6">
-          <div className="mx-auto max-w-[1600px] rounded-2xl border border-slate-200/80 bg-white/70 p-6 shadow-xl shadow-slate-200/40 backdrop-blur-md">
+        {/* FULL BLEED PAGE CONTAINER (NO WASTED MARGINS) */}
+        <main className="flex-1 overflow-y-auto p-2">
+          <div className="h-full w-full rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
             {children}
           </div>
         </main>
