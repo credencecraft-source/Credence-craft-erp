@@ -26,23 +26,23 @@ export default async function PurchasePage({
   }
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-4 shadow-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-emerald-700">Purchase</p>
-        <h3 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-900">Purchase overview</h3>
+    <div >
+      <div >
+        <p >Purchase</p>
+        <h3 >Purchase overview</h3>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div >
         {[
           { label: "Purchase Orders", value: "164", tone: "emerald" },
           { label: "Pending Inward", value: "42", tone: "sky" },
           { label: "Supplier On-Time", value: "96%", tone: "violet" },
           { label: "Avg. Cost", value: "₹8.2K", tone: "amber" },
         ].map((card) => (
-          <div key={card.label} className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-700">{card.label}</p>
-            <p className="mt-4 text-3xl font-semibold text-slate-900">{card.value}</p>
-            <div className="mt-3 h-2 rounded-full bg-emerald-100">
+          <div key={card.label} >
+            <p >{card.label}</p>
+            <p >{card.value}</p>
+            <div >
               <div
                 className={`h-2 rounded-full ${
                   card.tone === "emerald"

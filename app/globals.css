@@ -1,67 +1,70 @@
 @import "tailwindcss";
 
-/* 
-  If using Tailwind CSS v3 instead of v4, replace `@import "tailwindcss";` with:
-  @tailwind base;
-  @tailwind components;
-  @tailwind utilities; 
-*/
-
-/* ==========================================================================
-   FORCE HIGH-DENSITY CLEAN UI OVERRIDES ON ALL INNER PAGES
-   ========================================================================== */
-
-/* 1. Eliminate bulky mint/green pill backgrounds */
-.erp-override-wrapper div[class*="bg-emerald-50"],
-.erp-override-wrapper div[class*="bg-green-50"],
-.erp-override-wrapper div[class*="bg-teal-50"] {
-  background-color: #f8fafc !important;
-  border-color: #e2e8f0 !important;
-  border-radius: 4px !important;
+/* Automatic ERP Design System - Zero Local Classes Needed */
+.erp-override-wrapper input,
+.erp-override-wrapper select,
+.erp-override-wrapper textarea {
+  width: 100% !important;
+  border-radius: 8px !important;
+  border: 1px solid #dfe6df !important;
+  background-color: #f9fbf9 !important;
+  padding: 10px 14px !important;
+  font-size: 13px !important;
+  color: #0f172a !important;
+  outline: none !important;
 }
 
-/* 2. Flatten oversized rounded cards */
-.erp-override-wrapper div[class*="rounded-2xl"],
-.erp-override-wrapper div[class*="rounded-xl"],
-.erp-override-wrapper div[class*="rounded-lg"] {
-  border-radius: 4px !important;
-  padding: 8px !important;
+.erp-override-wrapper input:focus,
+.erp-override-wrapper select:focus,
+.erp-override-wrapper textarea:focus {
+  border-color: #047857 !important;
+  box-shadow: 0 0 0 2px rgba(4, 120, 87, 0.1) !important;
 }
 
-/* 3. Modern Compact Status Filter Pills */
-.erp-override-wrapper button[class*="rounded-full"],
-.erp-override-wrapper button[class*="rounded-2xl"] {
-  border-radius: 4px !important;
-  height: 24px !important;
-  padding: 0 8px !important;
-  font-size: 11px !important;
-}
-
-.erp-override-wrapper button[class*="bg-emerald-600"],
-.erp-override-wrapper button[class*="bg-emerald-700"] {
-  background: #047857 !important;
-  color: #ffffff !important;
+.erp-override-wrapper label {
+  display: block !important;
+  font-size: 12px !important;
   font-weight: 600 !important;
+  color: #475569 !important;
+  margin-bottom: 6px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
 }
 
-/* 4. Compact Table & Header Overrides */
+.erp-override-wrapper button[type="submit"],
+.erp-override-wrapper .btn-primary {
+  background-color: #17372a !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+  padding: 8px 16px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  border: none !important;
+  cursor: pointer !important;
+  transition: background-color 0.2s ease !important;
+}
+
+.erp-override-wrapper button[type="submit"]:hover,
+.erp-override-wrapper .btn-primary:hover {
+  background-color: #214d3a !important;
+}
+
+.erp-override-wrapper table {
+  width: 100% !important;
+  border-collapse: collapse !important;
+}
+
 .erp-override-wrapper table th {
-  padding: 4px 8px !important;
-  font-size: 10px !important;
+  padding: 6px 10px !important;
+  font-size: 11px !important;
   background-color: #f8fafc !important;
   color: #475569 !important;
   border-bottom: 1px solid #e2e8f0 !important;
+  text-align: left !important;
 }
 
 .erp-override-wrapper table td {
-  padding: 4px 8px !important;
-  font-size: 11px !important;
+  padding: 6px 10px !important;
+  font-size: 12px !important;
   border-bottom: 1px solid #f1f5f9 !important;
-}
-
-.erp-override-wrapper h1, 
-.erp-override-wrapper h2 {
-  font-size: 13px !important;
-  font-weight: 700 !important;
-  color: #0f172a !important;
 }

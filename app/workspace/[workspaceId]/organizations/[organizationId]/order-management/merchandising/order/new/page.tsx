@@ -246,8 +246,8 @@ export default function NewOrderPage() {
     const options = (masterOptions[masterKey] ?? []).filter((option) => !lookupDefinition?.dependsOn || option.parentValueId === parentOption?.id);
 
     return (
-      <label className="block text-xs text-slate-600">
-        <span className="mb-1 flex items-center justify-between gap-2 font-medium text-slate-700">
+      <label >
+        <span >
           <span>{label}</span>
           <button
             type="button"
@@ -255,7 +255,7 @@ export default function NewOrderPage() {
               setCreateMasterKey(masterKey);
               setMasterCreateError("");
             }}
-            className="font-semibold text-emerald-700 hover:text-emerald-800"
+            
           >
             + Create new
           </button>
@@ -271,7 +271,7 @@ export default function NewOrderPage() {
             }
             onChange(event.target.value);
           }}
-          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white"
+          
         >
           <option value="">{placeholder}</option>
           {options.map((option) => (
@@ -424,20 +424,20 @@ export default function NewOrderPage() {
         { key: "purchase", label: "Purchase", href: `/workspace/${workspaceId}/organizations/${organizationId}/order-management/purchase` },
       ]}
     >
-      <div className="space-y-4">
-        <div className="flex items-center justify-between gap-3 border-b border-emerald-100 pb-3">
+      <div >
+        <div >
           <div>
-            <p className="text-[9px] font-semibold uppercase tracking-[0.25em] text-emerald-700">{orderId ? "Edit Order" : "Create Order"}</p>
-            <h2 className="mt-1 text-xl font-semibold text-slate-900">{form.orderNo || "New Order"}</h2>
+            <p >{orderId ? "Edit Order" : "Create Order"}</p>
+            <h2 >{form.orderNo || "New Order"}</h2>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.15em] text-emerald-700">
+          <div >
+            <span >
               {form.finalStatus}
             </span>
             <button
               type="button"
               onClick={goBack}
-              className="rounded-lg border border-emerald-100 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:border-emerald-300 hover:bg-emerald-50"
+              
             >
               Back to Report
             </button>
@@ -445,10 +445,10 @@ export default function NewOrderPage() {
         </div>
 
         {loading ? (
-          <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 text-sm text-slate-600">Loading order...</div>
+          <div >Loading order...</div>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="flex flex-wrap gap-2 border-b border-emerald-100 pb-3">
+          <form onSubmit={handleSubmit} >
+            <div >
               {[
                 { key: "details", label: "Order Details Form" },
                 { key: "finishedGoods", label: "Finished Goods Form" },
@@ -469,87 +469,87 @@ export default function NewOrderPage() {
             </div>
 
             {activeTab === "details" ? (
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                <label className="block text-xs text-slate-600">
-                  <span className="mb-1 block font-medium text-slate-700">Order No</span>
-                  <input value={form.orderNo} onChange={(event) => handleChange("orderNo", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Order_No" />
+              <div >
+                <label >
+                  <span >Order No</span>
+                  <input value={form.orderNo} onChange={(event) => handleChange("orderNo", event.target.value)}  placeholder="Order_No" />
                 </label>
                 {masterSelect("Entity Name", form.entityName, (value) => handleChange("entityName", value), "entity", "Select entity")}
                 {masterSelect("Category", form.category, (value) => handleChange("category", value), "category", "Select category")}
                 {masterSelect("Sub Category", form.subCategory, (value) => handleChange("subCategory", value), "sub-category", "Select sub category")}
                 {masterSelect("Season", form.season, (value) => handleChange("season", value), "season", "Select season")}
                 {masterSelect("Article", form.article, (value) => handleChange("article", value), "article", "Select article")}
-                <label className="block text-xs text-slate-600">
-                  <span className="mb-1 block font-medium text-slate-700">Style Name</span>
-                  <input value={form.styleName} onChange={(event) => handleChange("styleName", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Style_Name" />
+                <label >
+                  <span >Style Name</span>
+                  <input value={form.styleName} onChange={(event) => handleChange("styleName", event.target.value)}  placeholder="Style_Name" />
                 </label>
                 {masterSelect("Colors", form.colors, (value) => handleChange("colors", value), "color", "Select color")}
                 {masterSelect("Buyer", form.buyer, (value) => handleChange("buyer", value), "buyer", "Select buyer")}
                 {masterSelect("Brand", form.brand, (value) => handleChange("brand", value), "brand", "Select brand")}
                 {masterSelect("Size Group", form.sizeGroup, (value) => handleChange("sizeGroup", value), "size-group", "Select size group")}
-                <label className="flex items-center gap-2 self-end pb-2 text-xs font-medium text-slate-700"><input type="checkbox" checked={form.haveSizeRatio} onChange={(event) => setForm((current) => ({ ...current, haveSizeRatio: event.target.checked }))} /> Have Size Ratio</label>
-                <label className="block text-xs text-slate-600">
-                  <span className="mb-1 block font-medium text-slate-700">Ratio Order Qty</span>
-                  <input type="number" value={form.ratioOrderQty} onChange={(event) => handleChange("ratioOrderQty", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Ratio_Order_Qty" />
+                <label ><input type="checkbox" checked={form.haveSizeRatio} onChange={(event) => setForm((current) => ({ ...current, haveSizeRatio: event.target.checked }))} /> Have Size Ratio</label>
+                <label >
+                  <span >Ratio Order Qty</span>
+                  <input type="number" value={form.ratioOrderQty} onChange={(event) => handleChange("ratioOrderQty", event.target.value)}  placeholder="Ratio_Order_Qty" />
                 </label>
-                <label className="block text-xs text-slate-600">
-                  <span className="mb-1 block font-medium text-slate-700">Order Qty</span>
-                  <input type="number" value={form.orderQty} onChange={(event) => handleChange("orderQty", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Order_Qty" />
+                <label >
+                  <span >Order Qty</span>
+                  <input type="number" value={form.orderQty} onChange={(event) => handleChange("orderQty", event.target.value)}  placeholder="Order_Qty" />
                 </label>
-                <label className="block text-xs text-slate-600">
-                  <span className="mb-1 block font-medium text-slate-700">Delivery Date</span>
-                  <input type="date" value={form.deliveryDate} onChange={(event) => handleChange("deliveryDate", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" />
+                <label >
+                  <span >Delivery Date</span>
+                  <input type="date" value={form.deliveryDate} onChange={(event) => handleChange("deliveryDate", event.target.value)}  />
                 </label>
-                <label className="block text-xs text-slate-600">
-                  <span className="mb-1 block font-medium text-slate-700">Final Status</span>
-                  <select value={form.finalStatus} onChange={(event) => handleChange("finalStatus", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white">
+                <label >
+                  <span >Final Status</span>
+                  <select value={form.finalStatus} onChange={(event) => handleChange("finalStatus", event.target.value)} >
                     {dsStatusOptions.map((status) => (
                       <option key={status} value={status}>{status}</option>
                     ))}
                   </select>
                 </label>
-                <label className="block text-xs text-slate-600">
-                  <span className="mb-1 block font-medium text-slate-700">Process Status</span>
-                  <select value={form.processStatus} onChange={(event) => handleChange("processStatus", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white">
+                <label >
+                  <span >Process Status</span>
+                  <select value={form.processStatus} onChange={(event) => handleChange("processStatus", event.target.value)} >
                     <option value="Draft">Draft</option>
                     <option value="Approved">Approved</option>
                   </select>
                 </label>
               </div>
             ) : (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-slate-900">Finished Goods Size Wise</h3>
-                  <button type="button" onClick={addSizeRow} className="rounded-md border border-emerald-200 bg-white px-2 py-1 text-[10px] font-medium text-emerald-700 hover:bg-emerald-50">
+              <div >
+                <div >
+                  <h3 >Finished Goods Size Wise</h3>
+                  <button type="button" onClick={addSizeRow} >
                     + Add Row
                   </button>
                 </div>
 
-                <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-                  <table className="min-w-full text-left text-[11px]">
-                    <thead className="bg-slate-100 text-slate-600">
+                <div >
+                  <table >
+                    <thead >
                       <tr>
-                        <th className="px-2 py-2 font-medium">Buyer Size</th>
-                        <th className="px-2 py-2 font-medium">Size</th>
-                        <th className="px-2 py-2 font-medium">Before Excess Qty</th>
-                        <th className="px-2 py-2 font-medium">Excess %</th>
-                        <th className="px-2 py-2 font-medium">Excess Qty</th>
-                        <th className="px-2 py-2 font-medium">Total Qty</th>
-                        <th className="px-2 py-2 font-medium">Buyer Po Price</th>
-                        <th className="px-2 py-2 font-medium">Exchange Price</th>
-                        <th className="px-2 py-2 font-medium">Price In INR</th>
-                        <th className="px-2 py-2 font-medium">Action</th>
+                        <th >Buyer Size</th>
+                        <th >Size</th>
+                        <th >Before Excess Qty</th>
+                        <th >Excess %</th>
+                        <th >Excess Qty</th>
+                        <th >Total Qty</th>
+                        <th >Buyer Po Price</th>
+                        <th >Exchange Price</th>
+                        <th >Price In INR</th>
+                        <th >Action</th>
                       </tr>
                     </thead>
                     <tbody>
                       {form.rows.map((row, index) => (
-                        <tr key={`${index}-${row.size || "row"}`} className="border-t border-slate-200">
-                          <td className="px-1.5 py-1.5"><input value={row.buyerSize} onChange={(event) => updateSizeRow(index, "buyerSize", event.target.value)} className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="Buyer Size" /></td>
-                          <td className="px-1.5 py-1.5">
+                        <tr key={`${index}-${row.size || "row"}`} >
+                          <td ><input value={row.buyerSize} onChange={(event) => updateSizeRow(index, "buyerSize", event.target.value)}  placeholder="Buyer Size" /></td>
+                          <td >
                             <select
                               value={row.size}
                               onChange={(event) => updateSizeRow(index, "size", event.target.value)}
-                              className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-slate-700 outline-none transition focus:border-emerald-300"
+                              
                             >
                               <option value="">Select size</option>
                               {(masterOptions.size ?? []).map((option) => (
@@ -557,14 +557,14 @@ export default function NewOrderPage() {
                               ))}
                             </select>
                           </td>
-                          <td className="px-1.5 py-1.5"><input type="number" value={row.beforeExcessQty} onChange={(event) => updateSizeRow(index, "beforeExcessQty", event.target.value)} className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0" /></td>
-                          <td className="px-1.5 py-1.5"><input type="number" value={row.excess} onChange={(event) => updateSizeRow(index, "excess", event.target.value)} className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0" /></td>
-                          <td className="px-1.5 py-1.5"><input type="number" value={row.excessQty} onChange={(event) => updateSizeRow(index, "excessQty", event.target.value)} className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0" /></td>
-                          <td className="px-1.5 py-1.5"><input type="number" value={row.totalQty} onChange={(event) => updateSizeRow(index, "totalQty", event.target.value)} className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0" /></td>
-                          <td className="px-1.5 py-1.5"><input type="number" value={row.buyerPoPrice} onChange={(event) => updateSizeRow(index, "buyerPoPrice", event.target.value)} className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0.00" /></td>
-                          <td className="px-1.5 py-1.5"><input type="number" value={row.exchangePrice} onChange={(event) => updateSizeRow(index, "exchangePrice", event.target.value)} className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0.00" /></td>
-                          <td className="px-1.5 py-1.5"><input type="number" value={row.priceInInr} onChange={(event) => updateSizeRow(index, "priceInInr", event.target.value)} className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0.00" /></td>
-                          <td className="px-1.5 py-1.5"><button type="button" onClick={() => removeSizeRow(index)} className="rounded-md border border-rose-200 bg-rose-50 px-1.5 py-1 text-[10px] font-medium text-rose-600 hover:bg-rose-100">Remove</button></td>
+                          <td ><input type="number" value={row.beforeExcessQty} onChange={(event) => updateSizeRow(index, "beforeExcessQty", event.target.value)}  placeholder="0" /></td>
+                          <td ><input type="number" value={row.excess} onChange={(event) => updateSizeRow(index, "excess", event.target.value)}  placeholder="0" /></td>
+                          <td ><input type="number" value={row.excessQty} onChange={(event) => updateSizeRow(index, "excessQty", event.target.value)}  placeholder="0" /></td>
+                          <td ><input type="number" value={row.totalQty} onChange={(event) => updateSizeRow(index, "totalQty", event.target.value)}  placeholder="0" /></td>
+                          <td ><input type="number" value={row.buyerPoPrice} onChange={(event) => updateSizeRow(index, "buyerPoPrice", event.target.value)}  placeholder="0.00" /></td>
+                          <td ><input type="number" value={row.exchangePrice} onChange={(event) => updateSizeRow(index, "exchangePrice", event.target.value)}  placeholder="0.00" /></td>
+                          <td ><input type="number" value={row.priceInInr} onChange={(event) => updateSizeRow(index, "priceInInr", event.target.value)}  placeholder="0.00" /></td>
+                          <td ><button type="button" onClick={() => removeSizeRow(index)} >Remove</button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -573,12 +573,12 @@ export default function NewOrderPage() {
               </div>
             )}
 
-            {saveError ? <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{saveError}</div> : null}
+            {saveError ? <div >{saveError}</div> : null}
 
-            <div className="flex justify-end gap-2 border-t border-slate-200 pt-3">
-              <button type="button" onClick={goBack} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50">Back to Report</button>
-              <button type="button" onClick={() => setForm({ ...emptyForm, rows: [defaultSizeRow()] })} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50">Reset</button>
-              <button type="submit" disabled={saving} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70">
+            <div >
+              <button type="button" onClick={goBack} >Back to Report</button>
+              <button type="button" onClick={() => setForm({ ...emptyForm, rows: [defaultSizeRow()] })} >Reset</button>
+              <button type="submit" disabled={saving} >
                 {saving ? "Saving..." : orderId ? "Update Order" : "Save Order"}
               </button>
             </div>
@@ -587,52 +587,52 @@ export default function NewOrderPage() {
       </div>
 
       {createMasterKey ? (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/40 p-4">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4">
+        <div >
+          <div >
+            <div >
               <div>
-                <p className="text-[9px] font-semibold uppercase tracking-[0.24em] text-emerald-700">Create master</p>
-                <h3 className="mt-1 text-lg font-semibold text-slate-900">Add {createMasterKey.replace(/-/g, " ")}</h3>
+                <p >Create master</p>
+                <h3 >Add {createMasterKey.replace(/-/g, " ")}</h3>
               </div>
-              <button type="button" onClick={closeMasterCreate} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100">
+              <button type="button" onClick={closeMasterCreate} >
                 Close
               </button>
             </div>
 
-            <form onSubmit={handleMasterCreate} className="space-y-4 p-5">
-              <label className="block space-y-2 text-sm font-medium text-slate-700">
+            <form onSubmit={handleMasterCreate} >
+              <label >
                 <span>Name</span>
                 <input
                   value={createMasterLabel}
                   onChange={(event) => setCreateMasterLabel(event.target.value)}
                   required
                   autoFocus
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                  
                 />
               </label>
-              <label className="block space-y-2 text-sm font-medium text-slate-700">
+              <label >
                 <span>Code</span>
                 <input
                   value={createMasterCode}
                   onChange={(event) => setCreateMasterCode(event.target.value)}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                  
                 />
               </label>
-              <label className="block space-y-2 text-sm font-medium text-slate-700">
+              <label >
                 <span>Description</span>
                 <textarea
                   value={createMasterDescription}
                   onChange={(event) => setCreateMasterDescription(event.target.value)}
                   rows={3}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                  
                 />
               </label>
-              {masterCreateError ? <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{masterCreateError}</p> : null}
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={closeMasterCreate} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+              {masterCreateError ? <p >{masterCreateError}</p> : null}
+              <div >
+                <button type="button" onClick={closeMasterCreate} >
                   Cancel
                 </button>
-                <button type="submit" disabled={creatingMaster} className="rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70">
+                <button type="submit" disabled={creatingMaster} >
                   {creatingMaster ? "Creating..." : "Create master"}
                 </button>
               </div>

@@ -61,7 +61,7 @@ export function MasterModuleSwitcher({
   }, []);
 
   return (
-    <div className="relative inline-block" ref={dropdownRef}>
+    <div  ref={dropdownRef}>
       {/* TRIGGER BUTTON */}
       <button
         type="button"
@@ -74,8 +74,8 @@ export function MasterModuleSwitcher({
             : "border-slate-300 hover:border-slate-400 hover:bg-slate-50"
         }`}
       >
-        <span className="flex items-center gap-1.5">
-          {isPending && <Loader2 className="h-3 w-3 animate-spin text-emerald-600" />}
+        <span >
+          {isPending && <Loader2  />}
           <span>{selectedLabel}</span>
         </span>
         <ChevronDown
@@ -87,8 +87,8 @@ export function MasterModuleSwitcher({
 
       {/* DROPDOWN MENU */}
       {isOpen && (
-        <div className="absolute right-0 z-50 mt-1.5 w-48 rounded-lg border border-slate-200 bg-white p-1 shadow-lg font-sans">
-          <div className="space-y-0.5">
+        <div >
+          <div >
             {options.map((module) => {
               const isSelected = module.key === value;
               return (
@@ -104,7 +104,7 @@ export function MasterModuleSwitcher({
                   }`}
                 >
                   <span>{module.label}</span>
-                  {isSelected && <Check className="h-3.5 w-3.5 text-emerald-700" />}
+                  {isSelected && <Check  />}
                 </button>
               );
             })}

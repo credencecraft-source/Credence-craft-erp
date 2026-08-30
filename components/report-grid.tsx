@@ -192,10 +192,10 @@ export function ReportGrid<T extends Record<string, unknown>>({
   );
 
   return (
-    <div className="w-full rounded border border-slate-200 bg-white shadow-2xs text-[11px] flex flex-col h-auto overflow-hidden">
+    <div >
       {/* STATUS FILTER TABS */}
       {statusOptions && statusOptions.length > 0 && (
-        <div className="border-b border-slate-200 bg-slate-50 px-2 py-1.5 flex gap-1 overflow-x-auto">
+        <div >
           {statusOptions.map((status) => (
             <button
               key={status}
@@ -214,25 +214,25 @@ export function ReportGrid<T extends Record<string, unknown>>({
       )}
 
       {/* CONTROL HEADER */}
-      <div className="border-b border-slate-200 bg-slate-50 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <h3 className="font-bold text-slate-800">{title}</h3>
-          <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-700">
+      <div >
+        <div >
+          <h3 >{title}</h3>
+          <span >
             {filteredRecords.length} records
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div >
           <input
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="Search report..."
-            className="h-7 min-w-[180px] rounded border border-slate-300 bg-white px-2 text-[11px] outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
+            
           />
           <button
             type="button"
             onClick={() => setShowFieldConfiguration(true)}
-            className="h-7 rounded border border-slate-300 bg-white px-2 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+            
           >
             Columns
           </button>
@@ -240,7 +240,7 @@ export function ReportGrid<T extends Record<string, unknown>>({
             <button
               type="button"
               onClick={onNewOrder}
-              className="h-7 rounded bg-emerald-700 px-2.5 text-[11px] font-semibold text-white shadow-2xs hover:bg-emerald-800"
+              
             >
               + New Order
             </button>
@@ -249,25 +249,25 @@ export function ReportGrid<T extends Record<string, unknown>>({
       </div>
 
       {/* DATA GRID TABLE */}
-      <div className="w-full overflow-x-auto overflow-y-hidden">
-        <table className="w-full text-left border-collapse border-spacing-0">
-          <thead className="bg-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-600 border-b border-slate-200">
+      <div >
+        <table >
+          <thead >
             <tr>
-              <th className="border-r border-slate-200 px-2 py-1.5 text-center w-8">
+              <th >
                 <input
                   type="checkbox"
                   checked={allFilteredSelected}
                   onChange={(e) => onToggleSelectAll?.(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-600"
+                  
                 />
               </th>
               {visibleFieldDefinitions.map((field) => (
-                <th key={field.key} className="relative border-r border-slate-200 px-2.5 py-1.5">
-                  <div className="flex items-center justify-between gap-1">
+                <th key={field.key} >
+                  <div >
                     <button
                       type="button"
                       onClick={() => openFilterForField(field.key, field.label)}
-                      className="hover:text-emerald-700 font-bold"
+                      
                     >
                       {field.label}
                     </button>
@@ -275,7 +275,7 @@ export function ReportGrid<T extends Record<string, unknown>>({
                       <button
                         type="button"
                         onClick={() => removeFilterForField(field.key)}
-                        className="rounded bg-rose-100 px-1 text-[9px] text-rose-800 font-bold hover:bg-rose-200"
+                        
                       >
                         ✕
                       </button>
@@ -284,13 +284,13 @@ export function ReportGrid<T extends Record<string, unknown>>({
 
                   {/* FILTER DROPDOWN POPUP */}
                   {activeFilterField?.field === field.key && (
-                    <div className="absolute left-0 top-full z-30 mt-1 w-60 rounded border border-slate-200 bg-white p-2.5 shadow-lg normal-case font-normal">
-                      <p className="text-[11px] font-bold text-slate-800 mb-2">Filter: {activeFilterField.label}</p>
-                      <div className="space-y-2">
+                    <div >
+                      <p >Filter: {activeFilterField.label}</p>
+                      <div >
                         <select
                           value={activeFilterOperator}
                           onChange={(e) => setActiveFilterOperator(e.target.value as FilterOperator)}
-                          className="w-full h-7 rounded border border-slate-300 bg-white px-1.5 text-[11px] outline-none"
+                          
                         >
                           <option value="contains">Contains</option>
                           <option value="is">Is Exact</option>
@@ -303,22 +303,22 @@ export function ReportGrid<T extends Record<string, unknown>>({
                             value={activeFilterValue}
                             onChange={(e) => setActiveFilterValue(e.target.value)}
                             placeholder="Value..."
-                            className="w-full h-7 rounded border border-slate-300 bg-white px-2 text-[11px] outline-none"
+                            
                           />
                         )}
                       </div>
-                      <div className="mt-2.5 flex items-center justify-end gap-1">
+                      <div >
                         <button
                           type="button"
                           onClick={clearActiveFilter}
-                          className="h-6 rounded border border-slate-300 bg-white px-2 text-[10px] font-semibold text-slate-700 hover:bg-slate-50"
+                          
                         >
                           Clear
                         </button>
                         <button
                           type="button"
                           onClick={applyActiveFilter}
-                          className="h-6 rounded bg-emerald-700 px-2 text-[10px] font-semibold text-white hover:bg-emerald-800"
+                          
                         >
                           Apply
                         </button>
@@ -332,7 +332,7 @@ export function ReportGrid<T extends Record<string, unknown>>({
           <tbody>
             {filteredRecords.length === 0 ? (
               <tr>
-                <td colSpan={visibleFieldDefinitions.length + 1} className="p-6 text-center text-slate-500 font-medium">
+                <td colSpan={visibleFieldDefinitions.length + 1} >
                   {emptyMessage}
                 </td>
               </tr>
@@ -347,16 +347,16 @@ export function ReportGrid<T extends Record<string, unknown>>({
                       index % 2 === 0 ? "bg-white" : "bg-slate-50/50"
                     } ${selectedRowId === recordId ? "bg-emerald-50" : "hover:bg-slate-100/80"}`}
                   >
-                    <td className="border-r border-slate-200 px-2 py-1 text-center align-middle" onClick={(e) => e.stopPropagation()}>
+                    <td  onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={selectedIds.includes(recordId)}
                         onChange={(e) => onToggleRowSelection?.(recordId, e.target.checked)}
-                        className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-600"
+                        
                       />
                     </td>
                     {visibleFieldDefinitions.map((field) => (
-                      <td key={`${recordId}-${field.key}`} className="border-r border-slate-200 px-2.5 py-1 text-slate-800 font-medium truncate max-w-[220px]">
+                      <td key={`${recordId}-${field.key}`} >
                         {renderCell(field.key, record)}
                       </td>
                     ))}
@@ -370,36 +370,36 @@ export function ReportGrid<T extends Record<string, unknown>>({
 
       {/* COLUMN SELECTION MODAL */}
       {showFieldConfiguration && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md rounded border border-slate-200 bg-white shadow-lg">
-            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2">
-              <h3 className="text-[12px] font-bold text-slate-800">Configure Visible Columns</h3>
+        <div >
+          <div >
+            <div >
+              <h3 >Configure Visible Columns</h3>
               <button
                 type="button"
                 onClick={() => setShowFieldConfiguration(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold text-sm"
+                
               >
                 ✕
               </button>
             </div>
-            <div className="p-3 grid grid-cols-2 gap-2 max-h-[60vh] overflow-y-auto">
+            <div >
               {fields.map((field) => (
-                <label key={field.key} className="flex items-center gap-2 text-[11px] font-semibold text-slate-700 cursor-pointer hover:bg-slate-50 p-1 rounded">
+                <label key={field.key} >
                   <input
                     type="checkbox"
                     checked={normalizedVisibleFields.includes(field.key)}
                     onChange={() => handleToggleVisibleField(field.key)}
-                    className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-600"
+                    
                   />
                   {field.label}
                 </label>
               ))}
             </div>
-            <div className="p-2 border-t border-slate-200 bg-slate-50 text-right">
+            <div >
               <button
                 type="button"
                 onClick={() => setShowFieldConfiguration(false)}
-                className="h-7 rounded bg-emerald-700 px-3 text-[11px] font-semibold text-white hover:bg-emerald-800"
+                
               >
                 Done
               </button>

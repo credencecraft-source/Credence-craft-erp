@@ -384,23 +384,23 @@ export default function MerchandisingOrdersPage() {
         { key: "purchase", label: "Purchase", href: `/workspace/${workspaceId}/organizations/${organizationId}/order-management/purchase` },
       ]}
     >
-      <div className="space-y-6">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div >
+        <div >
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-emerald-700">Orders</p>
-            <h2 className="mt-1 text-2xl font-semibold text-slate-900">Merchandising Order List</h2>
+            <p >Orders</p>
+            <h2 >Merchandising Order List</h2>
           </div>
           <button
             type="button"
             onClick={handleNewOrder}
-            className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700"
+            
           >
             + New Order
           </button>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2">
-          <div className="flex flex-wrap gap-2">
+        <div >
+          <div >
             {dsStatusOptions.map((status) => (
               <button
                 key={status}
@@ -419,7 +419,7 @@ export default function MerchandisingOrdersPage() {
         </div>
 
         {loading ? (
-          <div className="flex min-h-[70vh] items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          <div >
             Loading orders...
           </div>
         ) : (
@@ -462,28 +462,28 @@ export default function MerchandisingOrdersPage() {
         )}
 
         {showForm ? (
-          <div className="fixed inset-0 z-[100] h-screen w-screen bg-slate-950/45 p-0">
-            <div className="flex h-full w-full flex-col overflow-hidden border border-slate-200 bg-white shadow-2xl">
-              <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-4 sm:px-6">
+          <div >
+            <div >
+              <div >
                 <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-emerald-700">{form.id ? "Edit Order" : "Create Order"}</p>
-                  <h3 className="mt-1 text-xl font-semibold text-slate-900 sm:text-2xl">{form.orderNo || "New Order"}</h3>
+                  <p >{form.id ? "Edit Order" : "Create Order"}</p>
+                  <h3 >{form.orderNo || "New Order"}</h3>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                <div >
+                  <span >
                     {form.finalStatus}
                   </span>
                   <button
                     type="button"
                     onClick={closeForm}
-                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    
                   >
                     Close
                   </button>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3 sm:px-6">
+              <div >
                 {[
                   { key: "details", label: "Order Details Form" },
                   { key: "finishedGoods", label: "Finished Goods Form" },
@@ -503,149 +503,149 @@ export default function MerchandisingOrdersPage() {
                 ))}
               </div>
 
-              <div className="flex-1 overflow-auto p-4 sm:p-6">
-                <form onSubmit={handleSubmit} className="space-y-6">
+              <div >
+                <form onSubmit={handleSubmit} >
                   {activeTab === "details" ? (
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Order No</span>
-                        <input value={form.orderNo} onChange={(event) => handleChange("orderNo", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Order_No" />
+                    <div >
+                      <label >
+                        <span >Order No</span>
+                        <input value={form.orderNo} onChange={(event) => handleChange("orderNo", event.target.value)}  placeholder="Order_No" />
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Entity Name</span>
-                        <input value={form.entityName} onChange={(event) => handleChange("entityName", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Entity_Name" />
+                      <label >
+                        <span >Entity Name</span>
+                        <input value={form.entityName} onChange={(event) => handleChange("entityName", event.target.value)}  placeholder="Entity_Name" />
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Category</span>
-                        <input value={form.category} onChange={(event) => handleChange("category", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Product_Master" />
+                      <label >
+                        <span >Category</span>
+                        <input value={form.category} onChange={(event) => handleChange("category", event.target.value)}  placeholder="Product_Master" />
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Sub Category</span>
-                        <input value={form.subCategory} onChange={(event) => handleChange("subCategory", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Products" />
+                      <label >
+                        <span >Sub Category</span>
+                        <input value={form.subCategory} onChange={(event) => handleChange("subCategory", event.target.value)}  placeholder="Products" />
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Season</span>
-                        <input value={form.season} onChange={(event) => handleChange("season", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Season" />
+                      <label >
+                        <span >Season</span>
+                        <input value={form.season} onChange={(event) => handleChange("season", event.target.value)}  placeholder="Season" />
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Article</span>
-                        <input value={form.article} onChange={(event) => handleChange("article", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Gold_Seal" />
+                      <label >
+                        <span >Article</span>
+                        <input value={form.article} onChange={(event) => handleChange("article", event.target.value)}  placeholder="Gold_Seal" />
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Style Name</span>
-                        <input value={form.styleName} onChange={(event) => handleChange("styleName", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Style_Name" />
+                      <label >
+                        <span >Style Name</span>
+                        <input value={form.styleName} onChange={(event) => handleChange("styleName", event.target.value)}  placeholder="Style_Name" />
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Colors</span>
-                        <input value={form.colors} onChange={(event) => handleChange("colors", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Colors" />
+                      <label >
+                        <span >Colors</span>
+                        <input value={form.colors} onChange={(event) => handleChange("colors", event.target.value)}  placeholder="Colors" />
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Buyer</span>
-                        <input value={form.buyer} onChange={(event) => handleChange("buyer", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Buyer1" />
+                      <label >
+                        <span >Buyer</span>
+                        <input value={form.buyer} onChange={(event) => handleChange("buyer", event.target.value)}  placeholder="Buyer1" />
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Brand</span>
-                        <input value={form.brand} onChange={(event) => handleChange("brand", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Brand1" />
+                      <label >
+                        <span >Brand</span>
+                        <input value={form.brand} onChange={(event) => handleChange("brand", event.target.value)}  placeholder="Brand1" />
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Size Group</span>
-                        <input value={form.sizeGroup} onChange={(event) => handleChange("sizeGroup", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Size_Group" />
+                      <label >
+                        <span >Size Group</span>
+                        <input value={form.sizeGroup} onChange={(event) => handleChange("sizeGroup", event.target.value)}  placeholder="Size_Group" />
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Order Qty</span>
-                        <input type="number" value={form.orderQty} onChange={(event) => handleChange("orderQty", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" placeholder="Order_Qty" />
+                      <label >
+                        <span >Order Qty</span>
+                        <input type="number" value={form.orderQty} onChange={(event) => handleChange("orderQty", event.target.value)}  placeholder="Order_Qty" />
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Delivery Date</span>
-                        <input type="date" value={form.deliveryDate} onChange={(event) => handleChange("deliveryDate", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white" />
+                      <label >
+                        <span >Delivery Date</span>
+                        <input type="date" value={form.deliveryDate} onChange={(event) => handleChange("deliveryDate", event.target.value)}  />
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Final Status</span>
-                        <select value={form.finalStatus} onChange={(event) => handleChange("finalStatus", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white">
+                      <label >
+                        <span >Final Status</span>
+                        <select value={form.finalStatus} onChange={(event) => handleChange("finalStatus", event.target.value)} >
                           {dsStatusOptions.map((status) => (
                             <option key={status} value={status}>{status}</option>
                           ))}
                         </select>
                       </label>
 
-                      <label className="block text-sm text-slate-600">
-                        <span className="mb-1.5 block font-medium text-slate-700">Process Status</span>
-                        <select value={form.processStatus} onChange={(event) => handleChange("processStatus", event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-800 outline-none transition focus:border-emerald-300 focus:bg-white">
+                      <label >
+                        <span >Process Status</span>
+                        <select value={form.processStatus} onChange={(event) => handleChange("processStatus", event.target.value)} >
                           <option value="Draft">Draft</option>
                           <option value="Approved">Approved</option>
                         </select>
                       </label>
                     </div>
                   ) : (
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="mb-4 flex items-center justify-between">
-                        <h3 className="text-lg font-semibold text-slate-900">Finished Goods Size Wise</h3>
-                        <button type="button" onClick={addSizeRow} className="rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
+                    <div >
+                      <div >
+                        <h3 >Finished Goods Size Wise</h3>
+                        <button type="button" onClick={addSizeRow} >
                           + Add Row
                         </button>
                       </div>
 
-                      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                        <table className="min-w-full text-left text-sm">
-                          <thead className="bg-slate-100 text-slate-600">
+                      <div >
+                        <table >
+                          <thead >
                             <tr>
-                              <th className="px-3 py-2.5 font-medium">Buyer Size</th>
-                              <th className="px-3 py-2.5 font-medium">Size</th>
-                              <th className="px-3 py-2.5 font-medium">Before Excess Qty</th>
-                              <th className="px-3 py-2.5 font-medium">Excess %</th>
-                              <th className="px-3 py-2.5 font-medium">Excess Qty</th>
-                              <th className="px-3 py-2.5 font-medium">Total Qty</th>
-                              <th className="px-3 py-2.5 font-medium">Buyer Po Price</th>
-                              <th className="px-3 py-2.5 font-medium">Exchange Price</th>
-                              <th className="px-3 py-2.5 font-medium">Price In INR</th>
-                              <th className="px-3 py-2.5 font-medium">Action</th>
+                              <th >Buyer Size</th>
+                              <th >Size</th>
+                              <th >Before Excess Qty</th>
+                              <th >Excess %</th>
+                              <th >Excess Qty</th>
+                              <th >Total Qty</th>
+                              <th >Buyer Po Price</th>
+                              <th >Exchange Price</th>
+                              <th >Price In INR</th>
+                              <th >Action</th>
                             </tr>
                           </thead>
                           <tbody>
                             {form.rows.map((row, index) => (
-                              <tr key={`${index}-${row.size || "row"}`} className="border-t border-slate-200">
-                                <td className="px-2 py-2">
-                                  <input value={row.buyerSize} onChange={(event) => updateSizeRow(index, "buyerSize", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="Buyer Size" />
+                              <tr key={`${index}-${row.size || "row"}`} >
+                                <td >
+                                  <input value={row.buyerSize} onChange={(event) => updateSizeRow(index, "buyerSize", event.target.value)}  placeholder="Buyer Size" />
                                 </td>
-                                <td className="px-2 py-2">
-                                  <input value={row.size} onChange={(event) => updateSizeRow(index, "size", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="Size" />
+                                <td >
+                                  <input value={row.size} onChange={(event) => updateSizeRow(index, "size", event.target.value)}  placeholder="Size" />
                                 </td>
-                                <td className="px-2 py-2">
-                                  <input type="number" value={row.beforeExcessQty} onChange={(event) => updateSizeRow(index, "beforeExcessQty", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0" />
+                                <td >
+                                  <input type="number" value={row.beforeExcessQty} onChange={(event) => updateSizeRow(index, "beforeExcessQty", event.target.value)}  placeholder="0" />
                                 </td>
-                                <td className="px-2 py-2">
-                                  <input type="number" value={row.excess} onChange={(event) => updateSizeRow(index, "excess", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0" />
+                                <td >
+                                  <input type="number" value={row.excess} onChange={(event) => updateSizeRow(index, "excess", event.target.value)}  placeholder="0" />
                                 </td>
-                                <td className="px-2 py-2">
-                                  <input type="number" value={row.excessQty} onChange={(event) => updateSizeRow(index, "excessQty", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0" />
+                                <td >
+                                  <input type="number" value={row.excessQty} onChange={(event) => updateSizeRow(index, "excessQty", event.target.value)}  placeholder="0" />
                                 </td>
-                                <td className="px-2 py-2">
-                                  <input type="number" value={row.totalQty} onChange={(event) => updateSizeRow(index, "totalQty", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0" />
+                                <td >
+                                  <input type="number" value={row.totalQty} onChange={(event) => updateSizeRow(index, "totalQty", event.target.value)}  placeholder="0" />
                                 </td>
-                                <td className="px-2 py-2">
-                                  <input type="number" value={row.buyerPoPrice} onChange={(event) => updateSizeRow(index, "buyerPoPrice", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0.00" />
+                                <td >
+                                  <input type="number" value={row.buyerPoPrice} onChange={(event) => updateSizeRow(index, "buyerPoPrice", event.target.value)}  placeholder="0.00" />
                                 </td>
-                                <td className="px-2 py-2">
-                                  <input type="number" value={row.exchangePrice} onChange={(event) => updateSizeRow(index, "exchangePrice", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0.00" />
+                                <td >
+                                  <input type="number" value={row.exchangePrice} onChange={(event) => updateSizeRow(index, "exchangePrice", event.target.value)}  placeholder="0.00" />
                                 </td>
-                                <td className="px-2 py-2">
-                                  <input type="number" value={row.priceInInr} onChange={(event) => updateSizeRow(index, "priceInInr", event.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-slate-700 outline-none transition focus:border-emerald-300" placeholder="0.00" />
+                                <td >
+                                  <input type="number" value={row.priceInInr} onChange={(event) => updateSizeRow(index, "priceInInr", event.target.value)}  placeholder="0.00" />
                                 </td>
-                                <td className="px-2 py-2">
-                                  <button type="button" onClick={() => removeSizeRow(index)} className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-100">
+                                <td >
+                                  <button type="button" onClick={() => removeSizeRow(index)} >
                                     Remove
                                   </button>
                                 </td>
@@ -658,21 +658,21 @@ export default function MerchandisingOrdersPage() {
                   )}
 
                   {saveError ? (
-                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{saveError}</div>
+                    <div >{saveError}</div>
                   ) : null}
 
-                  <div className="flex justify-end gap-3 border-t border-slate-200 pt-4">
+                  <div >
                     <button
                       type="button"
                       onClick={closeForm}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                      
                     >
                       Back to Report
                     </button>
-                    <button type="button" onClick={() => setForm({ ...emptyForm, rows: [defaultSizeRow()] })} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                    <button type="button" onClick={() => setForm({ ...emptyForm, rows: [defaultSizeRow()] })} >
                       Reset
                     </button>
-                    <button type="submit" disabled={saving} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70">
+                    <button type="submit" disabled={saving} >
                       {saving ? "Saving..." : form.id ? "Update Order" : "Save Order"}
                     </button>
                   </div>

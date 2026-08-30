@@ -91,40 +91,40 @@ export default async function ApprovalSettingMasterPage({
         },
       ]}
     >
-      <div className="space-y-5">
-        <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-5">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-700">Pending approvals</p>
-          <h3 className="mt-2 text-2xl font-semibold text-slate-900">
+      <div >
+        <div >
+          <p >Pending approvals</p>
+          <h3 >
             {pendingRequests.length === 0 ? "There is nothing to approve" : `${pendingRequests.length} records waiting for action`}
           </h3>
         </div>
 
         {pendingRequests.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center">
-            <p className="text-base font-medium text-slate-700">There is nothing to approve</p>
-            <p className="mt-2 text-sm text-slate-500">No pending approval requests for this organization.</p>
+          <div >
+            <p >There is nothing to approve</p>
+            <p >No pending approval requests for this organization.</p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-2xl border border-emerald-100 bg-white shadow-[0_12px_35px_rgba(20,83,45,0.06)]">
-            <table className="min-w-full divide-y divide-slate-200 text-left">
-              <thead className="bg-emerald-50/70 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+          <div >
+            <table >
+              <thead >
                 <tr>
-                  <th className="px-4 py-3">Master</th>
-                  <th className="px-4 py-3">Module</th>
-                  <th className="px-4 py-3">Type</th>
-                  <th className="px-4 py-3">Requested</th>
-                  <th className="px-4 py-3 text-right">Action</th>
+                  <th >Master</th>
+                  <th >Module</th>
+                  <th >Type</th>
+                  <th >Requested</th>
+                  <th >Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 bg-white text-sm text-slate-700">
+              <tbody >
                 {pendingRequests.map((request) => (
-                  <tr key={request.id} className="align-top hover:bg-emerald-50/40">
-                    <td className="px-4 py-4 font-medium text-slate-900">{request.entity_label}</td>
-                    <td className="px-4 py-4">{request.module_name}</td>
-                    <td className="px-4 py-4 capitalize">{request.entity_type}</td>
-                    <td className="px-4 py-4 text-slate-500">{new Date(request.created_at).toLocaleDateString()}</td>
-                    <td className="px-4 py-4">
-                      <form action={handleApprovalAction} className="flex justify-end gap-2">
+                  <tr key={request.id} >
+                    <td >{request.entity_label}</td>
+                    <td >{request.module_name}</td>
+                    <td >{request.entity_type}</td>
+                    <td >{new Date(request.created_at).toLocaleDateString()}</td>
+                    <td >
+                      <form action={handleApprovalAction} >
                         <input type="hidden" name="workspaceId" value={workspaceId} />
                         <input type="hidden" name="organizationId" value={organizationId} />
                         <input type="hidden" name="requestId" value={request.id} />
@@ -132,7 +132,7 @@ export default async function ApprovalSettingMasterPage({
                           type="submit"
                           name="action"
                           value="approve"
-                          className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 transition hover:bg-emerald-100"
+                          
                         >
                           Approve
                         </button>
@@ -140,7 +140,7 @@ export default async function ApprovalSettingMasterPage({
                           type="submit"
                           name="action"
                           value="reject"
-                          className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-rose-700 transition hover:bg-rose-100"
+                          
                         >
                           Reject
                         </button>

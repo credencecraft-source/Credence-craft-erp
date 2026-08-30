@@ -55,11 +55,11 @@ export default async function MerchandisingBomPage({
       description="Merchandising BOM workflow."
       subItems={orderManagementSidebarItems}
     >
-      <div className="space-y-5">
-        <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-emerald-700">BOM</p>
-          <h3 className="mt-2 text-2xl font-semibold text-slate-900">Bill of materials</h3>
-          <p className="mt-2 text-sm text-slate-600">This is the BOM page inside merchandising.</p>
+      <div >
+        <div >
+          <p >BOM</p>
+          <h3 >Bill of materials</h3>
+          <p >This is the BOM page inside merchandising.</p>
         </div>
       </div>
     </MasterModuleShell>

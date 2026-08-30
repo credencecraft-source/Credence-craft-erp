@@ -55,10 +55,10 @@ export default async function MerchandisingSamplingPage({
       description="Merchandising sampling workflow."
       subItems={orderManagementSidebarItems}
     >
-      <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-emerald-700">Sampling</p>
-        <h3 className="mt-2 text-2xl font-semibold text-slate-900">Sample tracking</h3>
-        <p className="mt-2 text-sm text-slate-600">This is the sampling page inside merchandising.</p>
+      <div >
+        <p >Sampling</p>
+        <h3 >Sample tracking</h3>
+        <p >This is the sampling page inside merchandising.</p>
       </div>
     </MasterModuleShell>
   );

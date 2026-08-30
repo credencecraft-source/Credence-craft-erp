@@ -37,26 +37,26 @@ export default async function FactoryManagementPage({
       description="This module page is ready for production planning, work-order tracking, quality checks, and operational control."
       subItems={[]}
     >
-      <div className="space-y-5">
-        <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-700">Module ready</p>
-          <h3 className="mt-2 text-2xl font-semibold text-slate-900">Factory Management overview</h3>
-          <p className="mt-3 max-w-3xl text-slate-600">
+      <div >
+        <div >
+          <p >Module ready</p>
+          <h3 >Factory Management overview</h3>
+          <p >
             This module page is ready for production planning, work-order tracking, quality checks, and operational control.
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div >
           {[
             { label: "Production Lines", value: "12", tone: "emerald" },
             { label: "Running Orders", value: "48", tone: "sky" },
             { label: "Efficiency", value: "86%", tone: "violet" },
             { label: "Defects", value: "1.9%", tone: "amber" },
           ].map((card) => (
-            <div key={card.label} className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-700">{card.label}</p>
-              <p className="mt-4 text-3xl font-semibold text-slate-900">{card.value}</p>
-              <div className="mt-3 h-2 rounded-full bg-emerald-100">
+            <div key={card.label} >
+              <p >{card.label}</p>
+              <p >{card.value}</p>
+              <div >
                 <div
                   className={`h-2 rounded-full ${
                     card.tone === "emerald"

@@ -67,75 +67,75 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#f7f7f1,_#edf2eb_35%,_#dfe9de_100%)] px-4 py-10 text-zinc-900">
-      <div className="mx-auto flex max-w-6xl items-center justify-center min-h-[calc(100vh-5rem)]">
-        <div className="grid w-full overflow-hidden rounded-[32px] border border-emerald-100 bg-white/80 shadow-[0_24px_80px_rgba(16,24,40,0.08)] backdrop-blur md:grid-cols-2">
-          <div className="flex flex-col justify-between bg-[#0f172a] p-8 text-white md:p-10">
+    <main >
+      <div >
+        <div >
+          <div >
             <div>
-              <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-200">
+              <div >
                 Credence Craft
               </div>
-              <h1 className="max-w-sm text-4xl font-bold leading-tight">
+              <h1 >
                 Work smarter with your business workspace.
               </h1>
             </div>
 
-            <div className="mt-10 space-y-4 text-sm text-slate-300">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <p className="font-semibold text-white">Fast onboarding</p>
-                <p className="mt-1">Create your account in seconds and land directly in your workspace.</p>
+            <div >
+              <div >
+                <p >Fast onboarding</p>
+                <p >Create your account in seconds and land directly in your workspace.</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <p className="font-semibold text-white">One place for work</p>
-                <p className="mt-1">Track tasks, projects, and daily operations from a single dashboard.</p>
+              <div >
+                <p >One place for work</p>
+                <p >Track tasks, projects, and daily operations from a single dashboard.</p>
               </div>
             </div>
           </div>
 
-          <div className="p-8 md:p-10">
-            <div className="mb-8 flex items-center justify-between gap-3">
+          <div >
+            <div >
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Access</p>
-                <h2 className="mt-1 text-2xl font-bold text-slate-900">
+                <p >Access</p>
+                <h2 >
                   {mode === "login" ? "Welcome back" : "Create account"}
                 </h2>
               </div>
               <button
                 type="button"
                 onClick={() => setMode((prev) => (prev === "login" ? "create" : "login"))}
-                className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100"
+                
               >
                 {mode === "login" ? "Need an account?" : "Have an account?"}
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <label className="block">
-                <span className="mb-2 block text-sm font-medium text-slate-700">Email address</span>
+            <form onSubmit={handleSubmit} >
+              <label >
+                <span >Email address</span>
                 <input
                   type="email"
                   value={form.email}
                   onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
                   placeholder="name@example.com"
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+                  
                   required
                 />
               </label>
 
-              <label className="block">
-                <span className="mb-2 block text-sm font-medium text-slate-700">Full name</span>
+              <label >
+                <span >Full name</span>
                 <input
                   type="text"
                   value={form.name}
                   onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
                   placeholder="Your name"
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+                  
                   required
                 />
               </label>
 
               {error ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                <div >
                   {error}
                 </div>
               ) : null}
@@ -143,7 +143,7 @@ export default function Home() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full rounded-2xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-70"
+                
               >
                 {loading ? "Please wait..." : mode === "login" ? "Login to workspace" : "Create account & login"}
               </button>

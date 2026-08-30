@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-
 import { getSessionUser } from "@/lib/auth-session";
 
 export default async function WorkspaceLayout({ children }: { children: React.ReactNode }) {
@@ -9,5 +8,9 @@ export default async function WorkspaceLayout({ children }: { children: React.Re
     redirect("/");
   }
 
-  return <>{children}</>;
+  return (
+    <div className="erp-override-wrapper">
+      {children}
+    </div>
+  );
 }

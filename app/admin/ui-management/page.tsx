@@ -7,24 +7,24 @@ export default function UIManagementPage() {
   const [primaryColor, setPrimaryColor] = useState("#047857");
 
   return (
-    <div className="erp-page">
+    <div >
       {/* HEADER */}
-      <div className="erp-card flex items-center justify-between">
+      <div >
         <div>
-          <h1 className="text-sm font-bold text-slate-900">UI & Theme Management Center</h1>
-          <p className="text-[11px] text-slate-500">
+          <h1 >UI & Theme Management Center</h1>
+          <p >
             Centralized design system controls and component library for Credence Craft ERP.
           </p>
         </div>
-        <button className="erp-btn-primary">Save System Config</button>
+        <button >Save System Config</button>
       </div>
 
       {/* SYSTEM CONTROLS GRID */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+      <div >
         {/* DENSITY CONTROL */}
-        <div className="erp-card flex flex-col gap-2">
-          <span className="font-bold text-slate-800">Layout Density</span>
-          <div className="flex gap-2">
+        <div >
+          <span >Layout Density</span>
+          <div >
             <button
               onClick={() => setDensity("compact")}
               className={`erp-btn-secondary flex-1 justify-center ${
@@ -45,83 +45,83 @@ export default function UIManagementPage() {
         </div>
 
         {/* COLOR SCHEME */}
-        <div className="erp-card flex flex-col gap-2">
-          <span className="font-bold text-slate-800">Brand Primary Accent</span>
-          <div className="flex items-center gap-2">
+        <div >
+          <span >Brand Primary Accent</span>
+          <div >
             <input
               type="color"
               value={primaryColor}
               onChange={(e) => setPrimaryColor(e.target.value)}
-              className="h-7 w-10 cursor-pointer rounded border border-slate-300"
+              
             />
-            <span className="font-mono text-[11px] text-slate-600">{primaryColor}</span>
+            <span >{primaryColor}</span>
           </div>
         </div>
 
         {/* STATUS */}
-        <div className="erp-card flex flex-col gap-2 justify-center">
-          <span className="font-bold text-slate-800">Design Tokens Status</span>
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
-            <span className="text-[11px] text-slate-600">Tailwind v4 @theme active in globals.css</span>
+        <div >
+          <span >Design Tokens Status</span>
+          <div >
+            <span ></span>
+            <span >Tailwind v4 @theme active in globals.css</span>
           </div>
         </div>
       </div>
 
       {/* LIVE COMPONENT PREVIEW GALLERY */}
-      <div className="erp-card flex flex-col gap-3">
-        <h2 className="font-bold text-slate-900 border-b border-slate-200 pb-1">Standardized Component Preview</h2>
+      <div >
+        <h2 >Standardized Component Preview</h2>
 
         {/* BUTTONS PREVIEW */}
-        <div className="flex flex-col gap-1">
-          <label className="text-slate-500 font-medium">Standard Action Buttons</label>
-          <div className="flex items-center gap-2">
-            <button className="erp-btn-primary">+ Create Record</button>
-            <button className="erp-btn-secondary">Export Data</button>
-            <button className="h-7 px-3 text-[11px] font-medium text-red-700 bg-red-50 border border-red-200 rounded hover:bg-red-100">
+        <div >
+          <label >Standard Action Buttons</label>
+          <div >
+            <button >+ Create Record</button>
+            <button >Export Data</button>
+            <button >
               Delete
             </button>
           </div>
         </div>
 
         {/* INPUTS PREVIEW */}
-        <div className="flex flex-col gap-1">
-          <label className="text-slate-500 font-medium">Form Controls & Inputs</label>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            <input className="erp-input" placeholder="Standard Text Input..." />
-            <select className="erp-input">
+        <div >
+          <label >Form Controls & Inputs</label>
+          <div >
+            <input  placeholder="Standard Text Input..." />
+            <select >
               <option>Select Order Status...</option>
               <option>Draft</option>
               <option>Approved</option>
             </select>
-            <input type="date" className="erp-input" />
+            <input type="date"  />
           </div>
         </div>
 
         {/* DATA TABLE PREVIEW */}
-        <div className="flex flex-col gap-1">
-          <label className="text-slate-500 font-medium">Compact Table Preview</label>
-          <div className="border border-slate-200 rounded overflow-hidden">
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-slate-100 border-b border-slate-200 text-slate-700">
+        <div >
+          <label >Compact Table Preview</label>
+          <div >
+            <table >
+              <thead >
                 <tr>
-                  <th className="p-1.5 font-semibold">Order ID</th>
-                  <th className="p-1.5 font-semibold">Buyer Name</th>
-                  <th className="p-1.5 font-semibold">Status</th>
-                  <th className="p-1.5 font-semibold text-right">Action</th>
+                  <th >Order ID</th>
+                  <th >Buyer Name</th>
+                  <th >Status</th>
+                  <th >Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 bg-white">
+              <tbody >
                 <tr>
-                  <td className="p-1.5 font-medium">ORD-2026-001</td>
-                  <td className="p-1.5">Apex Apparel Ltd</td>
-                  <td className="p-1.5">
-                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-100 text-emerald-800 font-semibold">
+                  <td >ORD-2026-001</td>
+                  <td >Apex Apparel Ltd</td>
+                  <td >
+                    <span >
                       Approved
                     </span>
                   </td>
-                  <td className="p-1.5 text-right">
-                    <button className="erp-btn-secondary text-[10px] h-6 px-2">View</button>
+                  <td >
+                    <button >View</button>
                   </td>
                 </tr>
               </tbody>

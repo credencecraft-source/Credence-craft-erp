@@ -55,11 +55,11 @@ export default async function MerchandisingOrderSummaryPage({
       description="Merchandising order summary."
       subItems={orderManagementSidebarItems}
     >
-      <div className="space-y-5">
-        <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-emerald-700">Order Summary</p>
-          <h3 className="mt-2 text-2xl font-semibold text-slate-900">Summary dashboard</h3>
-          <p className="mt-2 text-sm text-slate-600">This is the order summary page inside merchandising.</p>
+      <div >
+        <div >
+          <p >Order Summary</p>
+          <h3 >Summary dashboard</h3>
+          <p >This is the order summary page inside merchandising.</p>
         </div>
       </div>
     </MasterModuleShell>

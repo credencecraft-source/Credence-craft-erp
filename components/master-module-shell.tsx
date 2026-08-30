@@ -97,7 +97,7 @@ export function MasterModuleShell({
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-100 font-sans text-slate-800 antialiased text-[11px]">
+    <div >
       {/* SIDEBAR NAVIGATION */}
       <motion.aside
         initial={false}
@@ -105,13 +105,13 @@ export function MasterModuleShell({
         transition={{ duration: 0.15, ease: "easeInOut" }}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        className="relative z-30 flex flex-col border-r border-slate-800 bg-slate-900 text-slate-300 shadow-md"
+        
       >
         {/* BRANDING HEADER */}
-        <div className="flex h-10 items-center justify-between border-b border-slate-800 px-2.5">
-          <div className="flex items-center gap-2 overflow-hidden">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-emerald-600 font-bold text-white shadow-sm">
-              <Sparkles className="h-3.5 w-3.5" />
+        <div >
+          <div >
+            <span >
+              <Sparkles  />
             </span>
             <AnimatePresence>
               {isHovered && (
@@ -119,10 +119,10 @@ export function MasterModuleShell({
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className="whitespace-nowrap"
+                  
                 >
-                  <p className="text-[8px] font-bold uppercase tracking-widest text-emerald-400">CREDENCE CRAFT</p>
-                  <h2 className="text-[11px] font-semibold text-white truncate max-w-[130px]">{organizationName}</h2>
+                  <p >CREDENCE CRAFT</p>
+                  <h2 >{organizationName}</h2>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -130,8 +130,8 @@ export function MasterModuleShell({
         </div>
 
         {/* NAVIGATION LINKS */}
-        <div className="flex-1 overflow-y-auto p-1 space-y-0.5">
-          <nav className="space-y-0.5">
+        <div >
+          <nav >
             {resolvedModules.map((subModule) => {
               const subSubItems = subSubItemMap[subModule.key] || [];
               const hasSubSub = subSubItems.length > 0;
@@ -139,7 +139,7 @@ export function MasterModuleShell({
               const active = isActive(subModule.href);
 
               return (
-                <div key={subModule.key} className="space-y-0.5">
+                <div key={subModule.key} >
                   <div
                     className={`flex items-center justify-between rounded px-2 py-1 transition-colors ${
                       active
@@ -147,20 +147,20 @@ export function MasterModuleShell({
                         : "hover:bg-slate-800 hover:text-white"
                     }`}
                   >
-                    <Link href={subModule.href} className="flex items-center gap-2 truncate flex-1">
+                    <Link href={subModule.href} >
                       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${active ? "bg-white" : "bg-slate-500"}`} />
-                      {isHovered && <span className="truncate text-[11px]">{subModule.label}</span>}
+                      {isHovered && <span >{subModule.label}</span>}
                     </Link>
 
                     {isHovered && hasSubSub && (
-                      <button type="button" onClick={() => toggleExpand(subModule.key)} className="p-0.5 text-slate-400 hover:text-white">
-                        {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                      <button type="button" onClick={() => toggleExpand(subModule.key)} >
+                        {isExpanded ? <ChevronDown  /> : <ChevronRight  />}
                       </button>
                     )}
                   </div>
 
                   {isHovered && hasSubSub && isExpanded && (
-                    <div className="ml-2.5 space-y-0.5 border-l border-slate-800 pl-1.5">
+                    <div >
                       {subSubItems.map((child) => (
                         <Link
                           key={child.key}
@@ -171,9 +171,9 @@ export function MasterModuleShell({
                               : "text-slate-400 hover:bg-slate-800 hover:text-white"
                           }`}
                         >
-                          <span className="truncate">{child.label}</span>
+                          <span >{child.label}</span>
                           {typeof child.count === "number" && (
-                            <span className="ml-1 rounded bg-slate-800 px-1 py-0.2 text-[8px] font-bold text-slate-300">
+                            <span >
                               {child.count}
                             </span>
                           )}
@@ -188,30 +188,30 @@ export function MasterModuleShell({
         </div>
 
         {/* WORKSPACE BACK FOOTER */}
-        <div className="border-t border-slate-800 p-1">
+        <div >
           <Link
             href={`/workspace/${workspaceId}`}
-            className="flex items-center gap-2 rounded border border-slate-800 bg-slate-900/50 p-1 text-[10px] text-slate-400 hover:bg-slate-800 hover:text-white"
+            
           >
-            <ArrowLeft className="h-3 w-3 shrink-0" />
-            {isHovered && <span className="truncate">Workspaces</span>}
+            <ArrowLeft  />
+            {isHovered && <span >Workspaces</span>}
           </Link>
         </div>
       </motion.aside>
 
       {/* MAIN VIEWPORT CONTAINER */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div >
         {/* HEADER TOOLBAR */}
-        <header className="flex h-10 items-center justify-between border-b border-slate-200 bg-white px-3 shadow-xs">
-          <div className="flex items-center gap-2">
-            <Layers className="h-3.5 w-3.5 text-emerald-700" />
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-800">
+        <header >
+          <div >
+            <Layers  />
+            <span >
               {value.replace("-", " ")}
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Master Modules</span>
+          <div >
+            <span >Master Modules</span>
             <MasterModuleSwitcher
               value={value}
               options={MASTER_MODULES.map((m) => ({ key: m.key, label: m.label }))}
@@ -220,8 +220,8 @@ export function MasterModuleShell({
         </header>
 
         {/* PAGE CONTENT WORKSPACE - ULTRA HIGH DENSITY ERP LAYOUT */}
-        <main className="flex flex-1 flex-col overflow-hidden bg-slate-100 p-1.5 erp-override-wrapper">
-          <div className="flex flex-1 flex-col overflow-hidden rounded border border-slate-200 bg-white p-2 shadow-2xs">
+        <main >
+          <div >
             {children}
           </div>
         </main>

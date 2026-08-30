@@ -31,7 +31,7 @@ export default async function ApprovalSettingPage({
   );
 
   return (
-    <div className="space-y-5">
+    <div >
       {/* Content for approval settings */}
     </div>
   );

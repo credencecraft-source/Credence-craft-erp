@@ -27,26 +27,26 @@ export default async function SettingsPage({
   }
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-700">Module ready</p>
-        <h3 className="mt-2 text-2xl font-semibold text-slate-900">System configuration overview</h3>
-        <p className="mt-3 max-w-3xl text-slate-600">
+    <div >
+      <div >
+        <p >Module ready</p>
+        <h3 >System configuration overview</h3>
+        <p >
           This module page is ready for company configuration, roles, permissions, integrations, and governance controls.
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div >
         {[
           { label: "Users", value: "42", tone: "emerald" },
           { label: "Roles", value: "11", tone: "sky" },
           { label: "Integrations", value: "8", tone: "violet" },
           { label: "Audit", value: "99%", tone: "amber" },
         ].map((card) => (
-          <div key={card.label} className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-700">{card.label}</p>
-            <p className="mt-4 text-3xl font-semibold text-slate-900">{card.value}</p>
-            <div className="mt-3 h-2 rounded-full bg-emerald-100">
+          <div key={card.label} >
+            <p >{card.label}</p>
+            <p >{card.value}</p>
+            <div >
               <div
                 className={`h-2 rounded-full ${
                   card.tone === "emerald"
@@ -63,28 +63,28 @@ export default async function SettingsPage({
         ))}
       </div>
 
-      <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center justify-between gap-3">
+      <div >
+        <div >
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-emerald-700">Master data</p>
-            <h3 className="mt-2 text-xl font-semibold text-slate-900">Master modules</h3>
+            <p >Master data</p>
+            <h3 >Master modules</h3>
           </div>
           <Link
             href={`/workspace/${workspaceId}/organizations/${organizationId}/settings/masters`}
-            className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-700"
+            
           >
             Open masters
           </Link>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-1">
+        <div >
           <Link
             href={`/workspace/${workspaceId}/organizations/${organizationId}/approvals`}
-            className="rounded-2xl border border-violet-200 bg-violet-50 p-4 transition hover:border-violet-300 hover:bg-violet-100/80"
+            
           >
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-violet-700">Central approval</p>
-            <h4 className="mt-2 text-lg font-semibold text-slate-900">Centralized approvals</h4>
-            <p className="mt-2 text-sm text-slate-600">Track the approval workflow by module with dedicated sub-tabs for key ERP areas.</p>
+            <p >Central approval</p>
+            <h4 >Centralized approvals</h4>
+            <p >Track the approval workflow by module with dedicated sub-tabs for key ERP areas.</p>
           </Link>
         </div>
       </div>

@@ -26,8 +26,8 @@ export default async function MerchandisingPage({
   }
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+    <div >
+      <div >
         Choose a merchandising module from the tabs above to switch between Orders, Order Summary, Samples, and BOM.
       </div>
     </div>

@@ -20,7 +20,9 @@ export default async function OrganizationLayout({
       title="ERP Module"
       description="Credence Craft ERP Workspace"
     >
-      {children}
+      <div className="erp-override-wrapper">
+        {children}
+      </div>
     </MasterModuleShell>
   );
 }

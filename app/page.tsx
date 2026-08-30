@@ -155,38 +155,38 @@ export default function PublicHomePage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4 py-8 text-slate-900 sm:px-6 lg:px-8">
-      <div className="mx-auto w-full max-w-6xl overflow-hidden rounded-[28px] border border-emerald-100 bg-white/90 shadow-[0_30px_100px_rgba(20,83,45,0.12)] backdrop-blur-xl">
-        <div className="grid lg:grid-cols-[1.05fr_0.95fr]">
-          <section className="relative overflow-hidden bg-[linear-gradient(135deg,#142f26_0%,#1d5441_45%,#12392d_100%)] p-8 text-white lg:p-12">
-            <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-emerald-300/20 blur-3xl" />
-            <div className="absolute bottom-0 left-0 h-32 w-32 rounded-full bg-sky-400/10 blur-3xl" />
-            <div className="relative">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.34em] text-emerald-200">Enterprise ERP</p>
-              <h1 className="mt-6 max-w-md text-4xl font-semibold leading-tight tracking-[-0.04em] text-white lg:text-5xl">
+    <main >
+      <div >
+        <div >
+          <section >
+            <div  />
+            <div  />
+            <div >
+              <p >Enterprise ERP</p>
+              <h1 >
                 Welcome to your workspace foundation.
               </h1>
-              <p className="mt-4 max-w-md text-sm leading-7 text-emerald-50/80 lg:text-base">
+              <p >
                 Secure login and onboarding for a scalable ERP platform. This public page starts the user authentication flow and leads to the workspace dashboard.
               </p>
 
-              <div className="mt-8 grid max-w-md gap-3 sm:grid-cols-3">
+              <div >
                 {[
                   { label: "Modules", value: "12+" },
                   { label: "Teams", value: "24/7" },
                   { label: "Coverage", value: "Global" },
                 ].map((item) => (
-                  <div key={item.label} className="rounded-2xl border border-white/10 bg-white/5 p-3 backdrop-blur-sm">
-                    <p className="text-[10px] uppercase tracking-[0.22em] text-emerald-200">{item.label}</p>
-                    <p className="mt-2 text-lg font-semibold text-white">{item.value}</p>
+                  <div key={item.label} >
+                    <p >{item.label}</p>
+                    <p >{item.value}</p>
                   </div>
                 ))}
               </div>
             </div>
           </section>
 
-          <section className="p-8 lg:p-12">
-            <div className="flex rounded-2xl border border-emerald-100 bg-emerald-50/60 p-1.5">
+          <section >
+            <div >
               <button
                 type="button"
                 onClick={() => switchMode("login")}
@@ -203,27 +203,27 @@ export default function PublicHomePage() {
               </button>
             </div>
 
-            <div className="mt-8 space-y-4">
+            <div >
               {mode === "register" && (
                 <>
-                  <label className="block text-sm font-medium text-slate-700">
-                    <span className="mb-2 block">Full name</span>
+                  <label >
+                    <span >Full name</span>
                     <input
                       type="text"
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100"
+                      
                       placeholder="John Smith"
                     />
                   </label>
 
-                  <label className="block text-sm font-medium text-slate-700">
-                    <span className="mb-2 block">Profile name</span>
+                  <label >
+                    <span >Profile name</span>
                     <input
                       type="text"
                       value={profileName}
                       onChange={(e) => setProfileName(e.target.value)}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100"
+                      
                       placeholder="johnsmith"
                     />
                     {profileName.trim() && (
@@ -235,13 +235,13 @@ export default function PublicHomePage() {
                 </>
               )}
 
-              <label className="block text-sm font-medium text-slate-700">
-                <span className="mb-2 block">Email address</span>
+              <label >
+                <span >Email address</span>
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100"
+                  
                   placeholder="name@company.com"
                 />
               </label>
@@ -251,19 +251,19 @@ export default function PublicHomePage() {
                   type="button"
                   onClick={requestOtp}
                   disabled={loading}
-                  className="w-full rounded-2xl bg-emerald-700 px-4 py-3.5 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(20,83,45,0.22)] transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  
                 >
                   {loading ? "Sending..." : "Send OTP"}
                 </button>
               ) : (
                 <>
-                  <label className="block text-sm font-medium text-zinc-700">
-                    <span className="mb-2 block">OTP</span>
+                  <label >
+                    <span >OTP</span>
                     <input
                       type="text"
                       value={otp}
                       onChange={(e) => setOtp(e.target.value)}
-                      className="w-full rounded-xl border border-[#dfe6df] bg-white px-3 py-3 text-sm outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/10"
+                      
                       placeholder="1234"
                     />
                   </label>
@@ -272,7 +272,7 @@ export default function PublicHomePage() {
                     type="button"
                     onClick={verifyOtp}
                     disabled={loading}
-                    className="w-full rounded-xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    
                   >
                     {loading ? "Verifying..." : "Verify and continue"}
                   </button>
@@ -280,7 +280,7 @@ export default function PublicHomePage() {
               )}
 
               {message && (
-                <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">{message}</p>
+                <p >{message}</p>
               )}
             </div>
           </section>
