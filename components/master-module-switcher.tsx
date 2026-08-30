@@ -30,10 +30,10 @@ export function MasterModuleSwitcher({
     <select
       value={value}
       onChange={(event) => handleChange(event.target.value)}
-      className="rounded-lg border border-emerald-200 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none"
+      className="h-6 rounded border border-slate-300 bg-white px-2 text-[11px] font-semibold text-slate-800 outline-none hover:border-slate-400 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 cursor-pointer shadow-xs"
     >
       {options.map((module) => (
-        <option key={module.key} value={module.key} className="text-slate-800">
+        <option key={module.key} value={module.key} className="text-slate-800 text-[11px]">
           {module.label}
         </option>
       ))}

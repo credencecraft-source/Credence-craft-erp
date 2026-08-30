@@ -43,15 +43,23 @@ export function MasterRecordsTable({
   const [createFields, setCreateFields] = useState<Record<string, unknown>>({});
   const [editFields, setEditFields] = useState<Record<string, unknown>>({});
   const [searchTerm, setSearchTerm] = useState("");
+
   const visibleRecords = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
     if (!query) return records;
-    return records.filter((record) => [record.label, record.code, record.description].some((value) => value?.toLowerCase().includes(query)));
+    return records.filter((record) =>
+      [record.label, record.code, record.description].some((value) =>
+        value?.toLowerCase().includes(query)
+      )
+    );
   }, [records, searchTerm]);
 
   const openEditor = (record: MasterRecord) => {
     setEditingRecord(record);
-    const metadata = record.metadata && typeof record.metadata === "object" ? record.metadata as { fields?: Record<string, unknown> } : {};
+    const metadata =
+      record.metadata && typeof record.metadata === "object"
+        ? (record.metadata as { fields?: Record<string, unknown> })
+        : {};
     setEditFields(metadata.fields ?? {});
   };
 
@@ -65,45 +73,109 @@ export function MasterRecordsTable({
     setCreateFields({});
   };
 
-  const renderField = (field: MasterFieldDefinition, values: Record<string, unknown>, setValues: (values: Record<string, unknown>) => void) => {
+  const renderField = (
+    field: MasterFieldDefinition,
+    values: Record<string, unknown>,
+    setValues: (values: Record<string, unknown>) => void
+  ) => {
     const value = values[field.key];
-    if (field.type === "checkbox") return <label key={field.key} className="flex items-center gap-2 text-sm font-medium text-slate-700"><input type="checkbox" checked={value === true} onChange={(event) => setValues({ ...values, [field.key]: event.target.checked })} name={`field_${field.key}`} />{field.label}</label>;
-    if (field.type === "picklist") return <label key={field.key} className="space-y-2 text-sm font-medium text-slate-700"><span>{field.label}</span><select name={`field_${field.key}`} value={String(value ?? "")} onChange={(event) => setValues({ ...values, [field.key]: event.target.value })} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5"><option value="">Select {field.label}</option>{field.options?.map((option) => <option key={option}>{option}</option>)}</select></label>;
-    if (field.type === "lookup") return <label key={field.key} className="space-y-2 text-sm font-medium text-slate-700"><span>{field.label}{field.required ? " *" : ""}</span><select required={field.required} name={`field_${field.key}`} value={String(value ?? "")} onChange={(event) => setValues({ ...values, [field.key]: event.target.value })} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5"><option value="">Select {field.label}</option>{(lookupOptions[field.lookupModuleKey ?? ""] ?? []).map((option) => <option key={option.id} value={option.label}>{option.label}</option>)}</select></label>;
-    return <label key={field.key} className="space-y-2 text-sm font-medium text-slate-700"><span>{field.label}{field.required ? " *" : ""}</span><input required={field.required} type={field.type === "percentage" || field.type === "number" ? "number" : "text"} step={field.type === "percentage" ? "0.01" : undefined} name={`field_${field.key}`} value={String(value ?? "")} onChange={(event) => setValues({ ...values, [field.key]: event.target.value })} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5" /></label>;
+    if (field.type === "checkbox")
+      return (
+        <label key={field.key} className="flex items-center gap-2 text-[11px] font-semibold text-slate-700">
+          <input
+            type="checkbox"
+            checked={value === true}
+            onChange={(event) => setValues({ ...values, [field.key]: event.target.checked })}
+            name={`field_${field.key}`}
+            className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-600"
+          />
+          {field.label}
+        </label>
+      );
+    if (field.type === "picklist")
+      return (
+        <label key={field.key} className="space-y-1 text-[11px] font-medium text-slate-700">
+          <span className="block font-semibold">{field.label}</span>
+          <select
+            name={`field_${field.key}`}
+            value={String(value ?? "")}
+            onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}
+            className="w-full h-7 rounded border border-slate-300 bg-white px-2 text-[11px] outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
+          >
+            <option value="">Select {field.label}</option>
+            {field.options?.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+      );
+    if (field.type === "lookup")
+      return (
+        <label key={field.key} className="space-y-1 text-[11px] font-medium text-slate-700">
+          <span className="block font-semibold">
+            {field.label}
+            {field.required ? " *" : ""}
+          </span>
+          <select
+            required={field.required}
+            name={`field_${field.key}`}
+            value={String(value ?? "")}
+            onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}
+            className="w-full h-7 rounded border border-slate-300 bg-white px-2 text-[11px] outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
+          >
+            <option value="">Select {field.label}</option>
+            {(lookupOptions[field.lookupModuleKey ?? ""] ?? []).map((option) => (
+              <option key={option.id} value={option.label}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      );
+    return (
+      <label key={field.key} className="space-y-1 text-[11px] font-medium text-slate-700">
+        <span className="block font-semibold">
+          {field.label}
+          {field.required ? " *" : ""}
+        </span>
+        <input
+          required={field.required}
+          type={field.type === "percentage" || field.type === "number" ? "number" : "text"}
+          step={field.type === "percentage" ? "0.01" : undefined}
+          name={`field_${field.key}`}
+          value={String(value ?? "")}
+          onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}
+          className="w-full h-7 rounded border border-slate-300 bg-white px-2 text-[11px] outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
+        />
+      </label>
+    );
   };
 
   return (
-    <div className="rounded-2xl border border-emerald-100 bg-white shadow-[0_12px_35px_rgba(20,83,45,0.06)]">
-      <div className="border-b border-emerald-100 bg-white px-4 py-3">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex items-center gap-3">
-            <h3 className="text-sm font-semibold text-slate-700">Report View</h3>
-            <span className="rounded-full border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-700">
+    <div className="rounded border border-slate-200 bg-white shadow-2xs text-[11px]">
+      {/* HEADER CONTROLS */}
+      <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <h3 className="font-bold text-slate-800">Report View</h3>
+            <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-700">
               {visibleRecords.length} records
             </span>
           </div>
 
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <label className="relative min-w-[190px]">
-              <span className="sr-only">Search master records</span>
-              <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search records" className="w-full rounded-xl border border-emerald-100 bg-emerald-50/40 py-2 pl-9 pr-3 text-xs text-slate-800 outline-none placeholder:text-slate-400 focus:bg-white" />
-              <svg viewBox="0 0 24 24" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 fill-none stroke-emerald-700 stroke-[1.8]" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></svg>
-            </label>
-            <button
-              type="button"
-              aria-label="Field configuration"
-              className="rounded-xl border border-emerald-100 bg-white p-2 text-slate-600 transition hover:border-emerald-300 hover:bg-emerald-50"
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current stroke-[1.8]" aria-hidden="true">
-                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-            </button>
+          <div className="flex items-center gap-2">
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search records..."
+              className="h-7 min-w-[180px] rounded border border-slate-300 bg-white px-2 text-[11px] outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
+            />
             <button
               type="button"
               onClick={() => setShowCreateModal(true)}
-              className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800"
+              className="h-7 rounded bg-emerald-700 px-2.5 text-[11px] font-semibold text-white shadow-2xs hover:bg-emerald-800"
             >
               + Add Record
             </button>
@@ -111,129 +183,179 @@ export function MasterRecordsTable({
         </div>
       </div>
 
+      {/* TABLE DATA */}
       {visibleRecords.length === 0 ? (
-        <div className="rounded-b-2xl border-t border-dashed border-slate-300 bg-slate-50 p-10 text-center">
-          <p className="text-base font-medium text-slate-700">No records yet.</p>
+        <div className="p-6 text-center text-slate-500 font-medium">
+          No records found.
         </div>
       ) : (
-        <div className="overflow-auto">
-          <table className="min-w-[900px] w-full border-separate border-spacing-0 text-left text-[12.5px] text-slate-700">
-            <thead className="bg-emerald-50/70 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-[11px] border-collapse">
+            <thead className="bg-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-600 border-b border-slate-200">
               <tr>
-                {fields.map((field) => <th key={field.key} className="border-b border-r border-slate-200 px-3 py-3">{field.label}</th>)}
-                <th className="border-b border-r border-slate-200 px-3 py-3">Code</th>
-                <th className="border-b border-r border-slate-200 px-3 py-3">Description</th>
-                <th className="border-b border-r border-slate-200 px-3 py-3">Status</th>
-                <th className="border-b border-slate-200 px-3 py-3 text-right">Actions</th>
+                {fields.map((field) => (
+                  <th key={field.key} className="border-r border-slate-200 px-2.5 py-1.5">
+                    {field.label}
+                  </th>
+                ))}
+                <th className="border-r border-slate-200 px-2.5 py-1.5">Code</th>
+                <th className="border-r border-slate-200 px-2.5 py-1.5">Description</th>
+                <th className="border-r border-slate-200 px-2.5 py-1.5">Status</th>
+                <th className="px-2.5 py-1.5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {visibleRecords.map((item, index) => (
-                <tr key={item.id} className={index % 2 === 0 ? "bg-white" : "bg-slate-50/60"}>
-                  {fields.map((field) => { const metadata = item.metadata && typeof item.metadata === "object" ? item.metadata as { fields?: Record<string, unknown> } : {}; return <td key={field.key} className="border-b border-r border-slate-200 px-3 py-3 font-medium text-slate-900">{String(metadata.fields?.[field.key] ?? (field === fields[0] ? item.label : "—"))}</td>; })}
-                  <td className="border-b border-r border-slate-200 px-3 py-3 text-slate-600">{item.description || "—"}</td>
-                  <td className="border-b border-r border-slate-200 px-3 py-3">
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${item.is_active ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-                      {item.is_active ? "Active" : "Pending"}
-                    </span>
-                  </td>
-                  <td className="border-b border-slate-200 px-3 py-3">
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openEditor(item)}
-                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition hover:bg-slate-100"
+              {visibleRecords.map((item, index) => {
+                const metadata =
+                  item.metadata && typeof item.metadata === "object"
+                    ? (item.metadata as { fields?: Record<string, unknown> })
+                    : {};
+                return (
+                  <tr
+                    key={item.id}
+                    className={`border-b border-slate-200 ${
+                      index % 2 === 0 ? "bg-white" : "bg-slate-50/50"
+                    } hover:bg-slate-100/80`}
+                  >
+                    {fields.map((field) => (
+                      <td key={field.key} className="border-r border-slate-200 px-2.5 py-1 font-medium text-slate-800">
+                        {String(metadata.fields?.[field.key] ?? (field === fields[0] ? item.label : "—"))}
+                      </td>
+                    ))}
+                    <td className="border-r border-slate-200 px-2.5 py-1 font-mono text-slate-600">
+                      {item.code || "—"}
+                    </td>
+                    <td className="border-r border-slate-200 px-2.5 py-1 text-slate-600 truncate max-w-[200px]">
+                      {item.description || "—"}
+                    </td>
+                    <td className="border-r border-slate-200 px-2.5 py-1">
+                      <span
+                        className={`inline-block rounded px-1.5 py-0.2 text-[9px] font-bold uppercase ${
+                          item.is_active
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-amber-100 text-amber-800"
+                        }`}
                       >
-                        Edit
-                      </button>
-
-                      <form action={deleteAction} className="contents">
-                        <input type="hidden" name="workspaceId" value={workspaceId} />
-                        <input type="hidden" name="organizationId" value={organizationId} />
-                        <input type="hidden" name="moduleKey" value={moduleKey} />
-                        <input type="hidden" name="valueId" value={item.value_id} />
+                        {item.is_active ? "Active" : "Pending"}
+                      </span>
+                    </td>
+                    <td className="px-2.5 py-1 text-right">
+                      <div className="flex items-center justify-end gap-1">
                         <button
-                          type="submit"
-                          className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-medium text-red-700 transition hover:bg-red-100"
+                          type="button"
+                          onClick={() => openEditor(item)}
+                          className="h-5 rounded border border-slate-300 bg-white px-2 text-[10px] font-semibold text-slate-700 hover:bg-slate-50"
                         >
-                          Delete
+                          Edit
                         </button>
-                      </form>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        <form action={deleteAction} className="inline">
+                          <input type="hidden" name="workspaceId" value={workspaceId} />
+                          <input type="hidden" name="organizationId" value={organizationId} />
+                          <input type="hidden" name="moduleKey" value={moduleKey} />
+                          <input type="hidden" name="valueId" value={item.value_id} />
+                          <button
+                            type="submit"
+                            className="h-5 rounded border border-rose-200 bg-rose-50 px-2 text-[10px] font-semibold text-rose-700 hover:bg-rose-100"
+                          >
+                            Delete
+                          </button>
+                        </form>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
-      {showCreateModal ? (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4">
-              <div>
-                <p className="text-[9px] font-semibold uppercase tracking-[0.24em] text-emerald-700">Create record</p>
-                <h3 className="mt-1 text-lg font-semibold text-slate-900">Add new {moduleLabel}</h3>
-              </div>
-              <button type="button" onClick={closeCreateModal} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100">
-                Close
+      {/* CREATE MODAL */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded border border-slate-200 bg-white shadow-lg">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2">
+              <h3 className="text-[12px] font-bold text-slate-800">Add New {moduleLabel}</h3>
+              <button
+                type="button"
+                onClick={closeCreateModal}
+                className="text-slate-400 hover:text-slate-600 font-bold text-sm"
+              >
+                ✕
               </button>
             </div>
-
-            <form action={createAction} className="space-y-4 p-5">
+            <form action={createAction} className="space-y-3 p-3">
               <input type="hidden" name="workspaceId" value={workspaceId} />
               <input type="hidden" name="organizationId" value={organizationId} />
               <input type="hidden" name="moduleKey" value={moduleKey} />
 
-              <div className="grid gap-4 md:grid-cols-2">{fields.map((field) => renderField(field, createFields, setCreateFields))}</div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {fields.map((field) => renderField(field, createFields, setCreateFields))}
+              </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button type="button" onClick={closeCreateModal} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+              <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={closeCreateModal}
+                  className="h-7 rounded border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
                   Cancel
                 </button>
-                <button type="submit" className="rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700">
-                  Save record
+                <button
+                  type="submit"
+                  className="h-7 rounded bg-emerald-700 px-2.5 text-[11px] font-semibold text-white hover:bg-emerald-800"
+                >
+                  Save Record
                 </button>
               </div>
             </form>
           </div>
         </div>
-      ) : null}
+      )}
 
-      {editingRecord ? (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/40 p-4">
-          <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4">
-              <div>
-                <p className="text-[9px] font-semibold uppercase tracking-[0.24em] text-emerald-700">Edit record</p>
-                <h3 className="mt-1 text-lg font-semibold text-slate-900">{editingRecord.label}</h3>
-              </div>
-              <button type="button" onClick={closeEditor} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100">
-                Close
+      {/* EDIT MODAL */}
+      {editingRecord && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded border border-slate-200 bg-white shadow-lg">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2">
+              <h3 className="text-[12px] font-bold text-slate-800">Edit: {editingRecord.label}</h3>
+              <button
+                type="button"
+                onClick={closeEditor}
+                className="text-slate-400 hover:text-slate-600 font-bold text-sm"
+              >
+                ✕
               </button>
             </div>
-
-            <form action={updateAction} className="space-y-4 p-5">
+            <form action={updateAction} className="space-y-3 p-3">
               <input type="hidden" name="workspaceId" value={workspaceId} />
               <input type="hidden" name="organizationId" value={organizationId} />
               <input type="hidden" name="moduleKey" value={moduleKey} />
               <input type="hidden" name="valueId" value={editingRecord.value_id} />
 
-              <div className="grid gap-4 md:grid-cols-2">{fields.map((field) => renderField(field, editFields, setEditFields))}</div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {fields.map((field) => renderField(field, editFields, setEditFields))}
+              </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button type="button" onClick={closeEditor} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+              <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={closeEditor}
+                  className="h-7 rounded border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
                   Cancel
                 </button>
-                <button type="submit" className="rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700">
-                  Save changes
+                <button
+                  type="submit"
+                  className="h-7 rounded bg-emerald-700 px-2.5 text-[11px] font-semibold text-white hover:bg-emerald-800"
+                >
+                  Save Changes
                 </button>
               </div>
             </form>
           </div>
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
