@@ -2,7 +2,6 @@ import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
-import { MasterModuleShell } from "@/components/master-module-shell";
 import { MasterRecordsTable } from "@/components/master-records-table";
 import { requireSessionUser } from "@/lib/auth-session";
 import { getOrganizationForUser } from "@/lib/organizations/service";
@@ -193,55 +192,44 @@ export default async function MasterModuleDetailPage({
   const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey)).map((item) => ({ id: item.value_id, label: item.label }))])));
 
   return (
-    <MasterModuleShell
-      workspaceId={workspaceId}
-      organizationId={organizationId}
-      organizationName={organization.organization_name}
-      value="settings"
-      moduleLabel="Settings"
-      title="Master module"
-      description="Maintain the reusable lookup values used throughout the ERP order and production flow."
-      subItems={[]}
-    >
-      <div className="space-y-6">
-        <div className="flex flex-col gap-4 rounded-2xl border border-emerald-100 bg-emerald-50 p-5 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-700">Master</p>
-            <h3 className="mt-2 text-2xl font-semibold text-slate-900">{definition.label}</h3>
-            <p className="mt-2 max-w-3xl text-sm text-slate-600">{definition.description}</p>
-          </div>
-
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Link
-              href={`/workspace/${workspaceId}/organizations/${organizationId}/settings/masters`}
-              className="inline-flex items-center justify-center rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-50"
-            >
-              Back to masters
-            </Link>
-          </div>
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 rounded-2xl border border-emerald-100 bg-emerald-50 p-5 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-700">Master</p>
+          <h3 className="mt-2 text-2xl font-semibold text-slate-900">{definition.label}</h3>
+          <p className="mt-2 max-w-3xl text-sm text-slate-600">{definition.description}</p>
         </div>
 
-        <MasterRecordsTable
-          records={values.map((item) => ({
-            id: item.id,
-            value_id: item.value_id,
-            label: item.label,
-            code: item.code,
-            description: item.description,
-            is_active: item.is_active,
-            metadata: { fields: item.fields },
-          }))}
-          fields={definition.fields}
-          lookupOptions={lookupOptions}
-          moduleLabel={definition.label}
-          workspaceId={workspaceId}
-          organizationId={organizationId}
-          moduleKey={moduleKey}
-          createAction={createMasterValueAction}
-          updateAction={updateMasterValueAction}
-          deleteAction={deleteMasterValueAction}
-        />
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Link
+            href={`/workspace/${workspaceId}/organizations/${organizationId}/settings/masters`}
+            className="inline-flex items-center justify-center rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-50"
+          >
+            Back to masters
+          </Link>
+        </div>
       </div>
-    </MasterModuleShell>
+
+      <MasterRecordsTable
+        records={values.map((item) => ({
+          id: item.id,
+          value_id: item.value_id,
+          label: item.label,
+          code: item.code,
+          description: item.description,
+          is_active: item.is_active,
+          metadata: { fields: item.fields },
+        }))}
+        fields={definition.fields}
+        lookupOptions={lookupOptions}
+        moduleLabel={definition.label}
+        workspaceId={workspaceId}
+        organizationId={organizationId}
+        moduleKey={moduleKey}
+        createAction={createMasterValueAction}
+        updateAction={updateMasterValueAction}
+        deleteAction={deleteMasterValueAction}
+      />
+    </div>
   );
 }

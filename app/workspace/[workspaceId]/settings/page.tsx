@@ -1,5 +1,6 @@
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { SESSION_COOKIE_NAME, requireSessionUser } from "@/lib/auth-session";
@@ -75,9 +76,13 @@ export default async function WorkspaceSettingsPage({
             <h1 className="mt-2 text-3xl font-semibold tracking-tight">Account and workspace details</h1>
           </div>
           <div className="flex items-center gap-3">
-            <a href={`/workspace/${workspaceId}`} className="rounded-xl border border-[#dfe6df] bg-white px-4 py-2 text-sm font-semibold text-zinc-700">Back to Workspace</a>
+            <Link href={`/workspace/${workspaceId}`} className="rounded-xl border border-[#dfe6df] bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50">
+              Back to Workspace
+            </Link>
             <form action={logoutAction}>
-              <button type="submit" className="rounded-xl border border-[#dfe6df] bg-white px-4 py-2 text-sm font-semibold text-zinc-700">Logout</button>
+              <button type="submit" className="rounded-xl border border-[#dfe6df] bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50">
+                Logout
+              </button>
             </form>
           </div>
         </div>
@@ -103,7 +108,9 @@ export default async function WorkspaceSettingsPage({
             </label>
           </div>
 
-          <button type="submit" className="rounded-xl bg-[#17372a] px-4 py-2.5 text-sm font-semibold text-white">Update profile</button>
+          <button type="submit" className="rounded-xl bg-[#17372a] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#11291f]">
+            Update profile
+          </button>
         </form>
 
         <div className="mt-8 grid gap-6 md:grid-cols-2">
@@ -122,7 +129,9 @@ export default async function WorkspaceSettingsPage({
           <p className="mt-2 text-sm leading-6 text-amber-800">
             Workspace deletion is restricted and should only be allowed after all dependent resources are removed. This flow is intentionally protected with explicit confirmation and enterprise safety checks.
           </p>
-          <button type="button" className="mt-4 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white">Delete workspace</button>
+          <button type="button" className="mt-4 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700">
+            Delete workspace
+          </button>
         </div>
       </div>
     </main>

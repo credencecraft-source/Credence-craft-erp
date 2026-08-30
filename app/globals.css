@@ -1,10 +1,10 @@
 @import "tailwindcss";
 
-/* If your project is using Tailwind CSS v3 instead of v4, 
-   replace "@import "tailwindcss";" above with:
-   @tailwind base;
-   @tailwind components;
-   @tailwind utilities; 
+/* 
+  If using Tailwind CSS v3 instead of v4, replace `@import "tailwindcss";` with:
+  @tailwind base;
+  @tailwind components;
+  @tailwind utilities; 
 */
 
 /* ==========================================================================
