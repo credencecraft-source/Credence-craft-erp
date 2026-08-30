@@ -50,6 +50,7 @@ export function MasterModuleShell({
   const [isHovered, setIsHovered] = useState(false);
   const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>({
     merchandising: true,
+    setting: true,
   });
 
   const toggleExpand = (key: string) => {
@@ -61,6 +62,10 @@ export function MasterModuleShell({
       { key: "home", label: "Home", href: `/workspace/${workspaceId}/organizations/${organizationId}/order-management` },
       { key: "merchandising", label: "Merchandising", href: `/workspace/${workspaceId}/organizations/${organizationId}/order-management/merchandising` },
       { key: "purchase", label: "Purchase", href: `/workspace/${workspaceId}/organizations/${organizationId}/order-management/purchase` },
+    ],
+    approvals: [
+      { key: "home", label: "Home", href: `/workspace/${workspaceId}/organizations/${organizationId}/approvals` },
+      { key: "setting", label: "Setting", href: `/workspace/${workspaceId}/organizations/${organizationId}/approvals/setting` },
     ],
     settings: [
       { key: "overview", label: "Overview", href: `/workspace/${workspaceId}/organizations/${organizationId}/settings` },
@@ -77,8 +82,13 @@ export function MasterModuleShell({
     { key: "bom", label: "BOM", href: `/workspace/${workspaceId}/organizations/${organizationId}/order-management/merchandising/bom` },
   ];
 
+  const approvalSettingTabs: SubItem[] = [
+    { key: "master", label: "Master", href: `/workspace/${workspaceId}/organizations/${organizationId}/approvals/setting/master` },
+  ];
+
   const subSubItemMap: Record<string, SubItem[]> = {
     merchandising: merchandisingTabs,
+    setting: approvalSettingTabs,
   };
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
