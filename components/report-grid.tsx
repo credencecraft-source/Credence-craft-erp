@@ -192,7 +192,7 @@ export function ReportGrid<T extends Record<string, unknown>>({
   );
 
   return (
-    <div className="rounded border border-slate-200 bg-white shadow-2xs text-[11px] flex flex-col">
+    <div className="w-full rounded border border-slate-200 bg-white shadow-2xs text-[11px] flex flex-col h-auto overflow-hidden">
       {/* STATUS FILTER TABS */}
       {statusOptions && statusOptions.length > 0 && (
         <div className="border-b border-slate-200 bg-slate-50 px-2 py-1.5 flex gap-1 overflow-x-auto">
@@ -249,7 +249,7 @@ export function ReportGrid<T extends Record<string, unknown>>({
       </div>
 
       {/* DATA GRID TABLE */}
-      <div className="overflow-x-auto">
+      <div className="w-full overflow-x-auto overflow-y-hidden">
         <table className="w-full text-left border-collapse border-spacing-0">
           <thead className="bg-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-600 border-b border-slate-200">
             <tr>
