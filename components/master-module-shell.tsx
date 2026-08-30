@@ -195,7 +195,7 @@ export function MasterModuleShell({
           </div>
         </header>
 
-        {/* FULL BLEED PAGE CONTAINER (NO WASTED MARGINS) */}
+        {/* dFULL BLEED PAGE CONTAINER (NO WASTED MARGINS) */}
         <main className="flex-1 overflow-y-auto p-2">
           <div className="h-full w-full rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
             {children}
