@@ -219,9 +219,9 @@ export function MasterModuleShell({
           </div>
         </header>
 
-        {/* PAGE CONTENT WORKSPACE - FORCES CLEAN HIGH-DENSITY LOOK */}
-        <main className="flex-1 overflow-y-auto p-1.5 bg-slate-100 erp-override-wrapper">
-          <div className="min-h-full w-full rounded border border-slate-200 bg-white p-2 shadow-2xs">
+        {/* PAGE CONTENT WORKSPACE - ULTRA HIGH DENSITY ERP LAYOUT */}
+        <main className="flex flex-1 flex-col overflow-hidden bg-slate-100 p-1.5 erp-override-wrapper">
+          <div className="flex flex-1 flex-col overflow-hidden rounded border border-slate-200 bg-white p-2 shadow-2xs">
             {children}
           </div>
         </main>
