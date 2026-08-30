@@ -1,6 +1,5 @@
 import { notFound, redirect } from "next/navigation";
 
-import { MasterModuleShell } from "@/components/master-module-shell";
 import { requireSessionUser } from "@/lib/auth-session";
 import { getOrganizationForUser } from "@/lib/organizations/service";
 import { listApprovalRequestsForOrganization } from "@/lib/master-data";
@@ -32,24 +31,8 @@ export default async function ApprovalSettingPage({
   );
 
   return (
-    <MasterModuleShell
-      workspaceId={workspaceId}
-      organizationId={organizationId}
-      organizationName={organization.organization_name}
-      value="approvals"
-      moduleLabel="Approvals"
-      title="Setting"
-      description="Approval setting options."
-      subItems={[
-        {
-          key: "masters",
-          label: "Masters",
-          href: `/workspace/${workspaceId}/organizations/${organizationId}/approvals/setting/master`,
-          count: pendingRequests.length,
-        },
-      ]}
-    >
-      <div className="space-y-5" />
-    </MasterModuleShell>
+    <div className="space-y-5">
+      {/* Content for approval settings */}
+    </div>
   );
 }
