@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, ChevronRight, Layers, ArrowLeft } from "lucide-react";
+import { ChevronDown, ChevronRight, Layers, ArrowLeft, Sparkles } from "lucide-react";
 import { MasterModuleSwitcher } from "@/components/master-module-switcher";
 
 export const MASTER_MODULES = [
@@ -84,20 +84,21 @@ export function MasterModuleShell({
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-100 font-sans text-slate-800 text-xs antialiased">
-      {/* HOVER ANIMATED LEFT SIDEBAR */}
+    <div className="flex h-screen overflow-hidden bg-slate-50 font-sans text-slate-800 antialiased">
+      {/* SIDEBAR NAVIGATION */}
       <motion.aside
         initial={false}
-        animate={{ width: isHovered ? 230 : 64 }}
+        animate={{ width: isHovered ? 230 : 56 }}
         transition={{ duration: 0.2, ease: "easeInOut" }}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        className="relative z-30 flex flex-col border-r border-slate-200 bg-white shadow-sm"
+        className="relative z-30 flex flex-col border-r border-slate-200 bg-slate-900 text-slate-300 shadow-lg"
       >
-        <div className="flex h-12 items-center justify-between border-b border-slate-200 px-3">
+        {/* BRANDING HEADER */}
+        <div className="flex h-11 items-center justify-between border-b border-slate-800 px-3">
           <div className="flex items-center gap-2 overflow-hidden">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-700 text-xs font-bold text-white">
-              CC
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-600 font-bold text-white shadow-sm">
+              <Sparkles className="h-4 w-4" />
             </span>
             <AnimatePresence>
               {isHovered && (
@@ -107,16 +108,17 @@ export function MasterModuleShell({
                   exit={{ opacity: 0 }}
                   className="whitespace-nowrap"
                 >
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-700">CREDENCE CRAFT</p>
-                  <h2 className="text-xs font-semibold text-slate-900 truncate max-w-[130px]">{organizationName}</h2>
+                  <p className="text-[8px] font-bold uppercase tracking-widest text-emerald-400">CREDENCE CRAFT</p>
+                  <h2 className="text-xs font-semibold text-white truncate max-w-[130px]">{organizationName}</h2>
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-2 space-y-2">
-          <nav className="space-y-1">
+        {/* NAVIGATION LINKS */}
+        <div className="flex-1 overflow-y-auto p-1.5 space-y-1">
+          <nav className="space-y-0.5">
             {resolvedModules.map((subModule) => {
               const subSubItems = subSubItemMap[subModule.key] || [];
               const hasSubSub = subSubItems.length > 0;
@@ -124,39 +126,41 @@ export function MasterModuleShell({
               const active = isActive(subModule.href);
 
               return (
-                <div key={subModule.key} className="space-y-1">
+                <div key={subModule.key} className="space-y-0.5">
                   <div
-                    className={`flex items-center justify-between rounded-md p-1.5 transition-all ${
-                      active ? "bg-emerald-700 text-white font-medium" : "text-slate-600 hover:bg-slate-100"
+                    className={`flex items-center justify-between rounded-md px-2 py-1.5 transition-colors ${
+                      active
+                        ? "bg-emerald-600/20 text-emerald-300 font-semibold"
+                        : "hover:bg-slate-800 hover:text-white"
                     }`}
                   >
                     <Link href={subModule.href} className="flex items-center gap-2 truncate flex-1">
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
-                      {isHovered && <span className="truncate">{subModule.label}</span>}
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${active ? "bg-emerald-400" : "bg-slate-500"}`} />
+                      {isHovered && <span className="truncate text-xs">{subModule.label}</span>}
                     </Link>
 
                     {isHovered && hasSubSub && (
-                      <button type="button" onClick={() => toggleExpand(subModule.key)} className="p-0.5">
+                      <button type="button" onClick={() => toggleExpand(subModule.key)} className="p-0.5 text-slate-400 hover:text-white">
                         {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                       </button>
                     )}
                   </div>
 
                   {isHovered && hasSubSub && isExpanded && (
-                    <div className="ml-2 space-y-0.5 border-l border-slate-200 pl-2">
+                    <div className="ml-3 space-y-0.5 border-l border-slate-800 pl-2">
                       {subSubItems.map((child) => (
                         <Link
                           key={child.key}
                           href={child.href}
-                          className={`flex items-center justify-between rounded-md px-2 py-1 text-[11px] transition-all ${
+                          className={`flex items-center justify-between rounded-md px-2 py-1 text-[11px] transition-colors ${
                             isActive(child.href)
-                              ? "bg-slate-900 text-white font-medium"
-                              : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                              ? "bg-emerald-600 text-white font-medium"
+                              : "text-slate-400 hover:bg-slate-800 hover:text-white"
                           }`}
                         >
                           <span className="truncate">{child.label}</span>
                           {typeof child.count === "number" && (
-                            <span className="ml-1 rounded-full bg-slate-200 px-1.5 py-0.2 text-[9px] font-bold text-slate-700">
+                            <span className="ml-1 rounded-full bg-slate-800 px-1.5 py-0.2 text-[9px] font-bold text-slate-300">
                               {child.count}
                             </span>
                           )}
@@ -170,10 +174,11 @@ export function MasterModuleShell({
           </nav>
         </div>
 
-        <div className="border-t border-slate-200 p-2">
+        {/* WORKSPACE BACK FOOTER */}
+        <div className="border-t border-slate-800 p-1.5">
           <Link
             href={`/workspace/${workspaceId}`}
-            className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-1.5 text-[11px] text-slate-600 hover:bg-white"
+            className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900/50 p-1.5 text-[11px] text-slate-400 hover:bg-slate-800 hover:text-white"
           >
             <ArrowLeft className="h-3.5 w-3.5 shrink-0" />
             {isHovered && <span className="truncate">Workspaces</span>}
@@ -181,19 +186,19 @@ export function MasterModuleShell({
         </div>
       </motion.aside>
 
-      {/* MAIN CONTENT AREA */}
+      {/* MAIN VIEWPORT CONTAINER */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* TOP BAR */}
-        <header className="flex h-12 items-center justify-between border-b border-slate-200 bg-white px-4">
+        {/* HEADER TOOLBAR */}
+        <header className="flex h-11 items-center justify-between border-b border-slate-200 bg-white px-4 shadow-sm">
           <div className="flex items-center gap-2">
-            <Layers className="h-4 w-4 text-emerald-700" />
+            <Layers className="h-4 w-4 text-emerald-600" />
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700">
               {value.replace("-", " ")}
             </span>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold uppercase text-emerald-700">Master Modules</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Master Modules</span>
             <MasterModuleSwitcher
               value={value}
               options={MASTER_MODULES.map((m) => ({ key: m.key, label: m.label }))}
@@ -201,9 +206,9 @@ export function MasterModuleShell({
           </div>
         </header>
 
-        {/* FULL BLEED PAGE CONTAINER */}
-        <main className="flex-1 overflow-y-auto p-2">
-          <div className="h-full w-full rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+        {/* PAGE CONTENT WORKSPACE */}
+        <main className="flex-1 overflow-y-auto p-1.5">
+          <div className="h-full w-full rounded-md border border-slate-200 bg-white p-2.5 shadow-sm">
             {children}
           </div>
         </main>
