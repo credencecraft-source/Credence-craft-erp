@@ -22,6 +22,7 @@ type SubItem = {
   key: string;
   label: string;
   href: string;
+  count?: number;
 };
 
 type MasterModuleShellProps = {
@@ -84,7 +85,7 @@ export function MasterModuleShell({
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-100 font-sans text-slate-800 text-xs antialiased">
-      {/* LEFT SIDEBAR */}
+      {/* HOVER ANIMATED LEFT SIDEBAR */}
       <motion.aside
         initial={false}
         animate={{ width: isHovered ? 230 : 64 }}
@@ -147,13 +148,18 @@ export function MasterModuleShell({
                         <Link
                           key={child.key}
                           href={child.href}
-                          className={`block rounded-md px-2 py-1 text-[11px] transition-all ${
+                          className={`flex items-center justify-between rounded-md px-2 py-1 text-[11px] transition-all ${
                             isActive(child.href)
                               ? "bg-slate-900 text-white font-medium"
                               : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
                           }`}
                         >
-                          {child.label}
+                          <span className="truncate">{child.label}</span>
+                          {typeof child.count === "number" && (
+                            <span className="ml-1 rounded-full bg-slate-200 px-1.5 py-0.2 text-[9px] font-bold text-slate-700">
+                              {child.count}
+                            </span>
+                          )}
                         </Link>
                       ))}
                     </div>
@@ -195,7 +201,7 @@ export function MasterModuleShell({
           </div>
         </header>
 
-        {/* dFULL BLEED PAGE CONTAINER (NO WASTED MARGINS) */}
+        {/* FULL BLEED PAGE CONTAINER */}
         <main className="flex-1 overflow-y-auto p-2">
           <div className="h-full w-full rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
             {children}
