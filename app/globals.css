@@ -1,70 +1,64 @@
 @import "tailwindcss";
 
-/* Automatic ERP Design System - Zero Local Classes Needed */
-.erp-override-wrapper input,
-.erp-override-wrapper select,
-.erp-override-wrapper textarea {
-  width: 100% !important;
-  border-radius: 8px !important;
-  border: 1px solid #dfe6df !important;
-  background-color: #f9fbf9 !important;
-  padding: 10px 14px !important;
-  font-size: 13px !important;
-  color: #0f172a !important;
-  outline: none !important;
+@theme {
+  --color-erp-50: #f2fbf7;
+  --color-erp-100: #dff6ea;
+  --color-erp-600: #087b59;
+  --color-erp-700: #076549;
+  --color-erp-800: #07513c;
 }
 
-.erp-override-wrapper input:focus,
-.erp-override-wrapper select:focus,
-.erp-override-wrapper textarea:focus {
-  border-color: #047857 !important;
-  box-shadow: 0 0 0 2px rgba(4, 120, 87, 0.1) !important;
+@layer base {
+  * {
+    border-color: theme(colors.slate.200);
+  }
+
+  html {
+    min-width: 320px;
+    background: theme(colors.slate.100);
+  }
+
+  body {
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at top right, rgb(209 250 229 / 0.4), transparent 28rem),
+      theme(colors.slate.100);
+    color: theme(colors.slate.900);
+    font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid theme(colors.emerald.600);
+    outline-offset: 2px;
+  }
 }
 
-.erp-override-wrapper label {
-  display: block !important;
-  font-size: 12px !important;
-  font-weight: 600 !important;
-  color: #475569 !important;
-  margin-bottom: 6px !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.05em !important;
-}
+@layer utilities {
+  .erp-surface {
+    @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+  }
 
-.erp-override-wrapper button[type="submit"],
-.erp-override-wrapper .btn-primary {
-  background-color: #17372a !important;
-  color: #ffffff !important;
-  border-radius: 8px !important;
-  padding: 8px 16px !important;
-  font-size: 13px !important;
-  font-weight: 600 !important;
-  border: none !important;
-  cursor: pointer !important;
-  transition: background-color 0.2s ease !important;
-}
+  .erp-page-heading {
+    @apply text-xl font-bold tracking-tight text-slate-950 sm:text-2xl;
+  }
 
-.erp-override-wrapper button[type="submit"]:hover,
-.erp-override-wrapper .btn-primary:hover {
-  background-color: #214d3a !important;
-}
+  .erp-eyebrow {
+    @apply text-xs font-bold uppercase tracking-[0.16em] text-emerald-700;
+  }
 
-.erp-override-wrapper table {
-  width: 100% !important;
-  border-collapse: collapse !important;
-}
-
-.erp-override-wrapper table th {
-  padding: 6px 10px !important;
-  font-size: 11px !important;
-  background-color: #f8fafc !important;
-  color: #475569 !important;
-  border-bottom: 1px solid #e2e8f0 !important;
-  text-align: left !important;
-}
-
-.erp-override-wrapper table td {
-  padding: 6px 10px !important;
-  font-size: 12px !important;
-  border-bottom: 1px solid #f1f5f9 !important;
+  .erp-table-head {
+    @apply bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-600;
+  }
 }
