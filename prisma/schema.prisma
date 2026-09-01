@@ -5,7 +5,7 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 model WorkspaceUser {
@@ -24,21 +24,25 @@ model WorkspaceUser {
 }
 
 model Organization {
-  id                String          @id @default(cuid())
-  organization_id   String          @unique @default(uuid())
-  workspace_user_id String
-  organization_name String          @db.VarChar(255)
-  gst_number        String          @unique @db.VarChar(50)
-  address_line_1    String?         @db.VarChar(255)
-  address_line_2    String?         @db.VarChar(255)
-  city              String?         @db.VarChar(100)
-  state             String?         @db.VarChar(100)
-  country           String?         @db.VarChar(100)
-  pin_code          String?         @db.VarChar(20)
-  is_active         Boolean         @default(true)
-  created_at        DateTime        @default(now())
-  updated_at        DateTime        @updatedAt
+  id                      String          @id @default(cuid())
+  organization_id         String          @unique @default(uuid())
+  workspace_user_id       String
+  organization_name       String          @db.VarChar(255)
+  gst_number              String          @unique @db.VarChar(50)
+  address_line_1          String?         @db.VarChar(255)
+  address_line_2          String?         @db.VarChar(255)
+  city                    String?         @db.VarChar(100)
+  state                   String?         @db.VarChar(100)
+  country                 String?         @db.VarChar(100)
+  pin_code                String?         @db.VarChar(20)
+  is_active               Boolean         @default(true)
+  plan_id                 String?
+  database_connection_id  String?
+  created_at              DateTime        @default(now())
+  updated_at              DateTime        @updatedAt
   workspaceUser     WorkspaceUser   @relation(fields: [workspace_user_id], references: [id], onDelete: Cascade)
+  plan              Plan?               @relation(fields: [plan_id], references: [id])
+  databaseConnection DatabaseConnection? @relation(fields: [database_connection_id], references: [id])
   erpSoftware       ERPSoftware[]
   masterModules     MasterModule[]
   merchandisingOrders MerchandisingOrder[]
@@ -71,7 +75,81 @@ model Organization {
   masterOrderVolumes MasterOrderVolume[]
 
   @@index([workspace_user_id])
+  @@index([plan_id])
+  @@index([database_connection_id])
   @@map("organizations")
+}
+
+// --- Platform / control-plane models (support team, plans, database assignment) ---
+// Kept in this single schema for now; these tables are candidates to move into a
+// dedicated Control Database once real multi-provider support is built.
+
+model PlatformAdmin {
+  id            String    @id @default(cuid())
+  admin_id      String    @unique @default(uuid())
+  full_name     String    @db.VarChar(255)
+  email         String    @unique @db.VarChar(255)
+  password_hash String    @db.VarChar(255)
+  is_active     Boolean   @default(true)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+  last_login_at DateTime?
+
+  @@map("platform_admins")
+}
+
+model Plan {
+  id             String         @id @default(cuid())
+  plan_id        String         @unique @default(uuid())
+  plan_name      String         @unique @db.VarChar(100)
+  description    String?        @db.VarChar(500)
+  price          Decimal?       @db.Decimal(10, 2)
+  billing_cycle  String?        @db.VarChar(50)
+  is_active      Boolean        @default(true)
+  sort_order     Int            @default(0)
+  created_at     DateTime       @default(now())
+  updated_at     DateTime       @updatedAt
+  features       PlanFeature[]
+  organizations  Organization[]
+
+  @@index([is_active])
+  @@map("plans")
+}
+
+model PlanFeature {
+  id           String   @id @default(cuid())
+  feature_id   String   @unique @default(uuid())
+  plan_id      String
+  feature_key  String   @db.VarChar(100)
+  feature_name String   @db.VarChar(255)
+  is_enabled   Boolean  @default(true)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+  plan         Plan     @relation(fields: [plan_id], references: [id], onDelete: Cascade)
+
+  @@unique([plan_id, feature_key])
+  @@map("plan_features")
+}
+
+model DatabaseConnection {
+  id              String         @id @default(cuid())
+  connection_id   String         @unique @default(uuid())
+  provider        String         @db.VarChar(100)
+  connection_name String         @db.VarChar(255)
+  connection_string String?      @db.VarChar(1000)
+  host            String?        @db.VarChar(255)
+  port            Int?
+  database_name   String?        @db.VarChar(255)
+  username        String?        @db.VarChar(255)
+  status          String         @default("active") @db.VarChar(50)
+  is_default      Boolean        @default(false)
+  notes           String?        @db.VarChar(500)
+  created_at      DateTime       @default(now())
+  updated_at      DateTime       @updatedAt
+  organizations   Organization[]
+
+  @@index([status])
+  @@map("database_connections")
 }
 
 model ERPSoftware {

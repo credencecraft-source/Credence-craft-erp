@@ -10,6 +10,7 @@ import Tabs from "@/components/ui/Tabs";
 const AUTH_TABS = [
   { label: "Login", value: "login" },
   { label: "Register", value: "register" },
+  { label: "Support Login", value: "support" },
 ] as const;
 
 const PLATFORM_HIGHLIGHTS = [
@@ -19,7 +20,7 @@ const PLATFORM_HIGHLIGHTS = [
 ] as const;
 
 export default function LoginPage() {
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<"login" | "register" | "support">("login");
   const [fullName, setFullName] = useState("");
   const [profileName, setProfileName] = useState("");
   const [email, setEmail] = useState("");
@@ -27,8 +28,9 @@ export default function LoginPage() {
   const [otpSent, setOtpSent] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [supportPassword, setSupportPassword] = useState("");
 
-  function switchMode(nextMode: "login" | "register") {
+  function switchMode(nextMode: "login" | "register" | "support") {
     setMode(nextMode);
     setOtp("");
     setOtpSent(false);
@@ -128,6 +130,41 @@ export default function LoginPage() {
     }
   }
 
+  async function signInSupport() {
+    const trimmedEmail = email.trim();
+
+    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail) || !supportPassword) {
+      setMessage("Please enter a valid email address and password.");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/platform/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimmedEmail, password: supportPassword }),
+      });
+
+      const payload = await parseJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to sign in.");
+      }
+
+      if (typeof window !== "undefined") {
+        window.location.assign(payload.redirectTo || "/platform");
+      }
+    } catch (error) {
+      const err = error as Error;
+      setMessage(err.message || "Sign in failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function verifyOtp() {
     const trimmedEmail = email.trim();
     const trimmedOtp = otp.trim();
@@ -198,9 +235,39 @@ export default function LoginPage() {
 
           <section className="lg:col-span-5">
             <Card className="p-6 shadow-lg sm:p-8">
-              <Tabs tabs={AUTH_TABS} value={mode} onChange={(nextMode) => switchMode(nextMode as "login" | "register")} />
+              <Tabs tabs={AUTH_TABS} value={mode} onChange={(nextMode) => switchMode(nextMode as "login" | "register" | "support")} />
 
               <div className="mt-6 space-y-4">
+                {mode === "support" ? (
+                  <>
+                    <Input
+                      label="Support email"
+                      type="email"
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      placeholder="support@company.com"
+                    />
+
+                    <Input
+                      label="Password"
+                      type="password"
+                      value={supportPassword}
+                      onChange={(event) => setSupportPassword(event.target.value)}
+                      placeholder="••••••••"
+                    />
+
+                    <Button onClick={signInSupport} disabled={loading} className="mt-2 w-full">
+                      {loading ? "Signing in..." : "Sign in to platform"}
+                    </Button>
+
+                    {message && (
+                      <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700" role="status">
+                        {message}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                <>
                 {mode === "register" && (
                   <>
                     <Input
@@ -260,6 +327,8 @@ export default function LoginPage() {
                   <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700" role="status">
                     {message}
                   </p>
+                )}
+                </>
                 )}
               </div>
             </Card>
