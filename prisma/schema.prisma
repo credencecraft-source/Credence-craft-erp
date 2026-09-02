@@ -62,6 +62,9 @@ model Organization {
   masterSizes MasterSize[]
   masterUoms MasterUom[]
   masterRawMaterials MasterRawMaterial[]
+  masterRawMaterialTypes MasterRawMaterialType[]
+  masterRawMaterialCategories MasterRawMaterialCategory[]
+  masterRawMaterialSubCategories MasterRawMaterialSubCategory[]
   masterVendors MasterVendor[]
   masterGstTypes MasterGstType[]
   masterGsts MasterGst[]
@@ -266,7 +269,6 @@ model MasterCategoryType {
   updated_at DateTime @updatedAt
   organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   categories MasterCategory[]
-  raw_materials MasterRawMaterial[]
   @@unique([organization_id, category_type])
   @@index([organization_id, is_active])
   @@map("master_category_types")
@@ -289,7 +291,6 @@ model MasterCategory {
   organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   category_type MasterCategoryType? @relation(fields: [category_type_id], references: [id])
   subcategories MasterSubCategory[]
-  raw_materials MasterRawMaterial[]
   @@unique([organization_id, category_name])
   @@index([organization_id, is_active])
   @@map("master_categories")
@@ -308,7 +309,6 @@ model MasterSubCategory {
   updated_at DateTime @updatedAt
   organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   category MasterCategory? @relation(fields: [category_id], references: [id])
-  raw_materials MasterRawMaterial[]
   @@unique([organization_id, sub_category])
   @@index([organization_id, is_active])
   @@map("master_sub_categories")
@@ -677,15 +677,72 @@ model MasterOrderVolume {
   @@map("master_order_volumes")
 }
 
+model MasterRawMaterialType {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  raw_material_type String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  categories MasterRawMaterialCategory[]
+  raw_materials MasterRawMaterial[]
+  @@unique([organization_id, raw_material_type])
+  @@index([organization_id, is_active])
+  @@map("master_raw_material_types")
+}
+
+model MasterRawMaterialCategory {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  raw_material_type_id String?
+  raw_material_category String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  raw_material_type MasterRawMaterialType? @relation(fields: [raw_material_type_id], references: [id])
+  sub_categories MasterRawMaterialSubCategory[]
+  raw_materials MasterRawMaterial[] @relation("RawMaterialCategoryToRawMaterial")
+  @@unique([organization_id, raw_material_category])
+  @@index([organization_id, is_active])
+  @@map("master_raw_material_categories")
+}
+
+model MasterRawMaterialSubCategory {
+  id String @id @default(cuid())
+  value_id String @unique @default(uuid())
+  organization_id String
+  raw_material_category_id String?
+  raw_material_sub_category String @db.VarChar(255)
+  is_active Boolean @default(false)
+  sort_order Int @default(0)
+  legacy_metadata Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  raw_material_category MasterRawMaterialCategory? @relation(fields: [raw_material_category_id], references: [id])
+  raw_materials MasterRawMaterial[] @relation("RawMaterialSubCategoryToRawMaterial")
+  @@unique([organization_id, raw_material_sub_category])
+  @@index([organization_id, is_active])
+  @@map("master_raw_material_sub_categories")
+}
+
 model MasterRawMaterial {
   id String @id @default(cuid())
   value_id String @unique @default(uuid())
   organization_id String
   raw_material_name String @db.VarChar(255)
-  category_id String
-  subcategory_id String
+  raw_material_category_id String
+  raw_material_sub_category_id String
   stock_uom_id String
-  category_type_id String?
+  raw_material_type_id String?
   is_specific_for_brand Boolean @default(false)
   size_wise_consumption Boolean @default(false)
   size_wise_consumption_id String?
@@ -706,10 +763,10 @@ model MasterRawMaterial {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
   organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  category MasterCategory @relation(fields: [category_id], references: [id])
-  subcategory MasterSubCategory @relation(fields: [subcategory_id], references: [id])
+  raw_material_category MasterRawMaterialCategory @relation("RawMaterialCategoryToRawMaterial", fields: [raw_material_category_id], references: [id])
+  raw_material_sub_category MasterRawMaterialSubCategory @relation("RawMaterialSubCategoryToRawMaterial", fields: [raw_material_sub_category_id], references: [id])
   stock_uom MasterUom @relation(fields: [stock_uom_id], references: [id])
-  category_type MasterCategoryType? @relation(fields: [category_type_id], references: [id])
+  raw_material_type MasterRawMaterialType? @relation(fields: [raw_material_type_id], references: [id])
   brand MasterBrand? @relation(fields: [brand_id], references: [id])
   colour MasterColor? @relation(fields: [colour_id], references: [id])
   size_wise_consumption_ref MasterSizeWiseConsumption? @relation(fields: [size_wise_consumption_id], references: [id])
@@ -766,6 +823,7 @@ model MerchandisingOrder {
   updatedAt       DateTime                  @updatedAt
   organization    Organization?             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   finishedGoods   FinishedGoodsSizeWise[]
+  bomItems        BillOfMaterialItem[]
 
   @@index([organizationId])
   @@map("merchandising_orders")
@@ -789,4 +847,22 @@ model FinishedGoodsSizeWise {
 
   @@index([orderId])
   @@map("finished_goods_size_wise")
+}
+
+model BillOfMaterialItem {
+  id              String             @id @default(cuid())
+  orderId         String
+  order           MerchandisingOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  categoryType    String?            @db.VarChar(255)
+  category        String?            @db.VarChar(255)
+  subCategory     String?            @db.VarChar(255)
+  rawMaterialName String?            @db.VarChar(255)
+  size            String?            @db.VarChar(100)
+  consumption     Decimal?           @db.Decimal(12,2)
+  requiredQty     Decimal?           @db.Decimal(12,2)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([orderId])
+  @@map("bill_of_material_items")
 }

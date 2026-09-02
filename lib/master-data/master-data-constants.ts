@@ -23,6 +23,7 @@ const delegates = {
   hsn: prisma.masterHsn, "measurement-chart": prisma.masterMeasurementChart, "size-wise-consumption": prisma.masterSizeWiseConsumption,
   "product-master": prisma.masterProduct, "process-template": prisma.masterProcessTemplate, merchandiser: prisma.masterMerchandiser, status: prisma.masterStatus,
   "order-volume": prisma.masterOrderVolume,
+  "raw-material-type": prisma.masterRawMaterialType, "raw-material-category": prisma.masterRawMaterialCategory, "raw-material-sub-category": prisma.masterRawMaterialSubCategory,
 } as unknown as Record<string, MasterDelegate>;
 
 const labelFields: Record<string, string> = {
@@ -31,6 +32,7 @@ const labelFields: Record<string, string> = {
   "size-group": "size_group", size: "size", uom: "uom", "raw-material": "raw_material_name", vendor: "vendor", "gst-type": "gst_type", gst: "name",
   hsn: "hsn_code", "measurement-chart": "measurement_chart", "size-wise-consumption": "bom_template_name", "product-master": "product_master_name",
   "process-template": "process_name", merchandiser: "merchandiser", status: "status", "order-volume": "order_volume",
+  "raw-material-type": "raw_material_type", "raw-material-category": "raw_material_category", "raw-material-sub-category": "raw_material_sub_category",
 };
 
 const fieldColumns: Record<string, Record<string, string>> = {
@@ -48,7 +50,17 @@ const fieldColumns: Record<string, Record<string, string>> = {
   "measurement-chart": { Measurement_Chart: "measurement_chart" }, "size-wise-consumption": { Bom_Template_Name: "bom_template_name" },
   "product-master": { Product_Master_name: "product_master_name" }, "process-template": { Process_Name: "process_name" }, merchandiser: { merchandiser: "merchandiser" },
   status: { status: "status" }, "order-volume": { Order_Volume: "order_volume", From: "from_value", To: "to_value" },
-  "raw-material": { Raw_Material_Name: "raw_material_name", Category: "category_id", Subcategory: "subcategory_id", Stock_Uom1: "stock_uom_id", Category_Type: "category_type_id", Is_this_Specific_for_a_Brand: "is_specific_for_brand", Size_Wise_Concemption: "size_wise_consumption", Size_Wise_Consemption_Master: "size_wise_consumption_id", Brand1: "brand_id", Show_All1: "show_all", Workdrive_Image_ID: "workdrive_image_id", Buyer_Item_Code: "buyer_item_code", Image_Url: "image_url", Item_Code: "item_code", Colour: "colour_id", Create_open_stock: "create_open_stock", Open_Stock: "open_stock", Open_Stock_Price: "open_stock_price", Vendor_Wise_Price_List: "vendor_wise_price_list" },
+  "raw-material-type": { Raw_Material_Type: "raw_material_type" },
+  "raw-material-category": { Raw_Material_Type1: "raw_material_type_id", Raw_Material_Category: "raw_material_category" },
+  "raw-material-sub-category": { Raw_Material_Category1: "raw_material_category_id", Raw_Material_Sub_Category: "raw_material_sub_category" },
+  "raw-material": { Raw_Material_Name: "raw_material_name", Category: "raw_material_category_id", Subcategory: "raw_material_sub_category_id", Stock_Uom1: "stock_uom_id", Category_Type: "raw_material_type_id", Is_this_Specific_for_a_Brand: "is_specific_for_brand", Size_Wise_Concemption: "size_wise_consumption", Size_Wise_Consemption_Master: "size_wise_consumption_id", Brand1: "brand_id", Show_All1: "show_all", Workdrive_Image_ID: "workdrive_image_id", Buyer_Item_Code: "buyer_item_code", Image_Url: "image_url", Item_Code: "item_code", Colour: "colour_id", Create_open_stock: "create_open_stock", Open_Stock: "open_stock", Open_Stock_Price: "open_stock_price", Vendor_Wise_Price_List: "vendor_wise_price_list" },
+};
+
+// Maps a moduleKey to the raw FK column that identifies its parent value, enabling cascading dropdowns.
+const parentColumns: Record<string, string> = {
+  "sub-category": "category_id",
+  "raw-material-category": "raw_material_type_id",
+  "raw-material-sub-category": "raw_material_category_id",
 };
 
 function typedValue(field: MasterFieldDefinition, value: unknown) {
@@ -71,7 +83,7 @@ async function buildData(organizationId: string, moduleKey: string, fields: Mast
   const data: Record<string, unknown> = { organization_id: organizationId, [labelFields[moduleKey]]: label };
   for (const field of definition.fields) {
     const column = fieldColumns[moduleKey]?.[field.key];
-    if (!column || field.key === definition.labelField) continue;
+    if (!column || column === labelFields[moduleKey]) continue;
     data[column] = field.type === "lookup" ? await resolveLookupId(organizationId, field.lookupModuleKey ?? "", fields[field.key]) : typedValue(field, fields[field.key]);
   }
   return data;
@@ -102,7 +114,7 @@ export async function getMasterValuesForOrganization(organizationId: string, mod
       const related = fields[field.key] ? await getMasterValueById(organizationId, field.lookupModuleKey ?? "", String(fields[field.key])) : null;
       fields[field.key] = related?.label ?? fields[field.key] ?? null;
     }
-    return { id: row.id, value_id: row.value_id, label: String(row[labelFields[moduleKey]] ?? ""), code: null, description: null, is_active: row.is_active, parent_id: moduleKey === "sub-category" ? row.category_id : null, fields };
+    return { id: row.id, value_id: row.value_id, label: String(row[labelFields[moduleKey]] ?? ""), code: null, description: null, is_active: row.is_active, parent_id: parentColumns[moduleKey] ? (row[parentColumns[moduleKey]] as string | null) ?? null : null, fields };
   }));
 }
 

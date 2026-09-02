@@ -1,1 +1,1 @@
-export { default } from "./_page-content/create-merchandising-order-page";
+export { default } from "../[orderId]/_page-content/merchandising-order-details-page";

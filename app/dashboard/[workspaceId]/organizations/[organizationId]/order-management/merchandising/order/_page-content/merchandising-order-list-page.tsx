@@ -166,8 +166,8 @@ export default function MerchandisingOrdersPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <Card className="p-6">
+    <div className="space-y-3 text-[11px]">
+      <Card className="p-3 shadow-none border-slate-200">
         <ReportGrid
           title="Orders List"
           records={filteredOrders}

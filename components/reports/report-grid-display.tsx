@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState } from "react";
 import Button from "@/components/ui/Button";
 import Table from "@/components/ui/Table";
 import Tabs from "@/components/ui/Tabs";
@@ -54,11 +54,9 @@ export function ReportGrid<T>({
   const [searchQuery, setSearchQuery] = useState("");
   const [columnFilters, setColumnFilters] = useState<Record<string, { operator: FilterOperator; value: string }>>({});
   
-  // Multi-Field Filter Popup State (Lists all fields with 3 columns: Field Name | Operator | Value)
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [tempFilters, setTempFilters] = useState<Record<string, { operator: FilterOperator; value: string }>>({});
 
-  // Direct Column Visibility Popup State
   const [showColumnModal, setShowColumnModal] = useState(false);
   const [tempVisibleFields, setTempVisibleFields] = useState<(keyof T | string)[]>([]);
 
@@ -149,7 +147,7 @@ export function ReportGrid<T>({
   });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2.5 text-[11px]">
       {statusOptions && selectedStatus && onStatusChange && (
         <Tabs
           tabs={statusOptions.map((st) => ({ label: st.toUpperCase(), value: st }))}
@@ -159,30 +157,30 @@ export function ReportGrid<T>({
       )}
 
       {/* HEADER CONTROLS BAR */}
-      <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2.5 rounded-lg border border-slate-200 shadow-none">
         <div>
-          <h2 className="text-base font-bold text-slate-900">{title}</h2>
-          <p className="text-xs text-slate-500">{filteredRecords.length} records available</p>
+          <h2 className="text-xs font-bold text-slate-900">{title}</h2>
+          <p className="text-[10px] text-slate-500">{filteredRecords.length} records available</p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <Input
             placeholder="Search report..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-64"
+            className="w-48 h-7 text-[11px] py-1 px-2"
           />
 
           {/* FILTER BUTTON WITH BADGE */}
           <button
             type="button"
             onClick={openFilterModal}
-            className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium border border-slate-300 transition-colors flex items-center gap-2 relative"
+            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-medium border border-slate-300 transition-colors flex items-center gap-1.5 relative"
             title="Advanced Filters"
           >
             <span>🔍 Filter</span>
             {activeFilterCount > 0 && (
-              <span className="bg-emerald-700 text-white rounded-full px-1.5 py-0.2 text-[10px] font-bold">
+              <span className="bg-emerald-700 text-white rounded-full px-1 py-0 text-[9px] font-bold">
                 {activeFilterCount}
               </span>
             )}
@@ -192,14 +190,15 @@ export function ReportGrid<T>({
           <button
             type="button"
             onClick={handleOpenColumnModal}
-            className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium border border-slate-300 transition-colors flex items-center justify-center"
+            className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-medium border border-slate-300 transition-colors flex items-center justify-center"
             title="Manage Columns"
           >
             👁
           </button>
 
+          {/* NEW ORDER BUTTON */}
           {onNewOrder && (
-            <Button variant="primary" size="md" onClick={onNewOrder}>
+            <Button variant="primary" size="sm" onClick={onNewOrder} className="text-[11px] py-1 px-2.5 h-7">
               + New Order
             </Button>
           )}
@@ -208,27 +207,27 @@ export function ReportGrid<T>({
 
       {/* TABLE */}
       <Table>
-        <thead className="bg-slate-50 text-slate-700 uppercase tracking-wider text-xs border-b border-slate-200">
+        <thead className="bg-slate-50 text-slate-700 uppercase tracking-wider text-[10px] border-b border-slate-200">
           <tr>
-            <th className="p-3 w-10 text-center">
+            <th className="p-2 w-8 text-center">
               <input
                 type="checkbox"
-                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
                 checked={allFilteredSelected}
                 onChange={(e) => onToggleSelectAll?.(e.target.checked)}
               />
             </th>
             {visibleFieldDefinitions.map((field) => (
-              <th key={String(field.key)} className="p-3 font-semibold whitespace-nowrap">
+              <th key={String(field.key)} className="p-2 font-semibold whitespace-nowrap">
                 {field.label}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-200 bg-white text-slate-700 text-sm">
+        <tbody className="divide-y divide-slate-200 bg-white text-slate-700 text-[11px]">
           {filteredRecords.length === 0 ? (
             <tr>
-              <td colSpan={visibleFieldDefinitions.length + 1} className="p-8 text-center text-slate-500">
+              <td colSpan={visibleFieldDefinitions.length + 1} className="p-6 text-center text-slate-500">
                 {emptyMessage}
               </td>
             </tr>
@@ -244,16 +243,16 @@ export function ReportGrid<T>({
                     index % 2 === 0 ? "bg-white" : "bg-slate-50/40"
                   } ${isSelected ? "bg-emerald-50/60" : "hover:bg-slate-100/60"}`}
                 >
-                  <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                  <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
-                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
                       checked={isSelected}
                       onChange={(e) => onToggleRowSelection?.(recordId, e.target.checked)}
                     />
                   </td>
                   {visibleFieldDefinitions.map((field) => (
-                    <td key={`${recordId}-${String(field.key)}`} className="p-3 whitespace-nowrap">
+                    <td key={`${recordId}-${String(field.key)}`} className="p-2 whitespace-nowrap">
                       {renderCell(String(field.key), record)}
                     </td>
                   ))}
@@ -264,33 +263,33 @@ export function ReportGrid<T>({
         </tbody>
       </Table>
 
-      {/* ADVANCED MULTI-FIELD FILTER MODAL (3 Columns: Field Name | Condition | Value) */}
+      {/* ADVANCED MULTI-FIELD FILTER MODAL */}
       {showFilterModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-3">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg p-4 space-y-4">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg p-3.5 space-y-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <h3 className="text-sm font-bold text-slate-900">Advanced Field Filters</h3>
+              <h3 className="text-xs font-bold text-slate-900">Advanced Field Filters</h3>
               <button
                 type="button"
                 onClick={() => setShowFilterModal(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold text-base"
+                className="text-slate-400 hover:text-slate-600 font-bold text-sm"
               >
                 ✕
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-3 font-bold text-xs text-slate-600 pb-1 border-b border-slate-200 uppercase tracking-wider">
+            <div className="grid grid-cols-3 gap-2.5 font-bold text-[10px] text-slate-600 pb-1 border-b border-slate-200 uppercase tracking-wider">
               <div>1. Field Name</div>
               <div>2. Condition</div>
               <div>3. Value</div>
             </div>
 
-            <div className="max-h-72 overflow-y-auto space-y-3 pr-1">
+            <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
               {fields.map((field) => {
                 const currentFilter = tempFilters[String(field.key)] ?? { operator: "contains", value: "" };
                 return (
-                  <div key={String(field.key)} className="grid grid-cols-3 gap-3 items-center">
-                    <div className="text-xs font-medium text-slate-700 truncate" title={field.label}>
+                  <div key={String(field.key)} className="grid grid-cols-3 gap-2.5 items-center">
+                    <div className="text-[11px] font-medium text-slate-700 truncate" title={field.label}>
                       {field.label}
                     </div>
                     <div>
@@ -299,7 +298,7 @@ export function ReportGrid<T>({
                         onChange={(e) =>
                           handleTempFilterChange(String(field.key), e.target.value as FilterOperator, currentFilter.value)
                         }
-                        className="w-full border border-slate-300 rounded-lg p-1.5 text-xs bg-white"
+                        className="w-full border border-slate-300 rounded-md p-1 text-[11px] bg-white h-7"
                       >
                         <option value="contains">Contains</option>
                         <option value="is">Is Exact</option>
@@ -316,10 +315,10 @@ export function ReportGrid<T>({
                             handleTempFilterChange(String(field.key), currentFilter.operator, e.target.value)
                           }
                           placeholder="Value..."
-                          className="w-full border border-slate-300 rounded-lg p-1.5 text-xs"
+                          className="w-full border border-slate-300 rounded-md p-1 text-[11px] h-7"
                         />
                       ) : (
-                        <span className="text-xs text-slate-400 italic">No value needed</span>
+                        <span className="text-[10px] text-slate-400 italic">No value needed</span>
                       )}
                     </div>
                   </div>
@@ -327,12 +326,12 @@ export function ReportGrid<T>({
               })}
             </div>
 
-            <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-              <div className="flex gap-2">
+            <div className="flex items-center justify-between pt-2.5 border-t border-slate-100">
+              <div className="flex gap-1.5">
                 <button
                   type="button"
                   onClick={clearAllFilters}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium"
+                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-medium"
                 >
                   Clear All
                 </button>
@@ -340,24 +339,24 @@ export function ReportGrid<T>({
                   <button
                     type="button"
                     onClick={removeAllAppliedFilters}
-                    className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-xs font-medium"
+                    className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded-md text-[11px] font-medium"
                   >
                     Remove Active
                   </button>
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-1.5">
                 <button
                   type="button"
                   onClick={() => setShowFilterModal(false)}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium"
+                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-medium"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={applyAllFilters}
-                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-medium"
+                  className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-md text-[11px] font-medium"
                 >
                   Submit Filters
                 </button>
@@ -370,19 +369,19 @@ export function ReportGrid<T>({
       {/* COLUMN MODAL POPUP */}
       {showColumnModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-3">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-xs p-3.5 space-y-2.5">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <h3 className="text-xs font-bold text-slate-900">Toggle Columns</h3>
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-xs p-3 space-y-2">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+              <h3 className="text-[11px] font-bold text-slate-900">Toggle Columns</h3>
               <button
                 type="button"
                 onClick={() => setShowColumnModal(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold text-sm"
+                className="text-slate-400 hover:text-slate-600 font-bold text-xs"
               >
                 ✕
               </button>
             </div>
             
-            <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
+            <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
               {fields.map((field) => {
                 const isChecked = tempVisibleFields.includes(field.key);
                 return (
@@ -391,7 +390,7 @@ export function ReportGrid<T>({
                       type="checkbox"
                       checked={isChecked}
                       onChange={() => handleTempToggleField(String(field.key))}
-                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5"
+                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
                     />
                     {field.label}
                   </label>
@@ -399,18 +398,18 @@ export function ReportGrid<T>({
               })}
             </div>
 
-            <div className="flex justify-end gap-1.5 pt-2 border-t border-slate-100">
+            <div className="flex justify-end gap-1 pt-1.5 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => setShowColumnModal(false)}
-                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-medium"
+                className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-medium"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleSaveColumns}
-                className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-[11px] font-medium"
+                className="px-2 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-[11px] font-medium"
               >
                 Submit
               </button>

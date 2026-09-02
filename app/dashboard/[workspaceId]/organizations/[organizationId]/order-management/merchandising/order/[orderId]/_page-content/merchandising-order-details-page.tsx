@@ -47,6 +47,16 @@ type OrderRecord = {
     exchangePrice?: number | string | null;
     priceInInr?: number | string | null;
   }>;
+  bomItems?: Array<{
+    id?: string;
+    categoryType?: string | null;
+    category?: string | null;
+    subCategory?: string | null;
+    rawMaterialName?: string | null;
+    size?: string | null;
+    consumption?: number | string | null;
+    requiredQty?: number | string | null;
+  }>;
 };
 
 type MasterOption = {
@@ -81,6 +91,27 @@ const defaultSizeRow = (): FinishedGoodsRow => ({
   priceInInr: "",
 });
 
+type BomRow = {
+  id?: string;
+  categoryType: string;
+  category: string;
+  subCategory: string;
+  rawMaterialName: string;
+  size: string;
+  consumption: string;
+  requiredQty: string;
+};
+
+const defaultBomRow = (): BomRow => ({
+  categoryType: "",
+  category: "",
+  subCategory: "",
+  rawMaterialName: "",
+  size: "",
+  consumption: "",
+  requiredQty: "",
+});
+
 const emptyForm = {
   id: "",
   orderNo: "",
@@ -101,6 +132,7 @@ const emptyForm = {
   finalStatus: "Draft",
   processStatus: "Draft",
   rows: [defaultSizeRow()],
+  bomRows: [defaultBomRow()],
 };
 
 const mapOrderToForm = (order: OrderRecord) => ({
@@ -137,6 +169,19 @@ const mapOrderToForm = (order: OrderRecord) => ({
           priceInInr: item.priceInInr?.toString() ?? "",
         }))
       : [defaultSizeRow()],
+  bomRows:
+    (order.bomItems ?? []).length > 0
+      ? order.bomItems!.map((item) => ({
+          id: item.id,
+          categoryType: item.categoryType ?? "",
+          category: item.category ?? "",
+          subCategory: item.subCategory ?? "",
+          rawMaterialName: item.rawMaterialName ?? "",
+          size: item.size ?? "",
+          consumption: item.consumption?.toString() ?? "",
+          requiredQty: item.requiredQty?.toString() ?? "",
+        }))
+      : [defaultBomRow()],
 });
 
 async function fetchMasterOptions(organizationId: string) {
@@ -178,7 +223,7 @@ export default function MerchandisingOrderDetailsPage() {
   const rawId = (rawParams?.id as string) ?? fallbackId;
   const orderId = rawId !== "orders" && rawId !== "create" ? rawId : "";
 
-  const [activeTab, setActiveTab] = useState<"details" | "finishedGoods">("details");
+  const [activeTab, setActiveTab] = useState<"details" | "finishedGoods" | "bom">("details");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [form, setForm] = useState<typeof emptyForm>({ ...emptyForm, rows: [defaultSizeRow()] });
@@ -336,6 +381,36 @@ export default function MerchandisingOrderDetailsPage() {
     });
   };
 
+  const getDependentOptions = (masterKey: string, parentMasterKey?: string, parentLabel?: string) => {
+    const options = masterOptions[masterKey] ?? [];
+    if (!parentMasterKey || !parentLabel) return options;
+    const parentOption = (masterOptions[parentMasterKey] ?? []).find((option) => option.label === parentLabel);
+    return options.filter((option) => option.parentValueId === parentOption?.id);
+  };
+
+  const updateBomRow = (index: number, field: keyof BomRow, value: string) => {
+    setForm((current) => ({
+      ...current,
+      bomRows: current.bomRows.map((row, rowIndex) => {
+        if (rowIndex !== index) return row;
+        const nextRow = { ...row, [field]: value };
+        if (field === "category") nextRow.subCategory = "";
+        return nextRow;
+      }),
+    }));
+  };
+
+  const addBomRow = () => {
+    setForm((current) => ({ ...current, bomRows: [...current.bomRows, defaultBomRow()] }));
+  };
+
+  const removeBomRow = (index: number) => {
+    setForm((current) => {
+      const nextRows = current.bomRows.filter((_, rowIndex) => rowIndex !== index);
+      return { ...current, bomRows: nextRows.length ? nextRows : [defaultBomRow()] };
+    });
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSaveError("");
@@ -376,6 +451,15 @@ export default function MerchandisingOrderDetailsPage() {
         buyerPoPrice: row.buyerPoPrice,
         exchangePrice: row.exchangePrice,
         priceInInr: row.priceInInr,
+      })),
+      bomRows: normalizedForm.bomRows.map((row) => ({
+        categoryType: row.categoryType,
+        category: row.category,
+        subCategory: row.subCategory,
+        rawMaterialName: row.rawMaterialName,
+        size: row.size,
+        consumption: row.consumption,
+        requiredQty: row.requiredQty,
       })),
     };
 
@@ -426,11 +510,12 @@ export default function MerchandisingOrderDetailsPage() {
           {[
             { key: "details", label: "Order Details Form" },
             { key: "finishedGoods", label: "Finished Goods Form" },
+            { key: "bom", label: "BOM Form" },
           ].map((tab) => (
             <button
               key={tab.key}
               type="button"
-              onClick={() => setActiveTab(tab.key as "details" | "finishedGoods")}
+              onClick={() => setActiveTab(tab.key as "details" | "finishedGoods" | "bom")}
               className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
                 activeTab === tab.key
                   ? "border-emerald-300 bg-emerald-700 text-white shadow-sm"
@@ -442,8 +527,7 @@ export default function MerchandisingOrderDetailsPage() {
           ))}
         </div>
 
-        {activeTab === "details" ? (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        {activeTab === "details" ? (          <div className="grid grid-cols-1 gap-4 md:grid-cols-3 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
             <label className="flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-slate-700">Order No</span>
               <input
@@ -535,7 +619,7 @@ export default function MerchandisingOrderDetailsPage() {
               </select>
             </label>
           </div>
-        ) : (
+        ) : activeTab === "finishedGoods" ? (
           <div className="space-y-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-900">Finished Goods Size Wise</h3>
@@ -594,6 +678,85 @@ export default function MerchandisingOrderDetailsPage() {
               </table>
             </div>
           </div>
+        ) : (
+          <div className="space-y-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-900">Bill of Materials</h3>
+              <button
+                type="button"
+                onClick={addBomRow}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700"
+              >
+                + Add Row
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-slate-200 text-slate-500">
+                  <tr>
+                    <th className="p-2">Raw Material Type</th>
+                    <th className="p-2">Raw Material Category</th>
+                    <th className="p-2">Raw Material Sub Category</th>
+                    <th className="p-2">Raw Material Name</th>
+                    <th className="p-2">Size</th>
+                    <th className="p-2">Consumption</th>
+                    <th className="p-2">Required Qty</th>
+                    <th className="p-2">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {form.bomRows.map((row, index) => (
+                    <tr key={`${index}-${row.rawMaterialName || "row"}`}>
+                      <td className="p-2">
+                        <select value={row.categoryType} onChange={(event) => updateBomRow(index, "categoryType", event.target.value)} className="w-full rounded border border-slate-200 px-2 py-1 bg-white">
+                          <option value="">Select raw material type</option>
+                          {(masterOptions["raw-material-type"] ?? []).map((option) => (
+                            <option key={option.id} value={option.label}>{option.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="p-2">
+                        <select value={row.category} onChange={(event) => updateBomRow(index, "category", event.target.value)} className="w-full rounded border border-slate-200 px-2 py-1 bg-white">
+                          <option value="">Select raw material category</option>
+                          {(masterOptions["raw-material-category"] ?? []).map((option) => (
+                            <option key={option.id} value={option.label}>{option.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="p-2">
+                        <select value={row.subCategory} onChange={(event) => updateBomRow(index, "subCategory", event.target.value)} className="w-full rounded border border-slate-200 px-2 py-1 bg-white">
+                          <option value="">Select raw material sub category</option>
+                          {getDependentOptions("raw-material-sub-category", "raw-material-category", row.category).map((option) => (
+                            <option key={option.id} value={option.label}>{option.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="p-2">
+                        <select value={row.rawMaterialName} onChange={(event) => updateBomRow(index, "rawMaterialName", event.target.value)} className="w-full rounded border border-slate-200 px-2 py-1 bg-white">
+                          <option value="">Select raw material</option>
+                          {(masterOptions["raw-material"] ?? []).map((option) => (
+                            <option key={option.id} value={option.label}>{option.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="p-2">
+                        <select value={row.size} onChange={(event) => updateBomRow(index, "size", event.target.value)} className="w-full rounded border border-slate-200 px-2 py-1 bg-white">
+                          <option value="">Select size</option>
+                          {(masterOptions.size ?? []).map((option) => (
+                            <option key={option.id} value={option.label}>{option.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="p-2"><input type="number" value={row.consumption} onChange={(event) => updateBomRow(index, "consumption", event.target.value)} placeholder="0.00" className="w-full rounded border border-slate-200 px-2 py-1" /></td>
+                      <td className="p-2"><input type="number" value={row.requiredQty} onChange={(event) => updateBomRow(index, "requiredQty", event.target.value)} placeholder="0.00" className="w-full rounded border border-slate-200 px-2 py-1" /></td>
+                      <td className="p-2"><button type="button" onClick={() => removeBomRow(index)} className="text-red-600 hover:text-red-700 font-medium">Remove</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
 
         {saveError ? <div className="rounded-lg bg-red-50 p-3 text-xs text-red-600">{saveError}</div> : null}
@@ -608,7 +771,7 @@ export default function MerchandisingOrderDetailsPage() {
           </button>
           <button
             type="button"
-            onClick={() => setForm({ ...emptyForm, rows: [defaultSizeRow()] })}
+            onClick={() => setForm({ ...emptyForm, rows: [defaultSizeRow()], bomRows: [defaultBomRow()] })}
             className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
           >
             Reset

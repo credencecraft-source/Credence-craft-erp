@@ -20,6 +20,16 @@ export type OrderRow = {
   priceInInr?: number | string;
 };
 
+export type BomRow = {
+  categoryType?: string;
+  category?: string;
+  subCategory?: string;
+  rawMaterialName?: string;
+  size?: string;
+  consumption?: number | string;
+  requiredQty?: number | string;
+};
+
 export type CreateOrderInput = {
   orderNo: string;
   entityName?: string;
@@ -39,12 +49,13 @@ export type CreateOrderInput = {
   finalStatus?: OrderStatus;
   processStatus?: string;
   rows?: OrderRow[];
+  bomRows?: BomRow[];
 };
 
 export async function listOrders(organizationId: string) {
   return prisma.merchandisingOrder.findMany({
     where: { organizationId },
-    include: { finishedGoods: true },
+    include: { finishedGoods: true, bomItems: true },
     orderBy: { createdAt: "desc" },
   });
 }
@@ -52,14 +63,14 @@ export async function listOrders(organizationId: string) {
 export async function getOrderById(id: string, organizationId: string) {
   return prisma.merchandisingOrder.findFirst({
     where: { id, organizationId },
-    include: { finishedGoods: true },
+    include: { finishedGoods: true, bomItems: true },
   });
 }
 
 export async function getOrderByOrderNo(orderNo: string, organizationId: string) {
   return prisma.merchandisingOrder.findFirst({
     where: { orderNo, organizationId },
-    include: { finishedGoods: true },
+    include: { finishedGoods: true, bomItems: true },
   });
 }
 
@@ -103,8 +114,19 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
           priceInInr: row.priceInInr !== undefined && row.priceInInr !== "" ? Number(row.priceInInr) : null,
         })),
       },
+      bomItems: {
+        create: (input.bomRows ?? []).map((row) => ({
+          categoryType: row.categoryType ?? null,
+          category: row.category ?? null,
+          subCategory: row.subCategory ?? null,
+          rawMaterialName: row.rawMaterialName ?? null,
+          size: row.size ?? null,
+          consumption: row.consumption !== undefined && row.consumption !== "" ? Number(row.consumption) : null,
+          requiredQty: row.requiredQty !== undefined && row.requiredQty !== "" ? Number(row.requiredQty) : null,
+        })),
+      },
     },
-    include: { finishedGoods: true },
+    include: { finishedGoods: true, bomItems: true },
   });
 }
 
@@ -134,7 +156,7 @@ export async function updateOrder(id: string, organizationId: string, input: Par
       finalStatus: input.finalStatus ?? undefined,
       processStatus: input.processStatus ?? undefined,
     },
-    include: { finishedGoods: true },
+    include: { finishedGoods: true, bomItems: true },
   });
 }
 
@@ -160,4 +182,52 @@ export async function updateFinishedGoodsForOrder(orderId: string, organizationI
       priceInInr: row.priceInInr !== undefined && row.priceInInr !== "" ? Number(row.priceInInr) : null,
     })),
   });
+}
+
+export async function updateBomItemsForOrder(orderId: string, organizationId: string, rows: BomRow[]) {
+  const order = await prisma.merchandisingOrder.findFirst({ where: { id: orderId, organizationId }, select: { id: true } });
+  if (!order) {
+    throw new Error("Order not found for this organization.");
+  }
+
+  await prisma.billOfMaterialItem.deleteMany({ where: { orderId } });
+
+  return prisma.billOfMaterialItem.createMany({
+    data: rows.map((row) => ({
+      orderId,
+      categoryType: row.categoryType ?? null,
+      category: row.category ?? null,
+      subCategory: row.subCategory ?? null,
+      rawMaterialName: row.rawMaterialName ?? null,
+      size: row.size ?? null,
+      consumption: row.consumption !== undefined && row.consumption !== "" ? Number(row.consumption) : null,
+      requiredQty: row.requiredQty !== undefined && row.requiredQty !== "" ? Number(row.requiredQty) : null,
+    })),
+  });
+}
+
+export async function listBomItemsForOrganization(organizationId: string) {
+  const orders = await prisma.merchandisingOrder.findMany({
+    where: { organizationId },
+    select: { id: true, orderNo: true, styleName: true, brand: true, buyer: true, bomItems: true },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return orders.flatMap((order) =>
+    order.bomItems.map((item) => ({
+      id: item.id,
+      orderId: order.id,
+      orderNo: order.orderNo,
+      styleName: order.styleName,
+      brand: order.brand,
+      buyer: order.buyer,
+      categoryType: item.categoryType,
+      category: item.category,
+      subCategory: item.subCategory,
+      rawMaterialName: item.rawMaterialName,
+      size: item.size,
+      consumption: item.consumption,
+      requiredQty: item.requiredQty,
+    })),
+  );
 }

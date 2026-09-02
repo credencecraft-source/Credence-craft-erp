@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { createOrder, listOrders, updateOrder, updateFinishedGoodsForOrder } from "@/lib/services/orders/order-service";
+import { createOrder, listOrders, updateOrder, updateFinishedGoodsForOrder, updateBomItemsForOrder } from "@/lib/services/orders/order-service";
 import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request) {
@@ -48,6 +48,10 @@ export async function PUT(request: Request) {
 
     if (Array.isArray(payload.rows)) {
       await updateFinishedGoodsForOrder(id, organization.id, payload.rows);
+    }
+
+    if (Array.isArray(payload.bomRows)) {
+      await updateBomItemsForOrder(id, organization.id, payload.bomRows);
     }
 
     return NextResponse.json({ ok: true, order });
