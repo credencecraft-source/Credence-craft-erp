@@ -38,29 +38,28 @@ const labelFields: Record<string, string> = {
 const fieldColumns: Record<string, Record<string, string>> = {
   entity: { entity_name: "entity_name" },
   "category-type": { Category_Type1: "category_type", Books_Item_ID: "books_item_id" },
-  category: { Category_Type_Master: "category_type_id", Category_Name: "category_name", Maximum_Excess_Allowed: "maximum_excess_allowed", Create_Cost_Center: "create_cost_center", Status: "status" },
-  "sub-category": { category: "category_id", sub_category: "sub_category" },
-  brand: { Brand: "brand", Maximum_Allowed_Excess: "maximum_allowed_excess", Auto_add_Excess_to_RM: "auto_add_excess_to_rm", Pre_Order_Checklist1: "pre_order_checklist_id", Status: "status" },
-  buyer: { Buyer_Name: "buyer_name", Currency_Type: "currency_type_id", Status: "status" },
+  category: { Category_Type_Master: "category_type", Category_Name: "category_name", Maximum_Excess_Allowed: "maximum_excess_allowed", Create_Cost_Center: "create_cost_center", Status: "status" },
+  "sub-category": { category: "category", sub_category: "sub_category" },
+  brand: { Brand: "brand", Maximum_Allowed_Excess: "maximum_allowed_excess", Auto_add_Excess_to_RM: "auto_add_excess_to_rm", Pre_Order_Checklist1: "pre_order_checklist", Status: "status" },
+  buyer: { Buyer_Name: "buyer_name", Currency_Type: "currency_type", Status: "status" },
   season: { season: "season" }, article: { article: "article" }, color: { Colors: "colors", Status: "status" },
-  "size-group": { Brand1: "brand_id", Size_Group: "size_group", Measurement_Chart1: "measurement_chart_id", Size: "size_id" },
-  size: { Size: "size", Size_Group_ID: "size_group_id", status: "status" }, uom: { uom: "uom" }, vendor: { vendor: "vendor" },
-  gst: { Name: "name", Gst: "gst", GST_TYPELOOKUP1: "gst_type_id", Zoho_Books_Tax_ID: "zoho_books_tax_id" }, hsn: { Hsn_Code: "hsn_code" },
+  "size-group": { Brand1: "brand", Size_Group: "size_group", Measurement_Chart1: "measurement_chart", Size: "size" },
+  size: { Size: "size", Size_Group_ID: "size_group", status: "status" }, uom: { uom: "uom" }, vendor: { vendor: "vendor" },
+  gst: { Name: "name", Gst: "gst", GST_TYPELOOKUP1: "gst_type", Zoho_Books_Tax_ID: "zoho_books_tax_id" }, hsn: { Hsn_Code: "hsn_code" },
   "pre-order-checklist": { Pre_Order_Checklist: "pre_order_checklist" }, "currency-type": { Currency_Type: "currency_type" }, "gst-type": { GST_TYPE: "gst_type" },
   "measurement-chart": { Measurement_Chart: "measurement_chart" }, "size-wise-consumption": { Bom_Template_Name: "bom_template_name" },
   "product-master": { Product_Master_name: "product_master_name" }, "process-template": { Process_Name: "process_name" }, merchandiser: { merchandiser: "merchandiser" },
   status: { status: "status" }, "order-volume": { Order_Volume: "order_volume", From: "from_value", To: "to_value" },
   "raw-material-type": { Raw_Material_Type: "raw_material_type" },
-  "raw-material-category": { Raw_Material_Type1: "raw_material_type_id", Raw_Material_Category: "raw_material_category" },
-  "raw-material-sub-category": { Raw_Material_Category1: "raw_material_category_id", Raw_Material_Sub_Category: "raw_material_sub_category" },
-  "raw-material": { Raw_Material_Name: "raw_material_name", Category: "raw_material_category_id", Subcategory: "raw_material_sub_category_id", Stock_Uom1: "stock_uom_id", Category_Type: "raw_material_type_id", Is_this_Specific_for_a_Brand: "is_specific_for_brand", Size_Wise_Concemption: "size_wise_consumption", Size_Wise_Consemption_Master: "size_wise_consumption_id", Brand1: "brand_id", Show_All1: "show_all", Workdrive_Image_ID: "workdrive_image_id", Buyer_Item_Code: "buyer_item_code", Image_Url: "image_url", Item_Code: "item_code", Colour: "colour_id", Create_open_stock: "create_open_stock", Open_Stock: "open_stock", Open_Stock_Price: "open_stock_price", Vendor_Wise_Price_List: "vendor_wise_price_list" },
+  "raw-material-category": { Raw_Material_Type1: "raw_material_type", Raw_Material_Category: "raw_material_category" },
+  "raw-material-sub-category": { Raw_Material_Category1: "raw_material_category", Raw_Material_Sub_Category: "raw_material_sub_category" },
+  "raw-material": { Raw_Material_Name: "raw_material_name", Category: "raw_material_category", Subcategory: "raw_material_sub_category", Stock_Uom1: "stock_uom", Category_Type: "raw_material_type", Is_this_Specific_for_a_Brand: "is_specific_for_brand", Size_Wise_Concemption: "size_wise_consumption", Size_Wise_Consemption_Master: "size_wise_consumption", Brand1: "brand", Show_All1: "show_all", Workdrive_Image_ID: "workdrive_image_id", Buyer_Item_Code: "buyer_item_code", Image_Url: "image_url", Item_Code: "item_code", Colour: "colour", Create_open_stock: "create_open_stock", Open_Stock: "open_stock", Open_Stock_Price: "open_stock_price", Vendor_Wise_Price_List: "vendor_wise_price_list" },
 };
 
-// Maps a moduleKey to the raw FK column that identifies its parent value, enabling cascading dropdowns.
 const parentColumns: Record<string, string> = {
-  "sub-category": "category_id",
-  "raw-material-category": "raw_material_type_id",
-  "raw-material-sub-category": "raw_material_category_id",
+  "sub-category": "category",
+  "raw-material-category": "raw_material_type",
+  "raw-material-sub-category": "raw_material_category",
 };
 
 function typedValue(field: MasterFieldDefinition, value: unknown) {
@@ -80,12 +79,48 @@ async function resolveLookupId(organizationId: string, moduleKey: string, value:
 async function buildData(organizationId: string, moduleKey: string, fields: MasterFieldValues, label: string) {
   const definition = getMasterDefinition(moduleKey);
   if (!definition) throw new Error("Master module is not available.");
-  const data: Record<string, unknown> = { organization_id: organizationId, [labelFields[moduleKey]]: label };
+  
+  // Use organization_id directly as a scalar column to completely bypass relational connect / schema field naming mismatches
+  const data: Record<string, unknown> = { 
+    organization_id: organizationId, 
+    [labelFields[moduleKey]]: label 
+  };
+  
   for (const field of definition.fields) {
-    const column = fieldColumns[moduleKey]?.[field.key];
-    if (!column || column === labelFields[moduleKey]) continue;
-    data[column] = field.type === "lookup" ? await resolveLookupId(organizationId, field.lookupModuleKey ?? "", fields[field.key]) : typedValue(field, fields[field.key]);
+    const relationField = fieldColumns[moduleKey]?.[field.key];
+    if (!relationField || relationField === labelFields[moduleKey]) continue;
+    
+    if (field.type === "lookup" && fields[field.key]) {
+      const targetId = await resolveLookupId(organizationId, field.lookupModuleKey ?? "", fields[field.key]);
+      if (targetId) {
+        data[relationField] = { connect: { id: targetId } };
+      }
+    } else {
+      const val = typedValue(field, fields[field.key]);
+      if (val !== null) {
+        data[relationField] = val;
+      }
+    }
   }
+
+  // Fallback to auto-create category_type if creating category without one
+  if (moduleKey === "category" && !data["category_type"]) {
+    const firstType = await delegates["category-type"].findFirst({ where: { organization_id: organizationId } });
+    if (firstType) {
+      data["category_type"] = { connect: { id: firstType.id } };
+    } else {
+      const createdType = await delegates["category-type"].create({
+        data: { 
+          organization_id: organizationId, 
+          category_type: "Default", 
+          is_active: true, 
+          sort_order: 0 
+        }
+      });
+      data["category_type"] = { connect: { id: createdType.id } };
+    }
+  }
+
   return data;
 }
 
@@ -129,7 +164,15 @@ export async function createMasterValueForOrganization(organizationId: string, m
   return prisma.$transaction(async (transaction) => {
     const transactionDelegate = (transaction as unknown as Record<string, MasterDelegate>)[`master${moduleKey.split("-").map((part) => part[0].toUpperCase() + part.slice(1)).join("")}`];
     const data = await buildData(organizationId, moduleKey, input.fields ?? {}, input.label.trim());
-    if (input.parentValueId && moduleKey === "sub-category") data.category_id = await resolveLookupId(organizationId, "category", input.parentValueId);
+    if (input.parentValueId && parentColumns[moduleKey]) {
+      const parentModuleKey = definition.fields.find(f => f.type === "lookup")?.lookupModuleKey ?? (moduleKey === "sub-category" ? "category" : "");
+      if (parentModuleKey) {
+        const parentId = await resolveLookupId(organizationId, parentModuleKey, input.parentValueId);
+        if (parentId) {
+          data[parentColumns[moduleKey]] = { connect: { id: parentId } };
+        }
+      }
+    }
     data.is_active = false;
     data.sort_order = await delegate.count({ where: { organization_id: organizationId } });
     const created = await transactionDelegate.create({ data });
@@ -181,9 +224,7 @@ export async function updateApprovalRequestStatus(
     where: { organization_id: organizationId, OR: [{ id: requestId }, { request_id: requestId }] },
   });
 
-  if (!request) {
-    return null;
-  }
+  if (!request) return null;
 
   const updated = await prisma.approvalRequest.update({
     where: { id: request.id },
@@ -202,4 +243,3 @@ export async function updateApprovalRequestStatus(
 
   return updated;
 }
-

@@ -4,6 +4,7 @@ import { requireSessionUser } from "@/lib/auth/session-manager";
 import { createMasterValueForOrganization, getMasterValuesForOrganization, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-constants";
 import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-definitions";
+import { prisma } from "@/lib/database/prisma-client";
 
 export async function GET(request: Request) {
   try {
@@ -45,8 +46,8 @@ export async function POST(request: Request) {
   try {
     const user = await requireSessionUser();
     const body = await request.json();
-    const organizationId = String(body.organizationId ?? "");
-    const moduleKey = String(body.moduleKey ?? "");
+    const organizationId = String(body.organizationId ?? body.organization_id ?? "");
+    const moduleKey = String(body.moduleKey ?? body.masterKey ?? "");
     const label = String(body.label ?? "").trim();
     const code = String(body.code ?? "").trim();
     const description = String(body.description ?? "").trim();
@@ -65,8 +66,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Organization not found." }, { status: 404 });
     }
 
-    if (!MASTER_DEFINITIONS.some((definition) => definition.key === moduleKey)) {
-      return NextResponse.json({ error: "Master module not found." }, { status: 404 });
+    const definitionExists = MASTER_DEFINITIONS.some((definition) => definition.key === moduleKey);
+    if (!definitionExists) {
+      const dbDefinition = await prisma.masterDefinition?.findFirst?.({
+        where: { organizationId, moduleKey }
+      });
+      if (!dbDefinition) {
+        return NextResponse.json({ error: "Master module not found." }, { status: 404 });
+      }
     }
 
     const value = await createMasterValueForOrganization(organization.id, moduleKey, {

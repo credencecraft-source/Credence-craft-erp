@@ -28,7 +28,7 @@ model Organization {
   organization_id         String          @unique @default(uuid())
   workspace_user_id       String
   organization_name       String          @db.VarChar(255)
-  gst_number              String          @unique @db.VarChar(50)
+  gst_number              String          @db.VarChar(50)
   address_line_1          String?         @db.VarChar(255)
   address_line_2          String?         @db.VarChar(255)
   city                    String?         @db.VarChar(100)

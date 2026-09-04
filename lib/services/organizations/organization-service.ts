@@ -58,14 +58,6 @@ export async function createOrganization(input: OrganizationCreateInput) {
       pinCode: input.pinCode,
     });
 
-    const existingGst = await prisma.organization.findUnique({
-      where: { gst_number: validated.gstNumber },
-    });
-
-    if (existingGst) {
-      throw new Error("GST number already exists for another organization.");
-    }
-
     return await prisma.$transaction(async (transaction) => {
       const organization = await transaction.organization.create({
         data: {

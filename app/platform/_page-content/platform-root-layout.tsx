@@ -13,6 +13,7 @@ const PLATFORM_NAV_ITEMS = [
   { key: "setup-plans", label: "Setup Plans", href: "/platform/setup-plans" },
   { key: "databases", label: "Databases", href: "/platform/databases" },
   { key: "business-types", label: "Business Types", href: "/platform/business-types" },
+  { key: "subscriptions", label: "Subscriptions", href: "/platform/subscriptions" },
 ] as const;
 
 export default async function PlatformRootLayout({

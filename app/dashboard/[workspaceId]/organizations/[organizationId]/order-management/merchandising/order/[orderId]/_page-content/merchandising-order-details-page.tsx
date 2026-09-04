@@ -422,7 +422,7 @@ export default function MerchandisingOrderDetailsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          moduleKey: createMasterKey,
+          masterKey: createMasterKey,
           label: createMasterLabel.trim(),
           code: createMasterCode.trim() || null,
           description: createMasterDescription.trim() || null,

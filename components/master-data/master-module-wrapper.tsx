@@ -51,7 +51,6 @@ export function MasterModuleShell({
   const pathname = usePathname();
   const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
 
-  // Map dynamic business types to module options, fallback to static ERP_MODULES if empty
   const moduleOptions = businessTypes.length > 0
     ? businessTypes.map((bt) => ({
         key: bt.id,
@@ -136,7 +135,6 @@ export function MasterModuleShell({
     ],
   };
 
-  // Fallback sub-navigation for dynamic business types if specific key isn't matched
   const fallbackDynamicModules: SubItem[] = [
     {
       key: "overview",
@@ -155,16 +153,6 @@ export function MasterModuleShell({
       key: "orders",
       label: "Orders",
       href: `${organizationPath}/order-management/merchandising/order`,
-    },
-    {
-      key: "order-summary",
-      label: "Order Summary",
-      href: `${organizationPath}/order-management/merchandising/order-summary`,
-    },
-    {
-      key: "samples",
-      label: "Samples",
-      href: `${organizationPath}/order-management/merchandising/samples`,
     },
     {
       key: "bom",
@@ -186,8 +174,8 @@ export function MasterModuleShell({
     setting: approvalChildren,
   };
 
-  const isActive = (href: string) =>
-    pathname === href || pathname.startsWith(`${href}/`);
+  const isActive = (href: string, exact = false) =>
+    exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-100">
@@ -226,12 +214,13 @@ export function MasterModuleShell({
               const children = childMap[item.key] ?? [];
               const hasChildren = children.length > 0;
               const opened = expanded[item.key];
+              const active = hasChildren ? isActive(item.href, false) && children.some((c) => isActive(c.href)) : isActive(item.href, true);
 
               return (
                 <div key={item.key}>
                   <div
                     className={`flex items-center justify-between rounded-md transition ${
-                      isActive(item.href)
+                      active
                         ? "bg-emerald-600 text-white"
                         : "hover:bg-slate-800"
                     }`}
@@ -242,7 +231,7 @@ export function MasterModuleShell({
                     >
                       <span
                         className={`h-2 w-2 rounded-full ${
-                          isActive(item.href)
+                          active
                             ? "bg-white"
                             : "bg-slate-500"
                         }`}
@@ -274,7 +263,7 @@ export function MasterModuleShell({
                           key={child.key}
                           href={child.href}
                           className={`flex items-center justify-between rounded-md px-2 py-1 text-xs transition ${
-                            isActive(child.href)
+                            isActive(child.href, true)
                               ? "bg-emerald-700 text-white"
                               : "text-slate-400 hover:bg-slate-800 hover:text-white"
                           }`}

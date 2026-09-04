@@ -21,8 +21,11 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const user = await requireSessionUser();
+    const url = new URL(request.url);
     const body = await request.json();
-    const organization = await getOrganizationForUser(user.id, String(body.organizationId ?? ""));
+    const organizationId = url.searchParams.get("organizationId") || body.organizationId;
+    
+    const organization = await getOrganizationForUser(user.id, String(organizationId ?? ""));
     if (!organization) return NextResponse.json({ error: "Organization not found." }, { status: 404 });
     const order = await createOrder(organization.id, body);
     return NextResponse.json({ ok: true, order });
@@ -35,8 +38,10 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
   try {
     const user = await requireSessionUser();
+    const url = new URL(request.url);
     const body = await request.json();
-    const { id, organizationId, ...payload } = body;
+    const { id, ...payload } = body;
+    const organizationId = url.searchParams.get("organizationId") || body.organizationId;
 
     if (!id) {
       return NextResponse.json({ error: "Order id is required." }, { status: 400 });

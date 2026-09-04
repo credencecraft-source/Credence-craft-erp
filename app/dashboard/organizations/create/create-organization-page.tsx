@@ -49,7 +49,7 @@ export default async function CreateOrganizationPage({
       redirect(`/dashboard/organizations/create?error=1&message=${encodeURIComponent(message)}`);
     }
 
-    redirect(`/dashboard/${user.workspace_id}?success=organization-created`);
+    redirect(`/dashboard/${user.workspace_id}/home`);
   }
 
   return (
@@ -61,12 +61,12 @@ export default async function CreateOrganizationPage({
             <h1 className="erp-page-heading mt-1">Create Organization</h1>
             <p className="mt-2 max-w-xl text-sm text-slate-600">Add a legal business entity to start managing its ERP operations.</p>
           </div>
-<Link
-  href={`/dashboard/${user.workspace_id}/home`}
-  className="text-sm font-semibold text-emerald-700 hover:text-emerald-800"
->
-  Back to Workspace
-</Link>
+          <Link
+            href={`/dashboard/${user.workspace_id}/home`}
+            className="text-sm font-semibold text-emerald-700 hover:text-emerald-800"
+          >
+            Back to Workspace
+          </Link>
         </div>
 
         {errorMessage && (
