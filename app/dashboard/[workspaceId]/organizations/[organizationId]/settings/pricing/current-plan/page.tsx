@@ -76,7 +76,7 @@ export default async function CurrentPlanPage({ params }: PageProps) {
                   );
 
                   const businessTypeName = sub.business_type_name || matchedBusinessType?.name || sub.businessTypeId || "Order Management";
-                  const planName = sub.plan_name || matchedPlan?.plan_name || matchedPlan?.name || sub.planId || "123";
+                  const planName = sub.plan_name || matchedPlan?.plan_name || (matchedPlan as any)?.name || sub.planId || "123";
                   const startDate = sub.startDate || sub.start_date || "2026-09-05";
                   const endDate = sub.endDate || sub.expireDate || "—";
 
