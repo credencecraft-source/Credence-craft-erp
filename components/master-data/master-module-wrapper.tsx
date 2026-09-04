@@ -22,6 +22,11 @@ type SubItem = {
   count?: number;
 };
 
+type BusinessTypeItem = {
+  id: string;
+  name: string;
+};
+
 type MasterModuleShellProps = {
   workspaceId: string;
   organizationId: string;
@@ -32,6 +37,7 @@ type MasterModuleShellProps = {
   description?: string;
   children: ReactNode;
   modules?: SubItem[];
+  businessTypes?: BusinessTypeItem[];
 };
 
 export function MasterModuleShell({
@@ -40,15 +46,25 @@ export function MasterModuleShell({
   organizationName,
   children,
   modules = [],
+  businessTypes = [],
 }: MasterModuleShellProps) {
   const pathname = usePathname();
   const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
-  const activeModule =
-    ERP_MODULES.find(({ pathSegment }) => {
-      const modulePath = `${organizationPath}/${pathSegment}`;
 
+  // Map dynamic business types to module options, fallback to static ERP_MODULES if empty
+  const moduleOptions = businessTypes.length > 0
+    ? businessTypes.map((bt) => ({
+        key: bt.id,
+        label: bt.name,
+        pathSegment: bt.name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+      }))
+    : ERP_MODULES;
+
+  const activeModule =
+    moduleOptions.find(({ pathSegment }) => {
+      const modulePath = `${organizationPath}/${pathSegment}`;
       return pathname === modulePath || pathname.startsWith(`${modulePath}/`);
-    }) ?? ERP_MODULES[0];
+    }) ?? moduleOptions[0];
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -69,78 +85,91 @@ export function MasterModuleShell({
       {
         key: "home",
         label: "Home",
-        href: `/dashboard/${workspaceId}/organizations/${organizationId}/order-management`,
+        href: `${organizationPath}/order-management`,
       },
       {
         key: "merchandising",
         label: "Merchandising",
-        href: `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising`,
+        href: `${organizationPath}/order-management/merchandising`,
       },
       {
         key: "purchase",
         label: "Purchase",
-        href: `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/purchase`,
+        href: `${organizationPath}/order-management/purchase`,
       },
     ],
-
     "factory-management": [
       {
         key: "home",
         label: "Overview",
-        href: `/dashboard/${workspaceId}/organizations/${organizationId}/factory-management`,
+        href: `${organizationPath}/factory-management`,
       },
     ],
-
     approvals: [
       {
         key: "home",
         label: "Home",
-        href: `/dashboard/${workspaceId}/organizations/${organizationId}/approvals`,
+        href: `${organizationPath}/approvals`,
       },
       {
         key: "setting",
         label: "Approval Settings",
-        href: `/dashboard/${workspaceId}/organizations/${organizationId}/approvals/approval-settings`,
+        href: `${organizationPath}/approvals/approval-settings`,
       },
     ],
-
     settings: [
       {
         key: "overview",
         label: "Overview",
-        href: `/dashboard/${workspaceId}/organizations/${organizationId}/settings`,
+        href: `${organizationPath}/settings`,
       },
       {
         key: "masters",
         label: "Master Data",
-        href: `/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data`,
+        href: `${organizationPath}/settings/master-data`,
+      },
+      {
+        key: "pricing-plan",
+        label: "Pricing Plan",
+        href: `${organizationPath}/settings/pricing/plan`,
       },
     ],
   };
 
+  // Fallback sub-navigation for dynamic business types if specific key isn't matched
+  const fallbackDynamicModules: SubItem[] = [
+    {
+      key: "overview",
+      label: "Overview",
+      href: `${organizationPath}/${activeModule.pathSegment}`,
+    },
+  ];
+
   const navigation =
-    modules.length > 0 ? modules : defaultModules[activeModule.key] ?? [];
+    modules.length > 0 
+      ? modules 
+      : defaultModules[activeModule.key] ?? defaultModules[activeModule.pathSegment] ?? fallbackDynamicModules;
 
   const merchandisingChildren: SubItem[] = [
     {
       key: "orders",
       label: "Orders",
-      href: `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order`,
+      href: `${organizationPath}/order-management/merchandising/order`,
     },
     {
       key: "order-summary",
       label: "Order Summary",
-      href: `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order-summary`,
+      href: `${organizationPath}/order-management/merchandising/order-summary`,
     },
     {
       key: "samples",
       label: "Samples",
-      href: `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/samples`,
+      href: `${organizationPath}/order-management/merchandising/samples`,
     },
     {
       key: "bom",
       label: "BOM",
-      href: `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/bom`,
+      href: `${organizationPath}/order-management/merchandising/bom`,
     },
   ];
 
@@ -148,7 +177,7 @@ export function MasterModuleShell({
     {
       key: "master",
       label: "Master",
-      href: `/dashboard/${workspaceId}/organizations/${organizationId}/approvals/approval-settings/master-review`,
+      href: `${organizationPath}/approvals/approval-settings/master-review`,
     },
   ];
 
@@ -162,7 +191,6 @@ export function MasterModuleShell({
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-100">
-
       <motion.aside
         initial={false}
         animate={{ width: sidebarOpen ? 240 : 60 }}
@@ -171,14 +199,11 @@ export function MasterModuleShell({
         onMouseLeave={() => setSidebarOpen(false)}
         className="flex flex-col border-r border-slate-800 bg-slate-950 text-slate-200"
       >
-
         <div className="border-b border-slate-800 p-3">
           <div className="flex items-center gap-3">
-
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-600">
               <Sparkles className="h-5 w-5 text-white" />
             </div>
-
             <AnimatePresence>
               {sidebarOpen && (
                 <motion.div
@@ -192,26 +217,18 @@ export function MasterModuleShell({
                 </motion.div>
               )}
             </AnimatePresence>
-
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-2">
-
           <nav className="space-y-1">
-
             {navigation.map((item) => {
-
               const children = childMap[item.key] ?? [];
-
               const hasChildren = children.length > 0;
-
               const opened = expanded[item.key];
 
               return (
-
                 <div key={item.key}>
-
                   <div
                     className={`flex items-center justify-between rounded-md transition ${
                       isActive(item.href)
@@ -219,12 +236,10 @@ export function MasterModuleShell({
                         : "hover:bg-slate-800"
                     }`}
                   >
-
                     <Link
                       href={item.href}
                       className="flex flex-1 items-center gap-3 px-3 py-2"
                     >
-
                       <span
                         className={`h-2 w-2 rounded-full ${
                           isActive(item.href)
@@ -232,130 +247,83 @@ export function MasterModuleShell({
                             : "bg-slate-500"
                         }`}
                       />
-
                       {sidebarOpen && (
-                        <span className="text-sm">
-                          {item.label}
-                        </span>
+                        <span className="text-sm">{item.label}</span>
                       )}
-
                     </Link>
 
                     {sidebarOpen && hasChildren && (
-
                       <button
                         type="button"
                         onClick={() => toggleExpand(item.key)}
                         className="mr-2"
                       >
-
                         {opened ? (
                           <ChevronDown className="h-4 w-4" />
                         ) : (
                           <ChevronRight className="h-4 w-4" />
                         )}
-
                       </button>
-
                     )}
-
                   </div>
-                                    {sidebarOpen &&
-                    hasChildren &&
-                    opened && (
-                      <div className="ml-6 mt-1 space-y-1">
 
-                        {children.map((child) => (
-                          <Link
-                            key={child.key}
-                            href={child.href}
-                            className={`flex items-center justify-between rounded-md px-2 py-1 text-xs transition ${
-                              isActive(child.href)
-                                ? "bg-emerald-700 text-white"
-                                : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                            }`}
-                          >
-                            <span>{child.label}</span>
-
-                            {typeof child.count === "number" && (
-                              <span className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px]">
-                                {child.count}
-                              </span>
-                            )}
-                          </Link>
-                        ))}
-
-                      </div>
-                    )}
-
+                  {sidebarOpen && hasChildren && opened && (
+                    <div className="ml-6 mt-1 space-y-1">
+                      {children.map((child) => (
+                        <Link
+                          key={child.key}
+                          href={child.href}
+                          className={`flex items-center justify-between rounded-md px-2 py-1 text-xs transition ${
+                            isActive(child.href)
+                              ? "bg-emerald-700 text-white"
+                              : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                          }`}
+                        >
+                          <span>{child.label}</span>
+                          {typeof child.count === "number" && (
+                            <span className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px]">
+                              {child.count}
+                            </span>
+                          )}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
                 </div>
-
               );
-
             })}
-
           </nav>
-
         </div>
 
         <div className="border-t border-slate-800 p-2">
-
           <Link
             href={`/dashboard/${workspaceId}/home`}
             className="flex items-center gap-3 rounded-md px-3 py-2 hover:bg-slate-800"
           >
-
             <ArrowLeft className="h-4 w-4" />
-
-            {sidebarOpen && (
-              <span className="text-sm">
-                Back to Workspace
-              </span>
-            )}
-
+            {sidebarOpen && <span className="text-sm">Back to Workspace</span>}
           </Link>
-
         </div>
-
       </motion.aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-
         <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-6">
-
           <div className="flex items-center gap-2">
-
             <Layers className="h-5 w-5 text-emerald-600" />
-
-            <span className="font-semibold capitalize">
-              {activeModule.label}
-            </span>
-
+            <span className="font-semibold capitalize">{activeModule.label}</span>
           </div>
 
           <div className="flex items-center gap-3">
-
-            <span className="text-sm text-slate-500">
-              Master Modules
-            </span>
-
+            <span className="text-sm text-slate-500">Master Modules</span>
             <MasterModuleSwitcher
               value={activeModule.key}
-              options={ERP_MODULES}
+              options={moduleOptions}
             />
-
           </div>
-
         </header>
 
-        <main className="flex-1 overflow-auto bg-slate-100 p-6">
-
-          {children}
-
-        </main>
-
+        <main className="flex-1 overflow-auto bg-slate-100 p-6">{children}</main>
       </div>
-
     </div>
   );
 }

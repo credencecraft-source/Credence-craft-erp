@@ -6,15 +6,20 @@ import { PLAN_FEATURE_CATALOG } from "@/lib/services/platform/plan-feature-catal
 export async function listPlans() {
   return prisma.plan.findMany({
     orderBy: { sort_order: "asc" },
+    include: { businessType: true },
   });
 }
 
 export async function getPlanById(planId: string) {
-  return prisma.plan.findUnique({ where: { id: planId } });
+  return prisma.plan.findUnique({
+    where: { id: planId },
+    include: { businessType: true },
+  });
 }
 
 export async function createPlan(input: {
   planName: string;
+  businessTypeId?: string;
   description?: string;
   price?: number;
   billingCycle?: string;
@@ -37,12 +42,14 @@ export async function createPlan(input: {
     const plan = await transaction.plan.create({
       data: {
         plan_id: randomUUID(),
+        business_type_id: input.businessTypeId?.trim() || null,
         plan_name: planName,
         description: input.description?.trim() || null,
         price: input.price ?? null,
         billing_cycle: input.billingCycle?.trim() || null,
         sort_order: planCount,
       },
+      include: { businessType: true },
     });
 
     await transaction.planFeature.createMany({
@@ -59,7 +66,26 @@ export async function createPlan(input: {
   });
 }
 
-// Ensures every catalog feature has a row for this plan (covers features added after the plan was created).
+export async function deletePlan(planId: string) {
+  return prisma.$transaction(async (transaction) => {
+    await transaction.planFeature.deleteMany({
+      where: { plan_id: planId },
+    });
+
+    const plan = await transaction.plan.findUnique({
+      where: { id: planId },
+    });
+
+    if (!plan) {
+      return null;
+    }
+
+    return transaction.plan.delete({
+      where: { id: planId },
+    });
+  });
+}
+
 export async function listPlanFeatures(planId: string) {
   const existingFeatures = await prisma.planFeature.findMany({
     where: { plan_id: planId },

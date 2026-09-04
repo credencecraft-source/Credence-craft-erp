@@ -15,6 +15,26 @@ import {
 } from "@/lib/master-data/master-data-constants";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-definitions";
 
+function serializeDecimal(value: unknown): unknown {
+  if (value === null || value === undefined) {
+    return value;
+  }
+  if (typeof value === "object" && value !== null && "toNumber" in value && typeof (value as { toNumber: () => number }).toNumber === "function") {
+    return (value as { toNumber: () => number }).toNumber();
+  }
+  if (Array.isArray(value)) {
+    return value.map(serializeDecimal);
+  }
+  if (typeof value === "object") {
+    const plainObj: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      plainObj[k] = serializeDecimal(v);
+    }
+    return plainObj;
+  }
+  return value;
+}
+
 function readFields(formData: FormData, fields: MasterFieldDefinition[]) {
   return Object.fromEntries(fields.map((field) => {
     const value = formData.get(`field_${field.key}`);
@@ -192,18 +212,17 @@ export default async function MasterDataEditorPage({
   const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey)).map((item) => ({ id: item.value_id, label: item.label }))])));
 
   return (
-    <div >
-      <div >
+    <div>
+      <div>
         <div>
-          <p >Master</p>
-          <h3 >{definition.label}</h3>
-          <p >{definition.description}</p>
+          <p>Master</p>
+          <h3>{definition.label}</h3>
+          <p>{definition.description}</p>
         </div>
 
-        <div >
+        <div>
           <Link
             href={`/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data`}
-            
           >
             Back to masters
           </Link>
@@ -218,7 +237,7 @@ export default async function MasterDataEditorPage({
           code: item.code,
           description: item.description,
           is_active: item.is_active,
-          metadata: { fields: item.fields },
+          metadata: { fields: serializeDecimal(item.fields) as Record<string, unknown> },
         }))}
         fields={definition.fields}
         lookupOptions={lookupOptions}

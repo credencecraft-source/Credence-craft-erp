@@ -101,20 +101,35 @@ model PlatformAdmin {
   @@map("platform_admins")
 }
 
-model Plan {
-  id             String         @id @default(cuid())
-  plan_id        String         @unique @default(uuid())
-  plan_name      String         @unique @db.VarChar(100)
-  description    String?        @db.VarChar(500)
-  price          Decimal?       @db.Decimal(10, 2)
-  billing_cycle  String?        @db.VarChar(50)
-  is_active      Boolean        @default(true)
-  sort_order     Int            @default(0)
-  created_at     DateTime       @default(now())
-  updated_at     DateTime       @updatedAt
-  features       PlanFeature[]
-  organizations  Organization[]
+model BusinessType {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+  plans       Plan[]
 
+  @@map("business_types")
+}
+
+model Plan {
+  id               String       @id @default(cuid())
+  plan_id          String       @unique @default(uuid())
+  business_type_id String?
+  plan_name        String       @unique @db.VarChar(100)
+  description      String?      @db.VarChar(500)
+  price            Decimal?     @db.Decimal(10, 2)
+  billing_cycle    String?      @db.VarChar(50)
+  is_active        Boolean      @default(true)
+  sort_order       Int          @default(0)
+  created_at       DateTime     @default(now())
+  updated_at       DateTime     @updatedAt
+  businessType     BusinessType? @relation(fields: [business_type_id], references: [id])
+  features         PlanFeature[]
+  organizations    Organization[]
+
+  @@index([business_type_id])
   @@index([is_active])
   @@map("plans")
 }

@@ -58,11 +58,30 @@ export function MasterRecordsTable({
 
   const openEditor = (record: MasterRecord) => {
     setEditingRecord(record);
-    const metadata =
-      record.metadata && typeof record.metadata === "object"
-        ? (record.metadata as { fields?: Record<string, unknown> })
-        : {};
-    setEditFields(metadata.fields ?? {});
+
+    let extractedFields: Record<string, unknown> = {};
+    if (record.metadata && typeof record.metadata === "object") {
+      const meta = record.metadata as Record<string, unknown>;
+      if (meta.fields && typeof meta.fields === "object") {
+        extractedFields = { ...(meta.fields as Record<string, unknown>) };
+      } else {
+        extractedFields = { ...meta };
+      }
+    }
+
+    fields.forEach((field) => {
+      if (extractedFields[field.key] === undefined) {
+        if (field.key === "label" || field === fields[0]) {
+          extractedFields[field.key] = record.label;
+        } else if (field.key === "code") {
+          extractedFields[field.key] = record.code;
+        } else if (field.key === "description") {
+          extractedFields[field.key] = record.description;
+        }
+      }
+    });
+
+    setEditFields(extractedFields);
   };
 
   const closeEditor = () => {

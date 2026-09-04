@@ -43,8 +43,8 @@ export type CreateOrderInput = {
   brand?: string;
   sizeGroup?: string;
   haveSizeRatio?: boolean;
-  ratioOrderQty?: number;
-  orderQty?: number;
+  ratioOrderQty?: number | string;
+  orderQty?: number | string;
   deliveryDate?: string;
   finalStatus?: OrderStatus;
   processStatus?: string;
@@ -96,8 +96,8 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
       brand: input.brand ?? null,
       sizeGroup: input.sizeGroup ?? null,
       haveSizeRatio: input.haveSizeRatio ?? null,
-      ratioOrderQty: input.ratioOrderQty ?? null,
-      orderQty: input.orderQty ?? null,
+      ratioOrderQty: input.ratioOrderQty !== undefined && input.ratioOrderQty !== "" ? Number(input.ratioOrderQty) : null,
+      orderQty: input.orderQty !== undefined && input.orderQty !== "" ? Number(input.orderQty) : null,
       deliveryDate,
       finalStatus: input.finalStatus ?? "Draft",
       processStatus: input.processStatus ?? null,
@@ -150,8 +150,8 @@ export async function updateOrder(id: string, organizationId: string, input: Par
       brand: input.brand ?? undefined,
       sizeGroup: input.sizeGroup ?? undefined,
       haveSizeRatio: input.haveSizeRatio ?? undefined,
-      ratioOrderQty: input.ratioOrderQty ?? undefined,
-      orderQty: input.orderQty ?? undefined,
+      ratioOrderQty: input.ratioOrderQty !== undefined && input.ratioOrderQty !== "" ? Number(input.ratioOrderQty) : null,
+      orderQty: input.orderQty !== undefined && input.orderQty !== "" ? Number(input.orderQty) : null,
       deliveryDate: input.deliveryDate ? new Date(input.deliveryDate) : undefined,
       finalStatus: input.finalStatus ?? undefined,
       processStatus: input.processStatus ?? undefined,

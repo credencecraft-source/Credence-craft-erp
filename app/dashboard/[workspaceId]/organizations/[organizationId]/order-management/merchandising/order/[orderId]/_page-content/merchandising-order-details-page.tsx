@@ -212,16 +212,11 @@ export default function MerchandisingOrderDetailsPage() {
   const rawParams = useParams();
   const router = useRouter();
 
-  // Safe fallback to extract ID and parameters robustly if Next.js useParams is empty or delayed
-  const pathSegments = typeof window !== "undefined" ? window.location.pathname.split("/") : [];
-  const fallbackOrgId = pathSegments[pathSegments.indexOf("organizations") + 1];
-  const fallbackWorkspaceId = pathSegments[pathSegments.indexOf("dashboard") + 1];
-  const fallbackId = pathSegments[pathSegments.length - 1];
-
-  const workspaceId = (rawParams?.workspaceId as string) ?? fallbackWorkspaceId ?? "demo";
-  const organizationId = (rawParams?.organizationId as string) ?? fallbackOrgId ?? "demo-org";
-  const rawId = (rawParams?.id as string) ?? fallbackId;
-  const orderId = rawId !== "orders" && rawId !== "create" ? rawId : "";
+  const workspaceId = (rawParams?.workspaceId as string) ?? "demo";
+  const organizationId = (rawParams?.organizationId as string) ?? "demo-org";
+  
+  const rawId = (rawParams?.orderId as string) ?? (rawParams?.id as string) ?? "";
+  const orderId = rawId && rawId !== "orders" && rawId !== "create" ? rawId : "";
 
   const [activeTab, setActiveTab] = useState<"details" | "finishedGoods" | "bom">("details");
   const [saving, setSaving] = useState(false);
@@ -251,8 +246,18 @@ export default function MerchandisingOrderDetailsPage() {
       setOrderLookups(masters.orderLookups);
 
       if (orderId) {
-        const response = await fetch(`/api/orders/${orderId}?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" });
-        if (response.ok) {
+        let response = await fetch(`/api/orders/${orderId}?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" });
+        if (!response.ok) {
+          response = await fetch(`/api/orders?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" });
+          if (response.ok) {
+            const listData = await response.json();
+            const matched = (listData?.orders ?? []).find((o: OrderRecord) => o.id === orderId);
+            if (matched) {
+              setForm(mapOrderToForm(matched));
+              return;
+            }
+          }
+        } else {
           const data = await response.json();
           if (data?.order) {
             setForm(mapOrderToForm(data.order));
@@ -268,9 +273,47 @@ export default function MerchandisingOrderDetailsPage() {
     loadData();
   }, [loadData]);
 
-  const handleChange = (field: keyof typeof emptyForm, value: string) => {
+  const handleChange = (field: keyof typeof emptyForm, value: string | boolean) => {
     setForm((current) => ({ ...current, [field]: value }));
     setSaveError("");
+  };
+
+  const addSizeRow = () => {
+    setForm((current) => ({ ...current, rows: [...current.rows, defaultSizeRow()] }));
+  };
+
+  const removeSizeRow = (index: number) => {
+    setForm((current) => ({
+      ...current,
+      rows: current.rows.filter((_, i) => i !== index),
+    }));
+  };
+
+  const updateSizeRow = (index: number, field: keyof FinishedGoodsRow, value: string) => {
+    setForm((current) => {
+      const updatedRows = [...current.rows];
+      updatedRows[index] = { ...updatedRows[index], [field]: value };
+      return { ...current, rows: updatedRows };
+    });
+  };
+
+  const addBomRow = () => {
+    setForm((current) => ({ ...current, bomRows: [...current.bomRows, defaultBomRow()] }));
+  };
+
+  const removeBomRow = (index: number) => {
+    setForm((current) => ({
+      ...current,
+      bomRows: current.bomRows.filter((_, i) => i !== index),
+    }));
+  };
+
+  const updateBomRow = (index: number, field: keyof BomRow, value: string) => {
+    setForm((current) => {
+      const updatedRows = [...current.bomRows];
+      updatedRows[index] = { ...updatedRows[index], [field]: value };
+      return { ...current, bomRows: updatedRows };
+    });
   };
 
   const masterSelect = (
@@ -283,7 +326,12 @@ export default function MerchandisingOrderDetailsPage() {
     const lookupDefinition = orderLookups.find((definition) => definition.lookupModuleKey === masterKey);
     const parentValue = lookupDefinition?.dependsOn ? form[lookupDefinition.dependsOn as keyof typeof form] : "";
     const parentOption = lookupDefinition?.dependsOn ? (masterOptions[lookupDefinition.dependsOn === "category" ? "category" : "brand"] ?? []).find((option) => option.label === parentValue) : null;
-    const options = (masterOptions[masterKey] ?? []).filter((option) => !lookupDefinition?.dependsOn || option.parentValueId === parentOption?.id);
+    
+    let options = (masterOptions[masterKey] ?? []).filter((option) => !lookupDefinition?.dependsOn || option.parentValueId === parentOption?.id);
+
+    if (value && !options.some((opt) => opt.label === value)) {
+      options = [{ id: "current-legacy", label: value, code: null, is_active: true }, ...options];
+    }
 
     return (
       <label className="flex flex-col gap-1.5">
@@ -297,18 +345,12 @@ export default function MerchandisingOrderDetailsPage() {
             }}
             className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
           >
-            + Create new
+            + New
           </button>
         </span>
         <select
           value={value}
           onChange={(event) => {
-            const selected = options.find((option) => option.label === event.target.value);
-            if (selected && !selected.is_active) {
-              window.alert(`${selected.label} is not approved yet.`);
-              onChange("");
-              return;
-            }
             onChange(event.target.value);
           }}
           className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
@@ -324,6 +366,43 @@ export default function MerchandisingOrderDetailsPage() {
     );
   };
 
+  const renderMasterSelect = (
+    value: string,
+    onChange: (value: string) => void,
+    masterKey: string,
+    placeholder: string,
+    parentCategoryValue?: string
+  ) => {
+    let options = masterOptions[masterKey] ?? [];
+    if (masterKey === "raw-material-sub-category" && parentCategoryValue) {
+      const parentOption = (masterOptions["raw-material-category"] ?? []).find((opt) => opt.label === parentCategoryValue);
+      options = options.filter((opt) => opt.parentValueId === parentOption?.id);
+    }
+
+    if (value && !options.some((opt) => opt.label === value)) {
+      options = [{ id: "current-legacy-row", label: value, code: null, is_active: true }, ...options];
+    }
+
+    return (
+      <div className="flex flex-col gap-1">
+        <select
+          value={value}
+          onChange={(event) => {
+            onChange(event.target.value);
+          }}
+          className="w-full rounded border border-slate-200 px-2 py-1 bg-white text-xs"
+        >
+          <option value="">{placeholder}</option>
+          {options.map((option) => (
+            <option key={option.id} value={option.label}>
+              {option.is_active ? option.label : `${option.label} (Not approved)`}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  };
+
   const closeMasterCreate = () => {
     setCreateMasterKey(null);
     setCreateMasterLabel("");
@@ -332,225 +411,140 @@ export default function MerchandisingOrderDetailsPage() {
     setMasterCreateError("");
   };
 
-  const handleMasterCreate = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleCreateMasterSubmit = async (e: FormEvent) => {
+    e.preventDefault();
     if (!createMasterKey || !createMasterLabel.trim()) return;
-
     setCreatingMaster(true);
     setMasterCreateError("");
+
     try {
-      const response = await fetch("/api/masters", {
+      const response = await fetch(`/api/masters/values?organizationId=${encodeURIComponent(organizationId)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          organizationId,
           moduleKey: createMasterKey,
-          label: createMasterLabel,
-          code: createMasterCode,
-          description: createMasterDescription,
+          label: createMasterLabel.trim(),
+          code: createMasterCode.trim() || null,
+          description: createMasterDescription.trim() || null,
         }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error ?? "Unable to create master value.");
-      const masters = await fetchMasterOptions(organizationId);
-      setMasterOptions(masters.options);
-      setOrderLookups(masters.orderLookups);
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Failed to create master option.");
+      }
+
+      await loadData();
       closeMasterCreate();
-    } catch (error) {
-      setMasterCreateError(error instanceof Error ? error.message : "Unable to create master value.");
+    } catch (err: any) {
+      setMasterCreateError(err.message || "Something went wrong.");
     } finally {
       setCreatingMaster(false);
     }
   };
 
-  const updateSizeRow = (index: number, field: keyof FinishedGoodsRow, value: string) => {
-    setForm((current) => ({
-      ...current,
-      rows: current.rows.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value } : row)),
-    }));
-  };
-
-  const addSizeRow = () => {
-    setForm((current) => ({ ...current, rows: [...current.rows, defaultSizeRow()] }));
-  };
-
-  const removeSizeRow = (index: number) => {
-    setForm((current) => {
-      const nextRows = current.rows.filter((_, rowIndex) => rowIndex !== index);
-      return { ...current, rows: nextRows.length ? nextRows : [defaultSizeRow()] };
-    });
-  };
-
-  const getDependentOptions = (masterKey: string, parentMasterKey?: string, parentLabel?: string) => {
-    const options = masterOptions[masterKey] ?? [];
-    if (!parentMasterKey || !parentLabel) return options;
-    const parentOption = (masterOptions[parentMasterKey] ?? []).find((option) => option.label === parentLabel);
-    return options.filter((option) => option.parentValueId === parentOption?.id);
-  };
-
-  const updateBomRow = (index: number, field: keyof BomRow, value: string) => {
-    setForm((current) => ({
-      ...current,
-      bomRows: current.bomRows.map((row, rowIndex) => {
-        if (rowIndex !== index) return row;
-        const nextRow = { ...row, [field]: value };
-        if (field === "category") nextRow.subCategory = "";
-        return nextRow;
-      }),
-    }));
-  };
-
-  const addBomRow = () => {
-    setForm((current) => ({ ...current, bomRows: [...current.bomRows, defaultBomRow()] }));
-  };
-
-  const removeBomRow = (index: number) => {
-    setForm((current) => {
-      const nextRows = current.bomRows.filter((_, rowIndex) => rowIndex !== index);
-      return { ...current, bomRows: nextRows.length ? nextRows : [defaultBomRow()] };
-    });
-  };
-
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
     setSaveError("");
 
-    const nextOrderNo =
-      form.orderNo.trim() ||
-      `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
-
-    const normalizedForm = { ...form, orderNo: nextOrderNo };
-    setSaving(true);
-
-    const payload = {
-      id: normalizedForm.id || undefined,
-      orderNo: normalizedForm.orderNo,
-      entityName: normalizedForm.entityName,
-      category: normalizedForm.category,
-      subCategory: normalizedForm.subCategory,
-      season: normalizedForm.season,
-      article: normalizedForm.article,
-      styleName: normalizedForm.styleName,
-      colors: normalizedForm.colors,
-      buyer: normalizedForm.buyer,
-      brand: normalizedForm.brand,
-      sizeGroup: normalizedForm.sizeGroup,
-      haveSizeRatio: normalizedForm.haveSizeRatio,
-      ratioOrderQty: normalizedForm.ratioOrderQty ? Number(normalizedForm.ratioOrderQty) : null,
-      orderQty: normalizedForm.orderQty ? Number(normalizedForm.orderQty) : null,
-      deliveryDate: normalizedForm.deliveryDate || null,
-      finalStatus: normalizedForm.finalStatus,
-      processStatus: normalizedForm.processStatus,
-      rows: normalizedForm.rows.map((row) => ({
-        buyerSize: row.buyerSize,
-        size: row.size,
-        beforeExcessQty: row.beforeExcessQty,
-        excess: row.excess,
-        excessQty: row.excessQty,
-        totalQty: row.totalQty,
-        buyerPoPrice: row.buyerPoPrice,
-        exchangePrice: row.exchangePrice,
-        priceInInr: row.priceInInr,
-      })),
-      bomRows: normalizedForm.bomRows.map((row) => ({
-        categoryType: row.categoryType,
-        category: row.category,
-        subCategory: row.subCategory,
-        rawMaterialName: row.rawMaterialName,
-        size: row.size,
-        consumption: row.consumption,
-        requiredQty: row.requiredQty,
-      })),
-    };
-
     try {
-      const response = await fetch("/api/orders", {
-        method: orderId ? "PUT" : "POST",
+      const endpoint = orderId 
+        ? `/api/orders/${orderId}?organizationId=${encodeURIComponent(organizationId)}`
+        : `/api/orders?organizationId=${encodeURIComponent(organizationId)}`;
+      
+      const method = orderId ? "PUT" : "POST";
+
+      const response = await fetch(endpoint, {
+        method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, organizationId, ...(orderId ? { id: orderId } : {}) }),
+        body: JSON.stringify(form),
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error ?? "Unable to save order.");
+        const errData = await response.json();
+        throw new Error(errData.error || "Failed to save order.");
       }
 
       goBack();
-    } catch (error) {
-      console.error("Save failed", error);
-      setSaveError(error instanceof Error ? error.message : "Unable to save this order.");
+    } catch (err: any) {
+      setSaveError(err.message || "Failed to save order.");
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="space-y-6 p-6 max-w-7xl mx-auto">
+    <div className="space-y-6 p-6">
       <div className="flex items-center justify-between border-b border-slate-200 pb-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{orderId ? "Edit Order" : "Create Order"}</p>
-          <h2 className="text-xl font-bold text-slate-900">{form.orderNo || "New Order"}</h2>
-        </div>
         <div className="flex items-center gap-3">
-          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
-            {form.finalStatus}
-          </span>
           <button
             type="button"
             onClick={goBack}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
           >
-            Back to Report
+            ← Back
+          </button>
+          <h2 className="text-lg font-bold text-slate-900">
+            {orderId ? "Edit Order" : "Create New Order"}
+          </h2>
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveTab("details")}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${activeTab === "details" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700"}`}
+          >
+            General Details
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("finishedGoods")}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${activeTab === "finishedGoods" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700"}`}
+          >
+            Finished Goods ({form.rows.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("bom")}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${activeTab === "bom" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700"}`}
+          >
+            Bill of Materials ({form.bomRows.length})
           </button>
         </div>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="flex gap-2 border-b border-slate-200 pb-4">
-          {[
-            { key: "details", label: "Order Details Form" },
-            { key: "finishedGoods", label: "Finished Goods Form" },
-            { key: "bom", label: "BOM Form" },
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTab(tab.key as "details" | "finishedGoods" | "bom")}
-              className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-                activeTab === tab.key
-                  ? "border-emerald-300 bg-emerald-700 text-white shadow-sm"
-                  : "border-emerald-100 bg-white text-slate-600 hover:border-emerald-300 hover:text-emerald-700"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {activeTab === "details" ? (          <div className="grid grid-cols-1 gap-4 md:grid-cols-3 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        {activeTab === "details" ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
             <label className="flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-slate-700">Order No</span>
               <input
+                type="text"
                 value={form.orderNo}
                 onChange={(event) => handleChange("orderNo", event.target.value)}
-                placeholder="Order_No"
+                placeholder="Order Number"
                 className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
               />
             </label>
+            
             {masterSelect("Entity Name", form.entityName, (value) => handleChange("entityName", value), "entity", "Select entity")}
             {masterSelect("Category", form.category, (value) => handleChange("category", value), "category", "Select category")}
             {masterSelect("Sub Category", form.subCategory, (value) => handleChange("subCategory", value), "sub-category", "Select sub category")}
             {masterSelect("Season", form.season, (value) => handleChange("season", value), "season", "Select season")}
             {masterSelect("Article", form.article, (value) => handleChange("article", value), "article", "Select article")}
+
             <label className="flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-slate-700">Style Name</span>
               <input
+                type="text"
                 value={form.styleName}
                 onChange={(event) => handleChange("styleName", event.target.value)}
-                placeholder="Style_Name"
+                placeholder="Style Name"
                 className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
               />
             </label>
+
             {masterSelect("Colors", form.colors, (value) => handleChange("colors", value), "color", "Select color")}
             {masterSelect("Buyer", form.buyer, (value) => handleChange("buyer", value), "buyer", "Select buyer")}
             {masterSelect("Brand", form.brand, (value) => handleChange("brand", value), "brand", "Select brand")}
@@ -560,7 +554,7 @@ export default function MerchandisingOrderDetailsPage() {
               <input
                 type="checkbox"
                 checked={form.haveSizeRatio}
-                onChange={(event) => setForm((current) => ({ ...current, haveSizeRatio: event.target.checked }))}
+                onChange={(event) => handleChange("haveSizeRatio", event.target.checked)}
                 className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
               />
               <span className="text-xs font-semibold text-slate-700">Have Size Ratio</span>
@@ -653,16 +647,7 @@ export default function MerchandisingOrderDetailsPage() {
                     <tr key={`${index}-${row.size || "row"}`}>
                       <td className="p-2"><input value={row.buyerSize} onChange={(event) => updateSizeRow(index, "buyerSize", event.target.value)} placeholder="Buyer Size" className="w-full rounded border border-slate-200 px-2 py-1" /></td>
                       <td className="p-2">
-                        <select
-                          value={row.size}
-                          onChange={(event) => updateSizeRow(index, "size", event.target.value)}
-                          className="w-full rounded border border-slate-200 px-2 py-1 bg-white"
-                        >
-                          <option value="">Select size</option>
-                          {(masterOptions.size ?? []).map((option) => (
-                            <option key={option.id} value={option.label}>{option.label}</option>
-                          ))}
-                        </select>
+                        {renderMasterSelect(row.size, (val) => updateSizeRow(index, "size", val), "size", "Select size")}
                       </td>
                       <td className="p-2"><input type="number" value={row.beforeExcessQty} onChange={(event) => updateSizeRow(index, "beforeExcessQty", event.target.value)} placeholder="0" className="w-full rounded border border-slate-200 px-2 py-1" /></td>
                       <td className="p-2"><input type="number" value={row.excess} onChange={(event) => updateSizeRow(index, "excess", event.target.value)} placeholder="0" className="w-full rounded border border-slate-200 px-2 py-1" /></td>
@@ -695,11 +680,81 @@ export default function MerchandisingOrderDetailsPage() {
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-slate-200 text-slate-500">
                   <tr>
-                    <th className="p-2">Raw Material Type</th>
-                    <th className="p-2">Raw Material Category</th>
-                    <th className="p-2">Raw Material Sub Category</th>
-                    <th className="p-2">Raw Material Name</th>
-                    <th className="p-2">Size</th>
+                    <th className="p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span>Raw Material Type</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCreateMasterKey("raw-material-type");
+                            setMasterCreateError("");
+                          }}
+                          className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
+                        >
+                          + New
+                        </button>
+                      </div>
+                    </th>
+                    <th className="p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span>Raw Material Category</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCreateMasterKey("raw-material-category");
+                            setMasterCreateError("");
+                          }}
+                          className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
+                        >
+                          + New
+                        </button>
+                      </div>
+                    </th>
+                    <th className="p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span>Raw Material Sub Category</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCreateMasterKey("raw-material-sub-category");
+                            setMasterCreateError("");
+                          }}
+                          className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
+                        >
+                          + New
+                        </button>
+                      </div>
+                    </th>
+                    <th className="p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span>Raw Material Name</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCreateMasterKey("raw-material");
+                            setMasterCreateError("");
+                          }}
+                          className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
+                        >
+                          + New
+                        </button>
+                      </div>
+                    </th>
+                    <th className="p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span>Size</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCreateMasterKey("size");
+                            setMasterCreateError("");
+                          }}
+                          className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
+                        >
+                          + New
+                        </button>
+                      </div>
+                    </th>
                     <th className="p-2">Consumption</th>
                     <th className="p-2">Required Qty</th>
                     <th className="p-2">Action</th>
@@ -709,44 +764,19 @@ export default function MerchandisingOrderDetailsPage() {
                   {form.bomRows.map((row, index) => (
                     <tr key={`${index}-${row.rawMaterialName || "row"}`}>
                       <td className="p-2">
-                        <select value={row.categoryType} onChange={(event) => updateBomRow(index, "categoryType", event.target.value)} className="w-full rounded border border-slate-200 px-2 py-1 bg-white">
-                          <option value="">Select raw material type</option>
-                          {(masterOptions["raw-material-type"] ?? []).map((option) => (
-                            <option key={option.id} value={option.label}>{option.label}</option>
-                          ))}
-                        </select>
+                        {renderMasterSelect(row.categoryType, (val) => updateBomRow(index, "categoryType", val), "raw-material-type", "Select type")}
                       </td>
                       <td className="p-2">
-                        <select value={row.category} onChange={(event) => updateBomRow(index, "category", event.target.value)} className="w-full rounded border border-slate-200 px-2 py-1 bg-white">
-                          <option value="">Select raw material category</option>
-                          {(masterOptions["raw-material-category"] ?? []).map((option) => (
-                            <option key={option.id} value={option.label}>{option.label}</option>
-                          ))}
-                        </select>
+                        {renderMasterSelect(row.category, (val) => updateBomRow(index, "category", val), "raw-material-category", "Select category")}
                       </td>
                       <td className="p-2">
-                        <select value={row.subCategory} onChange={(event) => updateBomRow(index, "subCategory", event.target.value)} className="w-full rounded border border-slate-200 px-2 py-1 bg-white">
-                          <option value="">Select raw material sub category</option>
-                          {getDependentOptions("raw-material-sub-category", "raw-material-category", row.category).map((option) => (
-                            <option key={option.id} value={option.label}>{option.label}</option>
-                          ))}
-                        </select>
+                        {renderMasterSelect(row.subCategory, (val) => updateBomRow(index, "subCategory", val), "raw-material-sub-category", "Select sub category", row.category)}
                       </td>
                       <td className="p-2">
-                        <select value={row.rawMaterialName} onChange={(event) => updateBomRow(index, "rawMaterialName", event.target.value)} className="w-full rounded border border-slate-200 px-2 py-1 bg-white">
-                          <option value="">Select raw material</option>
-                          {(masterOptions["raw-material"] ?? []).map((option) => (
-                            <option key={option.id} value={option.label}>{option.label}</option>
-                          ))}
-                        </select>
+                        {renderMasterSelect(row.rawMaterialName, (val) => updateBomRow(index, "rawMaterialName", val), "raw-material", "Select raw material")}
                       </td>
                       <td className="p-2">
-                        <select value={row.size} onChange={(event) => updateBomRow(index, "size", event.target.value)} className="w-full rounded border border-slate-200 px-2 py-1 bg-white">
-                          <option value="">Select size</option>
-                          {(masterOptions.size ?? []).map((option) => (
-                            <option key={option.id} value={option.label}>{option.label}</option>
-                          ))}
-                        </select>
+                        {renderMasterSelect(row.size, (val) => updateBomRow(index, "size", val), "size", "Select size")}
                       </td>
                       <td className="p-2"><input type="number" value={row.consumption} onChange={(event) => updateBomRow(index, "consumption", event.target.value)} placeholder="0.00" className="w-full rounded border border-slate-200 px-2 py-1" /></td>
                       <td className="p-2"><input type="number" value={row.requiredQty} onChange={(event) => updateBomRow(index, "requiredQty", event.target.value)} placeholder="0.00" className="w-full rounded border border-slate-200 px-2 py-1" /></td>
@@ -759,72 +789,59 @@ export default function MerchandisingOrderDetailsPage() {
           </div>
         )}
 
-        {saveError ? <div className="rounded-lg bg-red-50 p-3 text-xs text-red-600">{saveError}</div> : null}
-
-        <div className="flex items-center justify-end gap-3 border-t border-slate-200 pt-4">
+        <div className="flex justify-end gap-3 pt-4 border-t border-slate-200">
+          {saveError ? <p className="text-xs text-red-600 self-center">{saveError}</p> : null}
           <button
             type="button"
             onClick={goBack}
-            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
           >
-            Back to Report
-          </button>
-          <button
-            type="button"
-            onClick={() => setForm({ ...emptyForm, rows: [defaultSizeRow()], bomRows: [defaultBomRow()] })}
-            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-          >
-            Reset
+            Cancel
           </button>
           <button
             type="submit"
             disabled={saving}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
+            className="rounded-lg bg-emerald-600 px-5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
           >
             {saving ? "Saving..." : orderId ? "Update Order" : "Save Order"}
           </button>
         </div>
       </form>
 
+      {/* Master creation modal */}
       {createMasterKey ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Create master</p>
-                <h3 className="text-base font-bold text-slate-900">Add {createMasterKey.replace(/-/g, " ")}</h3>
-              </div>
-              <button type="button" onClick={closeMasterCreate} className="text-slate-400 hover:text-slate-600">
-                Close
-              </button>
-            </div>
-
-            <form onSubmit={handleMasterCreate} className="mt-4 space-y-4">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-semibold text-slate-700">Name</span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl space-y-4">
+            <h3 className="text-sm font-bold text-slate-900">Add New Master: {createMasterKey}</h3>
+            <form onSubmit={handleCreateMasterSubmit} className="space-y-4">
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-semibold text-slate-700">Label</span>
                 <input
-                  value={createMasterLabel}
-                  onChange={(event) => setCreateMasterLabel(event.target.value)}
+                  type="text"
                   required
-                  autoFocus
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 focus:border-emerald-500 focus:outline-none"
+                  value={createMasterLabel}
+                  onChange={(e) => setCreateMasterLabel(e.target.value)}
+                  placeholder="Enter name..."
+                  className="rounded border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:border-emerald-500"
                 />
               </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-semibold text-slate-700">Code</span>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-semibold text-slate-700">Code (Optional)</span>
                 <input
+                  type="text"
                   value={createMasterCode}
-                  onChange={(event) => setCreateMasterCode(event.target.value)}
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 focus:border-emerald-500 focus:outline-none"
+                  onChange={(e) => setCreateMasterCode(e.target.value)}
+                  placeholder="Enter code..."
+                  className="rounded border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:border-emerald-500"
                 />
               </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-semibold text-slate-700">Description</span>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-semibold text-slate-700">Description (Optional)</span>
                 <textarea
                   value={createMasterDescription}
-                  onChange={(event) => setCreateMasterDescription(event.target.value)}
-                  rows={3}
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 focus:border-emerald-500 focus:outline-none"
+                  onChange={(e) => setCreateMasterDescription(e.target.value)}
+                  placeholder="Optional description..."
+                  className="rounded border border-slate-200 px-3 py-2 text-xs focus:outline-none focus:border-emerald-500"
                 />
               </label>
               {masterCreateError ? <p className="text-xs text-red-600">{masterCreateError}</p> : null}
@@ -832,16 +849,16 @@ export default function MerchandisingOrderDetailsPage() {
                 <button
                   type="button"
                   onClick={closeMasterCreate}
-                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  className="rounded border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={creatingMaster}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                  className="rounded bg-emerald-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                 >
-                  {creatingMaster ? "Creating..." : "Create master"}
+                  {creatingMaster ? "Creating..." : "Create Option"}
                 </button>
               </div>
             </form>

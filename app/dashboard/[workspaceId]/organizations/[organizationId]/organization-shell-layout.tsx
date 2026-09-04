@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { MasterModuleShell } from "@/components/master-data/master-module-wrapper";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
+import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
 
 export default async function OrganizationShellLayout({
   children,
@@ -14,7 +15,11 @@ export default async function OrganizationShellLayout({
 }) {
   const { workspaceId, organizationId } = await params;
   const user = await requireSessionUser();
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  
+  const [organization, businessTypes] = await Promise.all([
+    getOrganizationForUser(user.id, organizationId),
+    listActiveBusinessTypes(),
+  ]);
 
   if (!organization) {
     notFound();
@@ -25,6 +30,7 @@ export default async function OrganizationShellLayout({
       workspaceId={workspaceId}
       organizationId={organizationId}
       organizationName={organization.organization_name}
+      businessTypes={businessTypes}
     >
       {children}
     </MasterModuleShell>
