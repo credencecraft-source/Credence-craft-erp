@@ -133,7 +133,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                   >
                     <option value="">Select organization...</option>
                     {clients.map((c: any) => {
-                      const clientEmail = c.email || c.workspaceUser?.email || "";
+                      const clientEmail = c.workspaceUser?.email || "";
                       return (
                         <option key={c.id} value={c.id}>
                           {c.organization_name} {clientEmail ? `- ${clientEmail}` : ""}
@@ -224,7 +224,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
               {subscriptions.map((sub: any) => {
                 const matchedClient = clients.find((c: any) => c.id === sub.organizationId);
                 const orgName = sub.organization_name || matchedClient?.organization_name || sub.organizationId;
-                const clientEmail = matchedClient?.email || matchedClient?.workspaceUser?.email || "";
+                const clientEmail = matchedClient?.workspaceUser?.email || "";
                 const orgEmail = clientEmail ? ` - ${clientEmail}` : "";
                 const endDate = sub.endDate || sub.expireDate || "—";
 
