@@ -3,6 +3,10 @@ import { listOrganizationClients } from "@/lib/services/platform/client-service"
 import { listPlans } from "@/lib/services/platform/plan-service";
 import { listBusinessTypes } from "@/lib/services/platform/business-type-service";
 
+declare global {
+  var mockSubscriptions: any[] | undefined;
+}
+
 global.mockSubscriptions = global.mockSubscriptions || [];
 
 export async function listSubscriptions() {
@@ -10,7 +14,7 @@ export async function listSubscriptions() {
   const plans = await listPlans();
   const businessTypes = await listBusinessTypes();
 
-  return global.mockSubscriptions.map((sub: any) => {
+  return (global.mockSubscriptions || []).map((sub: any) => {
     const client = clients.find((c: any) => c.id === sub.organizationId);
     const bt = businessTypes.find((b: any) => b.id === sub.businessTypeId);
     const plan = plans.find((p: any) => p.id === sub.planId);
@@ -35,6 +39,7 @@ export async function createSubscription(data: {
     ...data,
   };
   
+  global.mockSubscriptions = global.mockSubscriptions || [];
   global.mockSubscriptions.push(newSub);
   return newSub;
 }
@@ -48,6 +53,7 @@ export async function updateSubscription(
     startDate: string;
   }
 ) {
+  global.mockSubscriptions = global.mockSubscriptions || [];
   const index = global.mockSubscriptions.findIndex((sub: any) => sub.id === id);
   if (index === -1) throw new Error("Subscription not found.");
 
@@ -59,6 +65,7 @@ export async function updateSubscription(
 }
 
 export async function deleteSubscription(id: string) {
+  global.mockSubscriptions = global.mockSubscriptions || [];
   const index = global.mockSubscriptions.findIndex((sub: any) => sub.id === id);
   if (index === -1) throw new Error("Subscription not found.");
 
@@ -67,6 +74,7 @@ export async function deleteSubscription(id: string) {
 }
 
 export async function duplicateSubscription(id: string) {
+  global.mockSubscriptions = global.mockSubscriptions || [];
   const sub = global.mockSubscriptions.find((s: any) => s.id === id);
   if (!sub) throw new Error("Subscription not found.");
 
