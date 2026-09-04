@@ -68,7 +68,7 @@ export async function POST(request: Request) {
 
     const definitionExists = MASTER_DEFINITIONS.some((definition) => definition.key === moduleKey);
     if (!definitionExists) {
-      const dbDefinition = await prisma.masterDefinition?.findFirst?.({
+      const dbDefinition = await (prisma as any).masterDefinition?.findFirst?.({
         where: { organizationId, moduleKey }
       });
       if (!dbDefinition) {
