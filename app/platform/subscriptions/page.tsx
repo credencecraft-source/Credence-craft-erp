@@ -42,7 +42,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
     const endDate = String(formData.get("endDate") || "");
 
     try {
-      await createSubscription({ organizationId, businessTypeId, planId, startDate, endDate });
+      await createSubscription({ organizationId, businessTypeId, planId, startDate, expireDate: endDate } as any);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to create subscription.";
       redirect(`/platform/subscriptions?error=${encodeURIComponent(message)}`);
@@ -61,7 +61,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
     const endDate = String(formData.get("endDate") || "");
 
     try {
-      await updateSubscription(id, { organizationId, businessTypeId, planId, startDate, endDate });
+      await updateSubscription(id, { organizationId, businessTypeId, planId, startDate, expireDate: endDate } as any);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to update subscription.";
       redirect(`/platform/subscriptions?error=${encodeURIComponent(message)}`);
@@ -132,11 +132,14 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                     className="w-full rounded-lg border border-slate-300 p-2 text-xs bg-white text-slate-800"
                   >
                     <option value="">Select organization...</option>
-                    {clients.map((c: any) => (
-                      <option key={c.id} value={c.id}>
-                        {c.organization_name} {c.email ? `- ${c.email}` : ""}
-                      </option>
-                    ))}
+                    {clients.map((c: any) => {
+                      const clientEmail = c.email || c.workspaceUser?.email || "";
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.organization_name} {clientEmail ? `- ${clientEmail}` : ""}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 
@@ -221,7 +224,8 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
               {subscriptions.map((sub: any) => {
                 const matchedClient = clients.find((c: any) => c.id === sub.organizationId);
                 const orgName = sub.organization_name || matchedClient?.organization_name || sub.organizationId;
-                const orgEmail = matchedClient?.email ? ` - ${matchedClient.email}` : "";
+                const clientEmail = matchedClient?.email || matchedClient?.workspaceUser?.email || "";
+                const orgEmail = clientEmail ? ` - ${clientEmail}` : "";
                 const endDate = sub.endDate || sub.expireDate || "—";
 
                 return (
