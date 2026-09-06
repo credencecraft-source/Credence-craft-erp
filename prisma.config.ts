@@ -6,7 +6,7 @@ dotenv.config();
 type EnvValue = string | undefined;
 
 export default defineConfig({
-  schema: "prisma/schema.prisma",
+  schema: "prisma/masters/master.prisma",
   migrations: {
     path: "prisma/migrations",
   },
@@ -14,3 +14,4 @@ export default defineConfig({
     url: (process.env["DIRECT_URL"] as EnvValue) ?? (process.env["DATABASE_URL"] as EnvValue) ?? "",
   },
 });
+
