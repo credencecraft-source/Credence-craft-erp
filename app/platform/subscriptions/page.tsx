@@ -27,31 +27,12 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
   
   const clients = await listOrganizationClients();
   const plans = await listPlans();
-  const allBusinessTypes = await listBusinessTypes();
-  const activeBusinessTypes = allBusinessTypes.filter((bt: any) => (bt.isActive ?? true) === true);
+  const businessTypes = await listBusinessTypes();
   const subscriptions = await listSubscriptions();
 
-  const editingSubscription = editId ? subscriptions.find((s: any) => s.id === editId) : null;
+  const editingSub = editId ? subscriptions.find((s: any) => s.id === editId) : null;
 
-  async function createSubscriptionAction(formData: FormData) {
-    "use server";
-    const organizationId = String(formData.get("organizationId") || "");
-    const businessTypeId = String(formData.get("businessTypeId") || "");
-    const planId = String(formData.get("planId") || "");
-    const startDate = String(formData.get("startDate") || "");
-    const endDate = String(formData.get("endDate") || "");
-
-    try {
-      await createSubscription({ organizationId, businessTypeId, planId, startDate, expireDate: endDate } as any);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to create subscription.";
-      redirect(`/platform/subscriptions?error=${encodeURIComponent(message)}`);
-    }
-
-    redirect(`/platform/subscriptions?success=${encodeURIComponent("Subscription created successfully.")}`);
-  }
-
-  async function updateSubscriptionAction(formData: FormData) {
+  async function saveSubscription(formData: FormData) {
     "use server";
     const id = String(formData.get("id") || "");
     const organizationId = String(formData.get("organizationId") || "");
@@ -59,147 +40,151 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
     const planId = String(formData.get("planId") || "");
     const startDate = String(formData.get("startDate") || "");
     const endDate = String(formData.get("endDate") || "");
+    const paymentStatus = String(formData.get("paymentStatus") || "pending");
+    const serviceStatus = String(formData.get("serviceStatus") || "active");
+
+    const client = clients.find((c: any) => c.id === organizationId);
+    const organizationName = client?.organizationName || client?.name || "Unnamed";
 
     try {
-      await updateSubscription(id, { organizationId, businessTypeId, planId, startDate, expireDate: endDate } as any);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to update subscription.";
-      redirect(`/platform/subscriptions?error=${encodeURIComponent(message)}`);
+      const payload = {
+        organizationId,
+        organizationName,
+        organization_name: organizationName, 
+        businessTypeId,
+        planId,
+        startDate,
+        endDate,
+        paymentStatus,
+        serviceStatus,
+      };
+
+      if (id) {
+        await updateSubscription(id, payload);
+      } else {
+        await createSubscription(payload);
+      }
+    } catch (error: any) {
+      redirect(`/platform/subscriptions?error=${encodeURIComponent(error.message || "Failed to save")}`);
     }
 
-    redirect(`/platform/subscriptions?success=${encodeURIComponent("Subscription updated successfully.")}`);
+    redirect(`/platform/subscriptions?success=${encodeURIComponent("Saved successfully.")}`);
   }
 
-  async function deleteSubscriptionAction(formData: FormData) {
+  async function updateStatus(formData: FormData) {
     "use server";
     const id = String(formData.get("id") || "");
-
     try {
-      await deleteSubscription(id);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to delete subscription.";
-      redirect(`/platform/subscriptions?error=${encodeURIComponent(message)}`);
+      await updateSubscription(id, { paymentStatus: "paid", serviceStatus: "active" });
+    } catch (error: any) {
+      redirect(`/platform/subscriptions?error=${encodeURIComponent(error.message)}`);
     }
+    redirect(`/platform/subscriptions?success=${encodeURIComponent("Status updated.")}`);
+  }
 
-    redirect(`/platform/subscriptions?success=${encodeURIComponent("Subscription deleted successfully.")}`);
+  async function remove(formData: FormData) {
+    "use server";
+    try {
+      await deleteSubscription(String(formData.get("id")));
+    } catch (error: any) {
+      redirect(`/platform/subscriptions?error=${encodeURIComponent(error.message)}`);
+    }
+    redirect(`/platform/subscriptions?success=${encodeURIComponent("Deleted successfully.")}`);
   }
 
   return (
-    <Page className="max-w-5xl">
+    <Page className="max-w-7xl">
       <Section className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <p className="erp-eyebrow">Platform Admin</p>
             <h1 className="text-2xl font-bold text-slate-900">Subscription Management</h1>
-            <p className="text-sm text-slate-600">Overview of all active client subscriptions.</p>
           </div>
-          <a
-            href="/platform/subscriptions?modal=open"
-            className="px-4 py-2 rounded-xl bg-emerald-600 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-colors"
-          >
+          <a href="/platform/subscriptions?modal=open" className="px-4 py-2 rounded-xl bg-emerald-600 text-xs font-semibold text-white">
             + Add Subscription
           </a>
         </div>
 
-        {resolvedSearch.error && (
-          <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs font-medium text-red-700">{resolvedSearch.error}</p>
-        )}
-        {resolvedSearch.success && (
-          <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs font-medium text-emerald-700">{resolvedSearch.success}</p>
-        )}
+        {resolvedSearch.error && <p className="p-3 bg-red-50 text-red-700 text-xs rounded-xl">{resolvedSearch.error}</p>}
+        {resolvedSearch.success && <p className="p-3 bg-emerald-50 text-emerald-700 text-xs rounded-xl">{resolvedSearch.success}</p>}
 
         {(isModalOpen || editId) && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-            <Card className="w-full max-w-md p-6 bg-white shadow-xl space-y-4 relative">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h2 className="text-sm font-bold text-slate-900">
-                  {editId ? "Edit Subscription" : "Add New Subscription"}
-                </h2>
-                <a href="/platform/subscriptions" className="text-xs font-semibold text-slate-400 hover:text-slate-700">
-                  ✕
-                </a>
+            <Card className="w-full max-w-md p-6 bg-white space-y-4">
+              <div className="flex justify-between border-b pb-3">
+                <h2 className="text-sm font-bold">{editId ? "Edit Subscription" : "New Subscription"}</h2>
+                <a href="/platform/subscriptions" className="text-xs text-slate-400">✕</a>
               </div>
 
-              <form action={editId ? updateSubscriptionAction : createSubscriptionAction} className="space-y-4">
+              <form action={saveSubscription} className="space-y-3">
                 {editId && <input type="hidden" name="id" value={editId} />}
                 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Organization</label>
-                  <select 
-                    name="organizationId" 
-                    required 
-                    defaultValue={editingSubscription?.organizationId || ""}
-                    className="w-full rounded-lg border border-slate-300 p-2 text-xs bg-white text-slate-800"
-                  >
-                    <option value="">Select organization...</option>
-                    {clients.map((c: any) => {
-                      const clientEmail = c.workspaceUser?.email || "";
-                      return (
-                        <option key={c.id} value={c.id}>
-                          {c.organization_name} {clientEmail ? `- ${clientEmail}` : ""}
-                        </option>
-                      );
-                    })}
+                  <label className="block text-xs font-semibold mb-1">Organization</label>
+                  <select name="organizationId" required defaultValue={editingSub?.organizationId} className="w-full border p-2 text-xs rounded-lg">
+                    <option value="">Select...</option>
+                    {clients.map((c: any) => (
+                      <option key={c.id} value={c.id}>{c.organizationName || c.name}</option>
+                    ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Business Type</label>
-                  <select 
-                    name="businessTypeId" 
-                    required 
-                    defaultValue={editingSubscription?.businessTypeId || ""}
-                    className="w-full rounded-lg border border-slate-300 p-2 text-xs bg-white text-slate-800"
-                  >
-                    <option value="">Select business type...</option>
-                    {activeBusinessTypes.map((bt: any) => (
+                  <label className="block text-xs font-semibold mb-1">Business Type</label>
+                  <select name="businessTypeId" required defaultValue={editingSub?.businessTypeId} className="w-full border p-2 text-xs rounded-lg">
+                    <option value="">Select...</option>
+                    {businessTypes.map((bt: any) => (
                       <option key={bt.id} value={bt.id}>{bt.name}</option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Plan</label>
-                  <select 
-                    name="planId" 
-                    required 
-                    defaultValue={editingSubscription?.planId || ""}
-                    className="w-full rounded-lg border border-slate-300 p-2 text-xs bg-white text-slate-800"
-                  >
-                    <option value="">Select plan...</option>
+                  <label className="block text-xs font-semibold mb-1">Plan</label>
+                  <select name="planId" required defaultValue={editingSub?.planId} className="w-full border p-2 text-xs rounded-lg">
+                    <option value="">Select...</option>
                     {plans.map((p: any) => (
-                      <option key={p.id} value={p.id}>{p.plan_name}</option>
+                      <option key={p.id} value={p.id}>{p.name || p.plan_name}</option>
                     ))}
                   </select>
                 </div>
 
-                <div>
+                <div className="grid grid-cols-2 gap-2">
                   <Input 
                     label="Start Date" 
                     name="startDate" 
                     type="date" 
                     required 
-                    defaultValue={editingSubscription?.startDate || ""}
+                    defaultValue={(editingSub?.startDate || editingSub?.start_date)?.split("T")[0]} 
                   />
-                </div>
-
-                <div>
                   <Input 
                     label="Expire Date" 
                     name="endDate" 
                     type="date" 
                     required 
-                    defaultValue={editingSubscription?.endDate || editingSubscription?.expireDate || ""}
+                    defaultValue={(editingSub?.endDate || editingSub?.end_date)?.split("T")[0]} 
                   />
                 </div>
 
-                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-                  <a
-                    href="/platform/subscriptions"
-                    className="px-3 py-2 rounded-lg border border-slate-300 text-xs font-semibold text-slate-600 bg-white hover:bg-slate-50"
-                  >
-                    Cancel
-                  </a>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Payment Status</label>
+                    <select name="paymentStatus" defaultValue={editingSub?.paymentStatus || editingSub?.payment_status || "pending"} className="w-full border p-2 text-xs rounded-lg">
+                      <option value="pending">Pending</option>
+                      <option value="paid">Paid</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Service Status</label>
+                    <select name="serviceStatus" defaultValue={editingSub?.serviceStatus || editingSub?.service_status || "active"} className="w-full border p-2 text-xs rounded-lg">
+                      <option value="active">Active</option>
+                      <option value="inactive">Inactive</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <a href="/platform/subscriptions" className="px-3 py-2 border text-xs rounded-lg">Cancel</a>
                   <Button type="submit">Save</Button>
                 </div>
               </form>
@@ -207,60 +192,56 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
           </div>
         )}
 
-        <Card className="p-6 space-y-4">
-          <h2 className="text-sm font-bold text-slate-800 border-b border-slate-100 pb-3">Active Subscriptions Report</h2>
+        <Card className="p-6">
           <Table>
-            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            <thead className="bg-slate-50 text-xs text-slate-500 uppercase">
               <tr>
-                <th className="px-4 py-3">Organization</th>
-                <th className="px-4 py-3">Business Type</th>
-                <th className="px-4 py-3">Plan</th>
-                <th className="px-4 py-3">Start Date</th>
-                <th className="px-4 py-3">Expire Date</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+                <th className="px-3 py-3">Org ID</th>
+                <th className="px-3 py-3">Org Name</th>
+                <th className="px-3 py-3">Business Type</th>
+                <th className="px-3 py-3">Plan Name</th>
+                <th className="px-3 py-3">Plan ID</th>
+                <th className="px-3 py-3">Duration</th>
+                <th className="px-3 py-3">Payment</th>
+                <th className="px-3 py-3">Service</th>
+                <th className="px-3 py-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 text-xs">
+            <tbody className="divide-y text-xs">
               {subscriptions.map((sub: any) => {
-                const matchedClient = clients.find((c: any) => c.id === sub.organizationId);
-                const orgName = sub.organization_name || matchedClient?.organization_name || sub.organizationId;
-                const clientEmail = matchedClient?.workspaceUser?.email || "";
-                const orgEmail = clientEmail ? ` - ${clientEmail}` : "";
-                const endDate = sub.endDate || sub.expireDate || "—";
+                const bt = businessTypes.find((b: any) => b.id === sub.businessTypeId || b.id === sub.business_type_id);
+                const plan = plans.find((p: any) => p.id === sub.planId || p.id === sub.plan_id);
 
                 return (
-                  <tr key={sub.id} className="hover:bg-slate-50/50">
-                    <td className="px-4 py-3 font-bold text-slate-900">
-                      {orgName}{orgEmail}
+                  <tr key={sub.id} className="hover:bg-slate-50">
+                    <td className="px-3 py-3 font-mono text-[11px]">{sub.organizationId || sub.organization_id}</td>
+                    <td className="px-3 py-3 font-bold text-slate-900">
+                      {sub.organization_name || sub.organizationName || "—"}
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{sub.business_type_name || sub.businessTypeId}</td>
-                    <td className="px-4 py-3 text-slate-600">{sub.plan_name || sub.planId}</td>
-                    <td className="px-4 py-3 text-slate-600">{sub.startDate}</td>
-                    <td className="px-4 py-3 text-slate-600">{endDate}</td>
-                    <td className="px-4 py-3 text-right space-x-2">
-                      <a 
-                        href={`/platform/subscriptions?edit=${sub.id}`}
-                        className="text-emerald-600 hover:underline font-semibold"
-                      >
-                        Edit
-                      </a>
-                      <form action={deleteSubscriptionAction} className="inline">
+                    <td className="px-3 py-3">{bt?.name || "—"}</td>
+                    <td className="px-3 py-3">{plan?.name || plan?.plan_name || "—"}</td>
+                    <td className="px-3 py-3 font-mono text-[11px]">{sub.planId || sub.plan_id || "—"}</td>
+                    <td className="px-3 py-3">
+                      {(sub.startDate || sub.start_date)?.split("T")[0] || "—"} to {(sub.endDate || sub.end_date)?.split("T")[0] || "—"}
+                    </td>
+                    <td className="px-3 py-3"><span className="uppercase font-bold">{sub.paymentStatus || sub.payment_status}</span></td>
+                    <td className="px-3 py-3"><span className="uppercase font-bold">{sub.serviceStatus || sub.service_status || "active"}</span></td>
+                    <td className="px-3 py-3 text-right space-x-2">
+                      {(sub.paymentStatus || sub.payment_status) !== "paid" && (
+                        <form action={updateStatus} className="inline">
+                          <input type="hidden" name="id" value={sub.id} />
+                          <button className="text-emerald-600 font-semibold">Activate</button>
+                        </form>
+                      )}
+                      <a href={`/platform/subscriptions?edit=${sub.id}`} className="text-emerald-600 font-semibold">Edit</a>
+                      <form action={remove} className="inline">
                         <input type="hidden" name="id" value={sub.id} />
-                        <button type="submit" className="text-red-600 hover:underline font-semibold bg-transparent border-0 cursor-pointer p-0">
-                          Delete
-                        </button>
+                        <button className="text-red-600 font-semibold">Delete</button>
                       </form>
                     </td>
                   </tr>
                 );
               })}
-              {subscriptions.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-slate-400 italic">
-                    No subscriptions created yet. Click "+ Add Subscription" to create one.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </Table>
         </Card>

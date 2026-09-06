@@ -863,6 +863,34 @@ model FinishedGoodsSizeWise {
   @@index([orderId])
   @@map("finished_goods_size_wise")
 }
+model Subscription {
+  id                 String    @id @default(cuid())
+  organization_id    String
+  organization_name  String?   // <--- Add this line here
+  business_type_id   String?
+  plan_id            String
+  start_date         DateTime  @default(now())
+  end_date           DateTime?
+  payment_status     String    @default("PAID") @db.VarChar(50)
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  @@index([organization_id])
+  @@index([plan_id])
+  @@index([business_type_id])
+  @@map("subscriptions")
+}
+model plan_restrictions {
+  id               String   @id @default(uuid())
+  plan_id          String
+  master_module    String
+  main_module      String
+  sub_module       String
+  action_level     String
+  url_pattern      String
+  restriction_type String   @default("block")
+  created_at       DateTime @default(now())
+}
 
 model BillOfMaterialItem {
   id              String             @id @default(cuid())

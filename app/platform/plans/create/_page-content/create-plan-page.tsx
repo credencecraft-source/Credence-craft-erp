@@ -6,7 +6,7 @@ import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
-import { createPlan } from "@/lib/services/platform/plan-service";
+import { createPlan, listPlans } from "@/lib/services/platform/plan-service";
 import { listBusinessTypes } from "@/lib/services/platform/business-type-service";
 
 export default async function CreatePlanPage({
@@ -22,22 +22,41 @@ export default async function CreatePlanPage({
     "use server";
 
     const businessTypeId = String(formData.get("businessTypeId") || "").trim();
-    const planName = String(formData.get("planName") || "").trim();
+    const rawPlanName = String(formData.get("planName") || "").trim();
     const description = String(formData.get("description") || "").trim();
-    const priceRaw = String(formData.get("price") || "").trim();
+    const isFree = formData.get("isFree") === "on";
+    const priceRaw = isFree ? "0" : String(formData.get("price") || "").trim();
     const billingCycle = String(formData.get("billingCycle") || "monthly").trim();
+
+    if (isFree && businessTypeId) {
+      const allPlans = await listPlans();
+      const freePlanExists = allPlans.some(
+        (p) => p.business_type_id === businessTypeId && (!p.price || Number(p.price) === 0)
+      );
+      if (freePlanExists) {
+        redirect(`/platform/plans/create?error=${encodeURIComponent("A free plan already exists for this business type.")}`);
+      }
+    }
+
+    const selectedBt = businessTypes.find((bt) => bt.id === businessTypeId);
+    const planName = selectedBt ? `${selectedBt.name} - ${rawPlanName}` : rawPlanName;
+
+    let errorMessage: string | null = null;
 
     try {
       await createPlan({
         planName,
-        businessTypeId,
+        businessTypeId: businessTypeId !== "" ? businessTypeId : undefined,
         description,
-        price: priceRaw ? Number(priceRaw) : undefined,
+        price: Number(priceRaw),
         billingCycle,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to create plan.";
-      redirect(`/platform/plans/create?error=${encodeURIComponent(message)}`);
+      errorMessage = error instanceof Error ? error.message : "Unable to create plan.";
+    }
+
+    if (errorMessage) {
+      redirect(`/platform/plans/create?error=${encodeURIComponent(errorMessage)}`);
     }
 
     redirect("/platform/plans");
@@ -71,6 +90,19 @@ export default async function CreatePlanPage({
 
             <Input label="Tier / Plan Name" name="planName" required placeholder="Standard or 50K Units" />
             <Input label="Description" name="description" placeholder="Up to 5,000 units and 3 user seats." />
+            
+            <div className="flex items-center gap-2 py-1">
+              <input
+                type="checkbox"
+                id="isFree"
+                name="isFree"
+                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+              />
+              <label htmlFor="isFree" className="text-xs font-semibold text-slate-700">
+                This is a free plan (Only one free plan allowed per business type)
+              </label>
+            </div>
+
             <Input label="Price" name="price" type="number" step="0.01" placeholder="7000" />
             <Input label="Billing cycle" name="billingCycle" defaultValue="monthly" placeholder="monthly" />
 

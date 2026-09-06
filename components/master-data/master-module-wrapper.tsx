@@ -1,15 +1,15 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState, useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronDown,
-  ChevronRight,
   Layers,
   ArrowLeft,
   Sparkles,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 
 import { ERP_MODULES } from "@/components/erp/erp-config-registry";
@@ -20,6 +20,7 @@ type SubItem = {
   label: string;
   href: string;
   count?: number;
+  children?: SubItem[];
 };
 
 type BusinessTypeItem = {
@@ -27,7 +28,7 @@ type BusinessTypeItem = {
   name: string;
 };
 
-type MasterModuleShellProps = {
+type MasterModuleWrapperProps = {
   workspaceId: string;
   organizationId: string;
   organizationName: string;
@@ -38,39 +39,44 @@ type MasterModuleShellProps = {
   children: ReactNode;
   modules?: SubItem[];
   businessTypes?: BusinessTypeItem[];
+  onLogout?: () => void | Promise<void>;
 };
 
-export function MasterModuleShell({
+export function MasterModuleWrapper({
   workspaceId,
   organizationId,
   organizationName,
   children,
   modules = [],
   businessTypes = [],
-}: MasterModuleShellProps) {
+  onLogout,
+}: MasterModuleWrapperProps) {
   const pathname = usePathname();
   const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
 
-  const moduleOptions = businessTypes.length > 0
-    ? businessTypes.map((bt) => ({
+  const moduleOptions = useMemo(() => {
+    if (businessTypes.length > 0) {
+      return businessTypes.map((bt) => ({
         key: bt.id,
         label: bt.name,
         pathSegment: bt.name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-      }))
-    : ERP_MODULES;
+        children: [],
+      }));
+    }
+    return ERP_MODULES;
+  }, [businessTypes]);
 
-  const activeModule =
-    moduleOptions.find(({ pathSegment }) => {
-      const modulePath = `${organizationPath}/${pathSegment}`;
-      return pathname === modulePath || pathname.startsWith(`${modulePath}/`);
-    }) ?? moduleOptions[0];
+  const activeModule = useMemo(() => {
+    return (
+      moduleOptions.find(({ pathSegment }) => {
+        const modulePath = `${organizationPath}/${pathSegment}`;
+        return pathname === modulePath || pathname.startsWith(`${modulePath}/`);
+      }) ?? moduleOptions[0]
+    );
+  }, [moduleOptions, organizationPath, pathname]);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    merchandising: true,
-    setting: true,
-  });
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const toggleExpand = (key: string) => {
     setExpanded((prev) => ({
@@ -79,100 +85,40 @@ export function MasterModuleShell({
     }));
   };
 
-  const defaultModules: Record<string, SubItem[]> = {
-    "order-management": [
-      {
-        key: "home",
-        label: "Home",
-        href: `${organizationPath}/order-management`,
-      },
-      {
-        key: "merchandising",
-        label: "Merchandising",
-        href: `${organizationPath}/order-management/merchandising`,
-      },
-      {
-        key: "purchase",
-        label: "Purchase",
-        href: `${organizationPath}/order-management/purchase`,
-      },
-    ],
-    "factory-management": [
-      {
-        key: "home",
-        label: "Overview",
-        href: `${organizationPath}/factory-management`,
-      },
-    ],
-    approvals: [
-      {
-        key: "home",
-        label: "Home",
-        href: `${organizationPath}/approvals`,
-      },
-      {
-        key: "setting",
-        label: "Approval Settings",
-        href: `${organizationPath}/approvals/approval-settings`,
-      },
-    ],
-    settings: [
-      {
-        key: "overview",
-        label: "Overview",
-        href: `${organizationPath}/settings`,
-      },
-      {
-        key: "masters",
-        label: "Master Data",
-        href: `${organizationPath}/settings/master-data`,
-      },
-      {
-        key: "pricing-plan",
-        label: "Pricing Plan",
-        href: `${organizationPath}/settings/pricing/plan`,
-      },
-    ],
-  };
+  const dynamicNavigation = useMemo<SubItem[]>(() => {
+    if (!activeModule) return [];
 
-  const fallbackDynamicModules: SubItem[] = [
-    {
-      key: "overview",
-      label: "Overview",
-      href: `${organizationPath}/${activeModule.pathSegment}`,
-    },
-  ];
+    const normalizedActiveKey = activeModule.key.toLowerCase().replace(/[\s_]+/g, "-");
+    
+    const currentRegistry = ERP_MODULES.find(
+      (m) => m.key.toLowerCase().replace(/[\s_]+/g, "-") === normalizedActiveKey
+    );
 
-  const navigation =
-    modules.length > 0 
-      ? modules 
-      : defaultModules[activeModule.key] ?? defaultModules[activeModule.pathSegment] ?? fallbackDynamicModules;
+    if (!currentRegistry || !currentRegistry.children) {
+      return [
+        {
+          key: "overview",
+          label: "Overview",
+          href: `${organizationPath}/${activeModule.pathSegment}`,
+        },
+      ];
+    }
 
-  const merchandisingChildren: SubItem[] = [
-    {
-      key: "orders",
-      label: "Orders",
-      href: `${organizationPath}/order-management/merchandising/order`,
-    },
-    {
-      key: "bom",
-      label: "BOM",
-      href: `${organizationPath}/order-management/merchandising/bom`,
-    },
-  ];
+    const mapChild = (child: any, basePath: string): SubItem => ({
+      key: child.key,
+      label: child.label,
+      href: `${basePath}/${child.key}`,
+      children: child.children?.map((nested: any) =>
+        mapChild(nested, `${basePath}/${child.key}`)
+      ),
+    });
 
-  const approvalChildren: SubItem[] = [
-    {
-      key: "master",
-      label: "Master",
-      href: `${organizationPath}/approvals/approval-settings/master-review`,
-    },
-  ];
+    return currentRegistry.children.map((child) =>
+      mapChild(child, `${organizationPath}/${activeModule.pathSegment}`)
+    );
+  }, [activeModule, organizationPath]);
 
-  const childMap: Record<string, SubItem[]> = {
-    merchandising: merchandisingChildren,
-    setting: approvalChildren,
-  };
+  const navigation = modules.length > 0 ? modules : dynamicNavigation;
 
   const isActive = (href: string, exact = false) =>
     exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
@@ -211,71 +157,67 @@ export function MasterModuleShell({
         <div className="flex-1 overflow-y-auto p-2">
           <nav className="space-y-1">
             {navigation.map((item) => {
-              const children = childMap[item.key] ?? [];
-              const hasChildren = children.length > 0;
-              const opened = expanded[item.key];
-              const active = hasChildren ? isActive(item.href, false) && children.some((c) => isActive(c.href)) : isActive(item.href, true);
+              const active = isActive(item.href, true);
+              const hasSubChildren = Boolean(item.children && item.children.length > 0);
+              const isExpanded = expanded[item.key] ?? true;
 
               return (
-                <div key={item.key}>
+                <div key={item.key} className="space-y-1">
                   <div
                     className={`flex items-center justify-between rounded-md transition ${
-                      active
-                        ? "bg-emerald-600 text-white"
-                        : "hover:bg-slate-800"
+                      active ? "bg-emerald-600 text-white" : "hover:bg-slate-800"
                     }`}
                   >
                     <Link
                       href={item.href}
-                      className="flex flex-1 items-center gap-3 px-3 py-2"
+                      className="flex flex-1 items-center gap-3 px-3 py-2 text-sm"
                     >
                       <span
                         className={`h-2 w-2 rounded-full ${
-                          active
-                            ? "bg-white"
-                            : "bg-slate-500"
+                          active ? "bg-white" : "bg-slate-500"
                         }`}
                       />
                       {sidebarOpen && (
-                        <span className="text-sm">{item.label}</span>
+                        <span className="flex-1 text-xs font-medium">
+                          {item.label}
+                        </span>
                       )}
                     </Link>
 
-                    {sidebarOpen && hasChildren && (
+                    {hasSubChildren && sidebarOpen && (
                       <button
                         type="button"
                         onClick={() => toggleExpand(item.key)}
-                        className="mr-2"
+                        className="px-2 py-2 text-slate-400 hover:text-white"
                       >
-                        {opened ? (
-                          <ChevronDown className="h-4 w-4" />
+                        {isExpanded ? (
+                          <ChevronDown className="h-3.5 w-3.5" />
                         ) : (
-                          <ChevronRight className="h-4 w-4" />
+                          <ChevronRight className="h-3.5 w-3.5" />
                         )}
                       </button>
                     )}
                   </div>
 
-                  {sidebarOpen && hasChildren && opened && (
-                    <div className="ml-6 mt-1 space-y-1">
-                      {children.map((child) => (
-                        <Link
-                          key={child.key}
-                          href={child.href}
-                          className={`flex items-center justify-between rounded-md px-2 py-1 text-xs transition ${
-                            isActive(child.href, true)
-                              ? "bg-emerald-700 text-white"
-                              : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                          }`}
-                        >
-                          <span>{child.label}</span>
-                          {typeof child.count === "number" && (
-                            <span className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px]">
-                              {child.count}
-                            </span>
-                          )}
-                        </Link>
-                      ))}
+                  {hasSubChildren && isExpanded && sidebarOpen && (
+                    <div className="ml-4 space-y-1 border-l border-slate-800 pl-2">
+                      {item.children!.map((subChild) => {
+                        const subActive = isActive(subChild.href, true);
+
+                        return (
+                          <Link
+                            key={subChild.key}
+                            href={subChild.href}
+                            className={`flex items-center justify-between rounded-md px-2 py-1.5 text-xs transition ${
+                              subActive
+                                ? "bg-emerald-700 text-white font-medium"
+                                : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                            }`}
+                          >
+                            <span>{subChild.label}</span>
+                          </Link>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -307,6 +249,7 @@ export function MasterModuleShell({
             <MasterModuleSwitcher
               value={activeModule.key}
               options={moduleOptions}
+              onLogout={onLogout}
             />
           </div>
         </header>

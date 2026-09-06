@@ -1,38 +1,39 @@
-import { ReactNode } from "react";
-import { notFound } from "next/navigation";
+// app/dashboard/[workspaceId]/organizations/[organizationId]/organization-shell-layout.tsx
 
-import { MasterModuleShell } from "@/components/master-data/master-module-wrapper";
-import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
-import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
+import React from "react";
+import { MasterModuleWrapper } from "@/components/master-data/master-module-wrapper";
+
+type OrganizationShellLayoutProps = {
+  children: React.ReactNode;
+  params: Promise<{
+    workspaceId: string;
+    organizationId: string;
+  }>;
+};
 
 export default async function OrganizationShellLayout({
   children,
   params,
-}: {
-  children: ReactNode;
-  params: Promise<{ workspaceId: string; organizationId: string }>;
-}) {
-  const { workspaceId, organizationId } = await params;
-  const user = await requireSessionUser();
-  
-  const [organization, businessTypes] = await Promise.all([
-    getOrganizationForUser(user.id, organizationId),
-    listActiveBusinessTypes(),
-  ]);
+}: OrganizationShellLayoutProps) {
+  const resolvedParams = await params;
+  const { workspaceId, organizationId } = resolvedParams;
 
-  if (!organization) {
-    notFound();
-  }
+  // Mock or fetch your organization data and plan features here
+  const organization = {
+    organization_name: "Zoho Corporation Private Limited",
+  };
+  
+  // Example allowed features for the active plan
+  const allowedFeatures = ["order-management", "merchandising", "orders", "bom", "sales", "purchase"];
 
   return (
-    <MasterModuleShell
+    <MasterModuleWrapper
       workspaceId={workspaceId}
       organizationId={organizationId}
       organizationName={organization.organization_name}
-      businessTypes={businessTypes}
+      allowedFeatures={allowedFeatures}
     >
       {children}
-    </MasterModuleShell>
+    </MasterModuleWrapper>
   );
 }

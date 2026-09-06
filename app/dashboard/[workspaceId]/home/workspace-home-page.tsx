@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
-import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
+import Badge from "@/components/ui/Badge";
 import { logoutSession, requireSessionUser } from "@/lib/auth/session-manager";
-import { listOrganizationsForUser } from "@/lib/services/organizations/organization-service";
+import { listOrganizationsForUser, deleteOrganization } from "@/lib/services/organizations/organization-service";
 import { prisma } from "@/lib/database/prisma-client";
+import { OrganizationsGrid } from "./_components/organizations-grid";
 
 const isDevBypass =
   process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL;
@@ -30,6 +31,25 @@ export default async function WorkspaceHomePage({
 
     await logoutSession();
     redirect("/");
+  }
+
+  async function deleteOrgAction(formData: FormData) {
+    "use server";
+    const orgId = String(formData.get("orgId") || "");
+    const verificationText = String(formData.get("verificationText") || "");
+    
+    if (verificationText !== "DELETE") {
+      return;
+    }
+
+    if (orgId) {
+      try {
+        await deleteOrganization(orgId, user.id);
+      } catch (error) {
+        // Handle deletion error if needed
+      }
+    }
+    redirect(`/dashboard/${workspaceId}/home`);
   }
 
   if (!user.workspace_id) {
@@ -122,7 +142,8 @@ export default async function WorkspaceHomePage({
             </h2>
           </Card>
         </div>
-                {/* Organizations */}
+            
+        {/* Organizations */}
         <Section className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
@@ -154,37 +175,11 @@ export default async function WorkspaceHomePage({
               </div>
             </Card>
           ) : (
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {organizations.map((organization) => (
-                <Link
-                  key={organization.id}
-                  href={`/dashboard/${workspaceId}/organizations/${organization.organization_id}`}
-                >
-                  <Card className="h-full transition-shadow hover:shadow-md">
-                    <div className="flex items-start justify-between">
-                      <span className="text-xs font-medium text-slate-500">
-                        {organization.organization_id}
-                      </span>
-
-                      <Badge>Active</Badge>
-                    </div>
-
-                    <h3 className="mt-4 text-xl font-bold text-slate-900">
-                      {organization.organization_name}
-                    </h3>
-
-                    <p className="mt-2 text-sm text-slate-600">
-                      GST: {organization.gst_number}
-                    </p>
-
-                    <div className="mt-6 flex items-center justify-between font-medium text-emerald-700">
-                      <span>Open Organization</span>
-                      <span>→</span>
-                    </div>
-                  </Card>
-                </Link>
-              ))}
-            </div>
+            <OrganizationsGrid 
+              organizations={organizations} 
+              workspaceId={workspaceId} 
+              deleteOrgAction={deleteOrgAction} 
+            />
           )}
         </Section>
       </Section>

@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
-import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
@@ -9,6 +8,7 @@ import Section from "@/components/ui/Section";
 import { logoutSession, requireSessionUser } from "@/lib/auth/session-manager";
 import { listOrganizationsForUser, deleteOrganization } from "@/lib/services/organizations/organization-service";
 import { prisma } from "@/lib/database/prisma-client";
+import { OrganizationsGrid } from "./_components/organizations-grid";
 
 const isDevBypass =
   process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL;
@@ -27,7 +27,6 @@ export default async function WorkspaceHomePage({
 
   async function logoutAction() {
     "use server";
-
     await logoutSession();
     redirect("/");
   }
@@ -35,6 +34,12 @@ export default async function WorkspaceHomePage({
   async function deleteOrgAction(formData: FormData) {
     "use server";
     const orgId = String(formData.get("orgId") || "");
+    const verificationText = String(formData.get("verificationText") || "");
+    
+    if (verificationText !== "DELETE") {
+      return;
+    }
+
     if (orgId) {
       try {
         await deleteOrganization(orgId, user.id);
@@ -56,9 +61,7 @@ export default async function WorkspaceHomePage({
   } else {
     try {
       workspaceOwner = await prisma.workspaceUser.findFirst({
-        where: {
-          workspace_id: workspaceId,
-        },
+        where: { workspace_id: workspaceId },
       });
     } catch {
       workspaceOwner = null;
@@ -197,56 +200,11 @@ export default async function WorkspaceHomePage({
               </div>
             </Card>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
-              {organizations.map((organization) => (
-                <div key={organization.id} className="group relative flex flex-col justify-between rounded-lg border border-slate-200/80 bg-white p-3.5 shadow-2xs transition-all hover:border-slate-300 hover:shadow-sm">
-                  <div>
-                    {/* Top Row: Small Icon + Delete button */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-50 text-emerald-700 font-bold text-xs shadow-2xs">
-                        {organization.organization_name ? organization.organization_name.charAt(0).toUpperCase() : "O"}
-                      </div>
-                      
-                      <div className="flex items-center gap-1.5">
-                        <span className="inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
-                          Active
-                        </span>
-                        {/* Delete Form Action */}
-                        <form action={deleteOrgAction}>
-                          <input type="hidden" name="orgId" value={organization.id} />
-                          <button 
-                            type="submit" 
-                            title="Delete Organization"
-                            className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors"
-                          >
-                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                          </button>
-                        </form>
-                      </div>
-                    </div>
-
-                    {/* Organization details - compact */}
-                    <h3 className="mt-2.5 text-sm font-semibold text-slate-900 tracking-tight truncate" title={organization.organization_name}>
-                      {organization.organization_name}
-                    </h3>
-                    <p className="text-[11px] text-slate-500 font-mono truncate">
-                      GST: {organization.gst_number || "N/A"}
-                    </p>
-                  </div>
-
-                  {/* Bottom Link to open organization - compact */}
-                  <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
-                    <Link
-                      href={`/dashboard/${workspaceId}/organizations/${organization.organization_id}`}
-                      className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 w-full justify-between"
-                    >
-                      <span>Open Workspace</span>
-                      <span className="transition-transform group-hover:translate-x-0.5">→</span>
-                    </Link>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <OrganizationsGrid 
+              organizations={organizations} 
+              workspaceId={workspaceId} 
+              deleteOrgAction={deleteOrgAction} 
+            />
           )}
         </Section>
       </Section>
