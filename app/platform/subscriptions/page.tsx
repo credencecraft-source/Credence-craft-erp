@@ -44,7 +44,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
     const serviceStatus = String(formData.get("serviceStatus") || "active");
 
     const client = clients.find((c: any) => String(c.id || c._id) === organizationId);
-    const organizationName = client?.organizationName || client?.name || "Unnamed";
+    const organizationName = (client as any)?.organizationName || (client as any)?.organization_name || (client as any)?.name || "Unnamed";
 
     try {
       const payload: any = {
@@ -61,7 +61,6 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
         expireDate: endDate,
         end_date: endDate,
         paymentStatus,
-        payment_status: paymentStatus,
         serviceStatus,
         service_status: serviceStatus,
       };
@@ -84,10 +83,9 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
     try {
       await updateSubscription(id, { 
         paymentStatus: "paid", 
-        payment_status: "paid", 
         serviceStatus: "active", 
         service_status: "active" 
-      });
+      } as any);
     } catch (error: any) {
       redirect(`/platform/subscriptions?error=${encodeURIComponent(error.message)}`);
     }
@@ -136,7 +134,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                   <select name="organizationId" required defaultValue={editingSub?.organizationId || editingSub?.organization_id} className="w-full border p-2 text-xs rounded-lg">
                     <option value="">Select...</option>
                     {clients.map((c: any) => (
-                      <option key={c.id || c._id} value={c.id || c._id}>{c.organizationName || c.name}</option>
+                      <option key={c.id || c._id} value={c.id || c._id}>{c.organizationName || c.organization_name || c.name}</option>
                     ))}
                   </select>
                 </div>
@@ -156,7 +154,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                   <select name="planId" required defaultValue={editingSub?.planId || editingSub?.plan_id} className="w-full border p-2 text-xs rounded-lg">
                     <option value="">Select...</option>
                     {plans.map((p: any) => (
-                      <option key={p.id || p._id} value={p.id || p._id}>{p.name || p.plan_name}</option>
+                      <option key={p.id || p._id} value={p.id || p._id}>{(p as any).name || (p as any).plan_name}</option>
                     ))}
                   </select>
                 </div>
@@ -235,7 +233,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                       {sub.organization_name || sub.organizationName || "—"}
                     </td>
                     <td className="px-3 py-3">{bt?.name || "—"}</td>
-                    <td className="px-3 py-3">{plan?.name || plan?.plan_name || "—"}</td>
+                    <td className="px-3 py-3">{(plan as any)?.name || (plan as any)?.plan_name || "—"}</td>
                     <td className="px-3 py-3 font-mono text-[11px]">{subPlanId || "—"}</td>
                     <td className="px-3 py-3">
                       {(sub.startDate || sub.start_date)?.split("T")[0] || "—"} to {(sub.endDate || sub.end_date || sub.expireDate)?.split("T")[0] || "—"}

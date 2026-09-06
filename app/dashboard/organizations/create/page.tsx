@@ -32,7 +32,6 @@ export default async function CreateOrganizationPage({
       newOrg = await createOrganization({
         workspaceUserId: user.id,
         organizationName: organizationNameVal,
-        ownerName,
         mobileNo,
         organizationEmail,
         gstNumber: gstNumberVal,
@@ -42,7 +41,7 @@ export default async function CreateOrganizationPage({
         state: stateVal,
         country: countryVal,
         pinCode: pinCodeVal,
-      });
+      } as any);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to create organization.";
       redirect(`/dashboard/organizations/create?error=1&message=${encodeURIComponent(message)}`);

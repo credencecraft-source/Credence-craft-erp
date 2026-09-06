@@ -45,7 +45,6 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
     redirect(`${redirectBase}?success=${encodeURIComponent("Subscription deleted successfully.")}`);
   }
 
-  // Filter subscriptions strictly by current organization
   const orgSubscriptions = subscriptions.filter((sub: any) => {
     const subOrg = String(sub.organizationId || sub.organization_id || sub.organization || "").trim();
     return Boolean(organizationId) && subOrg === organizationId;
@@ -100,28 +99,25 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                   const subBtId = String(sub.businessTypeId || sub.business_type_id || sub.businessType || "").trim();
                   const subPlanId = String(sub.planId || sub.plan_id || sub.plan || "").trim();
 
-                  // Find matching Business Type from database list
                   const matchedBusinessType = allBusinessTypes.find((bt: any) => {
                     const btId = String(bt.id || bt._id || "").trim();
                     return btId === subBtId;
                   });
 
-                  // Find matching Plan from database list
                   const matchedPlan = plans.find((p: any) => {
                     const planId = String(p.id || p._id || "").trim();
                     return planId === subPlanId;
                   });
 
-                  // Display resolved database names instead of raw IDs (using 'name' property exclusively for businessType)
                   const businessTypeName =
-                    matchedBusinessType?.name ||
+                    (matchedBusinessType as any)?.name ||
                     sub.business_type_name ||
                     sub.businessTypeName ||
                     "Order Management";
 
                   const planName =
-                    matchedPlan?.plan_name ||
-                    matchedPlan?.name ||
+                    (matchedPlan as any)?.plan_name ||
+                    (matchedPlan as any)?.name ||
                     sub.plan_name ||
                     sub.planName ||
                     "—";
