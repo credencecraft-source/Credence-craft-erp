@@ -32,8 +32,6 @@ export default async function CreateOrganizationPage({
       newOrg = await createOrganization({
         workspaceUserId: user.id,
         organizationName: organizationNameVal,
-        organization_name: organizationNameVal,
-        name: organizationNameVal,
         ownerName,
         mobileNo,
         organizationEmail,

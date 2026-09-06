@@ -112,10 +112,9 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                     return planId === subPlanId;
                   });
 
-                  // Display resolved database names instead of raw IDs
+                  // Display resolved database names instead of raw IDs (using 'name' property exclusively for businessType)
                   const businessTypeName =
                     matchedBusinessType?.name ||
-                    matchedBusinessType?.title ||
                     sub.business_type_name ||
                     sub.businessTypeName ||
                     "Order Management";
@@ -123,7 +122,6 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                   const planName =
                     matchedPlan?.plan_name ||
                     matchedPlan?.name ||
-                    matchedPlan?.title ||
                     sub.plan_name ||
                     sub.planName ||
                     "—";

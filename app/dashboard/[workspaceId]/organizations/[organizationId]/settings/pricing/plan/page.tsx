@@ -24,9 +24,13 @@ export default async function Page({ params }: PageProps) {
     const workspaceUserEmail = String(formData.get("workspaceUserEmail") || "");
 
     try {
-      const existingSubs = await listSubscriptions({ organizationId });
+      const existingSubs = await listSubscriptions();
       const isAlreadyActive = existingSubs?.some(
-        (sub: any) => sub.planId === planId && sub.businessTypeId === businessTypeId && sub.paymentStatus === "paid"
+        (sub: any) => 
+          String(sub.organizationId || sub.organization_id || "") === String(organizationId) &&
+          String(sub.planId || sub.plan_id || "") === planId && 
+          String(sub.businessTypeId || sub.business_type_id || "") === businessTypeId && 
+          String(sub.paymentStatus || sub.payment_status || "").toLowerCase() === "paid"
       );
 
       if (isAlreadyActive) {
@@ -59,11 +63,15 @@ export default async function Page({ params }: PageProps) {
     redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan?success=${encodeURIComponent("Plan activated successfully.")}`);
   }
 
-  const [rawPlans, businessTypes, existingSubscriptions] = await Promise.all([
+  const [rawPlans, businessTypes, allSubscriptions] = await Promise.all([
     listPlans(),
     listBusinessTypes(),
-    listSubscriptions({ organizationId }).catch(() => []),
+    listSubscriptions().catch(() => []),
   ]);
+
+  const existingSubscriptions = allSubscriptions.filter((sub: any) => 
+    String(sub.organizationId || sub.organization_id || "") === String(organizationId)
+  );
 
   const plans = rawPlans.map((plan) => ({
     ...plan,

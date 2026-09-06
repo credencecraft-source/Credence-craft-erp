@@ -52,17 +52,16 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
 
     for (const plan of selectedPlans) {
       const businessTypeId = String(
-        plan.businessTypeId || 
+        (plan as any).businessTypeId || 
         (plan as any).business_type_id || 
-        (plan as any).businessType || 
+        (plan as any).businessType?.id || 
         ""
       ).trim();
 
       try {
         await createSubscription({
           organizationId,
-          organization_name: organizationName, // Inserts into your new column
-          organizationName: organizationName,   // Kept for backward compatibility if needed
+          organization_name: organizationName,
           workspaceUserEmail,
           businessTypeId,
           planId: plan.id,
@@ -70,10 +69,6 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
           expireDate,
           paymentType: "Offline",
           paymentStatus: "pending",
-          payment_status: "pending",
-          serviceStatus: "inactive",
-          service_status: "inactive",
-          status: "inactive",
         } as any);
       } catch {
         // Handle or ignore duplicate subscription error if necessary
@@ -103,7 +98,7 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
         <div className="space-y-3">
           {selectedPlans.map((plan) => (
             <div key={plan.id} className="flex justify-between items-center text-xs">
-              <span className="font-bold text-slate-700">{plan.plan_name}</span>
+              <span className="font-bold text-slate-700">{(plan as any).plan_name || (plan as any).name}</span>
               <span className="font-extrabold text-slate-900">₹{Number(plan.price || 0).toLocaleString("en-IN")} / mo</span>
             </div>
           ))}
