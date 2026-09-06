@@ -1,8 +1,8 @@
 import React from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getOrganizationClient } from "@/lib/services/platform/client-service";
-import { getPlan } from "@/lib/services/platform/plan-service";
+import { listOrganizationClients } from "@/lib/services/platform/client-service";
+import { getPlanById } from "@/lib/services/platform/plan-service";
 import { createSubscription } from "@/lib/services/platform/subscription-service";
 
 interface PageProps {
@@ -26,10 +26,12 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
   const planId = resolvedSearch?.planId;
   const billingCycle = resolvedSearch?.billingCycle || "yearly";
 
-  const [client, plan] = await Promise.all([
-    getOrganizationClient(organizationId),
-    planId ? getPlan(planId) : Promise.resolve(null),
+  const [clients, plan] = await Promise.all([
+    listOrganizationClients(),
+    planId ? getPlanById(planId) : Promise.resolve(null),
   ]);
+
+  const client = clients.find((c: any) => String(c.id || c._id) === organizationId);
 
   const orgName = (client as any)?.organization_name || (client as any)?.organizationName || (client as any)?.name || "Unnamed Organization";
   const planName = (plan as any)?.plan_name || (plan as any)?.name || "Selected Plan";
