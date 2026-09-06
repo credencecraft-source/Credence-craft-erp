@@ -9,6 +9,11 @@
     "lint": "eslint",
     "postinstall": "prisma-import && prisma generate"
   },
+  "prisma": {
+    "import": {
+      "schemas": ["prisma/**/*.prisma"]
+    }
+  },
   "dependencies": {
     "@prisma/client": "6.19.3",
     "clsx": "^2.1.1",
@@ -17,6 +22,7 @@
     "next": "16.3.1",
     "nodemailer": "^9.0.5",
     "prisma": "6.19.3",
+    "prisma-import": "^1.0.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "tailwind-merge": "^3.6.0"
@@ -29,7 +35,6 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
-    "prisma-import": "^1.0.5",
     "tailwindcss": "^4",
     "typescript": "^5"
   },
