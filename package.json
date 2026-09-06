@@ -11,7 +11,7 @@
   },
   "prisma": {
     "import": {
-      "schemas": ["prisma/**/*.prisma"]
+      "schemas": "prisma/**/*.prisma"
     }
   },
   "dependencies": {
