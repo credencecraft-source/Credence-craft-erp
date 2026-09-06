@@ -7,7 +7,3 @@ datasource db {
   url       = env("DATABASE_URL")
   directUrl = env("DATABASE_URL_UNPOOLED")
 }
-
-// Include all split schema models
-import "./masters/master.prisma"
-import "./others/others.prisma"
