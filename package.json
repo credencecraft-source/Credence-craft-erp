@@ -4,15 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma-import && prisma generate && next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "prisma-import && prisma generate"
-  },
-  "prisma": {
-    "import": {
-      "schemas": "prisma/**/*.prisma"
-    }
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",
@@ -22,7 +17,6 @@
     "next": "16.3.1",
     "nodemailer": "^9.0.5",
     "prisma": "6.19.3",
-    "prisma-import": "^1.0.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "tailwind-merge": "^3.6.0"
@@ -42,7 +36,6 @@
     "prisma@6.19.3": true,
     "@prisma/client@6.19.3": true,
     "@prisma/engines@6.19.3": true,
-    "unrs-resolver@1.12.2": true,
-    "prisma-import": true
+    "unrs-resolver@1.12.2": true
   }
 }
