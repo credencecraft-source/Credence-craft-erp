@@ -1,142 +1,137 @@
+import React from "react";
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { listPlans } from "@/lib/services/platform/plan-service";
+import { getOrganizationClient } from "@/lib/services/platform/client-service";
+import { getPlan } from "@/lib/services/platform/plan-service";
 import { createSubscription } from "@/lib/services/platform/subscription-service";
-import { listOrganizationClients } from "@/lib/services/platform/client-service";
-import { requireSessionUser } from "@/lib/auth/session-manager";
 
-interface CheckoutPageProps {
-  params: Promise<{ workspaceId: string; organizationId: string }>;
-  searchParams: Promise<Record<string, string>>;
+interface PageProps {
+  params: Promise<{
+    workspaceId: string;
+    organizationId: string;
+  }>;
+  searchParams?: Promise<{
+    planId?: string;
+    billingCycle?: string;
+    error?: string;
+  }>;
 }
 
-export default async function CheckoutPage({ params, searchParams }: CheckoutPageProps) {
-  const { workspaceId, organizationId } = await params;
-  const resolvedParams = await searchParams;
+export default async function CheckoutPage({ params, searchParams }: PageProps) {
+  const resolvedParams = await params;
+  const resolvedSearch = (await searchParams) ?? {};
   
-  const user = await requireSessionUser();
-  const workspaceUserEmail = user.email;
+  const workspaceId = resolvedParams?.workspaceId;
+  const organizationId = resolvedParams?.organizationId;
+  const planId = resolvedSearch?.planId;
+  const billingCycle = resolvedSearch?.billingCycle || "yearly";
 
-  const clientsList = await listOrganizationClients().catch(() => []);
-  const matchedClient = clientsList.find((c: any) => 
-    String(c.id) === String(organizationId) || 
-    String(c._id) === String(organizationId) || 
-    String(c.organizationId) === String(organizationId) ||
-    String(c.organization_id) === String(organizationId)
-  );
+  const [client, plan] = await Promise.all([
+    getOrganizationClient(organizationId),
+    planId ? getPlan(planId) : Promise.resolve(null),
+  ]);
 
-  const organizationName = 
-    matchedClient?.organizationName || 
-    matchedClient?.organization_name || 
-    matchedClient?.name || 
-    resolvedParams.organizationName || 
-    resolvedParams.orgName ||
-    "Organization Account";
+  const orgName = (client as any)?.organization_name || (client as any)?.organizationName || (client as any)?.name || "Unnamed Organization";
+  const planName = (plan as any)?.plan_name || (plan as any)?.name || "Selected Plan";
+  const planPrice = Number((plan as any)?.price || (plan as any)?.amount || 0);
 
-  const allPlans = await listPlans();
-  const planIds = Object.entries(resolvedParams)
-    .filter(([key]) => key !== "success" && key !== "organizationName" && key !== "orgName")
-    .map(([_, value]) => value);
+  const gstAmount = Math.round(planPrice * 0.18);
+  const totalAmount = planPrice + gstAmount;
 
-  const selectedPlans = allPlans.filter((p) => planIds.includes(p.id));
-
-  const monthlySubtotal = selectedPlans.reduce((sum, p) => sum + (p.price ? Number(p.price) : 0), 0);
-  const yearlySubtotal = monthlySubtotal * 12;
-  const gstAmount = yearlySubtotal * 0.18;
-  const totalPrice = yearlySubtotal + gstAmount;
-
-  async function confirmOfflinePaymentAction() {
+  async function handleCheckoutAction() {
     "use server";
 
-    const startDate = new Date().toISOString().split("T")[0];
-    const expireDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-
-    for (const plan of selectedPlans) {
-      const businessTypeId = String(
-        (plan as any).businessTypeId || 
-        (plan as any).business_type_id || 
-        (plan as any).businessType?.id || 
-        ""
-      ).trim();
-
-      try {
-        await createSubscription({
-          organizationId,
-          organization_name: organizationName,
-          workspaceUserEmail,
-          businessTypeId,
-          planId: plan.id,
-          startDate,
-          expireDate,
-          paymentType: "Offline",
-          paymentStatus: "pending",
-        } as any);
-      } catch {
-        // Handle or ignore duplicate subscription error if necessary
-      }
+    if (!organizationId || !planId) {
+      redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing?error=${encodeURIComponent("Missing organization or plan ID.")}`);
     }
 
-    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan`);
+    try {
+      await createSubscription({
+        organizationId,
+        organizationName: orgName,
+        organization_name: orgName,
+        businessTypeId: (plan as any)?.businessTypeId || (plan as any)?.business_type_id || "",
+        business_type_id: (plan as any)?.businessTypeId || (plan as any)?.business_type_id || "",
+        planId,
+        plan_id: planId,
+        startDate: new Date().toISOString(),
+        endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+        expireDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+        end_date: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+        paymentStatus: "pending",
+        payment_status: "pending",
+        serviceStatus: "active",
+        service_status: "active",
+      } as any);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to process checkout subscription.";
+      redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/checkout?planId=${planId}&error=${encodeURIComponent(message)}`);
+    }
+
+    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan?success=${encodeURIComponent("Subscription created successfully.")}`);
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
+    <div className="p-6 max-w-3xl mx-auto space-y-6">
       <div>
-        <p className="erp-eyebrow">Billing</p>
-        <h1 className="text-2xl font-bold text-slate-900">Complete Your Payment</h1>
-        <p className="text-sm text-slate-600 mt-0.5">Review your selected modules and proceed to secure checkout.</p>
+        <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wider">Checkout</p>
+        <h1 className="text-2xl font-bold text-slate-900">Confirm Your Subscription</h1>
+        <p className="text-sm text-slate-600 mt-0.5">
+          Review your order details and complete activation for <span className="font-semibold text-slate-900">{orgName}</span>.
+        </p>
       </div>
 
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-        <div className="border-b border-slate-100 pb-3 flex justify-between items-center">
-          <h2 className="text-sm font-bold text-slate-800">Selected Modules Summary (Yearly + 18% GST)</h2>
-          <div className="text-right text-xs text-slate-500">
-            <span className="font-semibold text-slate-700">{organizationName}</span>
-            <span className="block text-[11px] text-slate-400">{workspaceUserEmail}</span>
+      {resolvedSearch.error && (
+        <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs font-medium text-red-700">{resolvedSearch.error}</p>
+      )}
+
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6">
+        <div className="border-b border-slate-100 pb-4 space-y-2">
+          <div className="flex justify-between text-sm">
+            <span className="text-slate-500">Organization:</span>
+            <span className="font-bold text-slate-900">{orgName}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-slate-500">Selected Plan:</span>
+            <span className="font-semibold text-emerald-700">{planName}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-slate-500">Billing Cycle:</span>
+            <span className="font-medium text-slate-800 capitalize">{billingCycle}</span>
           </div>
         </div>
-        
+
         <div className="space-y-3">
-          {selectedPlans.map((plan) => (
-            <div key={plan.id} className="flex justify-between items-center text-xs">
-              <span className="font-bold text-slate-700">{(plan as any).plan_name || (plan as any).name}</span>
-              <span className="font-extrabold text-slate-900">₹{Number(plan.price || 0).toLocaleString("en-IN")} / mo</span>
-            </div>
-          ))}
-          {selectedPlans.length === 0 && (
-            <p className="text-xs text-slate-500 italic">No plans selected.</p>
-          )}
-        </div>
-
-        <div className="border-t border-slate-100 pt-3 space-y-1.5 text-xs text-slate-600">
-          <div className="flex justify-between">
-            <span>Yearly Subtotal (12 months)</span>
-            <span className="font-semibold text-slate-800">₹{yearlySubtotal.toLocaleString("en-IN")}</span>
+          <div className="flex justify-between text-xs text-slate-600">
+            <span>Plan Subtotal</span>
+            <span className="font-medium">₹{planPrice.toLocaleString("en-IN")}</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between text-xs text-slate-600">
             <span>GST (18%)</span>
-            <span className="font-semibold text-slate-800">₹{gstAmount.toLocaleString("en-IN")}</span>
+            <span className="font-medium">₹{gstAmount.toLocaleString("en-IN")}</span>
+          </div>
+          <div className="border-t border-slate-100 pt-3 flex justify-between text-sm font-bold text-slate-900">
+            <span>Total Amount Due</span>
+            <span className="text-emerald-700">₹{totalAmount.toLocaleString("en-IN")}</span>
           </div>
         </div>
 
-        <div className="border-t border-slate-100 pt-4 flex justify-between items-center">
-          <span className="text-sm font-bold text-slate-800">Total Payable (Yearly + GST)</span>
-          <span className="text-xl font-black text-emerald-600">₹{totalPrice.toLocaleString("en-IN")}</span>
+        <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+          <Link
+            href={`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing`}
+            className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+          >
+            Cancel
+          </Link>
+          <form action={handleCheckoutAction}>
+            <button
+              type="submit"
+              className="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-colors"
+            >
+              Confirm & Activate
+            </button>
+          </form>
         </div>
-
-        <form action={confirmOfflinePaymentAction} className="space-y-2 pt-2">
-          <button
-            type="submit"
-            className="w-full py-3 rounded-xl bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-700 transition-colors cursor-pointer"
-          >
-            Confirm Offline Payment
-          </button>
-          <button
-            type="button"
-            className="w-full py-3 rounded-xl bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 transition-colors cursor-pointer"
-          >
-            Online Payment
-          </button>
-        </form>
       </div>
     </div>
   );
