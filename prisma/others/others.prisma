@@ -1,42 +1,74 @@
 model WorkspaceUser {
-  id             String         @id @default(cuid())
-  workspace_id   String         @unique @default(uuid())
-  profile_name   String         @unique @db.VarChar(100)
-  full_name      String         @db.VarChar(255)
-  email          String         @unique @db.VarChar(255)
-  email_verified Boolean        @default(false)
-  created_at     DateTime       @default(now())
-  updated_at     DateTime       @updatedAt
-    last_login_at  DateTime?
-  organizations  Organization[]
+  id              String       @id @default(cuid())
+  workspace_id    String       @unique @default(uuid())
+  profile_name    String       @unique @db.VarChar(100)
+  full_name       String       @db.VarChar(255)
+  email           String       @unique @db.VarChar(255)
+  email_verified  Boolean      @default(false)
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  last_login_at   DateTime?
+  organizations   Organization[]
 
   @@map("workspace_users")
 }
 
 model Organization {
-  id                     String               @id @default(cuid())
-  organization_id        String               @unique @default(uuid())
-  workspace_user_id      String
-  organization_name      String               @db.VarChar(255)
-  gst_number             String               @db.VarChar(50)
-  address_line_1         String?              @db.VarChar(255)
-  address_line_2         String?              @db.VarChar(255)
-  city                   String?              @db.VarChar(100)
-  state                  String?              @db.VarChar(100)
-  country                String?              @db.VarChar(100)
-  pin_code               String?              @db.VarChar(20)
-  is_active              Boolean              @default(true)
-  plan_id                String?
-  database_connection_id String?
-  created_at             DateTime             @default(now())
-  updated_at             DateTime             @updatedAt
-  workspaceUser          WorkspaceUser        @relation(fields: [workspace_user_id], references: [id], onDelete: Cascade)
-  plan                   Plan?                @relation(fields: [plan_id], references: [id])
-  databaseConnection     DatabaseConnection?  @relation(fields: [database_connection_id], references: [id])
-  erpSoftware            ERPSoftware[]
-  masterModules          MasterModule[]
-  merchandisingOrders    MerchandisingOrder[]
-  approvalRequests       ApprovalRequest[]
+  id                      String   @id @default(cuid())
+  organization_id         String   @unique @default(uuid())
+  workspace_user_id       String
+  organization_name       String   @db.VarChar(255)
+  gst_number              String   @db.VarChar(50)
+  address_line_1          String?  @db.VarChar(255)
+  address_line_2          String?  @db.VarChar(255)
+  city                    String?  @db.VarChar(100)
+  state                   String?  @db.VarChar(100)
+  country                 String?  @db.VarChar(100)
+  pin_code                String?  @db.VarChar(20)
+  is_active               Boolean  @default(true)
+  plan_id                 String?
+  database_connection_id  String?
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
+  
+  workspaceUser           WorkspaceUser       @relation(fields: [workspace_user_id], references: [id], onDelete: Cascade)
+  plan                    Plan?               @relation(fields: [plan_id], references: [id])
+  databaseConnection      DatabaseConnection? @relation(fields: [database_connection_id], references: [id])
+  erpSoftware             ERPSoftware[]
+  masterModules           MasterModule[]
+  merchandisingOrders     MerchandisingOrder[]
+  approvalRequests        ApprovalRequest[]
+
+  // Opposite relations for all 29 master tables
+  masterEntities                 MasterEntity[]
+  masterCategoryTypes            MasterCategoryType[]
+  masterCategories               MasterCategory[]
+  masterSubCategories            MasterSubCategory[]
+  masterBrands                   MasterBrand[]
+  masterPreOrderChecklists       MasterPreOrderChecklist[]
+  masterCurrencyTypes            MasterCurrencyType[]
+  masterBuyers                   MasterBuyer[]
+  masterSeasons                  MasterSeason[]
+  masterArticles                 MasterArticle[]
+  masterColors                   MasterColor[]
+  masterSizeGroups               MasterSizeGroup[]
+  masterSizes                    MasterSize[]
+  masterUoms                     MasterUom[]
+  masterVendors                  MasterVendor[]
+  masterGstTypes                 MasterGstType[]
+  masterGsts                     MasterGst[]
+  masterHsns                     MasterHsn[]
+  masterMeasurementCharts        MasterMeasurementChart[]
+  masterSizeWiseConsumptions     MasterSizeWiseConsumption[]
+  masterProducts                 MasterProduct[]
+  masterProcessTemplates         MasterProcessTemplate[]
+  masterMerchandisers            MasterMerchandiser[]
+  masterStatuses                 MasterStatus[]
+  masterOrderVolumes             MasterOrderVolume[]
+  masterRawMaterialTypes         MasterRawMaterialType[]
+  masterRawMaterialCategories    MasterRawMaterialCategory[]
+  masterRawMaterialSubCategories MasterRawMaterialSubCategory[]
+  masterRawMaterials             MasterRawMaterial[]
 
   @@index([workspace_user_id])
   @@index([plan_id])
@@ -44,256 +76,42 @@ model Organization {
   @@map("organizations")
 }
 
-model PlatformAdmin {
-  id            String    @id @default(cuid())
-  admin_id      String    @unique @default(uuid())
-  full_name     String    @db.VarChar(255)
-  email         String    @unique @db.VarChar(255)
-  password_hash String    @db.VarChar(255)
-  is_active     Boolean   @default(true)
-  created_at    DateTime  @default(now())
-  updated_at    DateTime  @updatedAt
-  last_login_at DateTime?
-
-  @@map("platform_admins")
-}
-
-model BusinessType {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  description String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
-  plans       Plan[]
-
-  @@map("business_types")
-}
-
 model Plan {
-  id               String        @id @default(cuid())
-  plan_id          String        @unique @default(uuid())
-  business_type_id String?
-  plan_name        String        @unique @db.VarChar(100)
-  description      String?       @db.VarChar(500)
-  price            Decimal?      @db.Decimal(10, 2)
-  billing_cycle    String?       @db.VarChar(50)
-  is_active        Boolean       @default(true)
-  sort_order       Int           @default(0)
-  created_at       DateTime      @default(now())
-  updated_at       DateTime      @updatedAt
-  businessType     BusinessType? @relation(fields: [business_type_id], references: [id])
-  features         PlanFeature[]
-  organizations    Organization[]
+  id            String         @id @default(cuid())
+  name          String         @db.VarChar(100)
+  organizations Organization[]
 
-  @@index([business_type_id])
-  @@index([is_active])
   @@map("plans")
 }
 
-model PlanFeature {
-  id           String   @id @default(cuid())
-  feature_id   String   @unique @default(uuid())
-  plan_id      String
-  feature_key  String   @db.VarChar(100)
-  feature_name String   @db.VarChar(255)
-  is_enabled   Boolean  @default(true)
-  created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
-  plan         Plan     @relation(fields: [plan_id], references: [id], onDelete: Cascade)
-
-  @@unique([plan_id, feature_key])
-  @@map("plan_features")
-}
-
 model DatabaseConnection {
-  id                String         @id @default(cuid())
-  connection_id     String         @unique @default(uuid())
-  provider          String         @db.VarChar(100)
-  connection_name   String         @db.VarChar(255)
-  connection_string String?        @db.VarChar(1000)
-  host              String?        @db.VarChar(255)
-  port              Int?
-  database_name     String?        @db.VarChar(255)
-  username          String?        @db.VarChar(255)
-  status            String         @default("active") @db.VarChar(50)
-  is_default        Boolean        @default(false)
-  notes             String?        @db.VarChar(500)
-  created_at        DateTime       @default(now())
-  updated_at        DateTime       @updatedAt
-  organizations     Organization[]
+  id            String         @id @default(cuid())
+  name          String         @db.VarChar(100)
+  organizations Organization[]
 
-  @@index([status])
   @@map("database_connections")
 }
 
 model ERPSoftware {
   id              String       @id @default(cuid())
-  software_id     String       @unique @default(uuid())
   organization_id String
-  software_name   String       @default("ERP Software") @db.VarChar(255)
-  status          String       @default("active") @db.VarChar(50)
-  created_at      DateTime     @default(now())
-  updated_at      DateTime     @updatedAt
   organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  modules         ERPModule[]
 
-  @@index([organization_id])
   @@map("erp_software")
 }
 
-model ERPModule {
-  id          String          @id @default(cuid())
-  module_id   String          @unique @default(uuid())
-  software_id String
-  module_key  String          @db.VarChar(100)
-  module_name String          @db.VarChar(255)
-  status      String          @default("enabled") @db.VarChar(50)
-  settings    Json?
-  created_at  DateTime        @default(now())
-  updated_at  DateTime        @updatedAt
-  software    ERPSoftware     @relation(fields: [software_id], references: [id], onDelete: Cascade)
-  moduleData  ERPModuleData[]
+model MerchandisingOrder {
+  id              String       @id @default(cuid())
+  organization_id String
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
-  @@unique([software_id, module_key])
-  @@index([software_id])
-  @@map("erp_modules")
-}
-
-model ERPModuleData {
-  id         String    @id @default(cuid())
-  record_id  String    @unique @default(uuid())
-  module_id  String
-  record_key String    @db.VarChar(255)
-  payload    Json?
-  created_at DateTime  @default(now())
-  updated_at DateTime  @updatedAt
-  module     ERPModule @relation(fields: [module_id], references: [id], onDelete: Cascade)
-
-  @@index([module_id, record_key])
-  @@map("erp_module_data")
+  @@map("merchandising_orders")
 }
 
 model ApprovalRequest {
   id              String       @id @default(cuid())
-  request_id      String       @unique @default(uuid())
   organization_id String
-  module_key      String       @db.VarChar(100)
-  module_name     String       @db.VarChar(255)
-  entity_type     String       @db.VarChar(100)
-  entity_key      String       @db.VarChar(255)
-  entity_label    String       @db.VarChar(255)
-  entity_ref_id   String?
-  requested_by    String?
-  status          String       @default("pending") @db.VarChar(50)
-  notes           String?
-  reviewed_by     String?
-  reviewed_at     DateTime?
-  created_at      DateTime     @default(now())
-  updated_at      DateTime     @updatedAt
   organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
-  @@index([organization_id, status])
-  @@index([organization_id, entity_ref_id])
   @@map("approval_requests")
-}
-
-model MerchandisingOrder {
-  id              String                  @id @default(cuid())
-  organization_id String?                 @map("organizationId")
-  orderNo         String                  @unique @db.VarChar(100)
-  entityName      String?                 @db.VarChar(255)
-  category        String?                 @db.VarChar(255)
-  subCategory     String?                 @db.VarChar(255)
-  season          String?                 @db.VarChar(255)
-  article         String?                 @db.VarChar(255)
-  styleName       String?                 @db.VarChar(255)
-  colors          String?                 @db.VarChar(255)
-  buyer           String?                 @db.VarChar(255)
-  brand           String?                 @db.VarChar(255)
-  sizeGroup       String?                 @db.VarChar(255)
-  haveSizeRatio   Boolean?
-  ratioOrderQty   Int?
-  orderQty        Int?
-  deliveryDate    DateTime?
-  finalStatus     String                  @default("Draft") @db.VarChar(100)
-  processStatus   String?                 @db.VarChar(100)
-  createdAt       DateTime                @default(now()) @map("created_at")
-  updated_at      DateTime                @updatedAt @map("updated_at")
-  organization    Organization?           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  finishedGoods   FinishedGoodsSizeWise[]
-  bomItems        BillOfMaterialItem[]
-
-  @@index([organization_id])
-  @@map("merchandising_orders")
-}
-
-model FinishedGoodsSizeWise {
-  id              String             @id @default(cuid())
-  order_id        String             @map("orderId")
-  order           MerchandisingOrder @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  buyerSize       String?            @db.VarChar(100)
-  size            String?            @db.VarChar(100)
-  beforeExcessQty Int?
-  excess          Decimal?           @db.Decimal(10, 2)
-  excessQty       Int?
-  totalQty        Int?
-  buyerPoPrice    Decimal?           @db.Decimal(12, 2)
-  exchangePrice   Decimal?           @db.Decimal(12, 2)
-  priceInInr      Decimal?           @db.Decimal(12, 2)
-  createdAt       DateTime           @default(now()) @map("created_at")
-  updated_at      DateTime           @updatedAt @map("updated_at")
-
-  @@index([order_id])
-  @@map("finished_goods_size_wise")
-}
-
-model BillOfMaterialItem {
-  id              String             @id @default(cuid())
-  order_id        String             @map("orderId")
-  order           MerchandisingOrder @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  categoryType    String?            @db.VarChar(255)
-  category        String?            @db.VarChar(255)
-  subCategory     String?            @db.VarChar(255)
-  rawMaterialName String?            @db.VarChar(255)
-  size            String?            @db.VarChar(100)
-  consumption     Decimal?           @db.Decimal(12, 2)
-  requiredQty     Decimal?           @db.Decimal(12, 2)
-  createdAt       DateTime           @default(now()) @map("created_at")
-  updated_at      DateTime           @updatedAt @map("updated_at")
-
-  @@index([order_id])
-  @@map("bill_of_material_items")
-}
-
-model Subscription {
-  id                String    @id @default(cuid())
-  organization_id   String
-  organization_name String?
-  business_type_id  String?
-  plan_id           String
-  start_date        DateTime  @default(now())
-  end_date          DateTime?
-  payment_status    String    @default("PAID") @db.VarChar(50)
-  created_at        DateTime  @default(now())
-  updated_at        DateTime  @updatedAt
-
-  @@index([organization_id])
-  @@index([plan_id])
-  @@index([business_type_id])
-  @@map("subscriptions")
-}
-
-model plan_restrictions {
-  id               String   @id @default(uuid())
-  plan_id          String
-  master_module    String
-  main_module      String
-  sub_module       String
-  action_level     String
-  url_pattern      String
-  restriction_type String   @default("block")
-  created_at       DateTime @default(now())
-
-  @@map("plan_restrictions")
 }
