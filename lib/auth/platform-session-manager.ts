@@ -61,16 +61,16 @@ export async function getPlatformSessionAdmin(): Promise<PlatformSessionAdmin | 
   try {
     const admin = await prisma.platformAdmin.findUnique({ where: { id: adminId } });
 
-    if (!admin) {
+    if (!admin || !admin.is_active) {
       return null;
     }
 
     return {
       id: admin.id,
-      admin_id: admin.id,
-      full_name: "Platform Admin",
+      admin_id: admin.admin_id,
+      full_name: admin.full_name,
       email: admin.email,
-      is_active: true,
+      is_active: admin.is_active,
     };
   } catch {
     return null;

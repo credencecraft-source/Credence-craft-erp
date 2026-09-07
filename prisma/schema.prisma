@@ -1,1 +1,13 @@
-// Main schema definitions or additional models if needed
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+// Include all split schema models
+import "./masters/master.prisma"
+import "./others/others.prisma"

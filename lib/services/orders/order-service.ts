@@ -54,22 +54,22 @@ export type CreateOrderInput = {
 
 export async function listOrders(organizationId: string) {
   return prisma.merchandisingOrder.findMany({
-    where: { organization_id: organizationId },
+    where: { organizationId },
     include: { finishedGoods: true, bomItems: true },
-    orderBy: { created_at: "desc" },
+    orderBy: { createdAt: "desc" },
   });
 }
 
 export async function getOrderById(id: string, organizationId: string) {
   return prisma.merchandisingOrder.findFirst({
-    where: { id, organization_id: organizationId },
+    where: { id, organizationId },
     include: { finishedGoods: true, bomItems: true },
   });
 }
 
 export async function getOrderByOrderNo(orderNo: string, organizationId: string) {
   return prisma.merchandisingOrder.findFirst({
-    where: { order_no: orderNo, organization_id: organizationId },
+    where: { orderNo, organizationId },
     include: { finishedGoods: true, bomItems: true },
   });
 }
@@ -83,12 +83,14 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
 
   return prisma.merchandisingOrder.create({
     data: {
-      organization_id: organizationId,
-      order_no: input.orderNo,
-      entity_name: input.entityName ?? null,
+      organizationId,
+      orderNo: input.orderNo,
+      entityName: input.entityName ?? null,
+      category: input.category ?? null,
+      subCategory: input.subCategory ?? null,
       season: input.season ?? null,
       article: input.article ?? null,
-      style_name: input.styleName ?? null,
+      styleName: input.styleName ?? null,
       colors: input.colors ?? null,
       buyer: input.buyer ?? null,
       brand: input.brand ?? null,
@@ -114,13 +116,13 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
       },
       bomItems: {
         create: (input.bomRows ?? []).map((row) => ({
-          category_type: row.categoryType ?? null,
+          categoryType: row.categoryType ?? null,
           category: row.category ?? null,
-          sub_category: row.subCategory ?? null,
-          raw_material_name: row.rawMaterialName ?? null,
+          subCategory: row.subCategory ?? null,
+          rawMaterialName: row.rawMaterialName ?? null,
           size: row.size ?? null,
           consumption: row.consumption !== undefined && row.consumption !== "" ? Number(row.consumption) : null,
-          required_qty: row.requiredQty !== undefined && row.requiredQty !== "" ? Number(row.requiredQty) : null,
+          requiredQty: row.requiredQty !== undefined && row.requiredQty !== "" ? Number(row.requiredQty) : null,
         })),
       },
     },
@@ -129,7 +131,7 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
 }
 
 export async function updateOrder(id: string, organizationId: string, input: Partial<CreateOrderInput>) {
-  const existing = await prisma.merchandisingOrder.findFirst({ where: { id, organization_id: organizationId }, select: { id: true } });
+  const existing = await prisma.merchandisingOrder.findFirst({ where: { id, organizationId }, select: { id: true } });
   if (!existing) {
     throw new Error("Order not found for this organization.");
   }
@@ -137,10 +139,12 @@ export async function updateOrder(id: string, organizationId: string, input: Par
   return prisma.merchandisingOrder.update({
     where: { id: existing.id },
     data: {
-      entity_name: input.entityName ?? undefined,
+      entityName: input.entityName ?? undefined,
+      category: input.category ?? undefined,
+      subCategory: input.subCategory ?? undefined,
       season: input.season ?? undefined,
       article: input.article ?? undefined,
-      style_name: input.styleName ?? undefined,
+      styleName: input.styleName ?? undefined,
       colors: input.colors ?? undefined,
       buyer: input.buyer ?? undefined,
       brand: input.brand ?? undefined,
@@ -157,16 +161,16 @@ export async function updateOrder(id: string, organizationId: string, input: Par
 }
 
 export async function updateFinishedGoodsForOrder(orderId: string, organizationId: string, rows: OrderRow[]) {
-  const order = await prisma.merchandisingOrder.findFirst({ where: { id: orderId, organization_id: organizationId }, select: { id: true } });
+  const order = await prisma.merchandisingOrder.findFirst({ where: { id: orderId, organizationId }, select: { id: true } });
   if (!order) {
     throw new Error("Order not found for this organization.");
   }
 
-  await prisma.finishedGoodsSizeWise.deleteMany({ where: { merchandising_order_id: orderId } });
+  await prisma.finishedGoodsSizeWise.deleteMany({ where: { orderId } });
 
   return prisma.finishedGoodsSizeWise.createMany({
     data: rows.map((row) => ({
-      merchandising_order_id: orderId,
+      orderId,
       buyerSize: row.buyerSize ?? null,
       size: row.size ?? null,
       beforeExcessQty: row.beforeExcessQty !== undefined && row.beforeExcessQty !== "" ? Number(row.beforeExcessQty) : null,
@@ -181,49 +185,49 @@ export async function updateFinishedGoodsForOrder(orderId: string, organizationI
 }
 
 export async function updateBomItemsForOrder(orderId: string, organizationId: string, rows: BomRow[]) {
-  const order = await prisma.merchandisingOrder.findFirst({ where: { id: orderId, organization_id: organizationId }, select: { id: true } });
+  const order = await prisma.merchandisingOrder.findFirst({ where: { id: orderId, organizationId }, select: { id: true } });
   if (!order) {
     throw new Error("Order not found for this organization.");
   }
 
-  await prisma.billOfMaterialItem.deleteMany({ where: { merchandising_order_id: orderId } });
+  await prisma.billOfMaterialItem.deleteMany({ where: { orderId } });
 
   return prisma.billOfMaterialItem.createMany({
     data: rows.map((row) => ({
-      merchandising_order_id: orderId,
-      category_type: row.categoryType ?? null,
+      orderId,
+      categoryType: row.categoryType ?? null,
       category: row.category ?? null,
-      sub_category: row.subCategory ?? null,
-      raw_material_name: row.rawMaterialName ?? null,
+      subCategory: row.subCategory ?? null,
+      rawMaterialName: row.rawMaterialName ?? null,
       size: row.size ?? null,
       consumption: row.consumption !== undefined && row.consumption !== "" ? Number(row.consumption) : null,
-      required_qty: row.requiredQty !== undefined && row.requiredQty !== "" ? Number(row.requiredQty) : null,
+      requiredQty: row.requiredQty !== undefined && row.requiredQty !== "" ? Number(row.requiredQty) : null,
     })),
   });
 }
 
 export async function listBomItemsForOrganization(organizationId: string) {
   const orders = await prisma.merchandisingOrder.findMany({
-    where: { organization_id: organizationId },
-    select: { id: true, order_no: true, style_name: true, brand: true, buyer: true, bomItems: true },
-    orderBy: { created_at: "desc" },
+    where: { organizationId },
+    select: { id: true, orderNo: true, styleName: true, brand: true, buyer: true, bomItems: true },
+    orderBy: { createdAt: "desc" },
   });
 
   return orders.flatMap((order) =>
-    order.bomItems.map((item: any) => ({
+    order.bomItems.map((item) => ({
       id: item.id,
       orderId: order.id,
-      orderNo: order.order_no,
-      styleName: order.style_name,
+      orderNo: order.orderNo,
+      styleName: order.styleName,
       brand: order.brand,
       buyer: order.buyer,
-      categoryType: item.category_type,
+      categoryType: item.categoryType,
       category: item.category,
-      subCategory: item.sub_category,
-      rawMaterialName: item.raw_material_name,
+      subCategory: item.subCategory,
+      rawMaterialName: item.rawMaterialName,
       size: item.size,
       consumption: item.consumption,
-      requiredQty: item.required_qty,
+      requiredQty: item.requiredQty,
     })),
   );
 }

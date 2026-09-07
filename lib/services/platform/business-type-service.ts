@@ -15,13 +15,14 @@ export async function listActiveBusinessTypes() {
 
 export async function createBusinessType(input: {
   name: string;
+  description?: string;
 }) {
   const name = input.name.trim();
   if (!name) {
     throw new Error("Business type name is required.");
   }
 
-  const existing = await prisma.businessType.findFirst({
+  const existing = await prisma.businessType.findUnique({
     where: { name },
   });
 
@@ -32,6 +33,7 @@ export async function createBusinessType(input: {
   return prisma.businessType.create({
     data: {
       name,
+      description: input.description,
     },
   });
 }

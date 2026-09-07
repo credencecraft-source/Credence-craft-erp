@@ -8,6 +8,8 @@ const DEFAULT_PLANS = [
   { plan_name: "Professional", description: "All modules for growing organizations.", sort_order: 2 },
 ];
 
+// Idempotent: creates default plans, a default database connection, and
+// a default platform admin (from env) the first time the platform area is used.
 export async function ensurePlatformDefaults() {
   const existingPlanCount = await prisma.plan.count();
 
@@ -46,9 +48,10 @@ export async function ensurePlatformDefaults() {
 
     await prisma.platformAdmin.create({
       data: {
-        id: randomUUID(),
+        admin_id: randomUUID(),
+        full_name: "Support Team",
         email,
-        password: hashPlatformPassword(password),
+        password_hash: hashPlatformPassword(password),
       },
     });
   }

@@ -9,13 +9,13 @@ export async function listPlans() {
 
   return plans.map((plan) => ({
     ...plan,
-    price: plan.price ?? null,
+    price: plan.price ? plan.price.toNumber() : null,
   }));
 }
 
 export async function getPlanById(planId: string) {
   const plan = await prisma.plan.findUnique({
-    where: { plan_id: planId },
+    where: { plan_id: planId }, // Fixed from id: planId
     include: { businessType: true },
   });
 
@@ -23,7 +23,7 @@ export async function getPlanById(planId: string) {
 
   return {
     ...plan,
-    price: plan.price ?? null,
+    price: plan.price ? plan.price.toNumber() : null,
   };
 }
 
@@ -40,7 +40,7 @@ export async function createPlan(input: {
     throw new Error("Plan name is required.");
   }
 
-  const existing = await prisma.plan.findFirst({ where: { plan_name: planName } });
+  const existing = await prisma.plan.findUnique({ where: { plan_name: planName } });
 
   if (existing) {
     throw new Error("A plan with this name already exists.");
@@ -54,9 +54,8 @@ export async function createPlan(input: {
       plan_id: randomUUID(),
       business_type_id: businessTypeId && businessTypeId !== "" ? businessTypeId : null,
       plan_name: planName,
-      name: planName, // Satisfies Prisma's required name field
       description: input.description?.trim() || null,
-      price: input.price ?? undefined,
+      price: input.price ?? null,
       billing_cycle: input.billingCycle?.trim() || null,
       sort_order: planCount,
     },
@@ -65,13 +64,13 @@ export async function createPlan(input: {
 
   return {
     ...createdPlan,
-    price: createdPlan.price ?? null,
+    price: createdPlan.price ? createdPlan.price.toNumber() : null,
   };
 }
 
 export async function deletePlan(planId: string) {
   const plan = await prisma.plan.findUnique({
-    where: { plan_id: planId },
+    where: { plan_id: planId }, // Fixed from id: planId
   });
 
   if (!plan) {
@@ -79,6 +78,6 @@ export async function deletePlan(planId: string) {
   }
 
   return prisma.plan.delete({
-    where: { plan_id: planId },
+    where: { plan_id: planId }, // Fixed from id: planId
   });
 }
