@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-
 import { prisma } from "@/lib/database/prisma-client";
 
 export async function listDatabaseConnections() {

@@ -1,135 +1,84 @@
 import { randomUUID } from "node:crypto";
-
 import { prisma } from "@/lib/database/prisma-client";
 
-import { normalizeOrganizationInput, validateOrganizationInput } from "./organization-validators";
-
-export type OrganizationCreateInput = {
-  workspaceUserId: string;
-  organizationName: string;
-  gstNumber: string;
-  addressLine1?: string;
-  addressLine2?: string;
-  city?: string;
-  state?: string;
-  country?: string;
-  pinCode?: string;
-};
-
-function isMissingTableError(error: unknown) {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const message = error.message || "";
-  return message.includes("does not exist") || message.includes("P2021") || message.includes("table") && message.includes("public");
-}
-
-export async function listOrganizationsForUser(workspaceUserId: string) {
-  try {
-    return await prisma.organization.findMany({
-      where: {
-        workspace_user_id: workspaceUserId,
-        is_active: true,
-      },
-      orderBy: {
-        created_at: "desc",
-      },
-    });
-  } catch (error) {
-    if (isMissingTableError(error)) {
-      return [];
-    }
-
-    throw error;
-  }
-}
-
-export async function createOrganization(input: OrganizationCreateInput) {
-  try {
-    const validated = validateOrganizationInput({
-      organizationName: input.organizationName,
-      gstNumber: input.gstNumber,
-      addressLine1: input.addressLine1,
-      addressLine2: input.addressLine2,
-      city: input.city,
-      state: input.state,
-      country: input.country,
-      pinCode: input.pinCode,
-    });
-
-    return await prisma.$transaction(async (transaction) => {
-      const organization = await transaction.organization.create({
-        data: {
-          organization_id: randomUUID(),
-          workspace_user_id: input.workspaceUserId,
-          organization_name: validated.organizationName,
-          gst_number: validated.gstNumber,
-          address_line_1: validated.addressLine1 || null,
-          address_line_2: validated.addressLine2 || null,
-          city: validated.city || null,
-          state: validated.state || null,
-          country: validated.country || null,
-          pin_code: validated.pinCode || null,
-          is_active: true,
-        },
-      });
-
-      await transaction.eRPSoftware.create({
-        data: {
-          software_id: randomUUID(),
-          organization_id: organization.id,
-          software_name: "ERP Software",
-          status: "active",
-        },
-      });
-
-      return organization;
-    });
-  } catch (error) {
-    if (isMissingTableError(error)) {
-      throw new Error("Organization database table is not available yet. Run the Prisma migration or sync the database schema before creating organizations.");
-    }
-
-    throw error;
-  }
-}
-
-export async function getOrganizationForUser(workspaceUserId: string, organizationId: string) {
-  return prisma.organization.findFirst({
-    where: {
-      organization_id: organizationId,
-      workspace_user_id: workspaceUserId,
-    },
-    include: {
-      erpSoftware: {
-        include: {
-          modules: true,
-        },
-      },
-    },
-  });
-}
-
-export async function deleteOrganization(organizationId: string, workspaceUserId: string) {
-  const organization = await prisma.organization.findFirst({
-    where: {
-      id: organizationId,
-      workspace_user_id: workspaceUserId,
-    },
+export async function listPlans() {
+  const plans = await prisma.plan.findMany({
+    orderBy: { sort_order: "asc" },
+    include: { businessType: true },
   });
 
-  if (!organization) {
-    throw new Error("Organization not found.");
-  }
-
-  await prisma.organization.delete({
-    where: { id: organization.id },
-  });
-
-  return { deleted: true, organizationId: organization.organization_id };
+  return plans.map((plan) => ({
+    ...plan,
+    price: plan.price ?? null,
+  }));
 }
 
-export function normalizeOrganizationData(raw: OrganizationCreateInput) {
-  return normalizeOrganizationInput(raw);
+export async function getPlanById(planId: string) {
+  const plan = await prisma.plan.findUnique({
+    where: { plan_id: planId },
+    include: { businessType: true },
+  });
+
+  if (!plan) return null;
+
+  return {
+    ...plan,
+    price: plan.price ?? null,
+  };
+}
+
+export async function createPlan(input: {
+  planName: string;
+  businessTypeId?: string;
+  description?: string;
+  price?: number;
+  billingCycle?: string;
+}) {
+  const planName = input.planName.trim();
+
+  if (!planName) {
+    throw new Error("Plan name is required.");
+  }
+
+  const existing = await prisma.plan.findFirst({ where: { plan_name: planName } });
+
+  if (existing) {
+    throw new Error("A plan with this name already exists.");
+  }
+
+  const planCount = await prisma.plan.count();
+  const businessTypeId = input.businessTypeId?.trim();
+
+  const createdPlan = await prisma.plan.create({
+    data: {
+      plan_id: randomUUID(),
+      business_type_id: businessTypeId && businessTypeId !== "" ? businessTypeId : null,
+      plan_name: planName,
+      name: planName, // Satisfies Prisma's required name field
+      description: input.description?.trim() || null,
+      price: input.price ?? undefined,
+      billing_cycle: input.billingCycle?.trim() || null,
+      sort_order: planCount,
+    },
+    include: { businessType: true },
+  });
+
+  return {
+    ...createdPlan,
+    price: createdPlan.price ?? null,
+  };
+}
+
+export async function deletePlan(planId: string) {
+  const plan = await prisma.plan.findUnique({
+    where: { plan_id: planId },
+  });
+
+  if (!plan) {
+    return null;
+  }
+
+  return prisma.plan.delete({
+    where: { plan_id: planId },
+  });
 }
