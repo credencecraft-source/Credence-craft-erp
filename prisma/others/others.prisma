@@ -7,9 +7,7 @@ model WorkspaceUser {
   email_verified Boolean        @default(false)
   created_at     DateTime       @default(now())
   updated_at     DateTime       @updatedAt
-  last_login_at  DateTime?// ... existing code ...
-model WorkspaceUser {
-// ... existing code ...
+    last_login_at  DateTime?
   organizations  Organization[]
 
   @@map("workspace_users")
