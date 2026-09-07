@@ -76,42 +76,178 @@ model Organization {
   @@map("organizations")
 }
 
-model Plan {
-  id            String         @id @default(cuid())
-  name          String         @db.VarChar(100)
-  organizations Organization[]
+model BusinessType {
+  id         String   @id @default(cuid())
+  name       String   @db.VarChar(100)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  plans      Plan[]
 
+  @@map("business_types")
+}
+
+model Plan {
+  id               String            @id @default(cuid())
+  plan_id          String?           @unique @default(uuid())
+  plan_name        String            @db.VarChar(100)
+  name             String            @db.VarChar(100)
+  description      String?
+  price            Float             @default(0)
+  billing_cycle    String?           @db.VarChar(50)
+  is_active        Boolean           @default(true)
+  sort_order       Int               @default(0)
+  business_type_id String?
+  created_at       DateTime          @default(now())
+  updated_at       DateTime          @updatedAt
+
+  businessType     BusinessType?     @relation(fields: [business_type_id], references: [id])
+  organizations    Organization[]
+  plan_restrictions PlanRestriction[]
+
+  @@index([business_type_id])
   @@map("plans")
 }
 
+model PlanRestriction {
+  id         String   @id @default(cuid())
+  plan_id    String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  plan       Plan     @relation(fields: [plan_id], references: [id], onDelete: Cascade)
+
+  @@index([plan_id])
+  @@map("plan_restrictions")
+}
+
 model DatabaseConnection {
-  id            String         @id @default(cuid())
-  name          String         @db.VarChar(100)
-  organizations Organization[]
+  id                String         @id @default(cuid())
+  connection_id     String?        @unique @default(uuid())
+  connection_name   String         @db.VarChar(100)
+  name              String         @db.VarChar(100)
+  provider          String?        @db.VarChar(50)
+  host              String?        @db.VarChar(255)
+  port              Int?
+  database_name     String?        @db.VarChar(100)
+  connection_string String?
+  status            String?        @db.VarChar(50)
+  is_default        Boolean        @default(false)
+  created_at        DateTime       @default(now())
+  updated_at        DateTime       @updatedAt
+
+  organizations     Organization[]
 
   @@map("database_connections")
 }
 
 model ERPSoftware {
   id              String       @id @default(cuid())
+  software_id     String?      @unique @default(uuid())
   organization_id String
-  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
 
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  modules         MasterModule[]
+
+  @@index([organization_id])
   @@map("erp_software")
+}
+
+model MasterModule {
+  id              String       @id @default(cuid())
+  organization_id String
+  erp_software_id String?
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  erpSoftware     ERPSoftware? @relation(fields: [erp_software_id], references: [id])
+
+  @@index([organization_id])
+  @@index([erp_software_id])
+  @@map("master_modules")
 }
 
 model MerchandisingOrder {
   id              String       @id @default(cuid())
   organization_id String
-  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  order_no        String       @db.VarChar(100)
+  style_name      String?      @db.VarChar(100)
+  brand           String?      @db.VarChar(100)
+  buyer           String?      @db.VarChar(100)
+  entity_name     String?      @db.VarChar(100)
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
 
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  finishedGoods   FinishedGoodsSizeWise[]
+  bomItems        BillOfMaterialItem[]
+
+  @@index([organization_id])
   @@map("merchandising_orders")
+}
+
+model FinishedGoodsSizeWise {
+  id                    String             @id @default(cuid())
+  merchandising_order_id String
+  created_at            DateTime           @default(now())
+  updated_at            DateTime           @updatedAt
+
+  order                 MerchandisingOrder @relation(fields: [merchandising_order_id], references: [id], onDelete: Cascade)
+
+  @@index([merchandising_order_id])
+  @@map("finished_goods_size_wise")
+}
+
+model BillOfMaterialItem {
+  id                    String             @id @default(cuid())
+  merchandising_order_id String
+  created_at            DateTime           @default(now())
+  updated_at            DateTime           @updatedAt
+
+  order                 MerchandisingOrder @relation(fields: [merchandising_order_id], references: [id], onDelete: Cascade)
+
+  @@index([merchandising_order_id])
+  @@map("bill_of_material_items")
 }
 
 model ApprovalRequest {
   id              String       @id @default(cuid())
+  request_id      String?      @unique @default(uuid())
   organization_id String
+  entity_ref_id   String?
+  module_key      String?      @db.VarChar(100)
+  entity_label    String?      @db.VarChar(100)
+  module_name     String?      @db.VarChar(100)
+  entity_type     String?      @db.VarChar(100)
+  status          String       @default("PENDING") @db.VarChar(50)
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+
   organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
+  @@index([organization_id])
   @@map("approval_requests")
+}
+
+model PlatformAdmin {
+  id         String   @id @default(cuid())
+  email      String   @unique @db.VarChar(255)
+  password   String   @db.VarChar(255)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@map("platform_admins")
+}
+
+model Subscription {
+  id              String   @id @default(cuid())
+  organization_id String
+  status          String   @default("ACTIVE") @db.VarChar(50)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@index([organization_id])
+  @@map("subscriptions")
 }
