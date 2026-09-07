@@ -35,6 +35,7 @@ model Organization {
   plan                    Plan?               @relation(fields: [plan_id], references: [id])
   databaseConnection      DatabaseConnection? @relation(fields: [database_connection_id], references: [id])
   erpSoftware             ERPSoftware[]
+  masterModules           MasterModule[]
   merchandisingOrders     MerchandisingOrder[]
   approvalRequests        ApprovalRequest[]
 
