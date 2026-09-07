@@ -35,7 +35,6 @@ model Organization {
   plan                    Plan?               @relation(fields: [plan_id], references: [id])
   databaseConnection      DatabaseConnection? @relation(fields: [database_connection_id], references: [id])
   erpSoftware             ERPSoftware[]
-  masterModules           MasterModule[]
   merchandisingOrders     MerchandisingOrder[]
   approvalRequests        ApprovalRequest[]
 
@@ -148,25 +147,9 @@ model ERPSoftware {
   updated_at      DateTime     @updatedAt
 
   organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  modules         MasterModule[]
 
   @@index([organization_id])
   @@map("erp_software")
-}
-
-model MasterModule {
-  id              String       @id @default(cuid())
-  organization_id String
-  erp_software_id String?
-  created_at      DateTime     @default(now())
-  updated_at      DateTime     @updatedAt
-
-  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  erpSoftware     ERPSoftware? @relation(fields: [erp_software_id], references: [id])
-
-  @@index([organization_id])
-  @@index([erp_software_id])
-  @@map("master_modules")
 }
 
 model MerchandisingOrder {
