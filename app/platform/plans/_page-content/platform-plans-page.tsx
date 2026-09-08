@@ -46,7 +46,7 @@ async function deletePlanAction(formData: FormData) {
     } catch {
       try {
         await prisma.subscription.deleteMany({
-          where: { planId: planId },
+          where: { plan_id: planId },
         });
       } catch {}
     }
@@ -82,7 +82,6 @@ async function updatePlanAction(formData: FormData) {
   }
 
   try {
-    // Safely update using Prisma delegate or raw SQL fallback
     let updated = false;
     try {
       if ((prisma as any).plans?.update) {
@@ -165,7 +164,7 @@ export default async function PlatformPlansPage({ searchParams }: PageProps) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-xs">
-            {plans.map((plan) => {
+            {plans.map((plan: any) => {
               const nameParts = plan.plan_name.split(" - ");
               const businessType = nameParts.length > 1 ? nameParts[0] : "General";
               const tierName = nameParts.length > 1 ? nameParts.slice(1).join(" - ") : plan.plan_name;
@@ -251,14 +250,14 @@ export default async function PlatformPlansPage({ searchParams }: PageProps) {
               )}
 
               <form action={updatePlanAction} className="space-y-4 text-xs">
-                <input type="hidden" name="planId" value={editingPlan.id} />
+                <input type="hidden" name="planId" value={(editingPlan as any).id} />
 
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Plan Name</label>
                   <input 
                     type="text" 
                     name="planName" 
-                    defaultValue={editingPlan.plan_name} 
+                    defaultValue={(editingPlan as any).plan_name} 
                     required 
                     className="w-full border rounded-lg px-3 py-2 text-slate-900 outline-none focus:ring-2 focus:ring-sky-500"
                   />
@@ -268,7 +267,7 @@ export default async function PlatformPlansPage({ searchParams }: PageProps) {
                   <label className="block font-semibold text-slate-700 mb-1">Description</label>
                   <textarea 
                     name="description" 
-                    defaultValue={editingPlan.description || ""} 
+                    defaultValue={(editingPlan as any).description || ""} 
                     rows={2}
                     className="w-full border rounded-lg px-3 py-2 text-slate-900 outline-none focus:ring-2 focus:ring-sky-500"
                   />
@@ -281,7 +280,7 @@ export default async function PlatformPlansPage({ searchParams }: PageProps) {
                       type="number" 
                       step="0.01" 
                       name="price" 
-                      defaultValue={editingPlan.price ?? 0} 
+                      defaultValue={(editingPlan as any).price ?? 0} 
                       className="w-full border rounded-lg px-3 py-2 text-slate-900 outline-none focus:ring-2 focus:ring-sky-500"
                     />
                   </div>
@@ -289,7 +288,7 @@ export default async function PlatformPlansPage({ searchParams }: PageProps) {
                     <label className="block font-semibold text-slate-700 mb-1">Billing Cycle</label>
                     <select 
                       name="billingCycle" 
-                      defaultValue={editingPlan.billing_cycle || "month"} 
+                      defaultValue={(editingPlan as any).billing_cycle || "month"} 
                       className="w-full border rounded-lg px-3 py-2 text-slate-900 outline-none focus:ring-2 focus:ring-sky-500 bg-white"
                     >
                       <option value="month">Month</option>
@@ -305,7 +304,7 @@ export default async function PlatformPlansPage({ searchParams }: PageProps) {
                     type="checkbox" 
                     name="isActive" 
                     id="isActive" 
-                    defaultChecked={editingPlan.is_active} 
+                    defaultChecked={(editingPlan as any).is_active} 
                     className="w-4 h-4 text-sky-600 rounded border-slate-300"
                   />
                   <label htmlFor="isActive" className="font-semibold text-slate-700">Active Plan</label>

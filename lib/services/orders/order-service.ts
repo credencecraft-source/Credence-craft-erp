@@ -75,7 +75,9 @@ export async function getOrderByOrderNo(orderNo: string, organizationId: string)
 }
 
 export async function listBomItemsForOrganization(organizationId: string) {
-  return prisma.bomItem.findMany({
+  const db = prisma as any;
+  const bomItemClient = db.bomItem || db.bom_item;
+  return bomItemClient.findMany({
     where: {
       merchandisingOrder: {
         organization_id: organizationId,
@@ -93,6 +95,8 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
   }
 
   const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : null;
+  const ratioQty = input.ratioOrderQty !== undefined && input.ratioOrderQty !== null && input.ratioOrderQty !== "" ? Number(input.ratioOrderQty) : null;
+  const ordQty = input.orderQty !== undefined && input.orderQty !== null && input.orderQty !== "" ? Number(input.orderQty) : null;
 
   return prisma.merchandisingOrder.create({
     data: {
@@ -111,8 +115,8 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
       brand: input.brand ?? null,
       sizeGroup: input.sizeGroup ?? null,
       haveSizeRatio: input.haveSizeRatio ?? false,
-      ratioOrderQty: input.ratioOrderQty ? String(input.ratioOrderQty) : null,
-      orderQty: input.orderQty ? String(input.orderQty) : null,
+      ratioOrderQty: ratioQty !== null && !isNaN(ratioQty) ? ratioQty : null,
+      orderQty: ordQty !== null && !isNaN(ordQty) ? ordQty : null,
       deliveryDate: deliveryDate,
       finalStatus: input.finalStatus ?? "Draft",
       processStatus: input.processStatus ?? null,
@@ -131,6 +135,8 @@ export async function updateOrder(
   }
 
   const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : undefined;
+  const ratioQty = input.ratioOrderQty !== undefined && input.ratioOrderQty !== null && input.ratioOrderQty !== "" ? Number(input.ratioOrderQty) : undefined;
+  const ordQty = input.orderQty !== undefined && input.orderQty !== null && input.orderQty !== "" ? Number(input.orderQty) : undefined;
 
   return prisma.merchandisingOrder.update({
     where: { id: orderId },
@@ -147,11 +153,11 @@ export async function updateOrder(
       ...(input.brand !== undefined && { brand: input.brand ?? null }),
       ...(input.sizeGroup !== undefined && { sizeGroup: input.sizeGroup ?? null }),
       ...(input.haveSizeRatio !== undefined && { haveSizeRatio: input.haveSizeRatio }),
-      ...(input.ratioOrderQty !== undefined && {
-        ratioOrderQty: input.ratioOrderQty ? String(input.ratioOrderQty) : null,
+      ...(ratioQty !== undefined && {
+        ratioOrderQty: !isNaN(ratioQty) ? ratioQty : null,
       }),
-      ...(input.orderQty !== undefined && {
-        orderQty: input.orderQty ? String(input.orderQty) : null,
+      ...(ordQty !== undefined && {
+        orderQty: !isNaN(ordQty) ? ordQty : null,
       }),
       ...(deliveryDate !== undefined && { deliveryDate }),
       ...(input.finalStatus !== undefined && { finalStatus: input.finalStatus }),
@@ -170,22 +176,29 @@ export async function updateBomItemsForOrder(
     throw new Error("Order not found");
   }
 
-  await prisma.bomItem.deleteMany({
+  const db = prisma as any;
+  const bomItemClient = db.bomItem || db.bom_item;
+
+  await bomItemClient.deleteMany({
     where: { merchandising_order_id: orderId },
   });
 
   if (bomRows && bomRows.length > 0) {
-    await prisma.bomItem.createMany({
-      data: bomRows.map((row) => ({
-        merchandising_order_id: orderId,
-        categoryType: row.categoryType ?? null,
-        category: row.category ?? null,
-        subCategory: row.subCategory ?? null,
-        rawMaterialName: row.rawMaterialName ?? null,
-        size: row.size ?? null,
-        consumption: row.consumption ? String(row.consumption) : null,
-        requiredQty: row.requiredQty ? String(row.requiredQty) : null,
-      })),
+    await bomItemClient.createMany({
+      data: bomRows.map((row) => {
+        const consumptionVal = row.consumption !== undefined && row.consumption !== null && row.consumption !== "" ? Number(row.consumption) : null;
+        const requiredVal = row.requiredQty !== undefined && row.requiredQty !== null && row.requiredQty !== "" ? Number(row.requiredQty) : null;
+        return {
+          merchandising_order_id: orderId,
+          categoryType: row.categoryType ?? null,
+          category: row.category ?? null,
+          subCategory: row.subCategory ?? null,
+          rawMaterialName: row.rawMaterialName ?? null,
+          size: row.size ?? null,
+          consumption: consumptionVal !== null && !isNaN(consumptionVal) ? consumptionVal : null,
+          requiredQty: requiredVal !== null && !isNaN(requiredVal) ? requiredVal : null,
+        };
+      }),
     });
   }
 }
@@ -200,24 +213,34 @@ export async function updateFinishedGoodsForOrder(
     throw new Error("Order not found");
   }
 
-  await prisma.finishedGood.deleteMany({
+  const db = prisma as any;
+  const finishedGoodClient = db.finishedGood || db.finished_good;
+
+  await finishedGoodClient.deleteMany({
     where: { merchandising_order_id: orderId },
   });
 
   if (rows && rows.length > 0) {
-    await prisma.finishedGood.createMany({
-      data: rows.map((row) => ({
-        merchandising_order_id: orderId,
-        buyerSize: row.buyerSize ?? null,
-        size: row.size ?? null,
-        beforeExcessQty: row.beforeExcessQty ? String(row.beforeExcessQty) : null,
-        excess: row.excess ? String(row.excess) : null,
-        excessQty: row.excessQty ? String(row.excessQty) : null,
-        totalQty: row.totalQty ? String(row.totalQty) : null,
-        buyerPoPrice: row.buyerPoPrice ? String(row.buyerPoPrice) : null,
-        exchangePrice: row.exchangePrice ? String(row.exchangePrice) : null,
-        priceInInr: row.priceInInr ? String(row.priceInInr) : null,
-      })),
+    await finishedGoodClient.createMany({
+      data: rows.map((row) => {
+        const parseNum = (val: any) => {
+          if (val === undefined || val === null || val === "") return null;
+          const num = Number(val);
+          return isNaN(num) ? null : num;
+        };
+        return {
+          merchandising_order_id: orderId,
+          buyerSize: row.buyerSize ?? null,
+          size: row.size ?? null,
+          beforeExcessQty: parseNum(row.beforeExcessQty),
+          excess: parseNum(row.excess),
+          excessQty: parseNum(row.excessQty),
+          totalQty: parseNum(row.totalQty),
+          buyerPoPrice: parseNum(row.buyerPoPrice),
+          exchangePrice: parseNum(row.exchangePrice),
+          priceInInr: parseNum(row.priceInInr),
+        };
+      }),
     });
   }
 }
