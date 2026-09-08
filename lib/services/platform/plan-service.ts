@@ -1,3 +1,4 @@
+// @/lib/services/platform/plan-service.ts
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/database/prisma-client";
 
@@ -15,7 +16,7 @@ export async function listPlans() {
 
 export async function getPlanById(planId: string) {
   const plan = await prisma.plan.findUnique({
-    where: { plan_id: planId }, // Fixed from id: planId
+    where: { plan_id: planId },
     include: { businessType: true },
   });
 
@@ -70,7 +71,7 @@ export async function createPlan(input: {
 
 export async function deletePlan(planId: string) {
   const plan = await prisma.plan.findUnique({
-    where: { plan_id: planId }, // Fixed from id: planId
+    where: { plan_id: planId },
   });
 
   if (!plan) {
@@ -78,6 +79,6 @@ export async function deletePlan(planId: string) {
   }
 
   return prisma.plan.delete({
-    where: { plan_id: planId }, // Fixed from id: planId
+    where: { plan_id: planId },
   });
 }

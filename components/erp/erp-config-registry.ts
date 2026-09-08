@@ -3,6 +3,7 @@
 export type SubModuleOption = {
   key: string;
   label: string;
+  pathSegment?: string;
   children?: SubModuleOption[];
 };
 
@@ -22,9 +23,10 @@ export const ERP_MODULES = [
       {
         key: "merchandising",
         label: "Merchandising",
+        pathSegment: "merchandising",
         children: [
-          { key: "order", label: "Orders" },
-          { key: "bom", label: "BOM" },
+          { key: "order", label: "Order", pathSegment: "order" },
+          { key: "bom", label: "BOM", pathSegment: "bom" },
         ],
       },
     ],
@@ -55,12 +57,13 @@ export const ERP_MODULES = [
     label: "Settings",
     pathSegment: "settings",
     children: [
-      { key: "master-data", label: "Master Data" },
+      { key: "master-data", label: "Master Data", pathSegment: "master-data" },
       {
         key: "pricing",
         label: "Pricing Plan",
+        pathSegment: "pricing",
         children: [
-          { key: "plan", label: "Plan" },
+          { key: "plan", label: "Plan", pathSegment: "plan" },
         ],
       },
     ],

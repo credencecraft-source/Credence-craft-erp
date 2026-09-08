@@ -20,6 +20,16 @@ interface PageProps {
   searchParams?: Promise<{ error?: string; success?: string; modal?: string; edit?: string }>;
 }
 
+function formatDateForInput(val: any): string {
+  if (!val) return "";
+  try {
+    const str = typeof val === "string" ? val : new Date(val).toISOString();
+    return str.split("T")[0];
+  } catch {
+    return "";
+  }
+}
+
 export default async function PlatformSubscriptionsPage({ searchParams }: PageProps) {
   const resolvedSearch = (await searchParams) ?? {};
   const isModalOpen = resolvedSearch.modal === "open";
@@ -165,14 +175,14 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                     name="startDate" 
                     type="date" 
                     required 
-                    defaultValue={(editingSub?.startDate || editingSub?.start_date)?.split("T")[0]} 
+                    defaultValue={formatDateForInput(editingSub?.startDate || editingSub?.start_date)} 
                   />
                   <Input 
                     label="Expire Date" 
                     name="endDate" 
                     type="date" 
                     required 
-                    defaultValue={(editingSub?.endDate || editingSub?.end_date || editingSub?.expireDate)?.split("T")[0]} 
+                    defaultValue={formatDateForInput(editingSub?.endDate || editingSub?.end_date || editingSub?.expireDate)} 
                   />
                 </div>
 
@@ -226,6 +236,9 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                 const plan = plans.find((p: any) => String(p.id || p._id).trim() === subPlanId);
                 const subId = sub.id || sub._id;
 
+                const startStr = formatDateForInput(sub.startDate || sub.start_date);
+                const endStr = formatDateForInput(sub.endDate || sub.end_date || sub.expireDate);
+
                 return (
                   <tr key={subId} className="hover:bg-slate-50">
                     <td className="px-3 py-3 font-mono text-[11px]">{sub.organizationId || sub.organization_id}</td>
@@ -236,7 +249,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                     <td className="px-3 py-3">{(plan as any)?.name || (plan as any)?.plan_name || "—"}</td>
                     <td className="px-3 py-3 font-mono text-[11px]">{subPlanId || "—"}</td>
                     <td className="px-3 py-3">
-                      {(sub.startDate || sub.start_date)?.split("T")[0] || "—"} to {(sub.endDate || sub.end_date || sub.expireDate)?.split("T")[0] || "—"}
+                      {startStr || "—"} to {endStr || "—"}
                     </td>
                     <td className="px-3 py-3"><span className="uppercase font-bold">{sub.paymentStatus || sub.payment_status}</span></td>
                     <td className="px-3 py-3"><span className="uppercase font-bold">{sub.serviceStatus || sub.service_status || "active"}</span></td>

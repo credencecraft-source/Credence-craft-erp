@@ -54,23 +54,36 @@ export type CreateOrderInput = {
 
 export async function listOrders(organizationId: string) {
   return prisma.merchandisingOrder.findMany({
-    where: { organizationId },
+    where: { organization_id: organizationId },
     include: { finishedGoods: true, bomItems: true },
-    orderBy: { createdAt: "desc" },
+    orderBy: { created_at: "desc" },
   });
 }
 
 export async function getOrderById(id: string, organizationId: string) {
   return prisma.merchandisingOrder.findFirst({
-    where: { id, organizationId },
+    where: { id, organization_id: organizationId },
     include: { finishedGoods: true, bomItems: true },
   });
 }
 
 export async function getOrderByOrderNo(orderNo: string, organizationId: string) {
   return prisma.merchandisingOrder.findFirst({
-    where: { orderNo, organizationId },
+    where: { orderNo, organization_id: organizationId },
     include: { finishedGoods: true, bomItems: true },
+  });
+}
+
+export async function listBomItemsForOrganization(organizationId: string) {
+  return prisma.bomItem.findMany({
+    where: {
+      merchandisingOrder: {
+        organization_id: organizationId,
+      },
+    },
+    include: {
+      merchandisingOrder: true,
+    },
   });
 }
 
@@ -83,7 +96,9 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
 
   return prisma.merchandisingOrder.create({
     data: {
-      organizationId,
+      organization: {
+        connect: { id: organizationId },
+      },
       orderNo: input.orderNo,
       entityName: input.entityName ?? null,
       category: input.category ?? null,
@@ -95,139 +110,114 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
       buyer: input.buyer ?? null,
       brand: input.brand ?? null,
       sizeGroup: input.sizeGroup ?? null,
-      haveSizeRatio: input.haveSizeRatio ?? null,
-      ratioOrderQty: input.ratioOrderQty !== undefined && input.ratioOrderQty !== "" ? Number(input.ratioOrderQty) : null,
-      orderQty: input.orderQty !== undefined && input.orderQty !== "" ? Number(input.orderQty) : null,
-      deliveryDate,
+      haveSizeRatio: input.haveSizeRatio ?? false,
+      ratioOrderQty: input.ratioOrderQty ? String(input.ratioOrderQty) : null,
+      orderQty: input.orderQty ? String(input.orderQty) : null,
+      deliveryDate: deliveryDate,
       finalStatus: input.finalStatus ?? "Draft",
       processStatus: input.processStatus ?? null,
-      finishedGoods: {
-        create: (input.rows ?? []).map((row) => ({
-          buyerSize: row.buyerSize ?? null,
-          size: row.size ?? null,
-          beforeExcessQty: row.beforeExcessQty !== undefined && row.beforeExcessQty !== "" ? Number(row.beforeExcessQty) : null,
-          excess: row.excess !== undefined && row.excess !== "" ? Number(row.excess) : null,
-          excessQty: row.excessQty !== undefined && row.excessQty !== "" ? Number(row.excessQty) : null,
-          totalQty: row.totalQty !== undefined && row.totalQty !== "" ? Number(row.totalQty) : null,
-          buyerPoPrice: row.buyerPoPrice !== undefined && row.buyerPoPrice !== "" ? Number(row.buyerPoPrice) : null,
-          exchangePrice: row.exchangePrice !== undefined && row.exchangePrice !== "" ? Number(row.exchangePrice) : null,
-          priceInInr: row.priceInInr !== undefined && row.priceInInr !== "" ? Number(row.priceInInr) : null,
-        })),
-      },
-      bomItems: {
-        create: (input.bomRows ?? []).map((row) => ({
-          categoryType: row.categoryType ?? null,
-          category: row.category ?? null,
-          subCategory: row.subCategory ?? null,
-          rawMaterialName: row.rawMaterialName ?? null,
-          size: row.size ?? null,
-          consumption: row.consumption !== undefined && row.consumption !== "" ? Number(row.consumption) : null,
-          requiredQty: row.requiredQty !== undefined && row.requiredQty !== "" ? Number(row.requiredQty) : null,
-        })),
-      },
     },
-    include: { finishedGoods: true, bomItems: true },
   });
 }
 
-export async function updateOrder(id: string, organizationId: string, input: Partial<CreateOrderInput>) {
-  const existing = await prisma.merchandisingOrder.findFirst({ where: { id, organizationId }, select: { id: true } });
-  if (!existing) {
-    throw new Error("Order not found for this organization.");
+export async function updateOrder(
+  orderId: string,
+  organizationId: string,
+  input: Partial<CreateOrderInput>
+) {
+  const order = await getOrderById(orderId, organizationId);
+  if (!order) {
+    throw new Error("Order not found");
   }
+
+  const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : undefined;
 
   return prisma.merchandisingOrder.update({
-    where: { id: existing.id },
+    where: { id: orderId },
     data: {
-      entityName: input.entityName ?? undefined,
-      category: input.category ?? undefined,
-      subCategory: input.subCategory ?? undefined,
-      season: input.season ?? undefined,
-      article: input.article ?? undefined,
-      styleName: input.styleName ?? undefined,
-      colors: input.colors ?? undefined,
-      buyer: input.buyer ?? undefined,
-      brand: input.brand ?? undefined,
-      sizeGroup: input.sizeGroup ?? undefined,
-      haveSizeRatio: input.haveSizeRatio ?? undefined,
-      ratioOrderQty: input.ratioOrderQty !== undefined && input.ratioOrderQty !== "" ? Number(input.ratioOrderQty) : null,
-      orderQty: input.orderQty !== undefined && input.orderQty !== "" ? Number(input.orderQty) : null,
-      deliveryDate: input.deliveryDate ? new Date(input.deliveryDate) : undefined,
-      finalStatus: input.finalStatus ?? undefined,
-      processStatus: input.processStatus ?? undefined,
+      ...(input.orderNo !== undefined && { orderNo: input.orderNo }),
+      ...(input.entityName !== undefined && { entityName: input.entityName ?? null }),
+      ...(input.category !== undefined && { category: input.category ?? null }),
+      ...(input.subCategory !== undefined && { subCategory: input.subCategory ?? null }),
+      ...(input.season !== undefined && { season: input.season ?? null }),
+      ...(input.article !== undefined && { article: input.article ?? null }),
+      ...(input.styleName !== undefined && { styleName: input.styleName ?? null }),
+      ...(input.colors !== undefined && { colors: input.colors ?? null }),
+      ...(input.buyer !== undefined && { buyer: input.buyer ?? null }),
+      ...(input.brand !== undefined && { brand: input.brand ?? null }),
+      ...(input.sizeGroup !== undefined && { sizeGroup: input.sizeGroup ?? null }),
+      ...(input.haveSizeRatio !== undefined && { haveSizeRatio: input.haveSizeRatio }),
+      ...(input.ratioOrderQty !== undefined && {
+        ratioOrderQty: input.ratioOrderQty ? String(input.ratioOrderQty) : null,
+      }),
+      ...(input.orderQty !== undefined && {
+        orderQty: input.orderQty ? String(input.orderQty) : null,
+      }),
+      ...(deliveryDate !== undefined && { deliveryDate }),
+      ...(input.finalStatus !== undefined && { finalStatus: input.finalStatus }),
+      ...(input.processStatus !== undefined && { processStatus: input.processStatus ?? null }),
     },
-    include: { finishedGoods: true, bomItems: true },
   });
 }
 
-export async function updateFinishedGoodsForOrder(orderId: string, organizationId: string, rows: OrderRow[]) {
-  const order = await prisma.merchandisingOrder.findFirst({ where: { id: orderId, organizationId }, select: { id: true } });
+export async function updateBomItemsForOrder(
+  orderId: string,
+  organizationId: string,
+  bomRows: BomRow[]
+) {
+  const order = await getOrderById(orderId, organizationId);
   if (!order) {
-    throw new Error("Order not found for this organization.");
+    throw new Error("Order not found");
   }
 
-  await prisma.finishedGoodsSizeWise.deleteMany({ where: { orderId } });
-
-  return prisma.finishedGoodsSizeWise.createMany({
-    data: rows.map((row) => ({
-      orderId,
-      buyerSize: row.buyerSize ?? null,
-      size: row.size ?? null,
-      beforeExcessQty: row.beforeExcessQty !== undefined && row.beforeExcessQty !== "" ? Number(row.beforeExcessQty) : null,
-      excess: row.excess !== undefined && row.excess !== "" ? Number(row.excess) : null,
-      excessQty: row.excessQty !== undefined && row.excessQty !== "" ? Number(row.excessQty) : null,
-      totalQty: row.totalQty !== undefined && row.totalQty !== "" ? Number(row.totalQty) : null,
-      buyerPoPrice: row.buyerPoPrice !== undefined && row.buyerPoPrice !== "" ? Number(row.buyerPoPrice) : null,
-      exchangePrice: row.exchangePrice !== undefined && row.exchangePrice !== "" ? Number(row.exchangePrice) : null,
-      priceInInr: row.priceInInr !== undefined && row.priceInInr !== "" ? Number(row.priceInInr) : null,
-    })),
+  await prisma.bomItem.deleteMany({
+    where: { merchandising_order_id: orderId },
   });
+
+  if (bomRows && bomRows.length > 0) {
+    await prisma.bomItem.createMany({
+      data: bomRows.map((row) => ({
+        merchandising_order_id: orderId,
+        categoryType: row.categoryType ?? null,
+        category: row.category ?? null,
+        subCategory: row.subCategory ?? null,
+        rawMaterialName: row.rawMaterialName ?? null,
+        size: row.size ?? null,
+        consumption: row.consumption ? String(row.consumption) : null,
+        requiredQty: row.requiredQty ? String(row.requiredQty) : null,
+      })),
+    });
+  }
 }
 
-export async function updateBomItemsForOrder(orderId: string, organizationId: string, rows: BomRow[]) {
-  const order = await prisma.merchandisingOrder.findFirst({ where: { id: orderId, organizationId }, select: { id: true } });
+export async function updateFinishedGoodsForOrder(
+  orderId: string,
+  organizationId: string,
+  rows: OrderRow[]
+) {
+  const order = await getOrderById(orderId, organizationId);
   if (!order) {
-    throw new Error("Order not found for this organization.");
+    throw new Error("Order not found");
   }
 
-  await prisma.billOfMaterialItem.deleteMany({ where: { orderId } });
-
-  return prisma.billOfMaterialItem.createMany({
-    data: rows.map((row) => ({
-      orderId,
-      categoryType: row.categoryType ?? null,
-      category: row.category ?? null,
-      subCategory: row.subCategory ?? null,
-      rawMaterialName: row.rawMaterialName ?? null,
-      size: row.size ?? null,
-      consumption: row.consumption !== undefined && row.consumption !== "" ? Number(row.consumption) : null,
-      requiredQty: row.requiredQty !== undefined && row.requiredQty !== "" ? Number(row.requiredQty) : null,
-    })),
-  });
-}
-
-export async function listBomItemsForOrganization(organizationId: string) {
-  const orders = await prisma.merchandisingOrder.findMany({
-    where: { organizationId },
-    select: { id: true, orderNo: true, styleName: true, brand: true, buyer: true, bomItems: true },
-    orderBy: { createdAt: "desc" },
+  await prisma.finishedGood.deleteMany({
+    where: { merchandising_order_id: orderId },
   });
 
-  return orders.flatMap((order) =>
-    order.bomItems.map((item) => ({
-      id: item.id,
-      orderId: order.id,
-      orderNo: order.orderNo,
-      styleName: order.styleName,
-      brand: order.brand,
-      buyer: order.buyer,
-      categoryType: item.categoryType,
-      category: item.category,
-      subCategory: item.subCategory,
-      rawMaterialName: item.rawMaterialName,
-      size: item.size,
-      consumption: item.consumption,
-      requiredQty: item.requiredQty,
-    })),
-  );
+  if (rows && rows.length > 0) {
+    await prisma.finishedGood.createMany({
+      data: rows.map((row) => ({
+        merchandising_order_id: orderId,
+        buyerSize: row.buyerSize ?? null,
+        size: row.size ?? null,
+        beforeExcessQty: row.beforeExcessQty ? String(row.beforeExcessQty) : null,
+        excess: row.excess ? String(row.excess) : null,
+        excessQty: row.excessQty ? String(row.excessQty) : null,
+        totalQty: row.totalQty ? String(row.totalQty) : null,
+        buyerPoPrice: row.buyerPoPrice ? String(row.buyerPoPrice) : null,
+        exchangePrice: row.exchangePrice ? String(row.exchangePrice) : null,
+        priceInInr: row.priceInInr ? String(row.priceInInr) : null,
+      })),
+    });
+  }
 }

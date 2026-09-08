@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useMemo, type ReactNode } from "react";
+import { useState, useMemo, useEffect, type ReactNode } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Layers,
@@ -10,6 +10,7 @@ import {
   Sparkles,
   ChevronDown,
   ChevronRight,
+  Lock,
 } from "lucide-react";
 
 import { ERP_MODULES } from "@/components/erp/erp-config-registry";
@@ -39,6 +40,7 @@ type MasterModuleWrapperProps = {
   children: ReactNode;
   modules?: SubItem[];
   businessTypes?: BusinessTypeItem[];
+  restrictions?: any[]; 
   onLogout?: () => void | Promise<void>;
 };
 
@@ -49,10 +51,57 @@ export function MasterModuleWrapper({
   children,
   modules = [],
   businessTypes = [],
+  restrictions = [],
   onLogout,
 }: MasterModuleWrapperProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
+
+  // Helper function to check if a specific route/href is blocked by restrictions
+  const checkIsBlocked = (targetPath: string) => {
+    if (!restrictions || !restrictions.length) return null;
+
+    const orgIndex = targetPath.indexOf(organizationId);
+    if (orgIndex === -1) return null;
+
+    const subPath = targetPath.substring(orgIndex + organizationId.length).replace(/^\/+/, "");
+    const segments = subPath.split("/").filter(Boolean);
+
+    const currentMaster = (segments[0] || "").toLowerCase();
+    const currentMain = (segments[1] || "").toLowerCase();
+    const currentSub = (segments[2] || "").toLowerCase();
+
+    for (const rule of restrictions) {
+      if (rule.restriction_type === "block" || rule.type === "BLOCK") {
+        const ruleMaster = (rule.master_module || "").toLowerCase().replace(/\s+/g, "-");
+        const ruleMain = (rule.main_module || "").toLowerCase().replace(/\s+/g, "-");
+        const ruleSub = (rule.sub_module || "").toLowerCase().replace(/\s+/g, "-");
+
+        const masterMatch = !ruleMaster || ruleMaster === "*" || ruleMaster === currentMaster;
+        const mainMatch = !ruleMain || ruleMain === "*" || ruleMain === currentMain;
+        const subMatch = !ruleSub || ruleSub === "*" || ruleSub === currentSub;
+
+        if (masterMatch && mainMatch && subMatch) {
+          return {
+            message: rule.custom_message || rule.customAlertMessage || "Access to this module/feature is restricted by your current plan.",
+          };
+        }
+      }
+    }
+    return null;
+  };
+
+  const currentBlockInfo = useMemo(() => {
+    return checkIsBlocked(pathname);
+  }, [restrictions, pathname, organizationPath]);
+
+  useEffect(() => {
+    if (currentBlockInfo && !pathname.includes("/access-blocked")) {
+      const encodedMsg = encodeURIComponent(currentBlockInfo.message);
+      router.replace(`${organizationPath}/access-blocked?message=${encodedMsg}`);
+    }
+  }, [currentBlockInfo, organizationPath, pathname, router]);
 
   const moduleOptions = useMemo(() => {
     if (businessTypes.length > 0) {
@@ -104,14 +153,17 @@ export function MasterModuleWrapper({
       ];
     }
 
-    const mapChild = (child: any, basePath: string): SubItem => ({
-      key: child.key,
-      label: child.label,
-      href: `${basePath}/${child.key}`,
-      children: child.children?.map((nested: any) =>
-        mapChild(nested, `${basePath}/${child.key}`)
-      ),
-    });
+    const mapChild = (child: any, basePath: string): SubItem => {
+      const segment = child.pathSegment || child.key;
+      return {
+        key: child.key,
+        label: child.label,
+        href: `${basePath}/${segment}`,
+        children: child.children?.map((nested: any) =>
+          mapChild(nested, `${basePath}/${segment}`)
+        ),
+      };
+    };
 
     return currentRegistry.children.map((child) =>
       mapChild(child, `${organizationPath}/${activeModule.pathSegment}`)
@@ -158,6 +210,8 @@ export function MasterModuleWrapper({
           <nav className="space-y-1">
             {navigation.map((item) => {
               const active = isActive(item.href, true);
+              const blockInfo = checkIsBlocked(item.href);
+              const isBlocked = Boolean(blockInfo);
               const hasSubChildren = Boolean(item.children && item.children.length > 0);
               const isExpanded = expanded[item.key] ?? true;
 
@@ -165,26 +219,40 @@ export function MasterModuleWrapper({
                 <div key={item.key} className="space-y-1">
                   <div
                     className={`flex items-center justify-between rounded-md transition ${
-                      active ? "bg-emerald-600 text-white" : "hover:bg-slate-800"
+                      isBlocked
+                        ? "bg-slate-900/40 opacity-50 cursor-not-allowed pointer-events-none text-slate-500"
+                        : active 
+                        ? "bg-emerald-600 text-white" 
+                        : "hover:bg-slate-800 text-slate-200"
                     }`}
                   >
                     <Link
-                      href={item.href}
+                      href={isBlocked ? "#" : item.href}
+                      onClick={(e) => {
+                        if (isBlocked) {
+                          e.preventDefault();
+                          const encodedMsg = encodeURIComponent(blockInfo!.message);
+                          router.push(`${organizationPath}/access-blocked?message=${encodedMsg}`);
+                        }
+                      }}
                       className="flex flex-1 items-center gap-3 px-3 py-2 text-sm"
                     >
                       <span
                         className={`h-2 w-2 rounded-full ${
-                          active ? "bg-white" : "bg-slate-500"
+                          isBlocked ? "bg-slate-700" : active ? "bg-white" : "bg-slate-500"
                         }`}
                       />
                       {sidebarOpen && (
-                        <span className="flex-1 text-xs font-medium">
+                        <span className="flex-1 text-xs font-medium truncate">
                           {item.label}
                         </span>
                       )}
+                      {isBlocked && sidebarOpen && (
+                        <Lock className="h-3 w-3 text-red-400 ml-auto" />
+                      )}
                     </Link>
 
-                    {hasSubChildren && sidebarOpen && (
+                    {hasSubChildren && sidebarOpen && !isBlocked && (
                       <button
                         type="button"
                         onClick={() => toggleExpand(item.key)}
@@ -199,22 +267,34 @@ export function MasterModuleWrapper({
                     )}
                   </div>
 
-                  {hasSubChildren && isExpanded && sidebarOpen && (
+                  {hasSubChildren && isExpanded && sidebarOpen && !isBlocked && (
                     <div className="ml-4 space-y-1 border-l border-slate-800 pl-2">
                       {item.children!.map((subChild) => {
                         const subActive = isActive(subChild.href, true);
+                        const subBlockInfo = checkIsBlocked(subChild.href);
+                        const isSubBlocked = Boolean(subBlockInfo);
 
                         return (
                           <Link
                             key={subChild.key}
-                            href={subChild.href}
+                            href={isSubBlocked ? "#" : subChild.href}
+                            onClick={(e) => {
+                              if (isSubBlocked) {
+                                e.preventDefault();
+                                const encodedMsg = encodeURIComponent(subBlockInfo!.message);
+                                router.push(`${organizationPath}/access-blocked?message=${encodedMsg}`);
+                              }
+                            }}
                             className={`flex items-center justify-between rounded-md px-2 py-1.5 text-xs transition ${
-                              subActive
+                              isSubBlocked
+                                ? "opacity-40 cursor-not-allowed pointer-events-none text-slate-600 bg-slate-900/20"
+                                : subActive
                                 ? "bg-emerald-700 text-white font-medium"
                                 : "text-slate-400 hover:bg-slate-800 hover:text-white"
                             }`}
                           >
-                            <span>{subChild.label}</span>
+                            <span className="truncate">{subChild.label}</span>
+                            {isSubBlocked && <Lock className="h-2.5 w-2.5 text-red-400 ml-1 shrink-0" />}
                           </Link>
                         );
                       })}
@@ -254,7 +334,25 @@ export function MasterModuleWrapper({
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto bg-slate-100 p-6">{children}</main>
+        <main className="flex-1 overflow-auto bg-slate-100 p-6">
+          {currentBlockInfo ? (
+            <div className="flex flex-col items-center justify-center h-[60vh] rounded-xl border border-red-200 bg-white p-8 text-center shadow-sm">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600 mb-4">
+                <Lock className="h-6 w-6" />
+              </div>
+              <h2 className="text-lg font-bold text-slate-900 mb-2">Access Restricted</h2>
+              <p className="text-sm text-slate-600 max-w-md mb-6">{currentBlockInfo.message}</p>
+              <Link
+                href={`${organizationPath}/settings/pricing/current-plan`}
+                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition"
+              >
+                View Plan & Upgrade
+              </Link>
+            </div>
+          ) : (
+            children
+          )}
+        </main>
       </div>
     </div>
   );

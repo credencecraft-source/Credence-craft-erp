@@ -5,16 +5,19 @@ import {
   ReactNode,
   useState,
 } from "react";
-
 import { cn } from "@/lib/utilities/utility-helpers";
 
 interface SidebarProps extends ComponentPropsWithoutRef<"aside"> {
   children: ReactNode;
+  restrictions?: any[];
+  organizationId?: string;
 }
 
 export default function Sidebar({
   children,
   className,
+  restrictions = [],
+  organizationId = "",
   ...props
 }: SidebarProps) {
   const [expanded, setExpanded] = useState(false);

@@ -1,22 +1,77 @@
+// @/app/platform/plans/[id]/restrictions/page.tsx
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { prisma } from "@/lib/database/prisma-client";
 
-import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
-import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
 import { listPlans } from "@/lib/services/platform/plan-service";
+import { RestrictionForm } from "@/components/platform/restriction-form";
 
 interface PageProps {
   params: Promise<{ id: string }>;
   searchParams?: Promise<{ error?: string; success?: string; showModal?: string }>;
 }
 
+async function saveRestrictionAction(planId: string, formData: FormData) {
+  "use server";
+  const masterModule = String(formData.get("masterModule") || "").trim();
+  const mainModule = String(formData.get("mainModule") || "").trim();
+  const subModule = String(formData.get("subModule") || "").trim();
+  const actionLevel = String(formData.get("actionLevel") || "*").trim();
+  const restrictionType = String(formData.get("restrictionType") || "block");
+  const customMessage = String(formData.get("customMessage") || "").trim();
+
+  if (!masterModule || !mainModule || !subModule) {
+    redirect(`/platform/plans/${planId}/restrictions?error=` + encodeURIComponent("Master, Main, and Sub modules are required."));
+  }
+
+  const formattedMaster = masterModule.toLowerCase().replace(/\s+/g, "-");
+  const formattedMain = mainModule.toLowerCase().replace(/\s+/g, "-");
+  const formattedSub = subModule.toLowerCase().replace(/\s+/g, "-");
+  const formattedAction = actionLevel.toLowerCase().replace(/\s+/g, "-");
+  const urlPattern = `/dashboard/*/organizations/*/${formattedMaster}/${formattedMain}/${formattedSub}/${formattedAction}`;
+
+  const defaultMsg = `Access to ${masterModule} › ${mainModule} › ${subModule} is restricted on your current plan.`;
+
+  try {
+    await prisma.plan_restrictions.create({
+      data: {
+        plan_id: planId,
+        master_module: masterModule,
+        main_module: mainModule,
+        sub_module: subModule,
+        action_level: actionLevel,
+        url_pattern: urlPattern,
+        restriction_type: restrictionType,
+        custom_message: customMessage || defaultMsg,
+      },
+    });
+  } catch (error: any) {
+    redirect(`/platform/plans/${planId}/restrictions?error=` + encodeURIComponent(error.message || "Failed to save restriction"));
+  }
+
+  redirect(`/platform/plans/${planId}/restrictions?success=` + encodeURIComponent("Restriction rule added successfully."));
+}
+
+async function deleteRestrictionAction(planId: string, formData: FormData) {
+  "use server";
+  const restrictionId = String(formData.get("restrictionId") || "");
+  try {
+    await prisma.plan_restrictions.delete({
+      where: { restriction_id: restrictionId },
+    });
+  } catch (error: any) {
+    redirect(`/platform/plans/${planId}/restrictions?error=` + encodeURIComponent(error.message || "Failed to delete restriction"));
+  }
+  redirect(`/platform/plans/${planId}/restrictions?success=` + encodeURIComponent("Restriction rule removed successfully."));
+}
+
 export default async function PlanRestrictionsPage({ params, searchParams }: PageProps) {
-  const { id: planId } = await params;
+  const resolvedParams = await params;
+  const planId = resolvedParams.id;
   const resolvedSearch = (await searchParams) ?? {};
   
   const plans = await listPlans();
@@ -26,65 +81,14 @@ export default async function PlanRestrictionsPage({ params, searchParams }: Pag
     redirect("/platform/plans?error=" + encodeURIComponent("Plan not found"));
   }
 
-  // Fetch restrictions from Prisma
   const restrictions = await prisma.plan_restrictions.findMany({
     where: { plan_id: planId },
     orderBy: { created_at: "desc" },
   });
 
-  // Server action to save restriction configuration via Prisma
-  async function saveRestrictionAction(formData: FormData) {
-    "use server";
-    const masterModule = String(formData.get("masterModule") || "").trim();
-    const mainModule = String(formData.get("mainModule") || "").trim();
-    const subModule = String(formData.get("subModule") || "").trim();
-    const actionLevel = String(formData.get("actionLevel") || "*").trim();
-    const restrictionType = String(formData.get("restrictionType") || "block");
-
-    if (!masterModule || !mainModule || !subModule) {
-      redirect(`/platform/plans/${planId}/restrictions?error=` + encodeURIComponent("Master, Main, and Sub modules are required."));
-    }
-
-    const formattedMaster = masterModule.toLowerCase().replace(/\s+/g, "-");
-    const formattedMain = mainModule.toLowerCase().replace(/\s+/g, "-");
-    const formattedSub = subModule.toLowerCase().replace(/\s+/g, "-");
-    const formattedAction = actionLevel.toLowerCase().replace(/\s+/g, "-");
-    const urlPattern = `/dashboard/*/organizations/*/${formattedMaster}/${formattedMain}/${formattedSub}/${formattedAction}`;
-
-    try {
-      await prisma.plan_restrictions.create({
-        data: {
-          plan_id: planId,
-          master_module: masterModule,
-          main_module: mainModule,
-          sub_module: subModule,
-          action_level: actionLevel,
-          url_pattern: urlPattern,
-          restriction_type: restrictionType,
-        },
-      });
-    } catch (error: any) {
-      redirect(`/platform/plans/${planId}/restrictions?error=` + encodeURIComponent(error.message || "Failed to save restriction"));
-    }
-
-    redirect(`/platform/plans/${planId}/restrictions?success=` + encodeURIComponent("Restriction rule added successfully."));
-  }
-
-  // Server action to remove restriction configuration via Prisma
-  async function deleteRestrictionAction(formData: FormData) {
-    "use server";
-    const restrictionId = String(formData.get("restrictionId") || "");
-    try {
-      await prisma.plan_restrictions.delete({
-        where: { id: restrictionId },
-      });
-    } catch (error: any) {
-      redirect(`/platform/plans/${planId}/restrictions?error=` + encodeURIComponent(error.message || "Failed to delete restriction"));
-    }
-    redirect(`/platform/plans/${planId}/restrictions?success=` + encodeURIComponent("Restriction rule removed successfully."));
-  }
-
   const isModalOpen = resolvedSearch.showModal === "true";
+  const handleSave = saveRestrictionAction.bind(null, planId);
+  const handleDelete = deleteRestrictionAction.bind(null, planId);
 
   return (
     <Page className="max-w-5xl">
@@ -111,17 +115,13 @@ export default async function PlanRestrictionsPage({ params, searchParams }: Pag
         {resolvedSearch.error && <p className="p-3 bg-red-50 text-red-700 text-xs rounded-xl">{resolvedSearch.error}</p>}
         {resolvedSearch.success && <p className="p-3 bg-emerald-50 text-emerald-700 text-xs rounded-xl">{resolvedSearch.success}</p>}
 
-        {/* Configured Restrictions Table */}
         <Card className="p-6">
           <h2 className="text-sm font-bold text-slate-800 mb-4">Configured Hierarchy Restrictions</h2>
           <Table>
             <thead className="bg-slate-50 text-xs text-slate-500 uppercase">
               <tr>
-                <th className="px-3 py-3">Master Module</th>
-                <th className="px-3 py-3">Main Module</th>
-                <th className="px-3 py-3">Sub Module</th>
-                <th className="px-3 py-3">Action Level</th>
-                <th className="px-3 py-3">Generated URL Pattern</th>
+                <th className="px-3 py-3">Module Path</th>
+                <th className="px-3 py-3">Custom Alert Message</th>
                 <th className="px-3 py-3">Type</th>
                 <th className="px-3 py-3 text-right">Actions</th>
               </tr>
@@ -129,26 +129,27 @@ export default async function PlanRestrictionsPage({ params, searchParams }: Pag
             <tbody className="divide-y text-xs">
               {restrictions.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-3 py-8 text-center text-slate-400 italic">
-                    No restrictions configured yet. Click &quot;+ Add New Restriction&quot; above.
+                  <td colSpan={4} className="px-3 py-8 text-center text-slate-400 italic">
+                    No restrictions configured yet.
                   </td>
                 </tr>
               ) : (
                 restrictions.map((item: any) => (
-                  <tr key={item.id} className="hover:bg-slate-50">
-                    <td className="px-3 py-3 font-bold text-slate-900">{item.master_module}</td>
-                    <td className="px-3 py-3 text-slate-700">{item.main_module}</td>
-                    <td className="px-3 py-3 text-slate-700">{item.sub_module}</td>
-                    <td className="px-3 py-3 font-mono text-[11px]">{item.action_level}</td>
-                    <td className="px-3 py-3 font-mono text-[11px] text-slate-500">{item.url_pattern}</td>
+                  <tr key={item.restriction_id} className="hover:bg-slate-50">
+                    <td className="px-3 py-3 font-semibold text-slate-900">
+                      {item.master_module} › {item.main_module} › {item.sub_module}
+                    </td>
+                    <td className="px-3 py-3 text-slate-600 italic">
+                      &ldquo;{item.custom_message}&rdquo;
+                    </td>
                     <td className="px-3 py-3">
                       <span className={`px-2 py-0.5 rounded font-bold uppercase ${item.restriction_type === 'block' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>
                         {item.restriction_type}
                       </span>
                     </td>
                     <td className="px-3 py-3 text-right">
-                      <form action={deleteRestrictionAction}>
-                        <input type="hidden" name="restrictionId" value={item.id} />
+                      <form action={handleDelete}>
+                        <input type="hidden" name="restrictionId" value={item.restriction_id} />
                         <button type="submit" className="text-red-600 font-semibold cursor-pointer hover:underline">Remove</button>
                       </form>
                     </td>
@@ -159,14 +160,13 @@ export default async function PlanRestrictionsPage({ params, searchParams }: Pag
           </Table>
         </Card>
 
-        {/* Popup Modal for Adding Restriction */}
         {isModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
             <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-6 border border-slate-100">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-base font-bold text-slate-900">Add Hierarchical Restriction Rule</h3>
-                  <p className="text-xs text-slate-500">Type exact naming parameters to block or hide URLs.</p>
+                  <p className="text-xs text-slate-500">Configure modules and custom alert message.</p>
                 </div>
                 <Link 
                   href={`/platform/plans/${planId}/restrictions`}
@@ -176,53 +176,7 @@ export default async function PlanRestrictionsPage({ params, searchParams }: Pag
                 </Link>
               </div>
 
-              <form action={saveRestrictionAction} className="space-y-4">
-                <Input 
-                  label="Master Module" 
-                  name="masterModule" 
-                  required 
-                  placeholder="e.g. order-management" 
-                />
-
-                <Input 
-                  label="Main Module" 
-                  name="mainModule" 
-                  required 
-                  placeholder="e.g. merchandising" 
-                />
-
-                <Input 
-                  label="Sub Module" 
-                  name="subModule" 
-                  required 
-                  placeholder="e.g. order" 
-                />
-
-                <Input 
-                  label="Action / Sub Level" 
-                  name="actionLevel" 
-                  required 
-                  placeholder="e.g. create or *" 
-                />
-
-                <div>
-                  <label className="block text-xs font-semibold mb-1 text-slate-700">Restriction Type</label>
-                  <select name="restrictionType" className="w-full border p-2 text-xs rounded-lg bg-white">
-                    <option value="block">Block Access</option>
-                    <option value="hide">Hide Element / Module</option>
-                  </select>
-                </div>
-
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <Link 
-                    href={`/platform/plans/${planId}/restrictions`}
-                    className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
-                  >
-                    Cancel
-                  </Link>
-                  <Button type="submit">Save Rule</Button>
-                </div>
-              </form>
+              <RestrictionForm planId={planId} saveAction={handleSave} />
             </div>
           </div>
         )}

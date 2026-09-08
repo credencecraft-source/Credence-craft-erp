@@ -10,11 +10,7 @@ interface PageProps {
     workspaceId: string;
     organizationId: string;
   }>;
-  searchParams?: Promise<{
-    planId?: string;
-    billingCycle?: string;
-    error?: string;
-  }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }
 
 export default async function CheckoutPage({ params, searchParams }: PageProps) {
@@ -23,8 +19,16 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
   
   const workspaceId = resolvedParams?.workspaceId;
   const organizationId = resolvedParams?.organizationId;
-  const planId = resolvedSearch?.planId;
-  const billingCycle = resolvedSearch?.billingCycle || "yearly";
+
+  // Automatically grab planId whether it's passed as 'planId' or as a plan name query key
+  const searchKeys = Object.keys(resolvedSearch).filter(k => k !== "error" && k !== "billingCycle");
+  const planId = typeof resolvedSearch.planId === "string" 
+    ? resolvedSearch.planId 
+    : searchKeys.length > 0 && typeof resolvedSearch[searchKeys[0]] === "string"
+    ? (resolvedSearch[searchKeys[0]] as string)
+    : undefined;
+
+  const billingCycle = typeof resolvedSearch.billingCycle === "string" ? resolvedSearch.billingCycle : "yearly";
 
   const [clients, plan] = await Promise.all([
     listOrganizationClients(),
@@ -43,34 +47,27 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
   async function handleCheckoutAction() {
     "use server";
 
+    const pricingPlanUrl = `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan`;
+
     if (!organizationId || !planId) {
-      redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing?error=${encodeURIComponent("Missing organization or plan ID.")}`);
+      redirect(`${pricingPlanUrl}?error=` + encodeURIComponent("Missing organization or plan ID."));
     }
 
     try {
       await createSubscription({
         organizationId,
-        organizationName: orgName,
-        organization_name: orgName,
-        businessTypeId: (plan as any)?.businessTypeId || (plan as any)?.business_type_id || "",
-        business_type_id: (plan as any)?.businessTypeId || (plan as any)?.business_type_id || "",
+        businessTypeId: (plan as any)?.businessTypeId || (plan as any)?.business_type_id || undefined,
         planId,
-        plan_id: planId,
         startDate: new Date().toISOString(),
         endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-        expireDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-        end_date: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-        paymentStatus: "pending",
-        payment_status: "pending",
-        serviceStatus: "active",
-        service_status: "active",
-      } as any);
+        paymentStatus: "paid",
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to process checkout subscription.";
-      redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/checkout?planId=${planId}&error=${encodeURIComponent(message)}`);
+      redirect(`${pricingPlanUrl}?error=` + encodeURIComponent(message));
     }
 
-    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan?success=${encodeURIComponent("Subscription created successfully.")}`);
+    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan?success=` + encodeURIComponent("Subscription activated successfully."));
   }
 
   return (
@@ -83,7 +80,7 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
         </p>
       </div>
 
-      {resolvedSearch.error && (
+      {typeof resolvedSearch.error === "string" && resolvedSearch.error && (
         <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs font-medium text-red-700">{resolvedSearch.error}</p>
       )}
 
@@ -120,7 +117,7 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
 
         <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
           <Link
-            href={`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing`}
+            href={`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan`}
             className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
           >
             Cancel
@@ -128,7 +125,7 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
           <form action={handleCheckoutAction}>
             <button
               type="submit"
-              className="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-colors"
+              className="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-colors cursor-pointer"
             >
               Confirm & Activate
             </button>
