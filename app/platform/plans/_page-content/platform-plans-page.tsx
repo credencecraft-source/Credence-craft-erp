@@ -40,12 +40,12 @@ async function deletePlanAction(formData: FormData) {
     } catch {}
 
     try {
-      await prisma.subscriptions.deleteMany({
+      await prisma.subscription.deleteMany({
         where: { plan_id: planId },
       });
     } catch {
       try {
-        await prisma.subscriptions.deleteMany({
+        await prisma.subscription.deleteMany({
           where: { planId: planId },
         });
       } catch {}
