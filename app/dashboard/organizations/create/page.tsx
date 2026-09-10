@@ -47,13 +47,7 @@ export default async function CreateOrganizationPage({
       redirect(`/dashboard/organizations/create?error=1&message=${encodeURIComponent(message)}`);
     }
 
-    const newOrgId = newOrg?.id || newOrg?._id || newOrg?.organizationId;
-
-    if (newOrgId) {
-      redirect(`/dashboard/${user.workspace_id}/organizations/${newOrgId}/settings/pricing?organizationName=${encodeURIComponent(organizationNameVal)}`);
-    }
-
-    redirect(`/dashboard/${user.workspace_id}/home`);
+    redirect("/dashboard/");
   }
 
   return (

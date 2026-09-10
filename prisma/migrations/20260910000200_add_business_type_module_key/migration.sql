@@ -1,0 +1,1 @@
+ALTER TABLE "business_types" ADD COLUMN "module_key" VARCHAR(100) NOT NULL;

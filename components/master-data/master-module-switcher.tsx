@@ -8,7 +8,17 @@ type Option = {
   key: string;
   label: string;
   pathSegment: string;
-  children?: ReadonlyArray<{ key: string; label: string }>;
+  moduleKey?: string;
+  children?: ReadonlyArray<{
+    key: string;
+    label: string;
+    pathSegment?: string;
+    children?: ReadonlyArray<{
+      key: string;
+      label: string;
+      pathSegment?: string;
+    }>;
+  }>;
 };
 
 export function MasterModuleSwitcher({
@@ -32,18 +42,18 @@ export function MasterModuleSwitcher({
   const selectedOption = options.find((o) => o.key === value);
   const selectedLabel = selectedOption?.label ?? "Select Module";
 
-  /**
-   * Generates clean destination route. If destination module has sub-items,
-   * redirects directly to the first child route (e.g. /order-management/home).
-   */
   const getPath = (option: Option) => {
     const segments = pathname.split("/").filter(Boolean);
     const orgIndex = segments.indexOf("organizations");
 
-    const firstChildKey = option.children?.[0]?.key;
-    const subPath = firstChildKey
-      ? `${option.pathSegment}/${firstChildKey}`
-      : option.pathSegment;
+    const pathSegments = [option.pathSegment];
+    let currentOption = option;
+    while (currentOption.children?.[0]) {
+      const firstChild = currentOption.children[0];
+      pathSegments.push(firstChild.pathSegment || firstChild.key);
+      currentOption = firstChild;
+    }
+    const subPath = pathSegments.join("/");
 
     if (orgIndex === -1) return `/${subPath}`;
 

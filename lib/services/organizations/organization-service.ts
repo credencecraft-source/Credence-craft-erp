@@ -29,8 +29,13 @@ export async function listOrganizationsForUser(workspaceUserId: string) {
   try {
     return await prisma.organization.findMany({
       where: {
-        workspace_user_id: workspaceUserId,
         is_active: true,
+        memberships: {
+          some: {
+            workspace_user_id: workspaceUserId,
+            is_active: true,
+          },
+        },
       },
       orderBy: {
         created_at: "desc",
@@ -62,7 +67,6 @@ export async function createOrganization(input: OrganizationCreateInput) {
       const organization = await transaction.organization.create({
         data: {
           organization_id: randomUUID(),
-          workspace_user_id: input.workspaceUserId,
           organization_name: validated.organizationName,
           gst_number: validated.gstNumber,
           address_line_1: validated.addressLine1 || null,
@@ -72,6 +76,13 @@ export async function createOrganization(input: OrganizationCreateInput) {
           country: validated.country || null,
           pin_code: validated.pinCode || null,
           is_active: true,
+          memberships: {
+            create: {
+              id: randomUUID(),
+              workspace_user_id: input.workspaceUserId,
+              role: "OWNER",
+            },
+          },
         },
       });
 
@@ -99,7 +110,12 @@ export async function getOrganizationForUser(workspaceUserId: string, organizati
   return prisma.organization.findFirst({
     where: {
       organization_id: organizationId,
-      workspace_user_id: workspaceUserId,
+      memberships: {
+        some: {
+          workspace_user_id: workspaceUserId,
+          is_active: true,
+        },
+      },
     },
     include: {
       erpSoftware: {
@@ -115,7 +131,12 @@ export async function deleteOrganization(organizationId: string, workspaceUserId
   const organization = await prisma.organization.findFirst({
     where: {
       id: organizationId,
-      workspace_user_id: workspaceUserId,
+      memberships: {
+        some: {
+          workspace_user_id: workspaceUserId,
+          is_active: true,
+        },
+      },
     },
   });
 

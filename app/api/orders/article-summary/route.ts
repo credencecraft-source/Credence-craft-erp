@@ -1,0 +1,1 @@
+export { GET } from "./article-summary-handler";

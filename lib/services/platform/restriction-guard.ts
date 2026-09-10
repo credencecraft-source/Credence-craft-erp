@@ -34,7 +34,7 @@ export async function validateOrganizationAccess(organizationId: string, current
     const currentSub = (moduleSegments[2] || "").toLowerCase();
 
     for (const rule of restrictions) {
-      const isBlockType = rule.restriction_type === "block" || rule.restriction_type === "BLOCK";
+      const isBlockType = rule.restriction_type === "block" || rule.type === "BLOCK";
       if (isBlockType) {
         const ruleMaster = (rule.master_module || "").toLowerCase().replace(/\s+/g, "-");
         const ruleMain = (rule.main_module || "").toLowerCase().replace(/\s+/g, "-");

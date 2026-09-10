@@ -5,7 +5,16 @@ export async function listOrganizationClients() {
   return prisma.organization.findMany({
     orderBy: { created_at: "desc" },
     include: {
-      workspaceUser: true,
+      memberships: {
+        where: {
+          role: "OWNER",
+          is_active: true,
+        },
+        take: 1,
+        include: {
+          workspaceUser: true,
+        },
+      },
       plan: true,
       databaseConnection: true,
     },

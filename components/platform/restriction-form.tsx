@@ -19,10 +19,10 @@ export function RestrictionForm({
   const [selectedSubKey, setSelectedSubKey] = useState("");
 
   const activeMaster = ERP_MODULES.find((m) => m.key === selectedMasterKey);
-  const mainModules = (activeMaster && 'children' in activeMaster ? activeMaster.children : []) as readonly any[];
+  const mainModules = activeMaster?.children ?? [];
 
   const activeMain = mainModules.find((mm: any) => mm.key === selectedMainKey);
-  const subModules = (activeMain && 'children' in activeMain ? activeMain.children : []) as readonly any[];
+  const subModules = activeMain?.children ?? [];
 
   return (
     <form action={saveAction} className="space-y-4">
@@ -44,7 +44,7 @@ export function RestrictionForm({
           className="w-full border p-2 text-xs rounded-lg bg-white"
         >
           <option value="">Select Master Module...</option>
-          {ERP_MODULES.map((mod: any) => (
+          {ERP_MODULES.map((mod) => (
             <option key={mod.key} value={mod.key}>
               {mod.label}
             </option>

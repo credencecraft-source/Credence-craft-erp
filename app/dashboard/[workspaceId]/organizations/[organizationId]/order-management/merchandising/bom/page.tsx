@@ -1,1 +1,1 @@
-export { default } from "./_page-content/merchandising-bom-report-page";
+    export { default } from "./_page-content/merchandising-bom-report-page";

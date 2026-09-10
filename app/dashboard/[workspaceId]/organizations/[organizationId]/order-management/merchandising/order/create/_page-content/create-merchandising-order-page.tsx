@@ -15,7 +15,6 @@ export default function CreateMerchandisingOrderPage() {
   useEffect(() => {
     let isMounted = true;
     
-    // Render immediately with empty state or cached shell, fetch data asynchronously in background
     async function fetchOrdersAsync() {
       try {
         const res = await fetch(`/api/orders?organizationId=${encodeURIComponent(organizationId)}`, {
@@ -55,6 +54,9 @@ export default function CreateMerchandisingOrderPage() {
 
   const filteredOrders = orders.filter((order) => {
     const status = (order.finalStatus || "Draft").toUpperCase();
+    if (activeTab === "DRAFT") {
+      return status === "DRAFT" || status === "DRA";
+    }
     return status === activeTab;
   });
 

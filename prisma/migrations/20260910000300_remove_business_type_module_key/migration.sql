@@ -1,0 +1,1 @@
+ALTER TABLE "business_types" DROP COLUMN "module_key";

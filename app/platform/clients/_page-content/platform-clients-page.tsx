@@ -35,7 +35,7 @@ export default async function PlatformClientsPage() {
             {clients.map((client) => (
               <tr key={client.id}>
                 <td className="px-4 py-3 font-medium text-slate-900">{client.organization_name}</td>
-                <td className="px-4 py-3 text-slate-600">{client.workspaceUser.email}</td>
+                <td className="px-4 py-3 text-slate-600">{client.memberships[0]?.workspaceUser.email ?? "Unassigned"}</td>
                 <td className="px-4 py-3">
                   {client.plan ? (
                     <Badge>{client.plan.plan_name}</Badge>

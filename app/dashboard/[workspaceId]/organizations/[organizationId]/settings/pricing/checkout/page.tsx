@@ -1,9 +1,11 @@
+// Page Name: app/dashboard/[workspaceId]/organizations/[organizationId]/settings/pricing/checkout/page.tsx
+
 import React from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { listOrganizationClients } from "@/lib/services/platform/client-service";
 import { getPlanById } from "@/lib/services/platform/plan-service";
-import { createSubscription } from "@/lib/services/platform/subscription-service";
+import { activatePlanForBusinessType } from "@/lib/services/platform/subscription-service";
 
 interface PageProps {
   params: Promise<{
@@ -20,7 +22,6 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
   const workspaceId = resolvedParams?.workspaceId;
   const organizationId = resolvedParams?.organizationId;
 
-  // Automatically grab planId whether it's passed as 'planId' or as a plan name query key
   const searchKeys = Object.keys(resolvedSearch).filter(k => k !== "error" && k !== "billingCycle");
   const planId = typeof resolvedSearch.planId === "string" 
     ? resolvedSearch.planId 
@@ -54,9 +55,14 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
     }
 
     try {
-      await createSubscription({
+      const businessTypeId = plan?.business_type_id;
+      if (!businessTypeId) {
+        redirect(`${pricingPlanUrl}?error=${encodeURIComponent("The selected plan is not assigned to a business type.")}`);
+      }
+
+      await activatePlanForBusinessType({
         organizationId,
-        businessTypeId: (plan as any)?.businessTypeId || (plan as any)?.business_type_id || undefined,
+        businessTypeId,
         planId,
         startDate: new Date().toISOString(),
         endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
@@ -90,9 +96,14 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
             <span className="text-slate-500">Organization:</span>
             <span className="font-bold text-slate-900">{orgName}</span>
           </div>
-          <div className="flex justify-between text-sm">
+          <div className="flex justify-between text-sm items-center">
             <span className="text-slate-500">Selected Plan:</span>
-            <span className="font-semibold text-emerald-700">{planName}</span>
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full uppercase tracking-wider">
+                Current Plan
+              </span>
+              <span className="font-semibold text-emerald-700">{planName}</span>
+            </div>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-slate-500">Billing Cycle:</span>

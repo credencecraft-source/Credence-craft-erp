@@ -19,7 +19,7 @@ model WorkspaceUser {
   created_at     DateTime       @default(now())
   updated_at     DateTime       @updatedAt
   last_login_at  DateTime?
-  organizations  Organization[]
+    organizationMemberships OrganizationMembership[]
 
   @@map("workspace_users")
 }
@@ -27,7 +27,6 @@ model WorkspaceUser {
 model Organization {
   id                          String                       @id @default(cuid())
   organization_id             String                       @unique @default(uuid())
-  workspace_user_id           String
   organization_name           String                       @db.VarChar(255)
   gst_number                  String                       @db.VarChar(50)
   address_line_1              String?                      @db.VarChar(255)
@@ -41,9 +40,9 @@ model Organization {
   database_connection_id      String?
   created_at                  DateTime                     @default(now())
   updated_at                  DateTime                     @updatedAt
-  workspaceUser               WorkspaceUser                @relation(fields: [workspace_user_id], references: [id], onDelete: Cascade)
   plan                        Plan?                        @relation(fields: [plan_id], references: [id])
   databaseConnection          DatabaseConnection?          @relation(fields: [database_connection_id], references: [id])
+  memberships                 OrganizationMembership[]
   erpSoftware                 ERPSoftware[]
   masterModules               MasterModule[]
   merchandisingOrders         MerchandisingOrder[]
@@ -78,10 +77,35 @@ model Organization {
   masterStatuses              MasterStatus[]
   masterOrderVolumes          MasterOrderVolume[]
 
-  @@index([workspace_user_id])
   @@index([plan_id])
   @@index([database_connection_id])
   @@map("organizations")
+}
+
+enum OrganizationRole {
+  OWNER
+  ADMIN
+  FINANCE
+  MERCHANDISING
+  APPROVER
+  VIEWER
+}
+
+model OrganizationMembership {
+  id                String           @id
+  organization_id   String
+  workspace_user_id String
+  role              OrganizationRole @default(VIEWER)
+  is_active         Boolean          @default(true)
+  created_at        DateTime         @default(now())
+  updated_at        DateTime         @updatedAt
+  organization      Organization     @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  workspaceUser     WorkspaceUser    @relation(fields: [workspace_user_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, workspace_user_id])
+  @@index([organization_id, role, is_active])
+  @@index([workspace_user_id, is_active])
+  @@map("organization_memberships")
 }
 
 model PlatformAdmin {

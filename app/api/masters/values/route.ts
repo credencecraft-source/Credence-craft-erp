@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { createMasterValueForOrganization, getMasterDefinition } from "@/lib/master-data/master-data-constants";
 
 export async function POST(req: Request) {
@@ -17,7 +17,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized user workspace" }, { status: 401 });
     }
 
-    const organization = await getOrganizationForUser(user.id, organizationId);
+    const organization = await requireOrganizationAccess(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
     if (!organization) {
       return NextResponse.json({ error: "Organization not found" }, { status: 404 });
     }

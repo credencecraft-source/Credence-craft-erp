@@ -1,6 +1,6 @@
 import { listPlans } from "@/lib/services/platform/plan-service";
 import { listBusinessTypes } from "@/lib/services/platform/business-type-service";
-import { createSubscription, listSubscriptions } from "@/lib/services/platform/subscription-service";
+import { activatePlanForBusinessType, listSubscriptions } from "@/lib/services/platform/subscription-service";
 import { redirect } from "next/navigation";
 import OrganizationPricingPlanPage from "./page-content/organization-pricing-plan-page";
 
@@ -20,8 +20,6 @@ export default async function Page({ params }: PageProps) {
     "use server";
     const planId = String(formData.get("planId") || "");
     const businessTypeId = String(formData.get("businessTypeId") || "");
-    const organizationName = String(formData.get("organizationName") || "");
-    const workspaceUserEmail = String(formData.get("workspaceUserEmail") || "");
 
     try {
       const existingSubs = await listSubscriptions();
@@ -44,17 +42,14 @@ export default async function Page({ params }: PageProps) {
     const endDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
 
     try {
-      await createSubscription({
+      await activatePlanForBusinessType({
         organizationId,
-        organization_name: organizationName,
-        workspaceUserEmail,
         businessTypeId,
         planId,
         startDate,
-        expireDate: endDate,
-        paymentType: "Online",
+        endDate,
         paymentStatus: "paid",
-      } as any);
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to activate plan.";
       redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan?error=${encodeURIComponent(message)}`);
@@ -78,9 +73,6 @@ export default async function Page({ params }: PageProps) {
     price: plan.price ? Number(plan.price) : null,
   }));
 
-  const organizationName = ""; 
-  const workspaceUserEmail = "";
-
   return (
     <OrganizationPricingPlanPage
       workspaceId={workspaceId}
@@ -89,8 +81,6 @@ export default async function Page({ params }: PageProps) {
       businessTypes={businessTypes}
       existingSubscriptions={existingSubscriptions || []}
       activatePlanAction={activatePlanAction}
-      organizationName={organizationName}
-      workspaceUserEmail={workspaceUserEmail}
     />
   );
 }

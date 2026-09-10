@@ -6,6 +6,8 @@ import { redirect } from "next/navigation";
 import { MasterModuleWrapper } from "@/components/master-data/master-module-wrapper";
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
 import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
+import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
+import { ensureFreePlanSubscriptionsForOrganization } from "@/lib/services/platform/subscription-service";
 import { requireSessionUser } from "@/lib/auth/session-manager"; // Fixed typo (removed trailing 's')
 
 type OrganizationShellLayoutProps = {
@@ -53,11 +55,15 @@ export default async function OrganizationShellLayout({
     redirect(`/dashboard/${workspaceId}/home`);
   }
 
+  await ensureFreePlanSubscriptionsForOrganization(organization.id);
+  const businessTypes = await listActiveBusinessTypes();
+
   return (
     <MasterModuleWrapper
       workspaceId={workspaceId}
       organizationId={organizationId}
       organizationName={organization.organization_name}
+      businessTypes={businessTypes}
     >
       {children}
     </MasterModuleWrapper>

@@ -96,30 +96,36 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
             <tbody className="divide-y divide-slate-100">
               {orgSubscriptions.length > 0 ? (
                 orgSubscriptions.map((sub: any, idx: number) => {
-                  const subBtId = String(sub.businessTypeId || sub.business_type_id || sub.businessType || "").trim();
                   const subPlanId = String(sub.planId || sub.plan_id || sub.plan || "").trim();
-
-                  const matchedBusinessType = allBusinessTypes.find((bt: any) => {
-                    const btId = String(bt.id || bt._id || "").trim();
-                    return btId === subBtId;
-                  });
 
                   const matchedPlan = plans.find((p: any) => {
                     const planId = String(p.id || p._id || "").trim();
                     return planId === subPlanId;
                   });
 
-                  const businessTypeName =
-                    (matchedBusinessType as any)?.name ||
-                    sub.business_type_name ||
-                    sub.businessTypeName ||
-                    "Order Management";
-
                   const planName =
                     (matchedPlan as any)?.plan_name ||
                     (matchedPlan as any)?.name ||
                     sub.plan_name ||
                     sub.planName ||
+                    "—";
+
+                  // Extract business type from matched plan name pattern (e.g. "Factory Management - Basic" -> "Factory Management")
+                  // Fallback to searching business types via matchedPlan or subscription properties if available
+                  const subBtId = String(sub.businessTypeId || sub.business_type_id || sub.businessType || (matchedPlan as any)?.businessTypeId || (matchedPlan as any)?.business_type_id || "").trim();
+                  
+                  const matchedBusinessType = allBusinessTypes.find((bt: any) => {
+                    const btId = String(bt.id || bt._id || "").trim();
+                    return btId === subBtId;
+                  });
+
+                  const derivedBusinessTypeFromName = planName.includes(" - ") ? planName.split(" - ")[0] : null;
+
+                  const businessTypeName =
+                    (matchedBusinessType as any)?.name ||
+                    sub.business_type_name ||
+                    sub.businessTypeName ||
+                    derivedBusinessTypeFromName ||
                     "—";
 
                   const rawStartDate = sub.startDate || sub.start_date || "";
@@ -143,7 +149,11 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
 
                   return (
                     <tr key={sub.id || sub._id || `sub-${idx}`} className="hover:bg-slate-50/50">
-                      <td className="p-3 font-bold text-slate-800">{businessTypeName}</td>
+                      <td className="p-3 font-bold text-slate-800">
+                        <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200">
+                          {businessTypeName}
+                        </span>
+                      </td>
                       <td className="p-3 font-semibold text-emerald-700">
                         <span className="bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100">
                           {planName}

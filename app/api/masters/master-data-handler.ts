@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { createMasterValueForOrganization, getMasterValuesForOrganization, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-constants";
-import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-definitions";
 import { prisma } from "@/lib/database/prisma-client";
 
@@ -22,7 +22,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
     }
 
-    const organization = await getOrganizationForUser(user.id, organizationId);
+    const organization = await requireOrganizationAccess(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
 
     if (!organization) {
       return NextResponse.json({ error: "Organization not found." }, { status: 404 });
