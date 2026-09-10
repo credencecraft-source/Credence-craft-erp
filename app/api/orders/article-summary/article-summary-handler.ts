@@ -30,13 +30,16 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: "Article summary not found." }, { status: 404 });
       }
 
+      const summaryObj = found as Record<string, any>;
+      const orderNumbers = summaryObj.orderNumbers ?? [];
+
       const enrichedSummary = {
-        ...found,
-        colors: found.colors ?? [],
-        processes: found.processes ?? [],
-        bomItems: (found.bomItems ?? []).map((item: any) => {
-          const affectedOrderNumbers = item.affectedOrderNumbers || found.orderNumbers || [];
-          const isCommon = affectedOrderNumbers.length >= (found.orderNumbers?.length || 1);
+        ...summaryObj,
+        colors: summaryObj.colors ?? [],
+        processes: summaryObj.processes ?? [],
+        bomItems: (summaryObj.bomItems ?? []).map((item: any) => {
+          const affectedOrderNumbers = item.affectedOrderNumbers || orderNumbers;
+          const isCommon = affectedOrderNumbers.length >= (orderNumbers.length || 1);
           return {
             ...item,
             usageScope: isCommon ? "common" : "special",

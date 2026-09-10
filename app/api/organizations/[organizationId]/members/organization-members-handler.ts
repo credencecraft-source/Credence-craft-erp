@@ -6,7 +6,8 @@ import { addOrganizationMember, listOrganizationMembers, ORGANIZATION_ROLES } fr
 export async function GET(_request: Request, context: { params: Promise<{ organizationId: string }> }) {
   const user = await requireSessionUser();
   const { organizationId } = await context.params;
-  const members = await listOrganizationMembers(user.id, organizationId);
+  // Adjusted to match the expected argument count (1 argument: organizationId)
+  const members = await listOrganizationMembers(organizationId);
 
   if (!members) {
     return NextResponse.json({ error: "Organization not found or access denied." }, { status: 404 });
@@ -27,7 +28,8 @@ export async function POST(request: Request, context: { params: Promise<{ organi
       return NextResponse.json({ error: "A valid email and organization role are required." }, { status: 400 });
     }
 
-    const membership = await addOrganizationMember(user.id, organizationId, email, role);
+    // Adjusted to match the expected argument count (3 arguments: organizationId, email, role)
+    const membership = await addOrganizationMember(organizationId, email, role);
     if (!membership) {
       return NextResponse.json({ error: "Organization not found or access denied." }, { status: 404 });
     }

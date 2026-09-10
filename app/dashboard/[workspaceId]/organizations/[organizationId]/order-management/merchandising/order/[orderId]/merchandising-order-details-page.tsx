@@ -33,13 +33,13 @@ export default function MerchandisingOrderDetailsPage() {
   const [orderLookups, setOrderLookups] = useState<any[]>([]);
 
   const [form, setForm] = useState({
-    rows: [],
-    bomRows: [],
-    costingRows: [],
-    techPackRows: [],
-    measurementRows: [],
-    processRows: [],
-    attachmentRows: [],
+    rows: [] as any[],
+    bomRows: [] as any[],
+    costingRows: [] as any[],
+    techPackRows: [] as any[],
+    measurementRows: [] as any[],
+    processRows: [] as any[],
+    attachmentRows: [] as any[],
     orderQty: 1,
     sellingPricePerPcs: 0,
     orderNo: "",
@@ -175,7 +175,7 @@ export default function MerchandisingOrderDetailsPage() {
             <button
               type="button"
               onClick={goBack}
-              className="rounded-lg border border-slate-200 px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-550"
+              className="rounded-lg border border-slate-200 px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-200"
             >
               ← Back
             </button>

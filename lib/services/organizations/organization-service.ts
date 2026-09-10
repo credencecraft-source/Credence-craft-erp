@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { OrganizationRole as PrismaOrganizationRole } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
 
@@ -83,7 +84,7 @@ export async function createOrganization(input: OrganizationCreateInput) {
             create: {
               id: randomUUID(),
               workspace_user_id: input.workspaceUserId,
-              role: "OWNER",
+              role: PrismaOrganizationRole.OWNER,
             },
           },
         },
@@ -173,7 +174,7 @@ export async function addOrganizationMember(input: {
       id: randomUUID(),
       organization_id: input.organizationId,
       workspace_user_id: input.workspaceUserId,
-      role: input.role as OrganizationRole,
+      role: input.role as PrismaOrganizationRole,
       is_active: true,
     },
   });
@@ -187,7 +188,7 @@ export async function updateOrganizationMember(
     where: { id: membershipId },
     data: {
       ...data,
-      role: data.role as OrganizationRole | undefined,
+      role: data.role as PrismaOrganizationRole | undefined,
     },
   });
 }

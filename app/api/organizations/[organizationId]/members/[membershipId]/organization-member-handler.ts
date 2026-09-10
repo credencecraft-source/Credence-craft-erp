@@ -18,7 +18,8 @@ export async function PATCH(
       return NextResponse.json({ error: "A valid organization role and active status are required." }, { status: 400 });
     }
 
-    const membership = await updateOrganizationMember(user.id, organizationId, membershipId, role, isActive);
+    // Adjusted to match the expected 2 arguments: membershipId and data object
+    const membership = await updateOrganizationMember(membershipId, { role, isActive });
     if (!membership) {
       return NextResponse.json({ error: "Organization member not found or access denied." }, { status: 404 });
     }

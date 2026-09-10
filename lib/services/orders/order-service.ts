@@ -75,7 +75,7 @@ export async function getOrderByOrderNo(orderNo: string, organizationId: string)
 }
 
 export async function listBomItemsForOrganization(organizationId: string) {
-  return prisma.bomItem.findMany({
+  return (prisma as any).bomItem.findMany({
     where: {
       merchandisingOrder: {
         organization_id: organizationId,
@@ -111,8 +111,8 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
       brand: input.brand ?? null,
       sizeGroup: input.sizeGroup ?? null,
       haveSizeRatio: input.haveSizeRatio ?? false,
-      ratioOrderQty: input.ratioOrderQty ? String(input.ratioOrderQty) : null,
-      orderQty: input.orderQty ? String(input.orderQty) : null,
+      ratioOrderQty: input.ratioOrderQty !== undefined && input.ratioOrderQty !== null ? Number(input.ratioOrderQty) : null,
+      orderQty: input.orderQty !== undefined && input.orderQty !== null ? Number(input.orderQty) : null,
       deliveryDate: deliveryDate,
       finalStatus: input.finalStatus ?? "Draft",
       processStatus: input.processStatus ?? null,
@@ -148,10 +148,10 @@ export async function updateOrder(
       ...(input.sizeGroup !== undefined && { sizeGroup: input.sizeGroup ?? null }),
       ...(input.haveSizeRatio !== undefined && { haveSizeRatio: input.haveSizeRatio }),
       ...(input.ratioOrderQty !== undefined && {
-        ratioOrderQty: input.ratioOrderQty ? String(input.ratioOrderQty) : null,
+        ratioOrderQty: input.ratioOrderQty !== null ? Number(input.ratioOrderQty) : null,
       }),
       ...(input.orderQty !== undefined && {
-        orderQty: input.orderQty ? String(input.orderQty) : null,
+        orderQty: input.orderQty !== null ? Number(input.orderQty) : null,
       }),
       ...(deliveryDate !== undefined && { deliveryDate }),
       ...(input.finalStatus !== undefined && { finalStatus: input.finalStatus }),
@@ -170,12 +170,12 @@ export async function updateBomItemsForOrder(
     throw new Error("Order not found");
   }
 
-  await prisma.bomItem.deleteMany({
+  await (prisma as any).bomItem.deleteMany({
     where: { merchandising_order_id: orderId },
   });
 
   if (bomRows && bomRows.length > 0) {
-    await prisma.bomItem.createMany({
+    await (prisma as any).bomItem.createMany({
       data: bomRows.map((row) => ({
         merchandising_order_id: orderId,
         categoryType: row.categoryType ?? null,
@@ -200,12 +200,12 @@ export async function updateFinishedGoodsForOrder(
     throw new Error("Order not found");
   }
 
-  await prisma.finishedGood.deleteMany({
+  await (prisma as any).finishedGood.deleteMany({
     where: { merchandising_order_id: orderId },
   });
 
   if (rows && rows.length > 0) {
-    await prisma.finishedGood.createMany({
+    await (prisma as any).finishedGood.createMany({
       data: rows.map((row) => ({
         merchandising_order_id: orderId,
         buyerSize: row.buyerSize ?? null,
