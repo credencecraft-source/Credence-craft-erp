@@ -16,6 +16,9 @@ export type OrganizationCreateInput = {
   pinCode?: string;
 };
 
+export const ORGANIZATION_ROLES = ["OWNER", "ADMIN", "MEMBER"] as const;
+export type OrganizationRole = (typeof ORGANIZATION_ROLES)[number];
+
 function isMissingTableError(error: unknown) {
   if (!(error instanceof Error)) {
     return false;
@@ -149,6 +152,65 @@ export async function deleteOrganization(organizationId: string, workspaceUserId
   });
 
   return { deleted: true, organizationId: organization.organization_id };
+}
+
+export async function listOrganizationMembers(organizationId: string) {
+  return prisma.organizationMembership.findMany({
+    where: {
+      organization_id: organizationId,
+      is_active: true,
+    },
+  });
+}
+
+export async function addOrganizationMember(input: {
+  organizationId: string;
+  workspaceUserId: string;
+  role: string;
+}) {
+  return prisma.organizationMembership.create({
+    data: {
+      id: randomUUID(),
+      organization_id: input.organizationId,
+      workspace_user_id: input.workspaceUserId,
+      role: input.role,
+      is_active: true,
+    },
+  });
+}
+
+export async function updateOrganizationMember(
+  membershipId: string,
+  data: { role?: string; is_active?: boolean }
+) {
+  return prisma.organizationMembership.update({
+    where: { id: membershipId },
+    data,
+  });
+}
+
+export async function requireOrganizationAccess(
+  workspaceUserId: string,
+  organizationId: string,
+  allowedRoles?: string[]
+) {
+  const membership = await prisma.organizationMembership.findFirst({
+    where: {
+      organization_id: organizationId,
+      workspace_user_id: workspaceUserId,
+      is_active: true,
+    },
+  });
+
+  if (!membership) {
+    throw new Error("Access denied: You are not a member of this organization.");
+  }
+
+  if (allowedRoles && !allowedRoles.includes(membership.role)) {
+    throw new Error("Access denied: Insufficient permissions.");
+  }
+
+  return membership;
 }
 
 export function normalizeOrganizationData(raw: OrganizationCreateInput) {
