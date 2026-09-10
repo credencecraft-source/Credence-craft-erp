@@ -173,7 +173,7 @@ export async function addOrganizationMember(input: {
       id: randomUUID(),
       organization_id: input.organizationId,
       workspace_user_id: input.workspaceUserId,
-      role: input.role,
+      role: input.role as OrganizationRole,
       is_active: true,
     },
   });
@@ -185,7 +185,10 @@ export async function updateOrganizationMember(
 ) {
   return prisma.organizationMembership.update({
     where: { id: membershipId },
-    data,
+    data: {
+      ...data,
+      role: data.role as OrganizationRole | undefined,
+    },
   });
 }
 
