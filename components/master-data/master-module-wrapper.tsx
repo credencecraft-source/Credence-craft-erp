@@ -143,7 +143,7 @@ export function MasterModuleWrapper({
   const dynamicNavigation = useMemo<SubItem[]>(() => {
     if (!activeModule) return [];
 
-    const normalizedActiveKey = (activeModule.moduleKey || activeModule.key)
+    const normalizedActiveKey = ((activeModule as any).moduleKey || activeModule.key)
       .toLowerCase()
       .replace(/[\s_]+/g, "-");
     
@@ -184,7 +184,6 @@ export function MasterModuleWrapper({
   const isActive = (href: string, exact = false) =>
     exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
 
-  // Recursive renderer for deeply nested sidebar elements (like BOM -> Order Summary)
   const renderTreeItem = (item: SubItem, level = 0) => {
     const active = isActive(item.href, true);
     const blockInfo = checkIsBlocked(item.href);

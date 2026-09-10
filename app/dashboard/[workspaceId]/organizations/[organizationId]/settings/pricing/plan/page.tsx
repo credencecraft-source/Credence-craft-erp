@@ -23,7 +23,7 @@ export default async function Page({ params }: PageProps) {
 
     try {
       const existingSubs = await listSubscriptions();
-      const isAlreadyActive = existingSubs?.some(
+      const isAlreadyActive = (existingSubs ?? []).some(
         (sub: any) => 
           String(sub.organizationId || sub.organization_id || "") === String(organizationId) &&
           String(sub.planId || sub.plan_id || "") === planId && 
@@ -44,12 +44,12 @@ export default async function Page({ params }: PageProps) {
     try {
       await activatePlanForBusinessType({
         organizationId,
-        businessTypeId,
+        businessTypeId: businessTypeId || "",
+        start_date: startDate,
+        end_date: endDate,
+        payment_status: "paid",
         planId,
-        startDate,
-        endDate,
-        paymentStatus: "paid",
-      });
+      } as any);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to activate plan.";
       redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan?error=${encodeURIComponent(message)}`);
@@ -64,9 +64,12 @@ export default async function Page({ params }: PageProps) {
     listSubscriptions().catch(() => []),
   ]);
 
-  const existingSubscriptions = allSubscriptions.filter((sub: any) => 
+  const existingSubscriptions = (allSubscriptions ?? []).filter((sub: any) => 
     String(sub.organizationId || sub.organization_id || "") === String(organizationId)
-  );
+  ).map((sub: any) => ({
+    ...sub,
+    businessTypeId: sub.businessTypeId ?? sub.business_type_id ?? null,
+  }));
 
   const plans = rawPlans.map((plan) => ({
     ...plan,

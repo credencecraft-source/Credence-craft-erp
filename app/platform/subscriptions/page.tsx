@@ -65,13 +65,9 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
         business_type_id: businessTypeId,
         planId,
         plan_id: planId,
-        startDate,
         start_date: startDate,
-        endDate,
-        expireDate: endDate,
         end_date: endDate,
-        paymentStatus,
-        serviceStatus,
+        payment_status: paymentStatus,
         service_status: serviceStatus,
       };
 
@@ -92,8 +88,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
     const id = String(formData.get("id") || "");
     try {
       await updateSubscription(id, { 
-        paymentStatus: "paid", 
-        serviceStatus: "active", 
+        payment_status: "paid",
         service_status: "active" 
       } as any);
     } catch (error: any) {
@@ -141,7 +136,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                 
                 <div>
                   <label className="block text-xs font-semibold mb-1">Organization</label>
-                  <select name="organizationId" required defaultValue={editingSub?.organizationId || editingSub?.organization_id} className="w-full border p-2 text-xs rounded-lg">
+                  <select name="organizationId" required defaultValue={editingSub?.organizationId || editingSub?.organization_id || ""} className="w-full border p-2 text-xs rounded-lg">
                     <option value="">Select...</option>
                     {clients.map((c: any) => (
                       <option key={c.id || c._id} value={c.id || c._id}>{c.organizationName || c.organization_name || c.name}</option>
@@ -151,7 +146,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
 
                 <div>
                   <label className="block text-xs font-semibold mb-1">Business Type</label>
-                  <select name="businessTypeId" required defaultValue={editingSub?.businessTypeId || editingSub?.business_type_id} className="w-full border p-2 text-xs rounded-lg">
+                  <select name="businessTypeId" required defaultValue={editingSub?.businessTypeId || editingSub?.business_type_id || ""} className="w-full border p-2 text-xs rounded-lg">
                     <option value="">Select...</option>
                     {businessTypes.map((bt: any) => (
                       <option key={bt.id || bt._id} value={bt.id || bt._id}>{bt.name}</option>
@@ -161,7 +156,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
 
                 <div>
                   <label className="block text-xs font-semibold mb-1">Plan</label>
-                  <select name="planId" required defaultValue={editingSub?.planId || editingSub?.plan_id} className="w-full border p-2 text-xs rounded-lg">
+                  <select name="planId" required defaultValue={editingSub?.planId || editingSub?.plan_id || ""} className="w-full border p-2 text-xs rounded-lg">
                     <option value="">Select...</option>
                     {plans.map((p: any) => (
                       <option key={p.id || p._id} value={p.id || p._id}>{(p as any).name || (p as any).plan_name}</option>
@@ -175,28 +170,28 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                     name="startDate" 
                     type="date" 
                     required 
-                    defaultValue={formatDateForInput(editingSub?.startDate || editingSub?.start_date)} 
+                    defaultValue={formatDateForInput(editingSub?.start_date || (editingSub as any)?.startDate)} 
                   />
                   <Input 
                     label="Expire Date" 
                     name="endDate" 
                     type="date" 
                     required 
-                    defaultValue={formatDateForInput(editingSub?.endDate || editingSub?.end_date || editingSub?.expireDate)} 
+                    defaultValue={formatDateForInput(editingSub?.end_date || (editingSub as any)?.endDate || (editingSub as any)?.expireDate)} 
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-xs font-semibold mb-1">Payment Status</label>
-                    <select name="paymentStatus" defaultValue={editingSub?.paymentStatus || editingSub?.payment_status || "pending"} className="w-full border p-2 text-xs rounded-lg">
+                    <select name="paymentStatus" defaultValue={(editingSub as any)?.payment_status || (editingSub as any)?.paymentStatus || "pending"} className="w-full border p-2 text-xs rounded-lg">
                       <option value="pending">Pending</option>
                       <option value="paid">Paid</option>
                     </select>
                   </div>
                   <div>
                     <label className="block text-xs font-semibold mb-1">Service Status</label>
-                    <select name="serviceStatus" defaultValue={editingSub?.serviceStatus || editingSub?.service_status || "active"} className="w-full border p-2 text-xs rounded-lg">
+                    <select name="serviceStatus" defaultValue={(editingSub as any)?.service_status || (editingSub as any)?.serviceStatus || "active"} className="w-full border p-2 text-xs rounded-lg">
                       <option value="active">Active</option>
                       <option value="inactive">Inactive</option>
                     </select>
@@ -236,8 +231,8 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                 const plan = plans.find((p: any) => String(p.id || p._id).trim() === subPlanId);
                 const subId = sub.id || sub._id;
 
-                const startStr = formatDateForInput(sub.startDate || sub.start_date);
-                const endStr = formatDateForInput(sub.endDate || sub.end_date || sub.expireDate);
+                const startStr = formatDateForInput(sub.start_date || sub.startDate);
+                const endStr = formatDateForInput(sub.end_date || sub.endDate || sub.expireDate);
 
                 return (
                   <tr key={subId} className="hover:bg-slate-50">
@@ -251,10 +246,10 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                     <td className="px-3 py-3">
                       {startStr || "—"} to {endStr || "—"}
                     </td>
-                    <td className="px-3 py-3"><span className="uppercase font-bold">{sub.paymentStatus || sub.payment_status}</span></td>
-                    <td className="px-3 py-3"><span className="uppercase font-bold">{sub.serviceStatus || sub.service_status || "active"}</span></td>
+                    <td className="px-3 py-3"><span className="uppercase font-bold">{sub.payment_status || sub.paymentStatus}</span></td>
+                    <td className="px-3 py-3"><span className="uppercase font-bold">{sub.service_status || sub.serviceStatus || "active"}</span></td>
                     <td className="px-3 py-3 text-right space-x-2">
-                      {(sub.paymentStatus || sub.payment_status) !== "paid" && (
+                      {(sub.payment_status || sub.paymentStatus) !== "paid" && (
                         <form action={updateStatus} className="inline">
                           <input type="hidden" name="id" value={subId} />
                           <button className="text-emerald-600 font-semibold">Activate</button>

@@ -6,7 +6,6 @@ import { addOrganizationMember, listOrganizationMembers, ORGANIZATION_ROLES } fr
 export async function GET(_request: Request, context: { params: Promise<{ organizationId: string }> }) {
   const user = await requireSessionUser();
   const { organizationId } = await context.params;
-  // Adjusted to match the expected argument count (1 argument: organizationId)
   const members = await listOrganizationMembers(organizationId);
 
   if (!members) {
@@ -21,15 +20,14 @@ export async function POST(request: Request, context: { params: Promise<{ organi
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
     const body = await request.json();
-    const email = typeof body.email === "string" ? body.email : "";
+    const workspaceUserId = typeof body.workspaceUserId === "string" ? body.workspaceUserId : (typeof body.userId === "string" ? body.userId : "");
     const role = body.role;
 
-    if (!email || !ORGANIZATION_ROLES.includes(role)) {
-      return NextResponse.json({ error: "A valid email and organization role are required." }, { status: 400 });
+    if (!workspaceUserId || !ORGANIZATION_ROLES.includes(role)) {
+      return NextResponse.json({ error: "A valid workspace user ID and organization role are required." }, { status: 400 });
     }
 
-    // Adjusted to match the expected argument count (3 arguments: organizationId, email, role)
-    const membership = await addOrganizationMember(organizationId, email, role);
+    const membership = await addOrganizationMember({ organizationId, workspaceUserId, role });
     if (!membership) {
       return NextResponse.json({ error: "Organization not found or access denied." }, { status: 404 });
     }

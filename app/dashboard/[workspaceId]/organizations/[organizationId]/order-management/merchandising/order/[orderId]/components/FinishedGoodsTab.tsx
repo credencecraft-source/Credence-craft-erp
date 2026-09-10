@@ -38,7 +38,7 @@ export default function FinishedGoodsTab({
   setForm: any;
   masterOptions?: Record<string, any[]>;
   orderLookups?: Array<{ key: string; lookupModuleKey?: string; dependsOn?: string }>;
-  onOpenCreateMaster: (masterKey: string) => void;
+  onOpenCreateMaster?: (masterKey: string) => void;
 }) {
   const rows = form?.rows?.length > 0 ? form.rows : [defaultSizeRow()];
 
@@ -82,24 +82,28 @@ export default function FinishedGoodsTab({
         {label ? (
           <span className="flex items-center justify-between text-xs font-semibold text-slate-700">
             <span>{label}</span>
-            <button
-              type="button"
-              onClick={() => onOpenCreateMaster(masterKey)}
-              className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
-            >
-              + New
-            </button>
+            {onOpenCreateMaster && (
+              <button
+                type="button"
+                onClick={() => onOpenCreateMaster(masterKey)}
+                className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
+              >
+                + New
+              </button>
+            )}
           </span>
         ) : (
-          <div className="flex justify-end pb-0.5">
-            <button
-              type="button"
-              onClick={() => onOpenCreateMaster(masterKey)}
-              className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
-            >
-              + New
-            </button>
-          </div>
+          onOpenCreateMaster && (
+            <div className="flex justify-end pb-0.5">
+              <button
+                type="button"
+                onClick={() => onOpenCreateMaster(masterKey)}
+                className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
+              >
+                + New
+              </button>
+            </div>
+          )
         )}
         <select
           value={value ?? ""}

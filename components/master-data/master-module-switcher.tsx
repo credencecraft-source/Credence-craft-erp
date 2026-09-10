@@ -7,7 +7,7 @@ import { Check, ChevronDown, Loader2, LogOut } from "lucide-react";
 type Option = {
   key: string;
   label: string;
-  pathSegment: string;
+  pathSegment?: string;
   moduleKey?: string;
   children?: ReadonlyArray<{
     key: string;
@@ -46,8 +46,8 @@ export function MasterModuleSwitcher({
     const segments = pathname.split("/").filter(Boolean);
     const orgIndex = segments.indexOf("organizations");
 
-    const pathSegments = [option.pathSegment];
-    let currentOption = option;
+    const pathSegments = [option.pathSegment || option.key];
+    let currentOption: any = option;
     while (currentOption.children?.[0]) {
       const firstChild = currentOption.children[0];
       pathSegments.push(firstChild.pathSegment || firstChild.key);
