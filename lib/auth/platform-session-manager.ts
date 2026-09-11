@@ -13,9 +13,12 @@ export type PlatformSessionAdmin = {
 };
 
 export const PLATFORM_SESSION_COOKIE_NAME = "cc_platform_session";
+const PLATFORM_SESSION_TTL_SECONDS = 60 * 60 * 24;
 
 export function createPlatformSessionToken(adminId: string) {
-  return `${adminId}.${signValue(`platform:${adminId}`)}`;
+  const expiresAt = Math.floor(Date.now() / 1000) + PLATFORM_SESSION_TTL_SECONDS;
+  const payload = `${adminId}.${expiresAt}`;
+  return `${payload}.${signValue(`platform:${payload}`)}`;
 }
 
 export function verifyPlatformSessionToken(token: string | null | undefined) {
@@ -23,13 +26,19 @@ export function verifyPlatformSessionToken(token: string | null | undefined) {
     return null;
   }
 
-  const [adminId, signature] = token.split(".");
+  const [adminId, expiresAtValue, signature] = token.split(".");
 
-  if (!adminId || !signature) {
+  if (!adminId || !expiresAtValue || !signature) {
     return null;
   }
 
-  if (signature !== signValue(`platform:${adminId}`)) {
+  const expiresAt = Number(expiresAtValue);
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000)) {
+    return null;
+  }
+
+  const payload = `${adminId}.${expiresAtValue}`;
+  if (signature !== signValue(`platform:${payload}`)) {
     return null;
   }
 
@@ -45,7 +54,7 @@ export async function setPlatformSessionCookie(adminId: string) {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: 60 * 60 * 24, // 1 day, shorter than customer session
+    maxAge: PLATFORM_SESSION_TTL_SECONDS,
   });
 }
 

@@ -2,12 +2,24 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/database/prisma-client";
 
-export async function listSubscriptions() {
+export async function listSubscriptions(organizationId?: string, limit = 100) {
+  const page = await listSubscriptionsPage({ organizationId, limit });
+  return page.subscriptions;
+}
+
+export async function listSubscriptionsPage(options: { organizationId?: string; cursor?: string; limit?: number } = {}) {
+  const take = Math.min(Math.max(options.limit ?? 100, 1), 100);
   const subscriptions = await prisma.subscription.findMany({
+    where: options.organizationId ? { organization_id: options.organizationId } : undefined,
     orderBy: { created_at: "desc" },
+    ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+    take: take + 1,
   });
 
-  return subscriptions.map((sub) => ({
+  const hasNextPage = subscriptions.length > take;
+  const pageSubscriptions = hasNextPage ? subscriptions.slice(0, take) : subscriptions;
+  return {
+    subscriptions: pageSubscriptions.map((sub) => ({
     ...sub,
     organizationId: sub.organization_id,
     businessTypeId: sub.business_type_id,
@@ -16,7 +28,9 @@ export async function listSubscriptions() {
     organization_name: sub.organization_id,
     business_type_name: sub.business_type_id,
     plan_name: sub.plan_id,
-  }));
+    })),
+    nextCursor: hasNextPage ? pageSubscriptions.at(-1)?.id ?? null : null,
+  };
 }
 
 export async function getSubscriptionsByOrganization(organizationId: string) {
@@ -213,4 +227,24 @@ export async function activatePlanForBusinessType(data: {
       },
     });
   });
+}
+
+export async function updateSubscriptionStatus(id: string, paymentStatus: string) {
+  return prisma.subscription.update({
+    where: { id },
+    data: { payment_status: paymentStatus.toLowerCase() },
+  });
+}
+
+export async function countActiveSubscriptionsByPlan() {
+  const groups = await prisma.subscription.groupBy({
+    by: ["plan_id"],
+    where: {
+      payment_status: { in: ["paid", "PAID"] },
+      OR: [{ end_date: null }, { end_date: { gt: new Date() } }],
+    },
+    _count: { _all: true },
+  });
+
+  return new Map(groups.map((group) => [group.plan_id, group._count._all]));
 }

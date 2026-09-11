@@ -41,12 +41,12 @@ const fieldColumns: Record<string, Record<string, string>> = {
   "category-type": { Category_Type1: "category_type", Books_Item_ID: "books_item_id" },
   category: { Category_Type_Master: "category_type_id", Category_Name: "category_name", Maximum_Excess_Allowed: "maximum_excess_allowed", Create_Cost_Center: "create_cost_center", Status: "status" },
   "sub-category": { category: "category_id", sub_category: "sub_category" },
-  brand: { Brand: "brand", Maximum_Allowed_Excess: "maximum_allowed_excess", Auto_add_Excess_to_RM: "auto_add_excess_to_rm", Pre_Order_Checklist1: "pre_order_checklist", Status: "status" },
-  buyer: { Buyer_Name: "buyer_name", Currency_Type: "currency_type", Status: "status" },
+  brand: { Brand: "brand", Maximum_Allowed_Excess: "maximum_allowed_excess", Auto_add_Excess_to_RM: "auto_add_excess_to_rm", Pre_Order_Checklist1: "pre_order_checklist_id", Status: "status" },
+  buyer: { Buyer_Name: "buyer_name", Currency_Type: "currency_type_id", Status: "status" },
   season: { season: "season" }, article: { article: "article" }, color: { Colors: "colors", Status: "status" },
-  "size-group": { Brand1: "brand", Size_Group: "size_group", Measurement_Chart1: "measurement_chart", Size: "size" },
-  size: { Size: "size", Size_Group_ID: "size_group", status: "status" }, uom: { uom: "uom" }, vendor: { vendor: "vendor" },
-  gst: { Name: "name", Gst: "gst", GST_TYPELOOKUP1: "gst_type", Zoho_Books_Tax_ID: "zoho_books_tax_id" }, hsn: { Hsn_Code: "hsn_code" },
+  "size-group": { Brand1: "brand_id", Size_Group: "size_group", Measurement_Chart1: "measurement_chart_id" },
+  size: { Size: "size", Size_Group_ID: "size_group_id", status: "status" }, uom: { uom: "uom" }, vendor: { vendor: "vendor" },
+  gst: { Name: "name", Gst: "gst", GST_TYPELOOKUP1: "gst_type_id", Zoho_Books_Tax_ID: "zoho_books_tax_id" }, hsn: { Hsn_Code: "hsn_code" },
   "pre-order-checklist": { Pre_Order_Checklist: "pre_order_checklist" }, "currency-type": { Currency_Type: "currency_type" }, "gst-type": { GST_TYPE: "gst_type" },
   "measurement-chart": { Measurement_Chart: "measurement_chart" }, "size-wise-consumption": { Bom_Template_Name: "bom_template_name" },
   "product-master": { Product_Master_name: "product_master_name" }, "process-template": { Process_Name: "process_name" }, merchandiser: { merchandiser: "merchandiser" },
@@ -61,6 +61,7 @@ const parentColumns: Record<string, string> = {
   "sub-category": "category_id",
   "raw-material-category": "raw_material_type_id",
   "raw-material-sub-category": "raw_material_category_id",
+  size: "size_group_id",
 };
 
 function typedValue(field: MasterFieldDefinition, value: unknown) {
@@ -141,15 +142,38 @@ export async function getMasterValuesForOrganization(organizationId: string, mod
   const definition = getMasterDefinition(moduleKey);
   const delegate = delegates[moduleKey];
   if (!definition || !delegate) return [];
-  const rows = await delegate.findMany({ where: { organization_id: organizationId, ...(includeInactive ? {} : { is_active: true }) }, orderBy: [{ sort_order: "asc" }, { [labelFields[moduleKey]]: "asc" }] });
-  return Promise.all(rows.map(async (row) => {
+  const rows = await delegate.findMany({ where: { organization_id: organizationId, ...(includeInactive ? {} : { is_active: true }) }, orderBy: [{ sort_order: "asc" }, { [labelFields[moduleKey]]: "asc" }], take: 500 });
+  const lookupKeys = definition.fields
+    .filter((field) => field.type === "lookup" && field.lookupModuleKey)
+    .map((field) => field.lookupModuleKey as string);
+  const lookupCache = new Map<string, Map<string, string>>();
+
+  await Promise.all([...new Set(lookupKeys)].map(async (lookupModuleKey) => {
+    const ids = [...new Set(rows.map((row) => String(row[fieldColumns[moduleKey]?.[definition.fields.find((field) => field.lookupModuleKey === lookupModuleKey)?.key ?? ""]] ?? "")).filter(Boolean))];
+    if (ids.length === 0) return;
+    const lookupRows = await delegates[lookupModuleKey].findMany({
+      where: { organization_id: organizationId, OR: [{ id: { in: ids } }, { value_id: { in: ids } }] },
+      take: 500,
+    });
+    const labels = new Map<string, string>();
+    for (const lookupRow of lookupRows) {
+      const label = String(lookupRow[labelFields[lookupModuleKey]] ?? "");
+      labels.set(lookupRow.id, label);
+      labels.set(lookupRow.value_id, label);
+    }
+    lookupCache.set(lookupModuleKey, labels);
+  }));
+
+  return rows.map((row) => {
     const fields = rowFields(moduleKey, row, definition);
     for (const field of definition.fields.filter((item) => item.type === "lookup")) {
-      const related = fields[field.key] ? await getMasterValueById(organizationId, field.lookupModuleKey ?? "", String(fields[field.key])) : null;
-      fields[field.key] = related?.label ?? fields[field.key] ?? null;
+      const related = fields[field.key] && field.lookupModuleKey
+        ? lookupCache.get(field.lookupModuleKey)?.get(String(fields[field.key]))
+        : null;
+      fields[field.key] = related ?? fields[field.key] ?? null;
     }
     return { id: row.id, value_id: row.value_id, label: String(row[labelFields[moduleKey]] ?? ""), code: null, description: null, is_active: row.is_active, parent_id: parentColumns[moduleKey] ? (row[parentColumns[moduleKey]] as string | null) ?? null : null, fields };
-  }));
+  });
 }
 
 export async function getPendingMasterValuesForOrganization(organizationId: string, moduleKey: string) {
@@ -165,7 +189,8 @@ export async function createMasterValueForOrganization(organizationId: string, m
     const data = await buildData(organizationId, moduleKey, input.fields ?? {}, input.label.trim());
     
     if (input.parentValueId && parentColumns[moduleKey]) {
-      const parentModuleKey = definition.fields.find(f => f.type === "lookup")?.lookupModuleKey ?? (moduleKey === "sub-category" ? "category" : "");
+      const parentModuleKey = definition.fields.find(f => f.type === "lookup")?.lookupModuleKey
+        ?? (moduleKey === "sub-category" ? "category" : moduleKey === "size" ? "size-group" : "");
       if (parentModuleKey) {
         const parentId = await resolveLookupId(organizationId, parentModuleKey, input.parentValueId);
         if (parentId) {

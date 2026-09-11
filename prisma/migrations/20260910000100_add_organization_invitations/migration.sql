@@ -1,0 +1,2 @@
+-- Organization invitation migration was already applied to the shared database.
+-- This placeholder restores the migration file required by Prisma's local history.

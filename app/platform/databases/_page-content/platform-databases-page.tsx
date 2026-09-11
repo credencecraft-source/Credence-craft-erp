@@ -8,18 +8,6 @@ import Table from "@/components/ui/Table";
 import { ensurePlatformDefaults } from "@/lib/services/platform/platform-bootstrap-service";
 import { listDatabaseConnections } from "@/lib/services/platform/database-connection-service";
 
-function maskConnectionString(value: string | null) {
-  if (!value) {
-    return "-";
-  }
-
-  if (value.length <= 8) {
-    return "••••••••";
-  }
-
-  return `${value.slice(0, 4)}••••••••${value.slice(-4)}`;
-}
-
 export default async function PlatformDatabasesPage() {
   await ensurePlatformDefaults();
   const connections = await listDatabaseConnections();
@@ -62,7 +50,7 @@ export default async function PlatformDatabasesPage() {
                 </td>
                 <td className="px-4 py-3 text-slate-600">{connection.database_name || "-"}</td>
                 <td className="px-4 py-3 font-mono text-xs text-slate-500">
-                  {maskConnectionString(connection.connection_string)}
+                  Stored securely
                 </td>
                 <td className="px-4 py-3">
                   <Badge className={connection.status === "active" ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-600"}>

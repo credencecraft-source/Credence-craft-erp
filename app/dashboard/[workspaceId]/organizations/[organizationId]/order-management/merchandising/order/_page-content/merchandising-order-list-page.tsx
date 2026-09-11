@@ -120,10 +120,6 @@ export default function MerchandisingOrdersPage() {
     };
   }, [loadOrders]);
 
-  useEffect(() => {
-    loadOrders();
-  }, [selectedStatus, loadOrders]);
-
   const filteredOrders = useMemo(() => {
     if (!orders) return [];
     return selectedStatus === "Draft"

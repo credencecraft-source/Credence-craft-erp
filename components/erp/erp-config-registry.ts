@@ -70,7 +70,6 @@ export const ERP_MODULES: ErpModule[] = [
     label: "Settings",
     pathSegment: "settings",
     children: [
-      { key: "master-data", label: "Masters", pathSegment: "master-data" },
       {
         key: "pricing",
         label: "Pricing",
@@ -79,6 +78,15 @@ export const ERP_MODULES: ErpModule[] = [
           { key: "plan", label: "Plan", pathSegment: "plan" },
         ],
       },
+      { key: "users", label: "Users", pathSegment: "users" },
+    ],
+  },
+  {
+    key: "admin",
+    label: "Admin",
+    pathSegment: "admin",
+    children: [
+      { key: "master-data", label: "Masters", pathSegment: "master-data" },
     ],
   },
 ];
@@ -90,6 +98,7 @@ const BUSINESS_TYPE_MODULE_ALIASES: Record<string, string> = {
   "inventory-management": "inventory-management",
   "settings": "settings",
   "setting": "settings",
+  "admin": "admin",
   "approvals": "approvals",
   "approval": "approvals",
 };

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-definitions";
 import OrderDetailsTab from "./components/OrderDetailsTab";
 import FinishedGoodsTab from "./components/FinishedGoodsTab";
 import BomTab from "./components/BomTab";
@@ -12,6 +13,12 @@ import ProcessTab from "./components/ProcessTab";
 import AttachmentsTab from "./components/Attachments";
 
 type TabType = "details" | "finishedGoods" | "bom" | "costing" | "techPack" | "measurements" | "process" | "attachments";
+type QuickMasterParent = {
+  masterKey: string;
+  fields: Record<string, unknown>;
+  lookupOptions: Record<string, any[]>;
+  returnFieldKey: string;
+};
 
 export default function MerchandisingOrderDetailsPage() {
   const params = useParams<{
@@ -21,12 +28,18 @@ export default function MerchandisingOrderDetailsPage() {
   }>();
 
   const router = useRouter();
-  const orderId = params?.orderId;
+  const orderId = params?.orderId && params.orderId !== "create" ? params.orderId : undefined;
   const workspaceId = params?.workspaceId;
   const organizationId = params?.organizationId;
 
   const [activeTab, setActiveTab] = useState<TabType>("details");
   const [isSaving, setIsSaving] = useState(false);
+  const [newMasterKey, setNewMasterKey] = useState<string | null>(null);
+  const [quickMasterFields, setQuickMasterFields] = useState<Record<string, unknown>>({});
+  const [quickMasterLookupOptions, setQuickMasterLookupOptions] = useState<Record<string, any[]>>({});
+  const [quickMasterStack, setQuickMasterStack] = useState<QuickMasterParent[]>([]);
+  const [isCreatingMaster, setIsCreatingMaster] = useState(false);
+  const [masterCreateError, setMasterCreateError] = useState("");
 
   // Master Data & Lookups State
   const [masterOptions, setMasterOptions] = useState<Record<string, any[]>>({});
@@ -62,27 +75,15 @@ export default function MerchandisingOrderDetailsPage() {
 
   const fetchMasterData = async (orgId: string) => {
     try {
-      const keys = ["article", "entity", "category", "sub-category", "season", "color", "buyer", "brand", "size-group"];
-      const fetchedMasters: Record<string, any[]> = {};
-
-      for (const key of keys) {
-        try {
-          const mRes = await fetch(`/api/organizations/${orgId}/master-data/${key}`);
-          if (mRes.ok) {
-            const data = await mRes.json();
-            fetchedMasters[key] = Array.isArray(data) ? data : data.items || [];
-          }
-        } catch (e) {
-          // Ignore individual fetch errors gracefully
-        }
-      }
-
-      setMasterOptions(fetchedMasters);
-
-      const lookupsRes = await fetch(`/api/organizations/${orgId}/order-lookups`);
+      const lookupsRes = await fetch(`/api/organizations/${orgId}/master-data/order-lookups`, { cache: "no-store" });
       if (lookupsRes.ok) {
         const lookupData = await lookupsRes.json();
-        setOrderLookups(Array.isArray(lookupData) ? lookupData : lookupData.items || []);
+        setMasterOptions(lookupData.masterOptions ?? {});
+        setOrderLookups(
+          Array.isArray(lookupData)
+            ? lookupData
+            : lookupData.orderLookups ?? lookupData.items ?? [],
+        );
       }
     } catch (error) {
       console.error("Error fetching master options:", error);
@@ -102,11 +103,300 @@ export default function MerchandisingOrderDetailsPage() {
     }
   }, [organizationId]);
 
+  useEffect(() => {
+    if (!orderId || !organizationId) return;
+    const existingOrderId = orderId;
+
+    let isMounted = true;
+
+    async function loadOrder() {
+      try {
+        const response = await fetch(
+          `/api/orders/${encodeURIComponent(existingOrderId)}?organizationId=${encodeURIComponent(organizationId)}`,
+          { cache: "no-store" },
+        );
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error || "Unable to load order.");
+        }
+
+        const order = data.order;
+        if (!isMounted || !order) return;
+
+        setForm((current) => ({
+          ...current,
+          ...order,
+          deliveryDate: order.deliveryDate ? String(order.deliveryDate).slice(0, 10) : "",
+          ratioOrderQty: order.ratioOrderQty ?? "",
+          orderQty: order.orderQty ?? "",
+          rows: (order.finishedGoods ?? []).map((row: Record<string, unknown>) => ({
+            ...row,
+            beforeExcessQty: row.beforeExcessQty ?? "",
+            excess: row.excess ?? "",
+            excessQty: row.excessQty ?? "",
+            totalQty: row.totalQty ?? "",
+            buyerPoPrice: row.buyerPoPrice ?? "",
+            exchangePrice: row.exchangePrice ?? "",
+            priceInInr: row.priceInInr ?? "",
+          })),
+          bomRows: order.bomItems ?? [],
+        }));
+      } catch (error) {
+        if (isMounted) {
+          alert(error instanceof Error ? error.message : "Unable to load order.");
+        }
+      }
+    }
+
+    loadOrder();
+    return () => {
+      isMounted = false;
+    };
+  }, [orderId, organizationId]);
+
   // Handler to open/redirect to create master view using the `+ New` button
-  const handleOpenCreateMaster = (masterKey: string) => {
-    if (!workspaceId || !organizationId) return;
-    router.push(
-      `/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data/${masterKey}`
+  const handleOpenCreateMaster = async (masterKey: string, returnFieldKey?: string) => {
+    const definition = getMasterDefinition(masterKey);
+    if (!definition) return;
+
+    if (newMasterKey && returnFieldKey) {
+      setQuickMasterStack((current) => [
+        ...current,
+        { masterKey: newMasterKey, fields: quickMasterFields, lookupOptions: quickMasterLookupOptions, returnFieldKey },
+      ]);
+    }
+    setNewMasterKey(masterKey);
+    setQuickMasterFields(Object.fromEntries(definition.fields.map((field) => [field.key, field.type === "checkbox" ? false : field.multiple ? [] : ""])));
+    setMasterCreateError("");
+
+    const lookupKeys = [...new Set(definition.fields.filter((field) => field.type === "lookup" && field.lookupModuleKey).map((field) => field.lookupModuleKey as string))];
+    const lookupResults = await Promise.all(lookupKeys.map(async (lookupKey) => {
+      try {
+        const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(lookupKey)}`, { cache: "no-store" });
+        const data = response.ok ? await response.json() : [];
+        return [lookupKey, Array.isArray(data) ? data : data.items ?? []] as const;
+      } catch {
+        return [lookupKey, []] as const;
+      }
+    }));
+    setQuickMasterLookupOptions(Object.fromEntries(lookupResults));
+  };
+
+  const handleCreateMaster = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!organizationId || !newMasterKey) return;
+
+    const definition = getMasterDefinition(newMasterKey);
+    const labelKey = definition?.labelField ?? definition?.fields[0]?.key;
+    const label = labelKey ? String(quickMasterFields[labelKey] ?? "").trim() : "";
+    if (!definition || !label) return;
+
+    try {
+      setIsCreatingMaster(true);
+      setMasterCreateError("");
+      const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(newMasterKey)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label,
+          fields: quickMasterFields,
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(data?.error || "Unable to create master value.");
+      }
+
+      const refreshedResponse = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups`, { cache: "no-store" });
+      if (refreshedResponse.ok) {
+        const refreshedData = await refreshedResponse.json();
+        setMasterOptions(refreshedData.masterOptions ?? {});
+        setOrderLookups(refreshedData.orderLookups ?? []);
+      }
+
+      const formFieldByMasterKey: Record<string, string> = {
+        article: "article",
+        entity: "entityName",
+        category: "category",
+        "sub-category": "subCategory",
+        season: "season",
+        color: "colors",
+        buyer: "buyer",
+        brand: "brand",
+        "size-group": "sizeGroup",
+      };
+      const formField = formFieldByMasterKey[newMasterKey];
+      const previousMaster = quickMasterStack.at(-1);
+      if (previousMaster) {
+        const previousDefinition = getMasterDefinition(previousMaster.masterKey);
+        const previousField = previousDefinition?.fields.find((field) => field.key === previousMaster.returnFieldKey);
+        const lookupKey = previousField?.lookupModuleKey;
+        const restoredLookupOptions = { ...previousMaster.lookupOptions };
+        if (lookupKey) {
+          restoredLookupOptions[lookupKey] = [
+            ...(restoredLookupOptions[lookupKey] ?? []).filter((option) => option.label !== label),
+            { id: data?.id ?? data?.value_id ?? label, label },
+          ];
+        }
+        setQuickMasterFields({ ...previousMaster.fields, [previousMaster.returnFieldKey]: label });
+        setQuickMasterLookupOptions(restoredLookupOptions);
+        setQuickMasterStack((current) => current.slice(0, -1));
+        setNewMasterKey(previousMaster.masterKey);
+        setMasterCreateError("");
+      } else if (formField) {
+        setForm((current) => ({ ...current, [formField]: label }));
+        setNewMasterKey(null);
+      } else {
+        setNewMasterKey(null);
+      }
+    } catch (error) {
+      setMasterCreateError(error instanceof Error ? error.message : "Unable to create master value.");
+    } finally {
+      setIsCreatingMaster(false);
+    }
+  };
+
+  const closeQuickMaster = () => {
+    setNewMasterKey(null);
+    setQuickMasterStack([]);
+    setMasterCreateError("");
+  };
+
+  const handleSizeGroupChange = (sizeGroup: string) => {
+    const selectedGroup = (masterOptions["size-group"] ?? []).find((group: any) => group.label === sizeGroup);
+    const mappedSizes = selectedGroup?.sizes ?? [];
+    setForm((current: any) => ({
+      ...current,
+      sizeGroup,
+      ...(mappedSizes.length > 0
+        ? { rows: mappedSizes.map((size: any) => ({ buyerSize: "", size: size.label, beforeExcessQty: "", excess: "", excessQty: "", totalQty: "", buyerPoPrice: "", exchangePrice: "", priceInInr: "" })) }
+        : {}),
+    }));
+  };
+
+  const renderBomMasterSelect = (
+    value: string,
+    onChange: (value: string) => void,
+    masterKey: string,
+    placeholder: string,
+    parentValue?: string,
+  ) => {
+    let options = masterOptions[masterKey] ?? [];
+    if (parentValue) {
+      const parentOption = (masterOptions["raw-material-category"] ?? []).find((option: any) => option.label === parentValue);
+      if (parentOption) {
+        options = options.filter((option: any) => option.parent_id === parentOption.id || option.parentValueId === parentOption.id);
+      }
+    }
+    if (value && !options.some((option: any) => option.label === value)) {
+      options = [{ id: "legacy-bom-value", label: value, is_active: true }, ...options];
+    }
+    return (
+      <select
+        value={value ?? ""}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((option: any) => (
+          <option key={option.id ?? option.label} value={option.label}>
+            {option.label}{option.is_active === false ? " (Not approved)" : ""}
+          </option>
+        ))}
+      </select>
+    );
+  };
+
+  const renderQuickMasterField = (field: MasterFieldDefinition) => {
+    const value = quickMasterFields[field.key];
+    const setValue = (nextValue: unknown) => setQuickMasterFields((current) => ({ ...current, [field.key]: nextValue }));
+
+    if (field.type === "checkbox") {
+      return (
+        <label key={field.key} className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+          <input type="checkbox" checked={value === true} onChange={(event) => setValue(event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-emerald-600" />
+          {field.label}
+        </label>
+      );
+    }
+
+    if (field.type === "picklist" || field.type === "lookup") {
+      let options = field.type === "lookup" ? quickMasterLookupOptions[field.lookupModuleKey ?? ""] ?? [] : (field.options ?? []).map((option) => ({ id: option, label: option }));
+      if (field.dependsOn) {
+        const parentValue = String(quickMasterFields[field.dependsOn] ?? "");
+        const currentDefinition = newMasterKey ? getMasterDefinition(newMasterKey) : null;
+        const parentField = currentDefinition?.fields.find((candidate) => candidate.key === field.dependsOn);
+        const parentOptions = quickMasterLookupOptions[parentField?.lookupModuleKey ?? ""] ?? [];
+        const parentOption = parentOptions.find((option) => option.label === parentValue);
+        if (parentOption) {
+          const parentIds = new Set([parentOption.id, parentOption.value_id].filter(Boolean));
+          options = options.filter((option) => parentIds.has(option.parent_id) || parentIds.has(option.parentValueId));
+        } else if (parentValue) {
+          options = [];
+        }
+      }
+      if (field.type === "lookup" && field.multiple) {
+        const selectedValues = Array.isArray(value) ? value.map(String) : [];
+        return (
+          <div key={field.key} className="space-y-1">
+            <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+              <span>{field.label}{field.required ? " *" : ""}</span>
+              <span className="font-normal text-slate-500">{selectedValues.length} selected</span>
+            </div>
+            <div className="max-h-36 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2">
+              {options.length === 0 ? (
+                <p className="px-2 py-1 text-xs font-normal text-slate-500">No Size records available.</p>
+              ) : (
+                options.map((option) => {
+                  const optionValue = String(option.label);
+                  const checked = selectedValues.includes(optionValue);
+                  return (
+                    <label key={option.id ?? option.label} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs font-normal hover:bg-emerald-50">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => setValue(checked ? selectedValues.filter((item) => item !== optionValue) : [...selectedValues, optionValue])}
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-600"
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        );
+      }
+      return (
+        <label key={field.key} className="flex flex-col gap-1 text-xs font-semibold text-slate-700">
+          <span className="flex items-center justify-between">
+            <span>{field.label}{field.required ? " *" : ""}</span>
+            {field.type === "lookup" && field.lookupModuleKey && (
+              <button type="button" onClick={() => handleOpenCreateMaster(field.lookupModuleKey as string, field.key)} className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700">
+                + New
+              </button>
+            )}
+          </span>
+          <select required={field.required} multiple={field.multiple} value={field.multiple ? (Array.isArray(value) ? value.map(String) : []) : String(value ?? "")} onChange={(event) => {
+            const nextValue = field.multiple ? Array.from(event.target.selectedOptions, (option) => option.value) : event.target.value;
+            setValue(nextValue);
+            const currentDefinition = newMasterKey ? getMasterDefinition(newMasterKey) : null;
+            for (const dependentField of currentDefinition?.fields.filter((candidate) => candidate.dependsOn === field.key) ?? []) {
+              setQuickMasterFields((current) => ({ ...current, [dependentField.key]: dependentField.multiple ? [] : "" }));
+            }
+          }} className={`rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal focus:border-emerald-500 focus:outline-none${field.multiple ? " min-h-28" : ""}`}>
+            {!field.multiple && <option value="">Select {field.label}</option>}
+            {options.map((option) => <option key={option.id ?? option.label} value={option.label}>{option.label}</option>)}
+          </select>
+        </label>
+      );
+    }
+
+    return (
+      <label key={field.key} className="flex flex-col gap-1 text-xs font-semibold text-slate-700">
+        {field.label}{field.required ? " *" : ""}
+        <input required={field.required} type={field.type === "number" || field.type === "percentage" || field.type === "decimal" ? "number" : field.type === "url" ? "url" : "text"} step={field.type === "percentage" || field.type === "decimal" ? "0.01" : undefined} value={String(value ?? "")} onChange={(event) => setValue(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 font-normal focus:border-emerald-500 focus:outline-none" />
+      </label>
     );
   };
 
@@ -118,16 +408,13 @@ export default function MerchandisingOrderDetailsPage() {
     try {
       setIsSaving(true);
       
-      if (!form.orderNo || form.orderNo.trim() === "") {
-        throw new Error("Blocking Field Missing: 'Order No' is required.");
-      }
       if (!form.article || form.article.trim() === "") {
         throw new Error("Blocking Field Missing: 'Article' is required.");
       }
       
-      const endpoint = orderId 
-        ? `/api/workspaces/${workspaceId}/organizations/${organizationId}/merchandising-orders/${orderId}`
-        : `/api/workspaces/${workspaceId}/organizations/${organizationId}/merchandising-orders`;
+      const endpoint = orderId
+        ? `/api/orders/${encodeURIComponent(orderId)}?organizationId=${encodeURIComponent(organizationId)}`
+        : `/api/orders?organizationId=${encodeURIComponent(organizationId)}`;
       
       const method = orderId ? "PUT" : "POST";
 
@@ -136,7 +423,7 @@ export default function MerchandisingOrderDetailsPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(form),
+        body: JSON.stringify(orderId ? { id: orderId, ...form, organizationId } : { ...form, organizationId }),
       });
 
       if (!response.ok) {
@@ -146,7 +433,6 @@ export default function MerchandisingOrderDetailsPage() {
       }
 
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order`);
-      router.refresh();
     } catch (error: any) {
       console.error("Error saving order:", error);
       alert(error.message || "Failed to save order. Please check your inputs and try again.");
@@ -222,16 +508,49 @@ export default function MerchandisingOrderDetailsPage() {
             masterOptions={masterOptions}
             orderLookups={orderLookups}
             onOpenCreateMaster={handleOpenCreateMaster}
+            onSizeGroupChange={handleSizeGroupChange}
           />
         )}
-        {activeTab === "finishedGoods" && <FinishedGoodsTab form={form} setForm={setForm} />}
-        {activeTab === "bom" && <BomTab form={form} setForm={setForm} />}
+        {activeTab === "finishedGoods" && <FinishedGoodsTab form={form} setForm={setForm} masterOptions={masterOptions} onOpenCreateMaster={handleOpenCreateMaster} />}
+        {activeTab === "bom" && <BomTab form={form} setForm={setForm} renderMasterSelect={renderBomMasterSelect} onOpenCreateMaster={handleOpenCreateMaster} />}
         {activeTab === "costing" && <CostingTab form={form} setForm={setForm} />}
         {activeTab === "techPack" && <TecPackTab form={form} setForm={setForm} />}
         {activeTab === "measurements" && <MeasurementsTab form={form} setForm={setForm} />}
         {activeTab === "process" && <ProcessTab form={form} setForm={setForm} />}
         {activeTab === "attachments" && <AttachmentsTab form={form} setForm={setForm} />}
       </div>
+
+      {newMasterKey && getMasterDefinition(newMasterKey) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="quick-master-title">
+          <form onSubmit={handleCreateMaster} className="w-full max-w-md space-y-4 rounded-xl bg-white p-5 shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Quick create</p>
+                <h3 id="quick-master-title" className="text-base font-bold text-slate-900">
+                  New {getMasterDefinition(newMasterKey)?.label}
+                </h3>
+              </div>
+              <button type="button" onClick={closeQuickMaster} className="text-lg text-slate-400 hover:text-slate-700" aria-label="Close">
+                X
+              </button>
+            </div>
+
+            <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+              {getMasterDefinition(newMasterKey)?.fields.map(renderQuickMasterField)}
+            </div>
+
+            {masterCreateError && <p className="text-xs text-red-600">{masterCreateError}</p>}
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+              <button type="button" onClick={closeQuickMaster} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200">
+                Cancel
+              </button>
+              <button type="submit" disabled={isCreatingMaster} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+                {isCreatingMaster ? "Creating..." : "Create and select"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

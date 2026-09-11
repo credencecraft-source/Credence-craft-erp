@@ -20,14 +20,22 @@ export type SessionUser = {
 export const SESSION_COOKIE_NAME = "cc_session";
 const USE_DEV_USER_STORE = process.env.USE_DEV_USER_STORE === "true";
 const isDevBypass = USE_DEV_USER_STORE || !process.env.DATABASE_URL;
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export function signValue(value: string) {
-  const secret = process.env.AUTH_SECRET || "dev-auth-secret-change-me";
-  return createHmac("sha256", secret).update(value).digest("hex");
+  const secret = process.env.AUTH_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new Error("AUTH_SECRET must be configured in production.");
+  }
+
+  const signingSecret = secret || "dev-auth-secret-change-me";
+  return createHmac("sha256", signingSecret).update(value).digest("hex");
 }
 
 export function createSessionToken(userId: string) {
-  return `${userId}.${signValue(userId)}`;
+  const expiresAt = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
+  const payload = `${userId}.${expiresAt}`;
+  return `${payload}.${signValue(payload)}`;
 }
 
 export function verifySessionToken(token: string | null | undefined) {
@@ -35,13 +43,19 @@ export function verifySessionToken(token: string | null | undefined) {
     return null;
   }
 
-  const [userId, signature] = token.split(".");
+  const [userId, expiresAtValue, signature] = token.split(".");
 
-  if (!userId || !signature) {
+  if (!userId || !expiresAtValue || !signature) {
     return null;
   }
 
-  const expected = signValue(userId);
+  const expiresAt = Number(expiresAtValue);
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000)) {
+    return null;
+  }
+
+  const payload = `${userId}.${expiresAtValue}`;
+  const expected = signValue(payload);
   const input = Buffer.from(signature);
   const expectedBuffer = Buffer.from(expected);
 
@@ -69,7 +83,7 @@ export async function setSessionCookie(userId: string) {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: 60 * 60 * 24 * 7, // 7 days
+    maxAge: SESSION_TTL_SECONDS,
   });
 }
 

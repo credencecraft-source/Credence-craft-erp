@@ -1,18 +1,19 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useRef } from "react";
+import { calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
 
 type FinishedGoodsRow = {
   id?: string;
-  buyerSize: string;
-  size: string;
-  beforeExcessQty: string;
-  excess: string;
-  excessQty: string;
-  totalQty: string;
-  buyerPoPrice: string;
-  exchangePrice: string;
-  priceInInr: string;
+  buyerSize?: string | null;
+  size?: string | null;
+  beforeExcessQty?: number | string | null;
+  excess?: number | string | null;
+  excessQty?: number | string | null;
+  totalQty?: number | string | null;
+  buyerPoPrice?: number | string | null;
+  exchangePrice?: number | string | null;
+  priceInInr?: number | string | null;
 };
 
 const defaultSizeRow = (): FinishedGoodsRow => ({
@@ -40,27 +41,35 @@ export default function FinishedGoodsTab({
   orderLookups?: Array<{ key: string; lookupModuleKey?: string; dependsOn?: string }>;
   onOpenCreateMaster?: (masterKey: string) => void;
 }) {
-  const rows = form?.rows?.length > 0 ? form.rows : [defaultSizeRow()];
+  const rows = form?.rows ?? [];
+  const calculatedFinishedGoods = calculateFinishedGoodsRows(rows);
+  const previousSizeGroup = useRef<string>("");
 
-  const addSizeRow = () => {
-    setForm((current: any) => ({
-      ...current,
-      rows: [...(current.rows || []), defaultSizeRow()],
-    }));
-  };
+  useEffect(() => {
+    const sizeGroup = String(form?.sizeGroup ?? "");
+    if (!sizeGroup || sizeGroup === previousSizeGroup.current) return;
 
-  const removeSizeRow = (index: number) => {
-    setForm((current: any) => ({
-      ...current,
-      rows: (current.rows || []).filter((_: any, i: number) => i !== index),
-    }));
-  };
+    const selectedGroup = (masterOptions["size-group"] ?? []).find((group: any) => group.label === sizeGroup);
+    const mappedSizes = selectedGroup?.sizes ?? [];
+    if (mappedSizes.length > 0) {
+      setForm((current: any) => {
+        const hasExistingRows = (current.rows ?? []).length > 0;
+        if (hasExistingRows) return current;
+        return {
+          ...current,
+          rows: mappedSizes.map((size: any) => ({ ...defaultSizeRow(), size: size.label })),
+        };
+      });
+    }
+    previousSizeGroup.current = sizeGroup;
+  }, [form?.sizeGroup, masterOptions, setForm]);
 
   const updateSizeRow = (index: number, field: keyof FinishedGoodsRow, value: string) => {
     setForm((current: any) => {
       const updatedRows = [...(current.rows || [])];
       updatedRows[index] = { ...updatedRows[index], [field]: value };
-      return { ...current, rows: updatedRows };
+      const calculated = calculateFinishedGoodsRows(updatedRows);
+      return { ...current, rows: calculated.rows, orderQty: calculated.orderQty };
     });
   };
 
@@ -76,13 +85,14 @@ export default function FinishedGoodsTab({
     if (value && !options.some((opt: any) => opt.label === value)) {
       options = [{ id: "current-legacy-fg", label: value, code: null, is_active: true }, ...options];
     }
+    const canCreate = onOpenCreateMaster && masterKey !== "size";
 
     return (
       <label className="flex flex-col gap-1.5 w-full">
         {label ? (
           <span className="flex items-center justify-between text-xs font-semibold text-slate-700">
             <span>{label}</span>
-            {onOpenCreateMaster && (
+            {canCreate && (
               <button
                 type="button"
                 onClick={() => onOpenCreateMaster(masterKey)}
@@ -93,7 +103,7 @@ export default function FinishedGoodsTab({
             )}
           </span>
         ) : (
-          onOpenCreateMaster && (
+          canCreate && (
             <div className="flex justify-end pb-0.5">
               <button
                 type="button"
@@ -124,14 +134,11 @@ export default function FinishedGoodsTab({
   return (
     <div className="space-y-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
       <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-        <h3 className="text-sm font-bold text-slate-900">Finished Goods Size Wise</h3>
-        <button
-          type="button"
-          onClick={addSizeRow}
-          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700"
-        >
-          + Add Row
-        </button>
+        <div>
+          <h3 className="text-sm font-bold text-slate-900">Finished Goods Size Wise</h3>
+          <p className="text-xs text-slate-500">Calculated Order Qty: {calculatedFinishedGoods.orderQty}</p>
+        </div>
+        <span className="text-xs text-slate-500">Sizes come from Size Group</span>
       </div>
 
       <div className="overflow-x-auto">
@@ -147,11 +154,10 @@ export default function FinishedGoodsTab({
               <th className="p-2 min-w-[110px]">Buyer Po Price</th>
               <th className="p-2 min-w-[110px]">Exchange Price</th>
               <th className="p-2 min-w-[110px]">Price In INR</th>
-              <th className="p-2 min-w-[80px]">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 align-top">
-            {rows.map((row: FinishedGoodsRow, index: number) => (
+            {calculatedFinishedGoods.rows.map((row: FinishedGoodsRow, index: number) => (
               <tr key={`${index}-${row.size || "row"}`}>
                 <td className="p-2">
                   <div className="flex flex-col gap-1.5 pt-5">
@@ -165,7 +171,7 @@ export default function FinishedGoodsTab({
                   </div>
                 </td>
                 <td className="p-2">
-                  {renderMasterSelect("", row.size, (val) => updateSizeRow(index, "size", val), "size", "Select size")}
+                  {renderMasterSelect("", row.size ?? "", (val) => updateSizeRow(index, "size", val), "size", "Select size")}
                 </td>
                 <td className="p-2">
                   <div className="flex flex-col gap-1.5 pt-5">
@@ -194,9 +200,9 @@ export default function FinishedGoodsTab({
                     <input
                       type="number"
                       value={row.excessQty || ""}
-                      onChange={(event) => updateSizeRow(index, "excessQty", event.target.value)}
+                      readOnly
                       placeholder="0"
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none w-full"
+                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800"
                     />
                   </div>
                 </td>
@@ -205,9 +211,9 @@ export default function FinishedGoodsTab({
                     <input
                       type="number"
                       value={row.totalQty || ""}
-                      onChange={(event) => updateSizeRow(index, "totalQty", event.target.value)}
+                      readOnly
                       placeholder="0"
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none w-full"
+                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800"
                     />
                   </div>
                 </td>
@@ -242,17 +248,6 @@ export default function FinishedGoodsTab({
                       placeholder="0.00"
                       className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none w-full"
                     />
-                  </div>
-                </td>
-                <td className="p-2">
-                  <div className="flex flex-col gap-1.5 pt-6">
-                    <button
-                      type="button"
-                      onClick={() => removeSizeRow(index)}
-                      className="text-red-600 hover:text-red-700 font-medium text-xs text-left"
-                    >
-                      Remove
-                    </button>
                   </div>
                 </td>
               </tr>

@@ -5,7 +5,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { MasterModuleWrapper } from "@/components/master-data/master-module-wrapper";
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
-import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
 import { ensureFreePlanSubscriptionsForOrganization } from "@/lib/services/platform/subscription-service";
 import { requireSessionUser } from "@/lib/auth/session-manager"; // Fixed typo (removed trailing 's')
@@ -45,18 +45,26 @@ export default async function OrganizationShellLayout({
     ? new URL(rawPath).pathname 
     : rawPath;
 
-  // 3. Validate plan restriction guard (will throw or redirect if unauthorized)
-  await validateOrganizationAccess(organizationId, currentPath);
-
-  // 4. Fetch the real organization details dynamically
+  // 3. Fetch and authorize the real organization before checking plan rules.
   const organization = await getOrganizationForUser(user.id, organizationId);
   
   if (!organization) {
     redirect(`/dashboard/${workspaceId}/home`);
   }
 
+  if (currentPath.includes("/settings")) {
+    await requireOrganizationAccess(user.id, organizationId, ["OWNER", "ADMIN"]);
+  }
+
+  await validateOrganizationAccess(organization.organization_id, currentPath);
+
   await ensureFreePlanSubscriptionsForOrganization(organization.id);
-  const businessTypes = await listActiveBusinessTypes();
+  const businessTypes = (await listActiveBusinessTypes()).map((businessType) => ({
+    ...businessType,
+    name: businessType.name.trim().toLowerCase() === "settings"
+      ? "Admin"
+      : businessType.name,
+  }));
 
   return (
     <MasterModuleWrapper

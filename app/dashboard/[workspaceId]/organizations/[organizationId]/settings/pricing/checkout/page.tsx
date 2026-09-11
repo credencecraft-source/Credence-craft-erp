@@ -3,9 +3,10 @@
 import React from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { listOrganizationClients } from "@/lib/services/platform/client-service";
 import { getPlanById } from "@/lib/services/platform/plan-service";
 import { activatePlanForBusinessType } from "@/lib/services/platform/subscription-service";
+import { requireSessionUser } from "@/lib/auth/session-manager";
+import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 
 interface PageProps {
   params: Promise<{
@@ -31,12 +32,15 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
 
   const billingCycle = typeof resolvedSearch.billingCycle === "string" ? resolvedSearch.billingCycle : "yearly";
 
-  const [clients, plan] = await Promise.all([
-    listOrganizationClients(),
-    planId ? getPlanById(planId) : Promise.resolve(null),
-  ]);
+  const user = await requireSessionUser();
+  const organization = await getOrganizationForUser(user.id, organizationId);
+  if (!organization) {
+    redirect(`/dashboard/${workspaceId}/home`);
+  }
 
-  const client = clients.find((c: any) => String(c.id || c._id) === organizationId);
+  const plan = planId ? await getPlanById(planId) : null;
+
+  const client = organization;
 
   const orgName = (client as any)?.organization_name || (client as any)?.organizationName || (client as any)?.name || "Unnamed Organization";
   const planName = (plan as any)?.plan_name || (plan as any)?.name || "Selected Plan";
@@ -49,6 +53,13 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
     "use server";
 
     const pricingPlanUrl = `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan`;
+    const user = await requireSessionUser();
+    const organization = await getOrganizationForUser(user.id, organizationId);
+
+    if (!organization) {
+      redirect(`/dashboard/${workspaceId}/home`);
+    }
+    await requireOrganizationAccess(user.id, organization.organization_id, ["OWNER", "ADMIN"]);
 
     if (!organizationId || !planId) {
       redirect(`${pricingPlanUrl}?error=` + encodeURIComponent("Missing organization or plan ID."));
@@ -61,7 +72,7 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
       }
 
       await activatePlanForBusinessType({
-        organizationId,
+        organizationId: organization.id,
         businessTypeId,
         planId,
         startDate: new Date().toISOString(),

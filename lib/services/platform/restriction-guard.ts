@@ -2,14 +2,32 @@ import prisma from "@/lib/database/prisma-client";
 import { redirect } from "next/navigation";
 
 export async function validateOrganizationAccess(organizationId: string, currentPath: string) {
+  if (!currentPath) {
+    throw new Error("Unable to determine the current organization route.");
+  }
+
   try {
     const segments = currentPath.split("/").filter(Boolean);
     const dashboardIndex = segments.indexOf("dashboard");
     const workspaceId = dashboardIndex !== -1 ? segments[dashboardIndex + 1] : "";
 
-    const subscription = await prisma.subscription.findFirst({
+    const organization = await prisma.organization.findUnique({
       where: { organization_id: organizationId },
+      select: { id: true },
+    });
+
+    if (!organization) {
+      throw new Error("Organization not found while validating plan access.");
+    }
+
+    const subscription = await prisma.subscription.findFirst({
+      where: {
+        organization_id: organization.id,
+        payment_status: { in: ["paid", "PAID"] },
+        OR: [{ end_date: null }, { end_date: { gt: new Date() } }],
+      },
       select: { plan_id: true },
+      orderBy: { created_at: "desc" },
     });
 
     if (!subscription || !subscription.plan_id) {
@@ -46,9 +64,9 @@ export async function validateOrganizationAccess(organizationId: string, current
 
         const matches = masterMatch && (!ruleMain || mainMatch) && (!ruleSub || subMatch);
         const isAtOrBelowRule =
-          (!ruleMaster || ruleMaster === currentMaster) &&
-          (!ruleMain || ruleMain === currentMain) &&
-          (!ruleSub || currentSub === ruleSub || !ruleSub);
+          (!ruleMaster || ruleMaster === "*" || ruleMaster === currentMaster) &&
+          (!ruleMain || ruleMain === "*" || ruleMain === currentMain) &&
+          (!ruleSub || ruleSub === "*" || currentSub === ruleSub);
 
         if (matches && isAtOrBelowRule) {
           const blockMessage = rule.custom_message || "Access to this module/feature is restricted by your current plan.";
@@ -66,10 +84,11 @@ export async function validateOrganizationAccess(organizationId: string, current
         }
       }
     }
-  } catch (err: any) {
-    if (err?.digest?.includes("NEXT_REDIRECT")) {
-      throw err;
+  } catch (error: unknown) {
+    if (typeof error === "object" && error !== null && "digest" in error && String(error.digest).includes("NEXT_REDIRECT")) {
+      throw error;
     }
-    console.error("Error validating organization access:", err);
+    console.error("Error validating organization access:", error);
+    throw error;
   }
 }

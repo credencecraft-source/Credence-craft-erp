@@ -4,6 +4,20 @@ import { prisma } from "@/lib/database/prisma-client";
 
 export async function listDatabaseConnections() {
   return prisma.databaseConnection.findMany({
+    select: {
+      id: true,
+      connection_id: true,
+      provider: true,
+      connection_name: true,
+      host: true,
+      port: true,
+      database_name: true,
+      status: true,
+      is_default: true,
+      notes: true,
+      created_at: true,
+      updated_at: true,
+    },
     orderBy: { created_at: "asc" },
   });
 }

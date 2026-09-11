@@ -20,6 +20,9 @@ model WorkspaceUser {
   updated_at     DateTime       @updatedAt
   last_login_at  DateTime?
     organizationMemberships OrganizationMembership[]
+    organizationInvitations OrganizationInvitation[] @relation("InvitationInvitee")
+    createdOrganizationInvitations OrganizationInvitation[] @relation("InvitationCreator")
+    notifications     WorkspaceNotification[]
 
   @@map("workspace_users")
 }
@@ -76,6 +79,8 @@ model Organization {
   masterMerchandisers         MasterMerchandiser[]
   masterStatuses              MasterStatus[]
   masterOrderVolumes          MasterOrderVolume[]
+  subscriptions               Subscription[]
+  invitations                 OrganizationInvitation[]
 
   @@index([plan_id])
   @@index([database_connection_id])
@@ -108,6 +113,52 @@ model OrganizationMembership {
   @@map("organization_memberships")
 }
 
+enum OrganizationInvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+model OrganizationInvitation {
+  id                String                       @id @default(cuid())
+  token             String                       @unique @db.VarChar(128)
+  token_hash        String                       @unique @db.VarChar(64)
+  organization_id   String
+  invitee_user_id   String?
+  invited_by_user_id String
+  recipient_email   String                       @db.VarChar(255)
+  role              OrganizationRole
+  status            OrganizationInvitationStatus @default(PENDING)
+  expires_at        DateTime
+  accepted_at       DateTime?
+  revoked_at        DateTime?
+  created_at        DateTime                     @default(now())
+  updated_at        DateTime                     @updatedAt
+  organization      Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  invitee           WorkspaceUser?                @relation("InvitationInvitee", fields: [invitee_user_id], references: [id], onDelete: Cascade)
+  invitedBy         WorkspaceUser                 @relation("InvitationCreator", fields: [invited_by_user_id], references: [id], onDelete: Cascade)
+
+  @@index([invitee_user_id, status, expires_at])
+  @@index([organization_id, status])
+  @@map("organization_invitations")
+}
+
+model WorkspaceNotification {
+  id                String         @id @default(cuid())
+  workspace_user_id String
+  type              String         @db.VarChar(50)
+  reference_id      String?
+  title             String         @db.VarChar(255)
+  body              String?        @db.VarChar(500)
+  read_at           DateTime?
+  created_at        DateTime       @default(now())
+  workspaceUser     WorkspaceUser  @relation(fields: [workspace_user_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_user_id, read_at, created_at])
+  @@map("workspace_notifications")
+}
+
 model PlatformAdmin {
   id            String    @id @default(cuid())
   admin_id      String    @unique @default(uuid())
@@ -130,6 +181,7 @@ model BusinessType {
   createdAt   DateTime @default(now()) @map("created_at")
   updated_at  DateTime @default(now()) @updatedAt @map("updated_at")
   plans       Plan[]
+  subscriptions Subscription[]
 
   @@map("business_types")
 }
@@ -149,6 +201,7 @@ model Plan {
   businessType     BusinessType? @relation(fields: [business_type_id], references: [id])
   features         PlanFeature[]
   organizations    Organization[]
+  subscriptions    Subscription[]
 
   @@index([business_type_id])
   @@index([is_active])

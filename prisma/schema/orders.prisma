@@ -1,7 +1,7 @@
 model MerchandisingOrder {
   id              String                  @id @default(cuid())
-  organization_id String?                 @map("organization_id")
-  orderNo         String                  @unique @db.VarChar(100)
+  organization_id String                   @map("organization_id")
+  orderNo         String                  @db.VarChar(100)
   entityName      String?                 @db.VarChar(255)
   category        String?                 @db.VarChar(255)
   subCategory     String?                 @db.VarChar(255)
@@ -20,11 +20,12 @@ model MerchandisingOrder {
   processStatus   String?                 @db.VarChar(100)
   created_at      DateTime                @default(now()) @map("created_at")
   updated_at      DateTime                @updatedAt @map("updated_at")
-  organization    Organization?           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  organization    Organization             @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   finishedGoods   FinishedGoodsSizeWise[]
   bomItems        BillOfMaterialItem[]
 
-  @@index([organization_id])
+  @@unique([organization_id, orderNo])
+  @@index([organization_id, created_at])
   @@map("merchandising_orders")
 }
 
@@ -57,8 +58,17 @@ model BillOfMaterialItem {
   subCategory     String?            @db.VarChar(255)
   rawMaterialName String?            @db.VarChar(255)
   size            String?            @db.VarChar(100)
+  orderQty        Decimal?           @db.Decimal(12, 2)
+  buyerConsumption Decimal?          @db.Decimal(12, 4)
+  buyerPrice      Decimal?            @db.Decimal(12, 4)
+  internalConsumption Decimal?       @db.Decimal(12, 4)
+  internalPrice   Decimal?           @db.Decimal(12, 4)
+  valuePerGarmentRm Decimal?         @db.Decimal(12, 4)
   consumption     Decimal?           @db.Decimal(12, 2)
   requiredQty     Decimal?           @db.Decimal(12, 2)
+  itemWiseExcessPercentage Decimal?  @db.Decimal(12, 2)
+  itemWiseExcessQty Decimal?         @db.Decimal(12, 2)
+  totalRequiredQty Decimal?          @db.Decimal(12, 2)
   created_at      DateTime           @default(now()) @map("created_at")
   updated_at      DateTime           @updatedAt @map("updated_at")
 
@@ -77,8 +87,12 @@ model Subscription {
   payment_status    String    @default("PAID") @db.VarChar(50)
   created_at        DateTime  @default(now())
   updated_at        DateTime  @updatedAt
+  organization      Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  businessType      BusinessType? @relation(fields: [business_type_id], references: [id], onDelete: SetNull)
+  plan              Plan         @relation(fields: [plan_id], references: [id], onDelete: Restrict)
 
   @@index([organization_id])
+  @@index([organization_id, business_type_id, created_at])
   @@index([plan_id])
   @@index([business_type_id])
   @@map("subscriptions")
@@ -95,6 +109,8 @@ model plan_restrictions {
   restriction_type String   @default("block")
   custom_message   String?
   created_at       DateTime @default(now())
+
+  @@index([plan_id, restriction_type])
 
   @@map("plan_restrictions")
 }

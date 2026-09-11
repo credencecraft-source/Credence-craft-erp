@@ -2,7 +2,7 @@ import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { listApprovalRequestsForOrganization, updateApprovalRequestStatus } from "@/lib/master-data/master-data-constants";
 
 async function handleApprovalAction(formData: FormData) {
@@ -32,6 +32,7 @@ async function handleApprovalAction(formData: FormData) {
   if (!organization) {
     notFound();
   }
+  await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "APPROVER"]);
 
   const request = (await listApprovalRequestsForOrganization(organization.id)).find(
     (entry) => entry.id === requestId || entry.request_id === requestId,

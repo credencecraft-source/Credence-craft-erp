@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { MasterRecordsTable } from "@/components/master-data/master-records-data-table";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import {
   MASTER_DEFINITIONS,
   createMasterValueForOrganization,
@@ -37,6 +37,7 @@ function serializeDecimal(value: unknown): unknown {
 
 function readFields(formData: FormData, fields: MasterFieldDefinition[]) {
   return Object.fromEntries(fields.map((field) => {
+    if (field.multiple) return [field.key, formData.getAll(`field_${field.key}`).map((value) => String(value).trim()).filter(Boolean)];
     const value = formData.get(`field_${field.key}`);
     if (field.type === "checkbox") return [field.key, value === "on"];
     if (field.type === "number" || field.type === "percentage") return [field.key, value ? Number(value) : null];
@@ -47,6 +48,38 @@ function readFields(formData: FormData, fields: MasterFieldDefinition[]) {
 function getRecordLabel(fields: Record<string, string | number | boolean | null>, definition: { fields: MasterFieldDefinition[]; labelField?: string }) {
   const firstValue = fields[definition.labelField ?? definition.fields[0]?.key];
   return String(firstValue ?? "").trim();
+}
+
+function readChildValues(formData: FormData, field: MasterFieldDefinition) {
+  if (field.multiple) return [...new Set(formData.getAll(`field_${field.key}`).map((value) => String(value).trim()).filter(Boolean))];
+  const rawValue = String(formData.get(`field_${field.key}`) ?? "[]");
+  try {
+    const parsed = JSON.parse(rawValue);
+    return Array.isArray(parsed)
+      ? [...new Set(parsed.map((value) => String(value).trim()).filter(Boolean))]
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveChildValues(
+  organizationId: string,
+  parentValueId: string,
+  definition: { fields: MasterFieldDefinition[] },
+  formData: FormData,
+) {
+  const childField = definition.fields.find((field) => (field.type === "child-list" && field.childModuleKey) || (field.type === "lookup" && field.multiple && field.lookupModuleKey));
+  const childModuleKey = childField?.childModuleKey ?? childField?.lookupModuleKey;
+  if (!childField || !childModuleKey) return;
+
+  for (const value of readChildValues(formData, childField)) {
+    await createMasterValueForOrganization(organizationId, childModuleKey, {
+      label: value,
+      fields: { Size: value },
+      parentValueId,
+    });
+  }
 }
 
 async function createMasterValueAction(formData: FormData) {
@@ -79,6 +112,7 @@ async function createMasterValueAction(formData: FormData) {
   if (!organization) {
     notFound();
   }
+  await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
 
   const moduleDefinition = definition;
 
@@ -86,14 +120,16 @@ async function createMasterValueAction(formData: FormData) {
     notFound();
   }
 
-  await createMasterValueForOrganization(organization.id, moduleKey, {
+  const created = await createMasterValueForOrganization(organization.id, moduleKey, {
     label,
     code: code || null,
     description: description || null,
     fields,
   });
 
-  revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data/${moduleKey}`);
+  await saveChildValues(organization.id, created.value_id, moduleDefinition, formData);
+
+  revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
 }
 
 async function updateMasterValueAction(formData: FormData) {
@@ -127,19 +163,24 @@ async function updateMasterValueAction(formData: FormData) {
   if (!organization) {
     notFound();
   }
+  await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
 
   if (!definition) {
     notFound();
   }
 
-  await updateMasterValue(organization.id, valueId, {
+  const updated = await updateMasterValue(organization.id, valueId, {
     label,
     code: code || null,
     description: description || null,
     fields,
   });
 
-  revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data/${moduleKey}`);
+  if (updated) {
+    await saveChildValues(organization.id, updated.value_id, definition, formData);
+  }
+
+  revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
 }
 
 async function deleteMasterValueAction(formData: FormData) {
@@ -169,6 +210,7 @@ async function deleteMasterValueAction(formData: FormData) {
   if (!organization) {
     notFound();
   }
+  await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
 
   if (!getMasterDefinition(moduleKey)) {
     notFound();
@@ -176,7 +218,7 @@ async function deleteMasterValueAction(formData: FormData) {
 
   await deleteMasterValue(organization.id, valueId);
 
-  revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data/${moduleKey}`);
+  revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
 }
 
 export default async function MasterDataEditorPage({
@@ -209,7 +251,12 @@ export default async function MasterDataEditorPage({
 
   const values = await getMasterValuesForOrganization(organization.id, moduleKey, true);
   const lookupKeys = [...new Set(definition.fields.flatMap((field) => field.lookupModuleKey ? [field.lookupModuleKey] : []))];
-  const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey)).map((item) => ({ id: item.value_id, label: item.label }))])));
+  const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true)).map((item) => ({ id: item.value_id, value_id: item.value_id, label: item.label, parent_id: item.parent_id }))])));
+  const childModuleKey = definition.fields.find((field) => field.type === "child-list")?.childModuleKey
+    ?? definition.fields.find((field) => field.type === "lookup" && field.multiple)?.lookupModuleKey;
+  const childRecords = childModuleKey
+    ? (await getMasterValuesForOrganization(organization.id, childModuleKey, true)).map((item) => ({ parentId: item.parent_id, label: item.label }))
+    : [];
 
   return (
     <div>
@@ -241,6 +288,7 @@ export default async function MasterDataEditorPage({
         }))}
         fields={definition.fields}
         lookupOptions={lookupOptions}
+        childRecords={childRecords}
         moduleLabel={definition.label}
         workspaceId={workspaceId}
         organizationId={organizationId}

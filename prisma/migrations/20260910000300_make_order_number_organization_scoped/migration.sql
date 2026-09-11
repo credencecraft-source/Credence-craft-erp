@@ -1,0 +1,2 @@
+-- Superseded by 20260911000000_add_tenant_scale_indexes_and_order_scope.
+-- Kept as an explicit no-op so Prisma does not encounter an empty migration.

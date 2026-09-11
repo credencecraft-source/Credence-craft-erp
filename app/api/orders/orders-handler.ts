@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { createOrder, listOrders, updateOrder, updateFinishedGoodsForOrder, updateBomItemsForOrder } from "@/lib/services/orders/order-service";
-import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
+import { createOrder, listOrdersPage, updateOrderWithDetails } from "@/lib/services/orders/order-service";
+import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request) {
   const user = await requireSessionUser();
@@ -10,12 +10,13 @@ export async function GET(request: Request) {
   if (!organizationId) {
     return NextResponse.json({ error: "Organization not found." }, { status: 404 });
   }
-  const organization = await getOrganizationForUser(user.id, organizationId);
-  if (!organization) {
-    return NextResponse.json({ error: "Organization not found." }, { status: 404 });
-  }
-  const orders = await listOrders(organization.id);
-  return NextResponse.json({ orders });
+  const organization = await requireOrganizationContext(user.id, organizationId);
+  const searchParams = new URL(request.url).searchParams;
+  const page = await listOrdersPage(organization.id, {
+    cursor: searchParams.get("cursor") || undefined,
+    limit: Number(searchParams.get("limit") || 100),
+  });
+  return NextResponse.json(page);
 }
 
 export async function POST(request: Request) {
@@ -25,8 +26,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const organizationId = url.searchParams.get("organizationId") || body.organizationId;
     
-    const organization = await getOrganizationForUser(user.id, String(organizationId ?? ""));
-    if (!organization) return NextResponse.json({ error: "Organization not found." }, { status: 404 });
+    const organization = await requireOrganizationContext(user.id, String(organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
     const order = await createOrder(organization.id, body);
     return NextResponse.json({ ok: true, order });
   } catch (error) {
@@ -47,17 +47,8 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "Order id is required." }, { status: 400 });
     }
 
-    const organization = await getOrganizationForUser(user.id, String(organizationId ?? ""));
-    if (!organization) return NextResponse.json({ error: "Organization not found." }, { status: 404 });
-    const order = await updateOrder(id, organization.id, payload);
-
-    if (Array.isArray(payload.rows)) {
-      await updateFinishedGoodsForOrder(id, organization.id, payload.rows);
-    }
-
-    if (Array.isArray(payload.bomRows)) {
-      await updateBomItemsForOrder(id, organization.id, payload.bomRows);
-    }
+    const organization = await requireOrganizationContext(user.id, String(organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    const order = await updateOrderWithDetails(id, organization.id, payload);
 
     return NextResponse.json({ ok: true, order });
   } catch (error) {

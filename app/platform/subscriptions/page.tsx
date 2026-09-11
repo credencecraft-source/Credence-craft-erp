@@ -13,11 +13,14 @@ import {
   createSubscription, 
   listSubscriptions, 
   updateSubscription, 
-  deleteSubscription 
+  deleteSubscription,
+  updateSubscriptionStatus,
 } from "@/lib/services/platform/subscription-service";
+import { listSubscriptionsPage } from "@/lib/services/platform/subscription-service";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 
 interface PageProps {
-  searchParams?: Promise<{ error?: string; success?: string; modal?: string; edit?: string }>;
+  searchParams?: Promise<{ error?: string; success?: string; modal?: string; edit?: string; cursor?: string }>;
 }
 
 function formatDateForInput(val: any): string {
@@ -38,12 +41,14 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
   const clients = await listOrganizationClients();
   const plans = await listPlans();
   const businessTypes = await listBusinessTypes();
-  const subscriptions = await listSubscriptions();
+  const subscriptionPage = await listSubscriptionsPage({ cursor: resolvedSearch.cursor });
+  const subscriptions = subscriptionPage.subscriptions;
 
   const editingSub = editId ? subscriptions.find((s: any) => String(s.id || s._id) === String(editId)) : null;
 
   async function saveSubscription(formData: FormData) {
     "use server";
+    await requirePlatformSessionAdmin();
     const id = String(formData.get("id") || "");
     const organizationId = String(formData.get("organizationId") || "");
     const businessTypeId = String(formData.get("businessTypeId") || "");
@@ -65,10 +70,9 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
         business_type_id: businessTypeId,
         planId,
         plan_id: planId,
-        start_date: startDate,
-        end_date: endDate,
-        payment_status: paymentStatus,
-        service_status: serviceStatus,
+        startDate,
+        endDate,
+        paymentStatus,
       };
 
       if (id) {
@@ -85,12 +89,10 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
 
   async function updateStatus(formData: FormData) {
     "use server";
+    await requirePlatformSessionAdmin();
     const id = String(formData.get("id") || "");
     try {
-      await updateSubscription(id, { 
-        payment_status: "paid",
-        service_status: "active" 
-      } as any);
+      await updateSubscriptionStatus(id, "paid");
     } catch (error: any) {
       redirect(`/platform/subscriptions?error=${encodeURIComponent(error.message)}`);
     }
@@ -99,6 +101,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
 
   async function remove(formData: FormData) {
     "use server";
+    await requirePlatformSessionAdmin();
     try {
       await deleteSubscription(String(formData.get("id")));
     } catch (error: any) {
@@ -268,6 +271,11 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
           </Table>
         </Card>
       </Section>
+      {subscriptionPage.nextCursor && (
+        <a href={`/platform/subscriptions?cursor=${encodeURIComponent(subscriptionPage.nextCursor)}`} className="text-sm font-semibold text-emerald-700">
+          Next page
+        </a>
+      )}
     </Page>
   );
 }

@@ -15,6 +15,8 @@ type MasterRecord = {
   metadata?: unknown;
 };
 
+type ChildRecord = { parentId: string | null; label: string };
+
 type MasterRecordsTableProps = {
   records: MasterRecord[];
   moduleLabel: string;
@@ -25,7 +27,8 @@ type MasterRecordsTableProps = {
   updateAction: (formData: FormData) => Promise<void>;
   deleteAction: (formData: FormData) => Promise<void>;
   fields: MasterFieldDefinition[];
-  lookupOptions: Record<string, Array<{ id: string; label: string }>>;
+  lookupOptions: Record<string, Array<{ id: string; value_id?: string; label: string; parent_id?: string | null }>>;
+  childRecords?: ChildRecord[];
 };
 
 export function MasterRecordsTable({
@@ -39,6 +42,7 @@ export function MasterRecordsTable({
   deleteAction,
   fields,
   lookupOptions,
+  childRecords = [],
 }: MasterRecordsTableProps) {
   const [editingRecord, setEditingRecord] = useState<MasterRecord | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -94,12 +98,27 @@ export function MasterRecordsTable({
     setCreateFields({});
   };
 
+  const getLookupOptions = (field: MasterFieldDefinition, values: Record<string, unknown>) => {
+    const options = lookupOptions[field.lookupModuleKey ?? ""] ?? [];
+    if (!field.dependsOn) return options;
+
+    const parentField = fields.find((candidate) => candidate.key === field.dependsOn);
+    const parentOptions = lookupOptions[parentField?.lookupModuleKey ?? ""] ?? [];
+    const parentValue = String(values[field.dependsOn] ?? "");
+    const parentOption = parentOptions.find((option) => option.label === parentValue);
+    if (!parentValue) return options;
+    if (!parentOption) return [];
+
+    const parentIds = new Set([parentOption.id, parentOption.value_id].filter(Boolean));
+    return options.filter((option) => option.parent_id && parentIds.has(option.parent_id));
+  };
+
   const renderField = (
     field: MasterFieldDefinition,
     values: Record<string, unknown>,
     setValues: (values: Record<string, unknown>) => void
   ) => {
-    const value = values[field.key];
+    const value = values[field.key] ?? field.initialValue;
     if (field.type === "checkbox")
       return (
         <label key={field.key} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
@@ -132,7 +151,11 @@ export function MasterRecordsTable({
           </select>
         </label>
       );
-    if (field.type === "lookup")
+    if (field.type === "lookup") {
+      const selectedValue = field.multiple && value === undefined && editingRecord
+        ? childRecords.filter((item) => item.parentId === editingRecord.value_id).map((item) => item.label)
+        : value;
+      const options = getLookupOptions(field, values);
       return (
         <label key={field.key} className="block space-y-1">
           <span className="text-xs font-semibold text-slate-700">
@@ -141,13 +164,21 @@ export function MasterRecordsTable({
           </span>
           <select
             required={field.required}
+            multiple={field.multiple}
             name={`field_${field.key}`}
-            value={String(value ?? "")}
-            onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}
-            className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white"
+            value={field.multiple ? (Array.isArray(selectedValue) ? selectedValue.map(String) : selectedValue ? [String(selectedValue)] : []) : String(selectedValue ?? "")}
+            onChange={(event) => {
+              const nextValue = field.multiple ? Array.from(event.target.selectedOptions, (option) => option.value) : event.target.value;
+              const nextValues = { ...values, [field.key]: nextValue };
+              for (const dependentField of fields.filter((candidate) => candidate.dependsOn === field.key)) {
+                nextValues[dependentField.key] = dependentField.multiple ? [] : "";
+              }
+              setValues(nextValues);
+            }}
+            className={`w-full border border-slate-300 rounded-lg p-2 text-sm bg-white${field.multiple ? " min-h-28" : ""}`}
           >
-            <option value="">Select {field.label}</option>
-            {(lookupOptions[field.lookupModuleKey ?? ""] ?? []).map((option) => (
+            {!field.multiple && <option value="">Select {field.label}</option>}
+            {options.map((option) => (
               <option key={option.id} value={option.label}>
                 {option.label}
               </option>
@@ -155,6 +186,51 @@ export function MasterRecordsTable({
           </select>
         </label>
       );
+    }
+    if (field.type === "child-list") {
+      const childValues = Array.isArray(value)
+        ? value.map((item) => String(item ?? ""))
+        : editingRecord
+          ? childRecords.filter((item) => item.parentId === editingRecord.value_id).map((item) => item.label)
+          : [""];
+      const normalizedValues = childValues.length > 0 ? childValues : [""];
+      return (
+        <div key={field.key} className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-700">{field.label}</span>
+            <button
+              type="button"
+              onClick={() => setValues({ ...values, [field.key]: [...normalizedValues, ""] })}
+              className="rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white"
+            >
+              Add size
+            </button>
+          </div>
+          <input type="hidden" name={`field_${field.key}`} value={JSON.stringify(normalizedValues.filter(Boolean))} />
+          {normalizedValues.map((childValue, index) => (
+            <div key={`${field.key}-${index}`} className="flex items-center gap-2">
+              <span className="w-5 text-center text-xs font-semibold text-slate-500">{index + 1}</span>
+              <Input
+                value={childValue}
+                placeholder="e.g. S"
+                onChange={(event) => {
+                  const nextValues = [...normalizedValues];
+                  nextValues[index] = event.target.value;
+                  setValues({ ...values, [field.key]: nextValues });
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => setValues({ ...values, [field.key]: normalizedValues.filter((_, itemIndex) => itemIndex !== index) })}
+                className="px-2 py-1 text-xs font-medium text-red-600"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      );
+    }
     return (
       <label key={field.key} className="block space-y-1">
         <span className="text-xs font-semibold text-slate-700">

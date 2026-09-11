@@ -10,6 +10,7 @@ import { logoutSession, requireSessionUser } from "@/lib/auth/session-manager";
 import { listOrganizationsForUser, deleteOrganization } from "@/lib/services/organizations/organization-service";
 import { prisma } from "@/lib/database/prisma-client";
 import { OrganizationsGrid } from "./_components/organizations-grid";
+import { WorkspaceInvitationBell } from "./_components/workspace-invitation-bell";
 
 const isDevBypass =
   process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL;
@@ -102,6 +103,7 @@ export default async function WorkspaceHomePage({
           </div>
 
           <div className="erp-action-group">
+            <WorkspaceInvitationBell />
             <Link href="/dashboard/organizations/create">
               <Button>Create Organization</Button>
             </Link>
@@ -111,7 +113,7 @@ export default async function WorkspaceHomePage({
                 variant="ghost"
                 className="erp-btn-secondary-alt"
               >
-                Workspace Settings
+                Admin
               </Button>
             </Link>
 

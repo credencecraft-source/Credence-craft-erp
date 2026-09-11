@@ -10,6 +10,7 @@ type BomReportRow = {
   id: string;
   orderId: string;
   orderNo: string;
+  orderQty?: number | string | null;
   styleName?: string | null;
   brand?: string | null;
   buyer?: string | null;
@@ -19,7 +20,15 @@ type BomReportRow = {
   rawMaterialName?: string | null;
   size?: string | null;
   consumption?: number | string | null;
+  buyerConsumption?: number | string | null;
+  buyerPrice?: number | string | null;
+  internalConsumption?: number | string | null;
+  internalPrice?: number | string | null;
+  valuePerGarmentRm?: number | string | null;
   requiredQty?: number | string | null;
+  itemWiseExcessPercentage?: number | string | null;
+  itemWiseExcessQty?: number | string | null;
+  totalRequiredQty?: number | string | null;
 };
 
 type FilterableBomField =
@@ -33,7 +42,16 @@ type FilterableBomField =
   | "rawMaterialName"
   | "size"
   | "consumption"
-  | "requiredQty";
+  | "buyerConsumption"
+  | "buyerPrice"
+  | "internalConsumption"
+  | "internalPrice"
+  | "valuePerGarmentRm"
+  | "requiredQty"
+  | "orderQty"
+  | "itemWiseExcessPercentage"
+  | "itemWiseExcessQty"
+  | "totalRequiredQty";
 
 const reportFilterFields: Array<{ key: FilterableBomField; label: string }> = [
   { key: "orderNo", label: "Order No" },
@@ -46,7 +64,16 @@ const reportFilterFields: Array<{ key: FilterableBomField; label: string }> = [
   { key: "rawMaterialName", label: "Raw Material Name" },
   { key: "size", label: "Size" },
   { key: "consumption", label: "Consumption" },
+  { key: "buyerConsumption", label: "Buyer Consumption" },
+  { key: "buyerPrice", label: "Buyer Price" },
+  { key: "internalConsumption", label: "Internal Consumption" },
+  { key: "internalPrice", label: "Internal Price" },
+  { key: "valuePerGarmentRm", label: "Value / Garment" },
   { key: "requiredQty", label: "Required Qty" },
+  { key: "orderQty", label: "Order Qty" },
+  { key: "itemWiseExcessPercentage", label: "Item Excess %" },
+  { key: "itemWiseExcessQty", label: "Item Excess Qty" },
+  { key: "totalRequiredQty", label: "Total Required Qty" },
 ];
 
 export default function MerchandisingBomReportPage() {

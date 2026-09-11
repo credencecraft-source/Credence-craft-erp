@@ -22,7 +22,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
     }
 
-    const organization = await requireOrganizationAccess(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    const organization = await getOrganizationForUser(user.id, organizationId);
+    if (!organization) {
+      return NextResponse.json({ error: "Organization not found." }, { status: 404 });
+    }
 
     if (!organization) {
       return NextResponse.json({ error: "Organization not found." }, { status: 404 });
@@ -61,10 +64,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Organization, master module, and name are required." }, { status: 400 });
     }
 
-    const organization = await getOrganizationForUser(user.id, organizationId);
-    if (!organization) {
-      return NextResponse.json({ error: "Organization not found." }, { status: 404 });
-    }
+    const organization = await requireOrganizationAccess(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
 
     const definitionExists = MASTER_DEFINITIONS.some((definition) => definition.key === moduleKey);
     if (!definitionExists) {

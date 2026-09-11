@@ -19,7 +19,7 @@ export async function PATCH(
     }
 
     // Fixed 'isActive' to 'is_active' to match expected database/service properties
-    const membership = await updateOrganizationMember(membershipId, { role, is_active: isActive });
+    const membership = await updateOrganizationMember(membershipId, organizationId, user.id, { role, is_active: isActive });
     if (!membership) {
       return NextResponse.json({ error: "Organization member not found or access denied." }, { status: 404 });
     }

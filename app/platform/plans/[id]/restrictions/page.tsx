@@ -9,6 +9,7 @@ import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
 import { listPlans } from "@/lib/services/platform/plan-service";
 import { RestrictionForm } from "@/components/platform/restriction-form";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -17,6 +18,7 @@ interface PageProps {
 
 async function saveRestrictionAction(planId: string, formData: FormData) {
   "use server";
+  await requirePlatformSessionAdmin();
   const masterModule = String(formData.get("masterModule") || "").trim();
   const mainModule = String(formData.get("mainModule") || "").trim();
   const subModule = String(formData.get("subModule") || "").trim();
@@ -58,6 +60,7 @@ async function saveRestrictionAction(planId: string, formData: FormData) {
 
 async function deleteRestrictionAction(planId: string, formData: FormData) {
   "use server";
+  await requirePlatformSessionAdmin();
   const restrictionId = String(formData.get("restrictionId") || "");
   try {
     await prisma.plan_restrictions.delete({

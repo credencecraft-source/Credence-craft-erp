@@ -18,18 +18,27 @@ export default function OrderDetailsTab({
   masterOptions = {},
   orderLookups = [],
   onOpenCreateMaster,
+  onSizeGroupChange,
 }: {
   form: any;
   setForm: any;
   masterOptions?: Record<string, any[]>;
   orderLookups?: Array<{ key: string; lookupModuleKey?: string; dependsOn?: string }>;
   onOpenCreateMaster: (masterKey: string) => void;
+  onSizeGroupChange?: (value: string) => void;
 }) {
   const handleChange = (field: string, value: any) => {
+    if (field === "sizeGroup" && onSizeGroupChange) {
+      onSizeGroupChange(value);
+      return;
+    }
     setForm((current: any) => {
       const updated = { ...current, [field]: value };
       if (field === "category") {
         updated.subCategory = "";
+      }
+      if (field === "brand") {
+        updated.sizeGroup = "";
       }
       return updated;
     });
@@ -70,6 +79,17 @@ export default function OrderDetailsTab({
     const parentValue = parentField ? form[parentField] : "";
     
     let options = getMasterList(masterKey);
+
+    if (masterKey === "size-group" && form.brand) {
+      const brandOption = getMasterList("brand").find(
+        (option: any) => option.label === form.brand || option.id === form.brand || option.value_id === form.brand,
+      );
+      const brandIds = new Set([brandOption?.id, brandOption?.value_id].filter(Boolean));
+      options = options.filter((option: any) => {
+        const relatedBrand = option.fields?.Brand1 ?? option.brand_id ?? option.brandId ?? option.brand;
+        return relatedBrand === form.brand || brandIds.has(relatedBrand);
+      });
+    }
 
     if (parentField && parentValue) {
       const parentOption = Object.values(masterOptions)
@@ -144,9 +164,9 @@ export default function OrderDetailsTab({
           <input
             type="text"
             value={form.orderNo ?? ""}
-            onChange={(e) => handleChange("orderNo", e.target.value)}
-            placeholder="Order Number"
-            className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
+            disabled
+            placeholder="Auto-generated (OD-1, OD-2, OD-3...)"
+            className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs text-slate-500 shadow-sm"
           />
         </label>
 

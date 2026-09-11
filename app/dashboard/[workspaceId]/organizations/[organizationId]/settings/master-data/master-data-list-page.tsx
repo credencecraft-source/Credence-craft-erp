@@ -56,7 +56,7 @@ export default async function MasterDataListPage({
           {MASTER_DEFINITIONS.map((master) => (
             <Link
               key={master.key}
-              href={`/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data/${master.key}`}
+              href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${master.key}`}
               className="group block"
             >
               <Card className="h-full transition-all duration-200 hover:border-emerald-300 hover:shadow-md">

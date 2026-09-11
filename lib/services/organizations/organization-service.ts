@@ -17,7 +17,14 @@ export type OrganizationCreateInput = {
   pinCode?: string;
 };
 
-export const ORGANIZATION_ROLES = ["OWNER", "ADMIN", "MEMBER"] as const;
+export type OrganizationContext = {
+  id: string;
+  organizationId: string;
+  membershipId: string;
+  role: OrganizationRole;
+};
+
+export const ORGANIZATION_ROLES = ["OWNER", "ADMIN", "FINANCE", "MERCHANDISING", "APPROVER", "VIEWER"] as const;
 export type OrganizationRole = (typeof ORGANIZATION_ROLES)[number];
 
 function isMissingTableError(error: unknown) {
@@ -31,7 +38,7 @@ function isMissingTableError(error: unknown) {
 
 export async function listOrganizationsForUser(workspaceUserId: string) {
   try {
-    return await prisma.organization.findMany({
+    const organizations = await prisma.organization.findMany({
       where: {
         is_active: true,
         memberships: {
@@ -44,7 +51,19 @@ export async function listOrganizationsForUser(workspaceUserId: string) {
       orderBy: {
         created_at: "desc",
       },
+      include: {
+        memberships: {
+          where: { workspace_user_id: workspaceUserId, is_active: true },
+          select: { role: true },
+          take: 1,
+        },
+      },
     });
+
+    return organizations.map(({ memberships, ...organization }) => ({
+      ...organization,
+      membership_role: memberships[0]?.role ?? "VIEWER",
+    }));
   } catch (error) {
     if (isMissingTableError(error)) {
       return [];
@@ -131,6 +150,19 @@ export async function getOrganizationForUser(workspaceUserId: string, organizati
   });
 }
 
+export async function getOrganizationByPublicId(organizationId: string) {
+  return prisma.organization.findUnique({
+    where: { organization_id: organizationId },
+    include: {
+      erpSoftware: {
+        include: {
+          modules: true,
+        },
+      },
+    },
+  });
+}
+
 export async function deleteOrganization(organizationId: string, workspaceUserId: string) {
   const organization = await prisma.organization.findFirst({
     where: {
@@ -148,31 +180,56 @@ export async function deleteOrganization(organizationId: string, workspaceUserId
     throw new Error("Organization not found.");
   }
 
+  const membership = await requireOrganizationAccess(workspaceUserId, organizationId, ["OWNER"]);
+  const orgToDelete = await prisma.organization.findUnique({
+    where: { id: membership.organization_id },
+  });
+
+  if (!orgToDelete) {
+    throw new Error("Organization not found.");
+  }
+
   await prisma.organization.delete({
-    where: { id: organization.id },
+    where: { id: orgToDelete.id },
   });
 
   return { deleted: true, organizationId: organization.organization_id };
 }
 
-export async function listOrganizationMembers(organizationId: string) {
+export async function listOrganizationMembers(organizationId: string, workspaceUserId: string) {
+  const membership = await requireOrganizationAccess(workspaceUserId, organizationId);
+
   return prisma.organizationMembership.findMany({
     where: {
-      organization_id: organizationId,
+      organization_id: membership.organization_id,
       is_active: true,
     },
+    include: {
+      workspaceUser: {
+        select: {
+          id: true,
+          profile_name: true,
+          full_name: true,
+          email: true,
+        },
+      },
+    },
+    orderBy: { created_at: "asc" },
   });
 }
 
 export async function addOrganizationMember(input: {
   organizationId: string;
   workspaceUserId: string;
-  role: string;
+  role: OrganizationRole;
+  actorUserId: string;
 }) {
+  const actorMembership = await requireOrganizationAccess(input.actorUserId, input.organizationId, ["OWNER", "ADMIN"]);
+
   return prisma.organizationMembership.create({
     data: {
       id: randomUUID(),
-      organization_id: input.organizationId,
+      organization_id: actorMembership.organization_id,
       workspace_user_id: input.workspaceUserId,
       role: input.role as PrismaOrganizationRole,
       is_active: true,
@@ -182,10 +239,14 @@ export async function addOrganizationMember(input: {
 
 export async function updateOrganizationMember(
   membershipId: string,
-  data: { role?: string; is_active?: boolean }
+  organizationId: string,
+  actorUserId: string,
+  data: { role?: OrganizationRole; is_active?: boolean }
 ) {
+  const actorMembership = await requireOrganizationAccess(actorUserId, organizationId, ["OWNER", "ADMIN"]);
+
   return prisma.organizationMembership.update({
-    where: { id: membershipId },
+    where: { id: membershipId, organization_id: actorMembership.organization_id },
     data: {
       ...data,
       role: data.role as PrismaOrganizationRole | undefined,
@@ -200,7 +261,10 @@ export async function requireOrganizationAccess(
 ) {
   const membership = await prisma.organizationMembership.findFirst({
     where: {
-      organization_id: organizationId,
+      OR: [
+        { organization_id: organizationId },
+        { organization: { organization_id: organizationId } },
+      ],
       workspace_user_id: workspaceUserId,
       is_active: true,
     },
@@ -219,4 +283,48 @@ export async function requireOrganizationAccess(
 
 export function normalizeOrganizationData(raw: OrganizationCreateInput) {
   return normalizeOrganizationInput(raw);
+}
+
+export async function requireOrganizationContext(
+  workspaceUserId: string,
+  publicOrganizationId: string,
+  allowedRoles?: OrganizationRole[],
+): Promise<OrganizationContext> {
+  const organization = await prisma.organization.findFirst({
+    where: {
+      organization_id: publicOrganizationId,
+      memberships: {
+        some: {
+          workspace_user_id: workspaceUserId,
+          is_active: true,
+          ...(allowedRoles ? { role: { in: allowedRoles as PrismaOrganizationRole[] } } : {}),
+        },
+      },
+    },
+    select: {
+      id: true,
+      organization_id: true,
+      memberships: {
+        where: { workspace_user_id: workspaceUserId, is_active: true },
+        select: { id: true, role: true },
+        take: 1,
+      },
+    },
+  });
+
+  const membership = organization?.memberships[0];
+  if (!organization || !membership) {
+    throw new Error("Access denied: organization not found or membership is inactive.");
+  }
+
+  if (allowedRoles && !allowedRoles.includes(membership.role as OrganizationRole)) {
+    throw new Error("Access denied: insufficient organization permissions.");
+  }
+
+  return {
+    id: organization.id,
+    organizationId: organization.organization_id,
+    membershipId: membership.id,
+    role: membership.role as OrganizationRole,
+  };
 }

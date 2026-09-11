@@ -7,7 +7,7 @@ import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
 import { listPlans, deletePlan } from "@/lib/services/platform/plan-service";
-import { listSubscriptions } from "@/lib/services/platform/subscription-service";
+import { countActiveSubscriptionsByPlan } from "@/lib/services/platform/subscription-service";
 
 export default async function PlatformPlansPage({
   searchParams,
@@ -15,7 +15,7 @@ export default async function PlatformPlansPage({
   searchParams?: Promise<{ error?: string }>;
 }) {
   const plans = await listPlans();
-  const subscriptions = await listSubscriptions();
+  const subscriptionCounts = await countActiveSubscriptionsByPlan();
   const params = (await searchParams) ?? {};
 
   async function deletePlanAction(formData: FormData) {
@@ -71,11 +71,7 @@ export default async function PlatformPlansPage({
               const businessType = nameParts.length > 1 ? nameParts[0] : "General";
               const tierName = nameParts.length > 1 ? nameParts.slice(1).join(" - ") : plan.plan_name;
 
-              const activeSubsCount = subscriptions.filter((sub: any) => {
-                const matchPlan = sub.planId === plan.id || sub.plan_id === plan.id;
-                const status = sub.serviceStatus || sub.service_status || "active";
-                return matchPlan && status === "active";
-              }).length;
+              const activeSubsCount = subscriptionCounts.get(plan.id) ?? 0;
 
               return (
                 <tr key={plan.id} className="hover:bg-slate-50/50">

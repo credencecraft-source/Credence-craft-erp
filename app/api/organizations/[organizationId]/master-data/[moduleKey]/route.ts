@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { createMasterValueForOrganization, getMasterValuesForOrganization, getMasterDefinition } from "@/lib/master-data/master-data-constants";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-definitions";
 
@@ -11,7 +11,7 @@ export async function GET(
   try {
     const { organizationId, moduleKey } = await context.params;
     const { searchParams } = new URL(request.url);
-    const includeInactive = searchParams.get("includeInactive") === "true";
+    const includeInactive = searchParams.get("includeInactive") !== "false";
 
     if (!organizationId) {
       return NextResponse.json({ error: "Organization ID is required" }, { status: 400 });
@@ -28,16 +28,28 @@ export async function GET(
     }
 
     if (moduleKey === "order-lookups") {
-      const [buyers, seasons, brands, articles, colors, sizeGroups] = await Promise.all([
-        getMasterValuesForOrganization(organization.id, "buyer", includeInactive),
-        getMasterValuesForOrganization(organization.id, "season", includeInactive),
-        getMasterValuesForOrganization(organization.id, "brand", includeInactive),
-        getMasterValuesForOrganization(organization.id, "article", includeInactive),
-        getMasterValuesForOrganization(organization.id, "color", includeInactive),
-        getMasterValuesForOrganization(organization.id, "size-group", includeInactive),
-      ]);
+      const lookupKeys = ["article", "entity", "category", "sub-category", "season", "color", "buyer", "brand", "size-group", "size", "raw-material-type", "raw-material-category", "raw-material-sub-category", "raw-material"];
+      const lookupValues = await Promise.all(
+        lookupKeys.map(async (key) => [
+          key,
+          await getMasterValuesForOrganization(organization.id, key, includeInactive),
+        ] as const),
+      );
+      const masterOptions = Object.fromEntries(lookupValues);
+      const buyers = masterOptions.buyer;
+      const seasons = masterOptions.season;
+      const brands = masterOptions.brand;
+      const articles = masterOptions.article;
+      const colors = masterOptions.color;
+      const sizes = masterOptions.size;
+      const sizeGroups = masterOptions["size-group"].map((group) => ({
+        ...group,
+        sizes: sizes.filter((size) => size.parent_id === group.value_id || size.parent_id === group.id),
+      }));
+      const enrichedMasterOptions = { ...masterOptions, "size-group": sizeGroups };
 
       return NextResponse.json({
+        masterOptions: enrichedMasterOptions,
         buyers,
         seasons,
         brands,
@@ -80,6 +92,7 @@ export async function POST(
     }
 
     const body = await request.json();
+    await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
     const masterKey = routeModuleKey || body.masterKey || body.moduleKey || body.masterId || body.key;
     const label = body.label || body.name;
     const code = body.code;
@@ -102,6 +115,18 @@ export async function POST(
       parentValueId: parentId || null,
       fields: body.fields || {},
     });
+
+    const multiLookupField = definition.fields.find((field) => field.type === "lookup" && field.multiple && field.lookupModuleKey);
+    const selectedValues = multiLookupField ? body.fields?.[multiLookupField.key] : [];
+    if (multiLookupField?.lookupModuleKey && Array.isArray(selectedValues)) {
+      for (const selectedValue of [...new Set(selectedValues.map((value: unknown) => String(value).trim()).filter(Boolean))]) {
+        await createMasterValueForOrganization(organization.id, multiLookupField.lookupModuleKey, {
+          label: selectedValue,
+          fields: { Size: selectedValue },
+          parentValueId: newMasterValue.value_id,
+        });
+      }
+    }
 
     return NextResponse.json(newMasterValue, { status: 201 });
   } catch (error: any) {

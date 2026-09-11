@@ -14,6 +14,10 @@ import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
 
+function getBusinessTypeLabel(name: string) {
+  return name.trim().toLowerCase() === "settings" ? "Admin" : name;
+}
+
 export default async function BusinessTypesPage({
   searchParams,
 }: {
@@ -99,7 +103,7 @@ export default async function BusinessTypesPage({
                 <Input
                   label="Business Type Name"
                   name="name"
-                  placeholder="Order Management, Factory Management, Finance Management, Inventory Management, Settings, or Approvals"
+                  placeholder="Order Management, Factory Management, Finance Management, Inventory Management, Admin, or Approvals"
                 />
               </div>
 
@@ -132,7 +136,7 @@ export default async function BusinessTypesPage({
               const isActive = bt.isActive ?? true;
               return (
                 <tr key={bt.id} className="hover:bg-slate-50/50">
-                  <td className="px-4 py-3 font-bold text-slate-800">{bt.name}</td>
+                  <td className="px-4 py-3 font-bold text-slate-800">{getBusinessTypeLabel(bt.name)}</td>
                   <td className="px-4 py-3 text-slate-600">
                     {bt.description || "-"}
                   </td>

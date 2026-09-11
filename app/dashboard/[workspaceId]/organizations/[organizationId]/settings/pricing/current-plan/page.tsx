@@ -1,6 +1,8 @@
 import React from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { requireSessionUser } from "@/lib/auth/session-manager";
+import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { listSubscriptions, deleteSubscription } from "@/lib/services/platform/subscription-service";
 import { listPlans } from "@/lib/services/platform/plan-service";
 import { listBusinessTypes } from "@/lib/services/platform/business-type-service";
@@ -18,9 +20,15 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
   const resolvedSearch = (await searchParams) ?? {};
   const workspaceId = resolvedParams?.workspaceId;
   const organizationId = resolvedParams?.organizationId;
+  const user = await requireSessionUser();
+  const organization = await getOrganizationForUser(user.id, organizationId);
+
+  if (!organization) {
+    redirect(`/dashboard/${workspaceId}/home`);
+  }
 
   const [subscriptions, plans, allBusinessTypes] = await Promise.all([
-    listSubscriptions(),
+    listSubscriptions(organization.id),
     listPlans(),
     listBusinessTypes(),
   ]);
@@ -29,6 +37,14 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
 
   async function deleteSubscriptionAction(formData: FormData) {
     "use server";
+    const actionUser = await requireSessionUser();
+    const actionOrganization = await getOrganizationForUser(actionUser.id, organizationId);
+
+    if (!actionOrganization) {
+      redirect(`/dashboard/${workspaceId}/home`);
+    }
+    await requireOrganizationAccess(actionUser.id, actionOrganization.organization_id, ["OWNER", "ADMIN"]);
+
     const subId = String(formData.get("subId") || "").trim();
 
     if (!subId) {
@@ -36,6 +52,10 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
     }
 
     try {
+      const organizationSubscriptions = await listSubscriptions(actionOrganization.id);
+      if (!organizationSubscriptions.some((subscription) => subscription.id === subId)) {
+        redirect(`${redirectBase}?error=${encodeURIComponent("Subscription not found.")}`);
+      }
       await deleteSubscription(subId);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to delete subscription.";
@@ -47,7 +67,7 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
 
   const orgSubscriptions = subscriptions.filter((sub: any) => {
     const subOrg = String(sub.organizationId || sub.organization_id || sub.organization || "").trim();
-    return Boolean(organizationId) && subOrg === organizationId;
+    return Boolean(organization.id) && subOrg === organization.id;
   });
 
   return (

@@ -9,6 +9,7 @@ import { logoutSession, requireSessionUser } from "@/lib/auth/session-manager";
 import { listOrganizationsForUser, deleteOrganization } from "@/lib/services/organizations/organization-service";
 import { prisma } from "@/lib/database/prisma-client";
 import { OrganizationsGrid } from "./_components/organizations-grid";
+import { WorkspaceInvitationBell } from "./_components/workspace-invitation-bell";
 
 const isDevBypass =
   process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL;
@@ -99,6 +100,7 @@ export default async function WorkspaceHomePage({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            <WorkspaceInvitationBell />
             <Link href="/dashboard/organizations/create">
               <Button className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm">
                 + Create Organization
@@ -110,7 +112,7 @@ export default async function WorkspaceHomePage({
                 variant="ghost"
                 className="border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
               >
-                Settings
+                Admin
               </Button>
             </Link>
 

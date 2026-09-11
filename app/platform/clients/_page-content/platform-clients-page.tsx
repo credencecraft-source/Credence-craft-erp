@@ -4,10 +4,12 @@ import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
 import { ensurePlatformDefaults } from "@/lib/services/platform/platform-bootstrap-service";
 import { listOrganizationClients } from "@/lib/services/platform/client-service";
+import { listOrganizationClientsPage } from "@/lib/services/platform/client-service";
 
-export default async function PlatformClientsPage() {
+export default async function PlatformClientsPage({ searchParams }: { searchParams?: Promise<{ cursor?: string }> }) {
   await ensurePlatformDefaults();
-  const clients = await listOrganizationClients();
+  const page = await listOrganizationClientsPage({ cursor: (await searchParams)?.cursor });
+  const clients = page.clients;
 
   return (
     <Page className="max-w-6xl">
@@ -69,6 +71,11 @@ export default async function PlatformClientsPage() {
           </tbody>
         </Table>
       </Section>
+      {page.nextCursor && (
+        <a href={`/platform/clients?cursor=${encodeURIComponent(page.nextCursor)}`} className="text-sm font-semibold text-emerald-700">
+          Next page
+        </a>
+      )}
     </Page>
   );
 }

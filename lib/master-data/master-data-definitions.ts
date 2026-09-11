@@ -1,4 +1,4 @@
-export type MasterFieldType = "text" | "number" | "percentage" | "decimal" | "url" | "checkbox" | "picklist" | "lookup";
+export type MasterFieldType = "text" | "number" | "percentage" | "decimal" | "url" | "checkbox" | "picklist" | "lookup" | "child-list";
 
 export type MasterFieldDefinition = {
   key: string;
@@ -7,7 +7,10 @@ export type MasterFieldDefinition = {
   required?: boolean;
   unique?: boolean;
   options?: string[];
+  initialValue?: string | number | boolean;
   lookupModuleKey?: string;
+  multiple?: boolean;
+  childModuleKey?: string;
   dependsOn?: string;
 };
 
@@ -24,15 +27,15 @@ const lookup = (key: string, label: string, lookupModuleKey: string, options: Pa
 
 export const MASTER_DEFINITIONS: MasterDefinition[] = [
   { key: "entity", label: "Entity", description: "Company and legal entity names.", fields: [text("entity_name", "Entity Name", { required: true, unique: true })] },
-  { key: "category", label: "Category", description: "Primary product category master.", labelField: "Category_Name", fields: [lookup("Category_Type_Master", "Category Type Master", "category-type"), text("Category_Name", "Category Name", { required: true, unique: true }), text("Maximum_Excess_Allowed", "Maximum Excess Allowed", { type: "percentage" }), text("Create_Cost_Center", "Create Cost Center", { type: "checkbox" }), text("Status", "Status", { type: "picklist", options: ["Draft", "Approved", "Rejected"] })] },
+  { key: "category", label: "Category", description: "Primary product category master.", labelField: "Category_Name", fields: [lookup("Category_Type_Master", "Category Type Master", "category-type"), text("Category_Name", "Category Name", { required: true, unique: true }), text("Maximum_Excess_Allowed", "Maximum Excess Allowed", { type: "percentage" }), text("Create_Cost_Center", "Create Cost Center", { type: "checkbox" })] },
   { key: "sub-category", label: "Sub Category", description: "Child category values linked to category.", fields: [lookup("category", "Category", "category"), text("sub_category", "Sub Category", { required: true, unique: true })] },
-  { key: "brand", label: "Brand", description: "Brand or label master.", labelField: "Brand", fields: [text("Brand", "Brand", { required: true, unique: true }), text("Maximum_Allowed_Excess", "Maximum Allowed Excess", { type: "percentage" }), text("Auto_add_Excess_to_RM", "Auto add Excess to RM", { type: "checkbox" }), lookup("Pre_Order_Checklist1", "Pre Order Checklist", "pre-order-checklist"), text("Status", "Status", { type: "picklist", options: ["Draft", "Approved", "Rejected"] })] },
-  { key: "buyer", label: "Buyer", description: "Buyer and customer master.", labelField: "Buyer_Name", fields: [text("Buyer_Name", "Buyer Name", { required: true, unique: true }), lookup("Currency_Type", "Currency Type", "currency-type"), text("Status", "Status", { type: "picklist", options: ["Draft", "Approved", "Rejected"] })] },
+  { key: "brand", label: "Brand", description: "Brand or label master.", labelField: "Brand", fields: [text("Brand", "Brand", { required: true, unique: true }), text("Maximum_Allowed_Excess", "Maximum Allowed Excess", { type: "percentage" }), text("Auto_add_Excess_to_RM", "Auto add Excess to RM", { type: "checkbox" }), lookup("Pre_Order_Checklist1", "Pre Order Checklist", "pre-order-checklist")] },
+  { key: "buyer", label: "Buyer", description: "Buyer and customer master.", labelField: "Buyer_Name", fields: [text("Buyer_Name", "Buyer Name", { required: true, unique: true }), lookup("Currency_Type", "Currency Type", "currency-type")] },
   { key: "season", label: "Season", description: "Season and campaign master.", fields: [text("season", "Season", { required: true, unique: true })] },
   { key: "article", label: "Article", description: "Article or style base master.", fields: [text("article", "Article", { required: true, unique: true })] },
-  { key: "color", label: "Color", description: "Color and shade master.", labelField: "Colors", fields: [text("Colors", "Colors", { required: true, unique: true }), text("Status", "Status", { type: "picklist", options: ["Draft", "Approved", "Reject"] })] },
-  { key: "size-group", label: "Size Group", description: "Grouped size families.", labelField: "Size_Group", fields: [lookup("Brand1", "Brand", "brand", { required: true }), text("Size_Group", "Size Group", { required: true, unique: true }), lookup("Measurement_Chart1", "Measurement Chart", "measurement-chart"), lookup("Size", "Size", "size")] },
-  { key: "size", label: "Size", description: "Specific size list and ratios.", fields: [text("Size", "Size", { required: true, unique: true }), lookup("Size_Group_ID", "Size Group", "size-group"), text("status", "Status", { type: "picklist", options: ["Draft", "Approved", "Rejected"] })] },
+  { key: "color", label: "Color", description: "Color and shade master.", labelField: "Colors", fields: [text("Colors", "Colors", { required: true, unique: true })] },
+  { key: "size-group", label: "Size Group", description: "Grouped size families with their mapped sizes.", labelField: "Size_Group", fields: [lookup("Brand1", "Brand", "brand", { required: true }), text("Size_Group", "Size Group", { required: true, unique: true }), lookup("Measurement_Chart1", "Measurement Chart", "measurement-chart"), lookup("Size", "Sizes", "size", { multiple: true })] },
+  { key: "size", label: "Size", description: "Reusable size values mapped to groups from the Size Group master.", fields: [text("Size", "Size", { required: true, unique: true })] },
   { key: "uom", label: "UOM", description: "Unit of measure master.", fields: [text("uom", "UOM", { required: true, unique: true })] },
   { key: "raw-material", label: "Raw Material", description: "Raw material and component master.", labelField: "Raw_Material_Name", fields: [text("Raw_Material_Name", "Raw Material Name", { required: true, unique: true }), lookup("Category", "Raw Material Category", "raw-material-category", { required: true }), lookup("Subcategory", "Raw Material Sub Category", "raw-material-sub-category", { required: true, dependsOn: "Category" }), lookup("Stock_Uom1", "Stock UOM", "uom", { required: true }), lookup("Category_Type", "Raw Material Type", "raw-material-type"), text("Is_this_Specific_for_a_Brand", "Specific for a Brand", { type: "checkbox" }), text("Size_Wise_Concemption", "Size Wise Consumption", { type: "checkbox" }), lookup("Size_Wise_Consemption_Master", "Size Wise Consumption Master", "size-wise-consumption"), lookup("Brand1", "Brand", "brand"), text("Show_All1", "Show All", { type: "checkbox" }), text("Workdrive_Image_ID", "Workdrive Image ID"), text("Buyer_Item_Code", "Buyer Item Code"), text("Image_Url", "Image URL", { type: "url" }), text("Item_Code", "Item Code"), lookup("Colour", "Colour", "color"), text("Create_open_stock", "Create Open Stock", { type: "picklist", options: ["Yes", "No"] }), text("Open_Stock", "Open Stock", { type: "decimal" }), text("Open_Stock_Price", "Open Stock Price", { type: "decimal" }), text("Vendor_Wise_Price_List", "Vendor Wise Price List") ] },
   { key: "raw-material-type", label: "Raw Material Type", description: "Raw material type classification, independent from product category type.", fields: [text("Raw_Material_Type", "Raw Material Type", { required: true, unique: true })] },
@@ -50,7 +53,6 @@ export const MASTER_DEFINITIONS: MasterDefinition[] = [
   { key: "product-master", label: "Product Master", description: "Product master lookup values.", fields: [text("Product_Master_name", "Product Master Name", { required: true, unique: true })] },
   { key: "process-template", label: "Process Template", description: "Production process templates.", fields: [text("Process_Name", "Process Name", { required: true, unique: true })] },
   { key: "merchandiser", label: "Merchandiser", description: "User and merchandiser assignment master.", fields: [text("merchandiser", "Merchandiser", { required: true })] },
-  { key: "status", label: "Status", description: "Operational status values.", fields: [text("status", "Status", { required: true })] },
   { key: "order-volume", label: "Order Volume", description: "Order volume classifications.", fields: [text("Order_Volume", "Order Volume", { required: true }), text("From", "From", { type: "number" }), text("To", "To", { type: "number" })] },
 ];
 
