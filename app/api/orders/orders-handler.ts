@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { createOrder, listOrdersPage, updateOrderWithDetails } from "@/lib/services/orders/order-service";
+import { createOrder, deleteOrders, listOrdersPage, updateOrderWithDetails } from "@/lib/services/orders/order-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request) {
@@ -53,6 +53,27 @@ export async function PUT(request: Request) {
     return NextResponse.json({ ok: true, order });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to update order.";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const user = await requireSessionUser();
+    const url = new URL(request.url);
+    const body = await request.json().catch(() => ({}));
+    const organizationId = url.searchParams.get("organizationId") || body.organizationId;
+    const orderIds = Array.isArray(body.orderIds) ? body.orderIds.map(String) : [];
+
+    if (!organizationId || orderIds.length === 0) {
+      return NextResponse.json({ error: "Organization and order ids are required." }, { status: 400 });
+    }
+
+    const organization = await requireOrganizationContext(user.id, String(organizationId), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    const result = await deleteOrders(orderIds, organization.id);
+    return NextResponse.json({ ok: true, ...result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to delete orders.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

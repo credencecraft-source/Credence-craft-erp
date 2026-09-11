@@ -19,7 +19,12 @@ export function OrganizationsGrid({
   return (
     <>
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        {organizations.map((organization) => (
+        {organizations.map((organization) => {
+          const role = String(organization.membership_role ?? "VIEWER").toUpperCase();
+          const canManageOrganization = role === "OWNER" || role === "ADMIN";
+          const roleLabel = role === "OWNER" ? "Owner" : role === "ADMIN" ? "Admin" : "Employee";
+
+          return (
           <div key={organization.id} className="group relative flex flex-col justify-between rounded-lg border border-slate-200/80 bg-white p-3.5 shadow-2xs transition-all hover:border-slate-300 hover:shadow-sm">
             <div>
               <div className="flex items-center justify-between">
@@ -31,10 +36,10 @@ export function OrganizationsGrid({
                   <span className="inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
                     Active
                   </span>
-                  <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[9px] font-semibold ${organization.membership_role === "OWNER" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
-                    {organization.membership_role === "OWNER" ? "Owner" : "Employee"}
+                  <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[9px] font-semibold ${role === "OWNER" ? "bg-amber-50 text-amber-700" : role === "ADMIN" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}`}>
+                    {roleLabel}
                   </span>
-                  {organization.membership_role === "OWNER" && (
+                  {role === "OWNER" && (
                     <button
                       type="button"
                       onClick={() => {
@@ -47,7 +52,7 @@ export function OrganizationsGrid({
                       <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                     </button>
                   )}
-                  {(organization.membership_role === "OWNER" || organization.membership_role === "ADMIN") && (
+                  {canManageOrganization && (
                     <Link
                       href={`/dashboard/${workspaceId}/organizations/${organization.organization_id}/settings`}
                       aria-label="Organization Settings"
@@ -78,7 +83,8 @@ export function OrganizationsGrid({
               </Link>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {deleteModalOrg && (

@@ -1,1 +1,1 @@
-export { GET } from "./orders-detail-handler";
+export { GET, PUT } from "./orders-detail-handler";

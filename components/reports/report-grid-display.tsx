@@ -29,6 +29,8 @@ interface ReportGridProps<T> {
   selectedStatus?: string;
   onStatusChange?: (status: string) => void;
   onNewOrder?: () => void;
+  onDeleteSelected?: () => void;
+  onCloneOrder?: (recordId: string) => void;
   renderCell: (fieldKey: string, record: T) => React.ReactNode;
   emptyMessage?: string;
 }
@@ -48,6 +50,8 @@ export function ReportGrid<T>({
   selectedStatus,
   onStatusChange,
   onNewOrder,
+  onDeleteSelected,
+  onCloneOrder,
   renderCell,
   emptyMessage = "No records found.",
 }: ReportGridProps<T>) {
@@ -196,6 +200,12 @@ export function ReportGrid<T>({
             👁
           </button>
 
+          {onDeleteSelected && selectedIds.length > 0 && (
+            <Button variant="danger" size="sm" onClick={onDeleteSelected} className="h-7 px-2.5 text-[11px]">
+              Delete Selected ({selectedIds.length})
+            </Button>
+          )}
+
           {/* NEW ORDER BUTTON */}
           {onNewOrder && (
             <Button variant="primary" size="sm" onClick={onNewOrder} className="text-[11px] py-1 px-2.5 h-7">
@@ -222,12 +232,13 @@ export function ReportGrid<T>({
                 {field.label}
               </th>
             ))}
+            {onCloneOrder && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200 bg-white text-slate-700 text-[11px]">
           {filteredRecords.length === 0 ? (
             <tr>
-              <td colSpan={visibleFieldDefinitions.length + 1} className="p-6 text-center text-slate-500">
+              <td colSpan={visibleFieldDefinitions.length + 1 + (onCloneOrder ? 1 : 0)} className="p-6 text-center text-slate-500">
                 {emptyMessage}
               </td>
             </tr>
@@ -256,6 +267,17 @@ export function ReportGrid<T>({
                       {renderCell(String(field.key), record)}
                     </td>
                   ))}
+                  {onCloneOrder && (
+                    <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => onCloneOrder(recordId)}
+                        className="rounded-md border border-emerald-200 px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-50"
+                      >
+                        Clone
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
             })

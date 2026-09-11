@@ -113,7 +113,7 @@ export default async function WorkspaceHomePage({
                 variant="ghost"
                 className="erp-btn-secondary-alt"
               >
-                Admin
+                Settings
               </Button>
             </Link>
 

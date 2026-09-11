@@ -151,6 +151,20 @@ export async function getOrderByOrderNo(orderNo: string, organizationId: string)
   });
 }
 
+export async function deleteOrders(orderIds: string[], organizationId: string) {
+  const ids = [...new Set(orderIds.filter(Boolean))];
+  if (ids.length === 0) return { deletedCount: 0 };
+
+  const result = await prisma.merchandisingOrder.deleteMany({
+    where: {
+      id: { in: ids },
+      organization_id: organizationId,
+    },
+  });
+
+  return { deletedCount: result.count };
+}
+
 export async function listBomItemsForOrganization(organizationId: string) {
   const bomItems = await prisma.billOfMaterialItem.findMany({
     where: {

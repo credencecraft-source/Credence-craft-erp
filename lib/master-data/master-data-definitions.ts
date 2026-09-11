@@ -30,7 +30,7 @@ export const MASTER_DEFINITIONS: MasterDefinition[] = [
   { key: "category", label: "Category", description: "Primary product category master.", labelField: "Category_Name", fields: [lookup("Category_Type_Master", "Category Type Master", "category-type"), text("Category_Name", "Category Name", { required: true, unique: true }), text("Maximum_Excess_Allowed", "Maximum Excess Allowed", { type: "percentage" }), text("Create_Cost_Center", "Create Cost Center", { type: "checkbox" })] },
   { key: "sub-category", label: "Sub Category", description: "Child category values linked to category.", fields: [lookup("category", "Category", "category"), text("sub_category", "Sub Category", { required: true, unique: true })] },
   { key: "brand", label: "Brand", description: "Brand or label master.", labelField: "Brand", fields: [text("Brand", "Brand", { required: true, unique: true }), text("Maximum_Allowed_Excess", "Maximum Allowed Excess", { type: "percentage" }), text("Auto_add_Excess_to_RM", "Auto add Excess to RM", { type: "checkbox" }), lookup("Pre_Order_Checklist1", "Pre Order Checklist", "pre-order-checklist")] },
-  { key: "buyer", label: "Buyer", description: "Buyer and customer master.", labelField: "Buyer_Name", fields: [text("Buyer_Name", "Buyer Name", { required: true, unique: true }), lookup("Currency_Type", "Currency Type", "currency-type")] },
+  { key: "buyer", label: "Buyer", description: "Buyer and customer master.", labelField: "Buyer_Name", fields: [text("Buyer_Name", "Buyer Name", { required: true, unique: true }), text("Buyer_Email", "Buyer Email", { type: "text" }), lookup("Currency_Type", "Currency Type", "currency-type")] },
   { key: "season", label: "Season", description: "Season and campaign master.", fields: [text("season", "Season", { required: true, unique: true })] },
   { key: "article", label: "Article", description: "Article or style base master.", fields: [text("article", "Article", { required: true, unique: true })] },
   { key: "color", label: "Color", description: "Color and shade master.", labelField: "Colors", fields: [text("Colors", "Colors", { required: true, unique: true })] },
@@ -65,7 +65,7 @@ export const ORDER_LOOKUP_FIELDS = [
   lookup("colors", "Colors", "color"),
   lookup("buyer", "Buyer", "buyer"),
   lookup("brand", "Brand", "brand"),
-  lookup("sizeGroup", "Size Group", "size-group", { dependsOn: "brand" }),
+  lookup("sizeGroup", "Size Group", "size-group"),
 ];
 
 export function getMasterDefinition(masterKey: string) {

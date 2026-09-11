@@ -126,24 +126,75 @@ export async function getOrganizationPlanId(organizationId: string) {
 }
 
 export async function ensureFreePlanSubscriptionsForOrganization(organizationId: string) {
+  const [businessTypes, plans, subscriptions] = await Promise.all([
+    prisma.businessType.findMany({
+      where: { isActive: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.plan.findMany({
+      where: {
+        is_active: true,
+        price: { lte: 0 },
+      },
+      select: { business_type_id: true },
+    }),
+    prisma.subscription.findMany({
+      where: { organization_id: organizationId },
+      select: { business_type_id: true },
+    }),
+  ]);
+  const freePlanBusinessTypeIds = new Set(
+    plans
+      .map((plan) => plan.business_type_id)
+      .filter((businessTypeId): businessTypeId is string => Boolean(businessTypeId)),
+  );
+  const subscriptionBusinessTypeIds = new Set(
+    subscriptions
+      .map((subscription) => subscription.business_type_id)
+      .filter((businessTypeId): businessTypeId is string => Boolean(businessTypeId)),
+  );
+  const needsSetup = businessTypes.some(
+    (businessType) =>
+      !freePlanBusinessTypeIds.has(businessType.id) ||
+      !subscriptionBusinessTypeIds.has(businessType.id),
+  );
+
+  if (!needsSetup) return;
+
   return prisma.$transaction(async (transaction) => {
     const businessTypes = await transaction.businessType.findMany({
       where: { isActive: true },
       orderBy: { name: "asc" },
     });
+    const plans = await transaction.plan.findMany({
+      where: {
+        is_active: true,
+        price: { lte: 0 },
+      },
+      orderBy: { sort_order: "asc" },
+    });
+    const subscriptions = await transaction.subscription.findMany({
+      where: { organization_id: organizationId },
+    });
+    const planByBusinessTypeId = new Map(
+      plans
+        .filter((plan) => plan.business_type_id)
+        .map((plan) => [plan.business_type_id as string, plan]),
+    );
+    const subscriptionBusinessTypeIds = new Set(
+      subscriptions
+        .map((subscription) => subscription.business_type_id)
+        .filter((businessTypeId): businessTypeId is string => Boolean(businessTypeId)),
+    );
+    let nextSortOrder = plans.reduce(
+      (highestSortOrder, plan) => Math.max(highestSortOrder, plan.sort_order),
+      -1,
+    ) + 1;
 
     for (const businessType of businessTypes) {
-      let freePlan = await transaction.plan.findFirst({
-        where: {
-          business_type_id: businessType.id,
-          is_active: true,
-          price: { lte: 0 },
-        },
-        orderBy: { sort_order: "asc" },
-      });
+      let freePlan = planByBusinessTypeId.get(businessType.id);
 
       if (!freePlan) {
-        const planCount = await transaction.plan.count();
         freePlan = await transaction.plan.create({
           data: {
             plan_id: randomUUID(),
@@ -152,19 +203,14 @@ export async function ensureFreePlanSubscriptionsForOrganization(organizationId:
             description: `Default free plan for ${businessType.name}.`,
             price: 0,
             billing_cycle: "monthly",
-            sort_order: planCount,
+            sort_order: nextSortOrder,
           },
         });
+        planByBusinessTypeId.set(businessType.id, freePlan);
+        nextSortOrder += 1;
       }
 
-      const subscription = await transaction.subscription.findFirst({
-        where: {
-          organization_id: organizationId,
-          business_type_id: businessType.id,
-        },
-      });
-
-      if (!subscription) {
+      if (!subscriptionBusinessTypeIds.has(businessType.id)) {
         await transaction.subscription.create({
           data: {
             organization_id: organizationId,
@@ -173,9 +219,10 @@ export async function ensureFreePlanSubscriptionsForOrganization(organizationId:
             payment_status: "paid",
           },
         });
+        subscriptionBusinessTypeIds.add(businessType.id);
       }
     }
-  });
+  }, { timeout: 15000 });
 }
 
 export async function activatePlanForBusinessType(data: {

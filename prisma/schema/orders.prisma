@@ -18,11 +18,14 @@ model MerchandisingOrder {
   deliveryDate    DateTime?
   finalStatus     String                  @default("Draft") @db.VarChar(100)
   processStatus   String?                 @db.VarChar(100)
+  sourceStatus    String                  @default("DIRECT") @db.VarChar(50)
   created_at      DateTime                @default(now()) @map("created_at")
   updated_at      DateTime                @updatedAt @map("updated_at")
   organization    Organization             @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   finishedGoods   FinishedGoodsSizeWise[]
   bomItems        BillOfMaterialItem[]
+  outgoingShares  OrderShare[]            @relation("OrderShareSourceOrder")
+  acceptedShares  OrderShare[]            @relation("OrderShareAcceptedOrder")
 
   @@unique([organization_id, orderNo])
   @@index([organization_id, created_at])

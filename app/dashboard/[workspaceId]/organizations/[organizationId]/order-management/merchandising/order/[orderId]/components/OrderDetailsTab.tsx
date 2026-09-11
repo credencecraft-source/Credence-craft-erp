@@ -2,16 +2,6 @@
 
 import React from "react";
 
-const dsStatusOptions = [
-  "Draft",
-  "Waiting For Approval",
-  "Approved",
-  "Waiting For Production Schedule",
-  "Work Order",
-  "Shipped",
-  "Closed",
-] as const;
-
 export default function OrderDetailsTab({
   form,
   setForm,
@@ -39,6 +29,9 @@ export default function OrderDetailsTab({
       }
       if (field === "brand") {
         updated.sizeGroup = "";
+      }
+      if (field === "haveSizeRatio" && !value) {
+        updated.ratioOrderQty = "";
       }
       return updated;
     });
@@ -143,37 +136,31 @@ export default function OrderDetailsTab({
         General Order Information
       </h3>
 
-      <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-4 rounded-xl bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-200 p-4 shadow-sm">
-        <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white text-xl shadow-sm">
-          👕
-        </div>
-        <div className="flex-1 w-full max-w-sm">
+      <div className="mb-6 grid grid-cols-1 gap-4 rounded-xl border border-emerald-200 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent p-4 shadow-sm sm:grid-cols-2">
+        <div className="w-full">
           {renderMasterSelect(
-            "Article", 
-            form.article, 
-            (val) => handleChange("article", val), 
-            "article", 
+            "Brand",
+            form.brand,
+            (val) => handleChange("brand", val),
+            "brand",
+            "Select brand"
+          )}
+        </div>
+        <div className="w-full">
+          {renderMasterSelect(
+            "Article",
+            form.article,
+            (val) => handleChange("article", val),
+            "article",
             "Select article"
           )}
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-semibold text-slate-700">Order No</span>
-          <input
-            type="text"
-            value={form.orderNo ?? ""}
-            disabled
-            placeholder="Auto-generated (OD-1, OD-2, OD-3...)"
-            className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs text-slate-500 shadow-sm"
-          />
-        </label>
-
         {renderMasterSelect("Entity Name", form.entityName, (val) => handleChange("entityName", val), "entity", "Select entity")}
         {renderMasterSelect("Category", form.category, (val) => handleChange("category", val), "category", "Select category")}
         {renderMasterSelect("Sub Category", form.subCategory, (val) => handleChange("subCategory", val), "sub-category", "Select sub category")}
-        {renderMasterSelect("Season", form.season, (val) => handleChange("season", val), "season", "Select season")}
 
         <label className="flex flex-col gap-1.5">
           <span className="text-xs font-semibold text-slate-700">Style Name</span>
@@ -187,8 +174,18 @@ export default function OrderDetailsTab({
         </label>
 
         {renderMasterSelect("Colors", form.colors, (val) => handleChange("colors", val), "color", "Select color")}
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs font-semibold text-slate-700">Order No</span>
+          <input
+            type="text"
+            value={form.orderNo ?? ""}
+            disabled
+            placeholder="Auto-generated (OD-1, OD-2, OD-3...)"
+            className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs text-slate-500 shadow-sm"
+          />
+        </label>
+        {renderMasterSelect("Season", form.season, (val) => handleChange("season", val), "season", "Select season")}
         {renderMasterSelect("Buyer", form.buyer, (val) => handleChange("buyer", val), "buyer", "Select buyer")}
-        {renderMasterSelect("Brand", form.brand, (val) => handleChange("brand", val), "brand", "Select brand")}
         {renderMasterSelect("Size Group", form.sizeGroup, (val) => handleChange("sizeGroup", val), "size-group", "Select size group")}
 
         <label className="flex items-center gap-2 pt-6">
@@ -201,16 +198,18 @@ export default function OrderDetailsTab({
           <span className="text-xs font-semibold text-slate-700">Have Size Ratio</span>
         </label>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-semibold text-slate-700">Ratio Order Qty</span>
-          <input
-            type="number"
-            value={form.ratioOrderQty ?? ""}
-            onChange={(e) => handleChange("ratioOrderQty", e.target.value)}
-            placeholder="0"
-            className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
-          />
-        </label>
+        {form.haveSizeRatio && (
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-semibold text-slate-700">Ratio Order Qty</span>
+            <input
+              type="number"
+              value={form.ratioOrderQty ?? ""}
+              onChange={(e) => handleChange("ratioOrderQty", e.target.value)}
+              placeholder="0"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
+            />
+          </label>
+        )}
 
         <label className="flex flex-col gap-1.5">
           <span className="text-xs font-semibold text-slate-700">Order Qty</span>
@@ -233,32 +232,6 @@ export default function OrderDetailsTab({
           />
         </label>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-semibold text-slate-700">Final Status</span>
-          <select
-            value={form.finalStatus ?? "Draft"}
-            onChange={(e) => handleChange("finalStatus", e.target.value)}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
-          >
-            {dsStatusOptions.map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-semibold text-slate-700">Process Status</span>
-          <select
-            value={form.processStatus ?? "Draft"}
-            onChange={(e) => handleChange("processStatus", e.target.value)}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
-          >
-            <option value="Draft">Draft</option>
-            <option value="Approved">Approved</option>
-          </select>
-        </label>
       </div>
     </div>
   );

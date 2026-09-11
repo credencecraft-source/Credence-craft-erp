@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-definitions";
 import OrderDetailsTab from "./components/OrderDetailsTab";
 import FinishedGoodsTab from "./components/FinishedGoodsTab";
@@ -28,7 +28,9 @@ export default function MerchandisingOrderDetailsPage() {
   }>();
 
   const router = useRouter();
+  const searchParams = useSearchParams();
   const orderId = params?.orderId && params.orderId !== "create" ? params.orderId : undefined;
+  const cloneFrom = searchParams.get("cloneFrom");
   const workspaceId = params?.workspaceId;
   const organizationId = params?.organizationId;
 
@@ -40,6 +42,8 @@ export default function MerchandisingOrderDetailsPage() {
   const [quickMasterStack, setQuickMasterStack] = useState<QuickMasterParent[]>([]);
   const [isCreatingMaster, setIsCreatingMaster] = useState(false);
   const [masterCreateError, setMasterCreateError] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
 
   // Master Data & Lookups State
   const [masterOptions, setMasterOptions] = useState<Record<string, any[]>>({});
@@ -104,15 +108,16 @@ export default function MerchandisingOrderDetailsPage() {
   }, [organizationId]);
 
   useEffect(() => {
-    if (!orderId || !organizationId) return;
-    const existingOrderId = orderId;
+    const existingOrderId = orderId || cloneFrom;
+    if (!existingOrderId || !organizationId) return;
+    const sourceOrderId = existingOrderId;
 
     let isMounted = true;
 
     async function loadOrder() {
       try {
         const response = await fetch(
-          `/api/orders/${encodeURIComponent(existingOrderId)}?organizationId=${encodeURIComponent(organizationId)}`,
+          `/api/orders/${encodeURIComponent(sourceOrderId)}?organizationId=${encodeURIComponent(organizationId)}`,
           { cache: "no-store" },
         );
         const data = await response.json();
@@ -123,13 +128,36 @@ export default function MerchandisingOrderDetailsPage() {
         const order = data.order;
         if (!isMounted || !order) return;
 
+        const clonedRows = (order.finishedGoods ?? []).map((row: Record<string, unknown>) => ({
+          ...row,
+          beforeExcessQty: "",
+          excess: "",
+          excessQty: "",
+          totalQty: "",
+          buyerPoPrice: row.buyerPoPrice ?? "",
+          exchangePrice: row.exchangePrice ?? "",
+          priceInInr: row.priceInInr ?? "",
+        }));
+
         setForm((current) => ({
           ...current,
           ...order,
+          ...(cloneFrom
+            ? {
+                orderNo: "",
+                article: "",
+                styleName: "",
+                orderQty: "",
+                ratioOrderQty: "",
+                finalStatus: "Draft",
+                processStatus: "Draft",
+                rows: clonedRows,
+              }
+            : {}),
           deliveryDate: order.deliveryDate ? String(order.deliveryDate).slice(0, 10) : "",
-          ratioOrderQty: order.ratioOrderQty ?? "",
-          orderQty: order.orderQty ?? "",
-          rows: (order.finishedGoods ?? []).map((row: Record<string, unknown>) => ({
+          ratioOrderQty: cloneFrom ? "" : order.ratioOrderQty ?? "",
+          orderQty: cloneFrom ? "" : order.orderQty ?? "",
+          rows: (cloneFrom ? clonedRows : order.finishedGoods ?? []).map((row: Record<string, unknown>) => ({
             ...row,
             beforeExcessQty: row.beforeExcessQty ?? "",
             excess: row.excess ?? "",
@@ -152,7 +180,7 @@ export default function MerchandisingOrderDetailsPage() {
     return () => {
       isMounted = false;
     };
-  }, [orderId, organizationId]);
+  }, [cloneFrom, orderId, organizationId]);
 
   // Handler to open/redirect to create master view using the `+ New` button
   const handleOpenCreateMaster = async (masterKey: string, returnFieldKey?: string) => {
@@ -295,7 +323,7 @@ export default function MerchandisingOrderDetailsPage() {
       <select
         value={value ?? ""}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs"
+        className="h-9 min-w-0 w-full rounded-md border border-slate-300 bg-white px-2.5 text-xs text-slate-700 shadow-sm"
       >
         <option value="">{placeholder}</option>
         {options.map((option: any) => (
@@ -441,6 +469,24 @@ export default function MerchandisingOrderDetailsPage() {
     }
   };
 
+  const openShareDialog = () => setShareOpen(true);
+
+  const handleShare = async () => {
+    if (!orderId) return;
+    try {
+      setIsSharing(true);
+      const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/shares`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceOrganizationId: organizationId }) });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Unable to share order.");
+      setShareOpen(false);
+      alert("Order shared with the buyer. The buyer workspace has been notified.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to share order.");
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
   const tabs: { id: TabType; label: string; count?: number }[] = [
     { id: "details", label: "General Details" },
     { id: "finishedGoods", label: "Finished Goods", count: form.rows.length },
@@ -470,15 +516,13 @@ export default function MerchandisingOrderDetailsPage() {
             </h2>
           </div>
 
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={isSaving}
-            className="rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
-          >
-            {isSaving ? "Saving..." : "Save Order"}
-          </button>
+          <div className="flex items-center gap-2">
+            {orderId && <button type="button" onClick={openShareDialog} className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 font-semibold text-emerald-800 hover:bg-emerald-100">Share with Buyer</button>}
+            <button type="button" onClick={handleSave} disabled={isSaving} className="rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50">{isSaving ? "Saving..." : "Save Order"}</button>
+          </div>
         </div>
+
+        {shareOpen && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center justify-between"><div><h3 className="font-bold text-emerald-950">Share with Buyer</h3><p className="mt-1 text-emerald-800">The buyer configured for this order will receive a workspace notification.</p><p className="mt-1 text-xs text-emerald-700">Internal consumption and internal price are never shared with the buyer.</p></div><button type="button" onClick={() => setShareOpen(false)} className="text-sm font-semibold text-emerald-800">Close</button></div><div className="mt-3 flex gap-2"><button type="button" onClick={() => void handleShare()} disabled={isSharing} className="rounded-md bg-emerald-700 px-4 py-2 font-semibold text-white disabled:opacity-50">{isSharing ? "Sharing..." : "Confirm and share"}</button></div></div>}
         
         {/* Scrollable Tab Navigation */}
         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">

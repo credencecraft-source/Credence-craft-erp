@@ -6,7 +6,6 @@ import {
   logoutPlatformSession,
   requirePlatformSessionAdmin,
 } from "@/lib/auth/platform-session-manager";
-import PlatformRootLayoutClient from "./_page-content/platform-root-layout";
 
 export default async function PlatformRootLayout({
   children,
@@ -22,10 +21,8 @@ export default async function PlatformRootLayout({
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
-      <PlatformRootLayoutClient />
-
-      <div className="flex flex-1 flex-col">
+    <div className="min-h-screen bg-slate-50">
+      <div className="flex min-h-screen flex-col">
         <Navbar title="Support Platform">
           <span className="text-sm text-slate-600">{admin.full_name}</span>
 

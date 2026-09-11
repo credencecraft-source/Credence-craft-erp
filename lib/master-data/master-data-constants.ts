@@ -42,7 +42,7 @@ const fieldColumns: Record<string, Record<string, string>> = {
   category: { Category_Type_Master: "category_type_id", Category_Name: "category_name", Maximum_Excess_Allowed: "maximum_excess_allowed", Create_Cost_Center: "create_cost_center", Status: "status" },
   "sub-category": { category: "category_id", sub_category: "sub_category" },
   brand: { Brand: "brand", Maximum_Allowed_Excess: "maximum_allowed_excess", Auto_add_Excess_to_RM: "auto_add_excess_to_rm", Pre_Order_Checklist1: "pre_order_checklist_id", Status: "status" },
-  buyer: { Buyer_Name: "buyer_name", Currency_Type: "currency_type_id", Status: "status" },
+  buyer: { Buyer_Name: "buyer_name", Buyer_Email: "buyer_email", Currency_Type: "currency_type_id", Status: "status" },
   season: { season: "season" }, article: { article: "article" }, color: { Colors: "colors", Status: "status" },
   "size-group": { Brand1: "brand_id", Size_Group: "size_group", Measurement_Chart1: "measurement_chart_id" },
   size: { Size: "size", Size_Group_ID: "size_group_id", status: "status" }, uom: { uom: "uom" }, vendor: { vendor: "vendor" },
@@ -233,6 +233,7 @@ export async function updateMasterValue(organizationId: string, valueId: string,
     const existing = await delegate.findFirst({ where: { organization_id: organizationId, OR: [{ id: valueId }, { value_id: valueId }] } });
     if (existing) {
       const data = input.fields ? await buildData(organizationId, moduleKey, input.fields, input.label?.trim() || String(existing[labelFields[moduleKey]])) : {};
+      delete data.organization_id;
       if (input.is_active !== undefined) data.is_active = input.is_active;
       return delegate.update({ where: { id: existing.id }, data });
     }

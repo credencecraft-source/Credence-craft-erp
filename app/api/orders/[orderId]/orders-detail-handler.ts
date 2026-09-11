@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrderById } from "@/lib/services/orders/order-service";
-import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
+import { getOrderById, updateOrderWithDetails } from "@/lib/services/orders/order-service";
+import { getOrganizationForUser, requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request, { params }: { params: Promise<{ orderId: string }> }) {
   try {
@@ -24,5 +24,30 @@ export async function GET(request: Request, { params }: { params: Promise<{ orde
   } catch (error: any) {
     const message = error?.message || "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function PUT(request: Request, { params }: { params: Promise<{ orderId: string }> }) {
+  try {
+    const { orderId } = await params;
+    const user = await requireSessionUser();
+    const url = new URL(request.url);
+    const body = await request.json().catch(() => ({}));
+    const organizationId = url.searchParams.get("organizationId") || body.organizationId;
+
+    if (!organizationId) {
+      return NextResponse.json({ error: "Organization ID is required." }, { status: 400 });
+    }
+
+    const organization = await requireOrganizationContext(user.id, String(organizationId), ["OWNER", "ADMIN", "MERCHANDISING"]);
+    const payload = { ...body };
+    delete payload.organizationId;
+    delete payload.id;
+
+    const order = await updateOrderWithDetails(orderId, organization.id, payload);
+    return NextResponse.json({ ok: true, order });
+  } catch (error: any) {
+    const message = error?.message || "Unable to update order.";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }

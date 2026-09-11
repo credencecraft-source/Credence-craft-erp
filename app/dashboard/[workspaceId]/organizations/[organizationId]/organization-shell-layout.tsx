@@ -44,6 +44,10 @@ export default async function OrganizationShellLayout({
   const currentPath = rawPath.startsWith("http") 
     ? new URL(rawPath).pathname 
     : rawPath;
+  const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
+  const isOrganizationSettingsRoute =
+    currentPath.startsWith(`${organizationPath}/settings`) &&
+    !currentPath.startsWith(`${organizationPath}/settings/master-data`);
 
   // 3. Fetch and authorize the real organization before checking plan rules.
   const organization = await getOrganizationForUser(user.id, organizationId);
@@ -66,6 +70,10 @@ export default async function OrganizationShellLayout({
       : businessType.name,
   }));
 
+
+  if (isOrganizationSettingsRoute) {
+    return children;
+  }
   return (
     <MasterModuleWrapper
       workspaceId={workspaceId}

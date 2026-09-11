@@ -24,6 +24,7 @@ type OrderRecord = {
   deliveryDate?: string | null;
   finalStatus: string;
   processStatus?: string | null;
+  sourceStatus?: string | null;
 };
 
 type FilterableOrderField =
@@ -41,7 +42,8 @@ type FilterableOrderField =
   | "orderQty"
   | "deliveryDate"
   | "processStatus"
-  | "finalStatus";
+  | "finalStatus"
+  | "sourceStatus";
 
 const reportFilterFields: Array<{
   key: FilterableOrderField;
@@ -62,6 +64,7 @@ const reportFilterFields: Array<{
   { key: "deliveryDate", label: "Delivery Date" },
   { key: "processStatus", label: "Process Status" },
   { key: "finalStatus", label: "Final Status" },
+  { key: "sourceStatus", label: "Source" },
 ];
 
 const dsStatusOptions = [
@@ -90,6 +93,8 @@ export default function MerchandisingOrdersPage() {
     useState<(typeof dsStatusOptions)[number]>("Draft");
 
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [visibleReportFields, setVisibleReportFields] = useState<FilterableOrderField[]>(
     reportFilterFields.map((field) => field.key),
   );
@@ -161,6 +166,36 @@ export default function MerchandisingOrdersPage() {
     });
   };
 
+  const handleCloneOrder = (orderId: string) => {
+    startTransition(() => {
+      router.push(
+        `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/create?cloneFrom=${encodeURIComponent(orderId)}`,
+      );
+    });
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedOrderIds.length === 0) return;
+
+    try {
+      setIsDeleting(true);
+      const response = await fetch(`/api/orders?organizationId=${encodeURIComponent(organizationId)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderIds: selectedOrderIds }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Unable to delete selected orders.");
+      setOrders((current) => current.filter((order) => !selectedOrderIds.includes(order.id)));
+      setSelectedOrderIds([]);
+      setShowDeleteConfirmation(false);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to delete selected orders.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="space-y-3 text-[11px]">
       <Card className="p-3 shadow-none border-slate-200">
@@ -189,12 +224,29 @@ export default function MerchandisingOrdersPage() {
           selectedStatus={selectedStatus}
           onStatusChange={(status) => setSelectedStatus(status as any)}
           onNewOrder={handleNewOrder}
+          onDeleteSelected={() => setShowDeleteConfirmation(true)}
+          onCloneOrder={handleCloneOrder}
           renderCell={(fieldKey, order) => {
             const val = order[fieldKey as keyof OrderRecord];
             return val !== null && val !== undefined ? String(val) : "";
           }}
         />
       </Card>
+
+      {showDeleteConfirmation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-orders-title">
+          <div className="w-full max-w-md space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+            <div>
+              <h3 id="delete-orders-title" className="text-base font-bold text-slate-900">Delete selected orders?</h3>
+              <p className="mt-1 text-xs text-slate-500">This will permanently delete {selectedOrderIds.length} order{selectedOrderIds.length === 1 ? "" : "s"} and its finished goods and BOM records.</p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setShowDeleteConfirmation(false)} disabled={isDeleting}>Cancel</Button>
+              <Button variant="danger" size="sm" onClick={handleDeleteSelected} disabled={isDeleting}>{isDeleting ? "Deleting..." : "Delete Orders"}</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

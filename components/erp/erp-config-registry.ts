@@ -30,6 +30,14 @@ export const ERP_MODULES: ErpModule[] = [
           { key: "order-summary", label: "Order Summary", pathSegment: "order-summary" },
         ],
       },
+      {
+        key: "procurement",
+        label: "Procurement",
+        pathSegment: "procurement",
+        children: [
+          { key: "create-po", label: "Style Wise PO", pathSegment: "create-po" },
+        ],
+      },
     ],
   },
   {

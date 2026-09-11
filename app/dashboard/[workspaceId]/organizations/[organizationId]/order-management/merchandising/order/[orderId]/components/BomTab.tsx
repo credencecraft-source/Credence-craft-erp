@@ -79,7 +79,7 @@ export default function BomTab({
   };
 
   return (
-    <div className="space-y-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+    <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-bold text-slate-900">Bill of Materials</h3>
         <button
@@ -91,11 +91,28 @@ export default function BomTab({
         </button>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs">
-          <thead className="border-b border-slate-200 text-slate-500">
+      <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-slate-200 bg-slate-50/40 shadow-inner">
+        <table className="min-w-[2500px] table-fixed text-left text-xs">
+          <colgroup>
+            <col className="w-[190px]" />
+            <col className="w-[210px]" />
+            <col className="w-[220px]" />
+            <col className="w-[210px]" />
+            <col className="w-[145px]" />
+            <col className="w-[155px]" />
+            <col className="w-[135px]" />
+            <col className="w-[165px]" />
+            <col className="w-[135px]" />
+            <col className="w-[150px]" />
+            <col className="w-[145px]" />
+            <col className="w-[145px]" />
+            <col className="w-[150px]" />
+            <col className="w-[165px]" />
+            <col className="w-[115px]" />
+          </colgroup>
+          <thead className="border-b border-slate-200 bg-white text-slate-600">
             <tr>
-              <th className="p-2">
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">
                 <div className="flex items-center justify-between gap-2">
                   <span>Raw Material Type</span>
                   {onOpenCreateMaster && (
@@ -109,7 +126,7 @@ export default function BomTab({
                   )}
                 </div>
               </th>
-              <th className="p-2">
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">
                 <div className="flex items-center justify-between gap-2">
                   <span>Raw Material Category</span>
                   {onOpenCreateMaster && (
@@ -123,7 +140,7 @@ export default function BomTab({
                   )}
                 </div>
               </th>
-              <th className="p-2">
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">
                 <div className="flex items-center justify-between gap-2">
                   <span>Raw Material Sub Category</span>
                   {onOpenCreateMaster && (
@@ -137,7 +154,7 @@ export default function BomTab({
                   )}
                 </div>
               </th>
-              <th className="p-2">
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">
                 <div className="flex items-center justify-between gap-2">
                   <span>Raw Material Name</span>
                   {onOpenCreateMaster && (
@@ -151,7 +168,7 @@ export default function BomTab({
                   )}
                 </div>
               </th>
-              <th className="p-2">
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">
                 <div className="flex items-center justify-between gap-2">
                   <span>Size</span>
                   {onOpenCreateMaster && (
@@ -165,22 +182,22 @@ export default function BomTab({
                   )}
                 </div>
               </th>
-              <th className="p-2">Buyer Consumption</th>
-              <th className="p-2">Buyer Price</th>
-              <th className="p-2">Internal Consumption</th>
-              <th className="p-2">Internal Price</th>
-              <th className="p-2">Value / Garment</th>
-              <th className="p-2">Required Qty</th>
-              <th className="p-2">Item Excess %</th>
-              <th className="p-2">Item Excess Qty</th>
-              <th className="p-2">Total Required Qty</th>
-              <th className="p-2">Action</th>
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Buyer Consumption</th>
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Buyer Price</th>
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Internal Consumption</th>
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Internal Price</th>
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Value / Garment</th>
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Required Qty</th>
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Item Excess %</th>
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Item Excess Qty</th>
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Total Required Qty</th>
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {calculatedBomRows.map((row: BomRow, index: number) => (
-              <tr key={`${index}-${row.rawMaterialName || "row"}`}>
-                <td className="p-2">
+              <tr key={`${index}-${row.rawMaterialName || "row"}`} className="bg-white">
+                <td className="p-2 align-top">
                   {renderMasterSelect ? renderMasterSelect(row.categoryType ?? "", (val) => updateBomRow(index, "categoryType", val), "raw-material-type", "Select type") : <input value={row.categoryType || ""} onChange={(e) => updateBomRow(index, "categoryType", e.target.value)} placeholder="Type" className="w-full rounded border border-slate-200 px-2 py-1 text-xs" />}
                 </td>
                 <td className="p-2">
@@ -221,7 +238,7 @@ export default function BomTab({
                     />
                   )}
                 </td>
-                <td className="p-2">
+                <td className="min-w-[180px] whitespace-nowrap p-2">
                   {renderMasterSelect ? (
                     renderMasterSelect(
                       row.size ?? "",
