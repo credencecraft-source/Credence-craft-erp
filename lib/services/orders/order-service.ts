@@ -68,6 +68,11 @@ export type OrderPageCursor = {
   id: string;
 };
 
+export function toDateOnly(value: Date | string | null | undefined) {
+  if (!value) return null;
+  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+}
+
 function decodeOrderCursor(cursor?: string): OrderPageCursor | null {
   if (!cursor) return null;
 
@@ -82,6 +87,20 @@ function decodeOrderCursor(cursor?: string): OrderPageCursor | null {
 
 export function encodeOrderCursor(cursor: OrderPageCursor) {
   return Buffer.from(JSON.stringify(cursor)).toString("base64url");
+}
+
+export async function reserveNextOrderNumber(
+  organizationId: string,
+  database: Prisma.TransactionClient | typeof prisma = prisma,
+) {
+  const counter = await database.organizationOrderCounter.upsert({
+    where: { organization_id: organizationId },
+    create: { organization_id: organizationId, current_value: 1 },
+    update: { current_value: { increment: 1 } },
+    select: { current_value: true },
+  });
+
+  return `OD-${counter.current_value}`;
 }
 
 export async function listOrders(organizationId: string, limit = 100) {
@@ -118,7 +137,10 @@ export async function listOrdersPage(
   const lastOrder = pageOrders.at(-1);
 
   return {
-    orders: pageOrders,
+    orders: pageOrders.map((order) => ({
+      ...order,
+      deliveryDate: toDateOnly(order.deliveryDate),
+    })),
     nextCursor: hasNextPage && lastOrder
       ? encodeOrderCursor({ createdAt: lastOrder.created_at.toISOString(), id: lastOrder.id })
       : null,
@@ -165,19 +187,70 @@ export async function deleteOrders(orderIds: string[], organizationId: string) {
   return { deletedCount: result.count };
 }
 
-export async function listBomItemsForOrganization(organizationId: string) {
+export async function listBomItemsPage(
+  organizationId: string,
+  options: { cursor?: string; limit?: number } = {},
+) {
+  const take = Math.min(Math.max(options.limit ?? 100, 1), 200);
+  let cursor: { createdAt: Date; id: string } | null = null;
+
+  if (options.cursor) {
+    try {
+      const decoded = JSON.parse(Buffer.from(options.cursor, "base64url").toString("utf8")) as { createdAt?: string; id?: string };
+      if (typeof decoded.createdAt === "string" && typeof decoded.id === "string") {
+        cursor = { createdAt: new Date(decoded.createdAt), id: decoded.id };
+      }
+    } catch {
+      cursor = null;
+    }
+  }
+
   const bomItems = await prisma.billOfMaterialItem.findMany({
     where: {
       order: {
         organization_id: organizationId,
       },
+      ...(cursor
+        ? {
+            OR: [
+              { created_at: { lt: cursor.createdAt } },
+              { created_at: cursor.createdAt, id: { lt: cursor.id } },
+            ],
+          }
+        : {}),
     },
-    include: {
-      order: true,
+    select: {
+      id: true,
+      order_id: true,
+      orderQty: true,
+      categoryType: true,
+      category: true,
+      subCategory: true,
+      rawMaterialName: true,
+      size: true,
+      consumption: true,
+      buyerConsumption: true,
+      buyerPrice: true,
+      internalConsumption: true,
+      internalPrice: true,
+      valuePerGarmentRm: true,
+      requiredQty: true,
+      itemWiseExcessPercentage: true,
+      itemWiseExcessQty: true,
+      totalRequiredQty: true,
+      created_at: true,
+      order: { select: { orderNo: true, styleName: true, brand: true, buyer: true } },
     },
+    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    take: take + 1,
   });
 
-  return bomItems.map((item) => ({
+  const hasNextPage = bomItems.length > take;
+  const pageItems = hasNextPage ? bomItems.slice(0, take) : bomItems;
+  const lastItem = pageItems.at(-1);
+
+  return {
+    bomItems: pageItems.map((item) => ({
     id: item.id,
     orderId: item.order_id,
     orderNo: item.order.orderNo,
@@ -200,7 +273,11 @@ export async function listBomItemsForOrganization(organizationId: string) {
     itemWiseExcessPercentage: item.itemWiseExcessPercentage,
     itemWiseExcessQty: item.itemWiseExcessQty,
     totalRequiredQty: item.totalRequiredQty,
-  }));
+    })),
+    nextCursor: hasNextPage && lastItem
+      ? encodeOrderCursor({ createdAt: lastItem.created_at.toISOString(), id: lastItem.id })
+      : null,
+  };
 }
 
 export async function createOrder(organizationId: string, input: CreateOrderInput) {
@@ -211,21 +288,12 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
   const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : null;
 
   return prisma.$transaction(async (transaction) => {
-    await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`merchandising-order:${organizationId}`}))`;
-
-    const existingOrders = await transaction.merchandisingOrder.findMany({
-      where: { organization_id: organizationId },
-      select: { orderNo: true },
-    });
-    const highestNumber = existingOrders.reduce((highest, order) => {
-      const match = /^OD[- ]?(\d+)$/i.exec(order.orderNo.trim());
-      return match ? Math.max(highest, Number(match[1])) : highest;
-    }, 0);
+    const orderNo = await reserveNextOrderNumber(organizationId, transaction);
 
     const createdOrder = await transaction.merchandisingOrder.create({
       data: {
         organization: { connect: { id: organizationId } },
-        orderNo: `OD-${highestNumber + 1}`,
+        orderNo,
         entityName: input.entityName ?? null,
         category: input.category ?? null,
         subCategory: input.subCategory ?? null,

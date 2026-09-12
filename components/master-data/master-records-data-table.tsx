@@ -109,8 +109,12 @@ export function MasterRecordsTable({
     if (!parentValue) return options;
     if (!parentOption) return [];
 
-    const parentIds = new Set([parentOption.id, parentOption.value_id].filter(Boolean));
-    return options.filter((option) => option.parent_id && parentIds.has(option.parent_id));
+    const parentIds = new Set(
+      [parentOption.id, parentOption.value_id]
+        .filter(Boolean)
+        .map((value) => String(value)),
+    );
+    return options.filter((option) => option.parent_id && parentIds.has(String(option.parent_id)));
   };
 
   const renderField = (
@@ -156,6 +160,58 @@ export function MasterRecordsTable({
         ? childRecords.filter((item) => item.parentId === editingRecord.value_id).map((item) => item.label)
         : value;
       const options = getLookupOptions(field, values);
+      if (field.multiple) {
+        const selectedValues = Array.isArray(selectedValue)
+          ? selectedValue.map(String)
+          : selectedValue
+            ? [String(selectedValue)]
+            : [];
+
+        return (
+          <fieldset key={field.key} className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <legend className="px-1 text-xs font-semibold text-slate-700">
+              {field.label}
+              {field.required ? " *" : ""}
+            </legend>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {options.map((option) => {
+                const checked = selectedValues.includes(option.label);
+                return (
+                  <label
+                    key={option.id}
+                    className={`flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 text-sm transition-colors ${
+                      checked
+                        ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      name={`field_${field.key}`}
+                      value={option.label}
+                      checked={checked}
+                      onChange={(event) => {
+                        const nextValue = event.target.checked
+                          ? [...selectedValues, option.label]
+                          : selectedValues.filter((item) => item !== option.label);
+                        const nextValues = { ...values, [field.key]: nextValue };
+                        for (const dependentField of fields.filter((candidate) => candidate.dependsOn === field.key)) {
+                          nextValues[dependentField.key] = dependentField.multiple ? [] : "";
+                        }
+                        setValues(nextValues);
+                      }}
+                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+            {options.length === 0 && <p className="text-xs text-slate-500">No {field.label.toLowerCase()} options available.</p>}
+            {field.required && <p className="text-[11px] text-slate-500">Select at least one.</p>}
+          </fieldset>
+        );
+      }
       return (
         <label key={field.key} className="block space-y-1">
           <span className="text-xs font-semibold text-slate-700">
@@ -164,20 +220,19 @@ export function MasterRecordsTable({
           </span>
           <select
             required={field.required}
-            multiple={field.multiple}
             name={`field_${field.key}`}
-            value={field.multiple ? (Array.isArray(selectedValue) ? selectedValue.map(String) : selectedValue ? [String(selectedValue)] : []) : String(selectedValue ?? "")}
+            value={String(selectedValue ?? "")}
             onChange={(event) => {
-              const nextValue = field.multiple ? Array.from(event.target.selectedOptions, (option) => option.value) : event.target.value;
+              const nextValue = event.target.value;
               const nextValues = { ...values, [field.key]: nextValue };
               for (const dependentField of fields.filter((candidate) => candidate.dependsOn === field.key)) {
                 nextValues[dependentField.key] = dependentField.multiple ? [] : "";
               }
               setValues(nextValues);
             }}
-            className={`w-full border border-slate-300 rounded-lg p-2 text-sm bg-white${field.multiple ? " min-h-28" : ""}`}
+            className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white"
           >
-            {!field.multiple && <option value="">Select {field.label}</option>}
+            <option value="">Select {field.label}</option>
             {options.map((option) => (
               <option key={option.id} value={option.label}>
                 {option.label}

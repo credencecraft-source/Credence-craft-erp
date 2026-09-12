@@ -47,20 +47,39 @@ export default function FinishedGoodsTab({
 
   useEffect(() => {
     const sizeGroup = String(form?.sizeGroup ?? "");
-    if (!sizeGroup || sizeGroup === previousSizeGroup.current) return;
+    if (!sizeGroup) {
+      previousSizeGroup.current = "";
+      setForm((current: any) => Array.isArray(current.rows) && current.rows.length > 0 ? { ...current, rows: [] } : current);
+      return;
+    }
 
-    const selectedGroup = (masterOptions["size-group"] ?? []).find((group: any) => group.label === sizeGroup);
-    const mappedSizes = selectedGroup?.sizes ?? [];
-    if (mappedSizes.length > 0) {
-      setForm((current: any) => {
-        const hasExistingRows = (current.rows ?? []).length > 0;
-        if (hasExistingRows) return current;
+    const selectedGroup = (masterOptions["size-group"] ?? []).find((group: any) => group.label === sizeGroup || group.id === sizeGroup || group.value_id === sizeGroup);
+    const mappedSizes = Array.isArray(selectedGroup?.sizes) ? selectedGroup.sizes : [];
+
+    setForm((current: any) => {
+      const currentRows = Array.isArray(current.rows) ? current.rows : [];
+      const existingMap = new Map(currentRows.map((row: any) => [String(row.size ?? "").trim(), row]));
+
+      const nextRows = mappedSizes.map((size: any) => {
+        const sizeLabel = String(size.label ?? size.name ?? size ?? "").trim();
+        const existingRow = sizeLabel ? existingMap.get(sizeLabel) : null;
         return {
-          ...current,
-          rows: mappedSizes.map((size: any) => ({ ...defaultSizeRow(), size: size.label })),
+          ...defaultSizeRow(),
+          ...(existingRow ?? {}),
+          size: sizeLabel,
         };
       });
-    }
+
+      if (nextRows.length === currentRows.length && currentRows.every((row: any, index: number) => String(row.size ?? "").trim() === String(nextRows[index]?.size ?? "").trim())) {
+        return current;
+      }
+
+      return {
+        ...current,
+        rows: nextRows,
+      };
+    });
+
     previousSizeGroup.current = sizeGroup;
   }, [form?.sizeGroup, masterOptions, setForm]);
 

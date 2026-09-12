@@ -1,6 +1,7 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import nodemailer from "nodemailer";
 
+import { decryptSecret, encryptSecret } from "@/lib/auth/secret-cryptography";
 import { prisma } from "@/lib/database/prisma-client";
 
 const CONFIGURATION_ID = "default";
@@ -18,27 +19,6 @@ type EmailConfigurationInput = {
   fromName: string;
   isActive: boolean;
 };
-
-function encryptionKey() {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret) throw new Error("AUTH_SECRET must be configured before saving email settings.");
-  return createHash("sha256").update(secret).digest();
-}
-
-function encryptSecret(value: string) {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
-  const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
-  return `${iv.toString("base64")}.${cipher.getAuthTag().toString("base64")}.${encrypted.toString("base64")}`;
-}
-
-function decryptSecret(value: string) {
-  const [ivValue, tagValue, encryptedValue] = value.split(".");
-  if (!ivValue || !tagValue || !encryptedValue) throw new Error("Stored email password is invalid.");
-  const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), Buffer.from(ivValue, "base64"));
-  decipher.setAuthTag(Buffer.from(tagValue, "base64"));
-  return Buffer.concat([decipher.update(Buffer.from(encryptedValue, "base64")), decipher.final()]).toString("utf8");
-}
 
 function otpHash(email: string, code: string) {
   const secret = process.env.AUTH_SECRET;

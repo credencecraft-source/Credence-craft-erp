@@ -84,21 +84,27 @@ export default function MerchandisingBomReportPage() {
   const organizationId = params?.organizationId ?? "demo-org";
 
   const [bomItems, setBomItems] = useState<BomReportRow[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [visibleReportFields, setVisibleReportFields] = useState<FilterableBomField[]>(
     reportFilterFields.map((field) => field.key),
   );
 
-  const loadBomItems = useCallback(async () => {
+  const loadBomItems = useCallback(async (cursor?: string) => {
     try {
+      if (cursor) setLoadingMore(true);
       const response = await fetch(
-        `/api/orders/bom?organizationId=${encodeURIComponent(organizationId)}`,
+        `/api/orders/bom?organizationId=${encodeURIComponent(organizationId)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         { cache: "no-store" },
       );
       const data = await response.json();
-      setBomItems(data?.bomItems ?? []);
+      setBomItems((current) => cursor ? [...current, ...(data?.bomItems ?? [])] : (data?.bomItems ?? []));
+      setNextCursor(data?.nextCursor ?? null);
     } catch (error) {
       console.error("Unable to load BOM report", error);
+    } finally {
+      setLoadingMore(false);
     }
   }, [organizationId]);
 
@@ -163,6 +169,16 @@ export default function MerchandisingBomReportPage() {
           }}
         />
       </Card>
+      {nextCursor && (
+        <button
+          type="button"
+          onClick={() => void loadBomItems(nextCursor)}
+          disabled={loadingMore}
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50"
+        >
+          {loadingMore ? "Loading..." : "Load more BOM rows"}
+        </button>
+      )}
     </div>
   );
 }

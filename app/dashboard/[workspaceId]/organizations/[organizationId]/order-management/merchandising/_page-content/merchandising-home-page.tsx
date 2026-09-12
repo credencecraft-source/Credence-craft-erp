@@ -357,7 +357,7 @@ export default function GMMerchandiserDashboardPage() {
                                   <span className="text-slate-500 ml-2">({ord.styleName || "No Style"})</span>
                                 </div>
                                 <div className="flex items-center gap-3">
-                                  <span className="text-slate-500">Delivery: {ord.deliveryDate}</span>
+                                  <span className="text-slate-500">Delivery: {ord.deliveryDate ? String(ord.deliveryDate).slice(0, 10) : "-"}</span>
                                   <span className="font-bold text-slate-900">{Number(ord.orderQty || 0).toLocaleString("en-IN")} pcs</span>
                                 </div>
                               </div>

@@ -1,1 +1,1 @@
-export { default } from "./_page-content/merchandising-home-page";
+export { default } from "./_page-content/merchandising-redirect-page";

@@ -12,6 +12,9 @@ export async function GET(
     const { organizationId, moduleKey } = await context.params;
     const { searchParams } = new URL(request.url);
     const includeInactive = searchParams.get("includeInactive") !== "false";
+    const search = searchParams.get("search") || undefined;
+    const requestedLimit = Number(searchParams.get("limit") || 100);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 200) : 100;
 
     if (!organizationId) {
       return NextResponse.json({ error: "Organization ID is required" }, { status: 400 });
@@ -32,7 +35,7 @@ export async function GET(
       const lookupValues = await Promise.all(
         lookupKeys.map(async (key) => [
           key,
-          await getMasterValuesForOrganization(organization.id, key, includeInactive),
+          await getMasterValuesForOrganization(organization.id, key, includeInactive, { limit }),
         ] as const),
       );
       const masterOptions = Object.fromEntries(lookupValues);
@@ -60,7 +63,7 @@ export async function GET(
       });
     }
 
-    const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive);
+    const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, { search, limit });
     return NextResponse.json(values);
   } catch (error: any) {
     console.error("Error fetching master data:", error);
@@ -108,16 +111,26 @@ export async function POST(
       return NextResponse.json({ error: `Invalid master definition for key: ${masterKey}` }, { status: 400 });
     }
 
+    const fields = body.fields && typeof body.fields === "object" ? body.fields : {};
+    const missingRequiredField = definition.fields.some((field) => {
+      if (!field.required) return false;
+      const value = fields[field.key];
+      return Array.isArray(value) ? value.length === 0 : value === null || value === undefined || String(value).trim() === "";
+    });
+    if (missingRequiredField) {
+      return NextResponse.json({ error: `${definition.label} is missing a required field.` }, { status: 400 });
+    }
+
     const newMasterValue = await createMasterValueForOrganization(organization.id, masterKey, {
       label: String(label).trim(),
       code: code ? String(code).trim() : null,
       description: description ? String(description).trim() : null,
       parentValueId: parentId || null,
-      fields: body.fields || {},
+      fields,
     });
 
     const multiLookupField = definition.fields.find((field) => field.type === "lookup" && field.multiple && field.lookupModuleKey);
-    const selectedValues = multiLookupField ? body.fields?.[multiLookupField.key] : [];
+    const selectedValues = multiLookupField ? fields[multiLookupField.key] : [];
     if (multiLookupField?.lookupModuleKey && Array.isArray(selectedValues)) {
       for (const selectedValue of [...new Set(selectedValues.map((value: unknown) => String(value).trim()).filter(Boolean))]) {
         await createMasterValueForOrganization(organization.id, multiLookupField.lookupModuleKey, {

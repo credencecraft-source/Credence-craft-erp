@@ -11,6 +11,6 @@ export default async function OrdersRedirectPage({
   const { workspaceId, organizationId } = await params;
 
   redirect(
-    `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising`
+    `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order`
   );
 }

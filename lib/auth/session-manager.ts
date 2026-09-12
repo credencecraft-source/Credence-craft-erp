@@ -19,7 +19,7 @@ export type SessionUser = {
 
 export const SESSION_COOKIE_NAME = "cc_session";
 const USE_DEV_USER_STORE = process.env.USE_DEV_USER_STORE === "true";
-const isDevBypass = USE_DEV_USER_STORE || !process.env.DATABASE_URL;
+const isDevBypass = process.env.NODE_ENV !== "production" && (USE_DEV_USER_STORE || !process.env.DATABASE_URL);
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export function signValue(value: string) {

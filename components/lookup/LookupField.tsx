@@ -45,9 +45,8 @@ export default function LookupField({
     if (!dependsOnValue && value) return;
     if (dependsOnValue === "") {
       onChange("");
-      setSearch("");
     }
-  }, [dependsOnValue]);
+  }, [dependsOnValue, onChange, value]);
 
   return (
     <div className="space-y-1">

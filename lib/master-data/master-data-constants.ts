@@ -81,28 +81,29 @@ async function resolveLookupId(organizationId: string, moduleKey: string, value:
 async function buildData(organizationId: string, moduleKey: string, fields: MasterFieldValues, label: string) {
   const definition = getMasterDefinition(moduleKey);
   if (!definition) throw new Error("Master module is not available.");
-  
-  const data: Record<string, unknown> = { 
-    organization_id: organizationId, 
-    [labelFields[moduleKey]]: label 
+
+  const data: Record<string, unknown> = {
+    organization_id: organizationId,
+    [labelFields[moduleKey]]: label,
   };
-  
-  for (const field of definition.fields) {
+
+  await Promise.all(definition.fields.map(async (field) => {
     const relationField = fieldColumns[moduleKey]?.[field.key];
-    if (!relationField || relationField === labelFields[moduleKey]) continue;
-    
+    if (!relationField || relationField === labelFields[moduleKey]) return;
+
     if (field.type === "lookup" && fields[field.key]) {
       const targetId = await resolveLookupId(organizationId, field.lookupModuleKey ?? "", fields[field.key]);
       if (targetId) {
         data[relationField] = targetId;
       }
-    } else {
-      const val = typedValue(field, fields[field.key]);
-      if (val !== null) {
-        data[relationField] = val;
-      }
+      return;
     }
-  }
+
+    const val = typedValue(field, fields[field.key]);
+    if (val !== null) {
+      data[relationField] = val;
+    }
+  }));
 
   if (moduleKey === "category" && !data["category_type_id"]) {
     const firstType = await delegates["category-type"].findFirst({ where: { organization_id: organizationId } });
@@ -110,12 +111,12 @@ async function buildData(organizationId: string, moduleKey: string, fields: Mast
       data["category_type_id"] = firstType.id;
     } else {
       const createdType = await delegates["category-type"].create({
-        data: { 
-          organization_id: organizationId, 
-          category_type: "Default", 
-          is_active: true, 
-          sort_order: 0 
-        }
+        data: {
+          organization_id: organizationId,
+          category_type: "Default",
+          is_active: true,
+          sort_order: 0,
+        },
       });
       data["category_type_id"] = createdType.id;
     }
@@ -138,11 +139,28 @@ async function getMasterValueById(organizationId: string, moduleKey: string, val
   return row ? { id: row.id, label: String(row[labelFields[moduleKey]] ?? "") } : null;
 }
 
-export async function getMasterValuesForOrganization(organizationId: string, moduleKey: string, includeInactive = false) {
+export async function getMasterValuesForOrganization(
+  organizationId: string,
+  moduleKey: string,
+  includeInactive = false,
+  options: { search?: string; limit?: number } = {},
+) {
   const definition = getMasterDefinition(moduleKey);
   const delegate = delegates[moduleKey];
   if (!definition || !delegate) return [];
-  const rows = await delegate.findMany({ where: { organization_id: organizationId, ...(includeInactive ? {} : { is_active: true }) }, orderBy: [{ sort_order: "asc" }, { [labelFields[moduleKey]]: "asc" }], take: 500 });
+  const search = options.search?.trim();
+  const limit = Math.min(Math.max(options.limit ?? 500, 1), 500);
+  const rows = await delegate.findMany({
+    where: {
+      organization_id: organizationId,
+      ...(includeInactive ? {} : { is_active: true }),
+      ...(search && labelFields[moduleKey]
+        ? { [labelFields[moduleKey]]: { contains: search, mode: "insensitive" } }
+        : {}),
+    },
+    orderBy: [{ sort_order: "asc" }, { [labelFields[moduleKey]]: "asc" }],
+    take: limit,
+  });
   const lookupKeys = definition.fields
     .filter((field) => field.type === "lookup" && field.lookupModuleKey)
     .map((field) => field.lookupModuleKey as string);
@@ -184,12 +202,15 @@ export async function createMasterValueForOrganization(organizationId: string, m
   const definition = getMasterDefinition(moduleKey);
   const delegate = delegates[moduleKey];
   if (!definition || !delegate) throw new Error("Master module is not available.");
+
   return prisma.$transaction(async (transaction) => {
-    const transactionDelegate = (transaction as unknown as Record<string, MasterDelegate>)[`master${moduleKey.split("-").map((part) => part[0].toUpperCase() + part.slice(1)).join("")}`];
+    const transactionDelegate =
+      (transaction as unknown as Record<string, MasterDelegate>)[`master${moduleKey.split("-").map((part) => part[0].toUpperCase() + part.slice(1)).join("")}`] ?? delegate;
+
     const data = await buildData(organizationId, moduleKey, input.fields ?? {}, input.label.trim());
-    
+
     if (input.parentValueId && parentColumns[moduleKey]) {
-      const parentModuleKey = definition.fields.find(f => f.type === "lookup")?.lookupModuleKey
+      const parentModuleKey = definition.fields.find((field) => field.type === "lookup")?.lookupModuleKey
         ?? (moduleKey === "sub-category" ? "category" : moduleKey === "size" ? "size-group" : "");
       if (parentModuleKey) {
         const parentId = await resolveLookupId(organizationId, parentModuleKey, input.parentValueId);
@@ -198,18 +219,21 @@ export async function createMasterValueForOrganization(organizationId: string, m
         }
       }
     }
-    data.is_active = false;
-    data.sort_order = await delegate.count({ where: { organization_id: organizationId } });
+
+    data.is_active = true;
+    data.sort_order = await transactionDelegate.count({ where: { organization_id: organizationId } });
 
     const labelKey = labelFields[moduleKey];
     let created: MasterRow;
 
-    const existing = labelKey ? await transactionDelegate.findFirst({
-      where: {
-        organization_id: organizationId,
-        [labelKey]: data[labelKey],
-      },
-    }) : null;
+    const existing = labelKey
+      ? await transactionDelegate.findFirst({
+          where: {
+            organization_id: organizationId,
+            [labelKey]: data[labelKey],
+          },
+        })
+      : null;
 
     if (existing) {
       created = await transactionDelegate.update({
@@ -223,7 +247,20 @@ export async function createMasterValueForOrganization(organizationId: string, m
     await transaction.approvalRequest.deleteMany({
       where: { organization_id: organizationId, entity_ref_id: created.value_id },
     });
-    await transaction.approvalRequest.create({ data: { organization_id: organizationId, module_key: moduleKey, module_name: definition.label, entity_type: "master", entity_key: moduleKey, entity_label: input.label.trim(), entity_ref_id: created.value_id, status: "pending", notes: `Master value pending approval for ${definition.label}.` } });
+    await transaction.approvalRequest.create({
+      data: {
+        organization_id: organizationId,
+        module_key: moduleKey,
+        module_name: definition.label,
+        entity_type: "master",
+        entity_key: moduleKey,
+        entity_label: input.label.trim(),
+        entity_ref_id: created.value_id,
+        status: "pending",
+        notes: `Master value pending approval for ${definition.label}.`,
+      },
+    });
+
     return created;
   });
 }
@@ -242,17 +279,34 @@ export async function updateMasterValue(organizationId: string, valueId: string,
 }
 
 export async function deleteMasterValue(organizationId: string, valueId: string) {
-  for (const delegate of Object.values(delegates)) {
+  for (const [moduleKey, delegate] of Object.entries(delegates)) {
     const existing = await delegate.findFirst({ where: { organization_id: organizationId, OR: [{ id: valueId }, { value_id: valueId }] } });
     if (existing) {
-      await prisma.$transaction(async (transaction) => {
-        await transaction.approvalRequest.deleteMany({ where: { organization_id: organizationId, entity_ref_id: existing.value_id } });
-        await delegate.delete({ where: { id: existing.id } });
-      });
-      return existing;
+      try {
+        await prisma.$transaction(async (transaction) => {
+          await transaction.approvalRequest.deleteMany({ where: { organization_id: organizationId, entity_ref_id: existing.value_id } });
+          await delegate.delete({ where: { id: existing.id } });
+        });
+        return { record: existing };
+      } catch (error) {
+        const errorCode = typeof error === "object" && error !== null && "code" in error ? error.code : null;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const isForeignKeyConflict = errorCode === "P2003"
+          || errorMessage.includes("violates foreign key constraint")
+          || errorMessage.includes("violates RESTRICT setting of foreign key constraint");
+
+        if (isForeignKeyConflict) {
+          return {
+            record: null,
+            error: `This ${getMasterDefinition(moduleKey)?.label.toLowerCase() ?? "master value"} cannot be deleted because it is used by other records.`,
+          };
+        }
+
+        throw error;
+      }
     }
   }
-  return null;
+  return { record: null };
 }
 
 export async function listApprovalRequestsForOrganization(organizationId: string) {
@@ -279,12 +333,12 @@ export async function updateApprovalRequestStatus(
     data: { status, reviewed_by: reviewer ?? null, reviewed_at: new Date() },
   });
 
-  if (status === "approved" && request.entity_ref_id) {
+  if (request.entity_ref_id) {
     const delegate = delegates[request.module_key];
     if (delegate) {
       const existing = await delegate.findFirst({ where: { organization_id: organizationId, OR: [{ id: request.entity_ref_id }, { value_id: request.entity_ref_id }] } });
       if (existing) {
-        await delegate.update({ where: { id: existing.id }, data: { is_active: true } });
+        await delegate.update({ where: { id: existing.id }, data: { is_active: status === "approved" } });
       }
     }
   }

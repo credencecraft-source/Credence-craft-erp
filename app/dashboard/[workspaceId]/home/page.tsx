@@ -12,7 +12,7 @@ import { OrganizationsGrid } from "./_components/organizations-grid";
 import { WorkspaceInvitationBell } from "./_components/workspace-invitation-bell";
 
 const isDevBypass =
-  process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL;
+  process.env.NODE_ENV !== "production" && (process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL);
 
 export default async function WorkspaceHomePage({
   params,

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { createOrder, deleteOrders, listOrdersPage, updateOrderWithDetails } from "@/lib/services/orders/order-service";
+import { createOrder, deleteOrders, listOrdersPage, toDateOnly, updateOrderWithDetails } from "@/lib/services/orders/order-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request) {
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     
     const organization = await requireOrganizationContext(user.id, String(organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
     const order = await createOrder(organization.id, body);
-    return NextResponse.json({ ok: true, order });
+    return NextResponse.json({ ok: true, order: { ...order, deliveryDate: toDateOnly(order.deliveryDate) } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to create order.";
     return NextResponse.json({ error: message }, { status: 400 });
@@ -50,7 +50,7 @@ export async function PUT(request: Request) {
     const organization = await requireOrganizationContext(user.id, String(organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
     const order = await updateOrderWithDetails(id, organization.id, payload);
 
-    return NextResponse.json({ ok: true, order });
+    return NextResponse.json({ ok: true, order: { ...order, deliveryDate: toDateOnly(order.deliveryDate) } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to update order.";
     return NextResponse.json({ error: message }, { status: 400 });

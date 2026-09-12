@@ -286,6 +286,9 @@ export async function addOrganizationMember(input: {
   actorUserId: string;
 }) {
   const actorMembership = await requireOrganizationAccess(input.actorUserId, input.organizationId, ["OWNER", "ADMIN"]);
+  if (input.role === "OWNER" || !(await isOrganizationRole(actorMembership.organization_id, input.role))) {
+    throw new Error("The selected organization role is not available.");
+  }
 
   return prisma.organizationMembership.create({
     data: {
@@ -305,6 +308,22 @@ export async function updateOrganizationMember(
   data: { role?: string; is_active?: boolean }
 ) {
   const actorMembership = await requireOrganizationAccess(actorUserId, organizationId, ["OWNER", "ADMIN"]);
+  const targetMembership = await prisma.organizationMembership.findFirst({
+    where: { id: membershipId, organization_id: actorMembership.organization_id },
+    select: { id: true, role: true },
+  });
+
+  if (!targetMembership) {
+    throw new Error("Organization member not found.");
+  }
+
+  if (targetMembership.role === "OWNER" || data.role === "OWNER") {
+    throw new Error("Owner membership changes require an explicit ownership transfer.");
+  }
+
+  if (data.role && !(await isOrganizationRole(actorMembership.organization_id, data.role))) {
+    throw new Error("The selected organization role is not available.");
+  }
 
   return prisma.organizationMembership.update({
     where: { id: membershipId, organization_id: actorMembership.organization_id },

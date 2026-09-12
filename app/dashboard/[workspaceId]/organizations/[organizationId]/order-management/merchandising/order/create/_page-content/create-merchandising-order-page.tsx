@@ -114,8 +114,8 @@ export default function CreateMerchandisingOrderPage() {
               <th className="p-3 w-10"><input type="checkbox" className="rounded border-slate-300" /></th>
               <th className="p-3">ORDER NO</th>
               <th className="p-3">ENTITY NAME</th>
-              <th className="p-3">CATEGORY</th>
-              <th className="p-3">SUB CATEGORY</th>
+              <th className="p-3">PRODUCT CATEGORY</th>
+              <th className="p-3">PRODUCT SUB CATEGORY</th>
               <th className="p-3">SEASON</th>
               <th className="p-3">ARTICLE</th>
               <th className="p-3">STYLE NAME</th>

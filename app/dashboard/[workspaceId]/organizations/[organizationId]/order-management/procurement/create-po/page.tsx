@@ -1,1 +1,1 @@
-export { default } from "../_page-content/create-purchase-order-page";
+export { default } from "../_page-content/style-wise-purchase-order-page";

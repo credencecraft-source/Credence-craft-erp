@@ -10,7 +10,7 @@ import { logoutSession, requireSessionUser } from "@/lib/auth/session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 import { listOrganizationsForUser } from "@/lib/services/organizations/organization-service";
 
-const isDevBypass = process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL;
+const isDevBypass = process.env.NODE_ENV !== "production" && (process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL);
 
 export default async function WorkspaceConfigurationPage({
   params,

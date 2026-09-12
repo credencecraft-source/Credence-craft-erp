@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, startTransition, useCallback } from "react";
+import { useEffect, useMemo, useState, startTransition, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
@@ -51,8 +51,8 @@ const reportFilterFields: Array<{
 }> = [
   { key: "orderNo", label: "Order No" },
   { key: "entityName", label: "Entity Name" },
-  { key: "category", label: "Category" },
-  { key: "subCategory", label: "Sub Category" },
+  { key: "category", label: "Product Category" },
+  { key: "subCategory", label: "Product Sub Category" },
   { key: "season", label: "Season" },
   { key: "article", label: "Article" },
   { key: "styleName", label: "Style Name" },
@@ -98,29 +98,40 @@ export default function MerchandisingOrdersPage() {
   const [visibleReportFields, setVisibleReportFields] = useState<FilterableOrderField[]>(
     reportFilterFields.map((field) => field.key),
   );
+  const lastLoadedAt = useRef(0);
 
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(async (signal?: AbortSignal, force = false) => {
+    const now = Date.now();
+    if (!force && now - lastLoadedAt.current < 1500) return;
+    lastLoadedAt.current = now;
+
     try {
       const response = await fetch(
         `/api/orders?organizationId=${encodeURIComponent(organizationId)}`,
-        { cache: "no-store" }
+        { cache: "no-store", signal },
       );
       const data = await response.json();
       setOrders(data?.orders ?? []);
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       console.error("Unable to load orders", error);
     }
   }, [organizationId]);
 
   useEffect(() => {
-    loadOrders();
+    const controller = new AbortController();
+    const initialLoad = window.setTimeout(() => {
+      void loadOrders(controller.signal, true);
+    }, 0);
 
     const handleFocus = () => {
-      loadOrders();
+      void loadOrders(undefined, false);
     };
 
     window.addEventListener("focus", handleFocus);
     return () => {
+      window.clearTimeout(initialLoad);
+      controller.abort();
       window.removeEventListener("focus", handleFocus);
     };
   }, [loadOrders]);

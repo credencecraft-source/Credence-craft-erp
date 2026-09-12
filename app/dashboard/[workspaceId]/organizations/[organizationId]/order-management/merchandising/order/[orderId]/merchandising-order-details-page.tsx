@@ -291,14 +291,24 @@ export default function MerchandisingOrderDetailsPage() {
   };
 
   const handleSizeGroupChange = (sizeGroup: string) => {
-    const selectedGroup = (masterOptions["size-group"] ?? []).find((group: any) => group.label === sizeGroup);
-    const mappedSizes = selectedGroup?.sizes ?? [];
+    const selectedGroup = (masterOptions["size-group"] ?? []).find((group: any) => group.label === sizeGroup || group.id === sizeGroup || group.value_id === sizeGroup);
+    const mappedSizes = Array.isArray(selectedGroup?.sizes) ? selectedGroup.sizes : [];
     setForm((current: any) => ({
       ...current,
       sizeGroup,
-      ...(mappedSizes.length > 0
-        ? { rows: mappedSizes.map((size: any) => ({ buyerSize: "", size: size.label, beforeExcessQty: "", excess: "", excessQty: "", totalQty: "", buyerPoPrice: "", exchangePrice: "", priceInInr: "" })) }
-        : {}),
+      rows: mappedSizes.length > 0
+        ? mappedSizes.map((size: any) => ({
+            buyerSize: "",
+            size: String(size.label ?? size.name ?? size ?? "").trim(),
+            beforeExcessQty: "",
+            excess: "",
+            excessQty: "",
+            totalQty: "",
+            buyerPoPrice: "",
+            exchangePrice: "",
+            priceInInr: "",
+          })).filter((row: any) => row.size)
+        : [],
     }));
   };
 
@@ -357,8 +367,18 @@ export default function MerchandisingOrderDetailsPage() {
         const parentOptions = quickMasterLookupOptions[parentField?.lookupModuleKey ?? ""] ?? [];
         const parentOption = parentOptions.find((option) => option.label === parentValue);
         if (parentOption) {
-          const parentIds = new Set([parentOption.id, parentOption.value_id].filter(Boolean));
-          options = options.filter((option) => parentIds.has(option.parent_id) || parentIds.has(option.parentValueId));
+          const parentIds = new Set(
+            [parentOption.id, parentOption.value_id]
+              .filter(Boolean)
+              .map((value) => String(value)),
+          );
+          options = options.filter((option) => {
+            const optionParentIds = [option.parent_id, option.parentValueId]
+              .filter(Boolean)
+              .map((value) => String(value));
+            return optionParentIds.some((value) => parentIds.has(value))
+              || option.parent_label === parentOption.label;
+          });
         } else if (parentValue) {
           options = [];
         }
@@ -553,6 +573,7 @@ export default function MerchandisingOrderDetailsPage() {
             orderLookups={orderLookups}
             onOpenCreateMaster={handleOpenCreateMaster}
             onSizeGroupChange={handleSizeGroupChange}
+            isCreateMode={!orderId}
           />
         )}
         {activeTab === "finishedGoods" && <FinishedGoodsTab form={form} setForm={setForm} masterOptions={masterOptions} onOpenCreateMaster={handleOpenCreateMaster} />}

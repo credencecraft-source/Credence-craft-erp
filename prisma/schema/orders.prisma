@@ -26,6 +26,7 @@ model MerchandisingOrder {
   bomItems        BillOfMaterialItem[]
   outgoingShares  OrderShare[]            @relation("OrderShareSourceOrder")
   acceptedShares  OrderShare[]            @relation("OrderShareAcceptedOrder")
+  groupedPurchaseOrderLines GroupedPurchaseOrderLine[]
 
   @@unique([organization_id, orderNo])
   @@index([organization_id, created_at])
@@ -74,9 +75,91 @@ model BillOfMaterialItem {
   totalRequiredQty Decimal?          @db.Decimal(12, 2)
   created_at      DateTime           @default(now()) @map("created_at")
   updated_at      DateTime           @updatedAt @map("updated_at")
+  groupedPurchaseOrderLines GroupedPurchaseOrderLine[]
 
   @@index([order_id])
   @@map("bill_of_material_items")
+}
+
+model GroupedPurchaseOrder {
+  id                String       @id @default(cuid())
+  organization_id   String
+  vendor_id         String
+  grouped_po_no     String       @db.VarChar(100)
+  status            String       @default("PENDING_PRICE_APPROVAL") @db.VarChar(50)
+  submitted_by      String?      @db.VarChar(255)
+  submitted_at      DateTime     @default(now())
+  approved_by       String?      @db.VarChar(255)
+  approved_at       DateTime?
+  rejection_reason  String?      @db.VarChar(500)
+  note              String?      @db.VarChar(1000)
+  raw_material      String?      @db.VarChar(255)
+  category_type     String?      @db.VarChar(255)
+  category          String?      @db.VarChar(255)
+  sub_category      String?      @db.VarChar(255)
+  brand             String?      @db.VarChar(255)
+  total_required_qty Decimal?    @db.Decimal(12, 2)
+  total_grouped_qty  Decimal?    @db.Decimal(12, 2)
+  no_of_styles       Int?
+  stock_uom          String?     @db.VarChar(100)
+  buying_uom         String?     @db.VarChar(100)
+  convert_value      Decimal?    @db.Decimal(12, 4)
+  round_of           Boolean     @default(false)
+  buying_qty         Decimal?    @db.Decimal(12, 4)
+  buying_qty_round   Decimal?    @db.Decimal(12, 4)
+  difference_round   Decimal?    @db.Decimal(12, 4)
+  moq_stock_uom      Decimal?    @db.Decimal(12, 4)
+  moq_buying         Decimal?    @db.Decimal(12, 4)
+  extra_buying_uom   Decimal?    @db.Decimal(12, 4)
+  buying_qty_total   Decimal?    @db.Decimal(12, 4)
+  vendor_price       Decimal?    @db.Decimal(12, 4)
+  vendor_price_inr   Decimal?    @db.Decimal(12, 4)
+  other_charges      Decimal?    @db.Decimal(12, 4)
+  other_charges_inr  Decimal?    @db.Decimal(12, 4)
+  currency           String?     @db.VarChar(100)
+  exchange_price     Decimal?    @db.Decimal(12, 4)
+  created_at        DateTime     @default(now())
+  updated_at        DateTime     @updatedAt
+  organization      Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  vendor            MasterVendor @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
+  lines             GroupedPurchaseOrderLine[]
+
+  @@unique([organization_id, grouped_po_no])
+  @@index([organization_id, status, created_at])
+  @@index([organization_id, vendor_id])
+  @@map("grouped_purchase_orders")
+}
+
+model GroupedPurchaseOrderLine {
+  id                       String                @id @default(cuid())
+  grouped_purchase_order_id String
+  source_bom_item_id      String
+  source_order_id         String
+  order_no                String?               @db.VarChar(100)
+  style_name              String?               @db.VarChar(255)
+  brand                   String?               @db.VarChar(255)
+  category                String?               @db.VarChar(255)
+  sub_category            String?               @db.VarChar(255)
+  item_name               String?               @db.VarChar(255)
+  category_type           String?               @db.VarChar(255)
+  internal_price_bom      Decimal?              @db.Decimal(12, 4)
+  internal_consumption    Decimal?              @db.Decimal(12, 4)
+  required_qty            Decimal               @db.Decimal(12, 2)
+  grouped_qty             Decimal               @db.Decimal(12, 2)
+  vendor_price            Decimal?              @db.Decimal(12, 4)
+  other_charges_per_item  Decimal?              @db.Decimal(12, 4)
+  total_extra             Decimal?              @db.Decimal(12, 4)
+  total_spend             Decimal?              @db.Decimal(12, 4)
+  created_at              DateTime              @default(now())
+  updated_at              DateTime              @updatedAt
+  groupedPurchaseOrder    GroupedPurchaseOrder @relation(fields: [grouped_purchase_order_id], references: [id], onDelete: Cascade)
+  sourceBomItem            BillOfMaterialItem   @relation(fields: [source_bom_item_id], references: [id], onDelete: Restrict)
+  sourceOrder              MerchandisingOrder  @relation(fields: [source_order_id], references: [id], onDelete: Restrict)
+
+  @@unique([source_bom_item_id])
+  @@index([grouped_purchase_order_id])
+  @@index([source_order_id])
+  @@map("grouped_purchase_order_lines")
 }
 
 model Subscription {

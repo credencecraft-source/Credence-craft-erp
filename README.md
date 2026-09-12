@@ -34,3 +34,18 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Production Requirements
+
+- Set `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, and a strong `AUTH_SECRET` in the deployment environment.
+- Never set `USE_DEV_USER_STORE=true` in production. The application only permits the development user store outside production.
+- Apply migrations before starting the application:
+
+```bash
+npx prisma migrate deploy
+npm run build
+npm start
+```
+
+- Database connection strings and usernames are encrypted with `AUTH_SECRET`. Rotate `AUTH_SECRET` only with a planned credential re-encryption procedure.
+- Order numbers use a tenant-scoped atomic counter. The migration initializes counters from existing numeric `OD-*` order numbers and leaves nonconforming legacy order numbers untouched.

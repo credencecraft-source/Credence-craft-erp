@@ -9,6 +9,7 @@ export default function OrderDetailsTab({
   orderLookups = [],
   onOpenCreateMaster,
   onSizeGroupChange,
+  isCreateMode = false,
 }: {
   form: any;
   setForm: any;
@@ -16,6 +17,7 @@ export default function OrderDetailsTab({
   orderLookups?: Array<{ key: string; lookupModuleKey?: string; dependsOn?: string }>;
   onOpenCreateMaster: (masterKey: string) => void;
   onSizeGroupChange?: (value: string) => void;
+  isCreateMode?: boolean;
 }) {
   const handleChange = (field: string, value: any) => {
     if (field === "sizeGroup" && onSizeGroupChange) {
@@ -130,13 +132,27 @@ export default function OrderDetailsTab({
     );
   };
 
+  const selectedSizeGroup = String(form.sizeGroup ?? "");
+  const sizeGroupOptions = Array.isArray(masterOptions["size-group"]) ? masterOptions["size-group"] : [];
+  const selectedGroup = sizeGroupOptions.find((group: any) => group.label === selectedSizeGroup || group.id === selectedSizeGroup || group.value_id === selectedSizeGroup);
+  const groupSizes = Array.isArray(selectedGroup?.sizes) ? selectedGroup.sizes.map((size: any) => size.label ?? size.name ?? String(size)).filter(Boolean) : [];
+
   return (
     <div className="space-y-6 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-      <h3 className="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2">
-        General Order Information
-      </h3>
+      <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-2">
+        <h3 className="text-sm font-bold text-slate-900">
+          General Order Information
+        </h3>
+        {!isCreateMode && form.orderNo ? (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-right">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">Order No</div>
+            <div className="text-sm font-bold text-emerald-900">{form.orderNo}</div>
+          </div>
+        ) : null}
+      </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-4 rounded-xl border border-emerald-200 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent p-4 shadow-sm sm:grid-cols-2">
+      <div className="mb-6 grid grid-cols-1 gap-4 rounded-xl border border-emerald-200 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent p-4 shadow-sm sm:grid-cols-2 xl:grid-cols-4">
+        {renderMasterSelect("Buyer", form.buyer, (val) => handleChange("buyer", val), "buyer", "Select buyer")}
         <div className="w-full">
           {renderMasterSelect(
             "Brand",
@@ -155,12 +171,21 @@ export default function OrderDetailsTab({
             "Select article"
           )}
         </div>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs font-semibold text-slate-700">Delivery Date</span>
+          <input
+            type="date"
+            value={form.deliveryDate ?? ""}
+            onChange={(e) => handleChange("deliveryDate", e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
+          />
+        </label>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {renderMasterSelect("Entity Name", form.entityName, (val) => handleChange("entityName", val), "entity", "Select entity")}
-        {renderMasterSelect("Category", form.category, (val) => handleChange("category", val), "category", "Select category")}
-        {renderMasterSelect("Sub Category", form.subCategory, (val) => handleChange("subCategory", val), "sub-category", "Select sub category")}
+        {renderMasterSelect("Product Category", form.category, (val) => handleChange("category", val), "category", "Select product category")}
+        {renderMasterSelect("Product Sub Category", form.subCategory, (val) => handleChange("subCategory", val), "sub-category", "Select product sub category")}
 
         <label className="flex flex-col gap-1.5">
           <span className="text-xs font-semibold text-slate-700">Style Name</span>
@@ -174,19 +199,22 @@ export default function OrderDetailsTab({
         </label>
 
         {renderMasterSelect("Colors", form.colors, (val) => handleChange("colors", val), "color", "Select color")}
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-semibold text-slate-700">Order No</span>
-          <input
-            type="text"
-            value={form.orderNo ?? ""}
-            disabled
-            placeholder="Auto-generated (OD-1, OD-2, OD-3...)"
-            className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs text-slate-500 shadow-sm"
-          />
-        </label>
         {renderMasterSelect("Season", form.season, (val) => handleChange("season", val), "season", "Select season")}
-        {renderMasterSelect("Buyer", form.buyer, (val) => handleChange("buyer", val), "buyer", "Select buyer")}
-        {renderMasterSelect("Size Group", form.sizeGroup, (val) => handleChange("sizeGroup", val), "size-group", "Select size group")}
+        <div className="flex flex-col gap-1.5">
+          {renderMasterSelect("Size Group", form.sizeGroup, (val) => handleChange("sizeGroup", val), "size-group", "Select size group")}
+          {selectedSizeGroup && groupSizes.length > 0 ? (
+            <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 p-2">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">Available sizes</div>
+              <div className="flex flex-wrap gap-1.5">
+                {groupSizes.map((size: string) => (
+                  <span key={size} className="rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[10px] font-medium text-emerald-800">
+                    {size}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
 
         <label className="flex items-center gap-2 pt-6">
           <input
@@ -221,17 +249,6 @@ export default function OrderDetailsTab({
             className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
           />
         </label>
-
-        <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-semibold text-slate-700">Delivery Date</span>
-          <input
-            type="date"
-            value={form.deliveryDate ?? ""}
-            onChange={(e) => handleChange("deliveryDate", e.target.value)}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
-          />
-        </label>
-
       </div>
     </div>
   );

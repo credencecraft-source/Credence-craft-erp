@@ -3,6 +3,7 @@ import { OrderShareStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
 import { requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { reserveNextOrderNumber } from "@/lib/services/orders/order-service";
 
 export async function createOrderShare(input: {
   orderId: string;
@@ -80,17 +81,12 @@ export async function acceptOrderShare(input: {
 
     if (share.target_workspace_user_id !== input.workspaceUserId) throw new Error("This order is not assigned to your buyer account.");
 
-    await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`merchandising-order:${destinationMembership.organization_id}`}))`;
-    const existingOrders = await transaction.merchandisingOrder.findMany({ where: { organization_id: destinationMembership.organization_id }, select: { orderNo: true } });
-    const highestNumber = existingOrders.reduce((highest, order) => {
-      const match = /^OD[- ]?(\d+)$/i.exec(order.orderNo.trim());
-      return match ? Math.max(highest, Number(match[1])) : highest;
-    }, 0);
+    const orderNo = await reserveNextOrderNumber(destinationMembership.organization_id, transaction);
     const source = share.sourceOrder;
     const order = await transaction.merchandisingOrder.create({
       data: {
         organization_id: destinationMembership.organization_id,
-        orderNo: `OD-${highestNumber + 1}`,
+        orderNo,
         entityName: source.entityName,
         category: source.category,
         subCategory: source.subCategory,

@@ -63,6 +63,14 @@ function readChildValues(formData: FormData, field: MasterFieldDefinition) {
   }
 }
 
+function hasMissingRequiredField(fields: Record<string, unknown>, definition: { fields: MasterFieldDefinition[] }) {
+  return definition.fields.some((field) => {
+    if (!field.required) return false;
+    const value = fields[field.key];
+    return Array.isArray(value) ? value.length === 0 : value === null || value === undefined || value === "";
+  });
+}
+
 async function saveChildValues(
   organizationId: string,
   parentValueId: string,
@@ -73,13 +81,21 @@ async function saveChildValues(
   const childModuleKey = childField?.childModuleKey ?? childField?.lookupModuleKey;
   if (!childField || !childModuleKey) return;
 
-  for (const value of readChildValues(formData, childField)) {
-    await createMasterValueForOrganization(organizationId, childModuleKey, {
-      label: value,
-      fields: { Size: value },
-      parentValueId,
-    });
-  }
+  const selectedValues = readChildValues(formData, childField);
+  const existingChildren = await getMasterValuesForOrganization(organizationId, childModuleKey, true);
+  const selectedSet = new Set(selectedValues);
+
+  await Promise.all(
+    existingChildren
+      .filter((child) => child.parent_id === parentValueId && !selectedSet.has(child.label))
+      .map((child) => deleteMasterValue(organizationId, child.value_id)),
+  );
+
+  await Promise.all(selectedValues.map((value) => createMasterValueForOrganization(organizationId, childModuleKey, {
+    label: value,
+    fields: { Size: value },
+    parentValueId,
+  })));
 }
 
 async function createMasterValueAction(formData: FormData) {
@@ -93,8 +109,12 @@ async function createMasterValueAction(formData: FormData) {
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  if (!workspaceId || !organizationId || !moduleKey || !label) {
+  if (!workspaceId || !organizationId || !moduleKey || !definition) {
     return;
+  }
+
+  if (!label || hasMissingRequiredField(fields, definition)) {
+    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent(`Complete all required ${definition.label.toLowerCase()} fields before saving.`)}`);
   }
 
   const user = await requireSessionUser();
@@ -114,12 +134,6 @@ async function createMasterValueAction(formData: FormData) {
   }
   await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
 
-  const moduleDefinition = definition;
-
-  if (!moduleDefinition) {
-    notFound();
-  }
-
   const created = await createMasterValueForOrganization(organization.id, moduleKey, {
     label,
     code: code || null,
@@ -127,7 +141,7 @@ async function createMasterValueAction(formData: FormData) {
     fields,
   });
 
-  await saveChildValues(organization.id, created.value_id, moduleDefinition, formData);
+  await saveChildValues(organization.id, created.value_id, definition, formData);
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
 }
@@ -144,7 +158,7 @@ async function updateMasterValueAction(formData: FormData) {
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  if (!workspaceId || !organizationId || !moduleKey || !valueId || !label) {
+  if (!workspaceId || !organizationId || !moduleKey || !valueId || !label || !definition || hasMissingRequiredField(fields, definition)) {
     return;
   }
 
@@ -164,10 +178,6 @@ async function updateMasterValueAction(formData: FormData) {
     notFound();
   }
   await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
-
-  if (!definition) {
-    notFound();
-  }
 
   const updated = await updateMasterValue(organization.id, valueId, {
     label,
@@ -216,17 +226,23 @@ async function deleteMasterValueAction(formData: FormData) {
     notFound();
   }
 
-  await deleteMasterValue(organization.id, valueId);
+  const deletionResult = await deleteMasterValue(organization.id, valueId);
+  if (deletionResult.error) {
+    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent(deletionResult.error)}`);
+  }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
 }
 
 export default async function MasterDataEditorPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ workspaceId: string; organizationId: string; moduleKey: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
   const { workspaceId, organizationId, moduleKey } = await params;
+  const { error } = await searchParams;
   const user = await requireSessionUser();
 
   if (!user.workspace_id) {
@@ -251,7 +267,7 @@ export default async function MasterDataEditorPage({
 
   const values = await getMasterValuesForOrganization(organization.id, moduleKey, true);
   const lookupKeys = [...new Set(definition.fields.flatMap((field) => field.lookupModuleKey ? [field.lookupModuleKey] : []))];
-  const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true)).map((item) => ({ id: item.value_id, value_id: item.value_id, label: item.label, parent_id: item.parent_id }))])));
+  const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true)).map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id }))])));
   const childModuleKey = definition.fields.find((field) => field.type === "child-list")?.childModuleKey
     ?? definition.fields.find((field) => field.type === "lookup" && field.multiple)?.lookupModuleKey;
   const childRecords = childModuleKey
@@ -275,6 +291,12 @@ export default async function MasterDataEditorPage({
           </Link>
         </div>
       </div>
+
+      {error ? (
+        <p className="mt-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800" role="alert">
+          {error}
+        </p>
+      ) : null}
 
       <MasterRecordsTable
         records={values.map((item) => ({
