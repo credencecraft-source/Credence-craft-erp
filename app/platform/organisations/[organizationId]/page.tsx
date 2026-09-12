@@ -1,0 +1,1 @@
+export { default } from "./_page-content/platform-organization-details-page";

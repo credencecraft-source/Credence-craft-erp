@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { ORGANIZATION_ROLES, updateOrganizationMember } from "@/lib/services/organizations/organization-service";
+import { updateOrganizationMember } from "@/lib/services/organizations/organization-service";
 
 export async function PATCH(
   request: Request,
@@ -14,7 +14,7 @@ export async function PATCH(
     const role = body.role;
     const isActive = body.isActive;
 
-    if (!ORGANIZATION_ROLES.includes(role) || typeof isActive !== "boolean") {
+    if (typeof role !== "string" || typeof isActive !== "boolean") {
       return NextResponse.json({ error: "A valid organization role and active status are required." }, { status: 400 });
     }
 

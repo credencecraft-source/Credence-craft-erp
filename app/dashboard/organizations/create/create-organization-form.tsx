@@ -3,7 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 
-import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
@@ -27,17 +26,13 @@ export default function CreateOrganizationForm({
 
   // Verification States
   const [email, setEmail] = useState("");
-  const [emailOtpSent, setEmailOtpSent] = useState(false);
-  const [emailVerified, setEmailVerified] = useState(false);
-
   const [mobile, setMobile] = useState("");
-  const [mobileOtpSent, setMobileOtpSent] = useState(false);
-  const [mobileVerified, setMobileVerified] = useState(false);
 
   const [gstNumber, setGstNumber] = useState("");
   const [loadingGst, setLoadingGst] = useState(false);
   const [gstError, setGstError] = useState("");
   const [isGstVerified, setIsGstVerified] = useState(false);
+  const [showGstSuccess, setShowGstSuccess] = useState(false);
 
   // Form Field States
   const [ownerName, setOwnerName] = useState("");
@@ -61,8 +56,8 @@ export default function CreateOrganizationForm({
 
   function validateWebsiteFormat(url: string) {
     if (!url) {
-      setWebsiteError("Website is required.");
-      return false;
+      setWebsiteError("");
+      return true;
     }
     const pattern = /^(https?:\/\/)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(\/.*)?$/;
     if (!pattern.test(url.trim())) {
@@ -75,10 +70,6 @@ export default function CreateOrganizationForm({
 
   async function handleVerifyGstAndSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-
-    if (!validateWebsiteFormat(companyWebsite)) {
-      return;
-    }
 
     if (!gstNumber || gstNumber.length !== 15) {
       setGstError("Please enter a valid 15-character GST number.");
@@ -118,7 +109,6 @@ export default function CreateOrganizationForm({
         setPinCode(fetchedPin);
         setIsGstVerified(true);
 
-        // Build and submit the form data via the Server Action
         const formData = new FormData();
         formData.append("role", "FOUNDER");
         formData.append("aboutBio", "");
@@ -130,9 +120,7 @@ export default function CreateOrganizationForm({
         formData.append("linkedIn", linkedIn);
         formData.append("companyWebsite", companyWebsite);
         formData.append("priorErp", priorErp);
-        if (priorErp === "OTHERS") {
-          formData.append("otherErpName", otherErpName);
-        }
+        if (priorErp === "OTHERS") formData.append("otherErpName", otherErpName);
         formData.append("gstNumber", gstNumber.trim().toUpperCase());
         formData.append("organizationName", fetchedOrgName);
         formData.append("addressLine1", fetchedAddr1);
@@ -143,6 +131,7 @@ export default function CreateOrganizationForm({
         formData.append("pinCode", fetchedPin);
 
         await action(formData);
+        setShowGstSuccess(true);
       } else {
         setGstError("❌ GST NOT FOUND or invalid response. Organization cannot be created.");
         setIsGstVerified(false);
@@ -195,51 +184,25 @@ export default function CreateOrganizationForm({
                   onChange={(e) => setOwnerName(e.target.value)}
                 />
 
-                {/* Email with OTP */}
-                <div className="flex items-end gap-2">
-                  <div className="flex-1">
-                    <Input
-                      name="organizationEmail"
-                      label="Email ID"
-                      required
-                      placeholder="contact@credencecraft.com"
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setEmailOtpSent(true)}
-                    disabled={emailVerified}
-                    className="mb-[2px] h-10 px-3 bg-emerald-600 text-white rounded-md text-xs font-medium hover:bg-emerald-700 disabled:bg-slate-400"
-                  >
-                    {emailVerified ? "Verified" : emailOtpSent ? "Verify OTP" : "View OTP"}
-                  </button>
-                </div>
+                <Input
+                  name="organizationEmail"
+                  label="Email ID"
+                  required
+                  placeholder="contact@credencecraft.com"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
 
-                {/* Mobile with OTP */}
-                <div className="flex items-end gap-2">
-                  <div className="flex-1">
-                    <Input
-                      name="mobileNo"
-                      label="Mobile No"
-                      required
-                      placeholder="9876543210"
-                      type="tel"
-                      value={mobile}
-                      onChange={(e) => setMobile(e.target.value)}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setMobileOtpSent(true)}
-                    disabled={mobileVerified}
-                    className="mb-[2px] h-10 px-3 bg-emerald-600 text-white rounded-md text-xs font-medium hover:bg-emerald-700 disabled:bg-slate-400"
-                  >
-                    {mobileVerified ? "Verified" : mobileOtpSent ? "Verify OTP" : "View OTP"}
-                  </button>
-                </div>
+                <Input
+                  name="mobileNo"
+                  label="Mobile No"
+                  required
+                  placeholder="9876543210"
+                  type="tel"
+                  value={mobile}
+                  onChange={(e) => setMobile(e.target.value)}
+                />
 
                 <Input
                   name="personalCity"
@@ -261,7 +224,6 @@ export default function CreateOrganizationForm({
                 <Input
                   name="linkedIn"
                   label="LinkedIn Profile"
-                  required
                   placeholder="https://linkedin.com/in/username"
                   value={linkedIn}
                   onChange={(e) => setLinkedIn(e.target.value)}
@@ -271,7 +233,6 @@ export default function CreateOrganizationForm({
                   <Input
                     name="companyWebsite"
                     label="Company Website"
-                    required
                     placeholder="https://credencecraft.com"
                     value={companyWebsite}
                     onChange={(e) => {
@@ -357,6 +318,33 @@ export default function CreateOrganizationForm({
             </div>
           </form>
         </Card>
+
+        {showGstSuccess && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true" aria-labelledby="gst-success-title">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl sm:p-8">
+              <div className="flex items-start gap-4">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xl font-bold text-emerald-700">✓</div>
+                <div>
+                  <h2 id="gst-success-title" className="text-xl font-bold text-slate-900">GST verified successfully</h2>
+                  <p className="mt-1 text-sm text-slate-600">Review the official GST details before creating your organization.</p>
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 text-sm sm:grid-cols-2">
+                <div className="sm:col-span-2"><p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">Organization</p><p className="mt-1 font-bold text-slate-900">{organizationName || "Not available"}</p></div>
+                <div><p className="text-xs text-slate-500">GST number</p><p className="mt-1 font-semibold text-slate-900">{gstNumber.toUpperCase()}</p></div>
+                <div><p className="text-xs text-slate-500">PIN code</p><p className="mt-1 font-semibold text-slate-900">{pinCode || "Not available"}</p></div>
+                <div><p className="text-xs text-slate-500">City</p><p className="mt-1 font-semibold text-slate-900">{city || "Not available"}</p></div>
+                <div><p className="text-xs text-slate-500">State</p><p className="mt-1 font-semibold text-slate-900">{state || "Not available"}</p></div>
+                <div className="sm:col-span-2"><p className="text-xs text-slate-500">Registered address</p><p className="mt-1 font-semibold text-slate-900">{addressLine1 || "Not available"}{addressLine2 ? `, ${addressLine2}` : ""}</p></div>
+              </div>
+
+              <div className="mt-6 flex justify-end gap-3">
+                <Link href={`/dashboard/${workspaceId}/home?success=organization-created`} className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700">Go to dashboard</Link>
+              </div>
+            </div>
+          </div>
+        )}
       </Section>
     </Page>
   );

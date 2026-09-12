@@ -24,6 +24,7 @@ interface Subscription {
   planId?: string;
   businessTypeId?: string;
   paymentStatus?: string;
+  serviceStatus?: string;
 }
 
 interface OrganizationPricingPlanPageProps {
@@ -109,8 +110,8 @@ export default function OrganizationPricingPlanPage({
 
   const handleProceedToCheckout = () => {
     const params = new URLSearchParams();
-    Object.entries(selections).forEach(([category, planId]) => {
-      params.append(category, planId);
+    Object.values(selections).forEach((planId) => {
+      params.append("planId", planId);
     });
     router.push(
       `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/checkout?${params.toString()}`
@@ -264,7 +265,15 @@ export default function OrganizationPricingPlanPage({
               (sub) =>
                 sub.planId === plan.id &&
                 sub.businessTypeId === matchedBusinessType?.id &&
-                sub.paymentStatus === "paid"
+                sub.paymentStatus === "paid" &&
+                sub.serviceStatus !== "inactive"
+            );
+
+            const matchedPendingSub = existingSubscriptions.some(
+              (sub) =>
+                sub.planId === plan.id &&
+                sub.businessTypeId === matchedBusinessType?.id &&
+                sub.paymentStatus === "pending"
             );
 
             return (
@@ -286,6 +295,11 @@ export default function OrganizationPricingPlanPage({
                       {matchedActiveSub && (
                         <span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-200 rounded-full uppercase tracking-wider">
                           Current Plan
+                        </span>
+                      )}
+                      {!matchedActiveSub && matchedPendingSub && (
+                        <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded-full uppercase tracking-wider">
+                          Awaiting payment
                         </span>
                       )}
                     </div>
@@ -332,14 +346,14 @@ export default function OrganizationPricingPlanPage({
 
                       <button
                         type="submit"
-                        disabled={matchedActiveSub}
+                        disabled={matchedActiveSub || matchedPendingSub}
                         className={`w-full rounded-lg py-2.5 text-xs font-semibold shadow-sm transition-colors ${
-                          matchedActiveSub
+                          matchedActiveSub || matchedPendingSub
                             ? "bg-slate-300 text-slate-500 cursor-not-allowed"
                             : "bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
                         }`}
                       >
-                        {matchedActiveSub ? "Current Plan Active" : "Activate"}
+                        {matchedActiveSub ? "Current Plan Active" : matchedPendingSub ? "Awaiting payment" : "Activate"}
                       </button>
                     </form>
                   ) : (
@@ -347,11 +361,12 @@ export default function OrganizationPricingPlanPage({
                       type="button"
                       onClick={() =>
                         !matchedActiveSub &&
+                        !matchedPendingSub &&
                         handleSelectPlan(plan.id, plan.price)
                       }
-                      disabled={matchedActiveSub}
+                      disabled={matchedActiveSub || matchedPendingSub}
                       className={`w-full rounded-lg py-2.5 text-xs font-semibold transition-colors ${
-                        matchedActiveSub
+                        matchedActiveSub || matchedPendingSub
                           ? "bg-slate-300 text-slate-500 cursor-not-allowed"
                           : isChosen
                           ? "bg-emerald-600 text-white shadow-sm cursor-pointer"
@@ -360,6 +375,8 @@ export default function OrganizationPricingPlanPage({
                     >
                       {matchedActiveSub
                         ? "Current Plan Active"
+                        : matchedPendingSub
+                        ? "Awaiting payment"
                         : isChosen
                         ? "Added to Cart"
                         : `Add to Cart (${tierName})`}

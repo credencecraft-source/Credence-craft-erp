@@ -1,0 +1,1 @@
+export { default } from "../../clients/_page-content/platform-clients-page";

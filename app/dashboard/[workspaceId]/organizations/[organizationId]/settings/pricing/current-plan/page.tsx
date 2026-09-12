@@ -106,7 +106,10 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
                 <th className="p-3 font-bold">Business Type</th>
                 <th className="p-3 font-bold">Plan</th>
-                <th className="p-3 font-bold">Duration</th>
+                <th className="p-3 font-bold">Start Date</th>
+                <th className="p-3 font-bold">End Date</th>
+                <th className="p-3 font-bold">Term</th>
+                <th className="p-3 font-bold">Amount</th>
                 <th className="p-3 font-bold">Payment Type</th>
                 <th className="p-3 font-bold">Payment Status</th>
                 <th className="p-3 font-bold">Subscription / Service Status</th>
@@ -165,7 +168,9 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                   const isDateValid = !endDate || endDate >= today;
                   const isPaid = paymentStatus === "paid";
 
-                  const isActive = rawStatus === "active" || rawStatus === "enabled" || (!rawStatus && isPaid && isDateValid);
+                  const serviceStatus = String(sub.serviceStatus || sub.service_status || rawStatus || "").toLowerCase();
+                  const isActive = isPaid && isDateValid && serviceStatus !== "inactive" && serviceStatus !== "pending";
+                  const paymentLabel = paymentStatus === "pending" ? "Awaiting payment" : paymentStatus;
 
                   return (
                     <tr key={sub.id || sub._id || `sub-${idx}`} className="hover:bg-slate-50/50">
@@ -179,7 +184,10 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                           {planName}
                         </span>
                       </td>
-                      <td className="p-3 text-slate-600">{startDate} to {endDate || "—"}</td>
+                      <td className="p-3 text-slate-600">{startDate}</td>
+                      <td className="p-3 text-slate-600">{endDate || "—"}</td>
+                      <td className="p-3 text-slate-600">{sub.billingMonths ? `${sub.billingMonths} months` : "—"}</td>
+                      <td className="p-3 text-slate-600">{sub.totalAmount != null ? `₹${Number(sub.totalAmount).toLocaleString("en-IN")}` : "—"}</td>
                       <td className="p-3">
                         <span className="font-semibold text-slate-700">{paymentType}</span>
                       </td>
@@ -189,7 +197,7 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                             ? "bg-emerald-50 text-emerald-700 border border-emerald-200" 
                             : "bg-amber-50 text-amber-700 border border-amber-200"
                         }`}>
-                          {paymentStatus}
+                          {paymentLabel}
                         </span>
                       </td>
                       <td className="p-3">
@@ -221,7 +229,7 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                 })
               ) : (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-500 italic">
+                  <td colSpan={9} className="p-6 text-center text-slate-500 italic">
                     No active subscriptions found.
                   </td>
                 </tr>

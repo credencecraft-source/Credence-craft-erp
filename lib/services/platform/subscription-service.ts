@@ -79,6 +79,34 @@ export async function createSubscription(data: {
   };
 }
 
+export async function createPendingSubscription(data: {
+  organizationId: string;
+  organizationName?: string;
+  businessTypeId: string;
+  planId: string;
+  monthlyPrice: number;
+  billingMonths: 6 | 12;
+}) {
+  const subtotalAmount = data.monthlyPrice * data.billingMonths;
+  const gstAmount = subtotalAmount * 0.18;
+  const totalAmount = subtotalAmount + gstAmount;
+
+  return prisma.subscription.create({
+    data: {
+      organization_id: data.organizationId,
+      organization_name: data.organizationName || null,
+      business_type_id: data.businessTypeId,
+      plan_id: data.planId,
+      payment_status: "pending",
+      service_status: "inactive",
+      billing_months: data.billingMonths,
+      subtotal_amount: subtotalAmount,
+      gst_amount: gstAmount,
+      total_amount: totalAmount,
+    },
+  });
+}
+
 export async function updateSubscription(
   id: string,
   data: {
@@ -280,6 +308,16 @@ export async function updateSubscriptionStatus(id: string, paymentStatus: string
   return prisma.subscription.update({
     where: { id },
     data: { payment_status: paymentStatus.toLowerCase() },
+  });
+}
+
+export async function approveSubscription(id: string) {
+  return prisma.subscription.update({
+    where: { id },
+    data: {
+      payment_status: "paid",
+      service_status: "active",
+    },
   });
 }
 

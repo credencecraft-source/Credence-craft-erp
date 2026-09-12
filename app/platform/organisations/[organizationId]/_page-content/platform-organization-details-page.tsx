@@ -1,0 +1,1 @@
+export { default } from "../../../clients/[organizationId]/_page-content/platform-organization-details-page";

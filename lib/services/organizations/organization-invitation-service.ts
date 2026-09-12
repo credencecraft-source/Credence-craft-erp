@@ -1,8 +1,8 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { OrganizationInvitationStatus, OrganizationRole as PrismaOrganizationRole } from "@prisma/client";
+import { OrganizationInvitationStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
-import { requireOrganizationAccess, type OrganizationRole } from "./organization-service";
+import { requireOrganizationAccess, requireOrganizationPermission } from "./organization-service";
 
 const INVITATION_DAYS = 7;
 
@@ -36,11 +36,13 @@ export async function createStandaloneUser(input: {
 export async function createOrganizationInvitation(input: {
   organizationId: string;
   inviteeUserId: string;
-  role: OrganizationRole;
+  role: string;
   invitedByUserId: string;
 }) {
-  const actorMembership = await requireOrganizationAccess(input.invitedByUserId, input.organizationId, ["OWNER", "ADMIN"]);
+  const actorMembership = await requireOrganizationPermission(input.invitedByUserId, input.organizationId, "MANAGE_USERS");
   const organizationId = actorMembership.organization_id;
+  const role = await prisma.organizationRoleDefinition.findUnique({ where: { organization_id_role_key: { organization_id: organizationId, role_key: input.role } } });
+  if (!role) throw new Error("The selected organization role was not found.");
   const existing = await prisma.organizationInvitation.findFirst({
     where: { organization_id: organizationId, invitee_user_id: input.inviteeUserId, status: OrganizationInvitationStatus.PENDING, expires_at: { gt: new Date() } },
   });
@@ -59,7 +61,7 @@ export async function createOrganizationInvitation(input: {
       data: {
         id: randomUUID(), token, token_hash: createHash("sha256").update(token).digest("hex"), recipient_email: invitee.email, organization_id: organizationId,
         invitee_user_id: input.inviteeUserId, invited_by_user_id: input.invitedByUserId,
-        role: input.role as PrismaOrganizationRole, expires_at: new Date(Date.now() + INVITATION_DAYS * 86400000),
+        role: input.role, expires_at: new Date(Date.now() + INVITATION_DAYS * 86400000),
       }, include: { organization: { select: { organization_name: true, organization_id: true } } },
     });
     await transaction.workspaceNotification.create({

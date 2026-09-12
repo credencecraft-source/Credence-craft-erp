@@ -1,5 +1,3 @@
-export const DEV_OTP = process.env.DEV_OTP || "1234";
-
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function normalizeEmail(value: string) {

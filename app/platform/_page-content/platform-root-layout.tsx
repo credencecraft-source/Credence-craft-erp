@@ -10,16 +10,25 @@ import {
   CreditCard,
   Layers3,
   ChevronDown,
+  LifeBuoy,
+  Mail,
 } from "lucide-react";
 import Sidebar from "@/components/ui/Sidebar";
 
 const NAV_SECTIONS = [
   {
-    title: "Clients",
+    title: "Organisations",
     icon: Users,
     items: [
-      { label: "Clients", href: "/platform/clients", icon: Building2 },
+      { label: "Organisations", href: "/platform/organisations", icon: Building2 },
       { label: "Subscriptions", href: "/platform/subscriptions", icon: CreditCard },
+    ],
+  },
+  {
+    title: "Workspace",
+    icon: Users,
+    items: [
+      { label: "Workspace Users", href: "/platform/workspace-users", icon: Users },
     ],
   },
   {
@@ -35,6 +44,20 @@ const NAV_SECTIONS = [
     items: [
       { label: "Business Types", href: "/platform/business-types", icon: Building2 },
       { label: "Plans", href: "/platform/plans", icon: Package },
+    ],
+  },
+  {
+    title: "Support",
+    icon: LifeBuoy,
+    items: [
+      { label: "Support Tickets", href: "/platform/support-tickets", icon: LifeBuoy },
+    ],
+  },
+  {
+    title: "Settings",
+    icon: Mail,
+    items: [
+      { label: "Email and OTP", href: "/platform/settings/email", icon: Mail },
     ],
   },
 ] as const;

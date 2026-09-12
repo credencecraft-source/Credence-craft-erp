@@ -4,7 +4,6 @@ import { NextResponse } from "next/server";
 
 import { createSessionToken, SESSION_COOKIE_NAME } from "@/lib/auth/session-manager";
 import {
-  DEV_OTP,
   isValidEmail,
   isValidFullName,
   isValidProfileName,
@@ -12,8 +11,12 @@ import {
   normalizeFullName,
   normalizeProfileName,
 } from "@/lib/auth/validation-rules";
+import { verifyEmailOtp } from "@/lib/services/platform/platform-email-configuration-service";
 import { getDevUser, hasDevProfileName, setDevUser } from "@/lib/dev/dev-user-store-mock";
 import { prisma } from "@/lib/database/prisma-client";
+import { setPlatformSessionCookie } from "@/lib/auth/platform-session-manager";
+
+const SUPPORT_EMAIL = "jassimtkd@gmail.com";
 
 const USE_DEV_USER_STORE = process.env.USE_DEV_USER_STORE === "true";
 const isDevBypass =
@@ -57,11 +60,37 @@ export async function POST(request: Request) {
     const otp = String(body.otp || "").trim();
     const mode = String(body.mode || "login").trim();
 
+    if (mode !== "login" && mode !== "register" && mode !== "support") {
+      return NextResponse.json(
+        { error: "Invalid authentication mode." },
+        { status: 400 },
+      );
+    }
+
     if (!isValidEmail(email) || !otp) {
       return NextResponse.json(
         { error: "Please enter a valid email address and OTP." },
         { status: 400 }
       );
+    }
+
+    if (mode === "support") {
+      if (email !== SUPPORT_EMAIL) {
+        return NextResponse.json({ error: "That email address is not registered for support login." }, { status: 403 });
+      }
+
+      if (!(await verifyEmailOtp(email, otp, "SUPPORT"))) {
+        return NextResponse.json({ error: "Invalid OTP." }, { status: 401 });
+      }
+
+      const admin = await prisma.platformAdmin.findUnique({ where: { email: SUPPORT_EMAIL } });
+      if (!admin || !admin.is_active) {
+        return NextResponse.json({ error: "Support login is not available for this email address." }, { status: 403 });
+      }
+
+      await prisma.platformAdmin.update({ where: { id: admin.id }, data: { last_login_at: new Date() } });
+      await setPlatformSessionCookie(admin.id);
+      return NextResponse.json({ ok: true, redirectTo: "/platform/organisations" });
     }
 
     if (!process.env.DATABASE_URL && !isDevBypass) {
@@ -74,7 +103,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (otp !== DEV_OTP) {
+    if (!(await verifyEmailOtp(email, otp))) {
       return NextResponse.json({ error: "Invalid OTP." }, { status: 401 });
     }
 
@@ -150,11 +179,6 @@ export async function POST(request: Request) {
               last_login_at: new Date(),
             },
           });
-    } else {
-      return NextResponse.json(
-        { error: "Invalid authentication mode." },
-        { status: 400 }
-      );
     }
 
     if (!user) {

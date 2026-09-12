@@ -6,6 +6,7 @@ import {
   logoutPlatformSession,
   requirePlatformSessionAdmin,
 } from "@/lib/auth/platform-session-manager";
+import PlatformRootLayoutClient from "./_page-content/platform-root-layout";
 
 export default async function PlatformRootLayout({
   children,
@@ -33,7 +34,10 @@ export default async function PlatformRootLayout({
           </form>
         </Navbar>
 
-        <main className="flex-1 p-4 sm:p-6">{children}</main>
+        <div className="flex min-h-0 flex-1">
+          <PlatformRootLayoutClient />
+          <main className="min-w-0 flex-1 p-4 sm:p-6">{children}</main>
+        </div>
       </div>
     </div>
   );

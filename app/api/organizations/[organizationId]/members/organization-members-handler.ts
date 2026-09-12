@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { listOrganizationMembers, ORGANIZATION_ROLES } from "@/lib/services/organizations/organization-service";
+import { listOrganizationMembers } from "@/lib/services/organizations/organization-service";
 import { createOrganizationInvitation } from "@/lib/services/organizations/organization-invitation-service";
 
 export async function GET(_request: Request, context: { params: Promise<{ organizationId: string }> }) {
@@ -24,7 +24,7 @@ export async function POST(request: Request, context: { params: Promise<{ organi
     const workspaceUserId = typeof body.workspaceUserId === "string" ? body.workspaceUserId : (typeof body.userId === "string" ? body.userId : "");
     const role = body.role;
 
-    if (!workspaceUserId || !ORGANIZATION_ROLES.includes(role)) {
+    if (!workspaceUserId || typeof role !== "string") {
       return NextResponse.json({ error: "A valid workspace user ID and organization role are required." }, { status: 400 });
     }
 

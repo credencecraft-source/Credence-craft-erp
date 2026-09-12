@@ -61,11 +61,11 @@ export default async function Page({ params }: PageProps) {
       await activatePlanForBusinessType({
         organizationId: actionOrganization.id,
         businessTypeId: businessTypeId || "",
-        start_date: startDate,
-        end_date: endDate,
-        payment_status: "paid",
+        startDate,
+        endDate,
+        paymentStatus: "paid",
         planId,
-      } as any);
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to activate plan.";
       redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan?error=${encodeURIComponent(message)}`);

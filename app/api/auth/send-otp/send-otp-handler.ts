@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import {
-  DEV_OTP,
   isValidEmail,
   isValidFullName,
   isValidProfileName,
@@ -9,8 +8,12 @@ import {
   normalizeFullName,
   normalizeProfileName,
 } from "@/lib/auth/validation-rules";
+import { issueEmailOtp } from "@/lib/services/platform/platform-email-configuration-service";
 import { getDevUser, hasDevProfileName } from "@/lib/dev/dev-user-store-mock";
 import { prisma } from "@/lib/database/prisma-client";
+import { ensurePlatformDefaults } from "@/lib/services/platform/platform-bootstrap-service";
+
+const SUPPORT_EMAIL = "jassimtkd@gmail.com";
 
 const USE_DEV_USER_STORE = process.env.USE_DEV_USER_STORE === "true";
 const isDevBypass =
@@ -60,6 +63,21 @@ export async function POST(request: Request) {
       );
     }
 
+    if (mode === "support") {
+      if (email !== SUPPORT_EMAIL) {
+        return NextResponse.json({ error: "That email address is not registered for support login." }, { status: 403 });
+      }
+
+      await ensurePlatformDefaults();
+      const admin = await prisma.platformAdmin.findUnique({ where: { email: SUPPORT_EMAIL } });
+      if (!admin || !admin.is_active) {
+        return NextResponse.json({ error: "Support login is not available for this email address." }, { status: 403 });
+      }
+
+      await issueEmailOtp(email, "SUPPORT");
+      return NextResponse.json({ ok: true, message: "OTP sent." });
+    }
+
     if (!process.env.DATABASE_URL && !isDevBypass) {
       return NextResponse.json(
         {
@@ -95,12 +113,8 @@ export async function POST(request: Request) {
         );
       }
 
-      return NextResponse.json({
-        ok: true,
-        userExists: false,
-        ...(isDevBypass ? { devMode: true, devOtp: DEV_OTP } : {}),
-        message: "OTP sent.",
-      });
+      await issueEmailOtp(email);
+      return NextResponse.json({ ok: true, userExists: false, message: "OTP sent." });
     }
 
     if (mode !== "login") {
@@ -120,16 +134,12 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({
-      ok: true,
-      userExists: true,
-      ...(isDevBypass ? { devMode: true, devOtp: DEV_OTP } : {}),
-      message: "OTP sent.",
-    });
-  } catch {
+    await issueEmailOtp(email);
+    return NextResponse.json({ ok: true, userExists: true, message: "OTP sent." });
+  } catch (error) {
     return NextResponse.json(
-      { error: "Unable to send OTP." },
-      { status: 500 }
+      { error: error instanceof Error ? error.message : "Unable to send OTP." },
+      { status: 500 },
     );
   }
 }

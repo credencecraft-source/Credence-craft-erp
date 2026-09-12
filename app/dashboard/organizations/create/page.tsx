@@ -47,7 +47,6 @@ export default async function CreateOrganizationPage({
       redirect(`/dashboard/organizations/create?error=1&message=${encodeURIComponent(message)}`);
     }
 
-    redirect("/dashboard/");
   }
 
   return (

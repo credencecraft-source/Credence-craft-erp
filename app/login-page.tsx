@@ -28,7 +28,6 @@ export default function LoginPage() {
   const [otpSent, setOtpSent] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
-  const [supportPassword, setSupportPassword] = useState("");
 
   function switchMode(nextMode: "login" | "register" | "support") {
     setMode(nextMode);
@@ -103,7 +102,7 @@ export default function LoginPage() {
           mode,
           fullName,
           profileName,
-          email,
+          email: trimmedEmail,
         }),
       });
 
@@ -121,45 +120,10 @@ export default function LoginPage() {
       }
 
       setOtpSent(true);
-      setMessage(payload.devOtp ? `Development OTP: ${payload.devOtp}` : "OTP sent.");
+      setMessage("OTP sent to your email. It expires in 10 minutes.");
     } catch (error) {
       const err = error as Error;
       setMessage(err.message || "Something went wrong.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function signInSupport() {
-    const trimmedEmail = email.trim();
-
-    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail) || !supportPassword) {
-      setMessage("Please enter a valid email address and password.");
-      return;
-    }
-
-    setLoading(true);
-    setMessage("");
-
-    try {
-      const response = await fetch("/api/platform/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: trimmedEmail, password: supportPassword }),
-      });
-
-      const payload = await parseJsonResponse(response);
-
-      if (!response.ok) {
-        throw new Error(payload.error || "Unable to sign in.");
-      }
-
-      if (typeof window !== "undefined") {
-        window.location.assign(payload.redirectTo || "/platform");
-      }
-    } catch (error) {
-      const err = error as Error;
-      setMessage(err.message || "Sign in failed.");
     } finally {
       setLoading(false);
     }
@@ -185,7 +149,7 @@ export default function LoginPage() {
           mode,
           fullName,
           profileName,
-          email,
+          email: trimmedEmail,
           otp,
         }),
       });
@@ -245,20 +209,20 @@ export default function LoginPage() {
                       type="email"
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
-                      placeholder="support@company.com"
+                      placeholder="Enter your support email"
                     />
-
-                    <Input
-                      label="Password"
-                      type="password"
-                      value={supportPassword}
-                      onChange={(event) => setSupportPassword(event.target.value)}
-                      placeholder="••••••••"
-                    />
-
-                    <Button onClick={signInSupport} disabled={loading} className="mt-2 w-full">
-                      {loading ? "Signing in..." : "Sign in to platform"}
-                    </Button>
+                    {!otpSent ? (
+                      <Button onClick={requestOtp} disabled={loading} className="mt-2 w-full">
+                        {loading ? "Sending..." : "Send OTP"}
+                      </Button>
+                    ) : (
+                      <>
+                        <Input label="OTP" type="text" value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="6-digit code" />
+                        <Button onClick={verifyOtp} disabled={loading} className="mt-2 w-full">
+                          {loading ? "Verifying..." : "Verify and continue"}
+                        </Button>
+                      </>
+                    )}
 
                     {message && (
                       <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700" role="status">
@@ -314,7 +278,7 @@ export default function LoginPage() {
                       type="text"
                       value={otp}
                       onChange={(event) => setOtp(event.target.value)}
-                      placeholder="1234"
+                      placeholder="6-digit code"
                     />
 
                     <Button onClick={verifyOtp} disabled={loading} className="mt-2 w-full">

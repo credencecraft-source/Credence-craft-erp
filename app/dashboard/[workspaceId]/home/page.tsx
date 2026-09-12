@@ -79,8 +79,12 @@ export default async function WorkspaceHomePage({
     <Page className="max-w-7xl px-4 py-8">
       <Section className="space-y-8">
         {successMessage && (
-          <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900 shadow-sm" role="status">
-            <span>Organization created successfully.</span>
+          <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-emerald-950 shadow-sm" role="status">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-bold text-white">✓</div>
+            <div>
+              <p className="text-sm font-bold">Organization created successfully</p>
+              <p className="mt-1 text-xs text-emerald-800">Your organization is ready and awaiting approval.</p>
+            </div>
           </div>
         )}
 

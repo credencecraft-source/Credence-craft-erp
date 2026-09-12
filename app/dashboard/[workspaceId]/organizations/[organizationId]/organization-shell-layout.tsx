@@ -5,10 +5,11 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { MasterModuleWrapper } from "@/components/master-data/master-module-wrapper";
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
-import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
 import { ensureFreePlanSubscriptionsForOrganization } from "@/lib/services/platform/subscription-service";
 import { requireSessionUser } from "@/lib/auth/session-manager"; // Fixed typo (removed trailing 's')
+import { PendingOrganizationPrompt } from "@/components/organizations/pending-organization-prompt";
 
 type OrganizationShellLayoutProps = {
   children: React.ReactNode;
@@ -56,8 +57,21 @@ export default async function OrganizationShellLayout({
     redirect(`/dashboard/${workspaceId}/home`);
   }
 
+  if (organization.approval_status !== "APPROVED") {
+    return <PendingOrganizationPrompt organizationId={organization.organization_id} />;
+  }
+
   if (currentPath.includes("/settings")) {
-    await requireOrganizationAccess(user.id, organizationId, ["OWNER", "ADMIN"]);
+    const requiredPermission = currentPath.includes("/settings/roles")
+      ? "MANAGE_ROLES"
+      : currentPath.includes("/settings/users")
+        ? "MANAGE_USERS"
+        : currentPath.includes("/settings/reports")
+          ? "VIEW_REPORTS"
+          : currentPath.includes("/settings/master-data")
+            ? "MANAGE_MASTER_DATA"
+            : "ORGANIZATION_SETTINGS";
+    await requireOrganizationPermission(user.id, organizationId, requiredPermission);
   }
 
   await validateOrganizationAccess(organization.organization_id, currentPath);

@@ -30,7 +30,7 @@ export async function POST(request: Request) {
 
     await setPlatformSessionCookie(admin.id);
 
-    return NextResponse.json({ redirectTo: "/platform/clients" });
+    return NextResponse.json({ redirectTo: "/platform/organisations" });
   } catch {
     return NextResponse.json({ error: "Unable to sign in right now. Please try again." }, { status: 500 });
   }

@@ -14,7 +14,7 @@ import {
   listSubscriptions, 
   updateSubscription, 
   deleteSubscription,
-  updateSubscriptionStatus,
+  approveSubscription,
 } from "@/lib/services/platform/subscription-service";
 import { listSubscriptionsPage } from "@/lib/services/platform/subscription-service";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
@@ -57,6 +57,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
     const endDate = String(formData.get("endDate") || "");
     const paymentStatus = String(formData.get("paymentStatus") || "pending");
     const serviceStatus = String(formData.get("serviceStatus") || "active");
+    const billingMonthsValue = String(formData.get("billingMonths") || "");
 
     const client = clients.find((c: any) => String(c.id || c._id) === organizationId);
     const organizationName = (client as any)?.organizationName || (client as any)?.organization_name || (client as any)?.name || "Unnamed";
@@ -73,6 +74,8 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
         startDate,
         endDate,
         paymentStatus,
+        serviceStatus,
+        billingMonths: billingMonthsValue ? Number(billingMonthsValue) : undefined,
       };
 
       if (id) {
@@ -92,7 +95,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
     await requirePlatformSessionAdmin();
     const id = String(formData.get("id") || "");
     try {
-      await updateSubscriptionStatus(id, "paid");
+      await approveSubscription(id);
     } catch (error: any) {
       redirect(`/platform/subscriptions?error=${encodeURIComponent(error.message)}`);
     }
@@ -184,6 +187,14 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                   />
                 </div>
 
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Billing Term</label>
+                  <select name="billingMonths" defaultValue={(editingSub as any)?.billingMonths || "12"} className="w-full border p-2 text-xs rounded-lg">
+                    <option value="6">6 months</option>
+                    <option value="12">12 months</option>
+                  </select>
+                </div>
+
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-xs font-semibold mb-1">Payment Status</label>
@@ -214,12 +225,12 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
           <Table>
             <thead className="bg-slate-50 text-xs text-slate-500 uppercase">
               <tr>
-                <th className="px-3 py-3">Org ID</th>
                 <th className="px-3 py-3">Org Name</th>
-                <th className="px-3 py-3">Business Type</th>
                 <th className="px-3 py-3">Plan Name</th>
-                <th className="px-3 py-3">Plan ID</th>
-                <th className="px-3 py-3">Duration</th>
+                <th className="px-3 py-3">Start Date</th>
+                <th className="px-3 py-3">End Date</th>
+                <th className="px-3 py-3">Term</th>
+                <th className="px-3 py-3">Amount</th>
                 <th className="px-3 py-3">Payment</th>
                 <th className="px-3 py-3">Service</th>
                 <th className="px-3 py-3 text-right">Actions</th>
@@ -227,10 +238,8 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
             </thead>
             <tbody className="divide-y text-xs">
               {subscriptions.map((sub: any) => {
-                const subBtId = String(sub.businessTypeId || sub.business_type_id || "").trim();
                 const subPlanId = String(sub.planId || sub.plan_id || "").trim();
 
-                const bt = businessTypes.find((b: any) => String(b.id || b._id).trim() === subBtId);
                 const plan = plans.find((p: any) => String(p.id || p._id).trim() === subPlanId);
                 const subId = sub.id || sub._id;
 
@@ -239,23 +248,21 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
 
                 return (
                   <tr key={subId} className="hover:bg-slate-50">
-                    <td className="px-3 py-3 font-mono text-[11px]">{sub.organizationId || sub.organization_id}</td>
                     <td className="px-3 py-3 font-bold text-slate-900">
                       {sub.organization_name || sub.organizationName || "—"}
                     </td>
-                    <td className="px-3 py-3">{bt?.name || "—"}</td>
-                    <td className="px-3 py-3">{(plan as any)?.name || (plan as any)?.plan_name || "—"}</td>
-                    <td className="px-3 py-3 font-mono text-[11px]">{subPlanId || "—"}</td>
-                    <td className="px-3 py-3">
-                      {startStr || "—"} to {endStr || "—"}
-                    </td>
+                    <td className="px-3 py-3">{sub.plan_name || (plan as any)?.name || (plan as any)?.plan_name || "—"}</td>
+                    <td className="px-3 py-3">{startStr || "—"}</td>
+                    <td className="px-3 py-3">{endStr || "—"}</td>
+                    <td className="px-3 py-3">{sub.billingMonths ? `${sub.billingMonths} months` : "—"}</td>
+                    <td className="px-3 py-3">{sub.totalAmount != null ? `₹${Number(sub.totalAmount).toLocaleString("en-IN")}` : "—"}</td>
                     <td className="px-3 py-3"><span className="uppercase font-bold">{sub.payment_status || sub.paymentStatus}</span></td>
                     <td className="px-3 py-3"><span className="uppercase font-bold">{sub.service_status || sub.serviceStatus || "active"}</span></td>
                     <td className="px-3 py-3 text-right space-x-2">
-                      {(sub.payment_status || sub.paymentStatus) !== "paid" && (
+                      {String(sub.payment_status || sub.paymentStatus || "").toLowerCase() !== "paid" && (
                         <form action={updateStatus} className="inline">
                           <input type="hidden" name="id" value={subId} />
-                          <button className="text-emerald-600 font-semibold">Activate</button>
+                          <button type="submit" className="rounded border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">Approve</button>
                         </form>
                       )}
                       <a href={`/platform/subscriptions?edit=${subId}`} className="text-emerald-600 font-semibold">Edit</a>

@@ -15,6 +15,7 @@ import {
 
 import { ERP_MODULES, getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
 import { MasterModuleSwitcher } from "@/components/master-data/master-module-switcher";
+import { SupportTicketTrigger } from "@/components/organizations/support-ticket-trigger";
 
 type SubItem = {
   key: string;
@@ -308,6 +309,7 @@ export function MasterModuleWrapper({
           </div>
 
           <div className="flex items-center gap-3">
+            <SupportTicketTrigger organizationId={organizationId} />
             <span className="text-sm text-slate-500">Master Modules</span>
             <MasterModuleSwitcher
               value={activeModule.key}

@@ -21,8 +21,8 @@ export function OrganizationsGrid({
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {organizations.map((organization) => {
           const role = String(organization.membership_role ?? "VIEWER").toUpperCase();
-          const canManageOrganization = role === "OWNER" || role === "ADMIN";
-          const roleLabel = role === "OWNER" ? "Owner" : role === "ADMIN" ? "Admin" : "Employee";
+          const canManageOrganization = role === "OWNER";
+          const roleLabel = role === "OWNER" ? "Owner" : "Employee";
 
           return (
           <div key={organization.id} className="group relative flex flex-col justify-between rounded-lg border border-slate-200/80 bg-white p-3.5 shadow-2xs transition-all hover:border-slate-300 hover:shadow-sm">
@@ -33,10 +33,10 @@ export function OrganizationsGrid({
                 </div>
                 
                 <div className="flex items-center gap-1.5">
-                  <span className="inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
-                    Active
+                  <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[9px] font-semibold ${organization.approval_status === "APPROVED" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                    {organization.approval_status === "APPROVED" ? "Active" : "Pending approval"}
                   </span>
-                  <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[9px] font-semibold ${role === "OWNER" ? "bg-amber-50 text-amber-700" : role === "ADMIN" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}`}>
+                  <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[9px] font-semibold ${role === "OWNER" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
                     {roleLabel}
                   </span>
                   {role === "OWNER" && (

@@ -43,7 +43,7 @@ export async function ensurePlatformDefaults() {
   const existingAdminCount = await prisma.platformAdmin.count();
 
   if (existingAdminCount === 0) {
-    const email = process.env.PLATFORM_ADMIN_EMAIL || "support@platform.local";
+    const email = process.env.PLATFORM_ADMIN_EMAIL || "jassimtkd@gmail.com";
     const password = process.env.PLATFORM_ADMIN_PASSWORD || "ChangeMe123!";
 
     await prisma.platformAdmin.create({

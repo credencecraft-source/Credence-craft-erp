@@ -1,158 +1,101 @@
-// Page Name: app/dashboard/[workspaceId]/organizations/[organizationId]/settings/pricing/checkout/page.tsx
-
 import React from "react";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getPlanById } from "@/lib/services/platform/plan-service";
-import { activatePlanForBusinessType } from "@/lib/services/platform/subscription-service";
+import { createPendingSubscription } from "@/lib/services/platform/subscription-service";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import SubscriptionCheckoutForm from "./_page-content/subscription-checkout-form";
 
 interface PageProps {
-  params: Promise<{
-    workspaceId: string;
-    organizationId: string;
-  }>;
+  params: Promise<{ workspaceId: string; organizationId: string }>;
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }
 
+function valuesOf(value: string | string[] | undefined) {
+  if (!value) return [];
+  return Array.isArray(value) ? value.filter(Boolean) : [value];
+}
+
 export default async function CheckoutPage({ params, searchParams }: PageProps) {
-  const resolvedParams = await params;
-  const resolvedSearch = (await searchParams) ?? {};
-  
-  const workspaceId = resolvedParams?.workspaceId;
-  const organizationId = resolvedParams?.organizationId;
-
-  const searchKeys = Object.keys(resolvedSearch).filter(k => k !== "error" && k !== "billingCycle");
-  const planId = typeof resolvedSearch.planId === "string" 
-    ? resolvedSearch.planId 
-    : searchKeys.length > 0 && typeof resolvedSearch[searchKeys[0]] === "string"
-    ? (resolvedSearch[searchKeys[0]] as string)
-    : undefined;
-
-  const billingCycle = typeof resolvedSearch.billingCycle === "string" ? resolvedSearch.billingCycle : "yearly";
-
+  const { workspaceId, organizationId } = await params;
+  const query = (await searchParams) ?? {};
+  const explicitPlanIds = valuesOf(query.planId);
+  const legacyPlanIds = Object.entries(query)
+    .filter(([key]) => !["error", "billingCycle", "billingMonths", "planId"].includes(key))
+    .flatMap(([, value]) => valuesOf(value));
+  const selectedPlanIds = [...new Set(explicitPlanIds.length ? explicitPlanIds : legacyPlanIds)];
+  const billingMonths = Number(query.billingMonths) === 6 ? 6 : 12;
   const user = await requireSessionUser();
   const organization = await getOrganizationForUser(user.id, organizationId);
-  if (!organization) {
-    redirect(`/dashboard/${workspaceId}/home`);
-  }
 
-  const plan = planId ? await getPlanById(planId) : null;
+  if (!organization) redirect(`/dashboard/${workspaceId}/home`);
 
-  const client = organization;
+  const plans = (await Promise.all(selectedPlanIds.map((id) => getPlanById(id)))).filter(
+    (plan): plan is NonNullable<typeof plan> => Boolean(plan),
+  );
+  const monthlySubtotal = plans.reduce((sum, plan) => sum + Number(plan?.price || 0), 0);
+  const pricingPlanUrl = `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan`;
 
-  const orgName = (client as any)?.organization_name || (client as any)?.organizationName || (client as any)?.name || "Unnamed Organization";
-  const planName = (plan as any)?.plan_name || (plan as any)?.name || "Selected Plan";
-  const planPrice = Number((plan as any)?.price || (plan as any)?.amount || 0);
-
-  const gstAmount = Math.round(planPrice * 0.18);
-  const totalAmount = planPrice + gstAmount;
-
-  async function handleCheckoutAction() {
+  async function handleCheckoutAction(formData: FormData) {
     "use server";
+    const actionUser = await requireSessionUser();
+    const actionOrganization = await getOrganizationForUser(actionUser.id, organizationId);
+    if (!actionOrganization) redirect(`/dashboard/${workspaceId}/home`);
+    await requireOrganizationAccess(actionUser.id, actionOrganization.organization_id, ["OWNER", "ADMIN"]);
 
-    const pricingPlanUrl = `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan`;
-    const user = await requireSessionUser();
-    const organization = await getOrganizationForUser(user.id, organizationId);
-
-    if (!organization) {
-      redirect(`/dashboard/${workspaceId}/home`);
-    }
-    await requireOrganizationAccess(user.id, organization.organization_id, ["OWNER", "ADMIN"]);
-
-    if (!organizationId || !planId) {
-      redirect(`${pricingPlanUrl}?error=` + encodeURIComponent("Missing organization or plan ID."));
+    const requestedMonths = Number(formData.get("billingMonths"));
+    if (!selectedPlanIds.length || (requestedMonths !== 6 && requestedMonths !== 12)) {
+      redirect(`${pricingPlanUrl}?error=${encodeURIComponent("Select a valid paid plan and a 6 or 12 month term.")}`);
     }
 
     try {
-      const businessTypeId = plan?.business_type_id;
-      if (!businessTypeId) {
-        redirect(`${pricingPlanUrl}?error=${encodeURIComponent("The selected plan is not assigned to a business type.")}`);
+      for (const selectedPlanId of selectedPlanIds) {
+        const plan = await getPlanById(selectedPlanId);
+        if (!plan || !plan.business_type_id || Number(plan.price || 0) <= 0) {
+          throw new Error("One of the selected plans is no longer available.");
+        }
+        await createPendingSubscription({
+          organizationId: actionOrganization.id,
+          organizationName: actionOrganization.organization_name,
+          businessTypeId: plan.business_type_id,
+          planId: plan.id,
+          monthlyPrice: Number(plan.price || 0),
+          billingMonths: requestedMonths,
+        });
       }
-
-      await activatePlanForBusinessType({
-        organizationId: organization.id,
-        businessTypeId,
-        planId,
-        startDate: new Date().toISOString(),
-        endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-        paymentStatus: "paid",
-      });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to process checkout subscription.";
-      redirect(`${pricingPlanUrl}?error=` + encodeURIComponent(message));
+      const message = error instanceof Error ? error.message : "Unable to submit the payment request.";
+      redirect(`${pricingPlanUrl}?error=${encodeURIComponent(message)}`);
     }
 
-    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan?success=` + encodeURIComponent("Subscription activated successfully."));
+    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan?success=${encodeURIComponent("Payment request submitted. Awaiting payment approval.")}`);
   }
 
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-6">
-      <div>
-        <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wider">Checkout</p>
-        <h1 className="text-2xl font-bold text-slate-900">Confirm Your Subscription</h1>
-        <p className="text-sm text-slate-600 mt-0.5">
-          Review your order details and complete activation for <span className="font-semibold text-slate-900">{orgName}</span>.
-        </p>
-      </div>
-
-      {typeof resolvedSearch.error === "string" && resolvedSearch.error && (
-        <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs font-medium text-red-700">{resolvedSearch.error}</p>
-      )}
-
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6">
-        <div className="border-b border-slate-100 pb-4 space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-slate-500">Organization:</span>
-            <span className="font-bold text-slate-900">{orgName}</span>
-          </div>
-          <div className="flex justify-between text-sm items-center">
-            <span className="text-slate-500">Selected Plan:</span>
-            <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full uppercase tracking-wider">
-                Current Plan
-              </span>
-              <span className="font-semibold text-emerald-700">{planName}</span>
-            </div>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-slate-500">Billing Cycle:</span>
-            <span className="font-medium text-slate-800 capitalize">{billingCycle}</span>
-          </div>
+    <div className="min-h-full bg-slate-50 p-6 sm:p-8">
+      <div className="mx-auto max-w-4xl space-y-6">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-600">Settings / Pricing</p>
+          <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">Complete your subscription</h1>
+          <p className="mt-2 text-sm text-slate-600">Review the billing details below before sending the request for approval.</p>
         </div>
 
-        <div className="space-y-3">
-          <div className="flex justify-between text-xs text-slate-600">
-            <span>Plan Subtotal</span>
-            <span className="font-medium">₹{planPrice.toLocaleString("en-IN")}</span>
-          </div>
-          <div className="flex justify-between text-xs text-slate-600">
-            <span>GST (18%)</span>
-            <span className="font-medium">₹{gstAmount.toLocaleString("en-IN")}</span>
-          </div>
-          <div className="border-t border-slate-100 pt-3 flex justify-between text-sm font-bold text-slate-900">
-            <span>Total Amount Due</span>
-            <span className="text-emerald-700">₹{totalAmount.toLocaleString("en-IN")}</span>
-          </div>
-        </div>
+        {typeof query.error === "string" && query.error && <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs font-medium text-red-700">{query.error}</p>}
 
-        <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
-          <Link
-            href={`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan`}
-            className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
-          >
-            Cancel
-          </Link>
-          <form action={handleCheckoutAction}>
-            <button
-              type="submit"
-              className="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-colors cursor-pointer"
-            >
-              Confirm & Activate
-            </button>
-          </form>
-        </div>
+        {plans.length === 0 ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">No valid paid plans were selected. Return to the plan page and choose a paid tier.</div>
+        ) : (
+          <SubscriptionCheckoutForm
+            plans={plans.map((plan) => ({ id: plan.id, plan_name: plan.plan_name, price: plan.price }))}
+            organizationName={organization.organization_name}
+            organizationId={organizationId}
+            workspaceId={workspaceId}
+            monthlySubtotal={monthlySubtotal}
+            defaultBillingMonths={billingMonths as 6 | 12}
+            pricingPlanUrl={pricingPlanUrl}
+            handleCheckoutAction={handleCheckoutAction}
+          />
+        )}
       </div>
     </div>
   );

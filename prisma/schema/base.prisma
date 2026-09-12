@@ -26,6 +26,8 @@ model WorkspaceUser {
     createdOrderShares OrderShare[] @relation("OrderShareCreator")
     acceptedOrderShares OrderShare[] @relation("OrderShareAccepter")
     targetOrderShares OrderShare[] @relation("OrderShareTargetUser")
+    submittedSupportTickets SupportTicket[] @relation("SupportTicketSubmitter")
+    supportTicketMessages TicketMessage[] @relation("TicketMessageWorkspaceAuthor")
 
   @@map("workspace_users")
 }
@@ -42,6 +44,7 @@ model Organization {
   country                     String?                      @db.VarChar(100)
   pin_code                    String?                      @db.VarChar(20)
   is_active                   Boolean                      @default(true)
+  approval_status             String                       @default("PENDING_APPROVAL") @db.VarChar(40)
   plan_id                     String?
   database_connection_id      String?
   created_at                  DateTime                     @default(now())
@@ -87,26 +90,20 @@ model Organization {
   masterOrderVolumes          MasterOrderVolume[]
   subscriptions               Subscription[]
   invitations                 OrganizationInvitation[]
+  rolePermissions             OrganizationRolePermission[]
+  roleDefinitions             OrganizationRoleDefinition[]
+  supportTickets              SupportTicket[]
 
   @@index([plan_id])
   @@index([database_connection_id])
   @@map("organizations")
 }
 
-enum OrganizationRole {
-  OWNER
-  ADMIN
-  FINANCE
-  MERCHANDISING
-  APPROVER
-  VIEWER
-}
-
 model OrganizationMembership {
   id                String           @id
   organization_id   String
   workspace_user_id String
-  role              OrganizationRole @default(VIEWER)
+  role              String           @default("VIEWER") @db.VarChar(100)
   is_active         Boolean          @default(true)
   created_at        DateTime         @default(now())
   updated_at        DateTime         @updatedAt
@@ -117,6 +114,35 @@ model OrganizationMembership {
   @@index([organization_id, role, is_active])
   @@index([workspace_user_id, is_active])
   @@map("organization_memberships")
+}
+
+model OrganizationRolePermission {
+  id              String           @id @default(cuid())
+  organization_id String
+  role            String           @db.VarChar(100)
+  permission      String           @db.VarChar(100)
+  created_at      DateTime         @default(now())
+  updated_at      DateTime         @updatedAt
+  organization    Organization     @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, role, permission])
+  @@index([organization_id, role])
+  @@map("organization_role_permissions")
+}
+
+model OrganizationRoleDefinition {
+  id              String       @id @default(cuid())
+  organization_id String
+  role_key        String       @db.VarChar(100)
+  label           String       @db.VarChar(150)
+  is_system       Boolean      @default(false)
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, role_key])
+  @@index([organization_id, is_system])
+  @@map("organization_role_definitions")
 }
 
 enum OrganizationInvitationStatus {
@@ -134,7 +160,7 @@ model OrganizationInvitation {
   invitee_user_id   String?
   invited_by_user_id String
   recipient_email   String                       @db.VarChar(255)
-  role              OrganizationRole
+  role              String                       @db.VarChar(100)
   status            OrganizationInvitationStatus @default(PENDING)
   expires_at        DateTime
   accepted_at       DateTime?
@@ -175,8 +201,63 @@ model PlatformAdmin {
   created_at    DateTime  @default(now())
   updated_at    DateTime  @updatedAt
   last_login_at DateTime?
+  ticketMessages TicketMessage[]
 
   @@map("platform_admins")
+}
+
+model PlatformEmailConfiguration {
+  id                       String   @id @default(cuid())
+  provider                 String   @default("smtp") @db.VarChar(40)
+  smtp_host                String   @db.VarChar(255)
+  smtp_port                Int      @default(587)
+  smtp_secure              Boolean  @default(false)
+  smtp_username            String   @db.VarChar(255)
+  smtp_password_encrypted  String   @db.VarChar(2000)
+  from_email               String   @db.VarChar(255)
+  from_name                String   @db.VarChar(255)
+  is_active                Boolean  @default(true)
+  created_at               DateTime @default(now())
+  updated_at               DateTime @updatedAt
+
+  @@map("platform_email_configurations")
+}
+
+model OtpChallenge {
+  id           String    @id @default(cuid())
+  email        String    @db.VarChar(255)
+  purpose      String    @default("AUTH") @db.VarChar(40)
+  code_hash    String    @db.VarChar(128)
+  expires_at   DateTime
+  attempts     Int       @default(0)
+  consumed_at  DateTime?
+  created_at   DateTime  @default(now())
+
+  @@index([email, purpose, created_at])
+  @@map("otp_challenges")
+}
+
+model SupportTicket {
+  id                   String        @id @default(cuid())
+  ticket_number        String        @unique @default(uuid())
+  organization_id      String
+  submitted_by_user_id String
+  request_type         String        @default("TICKET") @db.VarChar(30)
+  subject              String        @db.VarChar(255)
+  description          String        @db.VarChar(5000)
+  callback_date        String?       @db.VarChar(20)
+  callback_time        String?       @db.VarChar(10)
+  priority             String        @default("NORMAL") @db.VarChar(30)
+  status               String        @default("OPEN") @db.VarChar(30)
+  created_at           DateTime      @default(now())
+  updated_at           DateTime      @updatedAt
+  organization         Organization  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  submittedBy          WorkspaceUser @relation("SupportTicketSubmitter", fields: [submitted_by_user_id], references: [id], onDelete: Cascade)
+  messages             TicketMessage[]
+
+  @@index([organization_id, status, created_at])
+  @@index([status, created_at])
+  @@map("support_tickets")
 }
 
 model BusinessType {
@@ -956,4 +1037,20 @@ model OrderShare {
   @@index([source_order_id, status])
   @@unique([source_order_id, target_workspace_user_id])
   @@map("order_shares")
+}
+
+model TicketMessage {
+  id                   String        @id @default(cuid())
+  support_ticket_id    String
+  body                 String        @db.VarChar(5000)
+  sender_type          String        @db.VarChar(20)
+  workspace_user_id    String?
+  platform_admin_id    String?
+  created_at           DateTime      @default(now())
+  supportTicket        SupportTicket @relation(fields: [support_ticket_id], references: [id], onDelete: Cascade)
+  workspaceUser        WorkspaceUser? @relation("TicketMessageWorkspaceAuthor", fields: [workspace_user_id], references: [id], onDelete: SetNull)
+  platformAdmin        PlatformAdmin? @relation(fields: [platform_admin_id], references: [id], onDelete: SetNull)
+
+  @@index([support_ticket_id, created_at])
+  @@map("ticket_messages")
 }

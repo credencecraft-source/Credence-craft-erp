@@ -15,8 +15,10 @@ export async function listPlans() {
 }
 
 export async function getPlanById(planId: string) {
-  const plan = await prisma.plan.findUnique({
-    where: { plan_id: planId },
+  const plan = await prisma.plan.findFirst({
+    where: {
+      OR: [{ id: planId }, { plan_id: planId }],
+    },
     include: { businessType: true },
   });
 
