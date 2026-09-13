@@ -16,6 +16,7 @@ import {
 import { ERP_MODULES, getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
 import { MasterModuleSwitcher } from "@/components/master-data/master-module-switcher";
 import { SupportTicketTrigger } from "@/components/organizations/support-ticket-trigger";
+import { getSidebarFeatureKeysForRoute, normalizeRestrictionPart, restrictionMatchesRoute } from "@/lib/services/platform/plan-restriction-matcher";
 
 type SubItem = {
   key: string;
@@ -68,21 +69,14 @@ export function MasterModuleWrapper({
     const subPath = targetPath.substring(orgIndex + organizationId.length).replace(/^\/+/, "");
     const segments = subPath.split("/").filter(Boolean);
 
-    const currentMaster = (segments[0] || "").toLowerCase();
-    const currentMain = (segments[1] || "").toLowerCase();
-    const currentSub = (segments[2] || "").toLowerCase();
+    const featureKeys = getSidebarFeatureKeysForRoute(segments);
+    const targetModule = normalizeRestrictionPart(segments[0] || "");
 
     for (const rule of restrictions) {
       if (rule.restriction_type === "block" || rule.type === "BLOCK") {
-        const ruleMaster = (rule.master_module || "").toLowerCase().replace(/\s+/g, "-");
-        const ruleMain = (rule.main_module || "").toLowerCase().replace(/\s+/g, "-");
-        const ruleSub = (rule.sub_module || "").toLowerCase().replace(/\s+/g, "-");
-
-        const masterMatch = !ruleMaster || ruleMaster === "*" || ruleMaster === currentMaster;
-        const mainMatch = !ruleMain || ruleMain === "*" || ruleMain === currentMain;
-        const subMatch = !ruleSub || ruleSub === "*" || ruleSub === currentSub;
-
-        if (masterMatch && mainMatch && subMatch) {
+        const owningModule = normalizeRestrictionPart(rule.plan_module_path || "");
+        if (owningModule && owningModule !== targetModule) continue;
+        if (restrictionMatchesRoute(rule, segments, featureKeys)) {
           return {
             message: rule.custom_message || rule.customAlertMessage || "Access to this module/feature is restricted by your current plan.",
           };
@@ -133,6 +127,7 @@ export function MasterModuleWrapper({
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [blockedNotice, setBlockedNotice] = useState<{ message: string; label: string } | null>(null);
 
   const toggleExpand = (key: string) => {
     setExpanded((prev) => ({
@@ -197,26 +192,25 @@ export function MasterModuleWrapper({
         <div
           className={`flex items-center justify-between rounded-md transition ${
             isBlocked
-              ? "bg-slate-900/40 opacity-50 cursor-not-allowed pointer-events-none text-slate-500"
+              ? "bg-amber-400/10 text-amber-100 ring-1 ring-inset ring-amber-300/20 hover:bg-amber-400/20"
               : active 
               ? "bg-emerald-600 text-white" 
               : "hover:bg-slate-800 text-slate-200"
           }`}
         >
           <Link
-            href={isBlocked ? "#" : item.href}
+            href={item.href}
             onClick={(e) => {
               if (isBlocked) {
                 e.preventDefault();
-                const encodedMsg = encodeURIComponent(blockInfo!.message);
-                router.push(`${organizationPath}/access-blocked?message=${encodedMsg}`);
+                setBlockedNotice({ message: blockInfo!.message, label: item.label });
               }
             }}
             className="flex flex-1 items-center gap-3 px-3 py-2 text-sm"
           >
             <span
               className={`h-2 w-2 rounded-full ${
-                isBlocked ? "bg-slate-700" : active ? "bg-white" : "bg-slate-500"
+                isBlocked ? "bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,0.65)]" : active ? "bg-white" : "bg-slate-500"
               }`}
             />
             {sidebarOpen && (
@@ -225,7 +219,7 @@ export function MasterModuleWrapper({
               </span>
             )}
             {isBlocked && sidebarOpen && (
-              <Lock className="h-3 w-3 text-red-400 ml-auto" />
+              <Lock className="ml-auto h-3.5 w-3.5 text-amber-300" />
             )}
           </Link>
 
@@ -244,7 +238,7 @@ export function MasterModuleWrapper({
           )}
         </div>
 
-        {hasSubChildren && isExpanded && sidebarOpen && !isBlocked && (
+        {hasSubChildren && isExpanded && sidebarOpen && (
           <div className="ml-4 space-y-1 border-l border-slate-800 pl-2">
             {item.children!.map((subChild) => renderTreeItem(subChild, level + 1))}
           </div>
@@ -339,6 +333,56 @@ export function MasterModuleWrapper({
           )}
         </main>
       </div>
+
+      {blockedNotice && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setBlockedNotice(null);
+          }}
+        >
+          <div className="w-full max-w-md overflow-hidden rounded-3xl border border-white/20 bg-white shadow-2xl shadow-slate-950/30">
+            <div className="relative overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 px-6 pb-7 pt-6 text-white">
+              <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-emerald-400/20 blur-2xl" />
+              <div className="relative flex items-start justify-between gap-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-300/30 bg-amber-300/15 text-amber-200">
+                  <Lock className="h-6 w-6" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBlockedNotice(null)}
+                  aria-label="Close access message"
+                  className="rounded-full px-2 py-1 text-xl leading-none text-slate-300 transition hover:bg-white/10 hover:text-white"
+                >
+                  &times;
+                </button>
+              </div>
+              <p className="relative mt-5 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300">Plan access</p>
+              <h2 className="relative mt-1 text-xl font-bold">{blockedNotice.label} is locked</h2>
+            </div>
+            <div className="space-y-5 p-6">
+              <p className="text-sm leading-6 text-slate-600">{blockedNotice.message}</p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setBlockedNotice(null)}
+                  className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                >
+                  Continue browsing
+                </button>
+                <Link
+                  href={`${organizationPath}/settings/pricing/plan`}
+                  onClick={() => setBlockedNotice(null)}
+                  className="rounded-xl bg-emerald-600 px-4 py-2.5 text-center text-sm font-semibold text-white shadow-lg shadow-emerald-600/20 transition hover:bg-emerald-700"
+                >
+                  View plans
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -11,7 +11,6 @@ import { listPlans } from "@/lib/services/platform/plan-service";
 import { listBusinessTypes } from "@/lib/services/platform/business-type-service";
 import { 
   createSubscription, 
-  listSubscriptions, 
   updateSubscription, 
   deleteSubscription,
   approveSubscription,
@@ -39,7 +38,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
   const editId = resolvedSearch.edit;
   
   const clients = await listOrganizationClients();
-  const plans = await listPlans();
+  const plans = (await listPlans()).filter((plan) => Number(plan.price ?? 0) > 0);
   const businessTypes = await listBusinessTypes();
   const subscriptionPage = await listSubscriptionsPage({ cursor: resolvedSearch.cursor });
   const subscriptions = subscriptionPage.subscriptions;

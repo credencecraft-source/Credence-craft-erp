@@ -7,6 +7,8 @@ export type GroupedPurchaseOrderHeaderInput = {
   note?: string | null;
   vendorPriceInr?: number | string | null;
   vendorPrice?: number | string | null;
+  gst?: number | string | null;
+  hsnCode?: string | null;
   otherChargesInr?: number | string | null;
   convertValue?: number | string | null;
   roundOf?: boolean;
@@ -32,11 +34,14 @@ export async function updateGroupedPurchaseOrderHeader(
   if (!order) throw new Error("Grouped PO is not pending price approval.");
 
   const vendorPriceInr = input.vendorPriceInr === null || input.vendorPriceInr === undefined ? null : numberValue(input.vendorPriceInr);
+  const gst = input.gst === null || input.gst === undefined || input.gst === "" ? null : numberValue(input.gst);
+  const hsnCode = input.hsnCode === undefined ? order.hsn_code : input.hsnCode?.trim() || null;
   const otherChargesInr = numberValue(input.otherChargesInr, numberValue(order.other_charges_inr));
   const convertValue = numberValue(input.convertValue, numberValue(order.convert_value));
   const moqStockUom = numberValue(input.moqStockUom, numberValue(order.moq_stock_uom));
   const roundOf = input.roundOf ?? order.round_of;
   if (vendorPriceInr !== null && vendorPriceInr < 0) throw new Error("Vendor price must be zero or greater.");
+  if (gst !== null && (gst < 0 || gst > 100)) throw new Error("GST must be between 0 and 100.");
   if (otherChargesInr < 0 || convertValue < 0 || moqStockUom < 0) throw new Error("Costing values must be zero or greater.");
 
   const totalGroupedQty = numberValue(order.total_grouped_qty, order.lines.reduce((total, line) => total + Number(line.grouped_qty), 0));
@@ -70,6 +75,8 @@ export async function updateGroupedPurchaseOrderHeader(
         ...(input.note !== undefined && { note: input.note?.trim() || null }),
         ...(input.buyingUom !== undefined && { buying_uom: input.buyingUom || null }),
         ...(vendorPriceInr !== null && { vendor_price_inr: vendorPriceInr, vendor_price: input.vendorPrice ?? vendorPriceInr }),
+        gst,
+        hsn_code: hsnCode,
         other_charges_inr: otherChargesInr,
         convert_value: convertValue,
         round_of: roundOf,

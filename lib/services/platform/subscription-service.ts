@@ -1,6 +1,116 @@
 // @/lib/services/platform/subscription-service.ts
 import { randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
+
+export const FREE_PLAN_NAME = "Free";
+
+export const STANDARD_PLAN_DEFINITIONS = [
+  { tierKey: "FREE", label: "Free", price: 0, maxOrderQty: 1000, color: "slate" },
+  { tierKey: "CLASSIC", label: "Classic", price: 4999, maxOrderQty: 10000, color: "blue" },
+  { tierKey: "PROFESSIONAL", label: "Professional", price: 9999, maxOrderQty: 50000, color: "violet" },
+  { tierKey: "ENTERPRISE", label: "Enterprise", price: 19999, maxOrderQty: null, color: "amber" },
+] as const;
+
+export async function ensureStandardPlansForBusinessTypes(client: Prisma.TransactionClient | typeof prisma = prisma) {
+  const businessTypes = await client.businessType.findMany({ where: { isActive: true }, orderBy: { name: "asc" } });
+  const plans = await client.plan.findMany({ where: { business_type_id: { in: businessTypes.map(({ id }) => id) } } });
+  let nextSortOrder = (await client.plan.aggregate({ _max: { sort_order: true } }))._max.sort_order ?? 0;
+
+  for (const businessType of businessTypes) {
+    for (const definition of STANDARD_PLAN_DEFINITIONS) {
+      const standardPlanName = `${businessType.name} - ${definition.label}`;
+      let plan = plans.find((candidate) => candidate.business_type_id === businessType.id && candidate.tier_key === definition.tierKey);
+      if (!plan && definition.tierKey === "FREE") {
+        plan = plans.find((candidate) => candidate.business_type_id === businessType.id && candidate.plan_name === standardPlanName);
+      }
+      if (!plan) {
+        const existingByName = await client.plan.findUnique({ where: { plan_name: standardPlanName } });
+        if (existingByName) plan = existingByName;
+      }
+
+      if (plan) {
+        const duplicatePlans = plans.filter((candidate) =>
+          candidate.id !== plan!.id
+          && candidate.business_type_id === businessType.id
+          && (candidate.tier_key === definition.tierKey || candidate.plan_name === `${businessType.name} - ${definition.label}`)
+        );
+
+        for (const duplicate of duplicatePlans) {
+          await client.plan_restrictions.updateMany({
+            where: { plan_id: duplicate.id },
+            data: { plan_id: plan.id },
+          });
+          await client.subscription.updateMany({
+            where: { plan_id: duplicate.id },
+            data: { plan_id: plan.id },
+          });
+          await client.plan.delete({ where: { id: duplicate.id } });
+        }
+
+        await client.plan.update({
+          where: { id: plan.id },
+          data: {
+            business_type_id: businessType.id,
+            tier_key: definition.tierKey,
+            is_system_plan: true,
+            display_color: definition.color,
+            ...(plan.plan_name !== standardPlanName && plan.tier_key === definition.tierKey
+              ? { plan_name: standardPlanName }
+              : {}),
+          },
+        });
+        continue;
+      }
+
+      nextSortOrder += 1;
+      await client.plan.create({
+        data: {
+          plan_id: randomUUID(),
+          business_type_id: businessType.id,
+          plan_name: standardPlanName,
+          description: `${definition.label} plan for ${businessType.name}. Configure feature restrictions and order quantity limits.`,
+          price: definition.price,
+          billing_cycle: "monthly",
+          tier_key: definition.tierKey,
+          is_system_plan: true,
+          display_color: definition.color,
+          max_order_qty: definition.maxOrderQty,
+          sort_order: nextSortOrder,
+        },
+      });
+    }
+  }
+}
+
+export async function ensureFreePlansForBusinessTypes(client: Prisma.TransactionClient | typeof prisma = prisma) {
+  await ensureStandardPlansForBusinessTypes(client);
+}
+
+export async function ensureGlobalFreePlan(client: Prisma.TransactionClient | typeof prisma = prisma) {
+  return client.plan.upsert({
+    where: { plan_name: FREE_PLAN_NAME },
+    update: {
+      business_type_id: null,
+      description: "Shared default plan for every business module.",
+      price: 0,
+      billing_cycle: "monthly",
+      is_active: true,
+    },
+    create: {
+      plan_id: randomUUID(),
+      plan_name: FREE_PLAN_NAME,
+      description: "Shared default plan for every business module.",
+      price: 0,
+      billing_cycle: "monthly",
+      sort_order: -1,
+    },
+  });
+}
+
+function isFreePlan(plan: { price: unknown; tier_key?: string | null; business_type_id?: string | null }) {
+  return plan.tier_key === "FREE" || Number(plan.price ?? 0) <= 0;
+}
 
 export async function listSubscriptions(organizationId?: string, limit = 100) {
   const page = await listSubscriptionsPage({ organizationId, limit });
@@ -10,7 +120,10 @@ export async function listSubscriptions(organizationId?: string, limit = 100) {
 export async function listSubscriptionsPage(options: { organizationId?: string; cursor?: string; limit?: number } = {}) {
   const take = Math.min(Math.max(options.limit ?? 100, 1), 100);
   const subscriptions = await prisma.subscription.findMany({
-    where: options.organizationId ? { organization_id: options.organizationId } : undefined,
+    where: {
+      ...(options.organizationId ? { organization_id: options.organizationId } : {}),
+      plan: { price: { gt: 0 } },
+    },
     orderBy: { created_at: "desc" },
     ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     take: take + 1,
@@ -35,7 +148,7 @@ export async function listSubscriptionsPage(options: { organizationId?: string; 
 
 export async function getSubscriptionsByOrganization(organizationId: string) {
   const subscriptions = await prisma.subscription.findMany({
-    where: { organization_id: organizationId },
+    where: { organization_id: organizationId, plan: { price: { gt: 0 } } },
   });
 
   return subscriptions.map((sub) => ({
@@ -60,6 +173,11 @@ export async function createSubscription(data: {
   paymentStatus?: string;
 }) {
   const paymentStatus = (data.paymentStatus || "paid").toLowerCase();
+  const plan = await prisma.plan.findUnique({ where: { id: data.planId } });
+
+  if (!plan || isFreePlan(plan)) {
+    throw new Error("The shared free plan does not require a subscription.");
+  }
 
   const subscription = await prisma.subscription.create({
     data: {
@@ -87,6 +205,11 @@ export async function createPendingSubscription(data: {
   monthlyPrice: number;
   billingMonths: 6 | 12;
 }) {
+  const plan = await prisma.plan.findUnique({ where: { id: data.planId } });
+  if (!plan || isFreePlan(plan)) {
+    throw new Error("The shared free plan does not require checkout.");
+  }
+
   const subtotalAmount = data.monthlyPrice * data.billingMonths;
   const gstAmount = subtotalAmount * 0.18;
   const totalAmount = subtotalAmount + gstAmount;
@@ -119,6 +242,11 @@ export async function updateSubscription(
   }
 ) {
   const paymentStatus = (data.paymentStatus || "paid").toLowerCase();
+  const plan = await prisma.plan.findUnique({ where: { id: data.planId } });
+
+  if (!plan || isFreePlan(plan)) {
+    throw new Error("The shared free plan does not require a subscription.");
+  }
 
   const subscription = await prisma.subscription.update({
     where: { id },
@@ -145,112 +273,62 @@ export async function deleteSubscription(id: string) {
 }
 
 export async function getOrganizationPlanId(organizationId: string) {
-  const subscription = await prisma.subscription.findFirst({
-    where: { organization_id: organizationId },
-    select: { plan_id: true },
-  });
-
-  return subscription?.plan_id || null;
+  const effectivePlans = await getEffectivePlansForOrganization(organizationId);
+  return effectivePlans[0]?.plan?.id || null;
 }
 
 export async function ensureFreePlanSubscriptionsForOrganization(organizationId: string) {
-  const [businessTypes, plans, subscriptions] = await Promise.all([
-    prisma.businessType.findMany({
-      where: { isActive: true },
-      orderBy: { name: "asc" },
-    }),
-    prisma.plan.findMany({
+  await prisma.$transaction(async (transaction) => {
+    await ensureFreePlansForBusinessTypes(transaction);
+    await transaction.subscription.deleteMany({
       where: {
-        is_active: true,
-        price: { lte: 0 },
+        organization_id: organizationId,
+        plan: { price: { lte: 0 } },
       },
-      select: { business_type_id: true },
-    }),
+    });
+  }, { timeout: 15000 });
+}
+
+export async function getEffectivePlansForOrganization(organizationId: string) {
+  await ensureStandardPlansForBusinessTypes();
+  const [businessTypes, freePlans, subscriptions] = await Promise.all([
+    prisma.businessType.findMany({ where: { isActive: true }, orderBy: { name: "asc" } }),
+    prisma.plan.findMany({ where: { business_type_id: { not: null }, tier_key: "FREE" } }),
     prisma.subscription.findMany({
       where: { organization_id: organizationId },
-      select: { business_type_id: true },
+      include: { plan: true },
+      orderBy: { updated_at: "desc" },
     }),
   ]);
-  const freePlanBusinessTypeIds = new Set(
-    plans
-      .map((plan) => plan.business_type_id)
-      .filter((businessTypeId): businessTypeId is string => Boolean(businessTypeId)),
+  const freePlanByBusinessType = new Map(
+    freePlans.map((plan) => [plan.business_type_id as string, plan]),
   );
-  const subscriptionBusinessTypeIds = new Set(
-    subscriptions
-      .map((subscription) => subscription.business_type_id)
-      .filter((businessTypeId): businessTypeId is string => Boolean(businessTypeId)),
-  );
-  const needsSetup = businessTypes.some(
-    (businessType) =>
-      !freePlanBusinessTypeIds.has(businessType.id) ||
-      !subscriptionBusinessTypeIds.has(businessType.id),
-  );
+  const now = new Date();
+  const latestByBusinessType = new Map<string, (typeof subscriptions)[number]>();
 
-  if (!needsSetup) return;
-
-  return prisma.$transaction(async (transaction) => {
-    const businessTypes = await transaction.businessType.findMany({
-      where: { isActive: true },
-      orderBy: { name: "asc" },
-    });
-    const plans = await transaction.plan.findMany({
-      where: {
-        is_active: true,
-        price: { lte: 0 },
-      },
-      orderBy: { sort_order: "asc" },
-    });
-    const subscriptions = await transaction.subscription.findMany({
-      where: { organization_id: organizationId },
-    });
-    const planByBusinessTypeId = new Map(
-      plans
-        .filter((plan) => plan.business_type_id)
-        .map((plan) => [plan.business_type_id as string, plan]),
-    );
-    const subscriptionBusinessTypeIds = new Set(
-      subscriptions
-        .map((subscription) => subscription.business_type_id)
-        .filter((businessTypeId): businessTypeId is string => Boolean(businessTypeId)),
-    );
-    let nextSortOrder = plans.reduce(
-      (highestSortOrder, plan) => Math.max(highestSortOrder, plan.sort_order),
-      -1,
-    ) + 1;
-
-    for (const businessType of businessTypes) {
-      let freePlan = planByBusinessTypeId.get(businessType.id);
-
-      if (!freePlan) {
-        freePlan = await transaction.plan.create({
-          data: {
-            plan_id: randomUUID(),
-            business_type_id: businessType.id,
-            plan_name: `${businessType.name} - Free`,
-            description: `Default free plan for ${businessType.name}.`,
-            price: 0,
-            billing_cycle: "monthly",
-            sort_order: nextSortOrder,
-          },
-        });
-        planByBusinessTypeId.set(businessType.id, freePlan);
-        nextSortOrder += 1;
-      }
-
-      if (!subscriptionBusinessTypeIds.has(businessType.id)) {
-        await transaction.subscription.create({
-          data: {
-            organization_id: organizationId,
-            business_type_id: businessType.id,
-            plan_id: freePlan.id,
-            payment_status: "paid",
-          },
-        });
-        subscriptionBusinessTypeIds.add(businessType.id);
-      }
+  for (const subscription of subscriptions) {
+    if (subscription.business_type_id && !latestByBusinessType.has(subscription.business_type_id)) {
+      latestByBusinessType.set(subscription.business_type_id, subscription);
     }
-  }, { timeout: 15000 });
+  }
+
+  return businessTypes.map((businessType) => {
+    const subscription = latestByBusinessType.get(businessType.id);
+    const subscriptionIsActive = Boolean(
+      subscription &&
+      !isFreePlan(subscription.plan) &&
+      ["paid"].includes(subscription.payment_status.toLowerCase()) &&
+      subscription.service_status.toLowerCase() !== "inactive" &&
+      (!subscription.end_date || subscription.end_date > now),
+    );
+
+    return {
+      businessType,
+      plan: subscriptionIsActive ? subscription!.plan : freePlanByBusinessType.get(businessType.id),
+      subscription: subscriptionIsActive ? subscription : null,
+      isFree: !subscriptionIsActive,
+    };
+  });
 }
 
 export async function activatePlanForBusinessType(data: {
@@ -262,6 +340,15 @@ export async function activatePlanForBusinessType(data: {
   paymentStatus?: string;
 }) {
   const paymentStatus = (data.paymentStatus || "paid").toLowerCase();
+  const plan = await prisma.plan.findUnique({ where: { id: data.planId } });
+
+  if (!plan || isFreePlan(plan)) {
+    throw new Error("The shared free plan is assigned automatically and cannot be activated.");
+  }
+
+  if (plan.business_type_id !== data.businessTypeId) {
+    throw new Error("The selected plan does not belong to this business type.");
+  }
 
   return prisma.$transaction(async (transaction) => {
     const subscriptions = await transaction.subscription.findMany({

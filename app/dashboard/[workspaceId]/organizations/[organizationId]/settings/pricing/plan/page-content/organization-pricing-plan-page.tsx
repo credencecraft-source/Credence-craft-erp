@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
+import { getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
 
 interface Plan {
   id: string;
@@ -10,6 +11,14 @@ interface Plan {
   price: number | null;
   billing_cycle: string | null;
   is_active: boolean;
+  max_order_qty?: number | null;
+}
+
+interface FeatureSummary {
+  key: string;
+  label: string;
+  path: string;
+  available: boolean;
 }
 
 interface BusinessType {
@@ -31,22 +40,20 @@ interface OrganizationPricingPlanPageProps {
   plans?: Plan[];
   businessTypes?: BusinessType[];
   existingSubscriptions?: Subscription[];
+  currentPlanIds?: Record<string, string>;
+  planFeatures?: Record<string, FeatureSummary[]>;
   workspaceId: string;
   organizationId: string;
-  activatePlanAction: (formData: FormData) => Promise<void>;
-  organizationName?: string;
-  workspaceUserEmail?: string;
 }
 
 export default function OrganizationPricingPlanPage({
   plans = [],
   businessTypes = [],
   existingSubscriptions = [],
+  currentPlanIds = {},
+  planFeatures = {},
   workspaceId,
   organizationId,
-  activatePlanAction,
-  organizationName = "",
-  workspaceUserEmail = "",
 }: OrganizationPricingPlanPageProps) {
   const router = useRouter();
   const safePlans = Array.isArray(plans) ? plans : [];
@@ -68,20 +75,20 @@ export default function OrganizationPricingPlanPage({
     }
   });
 
-  const initialTab = categories[0] || "Order Management";
-  const [activeTab, setActiveTab] = useState<string>(initialTab);
+  const [activeTab, setActiveTab] = useState<string | null>(null);
   const [selections, setSelections] = useState<Record<string, string>>({});
 
-  const currentPlans = groupedModules[activeTab] || [];
-  const isModuleSelected = Boolean(selections[activeTab]);
-  const currentSelectedPlanId = selections[activeTab];
+  const currentPlans = activeTab ? groupedModules[activeTab] || [] : [];
+  const isModuleSelected = activeTab ? Boolean(selections[activeTab]) : false;
+  const currentSelectedPlanId = activeTab ? selections[activeTab] : undefined;
 
-  const matchedBusinessType = safeBusinessTypes.find((bt) => bt.name === activeTab);
+  const matchedBusinessType = activeTab ? safeBusinessTypes.find((bt) => bt.name === activeTab) : undefined;
   const firstPaidPlan = currentPlans.find(
     (p) => p.price && Number(p.price) > 0
   );
 
   const handleSelectPlan = (planId: string, planPrice: number | null) => {
+    if (!activeTab) return;
     const isFree = !planPrice || Number(planPrice) === 0;
     if (isFree) return;
 
@@ -101,6 +108,7 @@ export default function OrganizationPricingPlanPage({
   };
 
   const handleDeselectModule = () => {
+    if (!activeTab) return;
     setSelections((prev) => {
       const copy = { ...prev };
       delete copy[activeTab];
@@ -140,16 +148,21 @@ export default function OrganizationPricingPlanPage({
           </p>
         </div>
         <div>
-          <button
-            onClick={() =>
-              router.push(
-                `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan`
-              )
-            }
-            className="px-4 py-2 rounded-xl bg-slate-900 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 transition-colors cursor-pointer"
-          >
-            View Current Plan
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button type="button" onClick={() => router.back()} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50">
+              Back
+            </button>
+            <button type="button" onClick={() => router.push(`/dashboard/${workspaceId}/home`)} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50">
+              Dashboard
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan`)}
+              className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-slate-800"
+            >
+              View Current Plan
+            </button>
+          </div>
         </div>
       </div>
 
@@ -212,7 +225,7 @@ export default function OrganizationPricingPlanPage({
         })}
       </div>
 
-      {activeTab && (
+      {activeTab ? (
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h2 className="text-sm font-bold text-slate-800">
@@ -245,9 +258,15 @@ export default function OrganizationPricingPlanPage({
             )}
           </div>
         </div>
+      ) : (
+        <div className="flex min-h-44 flex-col items-center justify-center rounded-2xl border border-dashed border-emerald-300 bg-emerald-50/50 px-6 py-10 text-center">
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-700">Choose a master module</p>
+          <h2 className="mt-2 text-lg font-bold text-slate-900">Select a module to view plans</h2>
+          <p className="mt-1 max-w-md text-sm text-slate-600">Choose a business module above to compare its prices, order quantity limits, and feature access.</p>
+        </div>
       )}
 
-      {currentPlans.length > 0 ? (
+      {activeTab && currentPlans.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 pb-12">
           {currentPlans.map((plan) => {
             const nameParts = (plan.plan_name || "").split(" - ");
@@ -260,9 +279,15 @@ export default function OrganizationPricingPlanPage({
               isModuleSelected && currentSelectedPlanId === plan.id;
 
             const isFreePlan = !plan.price || Number(plan.price) === 0;
+            const isCurrentPlan = currentPlanIds[matchedBusinessType?.id || ""] === plan.id;
+            const featureList = planFeatures[plan.id] || [];
+            const linkedModule = matchedBusinessType ? getErpModuleForBusinessTypeName(matchedBusinessType.name) : null;
+            const visibleFeatureList = featureList.filter((feature) => linkedModule && (feature.path === linkedModule.pathSegment || feature.path.startsWith(`${linkedModule.pathSegment}/`)));
+            const availableFeatureCount = visibleFeatureList.filter((feature) => feature.available).length;
 
             const matchedActiveSub = existingSubscriptions.some(
               (sub) =>
+                isCurrentPlan &&
                 sub.planId === plan.id &&
                 sub.businessTypeId === matchedBusinessType?.id &&
                 sub.paymentStatus === "paid" &&
@@ -292,12 +317,12 @@ export default function OrganizationPricingPlanPage({
                         {tierName}
                       </h3>
 
-                      {matchedActiveSub && (
+                      {isCurrentPlan && (
                         <span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-200 rounded-full uppercase tracking-wider">
                           Current Plan
                         </span>
                       )}
-                      {!matchedActiveSub && matchedPendingSub && (
+                      {!isCurrentPlan && matchedPendingSub && (
                         <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded-full uppercase tracking-wider">
                           Awaiting payment
                         </span>
@@ -318,62 +343,48 @@ export default function OrganizationPricingPlanPage({
                   </div>
 
                   <div className="border-t border-slate-100 pt-4">
-                    <p className="text-xs font-semibold text-emerald-600 bg-emerald-50 p-2.5 rounded-lg border border-emerald-100 text-center">
-                      ERP Module Access Enabled
-                    </p>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Feature access</p>
+                        <span className="text-[10px] font-bold text-slate-500">{availableFeatureCount}/{visibleFeatureList.length} available</span>
+                      </div>
+                      {plan.max_order_qty != null && <p className="mt-2 rounded-lg border border-blue-100 bg-blue-50 px-2.5 py-2 text-xs font-semibold text-blue-800">Order quantity: up to {plan.max_order_qty.toLocaleString("en-IN")}</p>}
+                      {plan.max_order_qty == null && <p className="mt-2 rounded-lg border border-emerald-100 bg-emerald-50 px-2.5 py-2 text-xs font-semibold text-emerald-800">Order quantity: Unlimited</p>}
+                      <div className="mt-2 max-h-36 space-y-1 overflow-y-auto">
+                        {visibleFeatureList.map((feature) => (
+                          <div key={feature.key} className={`flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-[11px] ${feature.available ? "bg-white text-slate-700" : "bg-rose-50 text-rose-700"}`}>
+                            <span className="truncate">{feature.label}</span>
+                            <span className="shrink-0 font-bold">{feature.available ? "Available" : "Not available"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </div>
 
                 <div className="mt-8 flex flex-col gap-2 pt-4 border-t border-slate-100">
                   {isFreePlan ? (
-                    <form action={activatePlanAction}>
-                      <input type="hidden" name="planId" value={plan.id} />
-                      <input
-                        type="hidden"
-                        name="businessTypeId"
-                        value={matchedBusinessType?.id || ""}
-                      />
-                      <input
-                        type="hidden"
-                        name="organizationName"
-                        value={organizationName}
-                      />
-                      <input
-                        type="hidden"
-                        name="workspaceUserEmail"
-                        value={workspaceUserEmail}
-                      />
-
-                      <button
-                        type="submit"
-                        disabled={matchedActiveSub || matchedPendingSub}
-                        className={`w-full rounded-lg py-2.5 text-xs font-semibold shadow-sm transition-colors ${
-                          matchedActiveSub || matchedPendingSub
-                            ? "bg-slate-300 text-slate-500 cursor-not-allowed"
-                            : "bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
-                        }`}
-                      >
-                        {matchedActiveSub ? "Current Plan Active" : matchedPendingSub ? "Awaiting payment" : "Activate"}
-                      </button>
-                    </form>
+                    <div className="w-full rounded-lg border border-emerald-200 bg-emerald-50 py-2.5 text-center text-xs font-semibold text-emerald-700">
+                      Included by default. No subscription required.
+                    </div>
                   ) : (
                     <button
                       type="button"
                       onClick={() =>
-                        !matchedActiveSub &&
+                        !isCurrentPlan &&
                         !matchedPendingSub &&
                         handleSelectPlan(plan.id, plan.price)
                       }
-                      disabled={matchedActiveSub || matchedPendingSub}
+                      disabled={isCurrentPlan || matchedPendingSub}
                       className={`w-full rounded-lg py-2.5 text-xs font-semibold transition-colors ${
-                        matchedActiveSub || matchedPendingSub
+                        isCurrentPlan || matchedPendingSub
                           ? "bg-slate-300 text-slate-500 cursor-not-allowed"
                           : isChosen
                           ? "bg-emerald-600 text-white shadow-sm cursor-pointer"
                           : "bg-slate-100 text-slate-700 hover:bg-slate-200 cursor-pointer"
                       }`}
                     >
-                      {matchedActiveSub
+                      {isCurrentPlan
                         ? "Current Plan Active"
                         : matchedPendingSub
                         ? "Awaiting payment"
@@ -387,7 +398,7 @@ export default function OrganizationPricingPlanPage({
             );
           })}
         </div>
-      ) : (
+      ) : activeTab ? (
         <div className="p-8 text-center bg-white rounded-2xl border border-slate-200 space-y-2">
           <p className="text-xs font-medium text-slate-600">
             No database plans created for {activeTab} yet.
@@ -396,7 +407,7 @@ export default function OrganizationPricingPlanPage({
             Create plans in the platform setup section to populate these cards.
           </p>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

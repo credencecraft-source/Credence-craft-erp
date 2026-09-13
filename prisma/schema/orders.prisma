@@ -86,6 +86,7 @@ model GroupedPurchaseOrder {
   organization_id   String
   vendor_id         String
   grouped_po_no     String       @db.VarChar(100)
+  display_no        Int?
   status            String       @default("PENDING_PRICE_APPROVAL") @db.VarChar(50)
   submitted_by      String?      @db.VarChar(255)
   submitted_at      DateTime     @default(now())
@@ -114,6 +115,8 @@ model GroupedPurchaseOrder {
   buying_qty_total   Decimal?    @db.Decimal(12, 4)
   vendor_price       Decimal?    @db.Decimal(12, 4)
   vendor_price_inr   Decimal?    @db.Decimal(12, 4)
+  gst                Decimal?    @db.Decimal(10, 2)
+  hsn_code           String?     @db.VarChar(100)
   other_charges      Decimal?    @db.Decimal(12, 4)
   other_charges_inr  Decimal?    @db.Decimal(12, 4)
   currency           String?     @db.VarChar(100)
@@ -123,11 +126,77 @@ model GroupedPurchaseOrder {
   organization      Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   vendor            MasterVendor @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
   lines             GroupedPurchaseOrderLine[]
+  masterGroupSource MasterPurchaseOrderSource?
 
   @@unique([organization_id, grouped_po_no])
+  @@unique([organization_id, display_no])
   @@index([organization_id, status, created_at])
   @@index([organization_id, vendor_id])
   @@map("grouped_purchase_orders")
+}
+
+model MasterPurchaseOrder {
+  id                String                    @id @default(cuid())
+  organization_id   String
+  vendor_id         String
+  master_po_no      String                    @db.VarChar(100)
+  display_no        Int?
+  status            String                    @default("MASTER_GROUPED") @db.VarChar(50)
+  created_by        String?                   @db.VarChar(255)
+  raw_material      String?                   @db.VarChar(255)
+  category          String?                   @db.VarChar(255)
+  sub_category      String?                   @db.VarChar(255)
+  total_required_qty Decimal?                 @db.Decimal(12, 2)
+  total_grouped_qty  Decimal?                 @db.Decimal(12, 2)
+  no_of_styles      Int?
+  created_at        DateTime                  @default(now())
+  updated_at        DateTime                  @updatedAt
+  organization      Organization              @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  vendor            MasterVendor              @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
+  sourceRecords     MasterPurchaseOrderSource[]
+  lines             MasterPurchaseOrderLine[]
+  purchaseOrderSources PurchaseOrderSource[]
+  purchaseOrderLines PurchaseOrderLine[]
+
+  @@unique([organization_id, master_po_no])
+  @@unique([organization_id, display_no])
+  @@index([organization_id, status, created_at])
+  @@map("master_purchase_orders")
+}
+
+model MasterPurchaseOrderSource {
+  id                    String             @id @default(cuid())
+  master_purchase_order_id String
+  grouped_purchase_order_id String         @unique
+  masterPurchaseOrder   MasterPurchaseOrder @relation(fields: [master_purchase_order_id], references: [id], onDelete: Cascade)
+  groupedPurchaseOrder  GroupedPurchaseOrder @relation(fields: [grouped_purchase_order_id], references: [id], onDelete: Cascade)
+
+  @@unique([master_purchase_order_id, grouped_purchase_order_id])
+  @@index([master_purchase_order_id])
+  @@map("master_purchase_order_sources")
+}
+
+model MasterPurchaseOrderLine {
+  id                    String              @id @default(cuid())
+  master_purchase_order_id String
+  source_grouped_line_id String              @unique
+  source_grouped_po_no  String?             @db.VarChar(100)
+  source_order_id       String
+  source_order_no       String?             @db.VarChar(100)
+  style_name            String?             @db.VarChar(255)
+  brand                 String?             @db.VarChar(255)
+  raw_material          String?             @db.VarChar(255)
+  category              String?             @db.VarChar(255)
+  sub_category          String?             @db.VarChar(255)
+  required_qty          Decimal             @db.Decimal(12, 2)
+  grouped_qty           Decimal             @db.Decimal(12, 2)
+  vendor_price          Decimal?            @db.Decimal(12, 4)
+  total_spend           Decimal?            @db.Decimal(12, 4)
+  created_at            DateTime            @default(now())
+  masterPurchaseOrder   MasterPurchaseOrder @relation(fields: [master_purchase_order_id], references: [id], onDelete: Cascade)
+
+  @@index([master_purchase_order_id])
+  @@map("master_purchase_order_lines")
 }
 
 model GroupedPurchaseOrderLine {
@@ -153,8 +222,8 @@ model GroupedPurchaseOrderLine {
   created_at              DateTime              @default(now())
   updated_at              DateTime              @updatedAt
   groupedPurchaseOrder    GroupedPurchaseOrder @relation(fields: [grouped_purchase_order_id], references: [id], onDelete: Cascade)
-  sourceBomItem            BillOfMaterialItem   @relation(fields: [source_bom_item_id], references: [id], onDelete: Restrict)
-  sourceOrder              MerchandisingOrder  @relation(fields: [source_order_id], references: [id], onDelete: Restrict)
+  sourceBomItem            BillOfMaterialItem   @relation(fields: [source_bom_item_id], references: [id], onDelete: Cascade)
+  sourceOrder              MerchandisingOrder  @relation(fields: [source_order_id], references: [id], onDelete: Cascade)
 
   @@unique([source_bom_item_id])
   @@index([grouped_purchase_order_id])
@@ -205,4 +274,153 @@ model plan_restrictions {
   @@index([plan_id, restriction_type])
 
   @@map("plan_restrictions")
+}
+
+model PurchaseOrder {
+  id                String              @id @default(cuid())
+  organization_id   String
+  vendor_id         String
+  purchase_order_no String              @db.VarChar(100)
+  display_no        Int?
+  status            String              @default("DRAFT") @db.VarChar(50)
+  created_by        String?             @db.VarChar(255)
+  approved_by       String?
+  approved_at       DateTime?
+  rejection_reason  String?
+  shared_at         DateTime?
+  created_at        DateTime            @default(now())
+  updated_at        DateTime            @updatedAt
+  po_date           DateTime            @default(now())
+  delivery_date     DateTime?
+  organization      Organization        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  vendor            MasterVendor        @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
+  sources           PurchaseOrderSource[]
+  lines             PurchaseOrderLine[]
+  inventoryReceipts InventoryReceipt[]
+
+  @@unique([organization_id, purchase_order_no])
+  @@unique([organization_id, display_no])
+  @@index([organization_id, status, created_at])
+  @@index([organization_id, vendor_id])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderSource {
+  id                    String             @id @default(cuid())
+  purchase_order_id     String
+  master_purchase_order_id String          @unique
+  purchaseOrder          PurchaseOrder    @relation(fields: [purchase_order_id], references: [id], onDelete: Cascade)
+  masterPurchaseOrder    MasterPurchaseOrder @relation(fields: [master_purchase_order_id], references: [id], onDelete: Cascade)
+
+  @@map("purchase_order_sources")
+}
+
+model PurchaseOrderLine {
+  id                String       @id @default(cuid())
+  purchase_order_id String
+  source_master_line_id String
+  master_purchase_order_id String?
+  raw_material      String?      @db.VarChar(255)
+  category          String?      @db.VarChar(255)
+  sub_category      String?      @db.VarChar(255)
+  source_order_no   String?      @db.VarChar(100)
+  style_name        String?      @db.VarChar(255)
+  quantity          Decimal      @db.Decimal(12, 2)
+  price             Decimal?     @db.Decimal(12, 4)
+  gst               Decimal?     @db.Decimal(10, 2)
+  hsn_code          String?      @db.VarChar(100)
+  total             Decimal?     @db.Decimal(12, 4)
+  purchaseOrder     PurchaseOrder @relation(fields: [purchase_order_id], references: [id], onDelete: Cascade)
+  masterPurchaseOrder MasterPurchaseOrder? @relation(fields: [master_purchase_order_id], references: [id], onDelete: Cascade)
+  inventoryReceiptLines InventoryReceiptLine[]
+
+  @@unique([purchase_order_id, source_master_line_id])
+  @@index([purchase_order_id])
+  @@index([master_purchase_order_id])
+  @@map("purchase_order_lines")
+}
+
+model ProcurementDocumentCounter {
+  id              String   @id @default(cuid())
+  organization_id String
+  document_type   String   @db.VarChar(30)
+  current_value   Int      @default(0)
+  updated_at      DateTime @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, document_type])
+  @@map("procurement_document_counters")
+}
+
+model InventoryReceipt {
+  id                String                 @id @default(cuid())
+  organization_id   String
+  purchase_order_id String
+  receipt_no        String                 @db.VarChar(100)
+  status            String                 @default("POSTED") @db.VarChar(30)
+  warehouse         String                 @db.VarChar(150)
+  received_date     DateTime               @default(now())
+  received_by       String?                @db.VarChar(255)
+  notes             String?                @db.VarChar(1000)
+  created_at        DateTime               @default(now())
+  updated_at        DateTime               @updatedAt
+  organization      Organization           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  purchaseOrder     PurchaseOrder          @relation(fields: [purchase_order_id], references: [id], onDelete: Restrict)
+  lines             InventoryReceiptLine[]
+
+  @@unique([organization_id, receipt_no])
+  @@index([organization_id, received_date])
+  @@index([purchase_order_id])
+  @@map("inventory_receipts")
+}
+
+model InventoryReceiptLine {
+  id                     String              @id @default(cuid())
+  receipt_id             String
+  purchase_order_line_id String
+  raw_material           String?             @db.VarChar(255)
+  ordered_quantity       Decimal             @db.Decimal(12, 2)
+  received_quantity      Decimal             @db.Decimal(12, 2)
+  accepted_quantity      Decimal             @db.Decimal(12, 2)
+  rejected_quantity      Decimal             @db.Decimal(12, 2)
+  created_at             DateTime            @default(now())
+  receipt                InventoryReceipt    @relation(fields: [receipt_id], references: [id], onDelete: Cascade)
+  purchaseOrderLine      PurchaseOrderLine  @relation(fields: [purchase_order_line_id], references: [id], onDelete: Restrict)
+
+  @@unique([receipt_id, purchase_order_line_id])
+  @@index([purchase_order_line_id])
+  @@map("inventory_receipt_lines")
+}
+
+model RawMaterialStock {
+  id                String       @id @default(cuid())
+  organization_id   String
+  raw_material      String       @db.VarChar(255)
+  warehouse         String       @db.VarChar(150)
+  quantity_on_hand  Decimal      @default(0) @db.Decimal(14, 2)
+  quantity_reserved Decimal      @default(0) @db.Decimal(14, 2)
+  quantity_issued   Decimal      @default(0) @db.Decimal(14, 2)
+  updated_at        DateTime     @updatedAt
+  organization      Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, raw_material, warehouse])
+  @@index([organization_id, warehouse])
+  @@map("raw_material_stocks")
+}
+
+model FinishedGoodsStock {
+  id                String       @id @default(cuid())
+  organization_id   String
+  style_name        String       @db.VarChar(255)
+  size              String?      @db.VarChar(100)
+  warehouse         String       @db.VarChar(150)
+  quantity_on_hand  Decimal      @default(0) @db.Decimal(14, 2)
+  quantity_reserved Decimal      @default(0) @db.Decimal(14, 2)
+  quantity_issued   Decimal      @default(0) @db.Decimal(14, 2)
+  updated_at        DateTime     @updatedAt
+  organization      Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, style_name, size, warehouse])
+  @@index([organization_id, warehouse])
+  @@map("finished_goods_stocks")
 }

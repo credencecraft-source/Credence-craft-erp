@@ -24,35 +24,46 @@ interface Plan {
   price: number | null;
   billing_cycle: string | null;
   is_active: boolean;
+  tier_key: string | null;
+  is_system_plan: boolean;
+  display_color: string | null;
+  max_order_qty: number | null;
   businessType: BusinessType | null;
 }
 
 interface PlatformPlansBrowserProps {
   plans: Plan[];
+  businessTypes: BusinessType[];
   subscriptionCounts: Record<string, number>;
   error?: string;
   deletePlanAction: (formData: FormData) => Promise<void>;
+  updatePlanAction: (formData: FormData) => Promise<void>;
 }
 
 export default function PlatformPlansBrowser({
   plans,
+  businessTypes,
   subscriptionCounts,
   error,
   deletePlanAction,
+  updatePlanAction,
 }: PlatformPlansBrowserProps) {
-  const modules = Array.from(
-    new Map(
-      plans
-        .filter((plan) => plan.businessType)
-        .map((plan) => [plan.businessType!.id, plan.businessType!]),
-    ).values(),
-  ).sort((left, right) => left.name.localeCompare(right.name));
+  const modules = businessTypes
+    .filter((businessType) => businessType.isActive !== false)
+    .sort((left, right) => left.name.localeCompare(right.name));
   const fallbackPlans = plans.filter((plan) => !plan.businessType);
   const [selectedModuleId, setSelectedModuleId] = useState(modules[0]?.id ?? "general");
+  const [editingPlan, setEditingPlan] = useState<Plan | null>(null);
   const selectedModule = modules.find((module) => module.id === selectedModuleId);
   const selectedPlans = selectedModuleId === "general"
     ? fallbackPlans
     : plans.filter((plan) => plan.businessType?.id === selectedModuleId);
+  const tierStyles: Record<string, string> = {
+    FREE: "border-slate-300 bg-slate-50 text-slate-700",
+    CLASSIC: "border-blue-200 bg-blue-50 text-blue-800",
+    PROFESSIONAL: "border-violet-200 bg-violet-50 text-violet-800",
+    ENTERPRISE: "border-amber-200 bg-amber-50 text-amber-800",
+  };
 
   return (
     <Page className="max-w-7xl">
@@ -133,21 +144,25 @@ export default function PlatformPlansBrowser({
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
                   {selectedPlans.length > 0 ? selectedPlans.map((plan) => (
-                    <tr key={plan.id} className="hover:bg-slate-50/60">
+                    <tr key={plan.id} className={`border-l-4 ${plan.display_color === "blue" ? "border-l-blue-500" : plan.display_color === "violet" ? "border-l-violet-500" : plan.display_color === "amber" ? "border-l-amber-500" : "border-l-slate-400"} hover:bg-slate-50/60`}>
                       <td className="px-4 py-4">
-                        <p className="font-bold text-slate-900">{plan.plan_name.includes(" - ") ? plan.plan_name.split(" - ").slice(1).join(" - ") : plan.plan_name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-bold text-slate-900">{plan.plan_name.includes(" - ") ? plan.plan_name.split(" - ").slice(1).join(" - ") : plan.plan_name}</p>
+                          {plan.tier_key && <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${tierStyles[plan.tier_key] || "border-slate-200 bg-slate-50 text-slate-700"}`}>{plan.tier_key}</span>}
+                        </div>
                         <p className="mt-1 font-mono text-[10px] text-slate-400">{plan.id}</p>
                       </td>
                       <td className="max-w-xs px-4 py-4 text-slate-600">{plan.description || "No description provided."}</td>
-                      <td className="px-4 py-4 font-bold text-slate-900">{plan.price && Number(plan.price) > 0 ? `₹${Number(plan.price).toLocaleString("en-IN")}${plan.billing_cycle ? ` / ${plan.billing_cycle}` : ""}` : "Free"}</td>
+                      <td className="px-4 py-4 font-bold text-slate-900">{plan.price && Number(plan.price) > 0 ? `₹${Number(plan.price).toLocaleString("en-IN")}${plan.billing_cycle ? ` / ${plan.billing_cycle}` : ""}` : "Free"}<span className="mt-1 block text-[10px] font-medium text-slate-500">Order qty: {plan.max_order_qty == null ? "Unlimited" : `up to ${plan.max_order_qty.toLocaleString("en-IN")}`}</span></td>
                       <td className="px-4 py-4"><span className="rounded-full bg-emerald-50 px-2.5 py-1 font-bold text-emerald-700">{subscriptionCounts[plan.id] ?? 0}</span></td>
                       <td className="px-4 py-4"><Badge className={plan.is_active ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-600"}>{plan.is_active ? "Active" : "Inactive"}</Badge></td>
                       <td className="space-x-2 px-4 py-4 text-right">
+                        <button type="button" onClick={() => setEditingPlan(plan)} className="rounded border border-slate-300 bg-white px-2.5 py-1 font-semibold text-slate-700 hover:bg-slate-50">Edit</button>
                         <Link href={`/platform/plans/${plan.id}/restrictions`} className="inline-block rounded border border-indigo-200 bg-indigo-50 px-2.5 py-1 font-semibold text-indigo-600 hover:bg-indigo-100">Restrictions</Link>
-                        <form action={deletePlanAction} className="inline">
+                        {!plan.is_system_plan && <form action={deletePlanAction} className="inline">
                           <input type="hidden" name="planId" value={plan.plan_id} />
                           <button type="submit" className="rounded border border-rose-200 bg-rose-50 px-2.5 py-1 font-semibold text-rose-600 hover:bg-rose-100">Delete</button>
-                        </form>
+                        </form>}
                       </td>
                     </tr>
                   )) : (
@@ -158,6 +173,31 @@ export default function PlatformPlansBrowser({
             </div>
           </div>
         </div>
+
+        {editingPlan && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+              <div className="mb-5 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-600">Plan settings</p>
+                  <h2 className="mt-1 text-xl font-bold text-slate-900">Edit {editingPlan.plan_name}</h2>
+                  <p className="mt-1 text-xs text-slate-500">Standard tier identity is protected; commercial values and limits can be changed.</p>
+                </div>
+                <button type="button" onClick={() => setEditingPlan(null)} aria-label="Close edit plan dialog" className="text-xl text-slate-400 hover:text-slate-700">&times;</button>
+              </div>
+              <form action={updatePlanAction} className="space-y-4">
+                <input type="hidden" name="planId" value={editingPlan.plan_id} />
+                <label className="block text-xs font-semibold text-slate-700">Description<textarea name="description" defaultValue={editingPlan.description ?? ""} rows={3} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal outline-none focus:border-emerald-500" /></label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block text-xs font-semibold text-slate-700">Price<input name="price" type="number" min="0" step="0.01" defaultValue={editingPlan.price ?? ""} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal outline-none focus:border-emerald-500" /></label>
+                  <label className="block text-xs font-semibold text-slate-700">Billing cycle<input name="billingCycle" defaultValue={editingPlan.billing_cycle ?? "monthly"} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal outline-none focus:border-emerald-500" /></label>
+                </div>
+                <label className="block text-xs font-semibold text-slate-700">Maximum order quantity <span className="font-normal text-slate-400">(blank = unlimited)</span><input name="maxOrderQty" type="number" min="0" step="1" defaultValue={editingPlan.max_order_qty ?? ""} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal outline-none focus:border-emerald-500" /></label>
+                <div className="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onClick={() => setEditingPlan(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">Cancel</button><button type="submit" className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700">Save changes</button></div>
+              </form>
+            </div>
+          </div>
+        )}
       </Section>
     </Page>
   );

@@ -35,7 +35,9 @@ export const ERP_MODULES: ErpModule[] = [
         label: "Procurement",
         pathSegment: "procurement",
         children: [
-          { key: "create-po", label: "Style Wise PO", pathSegment: "create-po" },
+          { key: "general-po", label: "General PO", pathSegment: "create-po/general-po/allocate-vendor" },
+          { key: "style-wise-po", label: "Style Wise PO", pathSegment: "create-po/style-wise" },
+          { key: "purchase-order", label: "Purchase Order", pathSegment: "purchase-order" },
         ],
       },
     ],
@@ -56,7 +58,33 @@ export const ERP_MODULES: ErpModule[] = [
     key: "inventory-management",
     label: "Inventory Management",
     pathSegment: "inventory-management",
-    children: [],
+    children: [
+      {
+        key: "inward",
+        label: "Inward",
+        pathSegment: "inward",
+        children: [
+          { key: "purchase-order", label: "Purchase Order", pathSegment: "purchase-order" },
+        ],
+      },
+      {
+        key: "outward",
+        label: "Outward",
+        pathSegment: "outward",
+        children: [
+          { key: "raw-material-dc", label: "Raw Material DC", pathSegment: "raw-material-dc" },
+        ],
+      },
+      {
+        key: "stock",
+        label: "Stock",
+        pathSegment: "stock",
+        children: [
+          { key: "rm-stock", label: "RM Stock", pathSegment: "rm-stock" },
+          { key: "fg-stock", label: "FG Stock", pathSegment: "fg-stock" },
+        ],
+      },
+    ],
   },
   {
     key: "approvals",
@@ -70,6 +98,11 @@ export const ERP_MODULES: ErpModule[] = [
         children: [
           { key: "master-review", label: "Master Review", pathSegment: "master-review" },
         ],
+      },
+      {
+        key: "purchase-order-approval",
+        label: "Purchase Order",
+        pathSegment: "approval-settings/purchase-order-review",
       },
     ],
   },

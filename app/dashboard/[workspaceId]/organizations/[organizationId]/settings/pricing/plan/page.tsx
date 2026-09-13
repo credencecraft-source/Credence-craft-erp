@@ -1,10 +1,49 @@
 import { listPlans } from "@/lib/services/platform/plan-service";
 import { listBusinessTypes } from "@/lib/services/platform/business-type-service";
-import { activatePlanForBusinessType, listSubscriptions } from "@/lib/services/platform/subscription-service";
+import { getEffectivePlansForOrganization, listSubscriptions } from "@/lib/services/platform/subscription-service";
 import { redirect } from "next/navigation";
-import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationByPublicId, getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { getOrganizationByPublicId } from "@/lib/services/organizations/organization-service";
+import { prisma } from "@/lib/database/prisma-client";
+import { ERP_MODULES } from "@/components/erp/erp-config-registry";
+import { restrictionMatchesFeature, type FeaturePath } from "@/lib/services/platform/plan-restriction-matcher";
 import OrganizationPricingPlanPage from "./page-content/organization-pricing-plan-page";
+
+type FeatureSummary = FeaturePath & { key: string; label: string; path: string; available: boolean };
+
+function getSidebarFeatures() {
+  const features: Array<FeaturePath & { key: string; label: string; path: string }> = [];
+  const visit = (items: typeof ERP_MODULES[number]["children"], parentPath: string[], parentRoute: string[]) => {
+    for (const item of items) {
+      const itemParts = (item.pathSegment || item.key).split("/").filter(Boolean);
+      const pathParts = [...parentPath, item.key];
+      const routeParts = [...parentRoute, ...itemParts];
+      features.push({
+        key: pathParts.join("/"),
+        label: item.label,
+        path: routeParts.join("/"),
+        master: pathParts[0] || "",
+        main: pathParts[1] || "",
+        sub: pathParts.slice(2),
+        route: routeParts,
+      });
+      if (item.children?.length) visit(item.children, pathParts, routeParts);
+    }
+  };
+
+  for (const module of ERP_MODULES) {
+    features.push({
+      key: module.key,
+      label: module.label,
+      path: module.pathSegment,
+      master: module.key,
+      main: "*",
+      sub: [],
+      route: [module.pathSegment],
+    });
+    visit(module.children, [module.key], [module.pathSegment]);
+  }
+  return features;
+}
 
 interface PageProps {
   params: Promise<{
@@ -17,67 +56,17 @@ export default async function Page({ params }: PageProps) {
   const resolvedParams = await params;
   const workspaceId = resolvedParams?.workspaceId;
   const organizationId = resolvedParams?.organizationId;
-  const user = await requireSessionUser();
   const organization = await getOrganizationByPublicId(organizationId);
 
   if (!organization) {
     redirect(`/dashboard/${workspaceId}/home`);
   }
 
-  async function activatePlanAction(formData: FormData) {
-    "use server";
-    const actionUser = await requireSessionUser();
-    const actionOrganization = await getOrganizationForUser(actionUser.id, organizationId);
-
-    if (!actionOrganization) {
-      redirect(`/dashboard/${workspaceId}/home`);
-    }
-    await requireOrganizationAccess(actionUser.id, actionOrganization.organization_id, ["OWNER", "ADMIN"]);
-
-    const planId = String(formData.get("planId") || "");
-    const businessTypeId = String(formData.get("businessTypeId") || "");
-
-    try {
-      const existingSubs = await listSubscriptions(actionOrganization.id);
-      const isAlreadyActive = (existingSubs ?? []).some(
-        (sub: any) => 
-          String(sub.organizationId || sub.organization_id || "") === String(organizationId) &&
-          String(sub.planId || sub.plan_id || "") === planId && 
-          String(sub.businessTypeId || sub.business_type_id || "") === businessTypeId && 
-          String(sub.paymentStatus || sub.payment_status || "").toLowerCase() === "paid"
-      );
-
-      if (isAlreadyActive) {
-        redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan?error=${encodeURIComponent("This plan is already active for this organization.")}`);
-      }
-    } catch (e: any) {
-      if (e?.message?.includes("NEXT_REDIRECT")) throw e;
-    }
-
-    const startDate = new Date().toISOString().split("T")[0];
-    const endDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-
-    try {
-      await activatePlanForBusinessType({
-        organizationId: actionOrganization.id,
-        businessTypeId: businessTypeId || "",
-        startDate,
-        endDate,
-        paymentStatus: "paid",
-        planId,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to activate plan.";
-      redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan?error=${encodeURIComponent(message)}`);
-    }
-
-    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan?success=${encodeURIComponent("Plan activated successfully.")}`);
-  }
-
-  const [rawPlans, businessTypes, allSubscriptions] = await Promise.all([
+  const [rawPlans, businessTypes, allSubscriptions, effectivePlans] = await Promise.all([
     listPlans(),
     listBusinessTypes(),
     listSubscriptions(organization.id).catch(() => []),
+    getEffectivePlansForOrganization(organization.id),
   ]);
 
   const existingSubscriptions = (allSubscriptions ?? []).filter((sub: any) => 
@@ -92,6 +81,28 @@ export default async function Page({ params }: PageProps) {
     price: plan.price ? Number(plan.price) : null,
   }));
 
+  const planRestrictions = await prisma.plan_restrictions.findMany({
+    where: { plan_id: { in: plans.map((plan) => plan.id) } },
+    select: { plan_id: true, master_module: true, main_module: true, sub_module: true, restriction_type: true },
+  });
+  const allSidebarFeatures = getSidebarFeatures();
+  const planFeatures: Record<string, FeatureSummary[]> = Object.fromEntries(
+    plans.map((plan) => {
+      const restrictions = planRestrictions.filter((rule) => rule.plan_id === plan.id && rule.restriction_type.toLowerCase() === "block");
+      const features = allSidebarFeatures.map((feature) => {
+        const blocked = feature.sub.length > 0 && restrictions.some((rule) => restrictionMatchesFeature(rule, feature));
+        return { ...feature, available: !blocked };
+      });
+      return [plan.id, features];
+    }),
+  );
+
+  const currentPlanIds = Object.fromEntries(
+    effectivePlans
+      .filter(({ plan, isFree }) => Boolean(plan) && !isFree)
+      .map(({ businessType, plan }) => [businessType.id, plan!.id]),
+  );
+
   return (
     <OrganizationPricingPlanPage
       workspaceId={workspaceId}
@@ -99,7 +110,8 @@ export default async function Page({ params }: PageProps) {
       plans={plans}
       businessTypes={businessTypes}
       existingSubscriptions={existingSubscriptions || []}
-      activatePlanAction={activatePlanAction}
+      currentPlanIds={currentPlanIds}
+      planFeatures={planFeatures}
     />
   );
 }

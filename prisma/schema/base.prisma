@@ -89,12 +89,18 @@ model Organization {
   masterStatuses              MasterStatus[]
   masterOrderVolumes          MasterOrderVolume[]
   groupedPurchaseOrders       GroupedPurchaseOrder[]
+  masterPurchaseOrders        MasterPurchaseOrder[]
+  purchaseOrders              PurchaseOrder[]
   subscriptions               Subscription[]
   invitations                 OrganizationInvitation[]
   rolePermissions             OrganizationRolePermission[]
   roleDefinitions             OrganizationRoleDefinition[]
   supportTickets              SupportTicket[]
   orderNumberCounter          OrganizationOrderCounter?
+  procurementDocumentCounters ProcurementDocumentCounter[]
+  inventoryReceipts          InventoryReceipt[]
+  rawMaterialStocks          RawMaterialStock[]
+  finishedGoodsStocks        FinishedGoodsStock[]
 
   @@index([plan_id])
   @@index([database_connection_id])
@@ -283,6 +289,10 @@ model Plan {
   description      String?       @db.VarChar(500)
   price            Decimal?      @db.Decimal(10, 2)
   billing_cycle    String?       @db.VarChar(50)
+  tier_key         String?       @db.VarChar(30)
+  is_system_plan   Boolean       @default(false)
+  display_color    String?       @db.VarChar(30)
+  max_order_qty    Int?
   is_active        Boolean       @default(true)
   sort_order       Int           @default(0)
   created_at       DateTime      @default(now())
@@ -293,6 +303,7 @@ model Plan {
   subscriptions    Subscription[]
 
   @@index([business_type_id])
+  @@index([business_type_id, tier_key])
   @@index([is_active])
   @@map("plans")
 }
@@ -703,6 +714,8 @@ model MasterVendor {
   updated_at      DateTime     @updatedAt
   organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   groupedPurchaseOrders GroupedPurchaseOrder[]
+  masterPurchaseOrders MasterPurchaseOrder[]
+  purchaseOrders PurchaseOrder[]
 
   @@index([organization_id, is_active])
   @@map("master_vendors")

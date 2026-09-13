@@ -86,7 +86,7 @@ export function RestrictionForm({
           disabled={!selectedMainKey || subModules.length === 0}
           className="w-full border p-2 text-xs rounded-lg bg-white disabled:bg-slate-100"
         >
-          <option value="">{subModules.length === 0 ? "Use * (All Sub Modules)" : "Select Sub Module..."}</option>
+          <option value="">{subModules.length === 0 ? "No restrictable submodules" : "Select Sub Module..."}</option>
           {subModules.map((sub: any) => (
             <option key={sub.key} value={sub.key}>
               {sub.label}

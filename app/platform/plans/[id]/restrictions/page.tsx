@@ -10,6 +10,7 @@ import Table from "@/components/ui/Table";
 import { listPlans } from "@/lib/services/platform/plan-service";
 import { RestrictionForm } from "@/components/platform/restriction-form";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -26,8 +27,17 @@ async function saveRestrictionAction(planId: string, formData: FormData) {
   const restrictionType = String(formData.get("restrictionType") || "block");
   const customMessage = String(formData.get("customMessage") || "").trim();
 
-  if (!masterModule || !mainModule || !subModule) {
-    redirect(`/platform/plans/${planId}/restrictions?error=` + encodeURIComponent("Master, Main, and Sub modules are required."));
+  const plan = await prisma.plan.findUnique({
+    where: { id: planId },
+    include: { businessType: true },
+  });
+
+  if (!plan) {
+    redirect(`/platform/plans/${planId}/restrictions?error=` + encodeURIComponent("Plan not found"));
+  }
+
+  if (!masterModule || !mainModule || !subModule || subModule === "*") {
+    redirect(`/platform/plans/${planId}/restrictions?error=` + encodeURIComponent("Select a third-level submodule. Master and main modules are shared features and cannot be restricted."));
   }
 
   const formattedMaster = masterModule.toLowerCase().replace(/\s+/g, "-");
@@ -36,7 +46,12 @@ async function saveRestrictionAction(planId: string, formData: FormData) {
   const formattedAction = actionLevel.toLowerCase().replace(/\s+/g, "-");
   const urlPattern = `/dashboard/*/organizations/*/${formattedMaster}/${formattedMain}/${formattedSub}/${formattedAction}`;
 
-  const defaultMsg = `Access to ${masterModule} › ${mainModule} › ${subModule} is restricted on your current plan.`;
+  const planModule = plan.businessType ? getErpModuleForBusinessTypeName(plan.businessType.name) : null;
+  if (!planModule || formattedMaster !== planModule.pathSegment) {
+    redirect(`/platform/plans/${planId}/restrictions?error=` + encodeURIComponent("Restriction must belong to the plan's business module."));
+  }
+
+  const defaultMsg = `This feature is not available on your current plan. Upgrade to unlock ${masterModule} › ${mainModule} › ${subModule}.`;
 
   try {
     await prisma.plan_restrictions.create({

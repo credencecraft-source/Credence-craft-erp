@@ -1,80 +1,110 @@
 "use client";
 
-import { ArrowRight, ChevronDown, ChevronRight, ClipboardCheck, Loader2, PackageSearch, Plus, Search, ShieldCheck } from "lucide-react";
+import { ArrowRight, ClipboardCheck, FilePlus2, Loader2, PackageCheck, PackageSearch } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-type BomRow = { id: string; orderNo?: string | null; styleName?: string | null; brand?: string | null; category?: string | null; subCategory?: string | null; rawMaterialName?: string | null; internalConsumption?: number | string | null; requiredQty?: number | string | null; totalRequiredQty?: number | string | null };
-type MaterialGroup = { key: string; rawMaterialName: string; category: string; subCategory: string; groupedQty: number; rows: BomRow[] };
+type ProcurementSummary = {
+  pendingVendorAllocation: number;
+  pendingPriceApproval: number;
+  readyForPo: number;
+  totalOpen: number;
+};
 
-const numberValue = (value: number | string | null | undefined) => { const parsed = Number(value ?? 0); return Number.isFinite(parsed) ? parsed : 0; };
-const formatNumber = (value: number) => value.toLocaleString("en-IN", { maximumFractionDigits: 2 });
-const text = (value: unknown, fallback = "-") => value === null || value === undefined || value === "" ? fallback : String(value);
+const emptySummary: ProcurementSummary = {
+  pendingVendorAllocation: 0,
+  pendingPriceApproval: 0,
+  readyForPo: 0,
+  totalOpen: 0,
+};
+
+const formatNumber = (value: number) => value.toLocaleString("en-IN");
 
 export default function ProcurementHomePage() {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
   const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
-  const procurementBasePath = `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/procurement`;
-  const [bomRows, setBomRows] = useState<BomRow[]>([]);
-  const [search, setSearch] = useState("");
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const procurementPath = `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/procurement`;
+  const [summary, setSummary] = useState<ProcurementSummary>(emptySummary);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let mounted = true;
-    async function loadBomRows() {
-      try {
-        const rows: BomRow[] = [];
-        let cursor = "";
-        do {
-          const response = await fetch(`/api/orders/bom?organizationId=${encodeURIComponent(organizationId)}&limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { cache: "no-store" });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data?.error || "Unable to load raw materials.");
-          rows.push(...(data.bomItems ?? []));
-          cursor = data.nextCursor ?? "";
-        } while (cursor);
-        if (mounted) setBomRows(rows);
-      } catch (loadError) {
-        if (mounted) setError(loadError instanceof Error ? loadError.message : "Unable to load raw materials.");
-      } finally {
+    fetch(`/api/orders/procurement?organizationId=${encodeURIComponent(organizationId)}&view=summary`, { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.error || "Unable to load procurement insights.");
+        if (mounted) setSummary(data);
+      })
+      .catch((loadError) => {
+        if (mounted) setError(loadError instanceof Error ? loadError.message : "Unable to load procurement insights.");
+      })
+      .finally(() => {
         if (mounted) setLoading(false);
-      }
-    }
-    loadBomRows();
+      });
+
     return () => { mounted = false; };
   }, [organizationId]);
 
-  const groups = useMemo<MaterialGroup[]>(() => {
-    const grouped = new Map<string, MaterialGroup>();
-    for (const row of bomRows) {
-      const rawMaterialName = text(row.rawMaterialName, "Unclassified material");
-      const category = text(row.category, "General");
-      const subCategory = text(row.subCategory, "Uncategorised");
-      const key = `${rawMaterialName.toLowerCase()}|${category.toLowerCase()}|${subCategory.toLowerCase()}`;
-      const group = grouped.get(key) ?? { key, rawMaterialName, category, subCategory, groupedQty: 0, rows: [] };
-      group.groupedQty += numberValue(row.totalRequiredQty ?? row.requiredQty);
-      group.rows.push(row);
-      grouped.set(key, group);
-    }
-    return [...grouped.values()].sort((left, right) => left.rawMaterialName.localeCompare(right.rawMaterialName));
-  }, [bomRows]);
+  const openWorkflow = () => router.push(`${procurementPath}/create-po/style-wise`);
 
-  const filteredGroups = groups.filter((group) => { const needle = search.trim().toLowerCase(); return !needle || `${group.rawMaterialName} ${group.category} ${group.subCategory}`.toLowerCase().includes(needle); });
-  const selectedGroup = groups.find((group) => group.key === selectedKey) ?? null;
+  return <div className="mx-auto max-w-7xl space-y-6">
+    <header className="flex flex-col justify-between gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end">
+      <div>
+        <p className="erp-eyebrow">Order Management / Procurement</p>
+        <h1 className="erp-page-heading mt-1">Procurement overview</h1>
+        <p className="mt-1 max-w-2xl text-sm text-slate-500">A quick view of work waiting across the procurement workflow.</p>
+      </div>
+      <button type="button" onClick={openWorkflow} className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800">
+        Open procurement workflow <ArrowRight className="h-4 w-4" />
+      </button>
+    </header>
 
-  return <div className="mx-auto max-w-7xl space-y-5">
-    <div className="flex flex-col justify-between gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end"><div><p className="erp-eyebrow">Order Management / Procurement</p><h1 className="erp-page-heading mt-1">Raw material procurement</h1><p className="mt-1 max-w-2xl text-sm text-slate-500">Review every raw-material requirement by material group before allocating vendors.</p></div><button type="button" onClick={() => router.push(`${procurementBasePath}/create-po`)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800"><Plus className="h-4 w-4" /> Style Wise PO</button></div>
-    <div className="grid gap-2 sm:grid-cols-3"><StageIndicator number="01" label="Allocate vendor" active icon={PackageSearch} /><StageIndicator number="02" label="Approve price" icon={ClipboardCheck} /><StageIndicator number="03" label="Create PO" icon={ShieldCheck} /></div>
-    <section className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700">Material groups</p><h2 className="mt-1 text-sm font-bold text-slate-950">All raw materials</h2></div><div className="relative w-full max-w-xs"><Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search material or subcategory" className="w-full rounded-md border border-slate-300 bg-white py-1.5 pl-8 pr-2 text-xs outline-none focus:border-emerald-500" /></div></div>{error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>}{loading ? <div className="erp-surface flex min-h-48 items-center justify-center gap-2 text-xs text-slate-500"><Loader2 className="h-4 w-4 animate-spin text-emerald-600" /> Loading raw-material groups</div> : filteredGroups.length === 0 ? <div className="erp-surface flex min-h-48 items-center justify-center text-xs text-slate-500">No raw-material groups found.</div> : <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{filteredGroups.map((group) => <MaterialGroupCard key={group.key} group={group} selected={group.key === selectedKey} onClick={() => setSelectedKey(group.key === selectedKey ? null : group.key)} />)}</div>}</section>
-    {selectedGroup && <RelatedOrders group={selectedGroup} onOpenStyleWisePo={() => router.push(`${procurementBasePath}/create-po`)} />}
+    {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>}
+
+    {loading ? <div className="erp-surface flex min-h-52 items-center justify-center gap-2 text-xs text-slate-500"><Loader2 className="h-4 w-4 animate-spin text-emerald-600" /> Loading procurement insights</div> : <>
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Procurement insights">
+        <InsightCard label="Pending vendor allocation" value={summary.pendingVendorAllocation} detail="BOM items waiting for a vendor" icon={PackageSearch} tone="amber" />
+        <InsightCard label="Pending price approval" value={summary.pendingPriceApproval} detail="Grouped POs awaiting review" icon={ClipboardCheck} tone="blue" />
+        <InsightCard label="Ready to create PO" value={summary.readyForPo} detail="Approved grouped POs" icon={FilePlus2} tone="emerald" />
+        <InsightCard label="Open procurement work" value={summary.totalOpen} detail="Items across all queues" icon={PackageCheck} tone="slate" />
+      </section>
+
+      <section className="erp-surface overflow-hidden">
+        <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+          <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700">Workflow</p>
+          <h2 className="mt-1 text-base font-bold text-slate-950">Move work forward</h2>
+        </div>
+        <div className="grid gap-0 divide-y divide-slate-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+          <WorkflowStep number="01" title="Allocate vendor" detail="Assign vendors to pending requirements." onClick={openWorkflow} />
+          <WorkflowStep number="02" title="Approve price" detail="Review submitted vendor pricing." onClick={openWorkflow} />
+          <WorkflowStep number="03" title="Create PO" detail="Convert approved records into POs." onClick={openWorkflow} />
+        </div>
+      </section>
+    </>}
   </div>;
 }
 
-function StageIndicator({ number, label, active, icon: Icon }: { number: string; label: string; active?: boolean; icon: typeof PackageSearch }) { return <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${active ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}><span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${active ? "bg-emerald-700 text-white" : "bg-slate-200 text-slate-600"}`}>{number}</span><Icon className="h-3.5 w-3.5 text-slate-500" /><span className="text-xs font-semibold text-slate-700">{label}</span></div>; }
+function InsightCard({ label, value, detail, icon: Icon, tone }: { label: string; value: number; detail: string; icon: typeof PackageSearch; tone: "amber" | "blue" | "emerald" | "slate" }) {
+  const tones = {
+    amber: "border-amber-200 bg-amber-50 text-amber-700",
+    blue: "border-blue-200 bg-blue-50 text-blue-700",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    slate: "border-slate-200 bg-slate-50 text-slate-700",
+  };
+  return <article className="erp-surface p-5">
+    <div className="flex items-start justify-between gap-3"><p className="max-w-[12rem] text-xs font-bold uppercase tracking-[0.1em] text-slate-500">{label}</p><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${tones[tone]}`}><Icon className="h-4 w-4" /></span></div>
+    <p className="mt-6 text-3xl font-bold tracking-tight text-slate-950">{formatNumber(value)}</p>
+    <p className="mt-1 text-xs text-slate-500">{detail}</p>
+  </article>;
+}
 
-function MaterialGroupCard({ group, selected, onClick }: { group: MaterialGroup; selected: boolean; onClick: () => void }) { return <button type="button" onClick={onClick} className={`group w-full rounded-xl border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md ${selected ? "border-emerald-500 ring-2 ring-emerald-100" : "border-slate-200"}`}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700">{group.category}</p><h3 className="mt-1 truncate text-base font-bold text-slate-950">{group.rawMaterialName}</h3><p className="mt-1 truncate text-xs text-slate-500">{group.subCategory}</p></div>{selected ? <ChevronDown className="h-4 w-4 shrink-0 text-emerald-700" /> : <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />}</div><div className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3"><div><p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Grouped Qty</p><p className="mt-1 text-xl font-bold text-slate-950">{formatNumber(group.groupedQty)}</p></div><div><p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Related Orders</p><p className="mt-1 text-xl font-bold text-slate-950">{new Set(group.rows.map((row) => row.orderNo)).size}</p></div></div><p className="mt-3 text-[10px] text-slate-500">{group.rows.length} raw-material line{group.rows.length === 1 ? "" : "s"}</p></button>; }
-
-function RelatedOrders({ group, onOpenStyleWisePo }: { group: MaterialGroup; onOpenStyleWisePo: () => void }) { return <section className="erp-surface overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3"><div><p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700">Selected material</p><h2 className="mt-1 text-sm font-bold text-slate-950">{group.rawMaterialName} · {group.subCategory}</h2></div><button type="button" onClick={onOpenStyleWisePo} className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">Allocate vendor <ArrowRight className="h-3.5 w-3.5" /></button></div><div className="overflow-x-auto"><table className="w-full min-w-[800px] text-left text-xs"><thead className="border-b border-slate-200 bg-white text-[9px] font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-2.5">Order Name</th><th className="px-4 py-2.5">Style Name</th><th className="px-4 py-2.5">Brand</th><th className="px-4 py-2.5">Internal Consumption</th><th className="px-4 py-2.5 text-right">Required Qty</th></tr></thead><tbody className="divide-y divide-slate-100">{group.rows.map((row) => <tr key={row.id} className="hover:bg-emerald-50/40"><td className="px-4 py-2.5 font-semibold text-slate-800">{text(row.orderNo)}</td><td className="px-4 py-2.5 text-slate-700">{text(row.styleName)}</td><td className="px-4 py-2.5 text-slate-700">{text(row.brand)}</td><td className="px-4 py-2.5 text-slate-700">{formatNumber(numberValue(row.internalConsumption))}</td><td className="px-4 py-2.5 text-right font-bold text-slate-900">{formatNumber(numberValue(row.totalRequiredQty ?? row.requiredQty))}</td></tr>)}</tbody></table></div></section>; }
+function WorkflowStep({ number, title, detail, onClick }: { number: string; title: string; detail: string; onClick: () => void }) {
+  return <button type="button" onClick={onClick} className="group flex items-center gap-4 px-5 py-5 text-left transition hover:bg-emerald-50/60">
+    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-700">{number}</span>
+    <span className="min-w-0 flex-1"><span className="block text-sm font-bold text-slate-950">{title}</span><span className="mt-1 block text-xs text-slate-500">{detail}</span></span>
+    <ArrowRight className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:translate-x-1 group-hover:text-emerald-700" />
+  </button>;
+}

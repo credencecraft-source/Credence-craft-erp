@@ -6,7 +6,7 @@ import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
-import { createPlan, listPlans } from "@/lib/services/platform/plan-service";
+import { createPlan } from "@/lib/services/platform/plan-service";
 import { listBusinessTypes } from "@/lib/services/platform/business-type-service";
 
 export default async function CreatePlanPage({
@@ -24,19 +24,8 @@ export default async function CreatePlanPage({
     const businessTypeId = String(formData.get("businessTypeId") || "").trim();
     const rawPlanName = String(formData.get("planName") || "").trim();
     const description = String(formData.get("description") || "").trim();
-    const isFree = formData.get("isFree") === "on";
-    const priceRaw = isFree ? "0" : String(formData.get("price") || "").trim();
+    const priceRaw = String(formData.get("price") || "").trim();
     const billingCycle = String(formData.get("billingCycle") || "monthly").trim();
-
-    if (isFree && businessTypeId) {
-      const allPlans = await listPlans();
-      const freePlanExists = allPlans.some(
-        (p) => p.business_type_id === businessTypeId && (!p.price || Number(p.price) === 0)
-      );
-      if (freePlanExists) {
-        redirect(`/platform/plans/create?error=${encodeURIComponent("A free plan already exists for this business type.")}`);
-      }
-    }
 
     const selectedBt = businessTypes.find((bt) => bt.id === businessTypeId);
     const planName = selectedBt ? `${selectedBt.name} - ${rawPlanName}` : rawPlanName;
@@ -76,7 +65,6 @@ export default async function CreatePlanPage({
               <label className="block text-xs font-semibold text-slate-700 mb-1">Business Type / Category</label>
               <select
                 name="businessTypeId"
-                required
                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-emerald-500 focus:outline-none"
               >
                 <option value="">Select a business type...</option>
@@ -91,17 +79,7 @@ export default async function CreatePlanPage({
             <Input label="Tier / Plan Name" name="planName" required placeholder="Standard or 50K Units" />
             <Input label="Description" name="description" placeholder="Up to 5,000 units and 3 user seats." />
             
-            <div className="flex items-center gap-2 py-1">
-              <input
-                type="checkbox"
-                id="isFree"
-                name="isFree"
-                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-              />
-              <label htmlFor="isFree" className="text-xs font-semibold text-slate-700">
-                This is a free plan (Only one free plan allowed per business type)
-              </label>
-            </div>
+            <p className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-blue-800">The four standard tiers are created automatically for every business type. This form creates an additional custom plan.</p>
 
             <Input label="Price" name="price" type="number" step="0.01" placeholder="7000" />
             <Input label="Billing cycle" name="billingCycle" defaultValue="monthly" placeholder="monthly" />

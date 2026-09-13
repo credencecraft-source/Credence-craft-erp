@@ -1,6 +1,17 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import { calculateBomRows, calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
+import { getEffectivePlansForOrganization } from "@/lib/services/platform/subscription-service";
+
+async function validateOrderQuantityLimit(organizationId: string, orderQty: number) {
+  const effectivePlans = await getEffectivePlansForOrganization(organizationId);
+  const orderManagementPlan = effectivePlans.find(({ businessType }) => businessType.name.trim().toLowerCase() === "order management");
+  const maxOrderQty = orderManagementPlan?.plan?.max_order_qty;
+
+  if (maxOrderQty !== null && maxOrderQty !== undefined && orderQty > maxOrderQty) {
+    throw new Error(`Your current ${orderManagementPlan?.plan?.plan_name || "plan"} allows up to ${maxOrderQty.toLocaleString("en-IN")} order quantity. Please upgrade your plan.`);
+  }
+}
 
 export type OrderStatus =
   | "Draft"
@@ -286,6 +297,10 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
   }
 
   const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : null;
+  const calculatedOrderQty = Array.isArray(input.rows)
+    ? calculateFinishedGoodsRows(input.rows).orderQty
+    : Number(input.orderQty ?? 0);
+  await validateOrderQuantityLimit(organizationId, calculatedOrderQty);
 
   return prisma.$transaction(async (transaction) => {
     const orderNo = await reserveNextOrderNumber(organizationId, transaction);
@@ -342,6 +357,9 @@ export async function updateOrder(
   }
 
   const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : undefined;
+  if (input.orderQty !== undefined && input.orderQty !== null) {
+    await validateOrderQuantityLimit(organizationId, Number(input.orderQty));
+  }
 
   return prisma.merchandisingOrder.update({
     where: { id: orderId },
@@ -464,6 +482,10 @@ export async function updateOrderWithDetails(
 
     const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : undefined;
     const calculatedFinishedGoods = input.rows ? calculateFinishedGoodsRows(input.rows) : null;
+    await validateOrderQuantityLimit(
+      organizationId,
+      calculatedFinishedGoods?.orderQty ?? (input.orderQty !== undefined ? Number(input.orderQty) : Number(order.orderQty ?? 0)),
+    );
     const updatedOrder = await transaction.merchandisingOrder.update({
       where: { id: orderId },
       data: {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
 import { prisma } from "@/lib/database/prisma-client";
+import { ensureStandardPlansForBusinessTypes } from "@/lib/services/platform/subscription-service";
 
 export async function listBusinessTypes() {
   return prisma.businessType.findMany({
@@ -47,34 +48,7 @@ export async function createBusinessType(input: {
       },
     });
 
-    const planCount = await transaction.plan.count();
-    const freePlan = await transaction.plan.create({
-      data: {
-        plan_id: randomUUID(),
-        business_type_id: businessType.id,
-        plan_name: `${name} - Free`,
-        description: `Default free plan for ${name}.`,
-        price: 0,
-        billing_cycle: "monthly",
-        sort_order: planCount,
-      },
-    });
-
-    const organizations = await transaction.organization.findMany({
-      where: { is_active: true },
-      select: { id: true },
-    });
-
-    if (organizations.length > 0) {
-      await transaction.subscription.createMany({
-        data: organizations.map((organization) => ({
-          organization_id: organization.id,
-          business_type_id: businessType.id,
-          plan_id: freePlan.id,
-          payment_status: "paid",
-        })),
-      });
-    }
+    await ensureStandardPlansForBusinessTypes(transaction);
 
     return businessType;
   });

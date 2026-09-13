@@ -71,7 +71,7 @@ export default async function ApprovalMasterReviewPage({
   }
 
   const approvalRequests = await listApprovalRequestsForOrganization(organization.id);
-  const pendingRequests = approvalRequests.filter((request) => request.status === "pending");
+  const pendingRequests = approvalRequests.filter((request) => request.status === "pending" && request.entity_type !== "purchase-order");
 
   return (
     <div className="space-y-6 p-6 max-w-7xl mx-auto">

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { reserveProcurementDocumentNumber } from "./procurement-document-number-service";
 
 const PRICE_APPROVAL_STATUS = "PENDING_PRICE_APPROVAL";
 const APPROVED_STATUS = "PRICE_APPROVED";
@@ -65,6 +66,7 @@ function serializeLine(line: {
     otherChargesPerItem: decimalValue(line.other_charges_per_item),
     totalExtra: decimalValue(line.total_extra),
     totalSpend: decimalValue(line.total_spend),
+    total: decimalValue(line.total_spend) ?? Number(line.grouped_qty) * Number(line.vendor_price ?? 0),
     internalConsumption: decimalValue(line.internal_consumption),
     requiredQty: decimalValue(line.required_qty),
     groupedQty: decimalValue(line.grouped_qty),
@@ -75,6 +77,7 @@ function serializeLine(line: {
 function serializePurchaseOrder(order: {
   id: string;
   grouped_po_no: string;
+  display_no: number | null;
   status: string;
   submitted_at: Date;
   approved_by: string | null;
@@ -103,6 +106,8 @@ function serializePurchaseOrder(order: {
   buying_qty_total: Prisma.Decimal | null;
   vendor_price: Prisma.Decimal | null;
   vendor_price_inr: Prisma.Decimal | null;
+  gst: Prisma.Decimal | null;
+  hsn_code: string | null;
   other_charges: Prisma.Decimal | null;
   other_charges_inr: Prisma.Decimal | null;
   currency: string | null;
@@ -111,7 +116,8 @@ function serializePurchaseOrder(order: {
 }) {
   return {
     id: order.id,
-    groupedPoNo: order.grouped_po_no,
+    groupedPoNo: order.display_no ? `GP-${order.display_no}` : order.grouped_po_no,
+    groupedPoInternalNo: order.grouped_po_no,
     status: order.status,
     submittedAt: order.submitted_at,
     approvedBy: order.approved_by,
@@ -139,6 +145,8 @@ function serializePurchaseOrder(order: {
     buyingQtyTotal: decimalValue(order.buying_qty_total),
     vendorPrice: decimalValue(order.vendor_price),
     vendorPriceInr: decimalValue(order.vendor_price_inr),
+    gst: decimalValue(order.gst),
+    hsnCode: order.hsn_code,
     otherCharges: decimalValue(order.other_charges),
     otherChargesInr: decimalValue(order.other_charges_inr),
     currency: order.currency,
@@ -146,6 +154,25 @@ function serializePurchaseOrder(order: {
     vendor: { id: order.vendor.id, name: order.vendor.vendor },
     lines: order.lines.map(serializeLine),
   };
+}
+
+async function enrichPurchaseOrderTaxFields<T extends ReturnType<typeof serializePurchaseOrder>>(organizationId: string, orders: T[]) {
+  const rawMaterialNames = [...new Set(orders.flatMap((order) => order.lines.map((line) => line.itemName).filter((name): name is string => Boolean(name))))];
+  if (rawMaterialNames.length === 0) return orders;
+
+  const rawMaterials = await prisma.masterRawMaterial.findMany({
+    where: { organization_id: organizationId, raw_material_name: { in: rawMaterialNames } },
+    select: { raw_material_name: true, legacy_metadata: true },
+  });
+  const taxByMaterial = new Map(rawMaterials.map((material) => {
+    const metadata = material.legacy_metadata && typeof material.legacy_metadata === "object" && !Array.isArray(material.legacy_metadata) ? material.legacy_metadata as Record<string, unknown> : {};
+    return [material.raw_material_name, { gst: metadata.gst ?? metadata.Gst ?? metadata.GST ?? null, hsnCode: metadata.hsnCode ?? metadata.hsn_code ?? metadata.Hsn_Code ?? metadata.HSN ?? null }];
+  }));
+
+  return orders.map((order) => ({
+    ...order,
+    lines: order.lines.map((line) => ({ ...line, ...(taxByMaterial.get(line.itemName ?? "") ?? { gst: null, hsnCode: null }) })),
+  }));
 }
 
 const groupedPurchaseOrderInclude = {
@@ -212,6 +239,30 @@ export async function listAllocatableBomRows(organizationId: string) {
     internalPriceBom: decimalValue(row.internalPrice),
     requiredQty: decimalValue(row.totalRequiredQty ?? row.requiredQty),
   }));
+}
+
+export async function getProcurementSummary(organizationId: string) {
+  const [pendingVendorAllocation, pendingPriceApproval, readyForPo] = await prisma.$transaction([
+    prisma.billOfMaterialItem.count({
+      where: {
+        order: { organization_id: organizationId },
+        groupedPurchaseOrderLines: { none: {} },
+      },
+    }),
+    prisma.groupedPurchaseOrder.count({
+      where: { organization_id: organizationId, status: PRICE_APPROVAL_STATUS },
+    }),
+    prisma.groupedPurchaseOrder.count({
+      where: { organization_id: organizationId, status: APPROVED_STATUS },
+    }),
+  ]);
+
+  return {
+    pendingVendorAllocation,
+    pendingPriceApproval,
+    readyForPo,
+    totalOpen: pendingVendorAllocation + pendingPriceApproval + readyForPo,
+  };
 }
 
 export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrderInput) {
@@ -284,12 +335,15 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
     const categories = [...new Set(lines.map((line) => line.category).filter(Boolean))];
     const subCategories = [...new Set(lines.map((line) => line.sub_category).filter(Boolean))];
     const brands = [...new Set(lines.map((line) => line.brand).filter(Boolean))];
+    const displayNumber = await reserveProcurementDocumentNumber(input.organizationId, "GROUPED_PO", transaction);
+    const displayNo = Number(displayNumber.replace("GP-", ""));
 
     const order = await transaction.groupedPurchaseOrder.create({
       data: {
         organization_id: input.organizationId,
         vendor_id: vendor.id,
         grouped_po_no: `GPO-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`,
+        display_no: displayNo,
         status: PRICE_APPROVAL_STATUS,
         submitted_by: input.submittedBy ?? null,
         raw_material: rawMaterials.join(", ") || null,
@@ -316,7 +370,20 @@ export async function listGroupedPurchaseOrders(organizationId: string, status?:
     include: groupedPurchaseOrderInclude,
     orderBy: { created_at: "desc" },
   });
-  return orders.map(serializePurchaseOrder);
+  return enrichPurchaseOrderTaxFields(organizationId, orders.map(serializePurchaseOrder));
+}
+
+export async function deleteGroupedPurchaseOrder(organizationId: string, id: string) {
+  await prisma.$transaction(async (transaction) => {
+    const order = await transaction.groupedPurchaseOrder.findFirst({
+      where: { id, organization_id: organizationId },
+      select: { id: true, masterGroupSource: { select: { id: true } } },
+    });
+    if (!order) throw new Error("Grouped PO not found.");
+    if (order.masterGroupSource) throw new Error("Delete the Master Group before deleting this Grouped PO.");
+
+    await transaction.groupedPurchaseOrder.delete({ where: { id: order.id } });
+  });
 }
 
 export async function updateGroupedPurchaseOrderPrices(

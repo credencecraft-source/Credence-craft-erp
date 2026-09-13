@@ -3,11 +3,27 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import {
   approveGroupedPurchaseOrder,
+  deleteGroupedPurchaseOrder,
   rejectGroupedPurchaseOrder,
   updateGroupedPurchaseOrderPrices,
 } from "@/lib/services/orders/grouped-purchase-order-service";
 import { updateGroupedPurchaseOrderHeader } from "@/lib/services/orders/grouped-purchase-order-header-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ groupedPurchaseOrderId: string }> },
+) {
+  try {
+    const user = await requireSessionUser();
+    const organizationId = new URL(request.url).searchParams.get("organizationId") ?? "";
+    const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    await deleteGroupedPurchaseOrder(organization.id, (await params).groupedPurchaseOrderId);
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to delete Grouped PO." }, { status: 400 });
+  }
+}
 
 export async function PUT(
   request: Request,
@@ -45,6 +61,8 @@ export async function PUT(
         note: body.note,
         vendorPriceInr: body.vendorPriceInr,
         vendorPrice: body.vendorPrice,
+        gst: body.gst,
+        hsnCode: body.hsnCode,
         otherChargesInr: body.otherChargesInr,
         convertValue: body.convertValue,
         roundOf: body.roundOf,

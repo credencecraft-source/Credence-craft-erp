@@ -116,6 +116,18 @@ export async function sendTestEmail(recipient: string) {
   });
 }
 
+export async function sendPurchaseOrderEmail(input: { recipient: string; purchaseOrder: { purchaseOrderNo: string; vendor: { name: string }; total: number; lines: Array<{ rawMaterial: string | null; quantity: number | null; price: number | null; total: number | null }> } }) {
+  const { configuration, transporter } = await getTransport();
+  const rows = input.purchaseOrder.lines.map((line) => `<tr><td>${line.rawMaterial ?? "-"}</td><td>${line.quantity ?? 0}</td><td>${line.price ?? 0}</td><td>${line.total ?? 0}</td></tr>`).join("");
+  await transporter.sendMail({
+    from: `${configuration.from_name} <${configuration.from_email}>`,
+    to: input.recipient,
+    subject: `Purchase Order ${input.purchaseOrder.purchaseOrderNo}`,
+    text: `Purchase Order ${input.purchaseOrder.purchaseOrderNo} for ${input.purchaseOrder.vendor.name}. Total: ${input.purchaseOrder.total}.`,
+    html: `<h2>Purchase Order ${input.purchaseOrder.purchaseOrderNo}</h2><p>Vendor: ${input.purchaseOrder.vendor.name}</p><table border="1" cellpadding="6" cellspacing="0"><thead><tr><th>Raw material</th><th>Quantity</th><th>Price</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table><p><strong>Grand total: ${input.purchaseOrder.total}</strong></p>`,
+  });
+}
+
 export async function issueEmailOtp(email: string, purpose: OtpPurpose = "AUTH") {
   const normalizedEmail = email.trim().toLowerCase();
   const { configuration, transporter } = await getTransport();

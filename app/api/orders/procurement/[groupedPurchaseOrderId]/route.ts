@@ -1,1 +1,1 @@
-export { PUT } from "./procurement-detail-handler";
+export { DELETE, PUT } from "./procurement-detail-handler";

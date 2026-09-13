@@ -1,0 +1,1 @@
+export { default } from "./_page-content/purchase-order-report-page";

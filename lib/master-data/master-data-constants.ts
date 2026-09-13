@@ -333,6 +333,14 @@ export async function updateApprovalRequestStatus(
     data: { status, reviewed_by: reviewer ?? null, reviewed_at: new Date() },
   });
 
+  if (request.entity_type === "purchase-order" && request.entity_ref_id) {
+    await prisma.purchaseOrder.updateMany({
+      where: { id: request.entity_ref_id, organization_id: organizationId, status: "PENDING_APPROVAL" },
+      data: { status: status === "approved" ? "APPROVED" : "REJECTED", approved_by: reviewer ?? null, approved_at: new Date(), rejection_reason: status === "rejected" ? "Purchase Order approval was rejected." : null },
+    });
+    return updated;
+  }
+
   if (request.entity_ref_id) {
     const delegate = delegates[request.module_key];
     if (delegate) {

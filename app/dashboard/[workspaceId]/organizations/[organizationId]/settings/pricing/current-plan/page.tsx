@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
-import { listSubscriptions, deleteSubscription } from "@/lib/services/platform/subscription-service";
+import { getEffectivePlansForOrganization, listSubscriptions, deleteSubscription } from "@/lib/services/platform/subscription-service";
 import { listPlans } from "@/lib/services/platform/plan-service";
 import { listBusinessTypes } from "@/lib/services/platform/business-type-service";
 
@@ -27,10 +27,10 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
     redirect(`/dashboard/${workspaceId}/home`);
   }
 
-  const [subscriptions, plans, allBusinessTypes] = await Promise.all([
-    listSubscriptions(organization.id),
+  const [plans, allBusinessTypes, effectivePlans] = await Promise.all([
     listPlans(),
     listBusinessTypes(),
+    getEffectivePlansForOrganization(organization.id),
   ]);
 
   const redirectBase = `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan`;
@@ -65,9 +65,18 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
     redirect(`${redirectBase}?success=${encodeURIComponent("Subscription deleted successfully.")}`);
   }
 
-  const orgSubscriptions = subscriptions.filter((sub: any) => {
-    const subOrg = String(sub.organizationId || sub.organization_id || sub.organization || "").trim();
-    return Boolean(organization.id) && subOrg === organization.id;
+  const orgSubscriptions = effectivePlans.flatMap(({ businessType, plan, subscription, isFree }) => {
+    if (!plan || isFree) return [];
+    return [{
+    ...(subscription ?? {}),
+    organizationId: organization.id,
+    businessTypeId: businessType.id,
+    planId: plan.id,
+    plan_name: plan.plan_name,
+    isFreePlan: isFree,
+    payment_status: isFree ? "free" : subscription?.payment_status,
+    service_status: subscription?.service_status ?? "active",
+    }];
   });
 
   return (
@@ -166,11 +175,12 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
 
                   const today = new Date().toISOString().split("T")[0];
                   const isDateValid = !endDate || endDate >= today;
-                  const isPaid = paymentStatus === "paid";
+                  const isFreePlan = Boolean(sub.isFreePlan);
+                  const isPaid = paymentStatus === "paid" || isFreePlan;
 
                   const serviceStatus = String(sub.serviceStatus || sub.service_status || rawStatus || "").toLowerCase();
                   const isActive = isPaid && isDateValid && serviceStatus !== "inactive" && serviceStatus !== "pending";
-                  const paymentLabel = paymentStatus === "pending" ? "Awaiting payment" : paymentStatus;
+                  const paymentLabel = isFreePlan ? "Included" : paymentStatus === "pending" ? "Awaiting payment" : paymentStatus;
 
                   return (
                     <tr key={sub.id || sub._id || `sub-${idx}`} className="hover:bg-slate-50/50">
@@ -183,6 +193,9 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                         <span className="bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100">
                           {planName}
                         </span>
+                        <span className="ml-2 inline-block rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-indigo-700">
+                          Current Plan
+                        </span>
                       </td>
                       <td className="p-3 text-slate-600">{startDate}</td>
                       <td className="p-3 text-slate-600">{endDate || "—"}</td>
@@ -193,7 +206,7 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                       </td>
                       <td className="p-3">
                         <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                          paymentStatus === "paid" 
+                          isFreePlan || paymentStatus === "paid"
                             ? "bg-emerald-50 text-emerald-700 border border-emerald-200" 
                             : "bg-amber-50 text-amber-700 border border-amber-200"
                         }`}>
