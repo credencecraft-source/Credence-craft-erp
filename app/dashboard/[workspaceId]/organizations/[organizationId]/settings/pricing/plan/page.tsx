@@ -1,11 +1,10 @@
-import { listPlans } from "@/lib/services/platform/plan-service";
-import { listBusinessTypes } from "@/lib/services/platform/business-type-service";
+import { listVersionSegmentPlansForOrganization } from "@/lib/services/platform/plan-service";
 import { getEffectivePlansForOrganization, listSubscriptions } from "@/lib/services/platform/subscription-service";
 import { redirect } from "next/navigation";
 import { getOrganizationByPublicId } from "@/lib/services/organizations/organization-service";
-import { prisma } from "@/lib/database/prisma-client";
 import { ERP_MODULES } from "@/components/erp/erp-config-registry";
 import { restrictionMatchesFeature, type FeaturePath } from "@/lib/services/platform/plan-restriction-matcher";
+import { getRestrictionsForPlans } from "@/lib/services/platform/segment-restriction-service";
 import OrganizationPricingPlanPage from "./page-content/organization-pricing-plan-page";
 
 type FeatureSummary = FeaturePath & { key: string; label: string; path: string; available: boolean };
@@ -62,29 +61,34 @@ export default async function Page({ params }: PageProps) {
     redirect(`/dashboard/${workspaceId}/home`);
   }
 
-  const [rawPlans, businessTypes, allSubscriptions, effectivePlans] = await Promise.all([
-    listPlans(),
-    listBusinessTypes(),
+  const [versionCatalog, allSubscriptions, effectivePlans] = await Promise.all([
+    listVersionSegmentPlansForOrganization(organization.id),
     listSubscriptions(organization.id).catch(() => []),
     getEffectivePlansForOrganization(organization.id),
   ]);
 
-  const existingSubscriptions = (allSubscriptions ?? []).filter((sub: any) => 
-    String(sub.organizationId || sub.organization_id || "") === String(organization.id)
-  ).map((sub: any) => ({
-    ...sub,
-    businessTypeId: sub.businessTypeId ?? sub.business_type_id ?? null,
-  }));
+  const existingSubscriptions = (allSubscriptions ?? [])
+    .filter((sub: any) => String(sub.organizationId || sub.organization_id || "") === String(organization.id))
+    .map((sub: any) => ({
+      id: sub.id,
+      planId: sub.planId ?? sub.plan_id ?? null,
+      businessTypeId: sub.businessTypeId ?? sub.business_type_id ?? null,
+      paymentStatus: sub.paymentStatus ?? sub.payment_status ?? null,
+      serviceStatus: sub.serviceStatus ?? sub.service_status ?? null,
+    }));
 
-  const plans = rawPlans.map((plan) => ({
+  const plans = versionCatalog.plans.map((plan) => ({
     ...plan,
     price: plan.price ? Number(plan.price) : null,
   }));
 
-  const planRestrictions = await prisma.plan_restrictions.findMany({
-    where: { plan_id: { in: plans.map((plan) => plan.id) } },
-    select: { plan_id: true, master_module: true, main_module: true, sub_module: true, restriction_type: true },
-  });
+  const restrictionsByPlan = await getRestrictionsForPlans(organization.id, plans);
+  const planRestrictions = plans.flatMap((plan) =>
+    (restrictionsByPlan.get(plan.id) ?? []).map((restriction) => ({
+      ...restriction,
+      plan_id: plan.id,
+    })),
+  );
   const allSidebarFeatures = getSidebarFeatures();
   const planFeatures: Record<string, FeatureSummary[]> = Object.fromEntries(
     plans.map((plan) => {
@@ -108,10 +112,11 @@ export default async function Page({ params }: PageProps) {
       workspaceId={workspaceId}
       organizationId={organizationId}
       plans={plans}
-      businessTypes={businessTypes}
+      businessTypes={versionCatalog.businessTypes}
       existingSubscriptions={existingSubscriptions || []}
       currentPlanIds={currentPlanIds}
       planFeatures={planFeatures}
+      platformVersionName={versionCatalog.versionName}
     />
   );
 }

@@ -51,7 +51,7 @@ export async function createBusinessType(input: {
     await ensureStandardPlansForBusinessTypes(transaction);
 
     return businessType;
-  });
+  }, { timeout: 15000 });
 }
 
 export async function updateBusinessTypeStatus(id: string, isActive: boolean) {

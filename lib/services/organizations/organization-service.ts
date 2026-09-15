@@ -202,6 +202,7 @@ export async function getOrganizationForUser(workspaceUserId: string, organizati
       },
     },
     include: {
+      platformVersion: true,
       erpSoftware: {
         include: {
           modules: true,
@@ -215,6 +216,7 @@ export async function getOrganizationByPublicId(organizationId: string) {
   return prisma.organization.findUnique({
     where: { organization_id: organizationId },
     include: {
+      platformVersion: true,
       erpSoftware: {
         include: {
           modules: true,

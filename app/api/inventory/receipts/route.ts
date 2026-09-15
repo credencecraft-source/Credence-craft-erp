@@ -11,13 +11,15 @@ type ReceiptLineInput = { purchaseOrderLineId: string; receivedQuantity: number;
 export async function GET(request: Request) {
   try {
     const user = await requireSessionUser();
-    const organization = await requireOrganizationContext(user.id, new URL(request.url).searchParams.get("organizationId") ?? "");
+    const searchParams = new URL(request.url).searchParams;
+    const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "");
+    const purchaseOrderId = searchParams.get("purchaseOrderId");
     const receipts = await prisma.inventoryReceipt.findMany({
-      where: { organization_id: organization.id },
-      include: { purchaseOrder: { select: { purchase_order_no: true, display_no: true } }, lines: true },
+      where: { organization_id: organization.id, ...(purchaseOrderId ? { purchase_order_id: purchaseOrderId } : {}) },
+      include: { purchaseOrder: { select: { id: true, purchase_order_no: true, display_no: true } }, lines: true },
       orderBy: { received_date: "desc" },
     });
-    return NextResponse.json({ receipts });
+    return NextResponse.json(purchaseOrderId ? { receipt: receipts[0] ?? null } : { receipts });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load inventory receipts." }, { status: 400 });
   }
@@ -44,7 +46,6 @@ export async function POST(request: Request) {
         const accepted = Number(line.acceptedQuantity);
         const rejected = Number(line.rejectedQuantity);
         if (!orderLine || !Number.isFinite(received) || received <= 0 || accepted < 0 || rejected < 0 || accepted + rejected !== received) throw new Error("Receipt quantities are invalid for one or more lines.");
-        if (received > Number(orderLine.quantity)) throw new Error(`Received quantity exceeds the ordered quantity for ${orderLine.raw_material ?? "the selected item"}.`);
         return { orderLine, received, accepted, rejected };
       });
       const created = await transaction.inventoryReceipt.create({

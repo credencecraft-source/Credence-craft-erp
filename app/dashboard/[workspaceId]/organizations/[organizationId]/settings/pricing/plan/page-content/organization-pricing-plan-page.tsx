@@ -6,7 +6,12 @@ import { getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-reg
 
 interface Plan {
   id: string;
+  billing_plan_id?: string | null;
+  business_type_id?: string | null;
+  is_pricing_configured?: boolean;
   plan_name: string;
+  segment_name?: string | null;
+  version_name?: string | null;
   description: string | null;
   price: number | null;
   billing_cycle: string | null;
@@ -44,6 +49,7 @@ interface OrganizationPricingPlanPageProps {
   planFeatures?: Record<string, FeatureSummary[]>;
   workspaceId: string;
   organizationId: string;
+  platformVersionName?: string | null;
 }
 
 export default function OrganizationPricingPlanPage({
@@ -54,6 +60,7 @@ export default function OrganizationPricingPlanPage({
   planFeatures = {},
   workspaceId,
   organizationId,
+  platformVersionName = null,
 }: OrganizationPricingPlanPageProps) {
   const router = useRouter();
   const safePlans = Array.isArray(plans) ? plans : [];
@@ -68,9 +75,8 @@ export default function OrganizationPricingPlanPage({
   });
 
   safePlans.forEach((plan) => {
-    const parts = (plan.plan_name || "").split(" - ");
-    const category = parts.length > 1 ? parts[0].trim() : "General";
-    if (groupedModules[category]) {
+    const category = safeBusinessTypes.find((businessType) => businessType.id === plan.business_type_id)?.name;
+    if (category && groupedModules[category]) {
       groupedModules[category].push(plan);
     }
   });
@@ -118,8 +124,9 @@ export default function OrganizationPricingPlanPage({
 
   const handleProceedToCheckout = () => {
     const params = new URLSearchParams();
-    Object.values(selections).forEach((planId) => {
-      params.append("planId", planId);
+    Object.values(selections).forEach((segmentPlanId) => {
+      const plan = safePlans.find((item) => item.id === segmentPlanId);
+      if (plan?.billing_plan_id) params.append("planId", plan.billing_plan_id);
     });
     router.push(
       `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/checkout?${params.toString()}`
@@ -164,6 +171,11 @@ export default function OrganizationPricingPlanPage({
             </button>
           </div>
         </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+        <div><p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Assigned pricing version</p><p className="mt-1 text-sm font-bold text-slate-900">{platformVersionName || "Default platform version"}</p></div>
+        <p className="text-xs text-slate-600">Plans and segment restrictions are evaluated against this version.</p>
       </div>
 
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -232,7 +244,7 @@ export default function OrganizationPricingPlanPage({
               {activeTab} Module
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Configure subscription plan tiers for {activeTab}.
+              Version segments and their live pricing for {activeTab}.
             </p>
           </div>
 
@@ -267,32 +279,25 @@ export default function OrganizationPricingPlanPage({
       )}
 
       {activeTab && currentPlans.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 pb-12">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pb-12">
           {currentPlans.map((plan) => {
             const nameParts = (plan.plan_name || "").split(" - ");
             const tierName =
               nameParts.length > 1
                 ? nameParts.slice(1).join(" - ")
                 : plan.plan_name;
+            const displayName = plan.segment_name || tierName;
 
             const isChosen =
               isModuleSelected && currentSelectedPlanId === plan.id;
 
-            const isFreePlan = !plan.price || Number(plan.price) === 0;
+            const isPricingConfigured = plan.is_pricing_configured === true && Boolean(plan.billing_plan_id);
+            const isFreePlan = isPricingConfigured && (!plan.price || Number(plan.price) === 0);
             const isCurrentPlan = currentPlanIds[matchedBusinessType?.id || ""] === plan.id;
             const featureList = planFeatures[plan.id] || [];
             const linkedModule = matchedBusinessType ? getErpModuleForBusinessTypeName(matchedBusinessType.name) : null;
             const visibleFeatureList = featureList.filter((feature) => linkedModule && (feature.path === linkedModule.pathSegment || feature.path.startsWith(`${linkedModule.pathSegment}/`)));
             const availableFeatureCount = visibleFeatureList.filter((feature) => feature.available).length;
-
-            const matchedActiveSub = existingSubscriptions.some(
-              (sub) =>
-                isCurrentPlan &&
-                sub.planId === plan.id &&
-                sub.businessTypeId === matchedBusinessType?.id &&
-                sub.paymentStatus === "paid" &&
-                sub.serviceStatus !== "inactive"
-            );
 
             const matchedPendingSub = existingSubscriptions.some(
               (sub) =>
@@ -314,7 +319,7 @@ export default function OrganizationPricingPlanPage({
                   <div>
                     <div className="flex items-center justify-between gap-2">
                       <h3 className="text-sm font-bold text-slate-800">
-                        {tierName}
+                        {displayName}
                       </h3>
 
                       {isCurrentPlan && (
@@ -330,7 +335,9 @@ export default function OrganizationPricingPlanPage({
                     </div>
 
                     <div className="text-xl font-extrabold text-slate-900 mt-2">
-                      {plan.price
+                      {!isPricingConfigured
+                        ? "Pricing not configured"
+                        : plan.price
                         ? `₹${Number(plan.price).toLocaleString("en-IN")} / mo`
                         : "Free"}
                     </div>
@@ -363,7 +370,11 @@ export default function OrganizationPricingPlanPage({
                 </div>
 
                 <div className="mt-8 flex flex-col gap-2 pt-4 border-t border-slate-100">
-                  {isFreePlan ? (
+                  {!isPricingConfigured ? (
+                    <div className="w-full rounded-lg border border-amber-200 bg-amber-50 py-2.5 text-center text-xs font-semibold text-amber-700">
+                      Configure a billing plan for this version segment.
+                    </div>
+                  ) : isFreePlan ? (
                     <div className="w-full rounded-lg border border-emerald-200 bg-emerald-50 py-2.5 text-center text-xs font-semibold text-emerald-700">
                       Included by default. No subscription required.
                     </div>
@@ -390,7 +401,7 @@ export default function OrganizationPricingPlanPage({
                         ? "Awaiting payment"
                         : isChosen
                         ? "Added to Cart"
-                        : `Add to Cart (${tierName})`}
+                        : `Add to Cart (${displayName})`}
                     </button>
                   )}
                 </div>
@@ -401,10 +412,10 @@ export default function OrganizationPricingPlanPage({
       ) : activeTab ? (
         <div className="p-8 text-center bg-white rounded-2xl border border-slate-200 space-y-2">
           <p className="text-xs font-medium text-slate-600">
-            No database plans created for {activeTab} yet.
+            No version segments are configured for {activeTab} yet.
           </p>
           <p className="text-[11px] text-slate-400">
-            Create plans in the platform setup section to populate these cards.
+            Add segments under the platform version configuration to populate these cards.
           </p>
         </div>
       ) : null}

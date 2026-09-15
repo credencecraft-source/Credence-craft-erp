@@ -8,10 +8,10 @@ import Input from "@/components/ui/Input";
 import { ERP_MODULES } from "@/components/erp/erp-config-registry";
 
 export function RestrictionForm({ 
-  planId, 
+  cancelHref,
   saveAction 
 }: { 
-  planId: string; 
+  cancelHref: string;
   saveAction: (formData: FormData) => void | Promise<void> 
 }) {
   const [selectedMasterKey, setSelectedMasterKey] = useState("");
@@ -113,7 +113,7 @@ export function RestrictionForm({
 
       <div className="flex items-center justify-end gap-3 pt-2">
         <Link
-          href={`/platform/plans/${planId}/restrictions`}
+          href={cancelHref}
           className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
         >
           Cancel

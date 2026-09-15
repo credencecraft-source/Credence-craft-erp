@@ -27,6 +27,7 @@ model MerchandisingOrder {
   outgoingShares  OrderShare[]            @relation("OrderShareSourceOrder")
   acceptedShares  OrderShare[]            @relation("OrderShareAcceptedOrder")
   groupedPurchaseOrderLines GroupedPurchaseOrderLine[]
+  workOrders      FactoryWorkOrder[]
 
   @@unique([organization_id, orderNo])
   @@index([organization_id, created_at])
@@ -48,6 +49,7 @@ model FinishedGoodsSizeWise {
   priceInInr      Decimal?           @db.Decimal(12, 2)
   created_at      DateTime           @default(now()) @map("created_at")
   updated_at      DateTime           @updatedAt @map("updated_at")
+  workOrderLines  FactoryWorkOrderSizeLine[]
 
   @@index([order_id])
   @@map("finished_goods_size_wise")
@@ -259,23 +261,6 @@ model Subscription {
   @@map("subscriptions")
 }
 
-model plan_restrictions {
-  restriction_id   String   @id @default(uuid())
-  plan_id          String
-  master_module    String
-  main_module      String
-  sub_module       String
-  action_level     String?
-  url_pattern      String?
-  restriction_type String   @default("block")
-  custom_message   String?
-  created_at       DateTime @default(now())
-
-  @@index([plan_id, restriction_type])
-
-  @@map("plan_restrictions")
-}
-
 model PurchaseOrder {
   id                String              @id @default(cuid())
   organization_id   String
@@ -297,6 +282,7 @@ model PurchaseOrder {
   sources           PurchaseOrderSource[]
   lines             PurchaseOrderLine[]
   inventoryReceipts InventoryReceipt[]
+  gateEntries       GateEntry[]
 
   @@unique([organization_id, purchase_order_no])
   @@unique([organization_id, display_no])
@@ -423,4 +409,38 @@ model FinishedGoodsStock {
   @@unique([organization_id, style_name, size, warehouse])
   @@index([organization_id, warehouse])
   @@map("finished_goods_stocks")
+}
+
+model GateEntry {
+  id                String        @id @default(cuid())
+  organization_id   String
+  purchase_order_id String?
+  entry_no          String        @db.VarChar(100)
+  direction         String        @db.VarChar(20)
+  movement_type     String        @db.VarChar(30)
+  challan_no        String?       @db.VarChar(100)
+  person_name       String        @db.VarChar(255)
+  company_name      String?       @db.VarChar(255)
+  id_type           String?       @db.VarChar(50)
+  id_number         String?       @db.VarChar(100)
+  contact_number    String?       @db.VarChar(50)
+  vehicle_number    String?       @db.VarChar(50)
+  purpose           String?       @db.VarChar(500)
+  item_description  String?       @db.VarChar(1000)
+  quantity          Decimal?      @db.Decimal(12, 2)
+  from_to           String?       @db.VarChar(255)
+  entry_at          DateTime      @default(now())
+  status            String        @default("OPEN") @db.VarChar(30)
+  notes             String?       @db.VarChar(1000)
+  created_by        String?       @db.VarChar(255)
+  created_at        DateTime      @default(now())
+  updated_at        DateTime      @updatedAt
+  organization      Organization  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  purchaseOrder     PurchaseOrder? @relation(fields: [purchase_order_id], references: [id], onDelete: SetNull)
+
+  @@unique([organization_id, entry_no])
+  @@index([organization_id, entry_at])
+  @@index([organization_id, movement_type, direction])
+  @@index([organization_id, challan_no])
+  @@map("gate_entries")
 }

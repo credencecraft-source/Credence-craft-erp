@@ -1,0 +1,72 @@
+model Segment {
+  id                         String                       @id @default(uuid())
+  name                       String                       @unique @db.VarChar(100)
+  description                String?                      @db.VarChar(500)
+  is_active                  Boolean                      @default(true)
+  created_at                 DateTime                     @default(now())
+  updated_at                 DateTime                     @updatedAt
+  versionBusinessTypeSegments VersionBusinessTypeSegment[]
+
+  @@index([is_active])
+  @@map("segments")
+}
+
+model PlatformVersion {
+  id               String                @id @default(uuid())
+  version_name     String                @unique @db.VarChar(100)
+  description      String?               @db.VarChar(500)
+  is_active        Boolean               @default(true)
+  created_at       DateTime              @default(now())
+  updated_at       DateTime              @updatedAt
+  businessTypes    VersionBusinessType[]
+  organizations    Organization[]
+
+  @@index([is_active])
+  @@map("platform_versions")
+}
+
+model VersionBusinessType {
+  id                String                       @id @default(cuid())
+  version_id        String
+  business_type_id  String
+  created_at        DateTime                     @default(now())
+  version           PlatformVersion              @relation(fields: [version_id], references: [id], onDelete: Cascade)
+  businessType      BusinessType                 @relation(fields: [business_type_id], references: [id], onDelete: Cascade)
+  segments          VersionBusinessTypeSegment[]
+
+  @@unique([version_id, business_type_id])
+  @@index([business_type_id])
+  @@map("version_business_types")
+}
+
+model VersionBusinessTypeSegment {
+  id                       String              @id @default(cuid())
+  version_business_type_id String
+  segment_id               String
+  is_active                Boolean             @default(true)
+  created_at               DateTime            @default(now())
+  versionBusinessType      VersionBusinessType @relation(fields: [version_business_type_id], references: [id], onDelete: Cascade)
+  segment                 Segment             @relation(fields: [segment_id], references: [id], onDelete: Cascade)
+  restrictions            SegmentRestriction[]
+
+  @@unique([version_business_type_id, segment_id])
+  @@index([segment_id])
+  @@map("version_business_type_segments")
+}
+
+model SegmentRestriction {
+  restriction_id                 String                     @id @default(uuid())
+  version_business_type_segment_id String
+  master_module                  String
+  main_module                    String
+  sub_module                     String
+  action_level                   String?
+  url_pattern                    String?
+  restriction_type               String                     @default("block")
+  custom_message                 String?
+  created_at                     DateTime                   @default(now())
+  versionBusinessTypeSegment     VersionBusinessTypeSegment @relation(fields: [version_business_type_segment_id], references: [id], onDelete: Cascade)
+
+  @@index([version_business_type_segment_id, restriction_type])
+  @@map("segment_restrictions")
+}

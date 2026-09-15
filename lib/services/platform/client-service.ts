@@ -1,5 +1,27 @@
 import { prisma } from "@/lib/database/prisma-client";
 
+export async function listPlatformVersions() {
+  return prisma.platformVersion.findMany({
+    where: { is_active: true },
+    orderBy: [{ created_at: "desc" }, { version_name: "desc" }],
+    select: { id: true, version_name: true, description: true },
+  });
+}
+
+export async function assignOrganizationPlatformVersion(organizationId: string, platformVersionId: string) {
+  const version = await prisma.platformVersion.findFirst({
+    where: { id: platformVersionId, is_active: true },
+    select: { id: true },
+  });
+  if (!version) throw new Error("Select a valid active version.");
+
+  return prisma.organization.update({
+    where: { id: organizationId },
+    data: { platform_version_id: version.id },
+    include: { platformVersion: true },
+  });
+}
+
 // "Clients" = organizations (each org carries its own plan + database assignment).
 export async function listOrganizationClients(limit = 100) {
   const page = await listOrganizationClientsPage({ limit });
@@ -38,6 +60,7 @@ export async function listOrganizationClientsPage(options: { cursor?: string; li
         },
       },
       plan: true,
+      platformVersion: true,
       databaseConnection: {
         select: {
           id: true,
@@ -87,6 +110,7 @@ export async function getOrganizationClient(organizationId: string) {
         },
       },
       plan: true,
+      platformVersion: true,
       databaseConnection: {
         select: {
           provider: true,

@@ -28,6 +28,91 @@ export async function listPlans() {
   }));
 }
 
+function normalizeSegmentName(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+export function segmentNamesForPlan(plan: { tier_key?: string | null; plan_name: string }) {
+  const tierKey = normalizeSegmentName(plan.tier_key || "");
+  const planTier = plan.plan_name.includes(" - ") ? plan.plan_name.split(" - ").slice(1).join(" - ") : plan.plan_name;
+  const mappedTier = tierKey === "classic" ? "standard" : tierKey === "enterprise" ? "premium" : tierKey;
+  return new Set([mappedTier, normalizeSegmentName(planTier)].filter(Boolean));
+}
+
+export async function listVersionSegmentPlansForOrganization(organizationId: string) {
+  const [organization, latestVersion] = await Promise.all([
+    prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { platform_version_id: true },
+    }),
+    prisma.platformVersion.findFirst({
+      where: { is_active: true },
+      orderBy: [{ created_at: "desc" }, { version_name: "desc" }],
+      select: { id: true },
+    }),
+  ]);
+
+  const versionId = organization?.platform_version_id ?? latestVersion?.id;
+  if (!versionId) return { plans: [], businessTypes: [], versionName: null };
+
+  const version = await prisma.platformVersion.findUnique({
+    where: { id: versionId },
+    select: {
+      version_name: true,
+      businessTypes: {
+        include: {
+          businessType: true,
+          segments: { where: { is_active: true }, include: { segment: true } },
+        },
+      },
+    },
+  });
+
+  if (!version) return { plans: [], businessTypes: [], versionName: null };
+
+  const businessTypeIds = version.businessTypes.map(({ business_type_id }) => business_type_id);
+  const plans = await prisma.plan.findMany({
+    where: { is_active: true, business_type_id: { in: businessTypeIds } },
+    orderBy: { sort_order: "asc" },
+    include: { businessType: true },
+  });
+
+  const segmentPlans = version.businessTypes.flatMap((assignment) =>
+    assignment.segments.flatMap(({ id: segmentId, segment }) => {
+      const segmentName = normalizeSegmentName(segment.name);
+      const plan = plans.find((candidate) => segmentNamesForPlan(candidate).has(segmentName));
+      return [{
+        id: plan?.id ?? `segment-${segmentId}`,
+        plan_id: plan?.plan_id ?? null,
+        business_type_id: assignment.business_type_id,
+        plan_name: plan?.plan_name ?? `${assignment.businessType.name} - ${segment.name}`,
+        description: plan?.description ?? segment.description,
+        price: plan?.price ? plan.price.toNumber() : null,
+        billing_cycle: plan?.billing_cycle ?? null,
+        is_active: plan?.is_active ?? true,
+        max_order_qty: plan?.max_order_qty ?? null,
+        tier_key: plan?.tier_key ?? null,
+        billing_plan_id: plan?.id ?? null,
+        is_pricing_configured: Boolean(plan),
+        segment_id: segmentId,
+        segment_name: segment.name,
+        version_name: version.version_name,
+      }];
+    }),
+  );
+
+  return {
+    plans: segmentPlans,
+    businessTypes: version.businessTypes.map(({ businessType }) => businessType),
+    versionName: version.version_name,
+  };
+}
+
+export async function listPlansForOrganizationVersion(organizationId: string) {
+  const catalog = await listVersionSegmentPlansForOrganization(organizationId);
+  return catalog.plans;
+}
+
 export async function getPlanById(planId: string) {
   const plan = await prisma.plan.findFirst({
     where: {
@@ -99,7 +184,7 @@ export async function deletePlan(planId: string) {
   }
 
   if (plan.is_system_plan) {
-    throw new Error("Standard plans cannot be deleted. Configure their restrictions instead.");
+    throw new Error("Standard plans cannot be deleted.");
   }
 
   return prisma.plan.delete({

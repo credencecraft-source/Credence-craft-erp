@@ -46,7 +46,55 @@ export const ERP_MODULES: ErpModule[] = [
     key: "factory-management",
     label: "Factory Management",
     pathSegment: "factory-management",
-    children: [],
+    children: [
+      {
+        key: "pre-production",
+        label: "Pre Production",
+        pathSegment: "pre-production",
+        children: [
+          { key: "work-order", label: "Work Order", pathSegment: "work-order" },
+        ],
+      },
+      {
+        key: "production",
+        label: "Production",
+        pathSegment: "production",
+        children: [
+          { key: "wip", label: "WIP", pathSegment: "wip" },
+        ],
+      },
+      {
+        key: "post-production",
+        label: "Post Production",
+        pathSegment: "post-production",
+        children: [
+          { key: "scan-pack", label: "Scan Pack", pathSegment: "scan-pack" },
+        ],
+      },
+    ],
+  },
+  {
+    key: "quality-management-system",
+    label: "Quality Management System",
+    pathSegment: "quality-management-system",
+    children: [
+      {
+        key: "raw-material",
+        label: "Raw Material",
+        pathSegment: "raw-material",
+        children: [
+          { key: "rm-quality-check", label: "RM Quality Check", pathSegment: "rm-quality-check" },
+        ],
+      },
+      {
+        key: "finished-goods",
+        label: "Finished Goods",
+        pathSegment: "finished-goods",
+        children: [
+          { key: "fg-quality-check", label: "FG Quality Check", pathSegment: "fg-quality-check" },
+        ],
+      },
+    ],
   },
   {
     key: "finance-management",
@@ -59,12 +107,17 @@ export const ERP_MODULES: ErpModule[] = [
     label: "Inventory Management",
     pathSegment: "inventory-management",
     children: [
+      { key: "gate-entry", label: "Gate Entry", pathSegment: "gate-entry" },
+      { key: "gate-entry-reports", label: "Gate Entry Reports", pathSegment: "gate-entry/reports" },
       {
         key: "inward",
         label: "Inward",
         pathSegment: "inward",
         children: [
-          { key: "purchase-order", label: "Purchase Order", pathSegment: "purchase-order" },
+          { key: "rm-grn", label: "RM GRN", pathSegment: "grn" },
+          { key: "packing-list-grn", label: "Packing List GRN", pathSegment: "packing-list-grn" },
+          { key: "wo-grn", label: "WO GRN", pathSegment: "wo-grn" },
+          { key: "returnable-dc-grn", label: "Returnable DC GRN", pathSegment: "returnable-dc-grn" },
         ],
       },
       {
@@ -135,6 +188,8 @@ export const ERP_MODULES: ErpModule[] = [
 const BUSINESS_TYPE_MODULE_ALIASES: Record<string, string> = {
   "order-management": "order-management",
   "factory-management": "factory-management",
+  "quality-management-system": "quality-management-system",
+  "quality-management": "quality-management-system",
   "finance-management": "finance-management",
   "inventory-management": "inventory-management",
   "settings": "settings",

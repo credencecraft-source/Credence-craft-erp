@@ -95,6 +95,15 @@ export default function MerchandisingOrdersPage() {
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [showCloneDialog, setShowCloneDialog] = useState(false);
+  const [cloneTargetOrderId, setCloneTargetOrderId] = useState<string | null>(null);
+  const [cloneRows, setCloneRows] = useState<Array<{ size: string; qty: string }>>([]);
+  const [cloneDraft, setCloneDraft] = useState({
+    article: "",
+    styleName: "",
+    colors: "",
+    orderQty: "",
+  });
   const [visibleReportFields, setVisibleReportFields] = useState<FilterableOrderField[]>(
     reportFilterFields.map((field) => field.key),
   );
@@ -177,10 +186,83 @@ export default function MerchandisingOrdersPage() {
     });
   };
 
-  const handleCloneOrder = (orderId: string) => {
+  const handleCloneOrder = async (orderId: string) => {
+    try {
+      const response = await fetch(
+        `/api/orders/${encodeURIComponent(orderId)}?organizationId=${encodeURIComponent(organizationId)}`,
+        { cache: "no-store" },
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(data?.error || "Unable to load order for cloning.");
+      }
+
+      const order = data?.order ?? {};
+      const sizeRows = (order.finishedGoods ?? [])
+        .map((row: any) => {
+          const size = String(row.size ?? row.buyerSize ?? "").trim();
+          return size ? { size, qty: "" } : null;
+        })
+        .filter(Boolean) as Array<{ size: string; qty: string }>;
+
+      setCloneTargetOrderId(orderId);
+      setCloneRows(sizeRows);
+      setCloneDraft({
+        article: "",
+        styleName: "",
+        colors: "",
+        orderQty: order.orderQty ?? "",
+      });
+      setShowCloneDialog(true);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to load order for cloning.");
+    }
+  };
+
+  const handleConfirmClone = () => {
+    if (!cloneTargetOrderId) return;
+
+    const article = cloneDraft.article.trim();
+    const styleName = cloneDraft.styleName.trim();
+    const colors = cloneDraft.colors.trim();
+    const orderQty = String(cloneDraft.orderQty ?? "").trim();
+
+    if (!article || !styleName || !colors) {
+      alert("Please enter article name, style name, and color before cloning.");
+      return;
+    }
+
+    if (!orderQty || Number(orderQty) <= 0) {
+      alert("Please enter a valid order quantity before cloning.");
+      return;
+    }
+
+    const cleanedRows = cloneRows
+      .map((row) => ({ size: row.size, qty: String(row.qty ?? "").trim() }))
+      .filter((row) => row.size && row.qty !== "");
+
+    if (cleanedRows.length === 0) {
+      alert("Please enter quantity for at least one size row before cloning.");
+      return;
+    }
+
+    const payload = {
+      article,
+      styleName,
+      colors,
+      orderQty,
+      rows: cleanedRows,
+    };
+
+    const params = new URLSearchParams({
+      cloneFrom: cloneTargetOrderId,
+      cloneData: JSON.stringify(payload),
+    });
+
     startTransition(() => {
+      setShowCloneDialog(false);
       router.push(
-        `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/create?cloneFrom=${encodeURIComponent(orderId)}`,
+        `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/create?${params.toString()}`,
       );
     });
   };
@@ -243,6 +325,107 @@ export default function MerchandisingOrdersPage() {
           }}
         />
       </Card>
+
+      {showCloneDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="clone-order-title">
+          <div className="w-full max-w-lg space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+            <div>
+              <h3 id="clone-order-title" className="text-base font-bold text-slate-900">Clone order</h3>
+              <p className="mt-1 text-xs text-slate-500">Enter the new order details below. The size rows will be copied from the original order so you can update only the quantities.</p>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-700">
+                Article name
+                <input
+                  type="text"
+                  value={cloneDraft.article}
+                  onChange={(event) => setCloneDraft((current) => ({ ...current, article: event.target.value }))}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal text-slate-800 focus:border-emerald-500 focus:outline-none"
+                  placeholder="Enter article"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-700">
+                Style name
+                <input
+                  type="text"
+                  value={cloneDraft.styleName}
+                  onChange={(event) => setCloneDraft((current) => ({ ...current, styleName: event.target.value }))}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal text-slate-800 focus:border-emerald-500 focus:outline-none"
+                  placeholder="Enter style name"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-700 md:col-span-2">
+                Color
+                <input
+                  type="text"
+                  value={cloneDraft.colors}
+                  onChange={(event) => setCloneDraft((current) => ({ ...current, colors: event.target.value }))}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal text-slate-800 focus:border-emerald-500 focus:outline-none"
+                  placeholder="Enter color"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-700 md:col-span-2">
+                Order Qty
+                <input
+                  type="number"
+                  min="0"
+                  value={cloneDraft.orderQty}
+                  onChange={(event) => setCloneDraft((current) => ({ ...current, orderQty: event.target.value }))}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal text-slate-800 focus:border-emerald-500 focus:outline-none"
+                  placeholder="Enter order qty"
+                />
+              </label>
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold uppercase tracking-wide text-slate-600">Finished goods size rows</h4>
+              <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-2">
+                <div className="grid gap-2">
+                  {cloneRows.length === 0 ? (
+                    <p className="text-xs text-slate-500">No size rows available for this order.</p>
+                  ) : (
+                    cloneRows.map((row, index) => (
+                      <div key={`${row.size}-${index}`} className="grid grid-cols-[1fr_120px] gap-2 rounded-md border border-slate-200 bg-white p-2">
+                        <label className="flex flex-col gap-1 text-[11px] font-semibold text-slate-700">
+                          <input
+                            type="text"
+                            value={row.size}
+                            readOnly
+                            className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-[11px] font-semibold text-slate-700">
+                          Qty
+                          <input
+                            type="number"
+                            min="0"
+                            value={row.qty}
+                            onChange={(event) => {
+                              const nextValue = event.target.value;
+                              setCloneRows((current) => current.map((item, idx) => idx === index ? { ...item, qty: nextValue } : item));
+                            }}
+                            className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-800 focus:border-emerald-500 focus:outline-none"
+                            placeholder="0"
+                          />
+                        </label>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="secondary" size="sm" onClick={() => setShowCloneDialog(false)}>Cancel</Button>
+              <Button variant="primary" size="sm" onClick={handleConfirmClone}>Continue</Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showDeleteConfirmation && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-orders-title">

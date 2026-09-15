@@ -4,7 +4,7 @@ import Badge from "@/components/ui/Badge";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
-import { getOrganizationClient } from "@/lib/services/platform/client-service";
+import { assignOrganizationPlatformVersion, getOrganizationClient, listPlatformVersions } from "@/lib/services/platform/client-service";
 import { deleteOrganizationFromPlatform, updateOrganizationApprovalStatus } from "@/lib/services/organizations/organization-service";
 
 function Detail({ label, value }: { label: string; value: string }) {
@@ -25,7 +25,10 @@ export default async function PlatformOrganizationDetailsPage({
 }) {
   const { organizationId } = await params;
   const query = (await searchParams) ?? {};
-  const organization = await getOrganizationClient(organizationId);
+  const [organization, platformVersions] = await Promise.all([
+    getOrganizationClient(organizationId),
+    listPlatformVersions(),
+  ]);
 
   if (!organization) {
     notFound();
@@ -47,6 +50,17 @@ export default async function PlatformOrganizationDetailsPage({
       redirect(`/platform/organisations/${organizationId}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to delete organisation.")}`);
     }
     redirect("/platform/organisations");
+  }
+
+  async function assignPlatformVersion(formData: FormData) {
+    "use server";
+    await requirePlatformSessionAdmin();
+    try {
+      await assignOrganizationPlatformVersion(organizationId, String(formData.get("platformVersionId") || ""));
+    } catch (error) {
+      redirect(`/platform/organisations/${organizationId}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to assign version.")}`);
+    }
+    redirect(`/platform/organisations/${organizationId}`);
   }
 
   const address = [
@@ -120,9 +134,26 @@ export default async function PlatformOrganizationDetailsPage({
             <h2 className="text-sm font-bold text-slate-900">Account setup</h2>
             <dl className="mt-4 space-y-4">
               <Detail label="Plan" value={organization.plan?.plan_name ?? "Unassigned"} />
+              <Detail label="Assigned version" value={organization.platformVersion?.version_name ?? "Not assigned"} />
               <Detail label="Database" value={organization.databaseConnection?.connection_name ?? "Unassigned"} />
               <Detail label="Database status" value={organization.databaseConnection?.status ?? "Not connected"} />
             </dl>
+          </section>
+
+          <section className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-5 lg:col-span-3">
+            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">Pricing version</h2>
+                <p className="mt-1 text-xs text-slate-600">Assign the version that controls this organisation&apos;s business-type segments, restrictions, and pricing context.</p>
+              </div>
+              <form action={assignPlatformVersion} className="flex w-full max-w-xl gap-2">
+                <select name="platformVersionId" defaultValue={organization.platform_version_id ?? ""} required className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800">
+                  <option value="">Select a version...</option>
+                  {platformVersions.map((version) => <option key={version.id} value={version.id}>{version.version_name}{version.description ? ` - ${version.description}` : ""}</option>)}
+                </select>
+                <button type="submit" className="rounded-md bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700">Assign version</button>
+              </form>
+            </div>
           </section>
 
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-2">

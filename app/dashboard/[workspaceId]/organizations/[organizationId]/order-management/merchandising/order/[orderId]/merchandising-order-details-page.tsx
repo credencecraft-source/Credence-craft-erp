@@ -31,6 +31,27 @@ export default function MerchandisingOrderDetailsPage() {
   const searchParams = useSearchParams();
   const orderId = params?.orderId && params.orderId !== "create" ? params.orderId : undefined;
   const cloneFrom = searchParams.get("cloneFrom");
+  const cloneDataParam = searchParams.get("cloneData");
+  const cloneConfig = (() => {
+    if (!cloneDataParam) return null;
+    try {
+      const parsed = JSON.parse(cloneDataParam) as {
+        article?: string;
+        styleName?: string;
+        colors?: string;
+        orderQty?: number | string;
+        rows?: Array<{ size?: string; qty?: number | string }>;
+      };
+      return parsed;
+    } catch {
+      return null;
+    }
+  })();
+  const cloneArticle = cloneConfig?.article ?? "";
+  const cloneStyleName = cloneConfig?.styleName ?? "";
+  const cloneColors = cloneConfig?.colors ?? "";
+  const cloneOrderQty = cloneConfig?.orderQty ?? "";
+  const cloneRowsLookup = cloneConfig?.rows ?? [];
   const workspaceId = params?.workspaceId;
   const organizationId = params?.organizationId;
 
@@ -128,16 +149,24 @@ export default function MerchandisingOrderDetailsPage() {
         const order = data.order;
         if (!isMounted || !order) return;
 
-        const clonedRows = (order.finishedGoods ?? []).map((row: Record<string, unknown>) => ({
-          ...row,
-          beforeExcessQty: "",
-          excess: "",
-          excessQty: "",
-          totalQty: "",
-          buyerPoPrice: row.buyerPoPrice ?? "",
-          exchangePrice: row.exchangePrice ?? "",
-          priceInInr: row.priceInInr ?? "",
-        }));
+        const clonedRows = (order.finishedGoods ?? []).map((row: Record<string, unknown>) => {
+          const rowSize = String(row.size ?? row.buyerSize ?? "").trim();
+          const matchingCloneRow = cloneRowsLookup.find((candidate) => String(candidate.size ?? "").trim() === rowSize);
+          const rowQty = matchingCloneRow?.qty !== undefined && matchingCloneRow?.qty !== null ? Number(matchingCloneRow.qty) : "";
+
+          return {
+            ...row,
+            buyerSize: row.buyerSize ?? "",
+            size: row.size ?? "",
+            beforeExcessQty: row.beforeExcessQty ?? "",
+            excess: row.excess ?? "",
+            excessQty: rowQty === "" ? "" : rowQty,
+            totalQty: rowQty === "" ? "" : rowQty,
+            buyerPoPrice: row.buyerPoPrice ?? "",
+            exchangePrice: row.exchangePrice ?? "",
+            priceInInr: row.priceInInr ?? "",
+          };
+        });
 
         setForm((current) => ({
           ...current,
@@ -145,9 +174,10 @@ export default function MerchandisingOrderDetailsPage() {
           ...(cloneFrom
             ? {
                 orderNo: "",
-                article: "",
-                styleName: "",
-                orderQty: "",
+                article: cloneArticle || order.article || "",
+                styleName: cloneStyleName || order.styleName || "",
+                colors: cloneColors || order.colors || "",
+                orderQty: cloneOrderQty !== "" ? Number(cloneOrderQty) : "",
                 ratioOrderQty: "",
                 finalStatus: "Draft",
                 processStatus: "Draft",
@@ -156,7 +186,7 @@ export default function MerchandisingOrderDetailsPage() {
             : {}),
           deliveryDate: order.deliveryDate ? String(order.deliveryDate).slice(0, 10) : "",
           ratioOrderQty: cloneFrom ? "" : order.ratioOrderQty ?? "",
-          orderQty: cloneFrom ? "" : order.orderQty ?? "",
+          orderQty: cloneFrom ? (cloneOrderQty !== "" ? Number(cloneOrderQty) : "") : (order.orderQty ?? ""),
           rows: (cloneFrom ? clonedRows : order.finishedGoods ?? []).map((row: Record<string, unknown>) => ({
             ...row,
             beforeExcessQty: row.beforeExcessQty ?? "",
@@ -180,7 +210,7 @@ export default function MerchandisingOrderDetailsPage() {
     return () => {
       isMounted = false;
     };
-  }, [cloneFrom, orderId, organizationId]);
+  }, [cloneFrom, cloneArticle, cloneColors, cloneOrderQty, cloneRowsLookup, cloneStyleName, orderId, organizationId]);
 
   // Handler to open/redirect to create master view using the `+ New` button
   const handleOpenCreateMaster = async (masterKey: string, returnFieldKey?: string) => {

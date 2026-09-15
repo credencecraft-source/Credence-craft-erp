@@ -5,10 +5,11 @@ import Link from "next/link";
 import {
   Building2,
   Database,
-  Package,
   Users,
   CreditCard,
   Layers3,
+  Tags,
+  CalendarRange,
   ChevronDown,
   LifeBuoy,
   Mail,
@@ -43,7 +44,8 @@ const NAV_SECTIONS = [
     icon: Layers3,
     items: [
       { label: "Business Types", href: "/platform/business-types", icon: Building2 },
-      { label: "Plans", href: "/platform/plans", icon: Package },
+      { label: "Segments", href: "/platform/segments", icon: Tags },
+      { label: "Versions", href: "/platform/versions", icon: CalendarRange },
     ],
   },
   {

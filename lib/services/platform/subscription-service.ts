@@ -37,10 +37,6 @@ export async function ensureStandardPlansForBusinessTypes(client: Prisma.Transac
         );
 
         for (const duplicate of duplicatePlans) {
-          await client.plan_restrictions.updateMany({
-            where: { plan_id: duplicate.id },
-            data: { plan_id: plan.id },
-          });
           await client.subscription.updateMany({
             where: { plan_id: duplicate.id },
             data: { plan_id: plan.id },
@@ -290,7 +286,6 @@ export async function ensureFreePlanSubscriptionsForOrganization(organizationId:
 }
 
 export async function getEffectivePlansForOrganization(organizationId: string) {
-  await ensureStandardPlansForBusinessTypes();
   const [businessTypes, freePlans, subscriptions] = await Promise.all([
     prisma.businessType.findMany({ where: { isActive: true }, orderBy: { name: "asc" } }),
     prisma.plan.findMany({ where: { business_type_id: { not: null }, tier_key: "FREE" } }),
@@ -307,7 +302,10 @@ export async function getEffectivePlansForOrganization(organizationId: string) {
   const latestByBusinessType = new Map<string, (typeof subscriptions)[number]>();
 
   for (const subscription of subscriptions) {
-    if (subscription.business_type_id && !latestByBusinessType.has(subscription.business_type_id)) {
+    if (!subscription.business_type_id) continue;
+
+    const current = latestByBusinessType.get(subscription.business_type_id);
+    if (!current || new Date(subscription.updated_at).getTime() > new Date(current.updated_at).getTime()) {
       latestByBusinessType.set(subscription.business_type_id, subscription);
     }
   }

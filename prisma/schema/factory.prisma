@@ -1,0 +1,35 @@
+model FactoryWorkOrder {
+  id              String                     @id @default(cuid())
+  organization_id String
+  order_id        String
+  work_order_no   String                     @db.VarChar(100)
+  order_no        String                     @db.VarChar(100)
+  total_qty       Int
+  status          String                     @default("OPEN") @db.VarChar(50)
+  created_at      DateTime                   @default(now())
+  updated_at      DateTime                   @updatedAt
+  organization    Organization               @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  order           MerchandisingOrder         @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  sizeLines       FactoryWorkOrderSizeLine[]
+
+  @@unique([organization_id, work_order_no])
+  @@index([organization_id, created_at])
+  @@index([order_id, created_at])
+  @@map("factory_work_orders")
+}
+
+model FactoryWorkOrderSizeLine {
+  id                      String                 @id @default(cuid())
+  work_order_id           String
+  source_finished_goods_id String
+  size                    String?                @db.VarChar(100)
+  buyer_size              String?                @db.VarChar(100)
+  quantity                Int
+  created_at              DateTime               @default(now())
+  workOrder               FactoryWorkOrder       @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
+  sourceFinishedGoods     FinishedGoodsSizeWise @relation(fields: [source_finished_goods_id], references: [id], onDelete: Cascade)
+
+  @@unique([work_order_id, source_finished_goods_id])
+  @@index([source_finished_goods_id])
+  @@map("factory_work_order_size_lines")
+}

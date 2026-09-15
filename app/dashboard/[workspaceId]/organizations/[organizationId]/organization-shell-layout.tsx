@@ -7,9 +7,7 @@ import { MasterModuleWrapper } from "@/components/master-data/master-module-wrap
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
 import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
-import { ensureFreePlanSubscriptionsForOrganization, getEffectivePlansForOrganization } from "@/lib/services/platform/subscription-service";
-import { prisma } from "@/lib/database/prisma-client";
-import { getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
+import { getEffectiveSegmentRestrictions } from "@/lib/services/platform/segment-restriction-service";
 import { requireSessionUser } from "@/lib/auth/session-manager"; // Fixed typo (removed trailing 's')
 import { PendingOrganizationPrompt } from "@/components/organizations/pending-organization-prompt";
 
@@ -78,23 +76,7 @@ export default async function OrganizationShellLayout({
 
   await validateOrganizationAccess(organization.organization_id, currentPath);
 
-  await ensureFreePlanSubscriptionsForOrganization(organization.id);
-  const effectivePlans = await getEffectivePlansForOrganization(organization.id);
-  const planIds = effectivePlans.map(({ plan }) => plan?.id).filter((planId): planId is string => Boolean(planId));
-  const restrictions = planIds.length > 0
-    ? await prisma.plan_restrictions.findMany({ where: { plan_id: { in: planIds } } })
-    : [];
-  const planModulePaths = new Map(
-    effectivePlans.flatMap(({ businessType, plan }) => {
-      if (!plan) return [];
-      const erpModule = getErpModuleForBusinessTypeName(businessType.name);
-      return erpModule ? [[plan.id, erpModule.pathSegment] as const] : [];
-    }),
-  );
-  const scopedRestrictions = restrictions.map((restriction) => ({
-    ...restriction,
-    plan_module_path: planModulePaths.get(restriction.plan_id) ?? null,
-  }));
+  const scopedRestrictions = await getEffectiveSegmentRestrictions(organization.id);
   const businessTypes = (await listActiveBusinessTypes()).map((businessType) => ({
     ...businessType,
     name: businessType.name.trim().toLowerCase() === "settings"

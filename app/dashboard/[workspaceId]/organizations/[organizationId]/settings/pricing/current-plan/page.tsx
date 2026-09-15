@@ -65,6 +65,12 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
     redirect(`${redirectBase}?success=${encodeURIComponent("Subscription deleted successfully.")}`);
   }
 
+  const currentPlanIdsByBusinessType = new Map(
+    effectivePlans
+      .filter(({ plan, isFree }) => Boolean(plan) && !isFree)
+      .map(({ businessType, plan }) => [businessType.id, plan!.id]),
+  );
+
   const orgSubscriptions = effectivePlans.flatMap(({ businessType, plan, subscription, isFree }) => {
     if (!plan || isFree) return [];
     return [{
@@ -181,6 +187,7 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                   const serviceStatus = String(sub.serviceStatus || sub.service_status || rawStatus || "").toLowerCase();
                   const isActive = isPaid && isDateValid && serviceStatus !== "inactive" && serviceStatus !== "pending";
                   const paymentLabel = isFreePlan ? "Included" : paymentStatus === "pending" ? "Awaiting payment" : paymentStatus;
+                  const isCurrentPlan = !isFreePlan && currentPlanIdsByBusinessType.get(sub.businessTypeId || "") === subPlanId;
 
                   return (
                     <tr key={sub.id || sub._id || `sub-${idx}`} className="hover:bg-slate-50/50">
@@ -193,9 +200,11 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                         <span className="bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100">
                           {planName}
                         </span>
-                        <span className="ml-2 inline-block rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-indigo-700">
-                          Current Plan
-                        </span>
+                        {isCurrentPlan && (
+                          <span className="ml-2 inline-block rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-indigo-700">
+                            Current Plan
+                          </span>
+                        )}
                       </td>
                       <td className="p-3 text-slate-600">{startDate}</td>
                       <td className="p-3 text-slate-600">{endDate || "—"}</td>

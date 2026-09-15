@@ -1,0 +1,1 @@
+export { default } from "../../../../_page-content/factory-management-work-order-create-page";

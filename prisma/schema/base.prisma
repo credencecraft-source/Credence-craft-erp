@@ -46,10 +46,12 @@ model Organization {
   is_active                   Boolean                      @default(true)
   approval_status             String                       @default("PENDING_APPROVAL") @db.VarChar(40)
   plan_id                     String?
+  platform_version_id         String?
   database_connection_id      String?
   created_at                  DateTime                     @default(now())
   updated_at                  DateTime                     @updatedAt
   plan                        Plan?                        @relation(fields: [plan_id], references: [id])
+  platformVersion             PlatformVersion?             @relation(fields: [platform_version_id], references: [id], onDelete: SetNull)
   databaseConnection          DatabaseConnection?          @relation(fields: [database_connection_id], references: [id])
   memberships                 OrganizationMembership[]
   erpSoftware                 ERPSoftware[]
@@ -101,6 +103,8 @@ model Organization {
   inventoryReceipts          InventoryReceipt[]
   rawMaterialStocks          RawMaterialStock[]
   finishedGoodsStocks        FinishedGoodsStock[]
+  gateEntries                GateEntry[]
+  factoryWorkOrders          FactoryWorkOrder[]
 
   @@index([plan_id])
   @@index([database_connection_id])
@@ -277,6 +281,7 @@ model BusinessType {
   updated_at  DateTime @default(now()) @updatedAt @map("updated_at")
   plans       Plan[]
   subscriptions Subscription[]
+  versionBusinessTypes VersionBusinessType[]
 
   @@map("business_types")
 }

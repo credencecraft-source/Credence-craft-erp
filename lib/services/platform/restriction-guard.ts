@@ -1,7 +1,6 @@
 import prisma from "@/lib/database/prisma-client";
 import { redirect } from "next/navigation";
-import { getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
-import { getEffectivePlansForOrganization } from "@/lib/services/platform/subscription-service";
+import { getEffectiveSegmentRestrictions } from "@/lib/services/platform/segment-restriction-service";
 import { getSidebarFeatureKeysForRoute, normalizeRestrictionPart, restrictionMatchesRoute } from "@/lib/services/platform/plan-restriction-matcher";
 
 export async function validateOrganizationAccess(organizationId: string, currentPath: string) {
@@ -29,17 +28,7 @@ export async function validateOrganizationAccess(organizationId: string, current
     if (moduleSegments.length === 0) return;
 
 
-    const effectivePlans = await getEffectivePlansForOrganization(organization.id);
-    const effectivePlan = effectivePlans.find(({ businessType }) => {
-      const erpModule = getErpModuleForBusinessTypeName(businessType.name);
-      return erpModule?.pathSegment.toLowerCase() === normalizeRestrictionPart(moduleSegments[0] || "");
-    });
-
-    if (!effectivePlan?.plan) return;
-
-    const restrictions = await prisma.plan_restrictions.findMany({
-      where: { plan_id: effectivePlan.plan.id },
-    });
+    const restrictions = await getEffectiveSegmentRestrictions(organization.id);
 
     if (restrictions.length === 0) return;
     const featureKeys = getSidebarFeatureKeysForRoute(moduleSegments);
@@ -48,7 +37,7 @@ export async function validateOrganizationAccess(organizationId: string, current
       const isBlockType = rule.restriction_type === "block" || rule.restriction_type === "BLOCK";
       if (isBlockType) {
         if (restrictionMatchesRoute(rule, moduleSegments, featureKeys)) {
-          const blockMessage = rule.custom_message || `This feature is not available on your current ${effectivePlan.plan.plan_name} plan. Please upgrade to unlock it.`;
+          const blockMessage = rule.custom_message || "This feature is not available for your current version and segment.";
           
           // Prevent infinite loops if already on the access-blocked page
           if (currentPath.includes("/access-blocked")) {

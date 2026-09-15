@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-type InventoryStage = "purchase-order" | "raw-material-dc" | "rm-stock" | "fg-stock";
+type InventoryStage = "purchase-order" | "packing-list-grn" | "wo-grn" | "returnable-dc-grn" | "raw-material-dc" | "rm-stock" | "fg-stock";
 
 type PurchaseOrder = {
   id: string;
@@ -21,9 +21,24 @@ type StockRow = { id: string; raw_material?: string; style_name?: string; size?:
 const stageDetails: Record<InventoryStage, { eyebrow: string; title: string; description: string; next?: { label: string; path: string } }> = {
   "purchase-order": {
     eyebrow: "Inventory / Inward",
-    title: "Purchase Order Receipts",
+    title: "RM GRN",
     description: "Receive approved Purchase Orders into inventory with traceable line quantities and pending receipt balances.",
     next: { label: "Open Raw Material DC", path: "../outward/raw-material-dc" },
+  },
+  "packing-list-grn": {
+    eyebrow: "Inventory / Inward",
+    title: "Packing List GRN",
+    description: "Register incoming packing-list materials with document-level traceability and organization-scoped receiving controls.",
+  },
+  "wo-grn": {
+    eyebrow: "Inventory / Inward",
+    title: "WO GRN",
+    description: "Register work-order receipts against the organization inventory ledger with a dedicated document flow.",
+  },
+  "returnable-dc-grn": {
+    eyebrow: "Inventory / Inward",
+    title: "Returnable DC GRN",
+    description: "Register returnable delivery challan receipts separately from raw-material receiving for auditable inward control.",
   },
   "raw-material-dc": {
     eyebrow: "Inventory / Outward",
@@ -108,13 +123,13 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
       ) : null}
 
       {stage === "purchase-order" ? (
-        loading ? <div className="erp-surface p-8 text-center text-xs text-slate-500">Loading Purchase Orders...</div> :
+        loading ? <div className="erp-surface p-8 text-center text-xs text-slate-500">Loading GRNs...</div> :
           error ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> :
             <div className="erp-surface overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[900px] text-left text-xs">
                   <thead className="border-b border-slate-200 bg-slate-50 text-[9px] font-bold uppercase tracking-wide text-slate-500">
-                    <tr><th className="px-3 py-3">Purchase Order</th><th className="px-3 py-3">Vendor</th><th className="px-3 py-3">Lines</th><th className="px-3 py-3">Status</th><th className="px-3 py-3 text-right">Action</th></tr>
+                    <tr><th className="px-3 py-3">PO No.</th><th className="px-3 py-3">Vendor</th><th className="px-3 py-3">Lines</th><th className="px-3 py-3">Status</th><th className="px-3 py-3 text-right">Action</th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {purchaseOrders.map((order) => (
@@ -123,21 +138,21 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
                         <td className="px-3 py-3">{order.vendor.name}</td>
                         <td className="px-3 py-3">{order.lines.length}</td>
                         <td className="px-3 py-3"><span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-bold">{order.status}</span></td>
-                        <td className="px-3 py-3 text-right"><Link className="font-bold text-emerald-700 hover:underline" href={`${basePath}/inward/purchase-order/${order.id}`}>Open receipt</Link></td>
+                        <td className="px-3 py-3 text-right"><Link className="font-bold text-emerald-700 hover:underline" href={`${basePath}/inward/grn/${order.id}`}>Open receipt</Link></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              {purchaseOrders.length === 0 ? <p className="p-8 text-center text-xs text-slate-500">No Purchase Orders are available for inward processing.</p> : null}
+              {purchaseOrders.length === 0 ? <p className="p-8 text-center text-xs text-slate-500">No GRNs are available for inward processing.</p> : null}
             </div>
       ) : stage.endsWith("stock") ? (
         loading ? <div className="erp-surface p-8 text-center text-xs text-slate-500">Loading stock...</div> : error ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> :
           <div className="erp-surface overflow-hidden"><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="border-b border-slate-200 bg-slate-50 text-[9px] font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">{stage === "fg-stock" ? "Style" : "Raw Material"}</th><th className="px-3 py-3">Size</th><th className="px-3 py-3">Warehouse</th><th className="px-3 py-3 text-right">On Hand</th><th className="px-3 py-3 text-right">Reserved</th><th className="px-3 py-3 text-right">Available</th></tr></thead><tbody className="divide-y divide-slate-100">{stock.map((row) => { const onHand = Number(row.quantity_on_hand); const reserved = Number(row.quantity_reserved); return <tr key={row.id} className="bg-white"><td className="px-3 py-3 font-semibold text-slate-900">{row.raw_material ?? row.style_name}</td><td className="px-3 py-3">{row.size ?? "-"}</td><td className="px-3 py-3">{row.warehouse}</td><td className="px-3 py-3 text-right">{onHand.toLocaleString("en-IN")}</td><td className="px-3 py-3 text-right">{reserved.toLocaleString("en-IN")}</td><td className="px-3 py-3 text-right font-bold text-emerald-700">{(onHand - reserved).toLocaleString("en-IN")}</td></tr>; })}</tbody></table></div>{stock.length === 0 ? <p className="p-8 text-center text-xs text-slate-500">No stock has been posted for this ledger yet.</p> : null}</div>
       ) : (
         <section className="erp-surface p-8">
-          <p className="text-sm font-semibold text-slate-900">Transaction workspace ready</p>
-          <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-500">This stage is linked to the Inventory document flow. Document-level persistence will use the same organization boundary and source references as Purchase Orders.</p>
+          <p className="text-sm font-semibold text-slate-900">{details.title} workspace ready</p>
+          <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-500">This document flow is organization-scoped and ready for its source-document fields, line items, approvals, and posting controls.</p>
         </section>
       )}
     </main>
