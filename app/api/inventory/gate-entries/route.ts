@@ -118,3 +118,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save gate entry." }, { status: 400 });
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    const user = await requireSessionUser();
+    const searchParams = new URL(request.url).searchParams;
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const organizationId = text(searchParams.get("organizationId") || body.organizationId);
+    const organization = await requireOrganizationContext(user.id, organizationId);
+    const rawIds = Array.isArray(body.entryIds) ? body.entryIds : Array.isArray(body.ids) ? body.ids : [];
+    const entryIds = rawIds.map((id) => String(id).trim()).filter(Boolean);
+
+    if (entryIds.length === 0) {
+      return NextResponse.json({ error: "Select at least one gate entry to delete." }, { status: 400 });
+    }
+
+    const result = await prisma.gateEntry.deleteMany({
+      where: {
+        organization_id: organization.id,
+        id: { in: entryIds },
+      },
+    });
+
+    return NextResponse.json({ ok: true, deletedCount: result.count });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to delete gate entries." }, { status: 400 });
+  }
+}

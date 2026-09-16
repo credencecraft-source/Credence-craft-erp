@@ -30,6 +30,7 @@ interface ReportGridProps<T> {
   onStatusChange?: (status: string) => void;
   onNewOrder?: () => void;
   onDeleteSelected?: () => void;
+  deleteSelectedLabel?: string;
   onCloneOrder?: (recordId: string) => void;
   renderCell: (fieldKey: string, record: T) => React.ReactNode;
   emptyMessage?: string;
@@ -51,6 +52,7 @@ export function ReportGrid<T>({
   onStatusChange,
   onNewOrder,
   onDeleteSelected,
+  deleteSelectedLabel = "Delete Selected",
   onCloneOrder,
   renderCell,
   emptyMessage = "No records found.",
@@ -202,7 +204,7 @@ export function ReportGrid<T>({
 
           {onDeleteSelected && selectedIds.length > 0 && (
             <Button variant="danger" size="sm" onClick={onDeleteSelected} className="h-7 px-2.5 text-[11px]">
-              Delete Selected ({selectedIds.length})
+              {deleteSelectedLabel} ({selectedIds.length})
             </Button>
           )}
 

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import MerchandisingOrderCloneDialog from "@/components/erp/merchandising-order-clone-dialog";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 
 type OrderRecord = {
@@ -326,106 +327,15 @@ export default function MerchandisingOrdersPage() {
         />
       </Card>
 
-      {showCloneDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="clone-order-title">
-          <div className="w-full max-w-lg space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
-            <div>
-              <h3 id="clone-order-title" className="text-base font-bold text-slate-900">Clone order</h3>
-              <p className="mt-1 text-xs text-slate-500">Enter the new order details below. The size rows will be copied from the original order so you can update only the quantities.</p>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-700">
-                Article name
-                <input
-                  type="text"
-                  value={cloneDraft.article}
-                  onChange={(event) => setCloneDraft((current) => ({ ...current, article: event.target.value }))}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal text-slate-800 focus:border-emerald-500 focus:outline-none"
-                  placeholder="Enter article"
-                />
-              </label>
-
-              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-700">
-                Style name
-                <input
-                  type="text"
-                  value={cloneDraft.styleName}
-                  onChange={(event) => setCloneDraft((current) => ({ ...current, styleName: event.target.value }))}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal text-slate-800 focus:border-emerald-500 focus:outline-none"
-                  placeholder="Enter style name"
-                />
-              </label>
-
-              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-700 md:col-span-2">
-                Color
-                <input
-                  type="text"
-                  value={cloneDraft.colors}
-                  onChange={(event) => setCloneDraft((current) => ({ ...current, colors: event.target.value }))}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal text-slate-800 focus:border-emerald-500 focus:outline-none"
-                  placeholder="Enter color"
-                />
-              </label>
-
-              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-700 md:col-span-2">
-                Order Qty
-                <input
-                  type="number"
-                  min="0"
-                  value={cloneDraft.orderQty}
-                  onChange={(event) => setCloneDraft((current) => ({ ...current, orderQty: event.target.value }))}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal text-slate-800 focus:border-emerald-500 focus:outline-none"
-                  placeholder="Enter order qty"
-                />
-              </label>
-            </div>
-
-            <div className="space-y-2">
-              <h4 className="text-xs font-bold uppercase tracking-wide text-slate-600">Finished goods size rows</h4>
-              <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-2">
-                <div className="grid gap-2">
-                  {cloneRows.length === 0 ? (
-                    <p className="text-xs text-slate-500">No size rows available for this order.</p>
-                  ) : (
-                    cloneRows.map((row, index) => (
-                      <div key={`${row.size}-${index}`} className="grid grid-cols-[1fr_120px] gap-2 rounded-md border border-slate-200 bg-white p-2">
-                        <label className="flex flex-col gap-1 text-[11px] font-semibold text-slate-700">
-                          <input
-                            type="text"
-                            value={row.size}
-                            readOnly
-                            className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700"
-                          />
-                        </label>
-                        <label className="flex flex-col gap-1 text-[11px] font-semibold text-slate-700">
-                          Qty
-                          <input
-                            type="number"
-                            min="0"
-                            value={row.qty}
-                            onChange={(event) => {
-                              const nextValue = event.target.value;
-                              setCloneRows((current) => current.map((item, idx) => idx === index ? { ...item, qty: nextValue } : item));
-                            }}
-                            className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-800 focus:border-emerald-500 focus:outline-none"
-                            placeholder="0"
-                          />
-                        </label>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="secondary" size="sm" onClick={() => setShowCloneDialog(false)}>Cancel</Button>
-              <Button variant="primary" size="sm" onClick={handleConfirmClone}>Continue</Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <MerchandisingOrderCloneDialog
+        open={showCloneDialog}
+        cloneDraft={cloneDraft}
+        cloneRows={cloneRows}
+        onDraftChange={(changes) => setCloneDraft((current) => ({ ...current, ...changes }))}
+        onRowsChange={setCloneRows}
+        onClose={() => setShowCloneDialog(false)}
+        onConfirm={handleConfirmClone}
+      />
 
       {showDeleteConfirmation && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-orders-title">

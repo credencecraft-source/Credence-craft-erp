@@ -1,8 +1,10 @@
 "use client";
 
-import { ArrowLeft, Eye, Loader2, Trash2 } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import { ReportGrid } from "@/components/reports/report-grid-display";
 
 type PurchaseOrder = {
   id: string;
@@ -14,19 +16,29 @@ type PurchaseOrder = {
   total: number;
 };
 
+type PurchaseOrderField = "purchaseOrderNo" | "vendorName" | "poDate" | "deliveryDate" | "status" | "total";
+
+const reportFields: Array<{ key: PurchaseOrderField; label: string }> = [
+  { key: "purchaseOrderNo", label: "PO Number" },
+  { key: "vendorName", label: "Vendor" },
+  { key: "poDate", label: "PO Date" },
+  { key: "deliveryDate", label: "Delivery Date" },
+  { key: "status", label: "Status" },
+  { key: "total", label: "Grand Total" },
+];
+
 const number = (value: number | null | undefined) => Number(value ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
-const date = (value: string | null | undefined) => value ? new Date(value).toLocaleDateString("en-IN") : "To be confirmed";
+const date = (value: string | null | undefined) => (value ? new Date(value).toLocaleDateString("en-IN") : "To be confirmed");
 
 export default function PurchaseOrderReportPage() {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [processingId, setProcessingId] = useState<string | null>(null);
-  const [sharingOrder, setSharingOrder] = useState<PurchaseOrder | null>(null);
-  const [shareEmail, setShareEmail] = useState("");
+  const [error, setError] = useState<{ message: string; linkedReceipts?: Array<{ id: string; receiptNo: string }>; linkedGateEntries?: Array<{ id: string; entryNo: string }> } | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [visibleFields, setVisibleFields] = useState<PurchaseOrderField[]>(reportFields.map((field) => field.key));
+
   const organizationId = params?.organizationId ?? "";
   const basePath = `/dashboard/${params?.workspaceId ?? "demo"}/organizations/${organizationId}/order-management/procurement`;
   const purchaseOrderPath = `${basePath}/purchase-order`;
@@ -39,60 +51,149 @@ export default function PurchaseOrderReportPage() {
   };
 
   useEffect(() => {
-    loadOrders().catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load Purchase Orders.")).finally(() => setLoading(false));
+    if (!organizationId) {
+      setLoading(false);
+      return;
+    }
+
+    loadOrders()
+      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load Purchase Orders."))
+      .finally(() => setLoading(false));
   }, [organizationId]);
 
-  const deleteOrder = async (order: PurchaseOrder) => {
-    if (!window.confirm(`Delete Purchase Order ${order.purchaseOrderNo}? This action cannot be undone.`)) return;
-    setDeletingId(order.id);
-    setError("");
+  const deleteSelectedOrders = async () => {
+    if (selectedIds.length === 0) return;
+    const confirmed = window.confirm(`Delete ${selectedIds.length} selected Purchase Order${selectedIds.length > 1 ? "s" : ""}?`);
+    if (!confirmed) return;
+
     try {
-      const response = await fetch(`/api/orders/purchase-orders/${encodeURIComponent(order.id)}?organizationId=${encodeURIComponent(organizationId)}`, { method: "DELETE" });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error || "Unable to delete Purchase Order.");
-      setOrders((current) => current.filter((item) => item.id !== order.id));
+      const results = await Promise.all(
+        selectedIds.map(async (id) => {
+          const response = await fetch(`/api/orders/purchase-orders/${encodeURIComponent(id)}?organizationId=${encodeURIComponent(organizationId)}`, { method: "DELETE" });
+          const data = await response.json().catch(() => null);
+          return { response, data };
+        }),
+      );
+
+      const failed = results.find((result) => !result.response.ok);
+      if (failed) {
+        const payload = failed.data ?? {};
+        const linkedReceipts = Array.isArray(payload.linkedReceipts) ? payload.linkedReceipts : [];
+        const linkedGateEntries = Array.isArray(payload.linkedGateEntries) ? payload.linkedGateEntries : [];
+        throw Object.assign(new Error(payload.error || "One or more Purchase Orders could not be deleted."), {
+          linkedReceipts,
+          linkedGateEntries,
+        });
+      }
+
+      setOrders((current) => current.filter((order) => !selectedIds.includes(order.id)));
+      setSelectedIds([]);
+      setError(null);
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete Purchase Order.");
-    } finally {
-      setDeletingId(null);
+      const details = deleteError instanceof Error ? deleteError : new Error("Unable to delete Purchase Orders.");
+      const linkedReceipts = "linkedReceipts" in details ? ((details as Error & { linkedReceipts?: Array<{ id: string; receiptNo: string }> }).linkedReceipts ?? []) : [];
+      const linkedGateEntries = "linkedGateEntries" in details ? ((details as Error & { linkedGateEntries?: Array<{ id: string; entryNo: string }> }).linkedGateEntries ?? []) : [];
+      setError({ message: details.message, linkedReceipts, linkedGateEntries });
     }
   };
 
-  const submitForApproval = async (order: PurchaseOrder) => {
-    setProcessingId(order.id);
-    setError("");
-    try {
-      const response = await fetch(`/api/orders/purchase-orders/${encodeURIComponent(order.id)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organizationId, action: "submit-approval" }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error || "Unable to submit Purchase Order for approval.");
-      setOrders((current) => current.map((item) => item.id === order.id ? { ...item, status: "PENDING_APPROVAL" } : item));
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Unable to submit Purchase Order for approval.");
-    } finally {
-      setProcessingId(null);
-    }
-  };
+  const reportRows = useMemo(
+    () => orders.map((order) => ({ ...order, vendorName: order.vendor?.name ?? "" })),
+    [orders],
+  );
 
-  const shareOrder = async () => {
-    if (!sharingOrder) return;
-    setProcessingId(sharingOrder.id);
-    setError("");
-    try {
-      const response = await fetch(`/api/orders/purchase-orders/${encodeURIComponent(sharingOrder.id)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organizationId, action: "share-email", email: shareEmail }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error || "Unable to email Purchase Order.");
-      setSharingOrder(null);
-      setShareEmail("");
-    } catch (shareError) {
-      setError(shareError instanceof Error ? shareError.message : "Unable to email Purchase Order.");
-    } finally {
-      setProcessingId(null);
-    }
-  };
+  return (
+    <div className="mx-auto max-w-[1500px] space-y-4">
+      <header className="flex items-center gap-3 border-b border-slate-200 pb-4">
+        <button
+          type="button"
+          onClick={() => router.push(basePath)}
+          aria-label="Back to procurement"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </button>
+        <div>
+          <p className="erp-eyebrow">Procurement</p>
+          <h1 className="erp-page-heading mt-1">Purchase Orders</h1>
+          <p className="mt-1 text-xs text-slate-500">Header-level Purchase Order register</p>
+        </div>
+      </header>
 
-  return <div className="mx-auto max-w-[1500px] space-y-4">
-    <header className="flex items-center gap-3 border-b border-slate-200 pb-4"><button type="button" onClick={() => router.push(basePath)} aria-label="Back to procurement" className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"><ArrowLeft className="h-4 w-4" /></button><div><p className="erp-eyebrow">Procurement</p><h1 className="erp-page-heading mt-1">Purchase Orders</h1><p className="mt-1 text-xs text-slate-500">Header-level Purchase Order register</p></div></header>
-    {loading ? <div className="erp-surface flex min-h-48 items-center justify-center gap-2 text-xs text-slate-500"><Loader2 className="h-4 w-4 animate-spin text-emerald-600" /> Loading Purchase Orders</div> : error ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : orders.length === 0 ? <div className="erp-surface flex min-h-48 items-center justify-center text-xs text-slate-500">No Purchase Orders have been generated.</div> : <div className="erp-surface overflow-hidden"><div className="overflow-x-auto"><table className="w-full min-w-[1100px] text-left text-xs"><thead className="border-b border-slate-200 bg-slate-50 text-[9px] font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">PO number</th><th className="px-3 py-3">Vendor</th><th className="px-3 py-3">PO date</th><th className="px-3 py-3">Delivery date</th><th className="px-3 py-3">Status</th><th className="px-3 py-3 text-right">Grand total</th><th className="px-3 py-3">Action</th></tr></thead><tbody className="divide-y divide-slate-100">{orders.map((order) => <tr key={order.id} className="cursor-pointer bg-white hover:bg-emerald-50" onClick={() => router.push(`${purchaseOrderPath}/${encodeURIComponent(order.id)}`)}><td className="px-3 py-3 font-bold text-slate-900">{order.purchaseOrderNo}</td><td className="px-3 py-3 font-semibold">{order.vendor.name}</td><td className="px-3 py-3">{date(order.poDate)}</td><td className="px-3 py-3">{date(order.deliveryDate)}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-[9px] font-bold ${order.status === "APPROVED" ? "bg-emerald-100 text-emerald-800" : order.status === "REJECTED" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{order.status}</span></td><td className="px-3 py-3 text-right font-bold">{number(order.total)}</td><td className="px-3 py-3" onClick={(event) => event.stopPropagation()}><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => router.push(`${purchaseOrderPath}/${encodeURIComponent(order.id)}`)} className="inline-flex items-center gap-1 font-semibold text-emerald-700 hover:text-emerald-900"><Eye className="h-3.5 w-3.5" /> View</button>{(order.status === "DRAFT" || order.status === "REJECTED") && <button type="button" disabled={processingId === order.id} onClick={() => void submitForApproval(order)} className="rounded-md bg-blue-700 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-blue-800 disabled:opacity-50">Submit for approval</button>}{order.status === "APPROVED" && <button type="button" disabled={processingId === order.id} onClick={() => { setShareEmail(""); setSharingOrder(order); }} className="rounded-md bg-emerald-700 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-emerald-800 disabled:opacity-50">Share</button>}<button type="button" disabled={deletingId === order.id} onClick={() => void deleteOrder(order)} aria-label={`Delete ${order.purchaseOrderNo}`} title="Delete Purchase Order" className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50">{deletingId === order.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}</button></div></td></tr>)}</tbody></table></div></div>}
-    {sharingOrder && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="share-po-title"><div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700">Approved Purchase Order</p><h2 id="share-po-title" className="mt-1 text-lg font-bold text-slate-950">Share {sharingOrder.purchaseOrderNo}</h2><p className="mt-1 text-xs text-slate-500">Send the approved PO to the vendor email address.</p></div><button type="button" onClick={() => setSharingOrder(null)} aria-label="Close share dialog" className="text-slate-400 hover:text-slate-700">×</button></div><label className="mt-5 block text-xs font-bold text-slate-700">Vendor email<input type="email" value={shareEmail} onChange={(event) => setShareEmail(event.target.value)} placeholder="vendor@example.com" className="mt-1.5 w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500" /></label><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setSharingOrder(null)} className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600">Cancel</button><button type="button" disabled={!shareEmail.trim() || processingId === sharingOrder.id} onClick={() => void shareOrder()} className="rounded-md bg-emerald-700 px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">{processingId === sharingOrder.id ? "Sending..." : "Send email"}</button></div></div></div>}
-  </div>;
+      {loading ? (
+        <div className="erp-surface flex min-h-48 items-center justify-center gap-2 text-xs text-slate-500">
+          <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+          Loading Purchase Orders
+        </div>
+      ) : error ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <p>{error.message}</p>
+          {error.linkedReceipts && error.linkedReceipts.length > 0 ? (
+            <div className="mt-2 space-y-1">
+              <p className="font-semibold text-red-800">Linked GRN records:</p>
+              <ul className="list-disc pl-5 space-y-1">
+                {error.linkedReceipts.map((receipt) => (
+                  <li key={receipt.id}>
+                    <a
+                      href={`/dashboard/${params?.workspaceId ?? "demo"}/organizations/${organizationId}/inventory-management/inward/grn/report/${encodeURIComponent(receipt.id)}`}
+                      className="font-semibold text-red-700 underline underline-offset-2 hover:text-red-900"
+                    >
+                      {receipt.receiptNo}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {error.linkedGateEntries && error.linkedGateEntries.length > 0 ? (
+            <div className="mt-2 space-y-1">
+              <p className="font-semibold text-red-800">Linked gate entries:</p>
+              <ul className="list-disc pl-5">
+                {error.linkedGateEntries.map((entry) => (
+                  <li key={entry.id}>{entry.entryNo}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="erp-surface overflow-hidden">
+          <ReportGrid
+            title="Purchase Orders"
+            records={reportRows}
+            fields={reportFields}
+            visibleFields={visibleFields}
+            onVisibleFieldsChange={(next) => setVisibleFields(next as PurchaseOrderField[])}
+            rowIdSelector={(row) => row.id}
+            selectedIds={selectedIds}
+            onRowClick={(recordId) => router.push(`${purchaseOrderPath}/${encodeURIComponent(recordId)}`)}
+            onToggleSelectAll={(checked) => setSelectedIds(checked ? reportRows.map((row) => row.id) : [])}
+            onToggleRowSelection={(recordId, checked) =>
+              setSelectedIds((current) => (checked ? [...new Set([...current, recordId])] : current.filter((id) => id !== recordId)))
+            }
+            onDeleteSelected={deleteSelectedOrders}
+            renderCell={(fieldKey, row) => {
+              switch (fieldKey as PurchaseOrderField) {
+                case "purchaseOrderNo":
+                  return row.purchaseOrderNo;
+                case "vendorName":
+                  return row.vendorName;
+                case "poDate":
+                  return date(row.poDate);
+                case "deliveryDate":
+                  return date(row.deliveryDate);
+                case "status":
+                  return row.status;
+                case "total":
+                  return number(row.total);
+                default:
+                  return "";
+              }
+            }}
+            emptyMessage="No Purchase Orders have been generated."
+          />
+        </div>
+      )}
+    </div>
+  );
 }

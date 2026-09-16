@@ -23,7 +23,15 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ p
     await deletePurchaseOrder(organization.id, (await params).purchaseOrderId);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to delete Purchase Order." }, { status: 400 });
+    const message = error instanceof Error ? error.message : "Unable to delete Purchase Order.";
+    const payload: Record<string, unknown> = { error: message };
+    if (error instanceof Error && "linkedReceipts" in error) {
+      payload.linkedReceipts = (error as Error & { linkedReceipts?: Array<{ id: string; receiptNo: string }> }).linkedReceipts ?? [];
+    }
+    if (error instanceof Error && "linkedGateEntries" in error) {
+      payload.linkedGateEntries = (error as Error & { linkedGateEntries?: Array<{ id: string; entryNo: string }> }).linkedGateEntries ?? [];
+    }
+    return NextResponse.json(payload, { status: 400 });
   }
 }
 

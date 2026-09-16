@@ -490,9 +490,9 @@ export default function FactoryWorkOrderDetailPage() {
                         <td className="px-3 py-3 font-medium text-slate-700">{item.rawMaterialName || "-"}</td>
                         <td className="px-3 py-3 text-slate-600">{item.category || "-"}</td>
                         <td className="px-3 py-3 text-slate-600">{item.size || "-"}</td>
-                        <td className="px-3 py-3 text-right font-semibold text-slate-900">{item.workOrderQty.toLocaleString("en-IN")}</td>
-                        <td className="px-3 py-3 text-right font-semibold text-slate-900">{item.requiredQty.toLocaleString("en-IN")}</td>
-                        <td className="px-3 py-3 text-right font-semibold text-emerald-700">{item.totalRequiredQty.toLocaleString("en-IN")}</td>
+                        <td className="px-3 py-3 text-right font-semibold text-slate-900">{Number(item.workOrderQty ?? 0).toLocaleString("en-IN")}</td>
+                        <td className="px-3 py-3 text-right font-semibold text-slate-900">{Number(item.requiredQty ?? 0).toLocaleString("en-IN")}</td>
+                        <td className="px-3 py-3 text-right font-semibold text-emerald-700">{Number(item.totalRequiredQty ?? 0).toLocaleString("en-IN")}</td>
                       </tr>
                     ))}
                     {workOrder.bomLines.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-500">No BOM rows are linked to this work order yet.</td></tr>}

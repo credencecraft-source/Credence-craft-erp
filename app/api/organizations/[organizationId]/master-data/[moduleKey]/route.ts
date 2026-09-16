@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { createMasterValueForOrganization, getMasterValuesForOrganization, getMasterDefinition } from "@/lib/master-data/master-data-constants";
-import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-definitions";
+import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-registry";
 
 export async function GET(
   request: Request,

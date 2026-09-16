@@ -29,7 +29,7 @@ export default function Sidebar({
       onMouseLeave={() => setExpanded(false)}
       data-expanded={expanded}
       className={cn(
-        "min-h-screen border-r border-slate-200 bg-white transition-all duration-300 ease-in-out overflow-hidden",
+        "min-h-screen border-r border-[var(--erp-border)] bg-[var(--erp-surface)] transition-all duration-300 ease-in-out overflow-hidden shadow-[var(--erp-shadow)]",
         expanded ? "w-64" : "w-16",
         className
       )}

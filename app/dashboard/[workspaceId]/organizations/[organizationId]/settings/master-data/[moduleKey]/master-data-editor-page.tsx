@@ -13,7 +13,7 @@ import {
   getMasterValuesForOrganization,
   updateMasterValue,
 } from "@/lib/master-data/master-data-constants";
-import type { MasterFieldDefinition } from "@/lib/master-data/master-data-definitions";
+import type { MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 
 function serializeDecimal(value: unknown): unknown {
   if (value === null || value === undefined) {
@@ -63,9 +63,27 @@ function readChildValues(formData: FormData, field: MasterFieldDefinition) {
 
 function hasMissingRequiredField(fields: Record<string, unknown>, definition: { fields: MasterFieldDefinition[] }) {
   return definition.fields.some((field) => {
-    if (!field.required) return false;
+    if (!field.required && !field.dependsOn) return false;
+
     const value = fields[field.key];
-    return Array.isArray(value) ? value.length === 0 : value === null || value === undefined || value === "";
+    const hasValue = Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== "";
+
+    if (!field.required && field.dependsOn) {
+      const parentValue = fields[field.dependsOn];
+      if (parentValue === null || parentValue === undefined || parentValue === "") {
+        return false;
+      }
+      return !hasValue;
+    }
+
+    if (field.dependsOn) {
+      const parentValue = fields[field.dependsOn];
+      if (parentValue === null || parentValue === undefined || parentValue === "") {
+        return true;
+      }
+    }
+
+    return !hasValue;
   });
 }
 

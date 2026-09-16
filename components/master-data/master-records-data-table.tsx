@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import type { MasterFieldDefinition } from "@/lib/master-data/master-data-definitions";
+import type { MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 
 type MasterRecord = {
   id: string;

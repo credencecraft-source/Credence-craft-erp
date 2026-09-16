@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/database/prisma-client";
-import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-definitions";
-export { getMasterDefinition, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-definitions";
+import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
+export { getMasterDefinition, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
 
 export type MasterFieldValues = Record<string, string | number | boolean | null | string[] | number[] | Record<string, unknown>[]>;
 
@@ -89,23 +89,37 @@ async function buildData(organizationId: string, moduleKey: string, fields: Mast
     [labelFields[moduleKey]]: label,
   };
 
-  await Promise.all(definition.fields.map(async (field) => {
+  for (const field of definition.fields) {
     const relationField = fieldColumns[moduleKey]?.[field.key];
-    if (!relationField || relationField === labelFields[moduleKey]) return;
+    if (!relationField || relationField === labelFields[moduleKey]) continue;
 
-    if (field.type === "lookup" && fields[field.key]) {
-      const targetId = await resolveLookupId(organizationId, field.lookupModuleKey ?? "", fields[field.key]);
-      if (targetId) {
-        data[relationField] = targetId;
+    if (field.type === "lookup") {
+      const parentValue = field.dependsOn ? fields[field.dependsOn] : null;
+      const isMissingDependency = field.dependsOn && (parentValue === null || parentValue === undefined || parentValue === "");
+      const hasValue = fields[field.key] !== null && fields[field.key] !== undefined && fields[field.key] !== "";
+
+      if (field.required && isMissingDependency) {
+        throw new Error(`${field.label} must be linked to ${definition.fields.find((candidate) => candidate.key === field.dependsOn)?.label ?? "its parent field"}.`);
       }
-      return;
+
+      if (field.required && !hasValue) {
+        throw new Error(`${field.label} is required.`);
+      }
+
+      if (field.type === "lookup" && hasValue) {
+        const targetId = await resolveLookupId(organizationId, field.lookupModuleKey ?? "", fields[field.key]);
+        if (targetId) {
+          data[relationField] = targetId;
+        }
+        continue;
+      }
     }
 
     const val = typedValue(field, fields[field.key]);
     if (val !== null) {
       data[relationField] = val;
     }
-  }));
+  }
 
   if (moduleKey === "category" && !data["category_type_id"]) {
     const firstType = await delegates["category-type"].findFirst({ where: { organization_id: organizationId } });

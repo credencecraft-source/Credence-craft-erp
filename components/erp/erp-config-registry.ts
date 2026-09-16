@@ -100,7 +100,20 @@ export const ERP_MODULES: ErpModule[] = [
     key: "finance-management",
     label: "Finance Management",
     pathSegment: "finance-management",
-    children: [],
+    children: [
+      {
+        key: "transactions",
+        label: "Transactions",
+        pathSegment: "transactions",
+        children: [
+          { key: "sales-invoice", label: "Sales Invoice", pathSegment: "sales-invoice" },
+          { key: "purchase-invoice", label: "Purchase Invoice", pathSegment: "purchase-invoice" },
+          { key: "debit-note", label: "Debit Note", pathSegment: "debit-note" },
+          { key: "credit-note", label: "Credit Note", pathSegment: "credit-note" },
+          { key: "delivery-challan", label: "Delivery Challan", pathSegment: "delivery-challan" },
+        ],
+      },
+    ],
   },
   {
     key: "inventory-management",

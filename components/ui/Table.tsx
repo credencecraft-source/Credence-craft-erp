@@ -12,8 +12,8 @@ export default function Table({
   ...props
 }: TableProps) {
   return (
-    <div {...props} className={cn("overflow-x-auto rounded-xl border border-slate-200 bg-white", className)}>
-      <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+    <div {...props} className={cn("overflow-x-auto rounded-2xl border border-[var(--erp-border)] bg-[var(--erp-surface)] shadow-[var(--erp-shadow)]", className)}>
+      <table className="min-w-full divide-y divide-[var(--erp-border)] text-left text-sm">
         {children}
       </table>
     </div>

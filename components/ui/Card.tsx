@@ -12,7 +12,7 @@ export default function Card({
   ...props
 }: CardProps) {
   return (
-    <div {...props} className={cn("rounded-xl border border-slate-200 bg-white p-5 shadow-sm", className)}>
+    <div {...props} className={cn("rounded-2xl border border-[var(--erp-border)] bg-[var(--erp-surface)] p-5 shadow-[var(--erp-shadow)]", className)}>
       {children}
     </div>
   );

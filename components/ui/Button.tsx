@@ -21,13 +21,13 @@ export default function Button({
 }: ButtonProps) {
   const variants = {
     primary:
-      "border border-emerald-700 bg-emerald-700 text-white shadow-sm hover:bg-emerald-800 focus-visible:ring-emerald-600",
+      "border border-[var(--erp-brand)] bg-[var(--erp-brand)] text-white shadow-sm hover:bg-[var(--erp-brand-hover)] focus-visible:ring-[var(--erp-brand)]",
     secondary:
-      "border border-slate-300 bg-white text-slate-800 shadow-sm hover:bg-slate-50 focus-visible:ring-slate-500",
+      "border border-[var(--erp-border)] bg-[var(--erp-surface)] text-slate-800 shadow-sm hover:bg-[var(--erp-surface-soft)] focus-visible:ring-slate-500",
     danger:
       "border border-red-600 bg-red-600 text-white shadow-sm hover:bg-red-700 focus-visible:ring-red-600",
     ghost:
-      "border border-transparent bg-transparent text-slate-700 hover:bg-slate-100 focus-visible:ring-slate-500",
+      "border border-transparent bg-transparent text-slate-700 hover:bg-[var(--erp-surface-soft)] focus-visible:ring-slate-500",
   };
 
   const sizes = {

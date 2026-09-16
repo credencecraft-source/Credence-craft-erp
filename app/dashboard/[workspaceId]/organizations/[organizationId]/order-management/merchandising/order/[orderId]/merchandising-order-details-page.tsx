@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-definitions";
+import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 import OrderDetailsTab from "./components/OrderDetailsTab";
 import FinishedGoodsTab from "./components/FinishedGoodsTab";
 import BomTab from "./components/BomTab";
@@ -630,7 +630,7 @@ export default function MerchandisingOrderDetailsPage() {
           />
         )}
         {activeTab === "finishedGoods" && <FinishedGoodsTab form={form} setForm={setForm} masterOptions={masterOptions} onOpenCreateMaster={handleOpenCreateMaster} />}
-        {activeTab === "bom" && <BomTab form={form} setForm={setForm} renderMasterSelect={renderBomMasterSelect} onOpenCreateMaster={handleOpenCreateMaster} />}
+        {activeTab === "bom" && <BomTab form={form} setForm={setForm} renderMasterSelect={renderBomMasterSelect} onOpenCreateMaster={handleOpenCreateMaster} masterOptions={masterOptions} />}
         {activeTab === "costing" && <CostingTab form={form} setForm={setForm} />}
         {activeTab === "techPack" && <TecPackTab form={form} setForm={setForm} />}
         {activeTab === "measurements" && <MeasurementsTab form={form} setForm={setForm} />}

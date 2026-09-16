@@ -1,29 +1,56 @@
 @import "tailwindcss";
 
 @theme {
-  --color-erp-50: #f2fbf7;
-  --color-erp-100: #dff6ea;
-  --color-erp-600: #087b59;
-  --color-erp-700: #076549;
-  --color-erp-800: #07513c;
+  --color-brand-50: #f1faf6;
+  --color-brand-100: #dff4ea;
+  --color-brand-200: #bfead9;
+  --color-brand-300: #8dd5b6;
+  --color-brand-400: #54ba8b;
+  --color-brand-500: #2b9d71;
+  --color-brand-600: #1d7f5c;
+  --color-brand-700: #17674d;
+  --color-brand-800: #12513d;
+  --color-brand-900: #0d3f30;
+
+  --color-surface-0: #f5f8f7;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #eef3f1;
+  --color-border: #dfe9e5;
+  --color-muted-text: #587066;
+  --color-strong-text: #0f172a;
+}
+
+:root {
+  --erp-bg: #f5f8f7;
+  --erp-surface: #ffffff;
+  --erp-surface-soft: #eef3f1;
+  --erp-border: #dfe9e5;
+  --erp-brand: #1d7f5c;
+  --erp-brand-hover: #17674d;
+  --erp-brand-soft: #e9f8f1;
+  --erp-text: #18232b;
+  --erp-muted: #587066;
+  --erp-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
 }
 
 @layer base {
   * {
-    border-color: theme(colors.slate.200);
+    border-color: var(--erp-border);
+    box-sizing: border-box;
   }
 
   html {
     min-width: 320px;
-    background: theme(colors.slate.100);
+    background: var(--erp-bg);
+    color: var(--erp-text);
   }
 
   body {
     min-height: 100vh;
     background:
-      radial-gradient(circle at top right, rgb(209 250 229 / 0.4), transparent 28rem),
-      theme(colors.slate.100);
-    color: theme(colors.slate.900);
+      radial-gradient(circle at top right, rgba(29, 127, 92, 0.12), transparent 25rem),
+      linear-gradient(180deg, #f5f8f7 0%, #eef3f1 100%);
+    color: var(--erp-text);
     font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   }
 
@@ -40,14 +67,18 @@
   }
 
   :focus-visible {
-    outline: 2px solid theme(colors.emerald.600);
+    outline: 2px solid var(--erp-brand);
     outline-offset: 2px;
   }
 }
 
 @layer utilities {
   .erp-surface {
-    @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+    @apply rounded-2xl border border-[var(--erp-border)] bg-[var(--erp-surface)] shadow-[var(--erp-shadow)];
+  }
+
+  .erp-surface-soft {
+    @apply rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)];
   }
 
   .erp-page-heading {
@@ -55,10 +86,15 @@
   }
 
   .erp-eyebrow {
-    @apply text-xs font-bold uppercase tracking-[0.16em] text-emerald-700;
+    @apply text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--erp-brand)];
   }
 
   .erp-table-head {
-    @apply bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-600;
+    @apply bg-[var(--erp-surface-soft)] text-[10px] font-bold uppercase tracking-[0.14em] text-slate-600;
+  }
+
+  .erp-section-header {
+    @apply flex items-center justify-between gap-3 rounded-2xl border border-[var(--erp-border)] bg-[var(--erp-surface)] px-4 py-3 shadow-[var(--erp-shadow)];
   }
 }
+

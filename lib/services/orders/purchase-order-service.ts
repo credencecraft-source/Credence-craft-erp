@@ -130,9 +130,27 @@ export async function getPurchaseOrder(organizationId: string, id: string) {
 export async function deletePurchaseOrder(organizationId: string, id: string) {
   const order = await prisma.purchaseOrder.findFirst({
     where: { id, organization_id: organizationId },
-    select: { id: true },
+    select: {
+      id: true,
+      inventoryReceipts: { select: { id: true, receipt_no: true } },
+      gateEntries: { select: { id: true, entry_no: true } },
+    },
   });
   if (!order) throw new Error("Purchase Order not found.");
+  if (order.inventoryReceipts.length > 0) {
+    const linkedReceipts = order.inventoryReceipts.map((receipt) => ({ id: receipt.id, receiptNo: receipt.receipt_no }));
+    const detail = linkedReceipts.map((receipt) => receipt.receiptNo).join(", ");
+    throw Object.assign(new Error(`This Purchase Order cannot be deleted because it has linked inventory receipt records: ${detail}.`), {
+      linkedReceipts,
+    });
+  }
+  if (order.gateEntries.length > 0) {
+    const linkedGateEntries = order.gateEntries.map((entry) => ({ id: entry.id, entryNo: entry.entry_no }));
+    const detail = linkedGateEntries.map((entry) => entry.entryNo).join(", ");
+    throw Object.assign(new Error(`This Purchase Order cannot be deleted because it is linked to gate entry records: ${detail}.`), {
+      linkedGateEntries,
+    });
+  }
 
   await prisma.purchaseOrder.delete({ where: { id: order.id } });
 }

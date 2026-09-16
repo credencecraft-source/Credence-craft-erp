@@ -354,9 +354,11 @@ export async function listWorkOrders(organizationId: string) {
           orderNo: true,
           article: true,
           styleName: true,
+          brand: true,
         },
       },
       sizeLines: true,
+      bomLines: true,
     },
     orderBy: [{ created_at: "desc" }, { work_order_no: "desc" }],
     take: 100,
@@ -368,10 +370,20 @@ export async function listWorkOrders(organizationId: string) {
     orderNo: workOrder.order.orderNo,
     article: workOrder.order.article,
     styleName: workOrder.order.styleName,
+    brand: workOrder.order.brand,
     totalQty: workOrder.total_qty,
     status: workOrder.status,
     createdAt: workOrder.created_at,
     sizeLines: workOrder.sizeLines.map((line) => ({ size: line.size || line.buyer_size || "Unspecified", quantity: line.quantity })),
+    bomLines: workOrder.bomLines.map((line) => ({
+      id: line.id,
+      rawMaterialName: line.raw_material_name,
+      category: line.category,
+      size: line.size,
+      workOrderQty: Number(line.work_order_qty),
+      requiredQty: Number(line.required_qty),
+      totalRequiredQty: Number(line.total_required_qty),
+    })),
   }));
 }
 
@@ -444,7 +456,7 @@ export async function updateWorkOrder(organizationId: string, workOrderId: strin
     });
 
     return { ...updatedWorkOrder, bomLines };
-  }, { isolationLevel: "Serializable" });
+  }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
 }
 
 export async function deleteWorkOrder(organizationId: string, workOrderId: string) {
@@ -461,5 +473,5 @@ export async function deleteWorkOrder(organizationId: string, workOrderId: strin
     await transaction.factoryBundleTransfer.deleteMany({ where: { work_order_id: workOrderId } });
 
     await transaction.factoryWorkOrder.delete({ where: { id: workOrderId } });
-  }, { isolationLevel: "Serializable" });
+  }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
 }
