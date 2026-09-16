@@ -15,7 +15,7 @@ type MasterRecord = {
   metadata?: unknown;
 };
 
-type ChildRecord = { parentId: string | null; label: string };
+type ChildRecord = { parentId: string | null; label: string; fields?: Record<string, unknown> };
 
 type MasterRecordsTableProps = {
   records: MasterRecord[];
@@ -243,40 +243,41 @@ export function MasterRecordsTable({
       );
     }
     if (field.type === "child-list") {
-      const childValues = Array.isArray(value)
-        ? value.map((item) => String(item ?? ""))
+      const childFields = field.childFields ?? [];
+      const childValues = Array.isArray(value) && value.length > 0
+        ? value.map((item) => typeof item === "object" && item !== null ? item : { [childFields[0]?.key ?? "value"]: String(item ?? "") })
         : editingRecord
-          ? childRecords.filter((item) => item.parentId === editingRecord.value_id).map((item) => item.label)
-          : [""];
-      const normalizedValues = childValues.length > 0 ? childValues : [""];
+          ? childRecords.filter((item) => item.parentId === editingRecord.id || item.parentId === editingRecord.value_id).map((item) => item.fields ?? { [childFields[0]?.key ?? "value"]: item.label })
+          : [{}];
+      const normalizedValues = childValues.length > 0 ? childValues as Array<Record<string, unknown>> : [{}];
       return (
         <div key={field.key} className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-700">{field.label}</span>
             <button
               type="button"
-              onClick={() => setValues({ ...values, [field.key]: [...normalizedValues, ""] })}
+               onClick={() => setValues({ ...values, [field.key]: [...normalizedValues, {}] })}
               className="rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white"
             >
-              Add size
-            </button>
-          </div>
-          <input type="hidden" name={`field_${field.key}`} value={JSON.stringify(normalizedValues.filter(Boolean))} />
-          {normalizedValues.map((childValue, index) => (
-            <div key={`${field.key}-${index}`} className="flex items-center gap-2">
-              <span className="w-5 text-center text-xs font-semibold text-slate-500">{index + 1}</span>
-              <Input
-                value={childValue}
-                placeholder="e.g. S"
-                onChange={(event) => {
-                  const nextValues = [...normalizedValues];
-                  nextValues[index] = event.target.value;
-                  setValues({ ...values, [field.key]: nextValues });
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => setValues({ ...values, [field.key]: normalizedValues.filter((_, itemIndex) => itemIndex !== index) })}
+                Add row
+              </button>
+            </div>
+            <input type="hidden" name={`field_${field.key}`} value={JSON.stringify(normalizedValues.filter((row) => Object.values(row).some((item) => String(item ?? "").trim() !== "")))} />
+            {normalizedValues.map((childValue, index) => (
+              <div key={`${field.key}-${index}`} className="grid gap-2 rounded-md border border-slate-200 bg-white p-2 sm:grid-cols-[56px_1fr_auto]">
+                <span className="flex items-center justify-center text-xs font-semibold text-slate-500">{index + 1}</span>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {childFields.map((childField) => {
+                    const childValueForField = childValue[childField.key] ?? "";
+                    if (childField.type === "lookup") {
+                      return <label key={childField.key} className="space-y-1 text-xs font-semibold text-slate-700"><span>{childField.label}{childField.required ? " *" : ""}</span><select required={childField.required} value={String(childValueForField)} onChange={(event) => { const nextValues = [...normalizedValues]; nextValues[index] = { ...nextValues[index], [childField.key]: event.target.value }; setValues({ ...values, [field.key]: nextValues }); }} className="w-full rounded-lg border border-slate-300 bg-white p-2 text-sm"><option value="">Select {childField.label}</option>{(lookupOptions[childField.lookupModuleKey ?? ""] ?? []).map((option) => <option key={option.id} value={option.label}>{option.label}</option>)}</select></label>;
+                    }
+                    return <label key={childField.key} className="space-y-1 text-xs font-semibold text-slate-700"><span>{childField.label}{childField.required ? " *" : ""}</span><Input required={childField.required} type={childField.type === "number" || childField.type === "percentage" || childField.type === "decimal" ? "number" : "text"} step={childField.type === "percentage" || childField.type === "decimal" ? "0.01" : undefined} value={String(childValueForField)} onChange={(event) => { const nextValues = [...normalizedValues]; nextValues[index] = { ...nextValues[index], [childField.key]: event.target.value }; setValues({ ...values, [field.key]: nextValues }); }} /></label>;
+                  })}
+                </div>
+               <button
+                  type="button"
+                  onClick={() => setValues({ ...values, [field.key]: normalizedValues.filter((_, itemIndex) => itemIndex !== index) })}
                 className="px-2 py-1 text-xs font-medium text-red-600"
               >
                 Remove
@@ -294,8 +295,8 @@ export function MasterRecordsTable({
         </span>
         <Input
           required={field.required}
-          type={field.type === "percentage" || field.type === "number" ? "number" : "text"}
-          step={field.type === "percentage" ? "0.01" : undefined}
+          type={field.type === "percentage" || field.type === "number" || field.type === "decimal" ? "number" : "text"}
+          step={field.type === "percentage" || field.type === "decimal" ? "0.01" : undefined}
           name={`field_${field.key}`}
           value={String(value ?? "")}
           onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}

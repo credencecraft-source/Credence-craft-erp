@@ -52,6 +52,24 @@ export type BomRow = {
   totalRequiredQty?: number | string;
 };
 
+export type ProcessRow = {
+  processId?: string;
+  processName?: string;
+  slNo?: number | string;
+  operationTemplateId?: string;
+  operationTemplateName?: string;
+  cost?: number | string | null;
+  operations?: ProcessOperationRow[];
+};
+
+export type ProcessOperationRow = {
+  id?: string;
+  sourceOperationId?: string;
+  operation?: string;
+  slNo?: number | string;
+  price?: number | string | null;
+};
+
 export type CreateOrderInput = {
   orderNo?: string;
   entityName?: string;
@@ -70,6 +88,8 @@ export type CreateOrderInput = {
   deliveryDate?: string;
   finalStatus?: OrderStatus;
   processStatus?: string;
+  processTemplateId?: string | null;
+  processRows?: ProcessRow[];
   rows?: OrderRow[];
   bomRows?: BomRow[];
 };
@@ -173,8 +193,168 @@ export async function listOrdersLegacy(organizationId: string) {
 export async function getOrderById(id: string, organizationId: string) {
   return prisma.merchandisingOrder.findFirst({
     where: { id, organization_id: organizationId },
-    include: { finishedGoods: true, bomItems: true },
+    include: {
+      finishedGoods: true,
+      bomItems: true,
+      processTemplate: { select: { id: true, value_id: true, process_name: true } },
+      processSteps: {
+        orderBy: { sl_no: "asc" },
+        include: {
+          process: { select: { id: true, value_id: true, process_name: true } },
+          operations: { orderBy: { sl_no: "asc" } },
+        },
+      },
+    },
   });
+}
+
+async function findProcessTemplate(organizationId: string, processTemplateId: string | null | undefined, database: Prisma.TransactionClient | typeof prisma) {
+  if (!processTemplateId) return null;
+  const template = await database.masterProcessTemplate.findFirst({
+    where: { organization_id: organizationId, OR: [{ id: processTemplateId }, { value_id: processTemplateId }], is_active: true },
+    include: {
+      steps: {
+        where: { is_active: true },
+        orderBy: { sl_no: "asc" },
+        include: {
+          process: {
+            select: {
+              id: true,
+              process_name: true,
+              operationTemplates: {
+                where: { organization_id: organizationId, is_active: true },
+                orderBy: { sort_order: "asc" },
+                include: {
+                  operations: { where: { is_active: true }, orderBy: { sl_no: "asc" } },
+                },
+              },
+            },
+          },
+          operationTemplate: {
+            include: {
+              operations: { where: { is_active: true }, orderBy: { sl_no: "asc" } },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!template) throw new Error("The selected process template is not active or does not belong to this organization.");
+  if (template.steps.length === 0) throw new Error("The selected process template has no process steps.");
+  return template;
+}
+
+async function replaceOrderProcessSteps(
+  orderId: string,
+  organizationId: string,
+  processTemplateId: string | null | undefined,
+  database: Prisma.TransactionClient | typeof prisma,
+  inputRows: ProcessRow[] = [],
+) {
+  await database.merchandisingOrderProcessStep.deleteMany({ where: { order_id: orderId } });
+  const template = await findProcessTemplate(organizationId, processTemplateId, database);
+  if (!template) return null;
+
+  for (const step of template.steps) {
+    const inputRow = inputRows.find((row) =>
+      row.processId === step.id
+      || row.processId === step.process_id
+      || (String(row.processName ?? "").trim() === step.process.process_name && Number(row.slNo ?? 0) === step.sl_no),
+    );
+    const operationTemplate = step.process.operationTemplates.find((candidate) =>
+      candidate.id === inputRow?.operationTemplateId
+      || candidate.value_id === inputRow?.operationTemplateId
+      || candidate.operation_template_name === inputRow?.operationTemplateName,
+    ) ?? step.process.operationTemplates[0] ?? step.operationTemplate;
+    const operationRows = (operationTemplate?.operations ?? []).map((operation) => {
+      const inputOperation = inputRow?.operations?.find((row) =>
+        row.sourceOperationId === operation.id
+        || row.id === operation.id
+        || (String(row.operation ?? "").trim() === operation.operation && Number(row.slNo ?? 0) === operation.sl_no),
+      );
+      const rawPrice = inputOperation?.price;
+      const price = rawPrice === undefined || rawPrice === null || rawPrice === ""
+        ? Number(operation.price)
+        : Number(rawPrice);
+      if (!Number.isFinite(price) || price < 0) {
+        throw new Error(`Operation price must be a valid non-negative number for ${operation.operation}.`);
+      }
+      return {
+        source_operation_template_step_id: operation.id,
+        operation: operation.operation,
+        sl_no: operation.sl_no,
+        price,
+      };
+    });
+
+    const processStep = await database.merchandisingOrderProcessStep.create({
+      data: {
+        order_id: orderId,
+        source_template_step_id: step.id,
+        process_id: step.process_id,
+        process_name: step.process.process_name,
+        sl_no: step.sl_no,
+        cost: operationRows.length > 0 ? operationRows.reduce((total, operation) => total + operation.price, 0) : null,
+      },
+    });
+
+    if (operationRows.length > 0) {
+      await database.merchandisingOrderProcessOperation.createMany({
+        data: operationRows.map((operation) => ({
+          ...operation,
+          order_process_step_id: processStep.id,
+        })),
+      });
+    }
+  }
+  return template;
+}
+
+async function syncOrderProcessController(
+  orderId: string,
+  processTemplateId: string | null | undefined,
+  orderQty: number,
+  database: Prisma.TransactionClient,
+) {
+  const processSteps = await database.merchandisingOrderProcessStep.findMany({
+    where: { order_id: orderId },
+    orderBy: { sl_no: "asc" },
+    include: { operations: { orderBy: { sl_no: "asc" } } },
+  });
+
+  if (!processTemplateId || processSteps.length === 0) {
+    await database.orderProcessController.deleteMany({ where: { order_id: orderId } });
+    return null;
+  }
+
+  const controller = await database.orderProcessController.upsert({
+    where: { order_id: orderId },
+    update: { process_template_id: processTemplateId },
+    create: { order_id: orderId, process_template_id: processTemplateId },
+  });
+  await database.orderProcessControllerProcess.deleteMany({ where: { controller_id: controller.id } });
+
+  for (const step of processSteps) {
+    await database.orderProcessControllerProcess.create({
+      data: {
+        controller_id: controller.id,
+        process_id: step.process_id,
+        process_name: step.process_name,
+        sl_no: step.sl_no,
+        order_qty: orderQty,
+        operations: {
+          create: step.operations.map((operation) => ({
+            source_operation_id: operation.source_operation_template_step_id,
+            operation: operation.operation,
+            sl_no: operation.sl_no,
+            budgeted_price: operation.price,
+          })),
+        },
+      },
+    });
+  }
+
+  return controller;
 }
 
 export async function getOrderByOrderNo(orderNo: string, organizationId: string) {
@@ -304,6 +484,7 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
 
   return prisma.$transaction(async (transaction) => {
     const orderNo = await reserveNextOrderNumber(organizationId, transaction);
+    const processTemplate = await findProcessTemplate(organizationId, input.processTemplateId, transaction);
 
     const createdOrder = await transaction.merchandisingOrder.create({
       data: {
@@ -325,6 +506,7 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
         deliveryDate,
         finalStatus: input.finalStatus ?? "Draft",
         processStatus: input.processStatus ?? null,
+        ...(processTemplate ? { processTemplate: { connect: { id: processTemplate.id } } } : {}),
       },
     });
 
@@ -335,15 +517,18 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
         data: { orderQty: calculatedFinishedGoods.orderQty },
       });
       await updateFinishedGoodsForOrder(createdOrder.id, organizationId, input.rows, transaction);
-      if (Array.isArray(input.bomRows)) {
+    if (Array.isArray(input.bomRows)) {
         await updateBomItemsForOrder(createdOrder.id, organizationId, input.bomRows, calculatedFinishedGoods.rows, calculatedFinishedGoods.orderQty, transaction);
       }
     } else if (Array.isArray(input.bomRows)) {
       await updateBomItemsForOrder(createdOrder.id, organizationId, input.bomRows, [], Number(createdOrder.orderQty ?? 0), transaction);
     }
 
+    await replaceOrderProcessSteps(createdOrder.id, organizationId, processTemplate?.id, transaction, input.processRows ?? []);
+    await syncOrderProcessController(createdOrder.id, processTemplate?.id, Number(createdOrder.orderQty ?? 0), transaction);
+
     return createdOrder;
-  });
+  }, { maxWait: 10000, timeout: 30000 });
 }
 
 export async function updateOrder(
@@ -516,7 +701,7 @@ export async function updateOrderWithDetails(
     if (Array.isArray(input.rows)) {
       await updateFinishedGoodsForOrder(orderId, organizationId, input.rows, transaction);
     }
-    if (Array.isArray(input.bomRows)) {
+      if (Array.isArray(input.bomRows)) {
       await updateBomItemsForOrder(
         orderId,
         organizationId,
@@ -527,8 +712,15 @@ export async function updateOrderWithDetails(
       );
     }
 
+    if (input.processTemplateId !== undefined) {
+      const processTemplate = await findProcessTemplate(organizationId, input.processTemplateId, transaction);
+      await transaction.merchandisingOrder.update({ where: { id: orderId }, data: { process_template_id: processTemplate?.id ?? null } });
+      await replaceOrderProcessSteps(orderId, organizationId, processTemplate?.id, transaction, input.processRows ?? []);
+      await syncOrderProcessController(orderId, processTemplate?.id, Number(updatedOrder.orderQty ?? 0), transaction);
+    }
+
     return updatedOrder;
-  });
+  }, { maxWait: 10000, timeout: 30000 });
 }
 
 export async function getArticleOrderSummaries(organizationId: string) {

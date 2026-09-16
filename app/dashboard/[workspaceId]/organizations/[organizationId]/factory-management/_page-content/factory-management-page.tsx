@@ -12,10 +12,10 @@ const factoryAreas = [
     description: "Prepare and release factory work orders before production begins.",
   },
   {
-    href: "factory-management/production/wip",
+    href: "factory-management/production/shop-floor",
     label: "Production",
-    child: "WIP",
-    description: "Track work in progress as orders move through factory operations.",
+    child: "Shop Floor",
+    description: "Track work in progress and daily production across factory operations.",
   },
   {
     href: "factory-management/post-production/scan-pack",
@@ -40,7 +40,7 @@ export default async function FactoryManagementPage({
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Factory Management</p>
           <h1 className="mt-3 text-3xl font-bold text-slate-900">Factory Management</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Coordinate the production lifecycle from work order creation through WIP and final packing.
+            Coordinate the production lifecycle from work order creation through the shop floor and final packing.
           </p>
         </div>
 

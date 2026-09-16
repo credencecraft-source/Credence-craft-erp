@@ -55,9 +55,7 @@ function readChildValues(formData: FormData, field: MasterFieldDefinition) {
   const rawValue = String(formData.get(`field_${field.key}`) ?? "[]");
   try {
     const parsed = JSON.parse(rawValue);
-    return Array.isArray(parsed)
-      ? [...new Set(parsed.map((value) => String(value).trim()).filter(Boolean))]
-      : [];
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
@@ -73,7 +71,7 @@ function hasMissingRequiredField(fields: Record<string, unknown>, definition: { 
 
 async function saveChildValues(
   organizationId: string,
-  parentValueId: string,
+  parentId: string,
   definition: { fields: MasterFieldDefinition[] },
   formData: FormData,
 ) {
@@ -83,19 +81,32 @@ async function saveChildValues(
 
   const selectedValues = readChildValues(formData, childField);
   const existingChildren = await getMasterValuesForOrganization(organizationId, childModuleKey, true);
-  const selectedSet = new Set(selectedValues);
+  const existingForParent = existingChildren.filter((child) => child.parent_id === parentId);
+  await Promise.all(existingForParent.map((child) => deleteMasterValue(organizationId, child.value_id)));
 
-  await Promise.all(
-    existingChildren
-      .filter((child) => child.parent_id === parentValueId && !selectedSet.has(child.label))
-      .map((child) => deleteMasterValue(organizationId, child.value_id)),
-  );
-
-  await Promise.all(selectedValues.map((value) => createMasterValueForOrganization(organizationId, childModuleKey, {
-    label: value,
-    fields: { Size: value },
-    parentValueId,
-  })));
+  const childFields = childField.childFields ?? [];
+  const slNumbers = new Set<number>();
+  const processNames = new Set<string>();
+  for (const rawValue of selectedValues) {
+    const row = rawValue && typeof rawValue === "object" ? rawValue as Record<string, unknown> : {};
+    const fields = Object.fromEntries(childFields.map((child) => {
+      const value = row[child.key];
+      if (child.type === "number" || child.type === "percentage" || child.type === "decimal") return [child.key, value === "" || value === null || value === undefined ? null : Number(value)];
+      return [child.key, value === null || value === undefined ? "" : String(value).trim()];
+    }));
+    const missingRequired = childFields.some((child) => child.required && (fields[child.key] === null || fields[child.key] === undefined || String(fields[child.key]).trim() === ""));
+    if (missingRequired) throw new Error(`${childField.label} has an incomplete row.`);
+    const labelField = childFields.find((child) => child.type === "lookup") ?? childFields[0];
+    const label = String(labelField ? fields[labelField.key] ?? "" : "").trim();
+    if (!label) continue;
+    const slNo = Number(fields.Sl_No);
+    if (!Number.isInteger(slNo) || slNo <= 0) throw new Error(`${childField.label} Sl No must be a positive whole number.`);
+    if (slNumbers.has(slNo)) throw new Error(`${childField.label} cannot contain duplicate Sl No values.`);
+    if (processNames.has(label)) throw new Error(`${childField.label} cannot contain the same process more than once.`);
+    slNumbers.add(slNo);
+    processNames.add(label);
+    await createMasterValueForOrganization(organizationId, childModuleKey, { label, fields, parentValueId: parentId });
+  }
 }
 
 async function createMasterValueAction(formData: FormData) {
@@ -141,7 +152,7 @@ async function createMasterValueAction(formData: FormData) {
     fields,
   });
 
-  await saveChildValues(organization.id, created.value_id, definition, formData);
+  await saveChildValues(organization.id, created.id, definition, formData);
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
 }
@@ -187,7 +198,7 @@ async function updateMasterValueAction(formData: FormData) {
   });
 
   if (updated) {
-    await saveChildValues(organization.id, updated.value_id, definition, formData);
+      await saveChildValues(organization.id, updated.id, definition, formData);
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
@@ -266,12 +277,15 @@ export default async function MasterDataEditorPage({
   }
 
   const values = await getMasterValuesForOrganization(organization.id, moduleKey, true);
-  const lookupKeys = [...new Set(definition.fields.flatMap((field) => field.lookupModuleKey ? [field.lookupModuleKey] : []))];
+  const lookupKeys = [...new Set(definition.fields.flatMap((field) => [
+    ...(field.lookupModuleKey ? [field.lookupModuleKey] : []),
+    ...(field.childFields ?? []).flatMap((child) => child.lookupModuleKey ? [child.lookupModuleKey] : []),
+  ]))];
   const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true)).map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id }))])));
   const childModuleKey = definition.fields.find((field) => field.type === "child-list")?.childModuleKey
     ?? definition.fields.find((field) => field.type === "lookup" && field.multiple)?.lookupModuleKey;
   const childRecords = childModuleKey
-    ? (await getMasterValuesForOrganization(organization.id, childModuleKey, true)).map((item) => ({ parentId: item.parent_id, label: item.label }))
+    ? (await getMasterValuesForOrganization(organization.id, childModuleKey, true)).map((item) => ({ parentId: item.parent_id, label: item.label, fields: item.fields }))
     : [];
 
   return (

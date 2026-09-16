@@ -11,6 +11,7 @@ export type MasterFieldDefinition = {
   lookupModuleKey?: string;
   multiple?: boolean;
   childModuleKey?: string;
+  childFields?: MasterFieldDefinition[];
   dependsOn?: string;
 };
 
@@ -20,6 +21,7 @@ type MasterDefinition = {
   description: string;
   fields: MasterFieldDefinition[];
   labelField?: string;
+  hidden?: boolean;
 };
 
 const text = (key: string, label: string, options: Partial<MasterFieldDefinition> = {}): MasterFieldDefinition => ({ key, label, type: "text", ...options });
@@ -51,7 +53,34 @@ export const MASTER_DEFINITIONS: MasterDefinition[] = [
   { key: "currency-type", label: "Currency Type", description: "Currency type lookup values.", fields: [text("Currency_Type", "Currency Type", { required: true, unique: true })] },
   { key: "gst-type", label: "GST Type", description: "GST type lookup values.", fields: [text("GST_TYPE", "GST Type", { required: true, unique: true })] },
   { key: "product-master", label: "Product Master", description: "Product master lookup values.", fields: [text("Product_Master_name", "Product Master Name", { required: true, unique: true })] },
-  { key: "process-template", label: "Process Template", description: "Production process templates.", fields: [text("Process_Name", "Process Name", { required: true, unique: true })] },
+  { key: "process-master", label: "Process Master", description: "Reusable production operations used inside process templates.", labelField: "Process_Name", fields: [text("Process_Name", "Process Name", { required: true, unique: true })] },
+  { key: "process-template", label: "Process Template", description: "Production process templates with ordered process steps.", labelField: "Process_Template_Name", fields: [
+    text("Process_Template_Name", "Process Template Name", { required: true, unique: true }),
+    { key: "Process_Steps", label: "Process Steps", type: "child-list", childModuleKey: "process-template-step", childFields: [
+      lookup("Process", "Process", "process-master", { required: true }),
+      text("Sl_No", "Sl No", { type: "number", required: true }),
+    ] },
+  ] },
+  { key: "process-template-step", label: "Process Template Step", description: "Ordered child rows for process templates.", hidden: true, labelField: "Process_Name", fields: [
+    lookup("Process", "Process", "process-master", { required: true }),
+    // Retained as a hidden legacy field so previously linked records remain readable.
+    lookup("Operation_Template", "Operation Template", "operation-template"),
+    text("Sl_No", "Sl No", { type: "number", required: true }),
+  ] },
+  { key: "operation-template", label: "Operation Template", description: "Reusable ordered operation sets maintained for production processes.", labelField: "Operation_Template_Name", fields: [
+    text("Operation_Template_Name", "Operation Template Name", { required: true, unique: true }),
+    lookup("Process", "Process Master", "process-master", { required: true }),
+    { key: "Operations", label: "Operations", type: "child-list", childModuleKey: "operation-template-step", childFields: [
+      text("Operation", "Operation", { required: true }),
+      text("Sl_No", "Sl No", { type: "number", required: true }),
+      text("Price", "Price", { type: "decimal", required: true }),
+    ] },
+  ] },
+  { key: "operation-template-step", label: "Operation Template Step", description: "Ordered operations inside an operation template.", hidden: true, labelField: "Operation", fields: [
+    text("Operation", "Operation", { required: true }),
+    text("Sl_No", "Sl No", { type: "number", required: true }),
+    text("Price", "Price", { type: "decimal", required: true }),
+  ] },
   { key: "merchandiser", label: "Merchandiser", description: "User and merchandiser assignment master.", fields: [text("merchandiser", "Merchandiser", { required: true })] },
   { key: "order-volume", label: "Order Volume", description: "Order volume classifications.", fields: [text("Order_Volume", "Order Volume", { required: true }), text("From", "From", { type: "number" }), text("To", "To", { type: "number" })] },
 ];

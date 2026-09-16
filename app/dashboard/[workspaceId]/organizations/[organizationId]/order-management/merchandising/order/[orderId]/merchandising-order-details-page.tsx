@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-definitions";
 import OrderDetailsTab from "./components/OrderDetailsTab";
@@ -32,7 +32,7 @@ export default function MerchandisingOrderDetailsPage() {
   const orderId = params?.orderId && params.orderId !== "create" ? params.orderId : undefined;
   const cloneFrom = searchParams.get("cloneFrom");
   const cloneDataParam = searchParams.get("cloneData");
-  const cloneConfig = (() => {
+  const cloneConfig = useMemo(() => {
     if (!cloneDataParam) return null;
     try {
       const parsed = JSON.parse(cloneDataParam) as {
@@ -46,17 +46,18 @@ export default function MerchandisingOrderDetailsPage() {
     } catch {
       return null;
     }
-  })();
+  }, [cloneDataParam]);
   const cloneArticle = cloneConfig?.article ?? "";
   const cloneStyleName = cloneConfig?.styleName ?? "";
   const cloneColors = cloneConfig?.colors ?? "";
   const cloneOrderQty = cloneConfig?.orderQty ?? "";
-  const cloneRowsLookup = cloneConfig?.rows ?? [];
+  const cloneRowsLookup = useMemo(() => cloneConfig?.rows ?? [], [cloneConfig]);
   const workspaceId = params?.workspaceId;
   const organizationId = params?.organizationId;
 
   const [activeTab, setActiveTab] = useState<TabType>("details");
   const [isSaving, setIsSaving] = useState(false);
+  const [isOrderLoading, setIsOrderLoading] = useState(Boolean(orderId || cloneFrom));
   const [newMasterKey, setNewMasterKey] = useState<string | null>(null);
   const [quickMasterFields, setQuickMasterFields] = useState<Record<string, unknown>>({});
   const [quickMasterLookupOptions, setQuickMasterLookupOptions] = useState<Record<string, any[]>>({});
@@ -77,6 +78,7 @@ export default function MerchandisingOrderDetailsPage() {
     techPackRows: [] as any[],
     measurementRows: [] as any[],
     processRows: [] as any[],
+    processTemplateId: "",
     attachmentRows: [] as any[],
     orderQty: 1,
     sellingPricePerPcs: 0,
@@ -130,10 +132,14 @@ export default function MerchandisingOrderDetailsPage() {
 
   useEffect(() => {
     const existingOrderId = orderId || cloneFrom;
-    if (!existingOrderId || !organizationId) return;
+    if (!existingOrderId || !organizationId) {
+      setIsOrderLoading(false);
+      return;
+    }
     const sourceOrderId = existingOrderId;
 
     let isMounted = true;
+    setIsOrderLoading(true);
 
     async function loadOrder() {
       try {
@@ -181,6 +187,8 @@ export default function MerchandisingOrderDetailsPage() {
                 ratioOrderQty: "",
                 finalStatus: "Draft",
                 processStatus: "Draft",
+                processTemplateId: "",
+                processRows: [],
                 rows: clonedRows,
               }
             : {}),
@@ -198,11 +206,30 @@ export default function MerchandisingOrderDetailsPage() {
             priceInInr: row.priceInInr ?? "",
           })),
           bomRows: order.bomItems ?? [],
+          processTemplateId: cloneFrom ? "" : order.processTemplate?.id ?? order.process_template_id ?? "",
+          processRows: cloneFrom
+            ? []
+            : (order.processSteps ?? []).map((step: any) => ({
+                id: step.id,
+                processId: step.process_id ?? step.process?.id,
+                processName: step.process_name ?? step.process?.process_name,
+                operation: step.process_name ?? step.process?.process_name,
+                slNo: step.sl_no,
+                operations: (step.operations ?? []).map((operation: any) => ({
+                  id: operation.id,
+                  sourceOperationId: operation.source_operation_template_step_id,
+                  operation: operation.operation,
+                  slNo: operation.sl_no,
+                  price: operation.price !== null && operation.price !== undefined ? Number(operation.price) : 0,
+                })),
+              })),
         }));
       } catch (error) {
         if (isMounted) {
           alert(error instanceof Error ? error.message : "Unable to load order.");
         }
+      } finally {
+        if (isMounted) setIsOrderLoading(false);
       }
     }
 
@@ -485,15 +512,12 @@ export default function MerchandisingOrderDetailsPage() {
   const handleSave = async () => {
     try {
       setIsSaving(true);
-      
       if (!form.article || form.article.trim() === "") {
         throw new Error("Blocking Field Missing: 'Article' is required.");
       }
-      
       const endpoint = orderId
         ? `/api/orders/${encodeURIComponent(orderId)}?organizationId=${encodeURIComponent(organizationId)}`
         : `/api/orders?organizationId=${encodeURIComponent(organizationId)}`;
-      
       const method = orderId ? "PUT" : "POST";
 
       const response = await fetch(endpoint, {
@@ -573,7 +597,6 @@ export default function MerchandisingOrderDetailsPage() {
         </div>
 
         {shareOpen && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center justify-between"><div><h3 className="font-bold text-emerald-950">Share with Buyer</h3><p className="mt-1 text-emerald-800">The buyer configured for this order will receive a workspace notification.</p><p className="mt-1 text-xs text-emerald-700">Internal consumption and internal price are never shared with the buyer.</p></div><button type="button" onClick={() => setShareOpen(false)} className="text-sm font-semibold text-emerald-800">Close</button></div><div className="mt-3 flex gap-2"><button type="button" onClick={() => void handleShare()} disabled={isSharing} className="rounded-md bg-emerald-700 px-4 py-2 font-semibold text-white disabled:opacity-50">{isSharing ? "Sharing..." : "Confirm and share"}</button></div></div>}
-        
         {/* Scrollable Tab Navigation */}
         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
           {tabs.map((tab) => (
@@ -596,9 +619,9 @@ export default function MerchandisingOrderDetailsPage() {
       {/* Tab Content Area */}
       <div className="pt-2">
         {activeTab === "details" && (
-          <OrderDetailsTab 
-            form={form} 
-            setForm={setForm} 
+          <OrderDetailsTab
+            form={form}
+            setForm={setForm}
             masterOptions={masterOptions}
             orderLookups={orderLookups}
             onOpenCreateMaster={handleOpenCreateMaster}
@@ -611,7 +634,7 @@ export default function MerchandisingOrderDetailsPage() {
         {activeTab === "costing" && <CostingTab form={form} setForm={setForm} />}
         {activeTab === "techPack" && <TecPackTab form={form} setForm={setForm} />}
         {activeTab === "measurements" && <MeasurementsTab form={form} setForm={setForm} />}
-        {activeTab === "process" && <ProcessTab form={form} setForm={setForm} />}
+        {activeTab === "process" && <ProcessTab form={form} setForm={setForm} organizationId={organizationId} isOrderLoading={isOrderLoading} />}
         {activeTab === "attachments" && <AttachmentsTab form={form} setForm={setForm} />}
       </div>
 

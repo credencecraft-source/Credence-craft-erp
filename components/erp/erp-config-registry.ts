@@ -60,7 +60,7 @@ export const ERP_MODULES: ErpModule[] = [
         label: "Production",
         pathSegment: "production",
         children: [
-          { key: "wip", label: "WIP", pathSegment: "wip" },
+          { key: "shop-floor", label: "Shop Floor", pathSegment: "shop-floor" },
         ],
       },
       {

@@ -53,7 +53,7 @@ export default async function MasterDataListPage({
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {MASTER_DEFINITIONS.map((master) => (
+          {MASTER_DEFINITIONS.filter((master) => !master.hidden).map((master) => (
             <Link
               key={master.key}
               href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${master.key}`}

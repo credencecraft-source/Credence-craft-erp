@@ -64,6 +64,56 @@ export async function GET(
     }
 
     const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, { search, limit });
+    if (moduleKey === "process-template") {
+      const steps = await getMasterValuesForOrganization(organization.id, "process-template-step", includeInactive, { limit: 500 });
+      const operationTemplates = await getMasterValuesForOrganization(organization.id, "operation-template", includeInactive, { limit: 500 });
+      const operationSteps = await getMasterValuesForOrganization(organization.id, "operation-template-step", includeInactive, { limit: 500 });
+
+      return NextResponse.json(values.map((template) => ({
+        ...template,
+        steps: steps
+          .filter((step) => step.parent_id === template.id)
+          .sort((left, right) => Number(left.fields?.Sl_No ?? 0) - Number(right.fields?.Sl_No ?? 0))
+          .map((step) => {
+            const processName = String(step.fields?.Process ?? step.label).trim();
+            const legacyOperationTemplateName = String(step.fields?.Operation_Template ?? "").trim();
+            const matchingOperationTemplates = operationTemplates
+              .filter((item) => String(item.fields?.Process ?? "").trim() === processName)
+              .sort((left, right) => Number(left.fields?.Sort_Order ?? 0) - Number(right.fields?.Sort_Order ?? 0));
+            const operationTemplate = matchingOperationTemplates[0]
+              ?? operationTemplates.find((item) => item.label === legacyOperationTemplateName);
+            const operationTemplateName = operationTemplate?.label ?? legacyOperationTemplateName;
+            const mapOperations = (selectedOperationTemplate: typeof operationTemplate) => selectedOperationTemplate
+              ? operationSteps
+                  .filter((operationStep) => operationStep.parent_id === selectedOperationTemplate.id)
+                  .sort((left, right) => Number(left.fields?.Sl_No ?? 0) - Number(right.fields?.Sl_No ?? 0))
+                  .map((operationStep) => ({
+                    id: operationStep.id,
+                    valueId: operationStep.value_id,
+                    slNo: Number(operationStep.fields?.Sl_No ?? 0),
+                    operation: String(operationStep.fields?.Operation ?? operationStep.label),
+                    price: Number(operationStep.fields?.Price ?? 0),
+                  }))
+              : [];
+
+            return {
+              id: step.id,
+              valueId: step.value_id,
+              slNo: Number(step.fields?.Sl_No ?? 0),
+              processName,
+              operationTemplateName: operationTemplateName || null,
+              operationTemplateId: operationTemplate?.id ?? null,
+              operationTemplates: matchingOperationTemplates.map((candidate) => ({
+                id: candidate.id,
+                valueId: candidate.value_id,
+                label: candidate.label,
+                operations: mapOperations(candidate),
+              })),
+              operations: mapOperations(operationTemplate),
+            };
+          }),
+      })));
+    }
     return NextResponse.json(values);
   } catch (error: any) {
     console.error("Error fetching master data:", error);

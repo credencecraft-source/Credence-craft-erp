@@ -39,16 +39,25 @@ export default function WorkOrderReportTable() {
   const [records, setRecords] = useState<WorkOrderReport[]>([]);
   const [visibleFields, setVisibleFields] = useState<WorkOrderField[]>(reportFields.map((field) => field.key));
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
+    setError("");
     void fetch(`/api/factory/work-orders?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" })
-      .then((response) => response.json())
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Unable to load work orders.");
+        return data;
+      })
       .then((data) => {
-        if (active) setRecords(data.workOrders ?? []);
+        if (active) setRecords(Array.isArray(data.workOrders) ? data.workOrders : []);
       })
       .catch(() => {
-        if (active) setRecords([]);
+        if (active) {
+          setRecords([]);
+          setError("Unable to load work orders. Please refresh and try again.");
+        }
       });
     return () => { active = false; };
   }, [organizationId]);
@@ -57,9 +66,11 @@ export default function WorkOrderReportTable() {
     ...record,
     sizeQuantities: record.sizeLines.map((line) => `${line.size}: ${line.quantity.toLocaleString("en-IN")}`).join(" | "),
   })), [records]);
+  const recordRowsById = useMemo(() => new Map(reportRows.map((row) => [row.id, row] as const)), [reportRows]);
 
   return (
     <Card className="p-3 shadow-none border-slate-200">
+      {error && <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
       <ReportGrid
         title="Work Orders"
         records={reportRows}
@@ -69,7 +80,14 @@ export default function WorkOrderReportTable() {
         storageKey={`credence-craft-work-orders-${organizationId}`}
         rowIdSelector={(row) => row.id}
         selectedIds={selectedIds}
-        onRowClick={() => undefined}
+        onRowClick={(recordId) => {
+          const selectedRecord = recordRowsById.get(recordId);
+          const orderNo = selectedRecord?.orderNo ?? "";
+          const target = orderNo
+            ? `/dashboard/${workspaceId}/organizations/${organizationId}/factory-management/pre-production/work-order/dashboard/work-orders/${recordId}?orderNo=${encodeURIComponent(orderNo)}`
+            : `/dashboard/${workspaceId}/organizations/${organizationId}/factory-management/pre-production/work-order/dashboard/work-orders/${recordId}`;
+          router.push(target);
+        }}
         onToggleSelectAll={(checked) => setSelectedIds(checked ? reportRows.map((row) => row.id) : [])}
         onToggleRowSelection={(id, checked) => setSelectedIds((current) => checked ? [...new Set([...current, id])] : current.filter((item) => item !== id))}
         onNewOrder={() => router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/factory-management/pre-production/work-order/dashboard/create`)}

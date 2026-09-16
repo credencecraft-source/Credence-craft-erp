@@ -2,7 +2,7 @@ import { prisma } from "@/lib/database/prisma-client";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-definitions";
 export { getMasterDefinition, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-definitions";
 
-export type MasterFieldValues = Record<string, string | number | boolean | null>;
+export type MasterFieldValues = Record<string, string | number | boolean | null | string[] | number[] | Record<string, unknown>[]>;
 
 type MasterRow = { id: string; value_id: string; organization_id: string; is_active: boolean; sort_order: number; [key: string]: unknown };
 type MasterQuery = Record<string, unknown>;
@@ -22,7 +22,7 @@ const delegates = {
   season: prisma.masterSeason, article: prisma.masterArticle, color: prisma.masterColor, "size-group": prisma.masterSizeGroup, size: prisma.masterSize,
   uom: prisma.masterUom, "raw-material": prisma.masterRawMaterial, vendor: prisma.masterVendor, "gst-type": prisma.masterGstType, gst: prisma.masterGst,
   hsn: prisma.masterHsn, "measurement-chart": prisma.masterMeasurementChart, "size-wise-consumption": prisma.masterSizeWiseConsumption,
-  "product-master": prisma.masterProduct, "process-template": prisma.masterProcessTemplate, merchandiser: prisma.masterMerchandiser, status: prisma.masterStatus,
+  "product-master": prisma.masterProduct, "process-master": prisma.masterProcess, "process-template": prisma.masterProcessTemplate, "process-template-step": prisma.masterProcessTemplateStep, "operation-template": prisma.masterOperationTemplate, "operation-template-step": prisma.masterOperationTemplateStep, merchandiser: prisma.masterMerchandiser, status: prisma.masterStatus,
   "order-volume": prisma.masterOrderVolume,
   "raw-material-type": prisma.masterRawMaterialType, "raw-material-category": prisma.masterRawMaterialCategory, "raw-material-sub-category": prisma.masterRawMaterialSubCategory,
 } as unknown as Record<string, MasterDelegate>;
@@ -32,7 +32,7 @@ const labelFields: Record<string, string> = {
   "pre-order-checklist": "pre_order_checklist", "currency-type": "currency_type", buyer: "buyer_name", season: "season", article: "article", color: "colors",
   "size-group": "size_group", size: "size", uom: "uom", "raw-material": "raw_material_name", vendor: "vendor", "gst-type": "gst_type", gst: "name",
   hsn: "hsn_code", "measurement-chart": "measurement_chart", "size-wise-consumption": "bom_template_name", "product-master": "product_master_name",
-  "process-template": "process_name", merchandiser: "merchandiser", status: "status", "order-volume": "order_volume",
+  "process-master": "process_name", "process-template": "process_name", "process-template-step": "process_name", "operation-template": "operation_template_name", "operation-template-step": "operation", merchandiser: "merchandiser", status: "status", "order-volume": "order_volume",
   "raw-material-type": "raw_material_type", "raw-material-category": "raw_material_category", "raw-material-sub-category": "raw_material_sub_category",
 };
 
@@ -49,7 +49,7 @@ const fieldColumns: Record<string, Record<string, string>> = {
   gst: { Name: "name", Gst: "gst", GST_TYPELOOKUP1: "gst_type_id", Zoho_Books_Tax_ID: "zoho_books_tax_id" }, hsn: { Hsn_Code: "hsn_code" },
   "pre-order-checklist": { Pre_Order_Checklist: "pre_order_checklist" }, "currency-type": { Currency_Type: "currency_type" }, "gst-type": { GST_TYPE: "gst_type" },
   "measurement-chart": { Measurement_Chart: "measurement_chart" }, "size-wise-consumption": { Bom_Template_Name: "bom_template_name" },
-  "product-master": { Product_Master_name: "product_master_name" }, "process-template": { Process_Name: "process_name" }, merchandiser: { merchandiser: "merchandiser" },
+  "product-master": { Product_Master_name: "product_master_name" }, "process-master": { Process_Name: "process_name" }, "process-template": { Process_Template_Name: "process_name", Process_Name: "process_name" }, "process-template-step": { Process: "process_id", Operation_Template: "operation_template_id", Sl_No: "sl_no" }, "operation-template": { Operation_Template_Name: "operation_template_name", Process: "process_id" }, "operation-template-step": { Operation: "operation", Sl_No: "sl_no", Price: "price" }, merchandiser: { merchandiser: "merchandiser" },
   status: { status: "status" }, "order-volume": { Order_Volume: "order_volume", From: "from_value", To: "to_value" },
   "raw-material-type": { Raw_Material_Type: "raw_material_type" },
   "raw-material-category": { Raw_Material_Type1: "raw_material_type_id", Raw_Material_Category: "raw_material_category" },
@@ -62,6 +62,8 @@ const parentColumns: Record<string, string> = {
   "raw-material-category": "raw_material_type_id",
   "raw-material-sub-category": "raw_material_category_id",
   size: "size_group_id",
+  "process-template-step": "process_template_id",
+  "operation-template-step": "operation_template_id",
 };
 
 function typedValue(field: MasterFieldDefinition, value: unknown) {
@@ -129,7 +131,13 @@ function rowFields(moduleKey: string, row: MasterRow, definition: NonNullable<Re
   const fields: MasterFieldValues = {};
   for (const field of definition.fields) {
     const column = fieldColumns[moduleKey]?.[field.key];
-    if (column) fields[field.key] = (row[column] as MasterFieldValues[string]) ?? null;
+    if (!column) continue;
+    const value = row[column];
+    fields[field.key] = value === null || value === undefined
+      ? null
+      : ["number", "percentage", "decimal"].includes(field.type)
+        ? Number(value)
+        : (value as MasterFieldValues[string]);
   }
   return fields;
 }
@@ -210,7 +218,11 @@ export async function createMasterValueForOrganization(organizationId: string, m
     const data = await buildData(organizationId, moduleKey, input.fields ?? {}, input.label.trim());
 
     if (input.parentValueId && parentColumns[moduleKey]) {
-      const parentModuleKey = definition.fields.find((field) => field.type === "lookup")?.lookupModuleKey
+      const parentModuleKey = moduleKey === "process-template-step"
+        ? "process-template"
+        : moduleKey === "operation-template-step"
+          ? "operation-template"
+        : definition.fields.find((field) => field.type === "lookup")?.lookupModuleKey
         ?? (moduleKey === "sub-category" ? "category" : moduleKey === "size" ? "size-group" : "");
       if (parentModuleKey) {
         const parentId = await resolveLookupId(organizationId, parentModuleKey, input.parentValueId);
@@ -226,11 +238,14 @@ export async function createMasterValueForOrganization(organizationId: string, m
     const labelKey = labelFields[moduleKey];
     let created: MasterRow;
 
+    const parentColumn = parentColumns[moduleKey];
+    const parentId = parentColumn ? data[parentColumn] : undefined;
     const existing = labelKey
       ? await transactionDelegate.findFirst({
           where: {
             organization_id: organizationId,
             [labelKey]: data[labelKey],
+            ...(parentColumn && parentId ? { [parentColumn]: parentId } : {}),
           },
         })
       : null;
