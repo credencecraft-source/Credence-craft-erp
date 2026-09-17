@@ -34,10 +34,12 @@ export type OrderRow = {
 };
 
 export type BomRow = {
+  id?: string;
   categoryType?: string | null;
   category?: string | null;
   subCategory?: string | null;
   rawMaterialName?: string | null;
+  stockUom?: string | null;
   size?: string | null;
   orderQty?: number | string;
   buyerConsumption?: number | string | null;
@@ -323,7 +325,13 @@ async function syncOrderProcessController(
   });
 
   if (!processTemplateId || processSteps.length === 0) {
-    await database.orderProcessController.deleteMany({ where: { order_id: orderId } });
+    const existingController = await database.orderProcessController.findUnique({
+      where: { order_id: orderId },
+      include: { workOrderControllers: { select: { id: true } } },
+    });
+    if (existingController && existingController.workOrderControllers.length === 0) {
+      await database.orderProcessController.delete({ where: { id: existingController.id } });
+    }
     return null;
   }
 
@@ -332,25 +340,57 @@ async function syncOrderProcessController(
     update: { process_template_id: processTemplateId },
     create: { order_id: orderId, process_template_id: processTemplateId },
   });
-  await database.orderProcessControllerProcess.deleteMany({ where: { controller_id: controller.id } });
+  const existingProcesses = await database.orderProcessControllerProcess.findMany({
+    where: { controller_id: controller.id },
+    select: { id: true, sl_no: true, workOrderProcesses: { select: { id: true } } },
+  });
+  const existingBySlNo = new Map(existingProcesses.map((process) => [process.sl_no, process]));
+  const retainedProcessIds = new Set<string>();
 
   for (const step of processSteps) {
-    await database.orderProcessControllerProcess.create({
-      data: {
-        controller_id: controller.id,
-        process_id: step.process_id,
-        process_name: step.process_name,
-        sl_no: step.sl_no,
-        order_qty: orderQty,
-        operations: {
-          create: step.operations.map((operation) => ({
-            source_operation_id: operation.source_operation_template_step_id,
-            operation: operation.operation,
-            sl_no: operation.sl_no,
-            budgeted_price: operation.price,
-          })),
+    const existingProcess = existingBySlNo.get(step.sl_no);
+    const process = existingProcess
+      ? await database.orderProcessControllerProcess.update({
+        where: { id: existingProcess.id },
+        data: {
+          process_id: step.process_id,
+          process_name: step.process_name,
+          order_qty: orderQty,
         },
-      },
+      })
+      : await database.orderProcessControllerProcess.create({
+        data: {
+          controller_id: controller.id,
+          process_id: step.process_id,
+          process_name: step.process_name,
+          sl_no: step.sl_no,
+          order_qty: orderQty,
+        },
+      });
+    retainedProcessIds.add(process.id);
+
+    await database.orderProcessControllerOperation.deleteMany({ where: { process_id: process.id } });
+    if (step.operations.length > 0) {
+      await database.orderProcessControllerOperation.createMany({
+        data: step.operations.map((operation) => ({
+          process_id: process.id,
+          source_operation_id: operation.source_operation_template_step_id,
+          operation: operation.operation,
+          sl_no: operation.sl_no,
+          budgeted_price: operation.price,
+        })),
+      });
+    }
+  }
+
+  const removedProcesses = existingProcesses.filter((process) => !retainedProcessIds.has(process.id));
+  const blockedProcess = removedProcesses.find((process) => process.workOrderProcesses.length > 0);
+  if (blockedProcess) {
+    throw new Error("A process used by an existing work order cannot be removed from this order.");
+  }
+  if (removedProcesses.length > 0) {
+    await database.orderProcessControllerProcess.deleteMany({
+      where: { id: { in: removedProcesses.map((process) => process.id) } },
     });
   }
 
@@ -368,14 +408,38 @@ export async function deleteOrders(orderIds: string[], organizationId: string) {
   const ids = [...new Set(orderIds.filter(Boolean))];
   if (ids.length === 0) return { deletedCount: 0 };
 
-  const result = await prisma.merchandisingOrder.deleteMany({
+  const protectedGrns = await prisma.factoryGrn.findMany({
     where: {
-      id: { in: ids },
       organization_id: organizationId,
+      workOrder: { order_id: { in: ids } },
     },
+    select: { workOrder: { select: { work_order_no: true } } },
+    take: 5,
   });
 
-  return { deletedCount: result.count };
+  if (protectedGrns.length > 0) {
+    const workOrderNumbers = protectedGrns.map((grn) => grn.workOrder.work_order_no).join(", ");
+    throw new Error(
+      `These orders cannot be deleted because work order${protectedGrns.length === 1 ? "" : "s"} ${workOrderNumbers} ${protectedGrns.length === 1 ? "has" : "have"} GRN records. Close or reverse the related production records first.`,
+    );
+  }
+
+  try {
+    const result = await prisma.merchandisingOrder.deleteMany({
+      where: {
+        id: { in: ids },
+        organization_id: organizationId,
+      },
+    });
+
+    return { deletedCount: result.count };
+  } catch (error) {
+    const errorCode = typeof error === "object" && error !== null && "code" in error ? error.code : null;
+    if (errorCode === "P2003") {
+      throw new Error("One or more selected orders have production or GRN records and cannot be deleted.");
+    }
+    throw error;
+  }
 }
 
 export async function listBomItemsPage(
@@ -418,6 +482,7 @@ export async function listBomItemsPage(
       category: true,
       subCategory: true,
       rawMaterialName: true,
+      stockUom: true,
       size: true,
       consumption: true,
       buyerConsumption: true,
@@ -453,6 +518,7 @@ export async function listBomItemsPage(
     category: item.category,
     subCategory: item.subCategory,
     rawMaterialName: item.rawMaterialName,
+    stockUom: item.stockUom,
     size: item.size,
     consumption: item.consumption,
     buyerConsumption: item.buyerConsumption,
@@ -587,33 +653,55 @@ export async function updateBomItemsForOrder(
     throw new Error("Order not found");
   }
 
-  await database.billOfMaterialItem.deleteMany({
+  const existingItems = await database.billOfMaterialItem.findMany({
     where: { order_id: orderId },
+    select: {
+      id: true,
+      _count: { select: { groupedPurchaseOrderLines: true, workOrderBomLines: true } },
+    },
+  });
+  const calculatedRows = calculateBomRows(bomRows ?? [], calculateFinishedGoodsRows(finishedGoodsRows).rows, orderQty);
+  const submittedIds = new Set(calculatedRows.map((row) => row.id).filter((id): id is string => Boolean(id)));
+  const removedItems = existingItems.filter((item) => !submittedIds.has(item.id));
+  const blockedRemoval = removedItems.find((item) => item._count.groupedPurchaseOrderLines > 0 || item._count.workOrderBomLines > 0);
+
+  if (blockedRemoval) {
+    throw new Error("This BOM row is already used in procurement or a work order and cannot be removed.");
+  }
+
+  if (removedItems.length > 0) {
+    await database.billOfMaterialItem.deleteMany({
+      where: { id: { in: removedItems.map((item) => item.id) } },
+    });
+  }
+
+  const itemData = (row: (typeof calculatedRows)[number]) => ({
+    order_id: orderId,
+    categoryType: row.categoryType ?? null,
+    category: row.category ?? null,
+    subCategory: row.subCategory ?? null,
+    rawMaterialName: row.rawMaterialName ?? null,
+    stockUom: row.stockUom ?? null,
+    size: row.size ?? null,
+    orderQty: String(row.orderQty),
+    buyerConsumption: row.buyerConsumption ? String(row.buyerConsumption) : null,
+    buyerPrice: row.buyerPrice ? String(row.buyerPrice) : null,
+    internalConsumption: row.internalConsumption ? String(row.internalConsumption) : null,
+    internalPrice: row.internalPrice ? String(row.internalPrice) : null,
+    valuePerGarmentRm: row.valuePerGarmentRm ? String(row.valuePerGarmentRm) : null,
+    consumption: row.consumption ? String(row.consumption) : null,
+    requiredQty: String(row.requiredQty),
+    itemWiseExcessPercentage: String(row.itemWiseExcessPercentage),
+    itemWiseExcessQty: String(row.itemWiseExcessQty),
+    totalRequiredQty: String(row.totalRequiredQty),
   });
 
-  if (bomRows && bomRows.length > 0) {
-    const calculatedRows = calculateBomRows(bomRows, calculateFinishedGoodsRows(finishedGoodsRows).rows, orderQty);
-    await database.billOfMaterialItem.createMany({
-      data: calculatedRows.map((row) => ({
-        order_id: orderId,
-        categoryType: row.categoryType ?? null,
-        category: row.category ?? null,
-        subCategory: row.subCategory ?? null,
-        rawMaterialName: row.rawMaterialName ?? null,
-        size: row.size ?? null,
-        orderQty: String(row.orderQty),
-        buyerConsumption: row.buyerConsumption ? String(row.buyerConsumption) : null,
-        buyerPrice: row.buyerPrice ? String(row.buyerPrice) : null,
-        internalConsumption: row.internalConsumption ? String(row.internalConsumption) : null,
-        internalPrice: row.internalPrice ? String(row.internalPrice) : null,
-        valuePerGarmentRm: row.valuePerGarmentRm ? String(row.valuePerGarmentRm) : null,
-        consumption: row.consumption ? String(row.consumption) : null,
-        requiredQty: String(row.requiredQty),
-        itemWiseExcessPercentage: String(row.itemWiseExcessPercentage),
-        itemWiseExcessQty: String(row.itemWiseExcessQty),
-        totalRequiredQty: String(row.totalRequiredQty),
-      })),
-    });
+  for (const row of calculatedRows) {
+    if (row.id && existingItems.some((item) => item.id === row.id)) {
+      await database.billOfMaterialItem.update({ where: { id: row.id }, data: itemData(row) });
+    } else {
+      await database.billOfMaterialItem.create({ data: itemData(row) });
+    }
   }
 }
 

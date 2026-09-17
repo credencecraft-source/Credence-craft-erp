@@ -29,6 +29,7 @@ interface ReportGridProps<T> {
   selectedStatus?: string;
   onStatusChange?: (status: string) => void;
   onNewOrder?: () => void;
+  newActionLabel?: string;
   onDeleteSelected?: () => void;
   deleteSelectedLabel?: string;
   onCloneOrder?: (recordId: string) => void;
@@ -51,6 +52,7 @@ export function ReportGrid<T>({
   selectedStatus,
   onStatusChange,
   onNewOrder,
+  newActionLabel = "+ New Order",
   onDeleteSelected,
   deleteSelectedLabel = "Delete Selected",
   onCloneOrder,
@@ -211,7 +213,7 @@ export function ReportGrid<T>({
           {/* NEW ORDER BUTTON */}
           {onNewOrder && (
             <Button variant="primary" size="sm" onClick={onNewOrder} className="text-[11px] py-1 px-2.5 h-7">
-              + New Order
+              {newActionLabel}
             </Button>
           )}
         </div>
@@ -289,8 +291,8 @@ export function ReportGrid<T>({
 
       {/* ADVANCED MULTI-FIELD FILTER MODAL */}
       {showFilterModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-3">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg p-3.5 space-y-3">
+        <div className="erp-popup-backdrop">
+          <div className="erp-popup-panel w-full max-w-lg space-y-3 p-3.5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
               <h3 className="text-xs font-bold text-slate-900">Advanced Field Filters</h3>
               <button
@@ -392,8 +394,8 @@ export function ReportGrid<T>({
 
       {/* COLUMN MODAL POPUP */}
       {showColumnModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-3">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-xs p-3 space-y-2">
+        <div className="erp-popup-backdrop">
+          <div className="erp-popup-panel w-full max-w-xs space-y-2 p-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
               <h3 className="text-[11px] font-bold text-slate-900">Toggle Columns</h3>
               <button

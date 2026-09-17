@@ -18,6 +18,7 @@ type BomReportRow = {
   category?: string | null;
   subCategory?: string | null;
   rawMaterialName?: string | null;
+  stockUom?: string | null;
   size?: string | null;
   consumption?: number | string | null;
   buyerConsumption?: number | string | null;
@@ -40,6 +41,7 @@ type FilterableBomField =
   | "category"
   | "subCategory"
   | "rawMaterialName"
+  | "stockUom"
   | "size"
   | "consumption"
   | "buyerConsumption"
@@ -62,6 +64,7 @@ const reportFilterFields: Array<{ key: FilterableBomField; label: string }> = [
   { key: "category", label: "Raw Material Category" },
   { key: "subCategory", label: "Raw Material Sub Category" },
   { key: "rawMaterialName", label: "Raw Material Name" },
+  { key: "stockUom", label: "Stock UOM" },
   { key: "size", label: "Size" },
   { key: "consumption", label: "Consumption" },
   { key: "buyerConsumption", label: "Buyer Consumption" },

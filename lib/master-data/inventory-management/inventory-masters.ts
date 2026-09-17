@@ -1,7 +1,23 @@
 import { createMaster, lookup, text } from "@/lib/master-data/master-data-models";
 
 export const INVENTORY_MASTER_DEFINITIONS = [
-  createMaster("uom", "UOM", "Unit of measure master.", [text("uom", "UOM", { required: true, unique: true })], { moduleGroup: "inventory-management", moduleSubGroup: "inward", moduleOrder: 1 }),
+  createMaster("uom", "Stock UOM", "Stock units of measure and their conversion values.", [
+    text("uom", "Stock UOM", { required: true, unique: true }),
+    {
+      key: "Uom_Convert",
+      label: "UOM Convert",
+      type: "child-list",
+      childModuleKey: "stock-uom-convert",
+      childFields: [
+        text("Name", "Name", { required: true }),
+        text("How_Many", "How Many", { type: "decimal", required: true }),
+      ],
+    },
+  ], { moduleGroup: "inventory-management", moduleSubGroup: "inward", moduleOrder: 1 }),
+  createMaster("stock-uom-convert", "UOM Convert", "Conversion values maintained under a stock UOM.", [
+    text("Name", "Name", { required: true }),
+    text("How_Many", "How Many", { type: "decimal", required: true }),
+  ], { labelField: "Name", hidden: true }),
   createMaster("raw-material", "Raw Material", "Raw material and component master.", [text("Raw_Material_Name", "Raw Material Name", { required: true, unique: true }), lookup("Category", "Raw Material Category", "raw-material-category", { required: true }), lookup("Subcategory", "Raw Material Sub Category", "raw-material-sub-category", { required: true, dependsOn: "Category" }), lookup("Stock_Uom1", "Stock UOM", "uom", { required: true }), lookup("Category_Type", "Raw Material Type", "raw-material-type", { required: true }), text("Is_this_Specific_for_a_Brand", "Specific for a Brand", { type: "checkbox" }), text("Size_Wise_Concemption", "Size Wise Consumption", { type: "checkbox" }), lookup("Size_Wise_Consemption_Master", "Size Wise Consumption Master", "size-wise-consumption"), lookup("Brand1", "Brand", "brand"), text("Show_All1", "Show All", { type: "checkbox" }), text("Workdrive_Image_ID", "Workdrive Image ID"), text("Buyer_Item_Code", "Buyer Item Code"), text("Image_Url", "Image URL", { type: "url" }), text("Item_Code", "Item Code"), lookup("Colour", "Colour", "color"), text("Create_open_stock", "Create Open Stock", { type: "picklist", options: ["Yes", "No"] }), text("Open_Stock", "Open Stock", { type: "decimal" }), text("Open_Stock_Price", "Open Stock Price", { type: "decimal" }), text("Vendor_Wise_Price_List", "Vendor Wise Price List")], { labelField: "Raw_Material_Name", moduleGroup: "inventory-management", moduleSubGroup: "inward", moduleOrder: 2 }),
   createMaster("raw-material-type", "Raw Material Type", "Raw material type classification, independent from product category type.", [text("Raw_Material_Type", "Raw Material Type", { required: true, unique: true })], { moduleGroup: "inventory-management", moduleSubGroup: "inward", moduleOrder: 3 }),
   createMaster("raw-material-category", "Raw Material Category", "Raw material category classification, independent from product category.", [lookup("Raw_Material_Type1", "Raw Material Type", "raw-material-type", { required: true }), text("Raw_Material_Category", "Raw Material Category", { required: true, unique: true })], { labelField: "Raw_Material_Category", moduleGroup: "inventory-management", moduleSubGroup: "inward", moduleOrder: 4 }),

@@ -27,6 +27,7 @@ export const SYSTEM_ORGANIZATION_ROLES = ["OWNER", "ADMIN", "FINANCE", "MERCHAND
 export type OrganizationRole = string;
 export const ORGANIZATION_PERMISSIONS = ["ORGANIZATION_SETTINGS", "MANAGE_USERS", "MANAGE_ROLES", "VIEW_REPORTS", "MANAGE_MASTER_DATA", "CREATE_ORDERS", "APPROVE_ORDERS", "VIEW_ORDERS"] as const;
 export type OrganizationPermission = (typeof ORGANIZATION_PERMISSIONS)[number];
+const INDIAN_STATES = ["Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal", "Andaman and Nicobar Islands", "Chandigarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi"] as const;
 const SYSTEM_ROLE_LABELS: Record<string, string> = { OWNER: "Owner", ADMIN: "Administrator", FINANCE: "Finance", MERCHANDISING: "Merchandising", APPROVER: "Approver", VIEWER: "Viewer" };
 const DEFAULT_ROLE_PERMISSIONS: Record<string, OrganizationPermission[]> = {
   OWNER: [...ORGANIZATION_PERMISSIONS],
@@ -177,6 +178,19 @@ export async function createOrganization(input: OrganizationCreateInput) {
         data: SYSTEM_ORGANIZATION_ROLES.flatMap((role) => DEFAULT_ROLE_PERMISSIONS[role].map((permission) => ({
           id: randomUUID(), organization_id: organization.id, role, permission,
         }))),
+      });
+      await transaction.masterGstType.createMany({
+        data: ["CGST & SGST", "IGST"].map((gstType, index) => ({
+          organization_id: organization.id,
+          gst_type: gstType,
+          is_active: true,
+          sort_order: index,
+        })),
+        skipDuplicates: true,
+      });
+      await transaction.masterState.createMany({
+        data: INDIAN_STATES.map((state, index) => ({ organization_id: organization.id, state, is_active: true, sort_order: index })),
+        skipDuplicates: true,
       });
 
       return organization;

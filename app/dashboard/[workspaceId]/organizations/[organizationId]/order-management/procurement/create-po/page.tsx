@@ -1,5 +1,1 @@
-import { redirect } from "next/navigation";
-
-export default function CreatePoRedirectPage() {
-	redirect("../");
-}
+export { default } from "../_page-content/purchase-order-type-page";

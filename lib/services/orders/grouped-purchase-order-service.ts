@@ -42,6 +42,7 @@ function serializeLine(line: {
   category: string | null;
   sub_category: string | null;
   item_name: string | null;
+  stock_uom?: string | null;
   category_type: string | null;
   internal_price_bom: Prisma.Decimal | null;
   other_charges_per_item: Prisma.Decimal | null;
@@ -61,6 +62,7 @@ function serializeLine(line: {
     category: line.category,
     subCategory: line.sub_category,
     itemName: line.item_name,
+    stockUom: line.stock_uom,
     categoryType: line.category_type,
     internalPriceBom: decimalValue(line.internal_price_bom),
     otherChargesPerItem: decimalValue(line.other_charges_per_item),
@@ -83,7 +85,7 @@ function serializePurchaseOrder(order: {
   approved_by: string | null;
   approved_at: Date | null;
   rejection_reason: string | null;
-  vendor: { id: string; vendor: string };
+  vendor: { id: string; vendor: string; gst_number: string | null; registered_state: string | null; registeredState: { state: string } | null };
   note: string | null;
   raw_material: string | null;
   category_type: string | null;
@@ -151,14 +153,16 @@ function serializePurchaseOrder(order: {
     otherChargesInr: decimalValue(order.other_charges_inr),
     currency: order.currency,
     exchangePrice: decimalValue(order.exchange_price),
-    vendor: { id: order.vendor.id, name: order.vendor.vendor },
+    vendor: { id: order.vendor.id, name: order.vendor.vendor, gstin: order.vendor.gst_number, registeredState: order.vendor.registered_state ?? order.vendor.registeredState?.state ?? null },
     lines: order.lines.map(serializeLine),
   };
 }
 
 async function enrichPurchaseOrderTaxFields<T extends ReturnType<typeof serializePurchaseOrder>>(organizationId: string, orders: T[]) {
+  const organization = await prisma.organization.findUnique({ where: { id: organizationId }, select: { state: true, gst_number: true } });
+  const ordersWithTaxContext = orders.map((order) => ({ ...order, organizationState: organization?.state ?? null, organizationGstin: organization?.gst_number ?? null }));
   const rawMaterialNames = [...new Set(orders.flatMap((order) => order.lines.map((line) => line.itemName).filter((name): name is string => Boolean(name))))];
-  if (rawMaterialNames.length === 0) return orders;
+  if (rawMaterialNames.length === 0) return ordersWithTaxContext;
 
   const rawMaterials = await prisma.masterRawMaterial.findMany({
     where: { organization_id: organizationId, raw_material_name: { in: rawMaterialNames } },
@@ -169,14 +173,14 @@ async function enrichPurchaseOrderTaxFields<T extends ReturnType<typeof serializ
     return [material.raw_material_name, { gst: metadata.gst ?? metadata.Gst ?? metadata.GST ?? null, hsnCode: metadata.hsnCode ?? metadata.hsn_code ?? metadata.Hsn_Code ?? metadata.HSN ?? null }];
   }));
 
-  return orders.map((order) => ({
+  return ordersWithTaxContext.map((order) => ({
     ...order,
     lines: order.lines.map((line) => ({ ...line, ...(taxByMaterial.get(line.itemName ?? "") ?? { gst: null, hsnCode: null }) })),
   }));
 }
 
 const groupedPurchaseOrderInclude = {
-  vendor: { select: { id: true, vendor: true } },
+  vendor: { select: { id: true, vendor: true, gst_number: true, registered_state: true, registeredState: { select: { state: true } } } },
   lines: {
     orderBy: { created_at: "asc" as const },
     select: {
@@ -196,6 +200,7 @@ const groupedPurchaseOrderInclude = {
       internal_consumption: true,
       required_qty: true,
       grouped_qty: true,
+      stock_uom: true,
       vendor_price: true,
     },
   },
@@ -215,6 +220,7 @@ export async function listAllocatableBomRows(organizationId: string) {
       category: true,
       subCategory: true,
       rawMaterialName: true,
+      stockUom: true,
       internalConsumption: true,
       internalPrice: true,
       requiredQty: true,
@@ -235,6 +241,7 @@ export async function listAllocatableBomRows(organizationId: string) {
     categoryType: row.categoryType,
     subCategory: row.subCategory,
     itemName: row.rawMaterialName,
+    stockUom: row.stockUom,
     internalConsumption: decimalValue(row.internalConsumption),
     internalPriceBom: decimalValue(row.internalPrice),
     requiredQty: decimalValue(row.totalRequiredQty ?? row.requiredQty),
@@ -290,6 +297,7 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
         categoryType: true,
         subCategory: true,
         rawMaterialName: true,
+        stockUom: true,
         internalConsumption: true,
         internalPrice: true,
         requiredQty: true,
@@ -306,12 +314,20 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
     const allocated = bomItems.find((item) => item.groupedPurchaseOrderLines.length > 0);
     if (allocated) throw new Error(`Raw-material row ${allocated.id} has already been allocated.`);
 
+    const rawMaterialNames = [...new Set(bomItems.map((item) => item.rawMaterialName).filter((name): name is string => Boolean(name)))];
+    const rawMaterialMasters = await transaction.masterRawMaterial.findMany({
+      where: { organization_id: input.organizationId, raw_material_name: { in: rawMaterialNames } },
+      select: { raw_material_name: true, stock_uom: { select: { uom: true } } },
+    });
+    const stockUomByRawMaterial = new Map(rawMaterialMasters.map((material) => [material.raw_material_name.trim().toLowerCase(), material.stock_uom.uom]));
+
     const lines = bomItems.map((item) => {
       const requiredQty = positiveNumber(item.totalRequiredQty ?? item.requiredQty, "Required Qty");
       const groupedQty = positiveNumber(uniqueLines.get(item.id)?.groupedQty, "Grouped Qty");
       if (groupedQty > requiredQty) {
         throw new Error(`Grouped Qty cannot exceed Required Qty for ${item.order.orderNo}.`);
       }
+      const stockUom = stockUomByRawMaterial.get(String(item.rawMaterialName ?? "").trim().toLowerCase()) ?? item.stockUom;
       return {
         source_bom_item_id: item.id,
         source_order_id: item.order_id,
@@ -322,6 +338,7 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
         category_type: item.categoryType,
         sub_category: item.subCategory,
         item_name: item.rawMaterialName,
+        stock_uom: stockUom,
         internal_consumption: item.internalConsumption,
         internal_price_bom: item.internalPrice,
         required_qty: new Prisma.Decimal(requiredQty),
@@ -335,6 +352,7 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
     const categories = [...new Set(lines.map((line) => line.category).filter(Boolean))];
     const subCategories = [...new Set(lines.map((line) => line.sub_category).filter(Boolean))];
     const brands = [...new Set(lines.map((line) => line.brand).filter(Boolean))];
+    const stockUoms = [...new Set(lines.map((line) => line.stock_uom).filter(Boolean))];
     const displayNumber = await reserveProcurementDocumentNumber(input.organizationId, "GROUPED_PO", transaction);
     const displayNo = Number(displayNumber.replace("GP-", ""));
 
@@ -353,6 +371,7 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
         total_required_qty: totalRequiredQty,
         total_grouped_qty: totalGroupedQty,
         no_of_styles: new Set(lines.map((line) => line.style_name).filter(Boolean)).size,
+        stock_uom: stockUoms.join(", ") || null,
         lines: { create: lines },
       },
       include: groupedPurchaseOrderInclude,

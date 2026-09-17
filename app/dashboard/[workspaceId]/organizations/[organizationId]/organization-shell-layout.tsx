@@ -32,6 +32,10 @@ export default async function OrganizationShellLayout({
     redirect("/");
   }
 
+  if (user.workspace_id !== workspaceId) {
+    redirect(`/dashboard/${user.workspace_id}/home`);
+  }
+
   // 2. Get current path safely from middleware header
   const headersList = await headers();
   const rawPath =
@@ -54,7 +58,7 @@ export default async function OrganizationShellLayout({
   const organization = await getOrganizationForUser(user.id, organizationId);
   
   if (!organization) {
-    redirect(`/dashboard/${workspaceId}/home`);
+    redirect(`/dashboard/${user.workspace_id}/home`);
   }
 
   if (organization.approval_status !== "APPROVED") {

@@ -1,4 +1,4 @@
-export type MasterFieldType = "text" | "number" | "percentage" | "decimal" | "url" | "checkbox" | "picklist" | "lookup" | "child-list";
+export type MasterFieldType = "text" | "number" | "percentage" | "decimal" | "date" | "url" | "checkbox" | "picklist" | "lookup" | "child-list";
 
 export type MasterFieldDefinition = {
   key: string;
@@ -13,6 +13,7 @@ export type MasterFieldDefinition = {
   childModuleKey?: string;
   childFields?: MasterFieldDefinition[];
   dependsOn?: string;
+  readOnly?: boolean;
 };
 
 export type MasterDefinition = {

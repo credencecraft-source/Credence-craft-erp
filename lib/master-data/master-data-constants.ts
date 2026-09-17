@@ -20,8 +20,8 @@ const delegates = {
   entity: prisma.masterEntity, "category-type": prisma.masterCategoryType, category: prisma.masterCategory, "sub-category": prisma.masterSubCategory,
   brand: prisma.masterBrand, "pre-order-checklist": prisma.masterPreOrderChecklist, "currency-type": prisma.masterCurrencyType, buyer: prisma.masterBuyer,
   season: prisma.masterSeason, article: prisma.masterArticle, color: prisma.masterColor, "size-group": prisma.masterSizeGroup, size: prisma.masterSize,
-  uom: prisma.masterUom, "raw-material": prisma.masterRawMaterial, vendor: prisma.masterVendor, "gst-type": prisma.masterGstType, gst: prisma.masterGst,
-  hsn: prisma.masterHsn, "measurement-chart": prisma.masterMeasurementChart, "size-wise-consumption": prisma.masterSizeWiseConsumption,
+  uom: prisma.masterUom, "stock-uom-convert": prisma.masterStockUomConvert, "raw-material": prisma.masterRawMaterial, vendor: prisma.masterVendor, "gst-type": prisma.masterGstType, gst: prisma.masterGst,
+  hsn: prisma.masterHsn, state: prisma.masterState, "measurement-chart": prisma.masterMeasurementChart, "size-wise-consumption": prisma.masterSizeWiseConsumption,
   "product-master": prisma.masterProduct, "process-master": prisma.masterProcess, "process-template": prisma.masterProcessTemplate, "process-template-step": prisma.masterProcessTemplateStep, "operation-template": prisma.masterOperationTemplate, "operation-template-step": prisma.masterOperationTemplateStep, merchandiser: prisma.masterMerchandiser, status: prisma.masterStatus,
   "order-volume": prisma.masterOrderVolume,
   "raw-material-type": prisma.masterRawMaterialType, "raw-material-category": prisma.masterRawMaterialCategory, "raw-material-sub-category": prisma.masterRawMaterialSubCategory,
@@ -30,8 +30,8 @@ const delegates = {
 const labelFields: Record<string, string> = {
   entity: "entity_name", "category-type": "category_type", category: "category_name", "sub-category": "sub_category", brand: "brand",
   "pre-order-checklist": "pre_order_checklist", "currency-type": "currency_type", buyer: "buyer_name", season: "season", article: "article", color: "colors",
-  "size-group": "size_group", size: "size", uom: "uom", "raw-material": "raw_material_name", vendor: "vendor", "gst-type": "gst_type", gst: "name",
-  hsn: "hsn_code", "measurement-chart": "measurement_chart", "size-wise-consumption": "bom_template_name", "product-master": "product_master_name",
+  "size-group": "size_group", size: "size", uom: "uom", "stock-uom-convert": "name", "raw-material": "raw_material_name", vendor: "vendor", "gst-type": "gst_type", gst: "name",
+  hsn: "hsn_code", state: "state", "measurement-chart": "measurement_chart", "size-wise-consumption": "bom_template_name", "product-master": "product_master_name",
   "process-master": "process_name", "process-template": "process_name", "process-template-step": "process_name", "operation-template": "operation_template_name", "operation-template-step": "operation", merchandiser: "merchandiser", status: "status", "order-volume": "order_volume",
   "raw-material-type": "raw_material_type", "raw-material-category": "raw_material_category", "raw-material-sub-category": "raw_material_sub_category",
 };
@@ -43,10 +43,12 @@ const fieldColumns: Record<string, Record<string, string>> = {
   "sub-category": { category: "category_id", sub_category: "sub_category" },
   brand: { Brand: "brand", Maximum_Allowed_Excess: "maximum_allowed_excess", Auto_add_Excess_to_RM: "auto_add_excess_to_rm", Pre_Order_Checklist1: "pre_order_checklist_id", Status: "status" },
   buyer: { Buyer_Name: "buyer_name", Buyer_Email: "buyer_email", Currency_Type: "currency_type_id", Status: "status" },
-  season: { season: "season" }, article: { article: "article" }, color: { Colors: "colors", Status: "status" },
+  season: { season: "season" },
+  article: { article: "article", article_code: "article_code", design_by: "design_by", designed_date: "designed_date" },
+  color: { Colors: "colors", Status: "status" },
   "size-group": { Brand1: "brand_id", Size_Group: "size_group", Measurement_Chart1: "measurement_chart_id" },
-  size: { Size: "size", Size_Group_ID: "size_group_id", status: "status" }, uom: { uom: "uom" }, vendor: { vendor: "vendor" },
-  gst: { Name: "name", Gst: "gst", GST_TYPELOOKUP1: "gst_type_id", Zoho_Books_Tax_ID: "zoho_books_tax_id" }, hsn: { Hsn_Code: "hsn_code" },
+  size: { Size: "size", Size_Group_ID: "size_group_id", status: "status" }, uom: { uom: "uom" }, "stock-uom-convert": { Name: "name", How_Many: "how_many" }, vendor: { vendor: "vendor", Gst_Number: "gst_number", Registered_State: "registered_state_id" }, state: { State: "state" },
+  gst: { Name: "name", Gst: "gst", Cgst_Rate: "cgst_rate", Sgst_Rate: "sgst_rate", Igst_Rate: "igst_rate", GST_TYPELOOKUP1: "gst_type_id", Zoho_Books_Tax_ID: "zoho_books_tax_id" }, hsn: { Hsn_Code: "hsn_code" },
   "pre-order-checklist": { Pre_Order_Checklist: "pre_order_checklist" }, "currency-type": { Currency_Type: "currency_type" }, "gst-type": { GST_TYPE: "gst_type" },
   "measurement-chart": { Measurement_Chart: "measurement_chart" }, "size-wise-consumption": { Bom_Template_Name: "bom_template_name" },
   "product-master": { Product_Master_name: "product_master_name" }, "process-master": { Process_Name: "process_name" }, "process-template": { Process_Template_Name: "process_name", Process_Name: "process_name" }, "process-template-step": { Process: "process_id", Operation_Template: "operation_template_id", Sl_No: "sl_no" }, "operation-template": { Operation_Template_Name: "operation_template_name", Process: "process_id" }, "operation-template-step": { Operation: "operation", Sl_No: "sl_no", Price: "price" }, merchandiser: { merchandiser: "merchandiser" },
@@ -64,13 +66,50 @@ const parentColumns: Record<string, string> = {
   size: "size_group_id",
   "process-template-step": "process_template_id",
   "operation-template-step": "operation_template_id",
+  "stock-uom-convert": "stock_uom_id",
 };
 
 function typedValue(field: MasterFieldDefinition, value: unknown) {
   if (value === null || value === undefined || value === "") return null;
   if (field.type === "checkbox") return value === true || value === "true" || value === "on";
   if (["number", "percentage", "decimal"].includes(field.type)) return Number(value);
+  if (field.type === "date") {
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === "string") {
+      const dateValue = value.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) return `${dateValue}T00:00:00.000Z`;
+      return dateValue;
+    }
+    return String(value);
+  }
   return String(value);
+}
+
+async function nextArticleCode(organizationId: string, database: MasterDelegate = delegates.article) {
+  const existing = await database.findMany({ where: { organization_id: organizationId }, select: { article_code: true }, orderBy: { sort_order: "asc" } });
+  const numbers = existing
+    .map((item) => Number(String(item.article_code ?? "").replace(/\D+/g, "")))
+    .filter((value) => Number.isFinite(value));
+  const nextNumber = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
+  return `AR-${nextNumber}`;
+}
+
+async function hydrateArticleMetrics(organizationId: string, row: MasterRow) {
+  const articleName = String(row.article ?? "").trim();
+  if (!articleName) {
+    return { running_order_qty: 0, running_order_variants: 0 };
+  }
+
+  const matchedOrders = await prisma.merchandisingOrder.findMany({
+    where: { organization_id: organizationId, article: articleName },
+    select: { orderNo: true, orderQty: true },
+  });
+
+  const totalQty = matchedOrders.reduce((sum, order) => sum + Number(order.orderQty ?? 0), 0);
+  return {
+    running_order_qty: totalQty,
+    running_order_variants: matchedOrders.length,
+  };
 }
 
 async function resolveLookupId(organizationId: string, moduleKey: string, value: unknown) {
@@ -93,6 +132,10 @@ async function buildData(organizationId: string, moduleKey: string, fields: Mast
     const relationField = fieldColumns[moduleKey]?.[field.key];
     if (!relationField || relationField === labelFields[moduleKey]) continue;
 
+    if (field.key === "running_order_qty" || field.key === "running_order_variants") {
+      continue;
+    }
+
     if (field.type === "lookup") {
       const parentValue = field.dependsOn ? fields[field.dependsOn] : null;
       const isMissingDependency = field.dependsOn && (parentValue === null || parentValue === undefined || parentValue === "");
@@ -110,6 +153,9 @@ async function buildData(organizationId: string, moduleKey: string, fields: Mast
         const targetId = await resolveLookupId(organizationId, field.lookupModuleKey ?? "", fields[field.key]);
         if (targetId) {
           data[relationField] = targetId;
+          if (moduleKey === "vendor" && field.key === "Registered_State") {
+            data.registered_state = String(fields[field.key]);
+          }
         }
         continue;
       }
@@ -141,17 +187,25 @@ async function buildData(organizationId: string, moduleKey: string, fields: Mast
   return data;
 }
 
-function rowFields(moduleKey: string, row: MasterRow, definition: NonNullable<ReturnType<typeof getMasterDefinition>>) {
+async function rowFields(moduleKey: string, row: MasterRow, definition: NonNullable<ReturnType<typeof getMasterDefinition>>) {
   const fields: MasterFieldValues = {};
   for (const field of definition.fields) {
     const column = fieldColumns[moduleKey]?.[field.key];
     if (!column) continue;
-    const value = row[column];
+    let value = row[column];
+    if (field.key === "running_order_qty" || field.key === "running_order_variants") {
+      if (moduleKey === "article") {
+        const metrics = await hydrateArticleMetrics(row.organization_id as string, row);
+        value = field.key === "running_order_qty" ? metrics.running_order_qty : metrics.running_order_variants;
+      }
+    }
     fields[field.key] = value === null || value === undefined
       ? null
-      : ["number", "percentage", "decimal"].includes(field.type)
-        ? Number(value)
-        : (value as MasterFieldValues[string]);
+      : field.type === "date"
+        ? value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10)
+        : ["number", "percentage", "decimal"].includes(field.type)
+          ? Number(value)
+          : (value as MasterFieldValues[string]);
   }
   return fields;
 }
@@ -204,16 +258,27 @@ export async function getMasterValuesForOrganization(
     lookupCache.set(lookupModuleKey, labels);
   }));
 
-  return rows.map((row) => {
-    const fields = rowFields(moduleKey, row, definition);
+  const hydratedRows = await Promise.all(rows.map(async (row) => {
+    const fields = await rowFields(moduleKey, row, definition);
     for (const field of definition.fields.filter((item) => item.type === "lookup")) {
       const related = fields[field.key] && field.lookupModuleKey
         ? lookupCache.get(field.lookupModuleKey)?.get(String(fields[field.key]))
         : null;
       fields[field.key] = related ?? fields[field.key] ?? null;
     }
-    return { id: row.id, value_id: row.value_id, label: String(row[labelFields[moduleKey]] ?? ""), code: null, description: null, is_active: row.is_active, parent_id: parentColumns[moduleKey] ? (row[parentColumns[moduleKey]] as string | null) ?? null : null, fields };
-  });
+    return {
+      id: row.id,
+      value_id: row.value_id,
+      label: String(row[labelFields[moduleKey]] ?? ""),
+      code: moduleKey === "article" ? String((row as Record<string, unknown>).article_code ?? "") || null : null,
+      description: null,
+      is_active: row.is_active,
+      parent_id: parentColumns[moduleKey] ? (row[parentColumns[moduleKey]] as string | null) ?? null : null,
+      fields,
+    };
+  }));
+
+  return hydratedRows;
 }
 
 export async function getPendingMasterValuesForOrganization(organizationId: string, moduleKey: string) {
@@ -231,11 +296,24 @@ export async function createMasterValueForOrganization(organizationId: string, m
 
     const data = await buildData(organizationId, moduleKey, input.fields ?? {}, input.label.trim());
 
+    if (moduleKey === "article") {
+      const providedCode = String((input.fields?.article_code ?? data.article_code ?? "") ?? "").trim();
+      data.article_code = providedCode || await nextArticleCode(organizationId, transactionDelegate);
+      const articleCodeExists = await transactionDelegate.findFirst({
+        where: { organization_id: organizationId, article_code: data.article_code },
+      });
+      if (articleCodeExists) {
+        throw new Error("This article code is already in use. Please choose a unique article code.");
+      }
+    }
+
     if (input.parentValueId && parentColumns[moduleKey]) {
       const parentModuleKey = moduleKey === "process-template-step"
         ? "process-template"
         : moduleKey === "operation-template-step"
           ? "operation-template"
+        : moduleKey === "stock-uom-convert"
+          ? "uom"
         : definition.fields.find((field) => field.type === "lookup")?.lookupModuleKey
         ?? (moduleKey === "sub-category" ? "category" : moduleKey === "size" ? "size-group" : "");
       if (parentModuleKey) {

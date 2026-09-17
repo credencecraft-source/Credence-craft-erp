@@ -190,7 +190,9 @@ export default function FinishedGoodsTab({
                   </div>
                 </td>
                 <td className="p-2">
-                  {renderMasterSelect("", row.size ?? "", (val) => updateSizeRow(index, "size", val), "size", "Select size")}
+                  <div className="pt-5">
+                    {renderMasterSelect("", row.size ?? "", (val) => updateSizeRow(index, "size", val), "size", "Select size")}
+                  </div>
                 </td>
                 <td className="p-2">
                   <div className="flex flex-col gap-1.5 pt-5">

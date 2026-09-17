@@ -32,4 +32,13 @@ export const PRE_PRODUCTION_MASTER_DEFINITIONS = [
       ],
     },
   ], { labelField: "Operation_Template_Name", moduleGroup: "factory-management", moduleSubGroup: "pre-production", moduleOrder: 5 }),
+  createMaster("process-template-step", "Process Template Step", "Internal child records for process templates.", [
+    lookup("Process", "Process", "process-master", { required: true }),
+    text("Sl_No", "Sl No", { type: "number", required: true }),
+  ], { labelField: "Process", hidden: true }),
+  createMaster("operation-template-step", "Operation Template Step", "Internal child records for operation templates.", [
+    text("Operation", "Operation", { required: true }),
+    text("Sl_No", "Sl No", { type: "number", required: true }),
+    text("Price", "Price", { type: "decimal", required: true }),
+  ], { labelField: "Operation", hidden: true }),
 ];

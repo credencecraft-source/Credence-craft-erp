@@ -34,6 +34,12 @@ export const MASTER_MODULE_HIERARCHY: Record<string, { label: string; children: 
       procurement: "Procurement",
     },
   },
+  "design-development": {
+    label: "Design and Development",
+    children: {
+      "tech-pack": "Tech Pack",
+    },
+  },
   "factory-management": {
     label: "Factory Management",
     children: {

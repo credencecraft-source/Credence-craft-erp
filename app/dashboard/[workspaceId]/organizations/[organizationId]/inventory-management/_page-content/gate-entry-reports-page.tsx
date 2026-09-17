@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import Modal from "@/components/ui/Modal";
 
 type Entry = {
   id: string;
@@ -226,8 +227,8 @@ export default function GateEntryReportsPage() {
       </div>
 
       {showDeleteConfirmation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-gate-entries-title">
-          <div className="w-full max-w-md space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+        <Modal open={showDeleteConfirmation} onClose={() => setShowDeleteConfirmation(false)} ariaLabel="Delete selected gate entries" variant="danger" size="sm" className="p-5">
+          <div className="space-y-4">
             <div>
               <h3 id="delete-gate-entries-title" className="text-base font-bold text-slate-900">Delete selected gate entries?</h3>
               <p className="mt-1 text-xs text-slate-500">This will permanently delete {selectedIds.length} selected record{selectedIds.length === 1 ? "" : "s"} from the gate register.</p>
@@ -241,7 +242,7 @@ export default function GateEntryReportsPage() {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </main>
   );

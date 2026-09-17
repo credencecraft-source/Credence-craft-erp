@@ -62,6 +62,7 @@ export async function PUT(
         vendorPriceInr: body.vendorPriceInr,
         vendorPrice: body.vendorPrice,
         gst: body.gst,
+        gstMasterId: body.gstMasterId,
         hsnCode: body.hsnCode,
         otherChargesInr: body.otherChargesInr,
         convertValue: body.convertValue,

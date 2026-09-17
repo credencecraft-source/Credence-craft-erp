@@ -66,13 +66,13 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
   const details = stageDetails[stage];
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [stock, setStock] = useState<StockRow[]>([]);
-  const [loading, setLoading] = useState(stage === "purchase-order" || stage.endsWith("stock"));
+  const [loading, setLoading] = useState(stage === "purchase-order" || (stage.endsWith("stock") && stage !== "fg-stock"));
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (!organizationId) return;
-    if (stage.endsWith("stock")) {
-      fetch(`/api/inventory/stock?organizationId=${encodeURIComponent(organizationId)}&type=${stage === "fg-stock" ? "FG" : "RM"}`, { cache: "no-store" })
+    if (stage.endsWith("stock") && stage !== "fg-stock") {
+      fetch(`/api/inventory/stock?organizationId=${encodeURIComponent(organizationId)}&type=RM`, { cache: "no-store" })
         .then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data?.error || "Unable to load stock."); setStock(data.stock ?? []); })
         .catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load stock."))
         .finally(() => setLoading(false));
@@ -97,6 +97,22 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
 
   return (
     <main className="mx-auto max-w-[1500px] space-y-5">
+      {stage === "fg-stock" ? (
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            { label: "Carton Box", href: `${basePath}/stock/fg-stock/carton-box` },
+            { label: "SKU", href: `${basePath}/stock/fg-stock/sku` },
+            { label: "Tags", href: `${basePath}/stock/fg-stock/tags` },
+          ].map((card) => (
+            <Link key={card.label} href={card.href} className="erp-surface block p-6 transition hover:border-emerald-400 hover:shadow-md">
+              <h2 className="text-lg font-bold text-slate-950">{card.label}</h2>
+            </Link>
+          ))}
+        </div>
+      ) : null}
+
+      {stage !== "fg-stock" ? (
+        <>
       <header className="border-b border-slate-200 pb-4">
         <p className="erp-eyebrow">{details.eyebrow}</p>
         <h1 className="erp-page-heading mt-1">{details.title}</h1>
@@ -148,13 +164,15 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
             </div>
       ) : stage.endsWith("stock") ? (
         loading ? <div className="erp-surface p-8 text-center text-xs text-slate-500">Loading stock...</div> : error ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> :
-          <div className="erp-surface overflow-hidden"><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="border-b border-slate-200 bg-slate-50 text-[9px] font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">{stage === "fg-stock" ? "Style" : "Raw Material"}</th><th className="px-3 py-3">Size</th><th className="px-3 py-3">Warehouse</th><th className="px-3 py-3 text-right">On Hand</th><th className="px-3 py-3 text-right">Reserved</th><th className="px-3 py-3 text-right">Available</th></tr></thead><tbody className="divide-y divide-slate-100">{stock.map((row) => { const onHand = Number(row.quantity_on_hand); const reserved = Number(row.quantity_reserved); return <tr key={row.id} className="bg-white"><td className="px-3 py-3 font-semibold text-slate-900">{row.raw_material ?? row.style_name}</td><td className="px-3 py-3">{row.size ?? "-"}</td><td className="px-3 py-3">{row.warehouse}</td><td className="px-3 py-3 text-right">{onHand.toLocaleString("en-IN")}</td><td className="px-3 py-3 text-right">{reserved.toLocaleString("en-IN")}</td><td className="px-3 py-3 text-right font-bold text-emerald-700">{(onHand - reserved).toLocaleString("en-IN")}</td></tr>; })}</tbody></table></div>{stock.length === 0 ? <p className="p-8 text-center text-xs text-slate-500">No stock has been posted for this ledger yet.</p> : null}</div>
+          <div className="erp-surface overflow-hidden"><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="border-b border-slate-200 bg-slate-50 text-[9px] font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">Raw Material</th><th className="px-3 py-3">Size</th><th className="px-3 py-3">Warehouse</th><th className="px-3 py-3 text-right">On Hand</th><th className="px-3 py-3 text-right">Reserved</th><th className="px-3 py-3 text-right">Available</th></tr></thead><tbody className="divide-y divide-slate-100">{stock.map((row) => { const onHand = Number(row.quantity_on_hand); const reserved = Number(row.quantity_reserved); return <tr key={row.id} className="bg-white"><td className="px-3 py-3 font-semibold text-slate-900">{row.raw_material ?? row.style_name}</td><td className="px-3 py-3">{row.size ?? "-"}</td><td className="px-3 py-3">{row.warehouse}</td><td className="px-3 py-3 text-right">{onHand.toLocaleString("en-IN")}</td><td className="px-3 py-3 text-right">{reserved.toLocaleString("en-IN")}</td><td className="px-3 py-3 text-right font-bold text-emerald-700">{(onHand - reserved).toLocaleString("en-IN")}</td></tr>; })}</tbody></table></div>{stock.length === 0 ? <p className="p-8 text-center text-xs text-slate-500">No stock has been posted for this ledger yet.</p> : null}</div>
       ) : (
         <section className="erp-surface p-8">
           <p className="text-sm font-semibold text-slate-900">{details.title} workspace ready</p>
           <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-500">This document flow is organization-scoped and ready for its source-document fields, line items, approvals, and posting controls.</p>
         </section>
       )}
+        </>
+      ) : null}
     </main>
   );
 }

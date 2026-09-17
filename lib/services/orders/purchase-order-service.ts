@@ -4,11 +4,12 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
 import { reserveProcurementDocumentNumber } from "./procurement-document-number-service";
+import { calculateTax } from "./gst-calculation-service";
 
 const purchaseOrderInclude = {
-  vendor: { select: { id: true, vendor: true, legacy_metadata: true } },
+  vendor: { select: { id: true, vendor: true, legacy_metadata: true, gst_number: true, registered_state: true, registeredState: { select: { state: true } } } },
   sources: { select: { master_purchase_order_id: true } },
-  lines: { orderBy: { source_order_no: "asc" as const }, include: { masterPurchaseOrder: { select: { display_no: true, master_po_no: true } } } },
+  lines: { orderBy: { source_order_no: "asc" as const }, include: { masterPurchaseOrder: { select: { display_no: true, master_po_no: true, lines: { select: { stock_uom: true } }, sourceRecords: { select: { groupedPurchaseOrder: { select: { buying_uom: true } } } } } } } },
 } as const;
 
 const numberValue = (value: Prisma.Decimal | number | string | null | undefined) => value == null ? null : Number(value);
@@ -39,9 +40,18 @@ function serializePurchaseOrder(order: Prisma.PurchaseOrderGetPayload<{ include:
       subCategory: line.sub_category,
       sourceOrderNo: line.source_order_no,
       styleName: line.style_name,
+      stockUom: line.masterPurchaseOrder?.lines[0]?.stock_uom ?? null,
+      buyingUom: line.masterPurchaseOrder?.sourceRecords[0]?.groupedPurchaseOrder.buying_uom ?? null,
       quantity: numberValue(line.quantity),
       price: numberValue(line.price),
       gst: numberValue(line.gst),
+      taxType: line.tax_type,
+      cgstRate: numberValue(line.cgst_rate),
+      sgstRate: numberValue(line.sgst_rate),
+      igstRate: numberValue(line.igst_rate),
+      cgstAmount: numberValue(line.cgst_amount),
+      sgstAmount: numberValue(line.sgst_amount),
+      igstAmount: numberValue(line.igst_amount),
       hsnCode: line.hsn_code,
       total: numberValue(line.total),
       masterGroupId: line.masterPurchaseOrder?.display_no ? `MGP-${line.masterPurchaseOrder.display_no}` : line.master_purchase_order_id,
@@ -62,7 +72,7 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
     const masters = await transaction.masterPurchaseOrder.findMany({
       where: { id: { in: uniqueIds }, organization_id: organizationId },
       include: {
-        vendor: { select: { id: true } },
+        vendor: { select: { id: true, gst_number: true, registered_state: true, registeredState: { select: { state: true } } } },
         lines: true,
         sourceRecords: { include: { groupedPurchaseOrder: { select: { gst: true, hsn_code: true } } } },
         purchaseOrderSources: { select: { purchase_order_id: true } },
@@ -73,6 +83,25 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
     if (existingSource.length > 0) throw new Error("One or more selected Master Groups already have a Purchase Order.");
     const vendorId = masters[0].vendor_id;
     if (masters.some((master) => master.vendor_id !== vendorId)) throw new Error("Select Master Groups from the same vendor.");
+    const organization = await transaction.organization.findUnique({ where: { id: organizationId }, select: { gst_number: true, state: true, country: true } });
+    if (!organization) throw new Error("Organization not found.");
+    const vendor = masters[0].vendor;
+    let defaultTaxProfile: { tax_regime: string; cgst_rate: Prisma.Decimal | null; sgst_rate: Prisma.Decimal | null; igst_rate: Prisma.Decimal | null; vat_rate: Prisma.Decimal | null; sales_tax_rate: Prisma.Decimal | null; } | null = null;
+    try {
+      defaultTaxProfile = await transaction.organizationTaxProfile.findFirst({
+        where: { organization_id: organizationId, is_active: true, is_default: true },
+        orderBy: { updated_at: "desc" },
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || (!error.message.includes("does not exist") && !error.message.includes("P2021") && !(error.message.includes("table") && error.message.includes("public")))) {
+        throw error;
+      }
+    }
+    const taxRegime = defaultTaxProfile?.tax_regime ?? "GST";
+    const gstRates = await transaction.masterGst.findMany({
+      where: { organization_id: organizationId },
+      select: { gst: true, cgst_rate: true, sgst_rate: true, igst_rate: true },
+    });
     const displayNumber = await reserveProcurementDocumentNumber(organizationId, "PURCHASE_ORDER", transaction);
     const displayNo = Number(displayNumber.replace("PO-", ""));
     const lines = masters.map((master) => {
@@ -82,6 +111,23 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
       const price = master.lines.find((line) => line.vendor_price !== null)?.vendor_price ?? null;
       const quantity = master.lines.reduce((sum, line) => sum + Number(line.grouped_qty), 0);
       const total = master.lines.reduce((sum, line) => sum + Number(line.total_spend ?? (Number(line.grouped_qty) * Number(line.vendor_price ?? 0))), 0);
+      const totalRate = Number(sourceValues.find((value) => value !== null && typeof value !== "string") ?? 0);
+      const configuredRate = gstRates.find((rate) => Number(rate.gst) === totalRate);
+      const tax = calculateTax({
+        taxableAmount: total,
+        totalRate,
+        taxRegime,
+        country: organization.country ?? "IN",
+        cgstRate: numberValue(configuredRate?.cgst_rate) ?? numberValue(defaultTaxProfile?.cgst_rate),
+        sgstRate: numberValue(configuredRate?.sgst_rate) ?? numberValue(defaultTaxProfile?.sgst_rate),
+        igstRate: numberValue(configuredRate?.igst_rate) ?? numberValue(defaultTaxProfile?.igst_rate),
+        vatRate: numberValue(defaultTaxProfile?.vat_rate),
+        salesTaxRate: numberValue(defaultTaxProfile?.sales_tax_rate),
+        organizationState: organization.state,
+        organizationGstin: organization.gst_number,
+        vendorState: vendor.registeredState?.state ?? vendor.registered_state,
+        vendorGstin: vendor.gst_number,
+      });
       return {
         source_master_line_id: master.lines[0]?.id ?? master.id,
         master_purchase_order_id: master.id,
@@ -93,6 +139,13 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
         quantity: new Prisma.Decimal(quantity),
         price,
         gst,
+        tax_type: tax.taxType,
+        cgst_rate: new Prisma.Decimal(tax.cgstRate),
+        sgst_rate: new Prisma.Decimal(tax.sgstRate),
+        igst_rate: new Prisma.Decimal(tax.igstRate),
+        cgst_amount: new Prisma.Decimal(tax.cgstAmount),
+        sgst_amount: new Prisma.Decimal(tax.sgstAmount),
+        igst_amount: new Prisma.Decimal(tax.igstAmount),
         hsn_code: hsnCode,
         total: new Prisma.Decimal(total),
       };

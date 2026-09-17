@@ -9,6 +9,7 @@ type BomRow = {
   category?: string | null;
   subCategory?: string | null;
   rawMaterialName?: string | null;
+  stockUom?: string | null;
   size?: string | null;
   buyerConsumption?: number | string | null;
   buyerPrice?: number | string | null;
@@ -27,6 +28,7 @@ const defaultBomRow = (categoryOverride?: string): BomRow => ({
   category: categoryOverride ?? "",
   subCategory: "",
   rawMaterialName: "",
+  stockUom: "",
   size: "",
   consumption: "",
   requiredQty: "",
@@ -76,12 +78,14 @@ export default function BomTab({
     parentCategoryValue?: string
   ) => React.ReactNode;
   onOpenCreateMaster?: (masterKey: string) => void;
-  masterOptions?: Record<string, Array<{ id?: string; label?: string; value_id?: string; name?: string; parent_id?: string | null; parentValueId?: string | null; is_active?: boolean }>>;
+  masterOptions?: Record<string, Array<{ id?: string; label?: string; value_id?: string; name?: string; parent_id?: string | null; parentValueId?: string | null; is_active?: boolean; fields?: Record<string, unknown> }>>;
 }) {
   const bomRows = form?.bomRows?.length > 0 ? form.bomRows : [defaultBomRow()];
   const finishedGoods = calculateFinishedGoodsRows(form?.rows ?? []);
   const calculatedBomRows = calculateBomRows(bomRows, finishedGoods.rows, finishedGoods.orderQty);
   const [selectedBomCategory, setSelectedBomCategory] = useState<string>("All");
+  const [showAdvancedFields, setShowAdvancedFields] = useState(false);
+  const isAllCategoryView = selectedBomCategory === "All";
 
   const bomCategories = useMemo(() => {
     const categorySet = new Set<string>(["All"]);
@@ -104,8 +108,9 @@ export default function BomTab({
   }, [calculatedBomRows, masterOptions]);
 
   const visibleBomRows = useMemo(() => {
-    if (selectedBomCategory === "All") return calculatedBomRows;
-    return calculatedBomRows.filter((row) => normalizeBomCategory(String(row.category ?? "")) === selectedBomCategory);
+    return calculatedBomRows
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) => selectedBomCategory === "All" || normalizeBomCategory(String(row.category ?? "")) === selectedBomCategory);
   }, [calculatedBomRows, selectedBomCategory]);
 
   const addBomRow = () => {
@@ -172,17 +177,35 @@ export default function BomTab({
         .filter(Boolean)
         .map((value) => String(value)),
     );
+    const selectedCategoryLabels = new Set(
+      [selectedCategory?.label, selectedCategory?.name, categoryValue]
+        .filter(Boolean)
+        .map((value) => normalizeOptionText(value)),
+    );
 
     const subCategoryOptions = masterOptions["raw-material-sub-category"] ?? [];
 
     return subCategoryOptions.filter((option: any) => {
-      const optionParentIds = [option.parent_id, option.parentValueId].filter(Boolean).map((value) => String(value));
-      const parentLabel = String(option.parent_label ?? option.parentName ?? option.parent ?? "").trim();
+      const optionFields = option.fields ?? {};
+      const optionParentIds = [
+        option.parent_id,
+        option.parentValueId,
+        optionFields.raw_material_category_id,
+        optionFields.Raw_Material_Category1,
+      ].filter(Boolean).map((value) => String(value));
+      const parentLabel = String(
+        option.parent_label
+          ?? option.parentName
+          ?? option.parent
+          ?? optionFields.raw_material_category
+          ?? optionFields.Raw_Material_Category1
+          ?? "",
+      ).trim();
       const categoryLabel = String(option.category ?? option.categoryName ?? "").trim();
 
       return optionParentIds.some((parentId) => selectedCategoryIds.has(parentId))
-        || normalizeOptionText(parentLabel) === targetCategoryText
-        || normalizeOptionText(categoryLabel) === targetCategoryText
+        || selectedCategoryLabels.has(normalizeOptionText(parentLabel))
+        || selectedCategoryLabels.has(normalizeOptionText(categoryLabel))
         || normalizeBomCategory(parentLabel) === normalizeBomCategory(categoryValue)
         || normalizeBomCategory(categoryLabel) === normalizeBomCategory(categoryValue);
     });
@@ -205,20 +228,52 @@ export default function BomTab({
     }
 
     const selectedSubCategoryIds = new Set(
-      [selectedSubCategory?.id, selectedSubCategory?.value_id, selectedSubCategory?.parent_id, selectedSubCategory?.parentValueId]
+      [
+        selectedSubCategory?.id,
+        selectedSubCategory?.value_id,
+        selectedSubCategory?.parent_id,
+        selectedSubCategory?.parentValueId,
+        selectedSubCategory?.fields?.Raw_Material_Category1,
+      ]
         .filter(Boolean)
         .map((value) => String(value)),
     );
+    const selectedSubCategoryLabels = new Set(
+      [selectedSubCategory?.label, selectedSubCategory?.name, subCategoryValue]
+        .filter(Boolean)
+        .map((value) => normalizeOptionText(value)),
+    );
 
     return rawMaterialOptions.filter((option: any) => {
-      const optionParentIds = [option.parent_id, option.parentValueId].filter(Boolean).map((value) => String(value));
-      const optionCategory = String(option.category ?? option.categoryName ?? "").trim();
-      const optionSubCategory = String(option.subCategory ?? option.sub_category ?? "").trim();
+      const optionFields = option.fields ?? {};
+      const optionParentIds = [
+        option.parent_id,
+        option.parentValueId,
+        option.sub_category_id,
+        option.subCategoryId,
+        optionFields.Subcategory,
+        optionFields.raw_material_sub_category_id,
+      ].filter(Boolean).map((value) => String(value));
+      const optionCategory = String(option.category ?? option.categoryName ?? optionFields.Category ?? "").trim();
+      const optionSubCategory = String(
+        option.subCategory
+          ?? option.sub_category
+          ?? optionFields.Subcategory
+          ?? optionFields.raw_material_sub_category
+          ?? "",
+      ).trim();
 
       return optionParentIds.some((parentId) => selectedSubCategoryIds.has(parentId))
-        || normalizeOptionText(optionSubCategory) === normalizeOptionText(subCategoryValue)
+        || selectedSubCategoryLabels.has(normalizeOptionText(optionSubCategory))
         || normalizeOptionText(optionCategory) === normalizeOptionText(categoryValue);
     });
+  };
+
+  const getRawMaterialStockUom = (rawMaterialName: string) => {
+    const option = (masterOptions?.["raw-material"] ?? []).find((item: any) =>
+      String(item.label ?? item.name ?? "").trim() === rawMaterialName.trim(),
+    );
+    return String(option?.fields?.Stock_Uom1 ?? option?.fields?.stock_uom_id ?? "").trim();
   };
 
   return (
@@ -228,13 +283,28 @@ export default function BomTab({
           <h3 className="text-sm font-bold text-slate-900">Bill of Materials</h3>
           <p className="mt-1 text-[11px] text-slate-500">Category tabs filter the view while keeping every BOM row in the same table data.</p>
         </div>
-        <button
-          type="button"
-          onClick={addBomRow}
-          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700"
-        >
-          + Add Row
-        </button>
+        <div className="flex items-center gap-3">
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700">
+            <span>Advanced</span>
+            <input
+              type="checkbox"
+              checked={showAdvancedFields}
+              onChange={(event) => setShowAdvancedFields(event.target.checked)}
+              className="sr-only"
+            />
+            <span className={`relative h-5 w-9 rounded-full transition ${showAdvancedFields ? "bg-emerald-600" : "bg-slate-300"}`}>
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition ${showAdvancedFields ? "left-[18px]" : "left-0.5"}`} />
+            </span>
+          </label>
+          <button
+            type="button"
+            onClick={addBomRow}
+            disabled={isAllCategoryView}
+            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            + Add Row
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
@@ -255,11 +325,15 @@ export default function BomTab({
       </div>
 
       <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-slate-200 bg-slate-50/40 shadow-inner">
-        <table className="min-w-[1200px] table-fixed text-left text-xs">
+        <fieldset disabled={isAllCategoryView} className="min-w-0 border-0 p-0">
+          <table className="min-w-[1200px] table-fixed text-left text-xs">
           <colgroup>
             <col className="w-[210px]" />
             <col className="w-[220px]" />
+            <col className="w-[130px]" />
             <col className="w-[150px]" />
+            {showAdvancedFields && <col className="w-[150px]" />}
+            {showAdvancedFields && <col className="w-[150px]" />}
             <col className="w-[150px]" />
             <col className="w-[150px]" />
             <col className="w-[150px]" />
@@ -289,6 +363,7 @@ export default function BomTab({
                   )}
                 </div>
               </th>
+              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Stock UOM</th>
               <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">
                 <div className="flex items-center justify-between gap-2">
                   <span>Raw Material Name</span>
@@ -317,8 +392,8 @@ export default function BomTab({
                   )}
                 </div>
               </th>
-              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Buyer Cons.</th>
-              <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Buyer Price</th>
+              {showAdvancedFields && <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Buyer Cons.</th>}
+              {showAdvancedFields && <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Buyer Price</th>}
               <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Internal Cons.</th>
               <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Internal Price</th>
               <th className="h-20 whitespace-normal p-3 align-top font-semibold leading-4">Required Qty</th>
@@ -329,7 +404,7 @@ export default function BomTab({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {visibleBomRows.map((row: BomRow, index: number) => (
+            {visibleBomRows.map(({ row, index }: { row: BomRow; index: number }) => (
               <tr key={`${index}-${row.rawMaterialName || "row"}`} className="bg-white">
                 <td className="p-2 align-top">
                   {renderMasterSelect ? (() => {
@@ -369,7 +444,11 @@ export default function BomTab({
                     return (
                       <select
                         value={value}
-                        onChange={(event) => updateBomRow(index, "rawMaterialName", event.target.value)}
+                        onChange={(event) => {
+                          const rawMaterialName = event.target.value;
+                          updateBomRow(index, "rawMaterialName", rawMaterialName);
+                          updateBomRow(index, "stockUom", getRawMaterialStockUom(rawMaterialName));
+                        }}
                         className="w-full rounded border border-slate-200 px-2 py-1 text-xs text-slate-700"
                       >
                         <option value="">{row.subCategory ? "Select raw material" : "Select sub category first"}</option>
@@ -389,6 +468,14 @@ export default function BomTab({
                     />
                   )}
                 </td>
+                <td className="p-2 align-top">
+                  <input
+                    value={String(row.stockUom ?? getRawMaterialStockUom(String(row.rawMaterialName ?? "")))}
+                    disabled
+                    placeholder="Auto-filled"
+                    className="w-full rounded border border-slate-200 bg-slate-100 px-2 py-1 text-xs text-slate-600"
+                  />
+                </td>
                 <td className="min-w-[180px] whitespace-nowrap p-2 align-top">
                   {renderMasterSelect ? (
                     renderMasterSelect(
@@ -406,7 +493,7 @@ export default function BomTab({
                     />
                   )}
                 </td>
-                <td className="p-2 align-top">
+                {showAdvancedFields && <td className="p-2 align-top">
                   <input
                     type="number"
                     value={row.buyerConsumption || ""}
@@ -414,8 +501,8 @@ export default function BomTab({
                     placeholder="0"
                     className="w-full rounded border border-slate-200 px-2 py-1 text-xs"
                   />
-                </td>
-                <td className="p-2 align-top">
+                </td>}
+                {showAdvancedFields && <td className="p-2 align-top">
                   <input
                     type="number"
                     value={row.buyerPrice || ""}
@@ -423,7 +510,7 @@ export default function BomTab({
                     placeholder="0.00"
                     className="w-full rounded border border-slate-200 px-2 py-1 text-xs"
                   />
-                </td>
+                </td>}
                 <td className="p-2 align-top">
                   <input
                     type="number"
@@ -490,7 +577,8 @@ export default function BomTab({
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </fieldset>
       </div>
     </div>
   );

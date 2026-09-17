@@ -16,6 +16,14 @@ export type ErpModule = {
 
 export const ERP_MODULES: ErpModule[] = [
   {
+    key: "pos",
+    label: "POS",
+    pathSegment: "pos",
+    children: [
+      { key: "quick-invoice", label: "Quick Invoice", pathSegment: "quick-invoice" },
+    ],
+  },
+  {
     key: "order-management",
     label: "Order Management",
     pathSegment: "order-management",
@@ -38,6 +46,21 @@ export const ERP_MODULES: ErpModule[] = [
           { key: "general-po", label: "General PO", pathSegment: "create-po/general-po/allocate-vendor" },
           { key: "style-wise-po", label: "Style Wise PO", pathSegment: "create-po/style-wise" },
           { key: "purchase-order", label: "Purchase Order", pathSegment: "purchase-order" },
+        ],
+      },
+    ],
+  },
+  {
+    key: "design-development",
+    label: "Design and Development",
+    pathSegment: "design-development",
+    children: [
+      {
+        key: "tech-pack",
+        label: "Tech Pack",
+        pathSegment: "tech-pack",
+        children: [
+          { key: "articles", label: "Articles", pathSegment: "articles" },
         ],
       },
     ],
@@ -199,7 +222,11 @@ export const ERP_MODULES: ErpModule[] = [
 ];
 
 const BUSINESS_TYPE_MODULE_ALIASES: Record<string, string> = {
+  "pos": "pos",
+  "point-of-sale": "pos",
   "order-management": "order-management",
+  "design-development": "design-development",
+  "design-and-development": "design-development",
   "factory-management": "factory-management",
   "quality-management-system": "quality-management-system",
   "quality-management": "quality-management-system",

@@ -3,11 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3001 --hostname 0.0.0.0",
+    "dev": "node scripts/start-dev-server.cjs",
     "dev:3000": "next dev --port 3000 --hostname 0.0.0.0",
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "audit:production": "npm audit --omit=dev --audit-level=high",
+    "qa": "npm run audit:production && npm run lint && npm run typecheck && npm run build",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -15,8 +18,8 @@
     "clsx": "^2.1.1",
     "framer-motion": "^13.1.1",
     "lucide-react": "^1.37.0",
-    "next": "16.3.1",
-    "nodemailer": "^9.0.5",
+    "next": "^16.3.5",
+    "nodemailer": "^10.0.10",
     "prisma": "6.19.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -29,7 +32,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.3.1",
+    "eslint-config-next": "^16.3.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   },
@@ -38,5 +42,8 @@
     "@prisma/client@6.19.3": true,
     "@prisma/engines@6.19.3": true,
     "unrs-resolver@1.12.2": true
+  },
+  "overrides": {
+    "deepmerge-ts": "8.0.2"
   }
 }

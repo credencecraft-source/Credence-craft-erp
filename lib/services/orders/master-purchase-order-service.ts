@@ -9,7 +9,7 @@ const MASTER_GROUPED_STATUS = "MASTER_GROUPED";
 
 const masterPurchaseOrderInclude = {
   vendor: { select: { id: true, vendor: true } },
-  sourceRecords: { select: { grouped_purchase_order_id: true, groupedPurchaseOrder: { select: { grouped_po_no: true, display_no: true, vendor_price_inr: true, vendor_price: true, gst: true, hsn_code: true } } } },
+  sourceRecords: { select: { grouped_purchase_order_id: true, groupedPurchaseOrder: { select: { grouped_po_no: true, display_no: true, vendor_price_inr: true, vendor_price: true, gst: true, hsn_code: true, buying_uom: true } } } },
   lines: { orderBy: { created_at: "asc" as const } },
   purchaseOrderSources: { select: { purchase_order_id: true } },
 } as const;
@@ -36,6 +36,7 @@ function serializeMaster(order: Prisma.MasterPurchaseOrderGetPayload<{ include: 
     price: [...new Set(order.sourceRecords.map((source) => numberValue(source.groupedPurchaseOrder.vendor_price_inr ?? source.groupedPurchaseOrder.vendor_price)).filter((value): value is number => value !== null))].join(", "),
     gst: [...new Set(order.sourceRecords.map((source) => numberValue(source.groupedPurchaseOrder.gst)).filter((value): value is number => value !== null))].join(", "),
     hsnCode: [...new Set(order.sourceRecords.map((source) => source.groupedPurchaseOrder.hsn_code).filter(Boolean))].join(", "),
+    buyingUom: [...new Set(order.sourceRecords.map((source) => source.groupedPurchaseOrder.buying_uom).filter(Boolean))].join(", "),
     total: order.lines.reduce((sum, line) => sum + Number(line.total_spend ?? (Number(line.grouped_qty) * Number(line.vendor_price ?? 0))), 0),
     lines: order.lines.map((line) => ({
       id: line.id,
@@ -51,6 +52,7 @@ function serializeMaster(order: Prisma.MasterPurchaseOrderGetPayload<{ include: 
       groupedQty: numberValue(line.grouped_qty),
       vendorPrice: numberValue(line.vendor_price),
       totalSpend: numberValue(line.total_spend),
+         stockUom: line.stock_uom,
     })),
   };
 }
@@ -92,6 +94,7 @@ export async function createMasterPurchaseOrder(
       grouped_qty: line.grouped_qty,
       vendor_price: line.vendor_price,
       total_spend: line.total_spend,
+         stock_uom: line.stock_uom,
     })));
     const displayNumber = await reserveProcurementDocumentNumber(organizationId, "MASTER_GROUP", transaction);
     const displayNo = Number(displayNumber.replace("MGP-", ""));

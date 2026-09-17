@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Button from "@/components/ui/Button";
+import Modal from "@/components/ui/Modal";
 
 type Receipt = {
   id: string;
@@ -113,8 +114,8 @@ export default function RmGrnReportPage() {
       </header>
 
       {showDeleteConfirmation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-grn-title">
-          <div className="w-full max-w-md space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+        <Modal open={showDeleteConfirmation} onClose={() => setShowDeleteConfirmation(false)} ariaLabel="Delete selected GRN records" variant="danger" size="sm" className="p-5">
+          <div className="space-y-4">
             <div>
               <h3 id="delete-grn-title" className="text-base font-bold text-slate-900">Delete selected GRN records?</h3>
               <p className="mt-1 text-xs text-slate-500">This will permanently remove {selectedIds.length} selected record{selectedIds.length === 1 ? "" : "s"} from the report.</p>
@@ -128,7 +129,7 @@ export default function RmGrnReportPage() {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {loading ? (

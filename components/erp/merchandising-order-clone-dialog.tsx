@@ -1,4 +1,5 @@
 import Button from "@/components/ui/Button";
+import Modal from "@/components/ui/Modal";
 
 type CloneDraft = {
   article: string;
@@ -34,8 +35,7 @@ export default function MerchandisingOrderCloneDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-2.5" role="dialog" aria-modal="true" aria-labelledby="clone-order-title">
-      <div className="w-full max-w-md overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.14)]">
+    <Modal open={open} onClose={onClose} ariaLabel="Clone order" variant="success" size="sm" className="max-w-md">
         <div className="border-b border-slate-200 bg-gradient-to-r from-emerald-50 via-white to-slate-50 px-3 py-2.5">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -150,7 +150,6 @@ export default function MerchandisingOrderCloneDialog({
             <Button variant="primary" size="sm" onClick={onConfirm}>Continue</Button>
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

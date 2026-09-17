@@ -53,6 +53,7 @@ model Organization {
   platformVersion               PlatformVersion?               @relation(fields: [platform_version_id], references: [id], onDelete: SetNull)
   databaseConnection            DatabaseConnection?            @relation(fields: [database_connection_id], references: [id])
   memberships                   OrganizationMembership[]
+  taxProfiles                   OrganizationTaxProfile[]
   erpSoftware                   ERPSoftware[]
   masterModules                 MasterModule[]
   merchandisingOrders           MerchandisingOrder[]
@@ -74,11 +75,13 @@ model Organization {
   masterSizeGroups              MasterSizeGroup[]
   masterSizes                   MasterSize[]
   masterUoms                    MasterUom[]
+  masterStockUomConverts        MasterStockUomConvert[]
   masterRawMaterials            MasterRawMaterial[]
   masterRawMaterialTypes        MasterRawMaterialType[]
   masterRawMaterialCategories   MasterRawMaterialCategory[]
   masterRawMaterialSubCats      MasterRawMaterialSubCategory[]
   masterVendors                 MasterVendor[]
+  masterStates                  MasterState[]
   masterGstTypes                MasterGstType[]
   masterGsts                    MasterGst[]
   masterHsns                    MasterHsn[]
@@ -106,6 +109,7 @@ model Organization {
   inventoryReceipts             InventoryReceipt[]
   rawMaterialStocks             RawMaterialStock[]
   finishedGoodsStocks           FinishedGoodsStock[]
+  finishedGoodsSkuStocks        FinishedGoodsSkuStock[]
   gateEntries                   GateEntry[]
   factoryWorkOrders             FactoryWorkOrder[]
   factoryProductionUpdates      FactoryProductionUpdate[]
@@ -116,6 +120,29 @@ model Organization {
   @@index([plan_id])
   @@index([database_connection_id])
   @@map("organizations")
+}
+
+model OrganizationTaxProfile {
+  id             String      @id @default(cuid())
+  organization_id String
+  country        String      @default("IN") @db.VarChar(10)
+  tax_regime     String      @default("GST") @db.VarChar(30)
+  gstin          String?     @db.VarChar(20)
+  state          String?     @db.VarChar(100)
+  is_default     Boolean     @default(true)
+  is_active      Boolean     @default(true)
+  cgst_rate      Decimal?    @db.Decimal(10, 2)
+  sgst_rate      Decimal?    @db.Decimal(10, 2)
+  igst_rate      Decimal?    @db.Decimal(10, 2)
+  vat_rate       Decimal?    @db.Decimal(10, 2)
+  sales_tax_rate Decimal?    @db.Decimal(10, 2)
+  created_at     DateTime    @default(now())
+  updated_at     DateTime    @updatedAt
+  organization   Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, country, tax_regime])
+  @@index([organization_id, is_default, is_active])
+  @@map("organization_tax_profiles")
 }
 
 model OrganizationMembership {
@@ -623,6 +650,9 @@ model MasterArticle {
   value_id        String       @unique @default(uuid())
   organization_id String
   article         String       @db.VarChar(255)
+  article_code    String?      @db.VarChar(100)
+  design_by       String?      @db.VarChar(255)
+  designed_date   DateTime?
   is_active       Boolean      @default(false)
   sort_order      Int          @default(0)
   legacy_metadata Json?
@@ -631,6 +661,7 @@ model MasterArticle {
   organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
   @@unique([organization_id, article])
+  @@unique([organization_id, article_code])
   @@index([organization_id, is_active])
   @@map("master_articles")
 }
@@ -709,10 +740,31 @@ model MasterUom {
   updated_at      DateTime            @updatedAt
   organization    Organization        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   raw_materials   MasterRawMaterial[]
+  conversions     MasterStockUomConvert[]
 
   @@unique([organization_id, uom])
   @@index([organization_id, is_active])
   @@map("master_uoms")
+}
+
+model MasterStockUomConvert {
+  id              String       @id @default(cuid())
+  value_id        String       @unique @default(uuid())
+  organization_id String
+  stock_uom_id    String
+  name            String       @db.VarChar(255)
+  how_many        Decimal      @db.Decimal(12, 4)
+  is_active       Boolean      @default(false)
+  sort_order      Int          @default(0)
+  legacy_metadata Json?
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  stock_uom       MasterUom    @relation(fields: [stock_uom_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, stock_uom_id, name])
+  @@index([organization_id, stock_uom_id, sort_order])
+  @@map("master_stock_uom_converts")
 }
 
 model MasterVendor {
@@ -720,18 +772,39 @@ model MasterVendor {
   value_id              String                 @unique @default(uuid())
   organization_id       String
   vendor                String                 @db.VarChar(255)
+  gst_number            String?                @db.VarChar(50)
+  registered_state      String?                @db.VarChar(100)
+  registered_state_id   String?
   is_active             Boolean                @default(false)
   sort_order            Int                    @default(0)
   legacy_metadata       Json?
   created_at            DateTime               @default(now())
   updated_at            DateTime               @updatedAt
   organization          Organization           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  registeredState       MasterState?           @relation(fields: [registered_state_id], references: [id], onDelete: SetNull)
   groupedPurchaseOrders GroupedPurchaseOrder[]
   masterPurchaseOrders  MasterPurchaseOrder[]
   purchaseOrders        PurchaseOrder[]
 
   @@index([organization_id, is_active])
   @@map("master_vendors")
+}
+
+model MasterState {
+  id              String         @id @default(cuid())
+  value_id        String         @unique @default(uuid())
+  organization_id String
+  state           String         @db.VarChar(100)
+  is_active       Boolean        @default(true)
+  sort_order      Int            @default(0)
+  created_at      DateTime       @default(now())
+  updated_at      DateTime       @updatedAt
+  organization    Organization   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  vendors         MasterVendor[]
+
+  @@unique([organization_id, state])
+  @@index([organization_id, is_active])
+  @@map("master_states")
 }
 
 model MasterGstType {
@@ -758,6 +831,9 @@ model MasterGst {
   organization_id   String
   name              String         @db.VarChar(255)
   gst               Decimal?       @db.Decimal(10, 2)
+  cgst_rate         Decimal?       @db.Decimal(10, 2)
+  sgst_rate         Decimal?       @db.Decimal(10, 2)
+  igst_rate         Decimal?       @db.Decimal(10, 2)
   gst_type_id       String?
   zoho_books_tax_id String?        @db.VarChar(255)
   is_active         Boolean        @default(false)

@@ -25,13 +25,9 @@ async function getUserByEmail(email: string) {
     return getDevUser(email);
   }
 
-  try {
-    return await prisma.workspaceUser.findUnique({
-      where: { email },
-    });
-  } catch {
-    return null;
-  }
+  return prisma.workspaceUser.findUnique({
+    where: { email },
+  });
 }
 
 async function getUserByProfileName(profileName: string) {
@@ -39,13 +35,9 @@ async function getUserByProfileName(profileName: string) {
     return hasDevProfileName(profileName) ? { profile_name: profileName } : null;
   }
 
-  try {
-    return await prisma.workspaceUser.findUnique({
-      where: { profile_name: profileName },
-    });
-  } catch {
-    return null;
-  }
+  return prisma.workspaceUser.findUnique({
+    where: { profile_name: profileName },
+  });
 }
 
 export async function POST(request: Request) {

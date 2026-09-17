@@ -14,9 +14,10 @@ type PurchaseOrder = {
   poDate: string;
   deliveryDate: string | null;
   total: number;
+  lines: Array<{ gst: number | null; hsnCode: string | null; buyingUom: string | null }>;
 };
 
-type PurchaseOrderField = "purchaseOrderNo" | "vendorName" | "poDate" | "deliveryDate" | "status" | "total";
+type PurchaseOrderField = "purchaseOrderNo" | "vendorName" | "poDate" | "deliveryDate" | "status" | "buyingUom" | "gst" | "hsnCode" | "total";
 
 const reportFields: Array<{ key: PurchaseOrderField; label: string }> = [
   { key: "purchaseOrderNo", label: "PO Number" },
@@ -24,6 +25,9 @@ const reportFields: Array<{ key: PurchaseOrderField; label: string }> = [
   { key: "poDate", label: "PO Date" },
   { key: "deliveryDate", label: "Delivery Date" },
   { key: "status", label: "Status" },
+  { key: "buyingUom", label: "Buying UOM" },
+  { key: "gst", label: "GST" },
+  { key: "hsnCode", label: "HSN Code" },
   { key: "total", label: "Grand Total" },
 ];
 
@@ -98,7 +102,13 @@ export default function PurchaseOrderReportPage() {
   };
 
   const reportRows = useMemo(
-    () => orders.map((order) => ({ ...order, vendorName: order.vendor?.name ?? "" })),
+    () => orders.map((order) => ({
+      ...order,
+      vendorName: order.vendor?.name ?? "",
+      buyingUom: [...new Set(order.lines.map((line) => line.buyingUom).filter(Boolean))].join(", "),
+      gst: [...new Set(order.lines.map((line) => line.gst).filter((value): value is number => value !== null))].join(", "),
+      hsnCode: [...new Set(order.lines.map((line) => line.hsnCode).filter(Boolean))].join(", "),
+    })),
     [orders],
   );
 
@@ -184,6 +194,12 @@ export default function PurchaseOrderReportPage() {
                   return date(row.deliveryDate);
                 case "status":
                   return row.status;
+                case "buyingUom":
+                  return row.buyingUom;
+                case "gst":
+                  return row.gst;
+                case "hsnCode":
+                  return row.hsnCode;
                 case "total":
                   return number(row.total);
                 default:

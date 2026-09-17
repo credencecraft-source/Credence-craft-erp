@@ -87,24 +87,17 @@ function hasMissingRequiredField(fields: Record<string, unknown>, definition: { 
   });
 }
 
-async function saveChildValues(
-  organizationId: string,
-  parentId: string,
-  definition: { fields: MasterFieldDefinition[] },
+function validateChildValues(
+  childField: MasterFieldDefinition,
   formData: FormData,
 ) {
-  const childField = definition.fields.find((field) => (field.type === "child-list" && field.childModuleKey) || (field.type === "lookup" && field.multiple && field.lookupModuleKey));
-  const childModuleKey = childField?.childModuleKey ?? childField?.lookupModuleKey;
-  if (!childField || !childModuleKey) return;
-
   const selectedValues = readChildValues(formData, childField);
-  const existingChildren = await getMasterValuesForOrganization(organizationId, childModuleKey, true);
-  const existingForParent = existingChildren.filter((child) => child.parent_id === parentId);
-  await Promise.all(existingForParent.map((child) => deleteMasterValue(organizationId, child.value_id)));
-
   const childFields = childField.childFields ?? [];
   const slNumbers = new Set<number>();
+  const hasSlNo = childFields.some((child) => child.key === "Sl_No");
   const processNames = new Set<string>();
+  const validatedRows: Array<{ label: string; fields: Record<string, unknown> }> = [];
+
   for (const rawValue of selectedValues) {
     const row = rawValue && typeof rawValue === "object" ? rawValue as Record<string, unknown> : {};
     const fields = Object.fromEntries(childFields.map((child) => {
@@ -118,13 +111,44 @@ async function saveChildValues(
     const label = String(labelField ? fields[labelField.key] ?? "" : "").trim();
     if (!label) continue;
     const slNo = Number(fields.Sl_No);
-    if (!Number.isInteger(slNo) || slNo <= 0) throw new Error(`${childField.label} Sl No must be a positive whole number.`);
-    if (slNumbers.has(slNo)) throw new Error(`${childField.label} cannot contain duplicate Sl No values.`);
+    if (hasSlNo && (!Number.isInteger(slNo) || slNo <= 0)) throw new Error(`${childField.label} Sl No must be a positive whole number.`);
+    if (hasSlNo && slNumbers.has(slNo)) throw new Error(`${childField.label} cannot contain duplicate Sl No values.`);
     if (processNames.has(label)) throw new Error(`${childField.label} cannot contain the same process more than once.`);
-    slNumbers.add(slNo);
+    if (hasSlNo) slNumbers.add(slNo);
     processNames.add(label);
-    await createMasterValueForOrganization(organizationId, childModuleKey, { label, fields, parentValueId: parentId });
+    validatedRows.push({ label, fields });
   }
+
+  return { childModuleKey: childField.childModuleKey ?? childField.lookupModuleKey, validatedRows };
+}
+
+async function saveChildValues(
+  organizationId: string,
+  parentId: string,
+  definition: { fields: MasterFieldDefinition[] },
+  formData: FormData,
+) {
+  const childField = definition.fields.find((field) => (field.type === "child-list" && field.childModuleKey) || (field.type === "lookup" && field.multiple && field.lookupModuleKey));
+  if (!childField) return;
+  const { childModuleKey, validatedRows } = validateChildValues(childField, formData);
+  if (!childModuleKey) return;
+
+  const existingChildren = await getMasterValuesForOrganization(organizationId, childModuleKey, true);
+  const existingForParent = existingChildren.filter((child) => child.parent_id === parentId);
+  await Promise.all(existingForParent.map((child) => deleteMasterValue(organizationId, child.value_id)));
+
+  for (const row of validatedRows) {
+    await createMasterValueForOrganization(organizationId, childModuleKey, {
+      label: row.label,
+      fields: row.fields as Parameters<typeof createMasterValueForOrganization>[2]["fields"],
+      parentValueId: parentId,
+    });
+  }
+}
+
+function masterDataErrorRedirect(workspaceId: string, organizationId: string, moduleKey: string, error: unknown): never {
+  const message = error instanceof Error ? error.message : "Unable to save master data.";
+  redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent(message)}`);
 }
 
 async function createMasterValueAction(formData: FormData) {
@@ -170,7 +194,12 @@ async function createMasterValueAction(formData: FormData) {
     fields,
   });
 
-  await saveChildValues(organization.id, created.id, definition, formData);
+  try {
+    await saveChildValues(organization.id, created.id, definition, formData);
+  } catch (error) {
+    await deleteMasterValue(organization.id, created.id);
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+  }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
 }
@@ -208,6 +237,13 @@ async function updateMasterValueAction(formData: FormData) {
   }
   await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
 
+  const childField = definition.fields.find((field) => (field.type === "child-list" && field.childModuleKey) || (field.type === "lookup" && field.multiple && field.lookupModuleKey));
+  try {
+    if (childField) validateChildValues(childField, formData);
+  } catch (error) {
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+  }
+
   const updated = await updateMasterValue(organization.id, valueId, {
     label,
     code: code || null,
@@ -216,7 +252,11 @@ async function updateMasterValueAction(formData: FormData) {
   });
 
   if (updated) {
+    try {
       await saveChildValues(organization.id, updated.id, definition, formData);
+    } catch (error) {
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+    }
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
@@ -305,24 +345,27 @@ export default async function MasterDataEditorPage({
   const childRecords = childModuleKey
     ? (await getMasterValuesForOrganization(organization.id, childModuleKey, true)).map((item) => ({ parentId: item.parent_id, label: item.label, fields: item.fields }))
     : [];
+  const shouldShowMasterHeader = moduleKey !== "article";
 
   return (
     <div>
-      <div>
+      {shouldShowMasterHeader ? (
         <div>
-          <p>Master</p>
-          <h3>{definition.label}</h3>
-          <p>{definition.description}</p>
-        </div>
+          <div>
+            <p>Master</p>
+            <h3>{definition.label}</h3>
+            <p>{definition.description}</p>
+          </div>
 
-        <div>
-          <Link
-            href={`/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data`}
-          >
-            Back to masters
-          </Link>
+          <div>
+            <Link
+              href={`/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data`}
+            >
+              Back to masters
+            </Link>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {error ? (
         <p className="mt-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800" role="alert">

@@ -16,10 +16,12 @@ export type CalculatedFinishedGoodsQuantity = FinishedGoodsQuantityInput & {
 };
 
 export type BomQuantityInput = {
+  id?: string;
   categoryType?: string | null;
   category?: string | null;
   subCategory?: string | null;
   rawMaterialName?: string | null;
+  stockUom?: string | null;
   size?: string | null;
   buyerConsumption?: number | string | null;
   buyerPrice?: number | string | null;

@@ -14,6 +14,7 @@ type BomRow = {
   category?: string | null;
   subCategory?: string | null;
   rawMaterialName?: string | null;
+  stockUom?: string | null;
   mainLabel?: string | null;
   size?: string | null;
   consumption?: number | string | null;

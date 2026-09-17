@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Modal from "@/components/ui/Modal";
 import MerchandisingOrderCloneDialog from "@/components/erp/merchandising-order-clone-dialog";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 
@@ -338,8 +339,8 @@ export default function MerchandisingOrdersPage() {
       />
 
       {showDeleteConfirmation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-orders-title">
-          <div className="w-full max-w-md space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+        <Modal open={showDeleteConfirmation} onClose={() => setShowDeleteConfirmation(false)} ariaLabel="Delete selected orders" variant="danger" size="sm" className="p-5">
+          <div className="space-y-4">
             <div>
               <h3 id="delete-orders-title" className="text-base font-bold text-slate-900">Delete selected orders?</h3>
               <p className="mt-1 text-xs text-slate-500">This will permanently delete {selectedOrderIds.length} order{selectedOrderIds.length === 1 ? "" : "s"} and its finished goods and BOM records.</p>
@@ -349,7 +350,7 @@ export default function MerchandisingOrdersPage() {
               <Button variant="danger" size="sm" onClick={handleDeleteSelected} disabled={isDeleting}>{isDeleting ? "Deleting..." : "Delete Orders"}</Button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

@@ -8,6 +8,7 @@ export type GroupedPurchaseOrderHeaderInput = {
   vendorPriceInr?: number | string | null;
   vendorPrice?: number | string | null;
   gst?: number | string | null;
+  gstMasterId?: string | null;
   hsnCode?: string | null;
   otherChargesInr?: number | string | null;
   convertValue?: number | string | null;
@@ -34,7 +35,13 @@ export async function updateGroupedPurchaseOrderHeader(
   if (!order) throw new Error("Grouped PO is not pending price approval.");
 
   const vendorPriceInr = input.vendorPriceInr === null || input.vendorPriceInr === undefined ? null : numberValue(input.vendorPriceInr);
-  const gst = input.gst === null || input.gst === undefined || input.gst === "" ? null : numberValue(input.gst);
+  const vendorPrice = input.vendorPrice === null || input.vendorPrice === undefined || input.vendorPrice === "" ? vendorPriceInr : numberValue(input.vendorPrice);
+  const gstMaster = input.gstMasterId
+    ? await prisma.masterGst.findFirst({ where: { id: input.gstMasterId, organization_id: organizationId, is_active: true }, select: { gst: true } })
+    : null;
+  if (input.gstMasterId && !gstMaster) throw new Error("Select a valid active GST master value.");
+  const gst = gstMaster ? Number(gstMaster.gst ?? 0) : input.gst === null || input.gst === undefined || input.gst === "" ? null : numberValue(input.gst);
+  if (gst !== null && !gstMaster) throw new Error("GST must be selected from the GST master.");
   const hsnCode = input.hsnCode === undefined ? order.hsn_code : input.hsnCode?.trim() || null;
   const otherChargesInr = numberValue(input.otherChargesInr, numberValue(order.other_charges_inr));
   const convertValue = numberValue(input.convertValue, numberValue(order.convert_value));
@@ -74,7 +81,7 @@ export async function updateGroupedPurchaseOrderHeader(
       data: {
         ...(input.note !== undefined && { note: input.note?.trim() || null }),
         ...(input.buyingUom !== undefined && { buying_uom: input.buyingUom || null }),
-        ...(vendorPriceInr !== null && { vendor_price_inr: vendorPriceInr, vendor_price: input.vendorPrice ?? vendorPriceInr }),
+        ...(vendorPriceInr !== null && { vendor_price_inr: vendorPriceInr, vendor_price: vendorPrice }),
         gst,
         hsn_code: hsnCode,
         other_charges_inr: otherChargesInr,
@@ -90,7 +97,7 @@ export async function updateGroupedPurchaseOrderHeader(
       },
       include: {
         vendor: { select: { id: true, vendor: true } },
-        lines: { orderBy: { created_at: "asc" }, select: { id: true, source_bom_item_id: true, order_no: true, style_name: true, brand: true, category: true, sub_category: true, item_name: true, category_type: true, internal_price_bom: true, other_charges_per_item: true, total_extra: true, total_spend: true, internal_consumption: true, required_qty: true, grouped_qty: true, vendor_price: true } },
+        lines: { orderBy: { created_at: "asc" }, select: { id: true, source_bom_item_id: true, order_no: true, style_name: true, brand: true, category: true, sub_category: true, item_name: true, stock_uom: true, category_type: true, internal_price_bom: true, other_charges_per_item: true, total_extra: true, total_spend: true, internal_consumption: true, required_qty: true, grouped_qty: true, vendor_price: true } },
       },
     });
   });
