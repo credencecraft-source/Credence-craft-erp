@@ -57,7 +57,7 @@ export default function PurchaseOrderReportPage() {
     }
 
     loadOrders()
-      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load Purchase Orders."))
+      .catch((loadError) => setError({ message: loadError instanceof Error ? loadError.message : "Unable to load Purchase Orders." }))
       .finally(() => setLoading(false));
   }, [organizationId]);
 

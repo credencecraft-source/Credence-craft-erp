@@ -37,7 +37,7 @@ export default async function MasterDataListPage({
 
   const groupedMasters = MASTER_DEFINITIONS.filter((master) => !master.hidden).reduce<Record<string, Record<string, typeof MASTER_DEFINITIONS[number][]>>>(
     (accumulator, master) => {
-      const { topLevel, topLevelLabel, subLevel, subLevelLabel } = getMasterModuleGroupInfo(master.key);
+      const { topLevel, subLevel } = getMasterModuleGroupInfo(master.key);
 
       if (!accumulator[topLevel]) {
         accumulator[topLevel] = {};
@@ -49,12 +49,10 @@ export default async function MasterDataListPage({
 
       accumulator[topLevel][subLevel].push(master);
       accumulator[topLevel][subLevel].sort((left, right) => (left.moduleOrder ?? 999) - (right.moduleOrder ?? 999));
-      accumulator[topLevel]["__meta"] ??= { label: topLevelLabel };
-      accumulator[topLevel]["__meta__sub"] ??= { [subLevel]: subLevelLabel };
 
       return accumulator;
     },
-    {} as Record<string, Record<string, typeof MASTER_DEFINITIONS[number][] | { label: string }>>,
+    {},
   );
 
   const orderedGroups = Object.entries(MASTER_MODULE_HIERARCHY).map(([topLevelKey, topLevelConfig]) => ({
