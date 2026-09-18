@@ -333,9 +333,13 @@ export function MasterRecordsTable({
     return String(value);
   };
 
-  const openArticleDetail = (record: MasterRecord) => {
-    if (moduleKey !== "article") return;
-    router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/articles/${encodeURIComponent(record.value_id)}`);
+  const openRecordDetail = (record: MasterRecord) => {
+    if (moduleKey === "article") {
+      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/articles/${encodeURIComponent(record.value_id)}`);
+    }
+    if (moduleKey === "gold-seal") {
+      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/gold-seals/${encodeURIComponent(record.value_id)}`);
+    }
   };
 
   return (
@@ -370,7 +374,7 @@ export function MasterRecordsTable({
             return (
               <article
                 key={item.id}
-                onClick={() => openArticleDetail(item)}
+                onClick={() => openRecordDetail(item)}
                 className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-emerald-500 hover:shadow-md"
               >
                 <div className="flex items-start justify-between gap-3">
@@ -423,12 +427,12 @@ export function MasterRecordsTable({
                 ) : null}
 
                 <div className="mt-4 flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
-                  {moduleKey === "article" ? (
+                  {moduleKey === "article" || moduleKey === "gold-seal" ? (
                     <button
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
-                        openArticleDetail(item);
+                        openRecordDetail(item);
                       }}
                       className="px-2.5 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-lg text-xs font-medium transition-colors"
                     >

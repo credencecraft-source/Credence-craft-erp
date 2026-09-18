@@ -21,6 +21,8 @@ export const ERP_MODULES: ErpModule[] = [
     pathSegment: "pos",
     children: [
       { key: "quick-invoice", label: "Quick Invoice", pathSegment: "quick-invoice" },
+      { key: "invoice", label: "Invoice", pathSegment: "invoice" },
+      { key: "stock", label: "Stock", pathSegment: "stock" },
     ],
   },
   {
@@ -60,7 +62,7 @@ export const ERP_MODULES: ErpModule[] = [
         label: "Tech Pack",
         pathSegment: "tech-pack",
         children: [
-          { key: "articles", label: "Articles", pathSegment: "articles" },
+          { key: "gold-seals", label: "Gold Seal", pathSegment: "gold-seals" },
         ],
       },
     ],
@@ -143,8 +145,6 @@ export const ERP_MODULES: ErpModule[] = [
     label: "Inventory Management",
     pathSegment: "inventory-management",
     children: [
-      { key: "gate-entry", label: "Gate Entry", pathSegment: "gate-entry" },
-      { key: "gate-entry-reports", label: "Gate Entry Reports", pathSegment: "gate-entry/reports" },
       {
         key: "inward",
         label: "Inward",
@@ -173,6 +173,15 @@ export const ERP_MODULES: ErpModule[] = [
           { key: "fg-stock", label: "FG Stock", pathSegment: "fg-stock" },
         ],
       },
+    ],
+  },
+  {
+    key: "security-management",
+    label: "Security Management",
+    pathSegment: "security-management",
+    children: [
+      { key: "gate-entry", label: "Gate Entry", pathSegment: "gate-entry" },
+      { key: "gate-entry-reports", label: "Gate Entry Reports", pathSegment: "gate-entry/reports" },
     ],
   },
   {
@@ -232,6 +241,8 @@ const BUSINESS_TYPE_MODULE_ALIASES: Record<string, string> = {
   "quality-management": "quality-management-system",
   "finance-management": "finance-management",
   "inventory-management": "inventory-management",
+  "security-management": "security-management",
+  "security": "security-management",
   "settings": "settings",
   "setting": "settings",
   "admin": "admin",

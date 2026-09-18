@@ -71,6 +71,8 @@ model Organization {
   masterBuyers                  MasterBuyer[]
   masterSeasons                 MasterSeason[]
   masterArticles                MasterArticle[]
+  masterGoldSeals               MasterGoldSeal[]
+  masterGoldSealVariants        MasterGoldSealVariant[]
   masterColors                  MasterColor[]
   masterSizeGroups              MasterSizeGroup[]
   masterSizes                   MasterSize[]
@@ -664,6 +666,55 @@ model MasterArticle {
   @@unique([organization_id, article_code])
   @@index([organization_id, is_active])
   @@map("master_articles")
+}
+
+model MasterGoldSeal {
+  id              String                   @id @default(cuid())
+  value_id        String                   @unique @default(uuid())
+  organization_id String
+  gold_seal       String                   @db.VarChar(255)
+  gold_seal_code  String?                  @db.VarChar(100)
+  design_by       String?                  @db.VarChar(255)
+  designed_date   DateTime?
+  is_active       Boolean                  @default(false)
+  sort_order      Int                      @default(0)
+  legacy_metadata Json?
+  created_at      DateTime                 @default(now())
+  updated_at      DateTime                 @updatedAt
+  organization    Organization              @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  variants        MasterGoldSealVariant[]
+
+  @@unique([organization_id, gold_seal])
+  @@unique([organization_id, gold_seal_code])
+  @@index([organization_id, is_active])
+  @@map("master_gold_seals")
+}
+
+model MasterGoldSealVariant {
+  id              String          @id @default(cuid())
+  value_id        String          @unique @default(uuid())
+  organization_id String
+  gold_seal_id    String
+  variant         String          @db.VarChar(255)
+  variant_code    String?         @db.VarChar(100)
+  color           String?         @db.VarChar(150)
+  size            String?         @db.VarChar(100)
+  sku             String?         @db.VarChar(150)
+  barcode         String?         @db.VarChar(150)
+  is_active       Boolean         @default(false)
+  sort_order      Int             @default(0)
+  legacy_metadata Json?
+  created_at      DateTime        @default(now())
+  updated_at      DateTime        @updatedAt
+  organization    Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  goldSeal        MasterGoldSeal  @relation(fields: [gold_seal_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, gold_seal_id, variant])
+  @@unique([organization_id, variant_code])
+  @@unique([organization_id, sku])
+  @@unique([organization_id, barcode])
+  @@index([organization_id, gold_seal_id, is_active])
+  @@map("master_gold_seal_variants")
 }
 
 model MasterColor {

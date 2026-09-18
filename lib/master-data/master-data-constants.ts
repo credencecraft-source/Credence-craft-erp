@@ -19,7 +19,7 @@ type MasterDelegate = {
 const delegates = {
   entity: prisma.masterEntity, "category-type": prisma.masterCategoryType, category: prisma.masterCategory, "sub-category": prisma.masterSubCategory,
   brand: prisma.masterBrand, "pre-order-checklist": prisma.masterPreOrderChecklist, "currency-type": prisma.masterCurrencyType, buyer: prisma.masterBuyer,
-  season: prisma.masterSeason, article: prisma.masterArticle, color: prisma.masterColor, "size-group": prisma.masterSizeGroup, size: prisma.masterSize,
+  season: prisma.masterSeason, article: prisma.masterArticle, "gold-seal": prisma.masterGoldSeal, "gold-seal-variant": prisma.masterGoldSealVariant, color: prisma.masterColor, "size-group": prisma.masterSizeGroup, size: prisma.masterSize,
   uom: prisma.masterUom, "stock-uom-convert": prisma.masterStockUomConvert, "raw-material": prisma.masterRawMaterial, vendor: prisma.masterVendor, "gst-type": prisma.masterGstType, gst: prisma.masterGst,
   hsn: prisma.masterHsn, state: prisma.masterState, "measurement-chart": prisma.masterMeasurementChart, "size-wise-consumption": prisma.masterSizeWiseConsumption,
   "product-master": prisma.masterProduct, "process-master": prisma.masterProcess, "process-template": prisma.masterProcessTemplate, "process-template-step": prisma.masterProcessTemplateStep, "operation-template": prisma.masterOperationTemplate, "operation-template-step": prisma.masterOperationTemplateStep, merchandiser: prisma.masterMerchandiser, status: prisma.masterStatus,
@@ -29,7 +29,7 @@ const delegates = {
 
 const labelFields: Record<string, string> = {
   entity: "entity_name", "category-type": "category_type", category: "category_name", "sub-category": "sub_category", brand: "brand",
-  "pre-order-checklist": "pre_order_checklist", "currency-type": "currency_type", buyer: "buyer_name", season: "season", article: "article", color: "colors",
+  "pre-order-checklist": "pre_order_checklist", "currency-type": "currency_type", buyer: "buyer_name", season: "season", article: "article", "gold-seal": "gold_seal", "gold-seal-variant": "variant", color: "colors",
   "size-group": "size_group", size: "size", uom: "uom", "stock-uom-convert": "name", "raw-material": "raw_material_name", vendor: "vendor", "gst-type": "gst_type", gst: "name",
   hsn: "hsn_code", state: "state", "measurement-chart": "measurement_chart", "size-wise-consumption": "bom_template_name", "product-master": "product_master_name",
   "process-master": "process_name", "process-template": "process_name", "process-template-step": "process_name", "operation-template": "operation_template_name", "operation-template-step": "operation", merchandiser: "merchandiser", status: "status", "order-volume": "order_volume",
@@ -45,6 +45,8 @@ const fieldColumns: Record<string, Record<string, string>> = {
   buyer: { Buyer_Name: "buyer_name", Buyer_Email: "buyer_email", Currency_Type: "currency_type_id", Status: "status" },
   season: { season: "season" },
   article: { article: "article", article_code: "article_code", design_by: "design_by", designed_date: "designed_date" },
+  "gold-seal": { gold_seal: "gold_seal", gold_seal_code: "gold_seal_code", design_by: "design_by", designed_date: "designed_date" },
+  "gold-seal-variant": { variant: "variant", variant_code: "variant_code", color: "color", size: "size", sku: "sku", barcode: "barcode" },
   color: { Colors: "colors", Status: "status" },
   "size-group": { Brand1: "brand_id", Size_Group: "size_group", Measurement_Chart1: "measurement_chart_id" },
   size: { Size: "size", Size_Group_ID: "size_group_id", status: "status" }, uom: { uom: "uom" }, "stock-uom-convert": { Name: "name", How_Many: "how_many" }, vendor: { vendor: "vendor", Gst_Number: "gst_number", Registered_State: "registered_state_id" }, state: { State: "state" },
@@ -67,6 +69,7 @@ const parentColumns: Record<string, string> = {
   "process-template-step": "process_template_id",
   "operation-template-step": "operation_template_id",
   "stock-uom-convert": "stock_uom_id",
+  "gold-seal-variant": "gold_seal_id",
 };
 
 function typedValue(field: MasterFieldDefinition, value: unknown) {
@@ -92,6 +95,15 @@ async function nextArticleCode(organizationId: string, database: MasterDelegate 
     .filter((value) => Number.isFinite(value));
   const nextNumber = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
   return `AR-${nextNumber}`;
+}
+
+async function nextGoldSealCode(organizationId: string, database: MasterDelegate = delegates["gold-seal"]) {
+  const existing = await database.findMany({ where: { organization_id: organizationId }, select: { gold_seal_code: true }, orderBy: { sort_order: "asc" } });
+  const numbers = existing
+    .map((item) => Number(String(item.gold_seal_code ?? "").replace(/\D+/g, "")))
+    .filter((value) => Number.isFinite(value));
+  const nextNumber = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
+  return `GS-${nextNumber}`;
 }
 
 async function hydrateArticleMetrics(organizationId: string, row: MasterRow) {
@@ -270,7 +282,9 @@ export async function getMasterValuesForOrganization(
       id: row.id,
       value_id: row.value_id,
       label: String(row[labelFields[moduleKey]] ?? ""),
-      code: moduleKey === "article" ? String((row as Record<string, unknown>).article_code ?? "") || null : null,
+      code: ["article", "gold-seal"].includes(moduleKey)
+        ? String((row as Record<string, unknown>)[moduleKey === "article" ? "article_code" : "gold_seal_code"] ?? "") || null
+        : null,
       description: null,
       is_active: row.is_active,
       parent_id: parentColumns[moduleKey] ? (row[parentColumns[moduleKey]] as string | null) ?? null : null,
@@ -296,19 +310,24 @@ export async function createMasterValueForOrganization(organizationId: string, m
 
     const data = await buildData(organizationId, moduleKey, input.fields ?? {}, input.label.trim());
 
-    if (moduleKey === "article") {
-      const providedCode = String((input.fields?.article_code ?? data.article_code ?? "") ?? "").trim();
-      data.article_code = providedCode || await nextArticleCode(organizationId, transactionDelegate);
+    if (moduleKey === "article" || moduleKey === "gold-seal") {
+      const codeField = moduleKey === "article" ? "article_code" : "gold_seal_code";
+      const providedCode = String((input.fields?.[codeField] ?? data[codeField] ?? "") ?? "").trim();
+      data[codeField] = providedCode || (moduleKey === "article"
+        ? await nextArticleCode(organizationId, transactionDelegate)
+        : await nextGoldSealCode(organizationId, transactionDelegate));
       const articleCodeExists = await transactionDelegate.findFirst({
-        where: { organization_id: organizationId, article_code: data.article_code },
+        where: { organization_id: organizationId, [codeField]: data[codeField] },
       });
       if (articleCodeExists) {
-        throw new Error("This article code is already in use. Please choose a unique article code.");
+        throw new Error(`This ${moduleKey === "article" ? "article" : "Gold Seal"} code is already in use.`);
       }
     }
 
     if (input.parentValueId && parentColumns[moduleKey]) {
-      const parentModuleKey = moduleKey === "process-template-step"
+      const parentModuleKey = moduleKey === "gold-seal-variant"
+        ? "gold-seal"
+        : moduleKey === "process-template-step"
         ? "process-template"
         : moduleKey === "operation-template-step"
           ? "operation-template"

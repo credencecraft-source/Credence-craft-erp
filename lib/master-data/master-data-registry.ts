@@ -5,6 +5,7 @@ import { PRODUCTION_MASTER_DEFINITIONS } from "@/lib/master-data/factory-managem
 import { INVENTORY_MASTER_DEFINITIONS } from "@/lib/master-data/inventory-management/inventory-masters";
 import { QUALITY_MANAGEMENT_MASTER_DEFINITIONS } from "@/lib/master-data/quality-management-system/quality-management-masters";
 import { FINANCE_MANAGEMENT_MASTER_DEFINITIONS } from "@/lib/master-data/finance-management/finance-management-masters";
+import { GOLD_SEAL_MASTER_DEFINITIONS } from "@/lib/master-data/design-development/gold-seal-masters";
 import { createMaster, type MasterDefinition, type MasterFieldDefinition, type MasterFieldType } from "@/lib/master-data/master-data-models";
 
 export type { MasterFieldType, MasterFieldDefinition, MasterDefinition } from "@/lib/master-data/master-data-models";
@@ -23,6 +24,7 @@ export const MASTER_DEFINITIONS: MasterDefinition[] = [
   ...INVENTORY_MASTER_DEFINITIONS,
   ...QUALITY_MANAGEMENT_MASTER_DEFINITIONS,
   ...FINANCE_MANAGEMENT_MASTER_DEFINITIONS,
+  ...GOLD_SEAL_MASTER_DEFINITIONS,
   ...GENERAL_MASTER_DEFINITIONS,
 ];
 

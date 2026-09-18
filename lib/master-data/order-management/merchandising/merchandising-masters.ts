@@ -14,7 +14,7 @@ export const MERCHANDISING_MASTER_DEFINITIONS = [
     text("designed_date", "Designed Date", { type: "date" }),
     text("running_order_qty", "Running Order Qty", { type: "number", readOnly: true }),
     text("running_order_variants", "Running Order Variants", { type: "number", readOnly: true }),
-  ], { labelField: "article", moduleGroup: "design-development", moduleSubGroup: "tech-pack", moduleOrder: 1 }),
+  ], { labelField: "article", moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 7 }),
   createMaster("color", "Color", "Color and shade master.", [text("Colors", "Colors", { required: true, unique: true })], { labelField: "Colors", moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 8 }),
   createMaster("size-group", "Size Group", "Grouped size families with their mapped sizes.", [lookup("Brand1", "Brand", "brand", { required: true }), text("Size_Group", "Size Group", { required: true, unique: true }), lookup("Measurement_Chart1", "Measurement Chart", "measurement-chart"), lookup("Size", "Sizes", "size", { multiple: true, required: true })], { labelField: "Size_Group", moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 9 }),
   createMaster("size", "Size", "Reusable size values mapped to groups from the Size Group master.", [text("Size", "Size", { required: true, unique: true })], { moduleGroup: "order-management", moduleSubGroup: "merchandising", moduleOrder: 10 }),

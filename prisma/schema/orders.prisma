@@ -514,6 +514,8 @@ model FinishedGoodsStock {
 
 model FinishedGoodsSkuStock {
   id                   String       @id @default(cuid())
+  sku_code             String?      @db.VarChar(50)
+  barcode              String?      @db.VarChar(150)
   organization_id      String
   style_name           String       @db.VarChar(255)
   order_no             String       @db.VarChar(100)
@@ -523,6 +525,11 @@ model FinishedGoodsSkuStock {
   colour               String?      @db.VarChar(150)
   product_category     String?      @db.VarChar(150)
   sub_product_category String?      @db.VarChar(150)
+  gst_rate             Decimal?     @db.Decimal(8, 2)
+  hsn_code             String?      @db.VarChar(50)
+  purchase_price       Decimal?     @db.Decimal(14, 2)
+  sales_price          Decimal?     @db.Decimal(14, 2)
+  mrp                  Decimal?     @db.Decimal(14, 2)
   added_time           DateTime     @default(now())
   added_user           String       @db.VarChar(255)
   source               String       @db.VarChar(30)
@@ -533,6 +540,8 @@ model FinishedGoodsSkuStock {
 
   @@index([organization_id, style_name])
   @@index([organization_id, added_time])
+  @@unique([organization_id, sku_code])
+  @@unique([organization_id, barcode])
   @@map("finished_goods_sku_stocks")
 }
 
