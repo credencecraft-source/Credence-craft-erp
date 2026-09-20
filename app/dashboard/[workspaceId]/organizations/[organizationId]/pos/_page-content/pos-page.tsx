@@ -25,6 +25,14 @@ export default async function PosPage({ params }: { params: Promise<{ workspaceI
             <span className="mt-6 inline-block text-sm font-semibold text-emerald-700">Open Quick Invoice -&gt;</span>
           </Card>
         </Link>
+        <Link href={`${base}/purchase-bill`} className="block max-w-xl">
+          <Card className="border-slate-200 transition hover:border-sky-400 hover:shadow-md">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">Purchase workspace</p>
+            <h2 className="mt-2 text-xl font-bold text-slate-900">Purchase Bill</h2>
+            <p className="mt-2 text-sm text-slate-600">Enter vendor purchases with size-wise quantities, GST, HSN, and totals.</p>
+            <span className="mt-6 inline-block text-sm font-semibold text-sky-700">Open Purchase Bill -&gt;</span>
+          </Card>
+        </Link>
       </Section>
     </Page>
   );

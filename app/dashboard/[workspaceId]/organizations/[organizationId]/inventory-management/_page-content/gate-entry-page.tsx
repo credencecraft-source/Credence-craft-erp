@@ -42,7 +42,7 @@ export default function GateEntryPage() {
       const response = await fetch("/api/inventory/gate-entries", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organizationId, ...form }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || "Unable to save gate entry.");
-      setForm({ ...initialForm, entryAt: new Date().toISOString().slice(0, 16) }); setChallan(null); setMessage(data.grn ? `Gate entry ${data.entry.entry_no} saved. GRN ${data.grn.receipt_no} created.` : `Gate entry ${data.entry.entry_no} saved.`);
+      setForm({ ...initialForm, entryAt: new Date().toISOString().slice(0, 16) }); setChallan(null); setMessage(data.nextStep === "INVENTORY_RECEIVING" ? `Gate entry ${data.entry.entry_no} saved. Security handoff recorded; Stores must complete the receipt.` : `Gate entry ${data.entry.entry_no} saved.`);
     } catch (saveError) { setError(saveError instanceof Error ? saveError.message : "Unable to save gate entry."); } finally { setSaving(false); }
   };
   const input = (key: keyof FormState, label: string, type = "text", required = false) => <label className="block text-xs font-semibold text-slate-700">{label}<input required={required} type={type} value={form[key]} onChange={(event) => update(key, event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-normal outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100" /></label>;

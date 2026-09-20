@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     const organizationId = url.searchParams.get("organizationId") || body.organizationId;
     
     const organization = await requireOrganizationContext(user.id, String(organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
-    const order = await createOrder(organization.id, body);
+    const order = await createOrder(organization.id, body, user.id);
     return NextResponse.json({ ok: true, order: { ...order, deliveryDate: toDateOnly(order.deliveryDate) } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to create order.";
@@ -48,7 +48,7 @@ export async function PUT(request: Request) {
     }
 
     const organization = await requireOrganizationContext(user.id, String(organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
-    const order = await updateOrderWithDetails(id, organization.id, payload);
+    const order = await updateOrderWithDetails(id, organization.id, payload, user.id);
 
     return NextResponse.json({ ok: true, order: { ...order, deliveryDate: toDateOnly(order.deliveryDate) } });
   } catch (error) {
@@ -70,7 +70,7 @@ export async function DELETE(request: Request) {
     }
 
     const organization = await requireOrganizationContext(user.id, String(organizationId), ["OWNER", "ADMIN", "MERCHANDISING"]);
-    const result = await deleteOrders(orderIds, organization.id);
+    const result = await deleteOrders(orderIds, organization.id, user.id);
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to delete orders.";

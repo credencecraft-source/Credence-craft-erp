@@ -44,7 +44,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ orde
     delete payload.organizationId;
     delete payload.id;
 
-    const order = await updateOrderWithDetails(orderId, organization.id, payload);
+    const order = await updateOrderWithDetails(orderId, organization.id, payload, user.id);
     return NextResponse.json({ ok: true, order });
   } catch (error: any) {
     const message = error?.message || "Unable to update order.";

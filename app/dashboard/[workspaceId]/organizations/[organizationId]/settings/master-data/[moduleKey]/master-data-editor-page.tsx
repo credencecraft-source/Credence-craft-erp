@@ -11,6 +11,8 @@ import {
   deleteMasterValue,
   getMasterDefinition,
   getMasterValuesForOrganization,
+  getSizeGroupSizesForOrganization,
+  syncSizeGroupSizes,
   updateMasterValue,
 } from "@/lib/master-data/master-data-constants";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
@@ -125,11 +127,15 @@ function validateChildValues(
 async function saveChildValues(
   organizationId: string,
   parentId: string,
-  definition: { fields: MasterFieldDefinition[] },
+  definition: { key?: string; fields: MasterFieldDefinition[] },
   formData: FormData,
 ) {
   const childField = definition.fields.find((field) => (field.type === "child-list" && field.childModuleKey) || (field.type === "lookup" && field.multiple && field.lookupModuleKey));
   if (!childField) return;
+  if (definition.key === "size-group") {
+    await syncSizeGroupSizes(organizationId, parentId, readChildValues(formData, childField));
+    return;
+  }
   const { childModuleKey, validatedRows } = validateChildValues(childField, formData);
   if (!childModuleKey) return;
 
@@ -342,9 +348,11 @@ export default async function MasterDataEditorPage({
   const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true)).map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id }))])));
   const childModuleKey = definition.fields.find((field) => field.type === "child-list")?.childModuleKey
     ?? definition.fields.find((field) => field.type === "lookup" && field.multiple)?.lookupModuleKey;
-  const childRecords = childModuleKey
-    ? (await getMasterValuesForOrganization(organization.id, childModuleKey, true)).map((item) => ({ parentId: item.parent_id, label: item.label, fields: item.fields }))
-    : [];
+  const childRecords = moduleKey === "size-group"
+    ? (await getSizeGroupSizesForOrganization(organization.id)).map((item) => ({ parentId: item.groupId, label: item.size.label, fields: item.size.fields }))
+    : childModuleKey
+      ? (await getMasterValuesForOrganization(organization.id, childModuleKey, true)).map((item) => ({ parentId: item.parent_id, label: item.label, fields: item.fields }))
+      : [];
   const shouldShowMasterHeader = moduleKey !== "article";
 
   return (

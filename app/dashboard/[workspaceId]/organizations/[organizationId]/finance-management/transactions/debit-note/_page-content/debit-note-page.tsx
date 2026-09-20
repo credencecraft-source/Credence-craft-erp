@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import Card from "@/components/ui/Card";
+import { ReportGrid } from "@/components/reports/report-grid-display";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 
@@ -22,6 +22,17 @@ type FinanceRecord = {
   paymentStatus: string;
 };
 
+const reportFields: Array<{ key: keyof FinanceRecord; label: string }> = [
+  { key: "documentNumber", label: "Document No." },
+  { key: "date", label: "Date" },
+  { key: "party", label: "Party" },
+  { key: "sourceModule", label: "Source Module" },
+  { key: "sourceRecordId", label: "Source Record" },
+  { key: "amount", label: "Amount" },
+  { key: "tax", label: "Tax" },
+  { key: "net", label: "Net" },
+];
+
 export default function DebitNotePage({
   workspaceId,
   organizationId,
@@ -30,6 +41,9 @@ export default function DebitNotePage({
   organizationId: string;
 }) {
   const [records, setRecords] = useState<FinanceRecord[]>([]);
+  const [visibleReportFields, setVisibleReportFields] = useState<Array<string | keyof FinanceRecord>>(
+    reportFields.map((field) => field.key),
+  );
   const base = `/dashboard/${workspaceId}/organizations/${organizationId}/finance-management/transactions`;
 
   useEffect(() => {
@@ -51,6 +65,26 @@ export default function DebitNotePage({
     }
   }, [organizationId]);
 
+  const renderCell = (fieldKey: string, record: FinanceRecord) => {
+    switch (fieldKey) {
+      case "sourceModule":
+        return (
+          <div>
+            <div className="font-medium text-slate-800">{record.sourceModule}</div>
+            <div className="text-[11px] text-slate-500">{record.sourceRecordId}</div>
+          </div>
+        );
+      case "amount":
+        return <span>Rs {record.amount.toFixed(2)}</span>;
+      case "tax":
+        return <span>Rs {record.tax.toFixed(2)}</span>;
+      case "net":
+        return <span className="font-bold text-slate-900">Rs {record.net.toFixed(2)}</span>;
+      default:
+        return String(record[fieldKey as keyof FinanceRecord] ?? "");
+    }
+  };
+
   return (
     <Page as="div">
       <Section className="space-y-6">
@@ -61,52 +95,18 @@ export default function DebitNotePage({
           </div>
         </div>
 
-        <Card className="border-slate-200 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">Report</p>
-              <h2 className="mt-2 text-xl font-bold text-slate-900">Debit Note Report</h2>
-            </div>
-          </div>
-
-          {records.length === 0 ? (
-            <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
-              No debit note records found.
-            </div>
-          ) : (
-            <div className="mt-5 overflow-x-auto">
-              <table className="w-full min-w-[760px] text-left text-sm">
-                <thead className="border-b border-slate-200 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                  <tr>
-                    <th className="px-3 py-3">Document No.</th>
-                    <th className="px-3 py-3">Date</th>
-                    <th className="px-3 py-3">Party</th>
-                    <th className="px-3 py-3">Source</th>
-                    <th className="px-3 py-3 text-right">Amount</th>
-                    <th className="px-3 py-3 text-right">Tax</th>
-                    <th className="px-3 py-3 text-right">Net</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {records.map((record) => (
-                    <tr key={`${record.id}-${record.documentNumber}`}>
-                      <td className="px-3 py-3 font-bold text-slate-900">{record.documentNumber}</td>
-                      <td className="px-3 py-3 text-slate-600">{record.date}</td>
-                      <td className="px-3 py-3 text-slate-700">{record.party}</td>
-                      <td className="px-3 py-3 text-slate-600">
-                        <div className="font-medium text-slate-800">{record.sourceModule}</div>
-                        <div className="text-[11px] text-slate-500">{record.sourceRecordId}</div>
-                      </td>
-                      <td className="px-3 py-3 text-right text-slate-700">Rs {record.amount.toFixed(2)}</td>
-                      <td className="px-3 py-3 text-right text-slate-700">Rs {record.tax.toFixed(2)}</td>
-                      <td className="px-3 py-3 text-right font-bold text-slate-900">Rs {record.net.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+        <ReportGrid
+          title="Debit Note Report"
+          records={records}
+          fields={reportFields}
+          visibleFields={visibleReportFields}
+          onVisibleFieldsChange={setVisibleReportFields}
+          rowIdSelector={(record) => `${record.id}-${record.documentNumber}`}
+          selectedIds={[]}
+          onRowClick={() => undefined}
+          renderCell={renderCell}
+          emptyMessage="No debit note records found."
+        />
       </Section>
     </Page>
   );

@@ -427,6 +427,99 @@ model PurchaseOrderLine {
   @@map("purchase_order_lines")
 }
 
+model PosPurchaseRecord {
+  id                String             @id @default(cuid())
+  organization_id   String
+  record_number     String             @db.VarChar(30)
+  item_type         String             @db.VarChar(30)
+  style_name        String?            @db.VarChar(255)
+  brand_id          String?
+  size_group_id     String?
+  color_id          String?
+  category_id       String?
+  sub_category_id   String?
+  status            String             @default("SAVED") @db.VarChar(30)
+  purchase_bill_id  String?
+  created_by        String?            @db.VarChar(255)
+  created_at        DateTime           @default(now())
+  updated_at        DateTime           @updatedAt
+  organization      Organization       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  purchase_bill     PosPurchaseBill?  @relation(fields: [purchase_bill_id], references: [id], onDelete: SetNull)
+  lines             PosPurchaseRecordLine[]
+
+  @@index([organization_id, status, created_at])
+  @@index([organization_id, purchase_bill_id])
+  @@unique([organization_id, record_number])
+  @@map("pos_purchase_records")
+}
+
+model PosPurchaseRecordLine {
+  id                 String             @id @default(cuid())
+  record_id          String
+  item_name          String?            @db.VarChar(255)
+  size               String?            @db.VarChar(100)
+  quantity           Decimal            @db.Decimal(14, 2)
+  purchase_price     Decimal?           @db.Decimal(14, 4)
+  sales_price        Decimal?           @db.Decimal(14, 4)
+  gst_id             String?
+  hsn_code           String?            @db.VarChar(100)
+  created_at         DateTime           @default(now())
+  record             PosPurchaseRecord  @relation(fields: [record_id], references: [id], onDelete: Cascade)
+
+  @@index([record_id])
+  @@map("pos_purchase_record_lines")
+}
+
+model PosPurchaseBill {
+  id                String             @id @default(cuid())
+  organization_id   String
+  document_number   String             @db.VarChar(30)
+  vendor_id         String
+  bill_number       String             @db.VarChar(100)
+  bill_date         DateTime
+  tax_mode          String             @default("LOCAL") @db.VarChar(20)
+  status            String             @default("POSTED") @db.VarChar(30)
+  total_quantity    Decimal            @default(0) @db.Decimal(14, 2)
+  subtotal          Decimal            @default(0) @db.Decimal(14, 2)
+  tax               Decimal            @default(0) @db.Decimal(14, 2)
+  total             Decimal            @default(0) @db.Decimal(14, 2)
+  created_by        String?            @db.VarChar(255)
+  posted_at         DateTime?
+  created_at        DateTime           @default(now())
+  updated_at        DateTime           @updatedAt
+  organization      Organization       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  records           PosPurchaseRecord[]
+  lines             PosPurchaseBillLine[]
+
+  @@unique([organization_id, bill_number])
+  @@unique([organization_id, document_number])
+  @@index([organization_id, status, bill_date])
+  @@index([organization_id, vendor_id])
+  @@map("pos_purchase_bills")
+}
+
+model PosPurchaseBillLine {
+  id                 String           @id @default(cuid())
+  purchase_bill_id   String
+  source_record_id   String?
+  item_name          String?          @db.VarChar(255)
+  size               String?          @db.VarChar(100)
+  quantity           Decimal          @db.Decimal(14, 2)
+  purchase_price     Decimal?         @db.Decimal(14, 4)
+  sales_price        Decimal?         @db.Decimal(14, 4)
+  gst_id             String?
+  gst_rate           Decimal?         @db.Decimal(10, 2)
+  hsn_code           String?          @db.VarChar(100)
+  tax_amount         Decimal          @default(0) @db.Decimal(14, 4)
+  total              Decimal          @default(0) @db.Decimal(14, 4)
+  created_at         DateTime         @default(now())
+  purchase_bill      PosPurchaseBill  @relation(fields: [purchase_bill_id], references: [id], onDelete: Cascade)
+
+  @@index([purchase_bill_id])
+  @@index([source_record_id])
+  @@map("pos_purchase_bill_lines")
+}
+
 model ProcurementDocumentCounter {
   id              String       @id @default(cuid())
   organization_id String

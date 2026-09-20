@@ -21,6 +21,7 @@ export const ERP_MODULES: ErpModule[] = [
     pathSegment: "pos",
     children: [
       { key: "quick-invoice", label: "Quick Invoice", pathSegment: "quick-invoice" },
+      { key: "purchase-bill", label: "Purchase Bill", pathSegment: "purchase-bill" },
       { key: "invoice", label: "Invoice", pathSegment: "invoice" },
       { key: "stock", label: "Stock", pathSegment: "stock" },
     ],
@@ -133,6 +134,7 @@ export const ERP_MODULES: ErpModule[] = [
         children: [
           { key: "sales-invoice", label: "Sales Invoice", pathSegment: "sales-invoice" },
           { key: "purchase-invoice", label: "Purchase Invoice", pathSegment: "purchase-invoice" },
+          { key: "create-purchase-bill", label: "Create Purchase Bill", pathSegment: "purchase-invoice/new" },
           { key: "debit-note", label: "Debit Note", pathSegment: "debit-note" },
           { key: "credit-note", label: "Credit Note", pathSegment: "credit-note" },
           { key: "delivery-challan", label: "Delivery Challan", pathSegment: "delivery-challan" },

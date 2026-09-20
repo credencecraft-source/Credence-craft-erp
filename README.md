@@ -49,3 +49,11 @@ npm start
 
 - Database connection strings and usernames are encrypted with `AUTH_SECRET`. Rotate `AUTH_SECRET` only with a planned credential re-encryption procedure.
 - Order numbers use a tenant-scoped atomic counter. The migration initializes counters from existing numeric `OD-*` order numbers and leaves nonconforming legacy order numbers untouched.
+
+## Vercel Preview And Production
+
+- Connect the GitHub repository to Vercel and set `test-branch` as the Preview branch. Keep `main` as the Production branch.
+- Configure `DATABASE_URL`, `DATABASE_URL_UNPOOLED` (or `DIRECT_URL`), and `AUTH_SECRET` separately for Preview and Production. Use separate databases; Preview migrations must never target the production database.
+- Add SMTP variables (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM`) to the environments that send email. Add `GSTIN_API_KEY` only when GST lookup is enabled.
+- Do not add `USE_DEV_USER_STORE` to Vercel. If it exists in a local environment, keep it false for deployed environments.
+- `vercel.json` runs `prisma migrate deploy` before the production build. Review every migration against the Preview database before merging to `main`.

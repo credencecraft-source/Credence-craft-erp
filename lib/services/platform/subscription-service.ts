@@ -291,10 +291,13 @@ export async function getEffectivePlansForOrganization(organizationId: string) {
     prisma.plan.findMany({ where: { business_type_id: { not: null }, tier_key: "FREE" } }),
     prisma.subscription.findMany({
       where: { organization_id: organizationId },
-      include: { plan: true },
       orderBy: { updated_at: "desc" },
     }),
   ]);
+  const plans = await prisma.plan.findMany({
+    where: { id: { in: subscriptions.map((subscription) => subscription.plan_id) } },
+  });
+  const planById = new Map(plans.map((plan) => [plan.id, plan]));
   const freePlanByBusinessType = new Map(
     freePlans.map((plan) => [plan.business_type_id as string, plan]),
   );
@@ -303,6 +306,7 @@ export async function getEffectivePlansForOrganization(organizationId: string) {
 
   for (const subscription of subscriptions) {
     if (!subscription.business_type_id) continue;
+    if (!planById.has(subscription.plan_id)) continue;
 
     const current = latestByBusinessType.get(subscription.business_type_id);
     if (!current || new Date(subscription.updated_at).getTime() > new Date(current.updated_at).getTime()) {
@@ -312,9 +316,11 @@ export async function getEffectivePlansForOrganization(organizationId: string) {
 
   return businessTypes.map((businessType) => {
     const subscription = latestByBusinessType.get(businessType.id);
+    const subscriptionPlan = subscription ? planById.get(subscription.plan_id) : null;
     const subscriptionIsActive = Boolean(
       subscription &&
-      !isFreePlan(subscription.plan) &&
+      subscriptionPlan &&
+      !isFreePlan(subscriptionPlan) &&
       ["paid"].includes(subscription.payment_status.toLowerCase()) &&
       subscription.service_status.toLowerCase() !== "inactive" &&
       (!subscription.end_date || subscription.end_date > now),
@@ -322,7 +328,7 @@ export async function getEffectivePlansForOrganization(organizationId: string) {
 
     return {
       businessType,
-      plan: subscriptionIsActive ? subscription!.plan : freePlanByBusinessType.get(businessType.id),
+      plan: subscriptionIsActive ? subscriptionPlan : freePlanByBusinessType.get(businessType.id),
       subscription: subscriptionIsActive ? subscription : null,
       isFree: !subscriptionIsActive,
     };

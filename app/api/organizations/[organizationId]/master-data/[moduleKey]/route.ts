@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
-import { createMasterValueForOrganization, getMasterValuesForOrganization, getMasterDefinition } from "@/lib/master-data/master-data-constants";
+import { createMasterValueForOrganization, getMasterDefinition, getMasterValuesForOrganization, getSizeGroupSizesForOrganization, syncSizeGroupSizes } from "@/lib/master-data/master-data-constants";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-registry";
 
 export async function GET(
@@ -44,10 +44,10 @@ export async function GET(
       const brands = masterOptions.brand;
       const articles = masterOptions.article;
       const colors = masterOptions.color;
-      const sizes = masterOptions.size;
+      const sizeLinks = await getSizeGroupSizesForOrganization(organization.id);
       const sizeGroups = masterOptions["size-group"].map((group) => ({
         ...group,
-        sizes: sizes.filter((size) => size.parent_id === group.value_id || size.parent_id === group.id),
+        sizes: sizeLinks.filter((link) => link.groupId === group.value_id || link.groupId === group.id).map((link) => link.size),
       }));
       const enrichedMasterOptions = { ...masterOptions, "size-group": sizeGroups };
 
@@ -64,6 +64,16 @@ export async function GET(
     }
 
     const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, { search, limit });
+    if (moduleKey === "size-group") {
+      const sizeLinks = await getSizeGroupSizesForOrganization(organization.id);
+      return NextResponse.json(values.map((group) => ({
+        ...group,
+        sizes: sizeLinks
+          .filter((link) => link.groupId === group.id || link.groupId === group.value_id)
+          .filter((link) => includeInactive || link.size.is_active)
+          .map((link) => link.size),
+      })));
+    }
     if (moduleKey === "process-template") {
       const steps = await getMasterValuesForOrganization(organization.id, "process-template-step", includeInactive, { limit: 500 });
       const operationTemplates = await getMasterValuesForOrganization(organization.id, "operation-template", includeInactive, { limit: 500 });
@@ -181,7 +191,9 @@ export async function POST(
 
     const multiLookupField = definition.fields.find((field) => field.type === "lookup" && field.multiple && field.lookupModuleKey);
     const selectedValues = multiLookupField ? fields[multiLookupField.key] : [];
-    if (multiLookupField?.lookupModuleKey && Array.isArray(selectedValues)) {
+    if (masterKey === "size-group" && Array.isArray(selectedValues)) {
+      await syncSizeGroupSizes(organization.id, newMasterValue.id, selectedValues);
+    } else if (multiLookupField?.lookupModuleKey && Array.isArray(selectedValues)) {
       for (const selectedValue of [...new Set(selectedValues.map((value: unknown) => String(value).trim()).filter(Boolean))]) {
         await createMasterValueForOrganization(organization.id, multiLookupField.lookupModuleKey, {
           label: selectedValue,

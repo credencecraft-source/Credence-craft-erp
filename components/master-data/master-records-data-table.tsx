@@ -167,7 +167,7 @@ export function MasterRecordsTable({
       );
     if (field.type === "lookup") {
       const selectedValue = field.multiple && value === undefined && editingRecord
-        ? childRecords.filter((item) => item.parentId === editingRecord.value_id).map((item) => item.label)
+        ? childRecords.filter((item) => item.parentId === editingRecord.id || item.parentId === editingRecord.value_id).map((item) => item.label)
         : value;
       const options = getLookupOptions(field, values);
       if (field.multiple) {

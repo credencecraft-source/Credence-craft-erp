@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import { calculateBomRows, calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
 import { getEffectivePlansForOrganization } from "@/lib/services/platform/subscription-service";
+import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 
 async function validateOrderQuantityLimit(organizationId: string, orderQty: number) {
   const effectivePlans = await getEffectivePlansForOrganization(organizationId);
@@ -404,7 +405,7 @@ export async function getOrderByOrderNo(orderNo: string, organizationId: string)
   });
 }
 
-export async function deleteOrders(orderIds: string[], organizationId: string) {
+export async function deleteOrders(orderIds: string[], organizationId: string, userId?: string) {
   const ids = [...new Set(orderIds.filter(Boolean))];
   if (ids.length === 0) return { deletedCount: 0 };
 
@@ -431,6 +432,17 @@ export async function deleteOrders(orderIds: string[], organizationId: string) {
         organization_id: organizationId,
       },
     });
+
+    if (result.count > 0) {
+      await createAuditEvent({
+        organizationId,
+        userId,
+        module: "Order Management",
+        action: "DELETE",
+        entityType: "MerchandisingOrder",
+        details: { deleted_count: result.count, order_ids: ids },
+      });
+    }
 
     return { deletedCount: result.count };
   } catch (error) {
@@ -537,7 +549,7 @@ export async function listBomItemsPage(
   };
 }
 
-export async function createOrder(organizationId: string, input: CreateOrderInput) {
+export async function createOrder(organizationId: string, input: CreateOrderInput, userId?: string) {
   if (!organizationId) {
     throw new Error("Organization is required to create an order.");
   }
@@ -548,7 +560,7 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
     : Number(input.orderQty ?? 0);
   await validateOrderQuantityLimit(organizationId, calculatedOrderQty);
 
-  return prisma.$transaction(async (transaction) => {
+  const createdOrder = await prisma.$transaction(async (transaction) => {
     const orderNo = await reserveNextOrderNumber(organizationId, transaction);
     const processTemplate = await findProcessTemplate(organizationId, input.processTemplateId, transaction);
 
@@ -595,6 +607,18 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
 
     return createdOrder;
   }, { maxWait: 10000, timeout: 30000 });
+
+  await createAuditEvent({
+    organizationId,
+    userId,
+    module: "Order Management",
+    action: "CREATE",
+    entityType: "MerchandisingOrder",
+    entityId: createdOrder.id,
+    details: { order_no: createdOrder.orderNo, status: createdOrder.finalStatus },
+  });
+
+  return createdOrder;
 }
 
 export async function updateOrder(
@@ -743,8 +767,9 @@ export async function updateOrderWithDetails(
   orderId: string,
   organizationId: string,
   input: Partial<CreateOrderInput>,
+  userId?: string,
 ) {
-  return prisma.$transaction(async (transaction) => {
+  const updatedOrder = await prisma.$transaction(async (transaction) => {
     const order = await transaction.merchandisingOrder.findFirst({
       where: { id: orderId, organization_id: organizationId },
     });
@@ -809,6 +834,18 @@ export async function updateOrderWithDetails(
 
     return updatedOrder;
   }, { maxWait: 10000, timeout: 30000 });
+
+  await createAuditEvent({
+    organizationId,
+    userId,
+    module: "Order Management",
+    action: "UPDATE",
+    entityType: "MerchandisingOrder",
+    entityId: updatedOrder.id,
+    details: { order_no: updatedOrder.orderNo, status: updatedOrder.finalStatus },
+  });
+
+  return updatedOrder;
 }
 
 export async function getArticleOrderSummaries(organizationId: string) {

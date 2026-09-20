@@ -299,6 +299,53 @@ export async function getPendingMasterValuesForOrganization(organizationId: stri
   return (await getMasterValuesForOrganization(organizationId, moduleKey, true)).filter((entry) => !entry.is_active);
 }
 
+export async function getSizeGroupSizesForOrganization(organizationId: string) {
+  const links = await prisma.masterSizeGroupSize.findMany({
+    where: { organization_id: organizationId },
+    include: { size: true },
+    orderBy: { created_at: "asc" },
+  });
+
+  return links.map((link) => ({
+    groupId: link.size_group_id,
+    size: {
+      id: link.size.id,
+      value_id: link.size.value_id,
+      label: link.size.size,
+      is_active: link.size.is_active,
+      parent_id: link.size_group_id,
+      fields: { Size: link.size.size, status: link.size.status },
+    },
+  }));
+}
+
+export async function syncSizeGroupSizes(organizationId: string, sizeGroupId: string, selectedValues: unknown[]) {
+  const selectedLabels = [...new Set(selectedValues.map((value) => String(value).trim()).filter(Boolean))];
+  const sizes = await prisma.masterSize.findMany({
+    where: {
+      organization_id: organizationId,
+      OR: selectedLabels.flatMap((label) => [{ id: label }, { value_id: label }, { size: label }]),
+    },
+  });
+  const sizeByKey = new Map(sizes.flatMap((size) => [[size.id, size], [size.value_id, size], [size.size, size]]));
+  const selectedSizes = selectedLabels.map((label) => sizeByKey.get(label)).filter((size): size is (typeof sizes)[number] => Boolean(size));
+
+  if (selectedSizes.length !== selectedLabels.length) {
+    throw new Error("Every selected size must already exist in the Size master.");
+  }
+
+  await prisma.$transaction(async (transaction) => {
+    await transaction.masterSizeGroupSize.deleteMany({
+      where: { organization_id: organizationId, size_group_id: sizeGroupId },
+    });
+    if (selectedSizes.length > 0) {
+      await transaction.masterSizeGroupSize.createMany({
+        data: selectedSizes.map((size) => ({ organization_id: organizationId, size_group_id: sizeGroupId, size_id: size.id })),
+      });
+    }
+  });
+}
+
 export async function createMasterValueForOrganization(organizationId: string, moduleKey: string, input: { label: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; parentValueId?: string | null }) {
   const definition = getMasterDefinition(moduleKey);
   const delegate = delegates[moduleKey];

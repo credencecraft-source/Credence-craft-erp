@@ -4,7 +4,7 @@ import { Printer } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import Card from "@/components/ui/Card";
+import { ReportGrid } from "@/components/reports/report-grid-display";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 
@@ -34,6 +34,13 @@ type SavedPosInvoice = {
   savedAt: string;
 };
 
+const reportFields: Array<{ key: keyof SavedPosInvoice; label: string }> = [
+  { key: "invoiceNumber", label: "Invoice No." },
+  { key: "invoiceDate", label: "Date" },
+  { key: "customer", label: "Customer" },
+  { key: "subtotal", label: "Total" },
+];
+
 export default function SalesInvoicePage({
   workspaceId,
   organizationId,
@@ -43,6 +50,9 @@ export default function SalesInvoicePage({
 }) {
   const [invoices, setInvoices] = useState<SavedPosInvoice[]>([]);
   const [selected, setSelected] = useState<SavedPosInvoice | null>(null);
+  const [visibleReportFields, setVisibleReportFields] = useState<Array<string | keyof SavedPosInvoice>>(
+    reportFields.map((field) => field.key),
+  );
   const base = `/dashboard/${workspaceId}/organizations/${organizationId}/finance-management/transactions`;
   const createPath = `${base}/sales-invoice/new`;
 
@@ -60,6 +70,19 @@ export default function SalesInvoicePage({
       setInvoices([]);
     }
   }, [organizationId]);
+
+  const renderCell = (fieldKey: string, record: SavedPosInvoice) => {
+    switch (fieldKey) {
+      case "customer":
+        return record.customer || "Walk-in customer";
+      case "quantity":
+        return record.lines.reduce((sum, line) => sum + line.quantity, 0);
+      case "subtotal":
+        return <span className="font-semibold text-slate-900">Rs {record.subtotal.toFixed(2)}</span>;
+      default:
+        return String(record[fieldKey as keyof SavedPosInvoice] ?? "");
+    }
+  };
 
   return (
     <Page as="div">
@@ -82,65 +105,21 @@ export default function SalesInvoicePage({
         {selected ? (
           <InvoicePreview invoice={selected} onBack={() => setSelected(null)} />
         ) : (
-          <Card className="border-slate-200 p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Report
-                </p>
-                <h2 className="mt-2 text-xl font-bold text-slate-900">
-                  Sales Invoice Report
-                </h2>
-              </div>
-            </div>
-
-            {invoices.length === 0 ? (
-              <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
-                No sales invoice records found.
-              </div>
-            ) : (
-              <div className="mt-5 overflow-x-auto">
-                <table className="w-full min-w-[760px] text-left text-sm">
-                  <thead className="border-b border-slate-200 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    <tr>
-                      <th className="px-3 py-3">Invoice No.</th>
-                      <th className="px-3 py-3">Date</th>
-                      <th className="px-3 py-3">Customer</th>
-                      <th className="px-3 py-3 text-right">Items</th>
-                      <th className="px-3 py-3 text-right">Total</th>
-                      <th className="px-3 py-3 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {invoices.map((invoice) => (
-                      <tr key={invoice.invoiceNumber}>
-                        <td className="px-3 py-3 font-bold text-slate-900">
-                          {invoice.invoiceNumber}
-                        </td>
-                        <td className="px-3 py-3">{invoice.invoiceDate}</td>
-                        <td className="px-3 py-3">{invoice.customer || "Walk-in customer"}</td>
-                        <td className="px-3 py-3 text-right">
-                          {invoice.lines.reduce((sum, line) => sum + line.quantity, 0)}
-                        </td>
-                        <td className="px-3 py-3 text-right font-semibold">
-                          Rs {invoice.subtotal.toFixed(2)}
-                        </td>
-                        <td className="px-3 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => setSelected(invoice)}
-                            className="font-bold text-sky-700 hover:underline"
-                          >
-                            View
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
+          <ReportGrid
+            title="Sales Invoice Report"
+            records={invoices}
+            fields={reportFields}
+            visibleFields={visibleReportFields}
+            onVisibleFieldsChange={setVisibleReportFields}
+            rowIdSelector={(record) => record.invoiceNumber}
+            selectedIds={[]}
+            onRowClick={(recordId) => {
+              const invoice = invoices.find((entry) => entry.invoiceNumber === recordId);
+              if (invoice) setSelected(invoice);
+            }}
+            renderCell={renderCell}
+            emptyMessage="No sales invoice records found."
+          />
         )}
       </Section>
     </Page>

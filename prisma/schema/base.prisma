@@ -27,6 +27,7 @@ model WorkspaceUser {
   targetOrderShares              OrderShare[]             @relation("OrderShareTargetUser")
   submittedSupportTickets        SupportTicket[]          @relation("SupportTicketSubmitter")
   supportTicketMessages          TicketMessage[]          @relation("TicketMessageWorkspaceAuthor")
+  auditEvents                    AuditEvent[]
 
   @@map("workspace_users")
 }
@@ -75,6 +76,7 @@ model Organization {
   masterGoldSealVariants        MasterGoldSealVariant[]
   masterColors                  MasterColor[]
   masterSizeGroups              MasterSizeGroup[]
+  masterSizeGroupSizes          MasterSizeGroupSize[]
   masterSizes                   MasterSize[]
   masterUoms                    MasterUom[]
   masterStockUomConverts        MasterStockUomConvert[]
@@ -101,6 +103,8 @@ model Organization {
   groupedPurchaseOrders         GroupedPurchaseOrder[]
   masterPurchaseOrders          MasterPurchaseOrder[]
   purchaseOrders                PurchaseOrder[]
+  posPurchaseRecords            PosPurchaseRecord[]
+  posPurchaseBills              PosPurchaseBill[]
   subscriptions                 Subscription[]
   invitations                   OrganizationInvitation[]
   rolePermissions               OrganizationRolePermission[]
@@ -118,6 +122,7 @@ model Organization {
   factoryBundleTransfers        FactoryBundleTransfer[]
   factoryDailyProductionReports FactoryDailyProductionReport[]
   factoryGrns                   FactoryGrn[]
+  auditEvents                   AuditEvent[]
 
   @@index([plan_id])
   @@index([database_connection_id])
@@ -306,6 +311,25 @@ model SupportTicket {
   @@index([organization_id, status, created_at])
   @@index([status, created_at])
   @@map("support_tickets")
+}
+
+model AuditEvent {
+  id              String       @id @default(cuid())
+  organization_id String
+  user_id         String?
+  module          String       @db.VarChar(100)
+  action          String       @db.VarChar(100)
+  entity_type     String?      @db.VarChar(150)
+  entity_id       String?      @db.VarChar(255)
+  details         Json?
+  created_at      DateTime     @default(now())
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  user            WorkspaceUser? @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@index([organization_id, created_at])
+  @@index([organization_id, module, created_at])
+  @@index([user_id, created_at])
+  @@map("audit_events")
 }
 
 model BusinessType {
@@ -753,6 +777,7 @@ model MasterSizeGroup {
   brand                MasterBrand             @relation(fields: [brand_id], references: [id])
   measurement_chart    MasterMeasurementChart? @relation(fields: [measurement_chart_id], references: [id])
   sizes                MasterSize[]
+  size_links           MasterSizeGroupSize[]
 
   @@unique([organization_id, size_group])
   @@index([organization_id, is_active])
@@ -773,10 +798,27 @@ model MasterSize {
   updated_at      DateTime         @updatedAt
   organization    Organization     @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   size_group      MasterSizeGroup? @relation(fields: [size_group_id], references: [id])
+  group_links     MasterSizeGroupSize[]
 
   @@unique([organization_id, size])
   @@index([organization_id, is_active])
   @@map("master_sizes")
+}
+
+model MasterSizeGroupSize {
+  id              String          @id @default(cuid())
+  organization_id String
+  size_group_id   String
+  size_id         String
+  created_at      DateTime        @default(now())
+  organization    Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  size_group      MasterSizeGroup @relation(fields: [size_group_id], references: [id], onDelete: Cascade)
+  size            MasterSize       @relation(fields: [size_id], references: [id], onDelete: Cascade)
+
+  @@unique([size_group_id, size_id])
+  @@index([organization_id, size_group_id])
+  @@index([organization_id, size_id])
+  @@map("master_size_group_sizes")
 }
 
 model MasterUom {
