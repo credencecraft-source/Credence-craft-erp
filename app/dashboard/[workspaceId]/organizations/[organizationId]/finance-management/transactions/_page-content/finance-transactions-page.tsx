@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { ReportGrid } from "@/components/reports/report-grid-display";
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
@@ -32,6 +33,22 @@ type SavedPosInvoice = {
   savedAt: string;
 };
 
+type FinanceReportField = keyof Pick<FinanceRecord, "documentType" | "documentNumber" | "date" | "party" | "sourceModule" | "sourceRecordId" | "amount" | "tax" | "net" | "status" | "paymentStatus">;
+
+const reportFields: Array<{ key: FinanceReportField; label: string }> = [
+  { key: "documentType", label: "Type" },
+  { key: "documentNumber", label: "Document No." },
+  { key: "date", label: "Date" },
+  { key: "party", label: "Party" },
+  { key: "sourceModule", label: "Source" },
+  { key: "sourceRecordId", label: "Source Record" },
+  { key: "amount", label: "Amount" },
+  { key: "tax", label: "Tax" },
+  { key: "net", label: "Net" },
+  { key: "status", label: "Status" },
+  { key: "paymentStatus", label: "Payment" },
+];
+
 export default function FinanceTransactionsPage({
   workspaceId,
   organizationId,
@@ -40,6 +57,7 @@ export default function FinanceTransactionsPage({
   organizationId: string;
 }) {
   const [records, setRecords] = useState<FinanceRecord[]>([]);
+  const [visibleFields, setVisibleFields] = useState<FinanceReportField[]>(reportFields.map((field) => field.key));
 
   useEffect(() => {
     const nextRecords: FinanceRecord[] = [];
@@ -168,57 +186,22 @@ export default function FinanceTransactionsPage({
             </span>
           </div>
 
-          {records.length === 0 ? (
-            <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
-              No finance records found for this organization yet.
-            </div>
-          ) : (
-            <div className="mt-5 overflow-x-auto">
-              <table className="w-full min-w-[980px] text-left text-sm">
-                <thead className="border-b border-slate-200 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                  <tr>
-                    <th className="px-3 py-3">Type</th>
-                    <th className="px-3 py-3">Document No.</th>
-                    <th className="px-3 py-3">Date</th>
-                    <th className="px-3 py-3">Party</th>
-                    <th className="px-3 py-3">Source</th>
-                    <th className="px-3 py-3 text-right">Amount</th>
-                    <th className="px-3 py-3 text-right">Tax</th>
-                    <th className="px-3 py-3 text-right">Net</th>
-                    <th className="px-3 py-3">Status</th>
-                    <th className="px-3 py-3">Payment</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {records.map((record) => (
-                    <tr key={`${record.documentType}-${record.documentNumber}`}>
-                      <td className="px-3 py-3 font-semibold text-slate-900">{record.documentType}</td>
-                      <td className="px-3 py-3 font-medium text-slate-700">{record.documentNumber}</td>
-                      <td className="px-3 py-3 text-slate-600">{record.date}</td>
-                      <td className="px-3 py-3 text-slate-700">{record.party}</td>
-                      <td className="px-3 py-3 text-slate-600">
-                        <div className="font-medium text-slate-800">{record.sourceModule}</div>
-                        <div className="text-[11px] text-slate-500">{record.sourceRecordId}</div>
-                      </td>
-                      <td className="px-3 py-3 text-right text-slate-700">Rs {record.amount.toFixed(2)}</td>
-                      <td className="px-3 py-3 text-right text-slate-700">Rs {record.tax.toFixed(2)}</td>
-                      <td className="px-3 py-3 text-right font-bold text-slate-900">Rs {record.net.toFixed(2)}</td>
-                      <td className="px-3 py-3">
-                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700">
-                          {record.status}
-                        </span>
-                      </td>
-                      <td className="px-3 py-3">
-                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-600">
-                          {record.paymentStatus}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <ReportGrid
+            title="Finance Transactions Report"
+            records={records}
+            fields={reportFields}
+            visibleFields={visibleFields}
+            onVisibleFieldsChange={(fields) => setVisibleFields(fields as FinanceReportField[])}
+            storageKey={`credence-craft-finance-transactions-${organizationId}`}
+            rowIdSelector={(record) => record.id}
+            selectedIds={[]}
+            onRowClick={() => undefined}
+            renderCell={(fieldKey, record) => {
+              if (["amount", "tax", "net"].includes(fieldKey)) return `Rs ${Number(record[fieldKey as "amount" | "tax" | "net"] ?? 0).toFixed(2)}`;
+              return String(record[fieldKey as FinanceReportField] ?? "");
+            }}
+            emptyMessage="No finance transaction records found."
+          />
         </Card>
       </Section>
     </Page>

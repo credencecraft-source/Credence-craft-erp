@@ -1,8 +1,9 @@
 "use client";
 
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import Button from "@/components/ui/Button";
 
 import type { MasterPurchaseOrder } from "./style-wise-purchase-order-page";
 
@@ -12,7 +13,6 @@ export default function MasterPurchaseOrderDetailPage() {
   const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
   const masterPurchaseOrderId = params?.masterPurchaseOrderId ?? "";
-  const createPoPath = `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/procurement/create-po/style-wise/create-po`;
   const [master, setMaster] = useState<MasterPurchaseOrder | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -30,7 +30,7 @@ export default function MasterPurchaseOrderDetailPage() {
     loadMaster().catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load Master Group.")).finally(() => setLoading(false));
   }, [loadMaster]);
 
-  return <div className="mx-auto max-w-[1500px] space-y-4"><header className="flex items-center gap-3 border-b border-slate-200 pb-4"><button type="button" onClick={() => router.push(createPoPath)} aria-label="Back to Master Groups" className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"><ArrowLeft className="h-4 w-4" /></button><div><p className="erp-eyebrow">Style Wise PO / Create PO</p><h1 className="erp-page-heading mt-1">Master Group report</h1><p className="mt-1 text-sm text-slate-500">Review the grouped raw-material lines before creating the purchase order.</p></div></header>{loading ? <div className="erp-surface flex min-h-52 items-center justify-center gap-2 text-xs text-slate-500"><Loader2 className="h-4 w-4 animate-spin text-emerald-600" /> Loading Master Group</div> : error ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : master ? <MasterReport master={master} /> : null}</div>;
+  return <div className="mx-auto max-w-[1500px] space-y-4">{loading ? <div className="erp-surface flex min-h-52 items-center justify-center gap-2 text-xs text-slate-500"><Loader2 className="h-4 w-4 animate-spin text-emerald-600" /> Loading Master Group</div> : error ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : master ? <MasterReport master={master} /> : null}</div>;
 }
 
 function MasterReport({ master }: { master: MasterPurchaseOrder }) {

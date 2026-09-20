@@ -112,6 +112,7 @@ model Organization {
   supportTickets                SupportTicket[]
   orderNumberCounter            OrganizationOrderCounter?
   procurementDocumentCounters   ProcurementDocumentCounter[]
+  challanNumberConfigurations   ChallanNumberConfiguration[]
   inventoryReceipts             InventoryReceipt[]
   rawMaterialStocks             RawMaterialStock[]
   finishedGoodsStocks           FinishedGoodsStock[]
@@ -150,6 +151,22 @@ model OrganizationTaxProfile {
   @@unique([organization_id, country, tax_regime])
   @@index([organization_id, is_default, is_active])
   @@map("organization_tax_profiles")
+}
+
+model ChallanNumberConfiguration {
+  id              String       @id @default(cuid())
+  organization_id String
+  document_type   String       @db.VarChar(40)
+  label           String       @db.VarChar(100)
+  prefix          String       @db.VarChar(20)
+  start_number    Int          @default(1)
+  current_number  Int          @default(0)
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, document_type])
+  @@map("challan_number_configurations")
 }
 
 model OrganizationMembership {

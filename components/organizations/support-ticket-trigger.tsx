@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarDays, CheckCircle2, Clock3, X } from "lucide-react";
+import { CalendarDays, CheckCircle2, Clock3, Headset, X } from "lucide-react";
 
 type SupportTicketTriggerProps = { organizationId: string; callbackOnly?: boolean };
 
@@ -65,20 +65,20 @@ export function SupportTicketTrigger({ organizationId, callbackOnly = false }: S
 
   return (
     <>
-      <button type="button" onClick={() => { setOpen(true); setMessage(""); setSubmitted(false); }} className={callbackOnly ? "inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-slate-950 shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400" : "flex h-8 w-8 items-center justify-center rounded-md text-emerald-600 transition hover:bg-emerald-50 hover:text-emerald-700"} title={callbackOnly ? "Book a demo" : "Contact support"} aria-label={callbackOnly ? "Book a demo" : "Contact support"}>
-        {callbackOnly ? "Book a demo" : "Support"}
+      <button type="button" onClick={() => { setOpen(true); setMessage(""); setSubmitted(false); }} className={callbackOnly ? "inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-bold text-slate-950 shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400" : "flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"} title={callbackOnly ? "Book a demo" : "Contact support"} aria-label={callbackOnly ? "Book a demo" : "Contact support"}>
+        {callbackOnly ? "Book a demo" : <Headset className="h-4 w-4" aria-hidden="true" />}
       </button>
 
       {open && <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}>
-        <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-white/20 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
-          <div className="bg-slate-950 px-6 py-6 text-white sm:px-8">
+        <div className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/20 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+          <div className="bg-slate-950 px-5 py-5 text-white sm:px-6">
             <div className="flex items-start justify-between gap-4">
               <div><p className="text-xs font-bold uppercase tracking-[0.2em] text-emerald-400">Credence Craft Concierge</p><h2 className="mt-2 text-2xl font-bold tracking-tight">Book your activation call</h2><p className="mt-2 text-sm leading-6 text-slate-300">Choose a convenient 30-minute slot and our team will help activate your organization.</p></div>
               <button type="button" onClick={() => setOpen(false)} aria-label="Close booking dialog" className="rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white"><X className="h-5 w-5" /></button>
             </div>
           </div>
 
-          {submitted ? <div className="px-6 py-12 text-center sm:px-8"><CheckCircle2 className="mx-auto h-14 w-14 text-emerald-600" /><h3 className="mt-5 text-xl font-bold text-slate-900">Appointment request received</h3><p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-600">Our activation team will contact you for the selected slot. You can also call 9567048809 for urgent assistance.</p><button type="button" onClick={() => setOpen(false)} className="mt-6 rounded-xl bg-slate-950 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800">Done</button></div> : <form onSubmit={submitTicket} className="space-y-5 px-6 py-6 sm:px-8">
+          {submitted ? <div className="px-5 py-8 text-center sm:px-6"><CheckCircle2 className="mx-auto h-12 w-12 text-emerald-600" /><h3 className="mt-4 text-xl font-bold text-slate-900">Appointment request received</h3><p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-600">Our activation team will contact you for the selected slot. You can also call 9567048809 for urgent assistance.</p><button type="button" onClick={() => setOpen(false)} className="mt-5 rounded-xl bg-slate-950 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800">Done</button></div> : <form onSubmit={submitTicket} className="space-y-4 px-5 py-5 sm:px-6">
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="block text-sm font-semibold text-slate-700"><span className="mb-2 flex items-center gap-2"><CalendarDays className="h-4 w-4 text-emerald-600" />Preferred date</span><select required value={callbackDate} onChange={(event) => setCallbackDate(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10"><option value="">Select a date</option>{dateOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
               <label className="block text-sm font-semibold text-slate-700"><span className="mb-2 flex items-center gap-2"><Clock3 className="h-4 w-4 text-emerald-600" />30-minute time slot</span><select required value={callbackTime} onChange={(event) => setCallbackTime(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10"><option value="">Select a time</option>{timeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
@@ -87,9 +87,9 @@ export function SupportTicketTrigger({ organizationId, callbackOnly = false }: S
             <label className="block text-sm font-semibold text-slate-700">What would you like to discuss?<textarea required minLength={10} maxLength={5000} rows={4} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Tell us what you need help activating..." className="mt-2 w-full resize-y rounded-xl border border-slate-200 px-3 py-3 text-sm font-normal outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10" /></label>
             {message && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">{message}</p>}
             <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-5"><a href="tel:9567048809" className="text-sm font-semibold text-slate-600 hover:text-emerald-700">Call 9567048809</a><button disabled={saving} type="submit" className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 hover:bg-emerald-700 disabled:opacity-50">{saving ? "Booking..." : "Request appointment"}</button></div>
-+          </form>}
-+        </div>
-+      </div>}
-+    </>
+          </form>}
+        </div>
+      </div>}
+    </>
   );
 }

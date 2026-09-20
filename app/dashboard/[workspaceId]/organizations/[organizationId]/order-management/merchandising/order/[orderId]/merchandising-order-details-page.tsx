@@ -11,6 +11,9 @@ import TecPackTab from "./components/Tecpack";
 import MeasurementsTab from "./components/MeasurementsTab";
 import ProcessTab from "./components/ProcessTab";
 import AttachmentsTab from "./components/Attachments";
+import Button from "@/components/ui/Button";
+import Modal from "@/components/ui/Modal";
+import Tabs from "@/components/ui/Tabs";
 
 type TabType = "details" | "finishedGoods" | "bom" | "costing" | "techPack" | "measurements" | "process" | "attachments";
 type QuickMasterParent = {
@@ -598,26 +601,16 @@ export default function MerchandisingOrderDetailsPage() {
 
         {shareOpen && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center justify-between"><div><h3 className="font-bold text-emerald-950">Share with Buyer</h3><p className="mt-1 text-emerald-800">The buyer configured for this order will receive a workspace notification.</p><p className="mt-1 text-xs text-emerald-700">Internal consumption and internal price are never shared with the buyer.</p></div><button type="button" onClick={() => setShareOpen(false)} className="text-sm font-semibold text-emerald-800">Close</button></div><div className="mt-3 flex gap-2"><button type="button" onClick={() => void handleShare()} disabled={isSharing} className="rounded-md bg-emerald-700 px-4 py-2 font-semibold text-white disabled:opacity-50">{isSharing ? "Sharing..." : "Confirm and share"}</button></div></div>}
         {/* Scrollable Tab Navigation */}
-        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`whitespace-nowrap px-3 py-1.5 font-semibold rounded-lg transition-colors ${
-                activeTab === tab.id
-                  ? "bg-emerald-600 text-white shadow-sm"
-                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-              }`}
-            >
-              {tab.label} {tab.count !== undefined && tab.count > 0 ? `(${tab.count})` : ""}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          tabs={tabs.map((tab) => ({ value: tab.id, label: `${tab.label}${tab.count !== undefined && tab.count > 0 ? ` (${tab.count})` : ""}`, panelId: "merchandising-order-tab-panel" }))}
+          value={activeTab}
+          onChange={(value) => setActiveTab(value as TabType)}
+          ariaLabel="Merchandising order sections"
+        />
       </div>
 
       {/* Tab Content Area */}
-      <div className="pt-2">
+      <div id="merchandising-order-tab-panel" className="pt-2" role="tabpanel">
         {activeTab === "details" && (
           <OrderDetailsTab
             form={form}
@@ -639,7 +632,7 @@ export default function MerchandisingOrderDetailsPage() {
       </div>
 
       {newMasterKey && getMasterDefinition(newMasterKey) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="quick-master-title">
+        <Modal open onClose={closeQuickMaster} ariaLabelledBy="quick-master-title" size="md" className="p-5">
           <form onSubmit={handleCreateMaster} className="w-full max-w-md space-y-4 rounded-xl bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
@@ -648,9 +641,9 @@ export default function MerchandisingOrderDetailsPage() {
                   New {getMasterDefinition(newMasterKey)?.label}
                 </h3>
               </div>
-              <button type="button" onClick={closeQuickMaster} className="text-lg text-slate-400 hover:text-slate-700" aria-label="Close">
+              <Button type="button" variant="ghost" size="sm" onClick={closeQuickMaster} aria-label="Close">
                 X
-              </button>
+              </Button>
             </div>
 
             <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
@@ -659,15 +652,15 @@ export default function MerchandisingOrderDetailsPage() {
 
             {masterCreateError && <p className="text-xs text-red-600">{masterCreateError}</p>}
             <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
-              <button type="button" onClick={closeQuickMaster} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200">
+              <Button type="button" variant="secondary" size="sm" onClick={closeQuickMaster}>
                 Cancel
-              </button>
-              <button type="submit" disabled={isCreatingMaster} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+              </Button>
+              <Button type="submit" disabled={isCreatingMaster} size="sm">
                 {isCreatingMaster ? "Creating..." : "Create and select"}
-              </button>
+              </Button>
             </div>
           </form>
-        </div>
+        </Modal>
       )}
     </div>
   );

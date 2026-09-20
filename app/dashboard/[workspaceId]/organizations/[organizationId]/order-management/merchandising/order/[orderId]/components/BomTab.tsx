@@ -2,6 +2,10 @@
 
 import React, { useMemo, useState } from "react";
 import { calculateBomRows, calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
+import Button from "@/components/ui/Button";
+import Checkbox from "@/components/ui/Checkbox";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 
 type BomRow = {
   id?: string;
@@ -284,32 +288,29 @@ export default function BomTab({
           <p className="mt-1 text-[11px] text-slate-500">Category tabs filter the view while keeping every BOM row in the same table data.</p>
         </div>
         <div className="flex items-center gap-3">
-          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700">
-            <span>Advanced</span>
-            <input
-              type="checkbox"
+          <Checkbox
+            label="Advanced"
               checked={showAdvancedFields}
               onChange={(event) => setShowAdvancedFields(event.target.checked)}
-              className="sr-only"
-            />
-            <span className={`relative h-5 w-9 rounded-full transition ${showAdvancedFields ? "bg-emerald-600" : "bg-slate-300"}`}>
-              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition ${showAdvancedFields ? "left-[18px]" : "left-0.5"}`} />
-            </span>
-          </label>
-          <button
+            className="h-4 w-4"
+          />
+          <Button
+            size="sm"
             type="button"
             onClick={addBomRow}
             disabled={isAllCategoryView}
             className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             + Add Row
-          </button>
+          </Button>
         </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
         {bomCategories.map((category) => (
-          <button
+          <Button
+            variant={selectedBomCategory === category ? "primary" : "secondary"}
+            size="sm"
             key={category}
             type="button"
             onClick={() => setSelectedBomCategory(category)}
@@ -320,7 +321,7 @@ export default function BomTab({
             }`}
           >
             {category}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -353,13 +354,15 @@ export default function BomTab({
                 <div className="flex items-center justify-between gap-2">
                   <span>RM Sub Category</span>
                   {onOpenCreateMaster && (
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       type="button"
                       onClick={() => onOpenCreateMaster("raw-material-sub-category")}
                       className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
                     >
                       + New
-                    </button>
+                    </Button>
                   )}
                 </div>
               </th>
@@ -368,13 +371,15 @@ export default function BomTab({
                 <div className="flex items-center justify-between gap-2">
                   <span>Raw Material Name</span>
                   {onOpenCreateMaster && (
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       type="button"
                       onClick={() => onOpenCreateMaster("raw-material")}
                       className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
                     >
                       + New
-                    </button>
+                    </Button>
                   )}
                 </div>
               </th>
@@ -382,13 +387,15 @@ export default function BomTab({
                 <div className="flex items-center justify-between gap-2">
                   <span>Size</span>
                   {onOpenCreateMaster && (
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       type="button"
                       onClick={() => onOpenCreateMaster("size")}
                       className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
                     >
                       + New
-                    </button>
+                    </Button>
                   )}
                 </div>
               </th>
@@ -413,21 +420,16 @@ export default function BomTab({
                     const value = String(row.subCategory ?? "");
 
                     return (
-                      <select
+                      <Select
+                        aria-label="Sub category"
                         value={value}
                         onChange={(event) => updateBomRow(index, "subCategory", event.target.value)}
-                        className="w-full rounded border border-slate-200 px-2 py-1 text-xs text-slate-700"
-                      >
-                        <option value="">Select sub category</option>
-                        {safeOptions.map((option: any) => (
-                          <option key={option.id ?? option.label ?? option.name} value={option.label ?? option.name ?? ""}>
-                            {option.label ?? option.name}
-                          </option>
-                        ))}
-                      </select>
+                        options={[{ value: "", label: "Select sub category" }, ...safeOptions.map((option: any) => ({ value: option.label ?? option.name ?? "", label: option.label ?? option.name ?? "" }))]}
+                        className="rounded p-1 text-xs"
+                      />
                     );
                   })() : (
-                    <input
+                    <Input
                       value={row.subCategory || ""}
                       onChange={(e) => updateBomRow(index, "subCategory", e.target.value)}
                       placeholder="Sub Category"
@@ -442,25 +444,20 @@ export default function BomTab({
                     const value = String(row.rawMaterialName ?? "");
 
                     return (
-                      <select
+                      <Select
+                        aria-label="Raw material"
                         value={value}
                         onChange={(event) => {
                           const rawMaterialName = event.target.value;
                           updateBomRow(index, "rawMaterialName", rawMaterialName);
                           updateBomRow(index, "stockUom", getRawMaterialStockUom(rawMaterialName));
                         }}
-                        className="w-full rounded border border-slate-200 px-2 py-1 text-xs text-slate-700"
-                      >
-                        <option value="">{row.subCategory ? "Select raw material" : "Select sub category first"}</option>
-                        {safeOptions.map((option: any) => (
-                          <option key={option.id ?? option.label ?? option.name} value={option.label ?? option.name ?? ""}>
-                            {option.label ?? option.name}
-                          </option>
-                        ))}
-                      </select>
+                        options={[{ value: "", label: row.subCategory ? "Select raw material" : "Select sub category first" }, ...safeOptions.map((option: any) => ({ value: option.label ?? option.name ?? "", label: option.label ?? option.name ?? "" }))]}
+                        className="rounded p-1 text-xs"
+                      />
                     );
                   })() : (
-                    <input
+                    <Input
                       value={row.rawMaterialName || ""}
                       onChange={(e) => updateBomRow(index, "rawMaterialName", e.target.value)}
                       placeholder="Name"
@@ -469,7 +466,7 @@ export default function BomTab({
                   )}
                 </td>
                 <td className="p-2 align-top">
-                  <input
+                  <Input
                     value={String(row.stockUom ?? getRawMaterialStockUom(String(row.rawMaterialName ?? "")))}
                     disabled
                     placeholder="Auto-filled"
@@ -485,7 +482,7 @@ export default function BomTab({
                       "Select size"
                     )
                   ) : (
-                    <input
+                    <Input
                       value={row.size || ""}
                       onChange={(e) => updateBomRow(index, "size", e.target.value)}
                       placeholder="Size"
@@ -494,7 +491,7 @@ export default function BomTab({
                   )}
                 </td>
                 {showAdvancedFields && <td className="p-2 align-top">
-                  <input
+                  <Input
                     type="number"
                     value={row.buyerConsumption || ""}
                     onChange={(e) => updateBomRow(index, "buyerConsumption", e.target.value)}
@@ -503,7 +500,7 @@ export default function BomTab({
                   />
                 </td>}
                 {showAdvancedFields && <td className="p-2 align-top">
-                  <input
+                  <Input
                     type="number"
                     value={row.buyerPrice || ""}
                     onChange={(e) => updateBomRow(index, "buyerPrice", e.target.value)}
@@ -512,7 +509,7 @@ export default function BomTab({
                   />
                 </td>}
                 <td className="p-2 align-top">
-                  <input
+                  <Input
                     type="number"
                     value={row.internalConsumption || ""}
                     onChange={(e) => updateBomRow(index, "internalConsumption", e.target.value)}
@@ -521,7 +518,7 @@ export default function BomTab({
                   />
                 </td>
                 <td className="p-2 align-top">
-                  <input
+                  <Input
                     type="number"
                     value={row.internalPrice || ""}
                     onChange={(e) => updateBomRow(index, "internalPrice", e.target.value)}
@@ -530,7 +527,7 @@ export default function BomTab({
                   />
                 </td>
                 <td className="p-2 align-top">
-                  <input
+                  <Input
                     type="number"
                     value={row.requiredQty || ""}
                     readOnly
@@ -539,7 +536,7 @@ export default function BomTab({
                   />
                 </td>
                 <td className="p-2 align-top">
-                  <input
+                  <Input
                     type="number"
                     value={row.itemWiseExcessPercentage || ""}
                     onChange={(e) => updateBomRow(index, "itemWiseExcessPercentage", e.target.value)}
@@ -548,7 +545,7 @@ export default function BomTab({
                   />
                 </td>
                 <td className="p-2 align-top">
-                  <input
+                  <Input
                     type="number"
                     value={row.itemWiseExcessQty || ""}
                     readOnly
@@ -566,13 +563,15 @@ export default function BomTab({
                   />
                 </td>
                 <td className="p-2 align-top">
-                  <button
+                  <Button
+                    variant="danger"
+                    size="sm"
                     type="button"
                     onClick={() => removeBomRow(index)}
                     className="rounded-md border border-red-200 bg-red-50 px-2 py-1 font-semibold text-red-600 hover:bg-red-100"
                   >
                     Delete
-                  </button>
+                  </Button>
                 </td>
               </tr>
             ))}

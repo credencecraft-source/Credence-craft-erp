@@ -1,6 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 
 type CostingItem = {
   id: string;
@@ -148,7 +151,9 @@ export default function CostingTab({
 
       {/* 2. MAIN SHEET TABS (BUYER COST SHEET vs ACTUAL COST SHEET) */}
       <div className="flex gap-3 border-b border-slate-200 pb-3">
-        <button
+        <Button
+          variant={mainTab === "BUYER" ? "primary" : "secondary"}
+          size="md"
           type="button"
           onClick={() => setMainTab("BUYER")}
           className={`px-5 py-2.5 font-bold rounded-xl text-xs transition-all flex items-center gap-2 ${
@@ -161,9 +166,11 @@ export default function CostingTab({
           <span className="ml-2 px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 text-[10px]">
             ₹{buyerTotalCost.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
-        </button>
+        </Button>
 
-        <button
+        <Button
+          variant={mainTab === "ACTUAL" ? "primary" : "secondary"}
+          size="md"
           type="button"
           onClick={() => setMainTab("ACTUAL")}
           className={`px-5 py-2.5 font-bold rounded-xl text-xs transition-all flex items-center gap-2 ${
@@ -176,7 +183,7 @@ export default function CostingTab({
           <span className="ml-2 px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 text-[10px]">
             ₹{actualTotalCost.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
-        </button>
+        </Button>
       </div>
 
       {/* 3. CATEGORY TABS WITH TOTAL AMOUNTS EMBEDDED */}
@@ -187,7 +194,9 @@ export default function CostingTab({
             .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
 
           return (
-            <button
+            <Button
+              variant={activeCategory === category ? "primary" : "secondary"}
+              size="sm"
               key={category}
               type="button"
               onClick={() => setActiveCategory(category)}
@@ -203,7 +212,7 @@ export default function CostingTab({
               }`}>
                 ₹{categoryTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -218,7 +227,9 @@ export default function CostingTab({
               .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
 
             return (
-              <button
+              <Button
+                variant={activeBomCategory === bomCat ? "primary" : "secondary"}
+                size="sm"
                 key={bomCat}
                 type="button"
                 onClick={() => setActiveBomCategory(bomCat)}
@@ -234,7 +245,7 @@ export default function CostingTab({
                 }`}>
                   ₹{bomTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
-              </button>
+              </Button>
             );
           })}
         </div>
@@ -260,13 +271,15 @@ export default function CostingTab({
                     ₹{catTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
-                <button
+                <Button
+                  variant="primary"
+                  size="sm"
                   type="button"
                   onClick={() => addCostingRow(category, mainTab === "ACTUAL")}
                   className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-all flex items-center gap-1"
                 >
                   <span>+</span> Add Breakdown
-                </button>
+                </Button>
               </div>
 
               {categoryRows.length > 0 ? (
@@ -289,17 +302,15 @@ export default function CostingTab({
                         <tr key={row.id} className="hover:bg-slate-50/40">
                           <td className="p-2">
                             {category === "Raw Material" ? (
-                              <select
+                              <Select
+                                aria-label="BOM category"
                                 value={row.costType || activeBomCategory}
                                 onChange={(e) => updateCostingRow(row.id, "costType", e.target.value, mainTab === "ACTUAL")}
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none transition-all bg-white"
-                              >
-                                {RAW_MATERIAL_BOM_CATEGORIES.map((bCat) => (
-                                  <option key={bCat} value={bCat}>{bCat}</option>
-                                ))}
-                              </select>
+                                options={RAW_MATERIAL_BOM_CATEGORIES.map((bCat) => ({ value: bCat, label: bCat }))}
+                              />
                             ) : (
-                              <input
+                              <Input
                                 type="text"
                                 value={row.costType}
                                 onChange={(e) => updateCostingRow(row.id, "costType", e.target.value, mainTab === "ACTUAL")}
@@ -309,7 +320,7 @@ export default function CostingTab({
                             )}
                           </td>
                           <td className="p-2">
-                            <input
+                            <Input
                               type="text"
                               value={row.description}
                               onChange={(e) => updateCostingRow(row.id, "description", e.target.value, mainTab === "ACTUAL")}
@@ -318,7 +329,7 @@ export default function CostingTab({
                             />
                           </td>
                           <td className="p-2">
-                            <input
+                            <Input
                               type="number"
                               value={row.amount}
                               onChange={(e) => updateCostingRow(row.id, "amount", e.target.value, mainTab === "ACTUAL")}
@@ -327,13 +338,15 @@ export default function CostingTab({
                             />
                           </td>
                           <td className="p-2 pt-3">
-                            <button
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               type="button"
                               onClick={() => removeCostingRow(row.id, mainTab === "ACTUAL")}
                               className="text-red-500 hover:text-red-700 font-semibold text-xs transition-colors"
                             >
                               Remove
-                            </button>
+                            </Button>
                           </td>
                         </tr>
                       ))}

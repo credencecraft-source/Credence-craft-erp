@@ -5,7 +5,9 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
+import Select from "@/components/ui/Select";
 
 type Entry = {
   id: string;
@@ -135,14 +137,14 @@ export default function GateEntryReportsPage() {
           <p className="mt-2 text-sm text-slate-500">Review, filter, and export the centralized inward and outward movement register.</p>
         </div>
         <div className="flex gap-2">
-          <button type="button" onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-slate-700">
+          <Button type="button" variant="secondary" size="md" onClick={() => void load()} className="gap-2">
             <RefreshCw size={15} />
             Refresh
-          </button>
-          <button type="button" onClick={exportCsv} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-xs font-bold text-white">
+          </Button>
+          <Button type="button" variant="primary" size="md" onClick={exportCsv} className="gap-2">
             <Download size={15} />
             Export CSV
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -164,23 +166,8 @@ export default function GateEntryReportsPage() {
       </section>
 
       <section className="erp-surface flex flex-col gap-4 p-5 sm:flex-row sm:items-end">
-        <label className="block w-full text-xs font-bold text-slate-700 sm:max-w-xs">
-          Direction
-          <select value={direction} onChange={(event) => setDirection(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-500">
-            <option value="ALL">All</option>
-            <option value="INWARD">Inward</option>
-            <option value="OUTWARD">Outward</option>
-          </select>
-        </label>
-        <label className="block w-full text-xs font-bold text-slate-700 sm:max-w-xs">
-          Movement type
-          <select value={movementType} onChange={(event) => setMovementType(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-500">
-            <option value="ALL">All</option>
-            <option value="GRN">GRN</option>
-            <option value="DC">DC</option>
-            <option value="RETURNABLE_DC">Returnable DC</option>
-          </select>
-        </label>
+        <Select label="Direction" value={direction} onChange={(event) => setDirection(event.target.value)} options={[{ value: "ALL", label: "All" }, { value: "INWARD", label: "Inward" }, { value: "OUTWARD", label: "Outward" }]} className="sm:max-w-xs" />
+        <Select label="Movement type" value={movementType} onChange={(event) => setMovementType(event.target.value)} options={[{ value: "ALL", label: "All" }, { value: "GRN", label: "GRN" }, { value: "DC", label: "DC" }, { value: "RETURNABLE_DC", label: "Returnable DC" }]} className="sm:max-w-xs" />
       </section>
 
       <div className="erp-surface overflow-hidden">
@@ -234,12 +221,12 @@ export default function GateEntryReportsPage() {
               <p className="mt-1 text-xs text-slate-500">This will permanently delete {selectedIds.length} selected record{selectedIds.length === 1 ? "" : "s"} from the gate register.</p>
             </div>
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setShowDeleteConfirmation(false)} disabled={isDeleting} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60">
+              <Button type="button" variant="secondary" size="sm" onClick={() => setShowDeleteConfirmation(false)} disabled={isDeleting}>
                 Cancel
-              </button>
-              <button type="button" onClick={() => void handleDeleteSelected()} disabled={isDeleting} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-60">
+              </Button>
+              <Button type="button" variant="danger" size="sm" onClick={() => void handleDeleteSelected()} disabled={isDeleting}>
                 {isDeleting ? "Deleting..." : "Delete Entries"}
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>

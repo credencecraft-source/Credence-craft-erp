@@ -1,5 +1,4 @@
 import { revalidatePath } from "next/cache";
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
@@ -84,13 +83,10 @@ export default async function GoldSealDetailPage({
   const variants = (await getMasterValuesForOrganization(organization.id, "gold-seal-variant", true))
     .filter((item) => item.parent_id === goldSeal.id || item.parent_id === goldSeal.value_id);
   const fields = goldSeal.fields ?? {};
-  const detailPath = `/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/gold-seals/${encodeURIComponent(goldSeal.value_id)}`;
-
   return (
     <main className="space-y-6 p-6">
       <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-5">
         <div>
-          <Link href={`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/gold-seals`} className="text-sm font-medium text-emerald-700">Back to Gold Seal</Link>
           <h1 className="mt-3 text-2xl font-bold text-slate-900">{goldSeal.label}</h1>
           <p className="mt-1 text-sm text-slate-500">Gold Seal header and fixed stock variants</p>
         </div>

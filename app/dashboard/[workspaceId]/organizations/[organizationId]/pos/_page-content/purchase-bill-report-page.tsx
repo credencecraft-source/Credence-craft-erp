@@ -22,6 +22,7 @@ type PurchaseBillRecord = {
   net: number;
   status: string;
   paymentStatus: string;
+  stockCreated: boolean;
 };
 
 const reportFields: Array<{ key: keyof PurchaseBillRecord; label: string }> = [
@@ -87,20 +88,11 @@ export default function PurchaseBillReportPage({
   return (
     <Page as="div">
       <Section className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
+        <div className="erp-page-header">
           <div>
-            <Link
-              href={base}
-              className="text-xs font-semibold text-emerald-700"
-            >
-              &larr; POS
-            </Link>
             <h1 className="mt-3 text-3xl font-bold text-slate-900">
               Purchase Bills
             </h1>
-            <p className="mt-2 text-sm text-slate-600">
-              Standard purchase bill report for vendor purchases.
-            </p>
           </div>
           <Link
             href={createPath}
@@ -115,9 +107,11 @@ export default function PurchaseBillReportPage({
           fields={reportFields}
           visibleFields={visibleReportFields}
           onVisibleFieldsChange={setVisibleReportFields}
-          rowIdSelector={(record) => `${record.id}-${record.documentNumber}`}
+          rowIdSelector={(record) => record.id}
           selectedIds={[]}
-          onRowClick={() => undefined}
+          onRowClick={(recordId) => router.push(`${base}/purchase-bill/${encodeURIComponent(recordId)}`)}
+          onCloneOrder={(recordId) => router.push(`${base}/purchase-bill/${encodeURIComponent(recordId)}`)}
+          rowActionLabel="Approve & Create Stock"
           renderCell={renderCell}
           emptyMessage="No purchase bill records found."
         />

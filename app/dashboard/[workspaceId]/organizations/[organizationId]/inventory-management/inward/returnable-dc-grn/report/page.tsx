@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import Card from "@/components/ui/Card";
+import EmptyReportGrid from "@/components/reports/empty-report-grid";
 import UiPage from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 
@@ -11,11 +11,12 @@ export default async function Page({ params }: { params: Promise<{ workspaceId: 
   return (
     <UiPage as="div">
       <Section className="space-y-6">
-        <Link href={basePath} className="text-xs font-semibold text-emerald-700">&larr; Returnable DC GRN</Link>
-        <Card>
-          <h1 className="text-2xl font-bold text-slate-900">Returnable DC GRN Report</h1>
-          <p className="mt-2 text-sm text-slate-600">Returnable DC GRN records will appear here.</p>
-        </Card>
+        <EmptyReportGrid
+          title="Returnable DC GRN Report"
+          fields={[{ key: "grnNo", label: "GRN No" }, { key: "dcNo", label: "DC No" }, { key: "receivedDate", label: "Received Date" }, { key: "status", label: "Status" }]}
+          storageKey={`credence-craft-returnable-dc-grn-${organizationId}`}
+          emptyMessage="No returnable DC GRN records found."
+        />
       </Section>
     </UiPage>
   );

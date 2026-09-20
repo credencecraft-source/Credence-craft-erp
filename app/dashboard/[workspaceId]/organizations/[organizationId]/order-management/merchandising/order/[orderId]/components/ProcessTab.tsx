@@ -1,6 +1,9 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
+import Tabs from "@/components/ui/Tabs";
 
 type ProcessTemplate = {
   id: string;
@@ -159,13 +162,14 @@ export default function ProcessTab({ form, setForm, organizationId, isOrderLoadi
     <div className="space-y-4">
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <label className="flex-1 space-y-1 text-xs font-bold text-slate-700">
-            <span>Process Template</span>
-            <select value={selectedTemplateId} onChange={(event) => applyTemplate(event.target.value)} disabled={isLoadingTemplates || isOrderLoading} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-800 focus:border-emerald-500 focus:outline-none">
-              <option value="">Select an approved process template</option>
-              {templates.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}
-            </select>
-          </label>
+          <Select
+            label="Process Template"
+            value={selectedTemplateId}
+            onChange={(event) => applyTemplate(event.target.value)}
+            disabled={isLoadingTemplates || isOrderLoading}
+            options={[{ value: "", label: "Select an approved process template" }, ...templates.map((template) => ({ value: template.id, label: template.label }))]}
+            className="flex-1 rounded-lg"
+          />
           <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{selectedTemplate ? `${processRows.length} process step${processRows.length === 1 ? "" : "s"} applied` : "No process template applied"}</div>
         </div>
         {templateError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{templateError}</p>}
@@ -175,41 +179,29 @@ export default function ProcessTab({ form, setForm, organizationId, isOrderLoadi
       {processTabs.length > 0 && (
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 bg-slate-50 px-4 pt-3">
-            <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="Process sections">
-              {processTabs.map((tab) => (
-                <button
-                  key={tab.key}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeProcessKey === tab.key}
-                  onClick={() => setActiveProcessTab(tab.key)}
-                  className={`whitespace-nowrap rounded-t-lg border border-b-0 px-4 py-2 text-xs font-bold transition-colors ${activeProcessKey === tab.key ? "border-emerald-200 bg-white text-emerald-700" : "border-transparent text-slate-500 hover:bg-white hover:text-slate-800"}`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
+            <Tabs
+              tabs={processTabs.map((tab) => ({ value: tab.key, label: tab.label, panelId: "process-section-panel" }))}
+              value={activeProcessKey}
+              onChange={setActiveProcessTab}
+              ariaLabel="Process sections"
+            />
           </div>
           {activeProcess && (
-            <div className="space-y-3 p-4">
+            <div id="process-section-panel" className="space-y-3 p-4" role="tabpanel">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-bold text-slate-800">{activeProcess.label}</p>
                   <p className="text-xs text-slate-500">Operation template</p>
                 </div>
-                <label className="flex min-w-64 flex-col gap-1 text-xs font-semibold text-slate-700">
-                  <span>Operation Template</span>
-                  <select
+                <Select
+                  label="Operation Template"
                     value={selectedOperationTemplateId}
                     onChange={(event) => updateOperationTemplate(event.target.value)}
                     disabled={isOrderLoading || operationTemplateOptions.length === 0}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-normal text-slate-800 focus:border-emerald-500 focus:outline-none disabled:bg-slate-100"
-                  >
-                    <option value="">{operationTemplateOptions.length > 0 ? "Select operation template" : "No operation template"}</option>
-                    {operationTemplateOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-                  </select>
+                    options={[{ value: "", label: operationTemplateOptions.length > 0 ? "Select operation template" : "No operation template" }, ...operationTemplateOptions.map((option) => ({ value: option.id, label: option.label }))]}
+                    className="min-w-64 rounded-lg text-xs"
+                  />
                   {!selectedOperationTemplateId && activeOperationTemplateName && <span className="text-[10px] font-normal text-slate-500">Current: {activeOperationTemplateName}</span>}
-                </label>
               </div>
 
               {activeOperations.length > 0 ? (
@@ -228,7 +220,7 @@ export default function ProcessTab({ form, setForm, organizationId, isOrderLoadi
                           <td className="px-3 py-2 font-semibold">{operation.slNo}</td>
                           <td className="px-3 py-2">{operation.operation}</td>
                           <td className="px-3 py-2 text-right">
-                            <input
+                            <Input
                               type="number"
                               min="0"
                               step="0.01"

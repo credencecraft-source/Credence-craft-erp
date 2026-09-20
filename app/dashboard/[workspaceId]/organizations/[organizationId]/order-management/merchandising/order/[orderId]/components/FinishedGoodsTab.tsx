@@ -2,6 +2,9 @@
 
 import React, { useEffect, useRef } from "react";
 import { calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 
 type FinishedGoodsRow = {
   id?: string;
@@ -112,40 +115,39 @@ export default function FinishedGoodsTab({
           <span className="flex items-center justify-between text-xs font-semibold text-slate-700">
             <span>{label}</span>
             {canCreate && (
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 type="button"
                 onClick={() => onOpenCreateMaster(masterKey)}
                 className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
               >
                 + New
-              </button>
+              </Button>
             )}
           </span>
         ) : (
           canCreate && (
             <div className="flex justify-end pb-0.5">
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 type="button"
                 onClick={() => onOpenCreateMaster(masterKey)}
                 className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
               >
                 + New
-              </button>
+              </Button>
             </div>
           )
         )}
-        <select
+        <Select
+          aria-label={label || placeholder}
           value={value ?? ""}
           onChange={(event) => onChange(event.target.value)}
           className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none w-full"
-        >
-          <option value="">{placeholder}</option>
-          {options.map((option: any) => (
-            <option key={option.id} value={option.label}>
-              {option.is_active ? option.label : `${option.label} (Not approved)`}
-            </option>
-          ))}
-        </select>
+          options={[{ value: "", label: placeholder }, ...options.map((option: any) => ({ value: option.label, label: option.is_active ? option.label : `${option.label} (Not approved)` }))]}
+        />
       </label>
     );
   };
@@ -180,7 +182,8 @@ export default function FinishedGoodsTab({
               <tr key={`${index}-${row.size || "row"}`}>
                 <td className="p-2">
                   <div className="flex flex-col gap-1.5 pt-5">
-                    <input
+                    <Input
+                      aria-label="Buyer Size"
                       type="text"
                       value={row.buyerSize || ""}
                       onChange={(event) => updateSizeRow(index, "buyerSize", event.target.value)}
@@ -196,7 +199,8 @@ export default function FinishedGoodsTab({
                 </td>
                 <td className="p-2">
                   <div className="flex flex-col gap-1.5 pt-5">
-                    <input
+                    <Input
+                      aria-label="Before Excess Quantity"
                       type="number"
                       value={row.beforeExcessQty || ""}
                       onChange={(event) => updateSizeRow(index, "beforeExcessQty", event.target.value)}
@@ -207,7 +211,8 @@ export default function FinishedGoodsTab({
                 </td>
                 <td className="p-2">
                   <div className="flex flex-col gap-1.5 pt-5">
-                    <input
+                    <Input
+                      aria-label="Excess Percentage"
                       type="number"
                       value={row.excess || ""}
                       onChange={(event) => updateSizeRow(index, "excess", event.target.value)}
@@ -218,7 +223,8 @@ export default function FinishedGoodsTab({
                 </td>
                 <td className="p-2">
                   <div className="flex flex-col gap-1.5 pt-5">
-                    <input
+                    <Input
+                      aria-label="Excess Quantity"
                       type="number"
                       value={row.excessQty || ""}
                       readOnly
@@ -229,7 +235,8 @@ export default function FinishedGoodsTab({
                 </td>
                 <td className="p-2">
                   <div className="flex flex-col gap-1.5 pt-5">
-                    <input
+                    <Input
+                      aria-label="Total Quantity"
                       type="number"
                       value={row.totalQty || ""}
                       readOnly
@@ -240,7 +247,8 @@ export default function FinishedGoodsTab({
                 </td>
                 <td className="p-2">
                   <div className="flex flex-col gap-1.5 pt-5">
-                    <input
+                    <Input
+                      aria-label="Buyer PO Price"
                       type="number"
                       value={row.buyerPoPrice || ""}
                       onChange={(event) => updateSizeRow(index, "buyerPoPrice", event.target.value)}
@@ -251,7 +259,8 @@ export default function FinishedGoodsTab({
                 </td>
                 <td className="p-2">
                   <div className="flex flex-col gap-1.5 pt-5">
-                    <input
+                    <Input
+                      aria-label="Exchange Price"
                       type="number"
                       value={row.exchangePrice || ""}
                       onChange={(event) => updateSizeRow(index, "exchangePrice", event.target.value)}
@@ -262,7 +271,8 @@ export default function FinishedGoodsTab({
                 </td>
                 <td className="p-2">
                   <div className="flex flex-col gap-1.5 pt-5">
-                    <input
+                    <Input
+                      aria-label="Price in INR"
                       type="number"
                       value={row.priceInInr || ""}
                       onChange={(event) => updateSizeRow(index, "priceInInr", event.target.value)}

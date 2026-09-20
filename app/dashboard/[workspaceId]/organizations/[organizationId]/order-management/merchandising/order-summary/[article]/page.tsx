@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
+import Table from "@/components/ui/Table";
+import Tabs from "@/components/ui/Tabs";
 
 type ArticleSummary = {
   article: string;
@@ -25,7 +26,7 @@ type ArticleSummary = {
 type DetailTab = "orders" | "sizes" | "bom";
 
 export default function ArticleOrderSummaryDetailPage() {
-  const { workspaceId, organizationId, article } = useParams<{ workspaceId: string; organizationId: string; article: string }>();
+  const { organizationId, article } = useParams<{ workspaceId: string; organizationId: string; article: string }>();
   const [summary, setSummary] = useState<ArticleSummary | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>("orders");
   const [error, setError] = useState("");
@@ -50,7 +51,6 @@ export default function ArticleOrderSummaryDetailPage() {
     if (organizationId && article) loadArticle();
   }, [organizationId, article]);
 
-  const summaryPath = `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order-summary`;
   if (error) return <div className="m-6 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!summary) return <div className="p-6 text-sm text-slate-500">Loading article details...</div>;
 
@@ -64,7 +64,6 @@ export default function ArticleOrderSummaryDetailPage() {
   return (
     <div className="space-y-5 p-6">
       <div className="border-b border-slate-200 pb-4">
-        <Link href={summaryPath} className="text-sm font-medium text-emerald-700 hover:text-emerald-800">Back to Article Summary</Link>
         <h1 className="mt-3 text-2xl font-bold text-slate-900">{summary.article}</h1>
         <p className="mt-1 text-sm text-slate-600">{orderCount} orders · {totalQty.toLocaleString()} total order quantity · {buyersList.join(", ") || "No buyer"}</p>
       </div>
@@ -76,19 +75,13 @@ export default function ArticleOrderSummaryDetailPage() {
       </div>
 
       <section className="border border-slate-200 bg-white">
-        <div className="flex border-b border-slate-200 px-4">
-          {(["orders", "sizes", "bom"] as DetailTab[]).map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              className={`border-b-2 px-4 py-3 text-sm font-semibold ${activeTab === tab ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-900"}`}
-            >
-              {tab === "bom" ? "Consolidated BOM" : tab === "sizes" ? "Size Totals" : "Orders"}
-            </button>
-          ))}
-        </div>
-        <div className="overflow-x-auto p-4">
+        <Tabs
+          tabs={[{ value: "orders", label: "Orders", panelId: "article-summary-panel" }, { value: "sizes", label: "Size Totals", panelId: "article-summary-panel" }, { value: "bom", label: "Consolidated BOM", panelId: "article-summary-panel" }]}
+          value={activeTab}
+          onChange={(value) => setActiveTab(value as DetailTab)}
+          ariaLabel="Article summary views"
+        />
+        <div id="article-summary-panel" className="overflow-x-auto p-4" role="tabpanel">
           {activeTab === "orders" && <OrdersTable article={summary.article} orderNumbers={orderNumbersList} />}
           {activeTab === "sizes" && <SizesTable rows={sizesList} />}
           {activeTab === "bom" && <BomTable rows={bomList} allOrderNumbers={orderNumbersList} />}
@@ -104,7 +97,7 @@ function SummaryMetric({ label, value }: { label: string; value: string }) {
 
 function OrdersTable({ article, orderNumbers }: { article: string; orderNumbers: string[] }) {
   return (
-    <table className="w-full text-left text-sm">
+    <Table className="rounded-none border-0 shadow-none">
       <thead className="border-b text-xs uppercase text-slate-500">
         <tr>
           <th className="p-2">Order Number</th>
@@ -119,13 +112,13 @@ function OrdersTable({ article, orderNumbers }: { article: string; orderNumbers:
           </tr>
         ))}
       </tbody>
-    </table>
+    </Table>
   );
 }
 
 function SizesTable({ rows }: { rows: ArticleSummary["sizes"] }) {
   return (
-    <table className="w-full text-left text-sm">
+    <Table className="rounded-none border-0 shadow-none">
       <thead className="border-b text-xs uppercase text-slate-500">
         <tr>
           <th className="p-2">Size</th>
@@ -144,13 +137,13 @@ function SizesTable({ rows }: { rows: ArticleSummary["sizes"] }) {
         })}
         {rows.length === 0 && <tr><td colSpan={2} className="p-5 text-center text-slate-500">No finished-goods size rows have been saved.</td></tr>}
       </tbody>
-    </table>
+    </Table>
   );
 }
 
 function BomTable({ rows, allOrderNumbers }: { rows: ArticleSummary["bomItems"]; allOrderNumbers: string[] }) {
   return (
-    <table className="w-full text-left text-sm">
+    <Table className="rounded-none border-0 shadow-none">
       <thead className="border-b text-xs uppercase text-slate-500">
         <tr>
           <th className="p-2">Raw Material</th>
@@ -183,6 +176,6 @@ function BomTable({ rows, allOrderNumbers }: { rows: ArticleSummary["bomItems"];
         })}
         {rows.length === 0 && <tr><td colSpan={4} className="p-5 text-center text-slate-500">No BOM rows have been saved.</td></tr>}
       </tbody>
-    </table>
+    </Table>
   );
 }

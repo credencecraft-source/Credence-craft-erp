@@ -1,9 +1,9 @@
-import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/database/prisma-client";
 import { requireSessionUser } from "@/lib/auth/session-manager";
+import { reserveChallanNumber } from "@/lib/services/organizations/challan-number-configuration-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 type ReceiptLineInput = { purchaseOrderLineId: string; receivedQuantity: number; acceptedQuantity: number; rejectedQuantity: number };
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
         data: {
           organization_id: organization.id,
           purchase_order_id: purchaseOrder.id,
-          receipt_no: `IR-${Date.now()}-${randomUUID().slice(0, 6).toUpperCase()}`,
+          receipt_no: await reserveChallanNumber(organization.id, "RM_GRN", transaction),
           warehouse,
           received_date: body.receivedDate ? new Date(body.receivedDate) : new Date(),
           received_by: user.full_name || user.email,

@@ -47,12 +47,7 @@ export default async function OrganizationAuditHistoryPage({
   return (
     <Page>
       <Section className="space-y-6">
-        <Link href={settingsPath} className="text-sm font-semibold text-emerald-700">
-          Back to Settings
-        </Link>
-
         <div>
-          <p className="erp-eyebrow">Organization Settings</p>
           <h1 className="erp-page-heading">Audit History</h1>
           <p className="erp-page-subheading">
             A chronological ERP-grade record of activity in {organization.organization_name}.

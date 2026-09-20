@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, startTransition, useCallback } from "reac
 import { useParams, useRouter } from "next/navigation";
 
 import Card from "@/components/ui/Card";
+import Button from "@/components/ui/Button";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 
 type BomReportRow = {
@@ -173,14 +174,16 @@ export default function MerchandisingBomReportPage() {
         />
       </Card>
       {nextCursor && (
-        <button
+        <Button
+          variant="secondary"
+          size="sm"
           type="button"
           onClick={() => void loadBomItems(nextCursor)}
           disabled={loadingMore}
           className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50"
         >
           {loadingMore ? "Loading..." : "Load more BOM rows"}
-        </button>
+        </Button>
       )}
     </div>
   );

@@ -136,12 +136,6 @@ export default function CreatePurchaseOrderPage() {
 
   return (
     <div className={selectedGroup ? "w-full space-y-3" : "mx-auto max-w-7xl space-y-3"}>
-      <header className="flex items-center gap-3 border-b border-slate-200 pb-3">
-        <button type="button" onClick={() => router.push(procurementPath)} aria-label="Back to procurement" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"><ArrowLeft className="h-4 w-4" /></button>
-        <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700">Procurement</p><h1 className="truncate text-lg font-bold text-slate-950">Style Wise PO</h1></div>
-        <div className="ml-auto hidden items-center gap-2 text-xs text-slate-500 sm:flex"><span className="h-2 w-2 rounded-full bg-emerald-500" /> BOM report</div>
-      </header>
-
       {!selectedGroup && <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
         <div className="grid gap-2 sm:grid-cols-3">
           {stageTabs.map((stage, index) => (

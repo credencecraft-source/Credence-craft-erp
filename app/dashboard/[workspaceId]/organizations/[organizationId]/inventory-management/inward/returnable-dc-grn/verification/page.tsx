@@ -11,7 +11,6 @@ export default async function Page({ params }: { params: Promise<{ workspaceId: 
   return (
     <UiPage as="div">
       <Section className="space-y-6">
-        <Link href={basePath} className="text-xs font-semibold text-amber-700">&larr; Returnable DC GRN</Link>
         <Card>
           <h1 className="text-2xl font-bold text-slate-900">Verification</h1>
           <p className="mt-2 text-sm text-slate-600">Returnable DC verification tasks will appear here.</p>

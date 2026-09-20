@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { reserveChallanNumber } from "@/lib/services/organizations/challan-number-configuration-service";
 
 const SAVED_STATUS = "SAVED";
 const POSTED_STATUS = "POSTED";
@@ -47,6 +48,8 @@ async function reservePosDocumentNumber(
   prefix: string,
   database: Prisma.TransactionClient | typeof prisma = prisma,
 ) {
+  if (documentType === "PURCHASE_BILL") return reserveChallanNumber(organizationId, documentType, database);
+
   const counter = await database.procurementDocumentCounter.upsert({
     where: {
       organization_id_document_type: {
@@ -114,18 +117,25 @@ async function validateMasterReferences(organizationId: string, input: CreatePur
   }
 
   if (!Array.isArray(input.lines) || input.lines.length === 0) throw new Error("At least one purchase line is required.");
+  const gstIds = [...new Set(input.lines.map((line) => line.gstId).filter((id): id is string => Boolean(id)))];
+  const hsnCodes = [...new Set(input.lines.map((line) => String(line.hsnCode ?? "").trim()).filter(Boolean))];
+  const [gsts, hsns] = await Promise.all([
+    gstIds.length
+      ? prisma.masterGst.findMany({ where: { organization_id: organizationId, id: { in: gstIds }, is_active: true }, select: { id: true } })
+      : Promise.resolve([]),
+    hsnCodes.length
+      ? prisma.masterHsn.findMany({ where: { organization_id: organizationId, hsn_code: { in: hsnCodes }, is_active: true }, select: { hsn_code: true } })
+      : Promise.resolve([]),
+  ]);
+  const validGstIds = new Set(gsts.map((gst) => gst.id));
+  const validHsnCodes = new Set(hsns.map((hsn) => hsn.hsn_code));
+
   for (const line of input.lines) {
     decimal(line.quantity, "Quantity", { required: true, positive: true });
     decimal(line.purchasePrice, "Purchase price");
     decimal(line.salesPrice, "Sales price");
-    if (line.gstId) {
-      const gst = await prisma.masterGst.findFirst({ where: { id: line.gstId, organization_id: organizationId, is_active: true }, select: { id: true } });
-      if (!gst) throw new Error("One selected GST value is not valid for this organization.");
-    }
-    if (line.hsnCode) {
-      const hsn = await prisma.masterHsn.findFirst({ where: { organization_id: organizationId, hsn_code: String(line.hsnCode).trim(), is_active: true }, select: { id: true } });
-      if (!hsn) throw new Error("One selected HSN value is not valid for this organization.");
-    }
+    if (line.gstId && !validGstIds.has(line.gstId)) throw new Error("One selected GST value is not valid for this organization.");
+    if (line.hsnCode && !validHsnCodes.has(String(line.hsnCode).trim())) throw new Error("One selected HSN value is not valid for this organization.");
   }
 }
 
@@ -380,7 +390,7 @@ export async function createPurchaseBill(organizationId: string, actorId: string
       },
     });
     return { bill, documentNumber };
-  });
+  }, { maxWait: 10000, timeout: 30000 });
 
   return {
     id: result.bill.id,
@@ -397,7 +407,7 @@ export async function createPurchaseBill(organizationId: string, actorId: string
 export async function listPurchaseBills(organizationId: string) {
   const bills = await prisma.posPurchaseBill.findMany({
     where: { organization_id: organizationId },
-    include: { lines: { orderBy: { created_at: "asc" } } },
+    include: { lines: { orderBy: { created_at: "asc" }, include: { finished_goods_stock: { select: { id: true, sku_code: true } } } } },
     orderBy: { created_at: "desc" },
   });
   const vendorIds = [...new Set(bills.map((bill) => bill.vendor_id))];
@@ -427,6 +437,149 @@ export async function listPurchaseBills(organizationId: string) {
       gst: Number(line.gst_rate ?? 0),
       hsnCode: line.hsn_code,
       total: Number(line.total),
+      stock: line.finished_goods_stock,
     })),
+    stockCreated: bill.lines.length > 0 && bill.lines.every((line) => Boolean(line.finished_goods_stock)),
   }));
+}
+
+const purchaseBillDetailInclude = {
+  lines: {
+    orderBy: { created_at: "asc" as const },
+    include: {
+      sourceRecord: { include: { lines: { orderBy: { created_at: "asc" as const } } } },
+      finished_goods_stock: { select: { id: true, sku_code: true } },
+    },
+  },
+} as const;
+
+type PurchaseBillDetail = Prisma.PosPurchaseBillGetPayload<{ include: typeof purchaseBillDetailInclude }>;
+
+function serializePurchaseBillDetail(bill: PurchaseBillDetail, vendor: { id: string; vendor: string; gst_number: string | null; registered_state: string | null } | null) {
+  return {
+    id: bill.id,
+    documentNumber: bill.document_number,
+    billNumber: bill.bill_number,
+    billDate: bill.bill_date,
+    taxMode: bill.tax_mode,
+    status: bill.status,
+    totalQuantity: bill.total_quantity.toString(),
+    subtotal: bill.subtotal.toString(),
+    tax: bill.tax.toString(),
+    total: bill.total.toString(),
+    createdAt: bill.created_at,
+    postedAt: bill.posted_at,
+    vendor,
+    lines: bill.lines.map((line) => ({
+      id: line.id,
+      itemName: line.item_name,
+      size: line.size,
+      quantity: line.quantity.toString(),
+      purchasePrice: line.purchase_price?.toString() ?? null,
+      salesPrice: line.sales_price?.toString() ?? null,
+      gstRate: line.gst_rate?.toString() ?? null,
+      hsnCode: line.hsn_code,
+      taxAmount: line.tax_amount.toString(),
+      total: line.total.toString(),
+      sourceRecord: line.sourceRecord ? {
+        id: line.sourceRecord.id,
+        recordNumber: line.sourceRecord.record_number,
+        itemType: line.sourceRecord.item_type,
+        styleName: line.sourceRecord.style_name,
+        brandId: line.sourceRecord.brand_id,
+        sizeGroupId: line.sourceRecord.size_group_id,
+        colorId: line.sourceRecord.color_id,
+        categoryId: line.sourceRecord.category_id,
+        subCategoryId: line.sourceRecord.sub_category_id,
+      } : null,
+      stock: line.finished_goods_stock,
+    })),
+  };
+}
+
+export async function getPurchaseBill(organizationId: string, billId: string) {
+  const bill = await prisma.posPurchaseBill.findFirst({ where: { id: billId, organization_id: organizationId }, include: purchaseBillDetailInclude });
+  if (!bill) throw new Error("Purchase bill was not found in this organization.");
+  const vendor = await prisma.masterVendor.findFirst({
+    where: { id: bill.vendor_id, organization_id: organizationId },
+    select: { id: true, vendor: true, gst_number: true, registered_state: true },
+  });
+  return serializePurchaseBillDetail(bill, vendor);
+}
+
+export async function createPurchaseBillFinishedGoodsStock(organizationId: string, actorId: string, billId: string) {
+  const result = await prisma.$transaction(async (transaction) => {
+    const bill = await transaction.posPurchaseBill.findFirst({ where: { id: billId, organization_id: organizationId }, include: purchaseBillDetailInclude });
+    if (!bill) throw new Error("Purchase bill was not found in this organization.");
+    const vendor = await transaction.masterVendor.findFirst({
+      where: { id: bill.vendor_id, organization_id: organizationId },
+      select: { id: true, vendor: true, gst_number: true, registered_state: true },
+    });
+    if (![POSTED_STATUS, "APPROVED"].includes(bill.status)) throw new Error("Only posted purchase bills can create stock.");
+    if (bill.lines.length === 0) throw new Error("This purchase bill has no item lines.");
+    if (bill.lines.some((line) => line.sourceRecord?.item_type !== "FINISHED_GOODS")) throw new Error("Finished Goods stock can only be created for a Finished Goods purchase bill.");
+    const existing = bill.lines.filter((line) => line.finished_goods_stock);
+    if (existing.length === bill.lines.length) return { bill, created: existing.map((line) => line.finished_goods_stock), vendor };
+    if (existing.length > 0) throw new Error("This purchase bill has partially created stock and needs administrator review.");
+
+    const sourceRecords = bill.lines.map((line) => line.sourceRecord).filter((record): record is NonNullable<typeof record> => Boolean(record));
+    const ids = {
+      brand: [...new Set(sourceRecords.map((record) => record.brand_id).filter((id): id is string => Boolean(id)))],
+      color: [...new Set(sourceRecords.map((record) => record.color_id).filter((id): id is string => Boolean(id)))],
+      category: [...new Set(sourceRecords.map((record) => record.category_id).filter((id): id is string => Boolean(id)))],
+      subCategory: [...new Set(sourceRecords.map((record) => record.sub_category_id).filter((id): id is string => Boolean(id)))],
+    };
+    const [brands, colors, categories, subCategories] = await Promise.all([
+      transaction.masterBrand.findMany({ where: { organization_id: organizationId, id: { in: ids.brand } }, select: { id: true, brand: true } }),
+      transaction.masterColor.findMany({ where: { organization_id: organizationId, id: { in: ids.color } }, select: { id: true, colors: true } }),
+      transaction.masterCategory.findMany({ where: { organization_id: organizationId, id: { in: ids.category } }, select: { id: true, category_name: true } }),
+      transaction.masterSubCategory.findMany({ where: { organization_id: organizationId, id: { in: ids.subCategory } }, select: { id: true, sub_category: true } }),
+    ]);
+    const brandById = new Map(brands.map((item) => [item.id, item.brand]));
+    const colorById = new Map(colors.map((item) => [item.id, item.colors]));
+    const categoryById = new Map(categories.map((item) => [item.id, item.category_name]));
+    const subCategoryById = new Map(subCategories.map((item) => [item.id, item.sub_category]));
+    const created = [];
+    for (const line of bill.lines) {
+      const record = line.sourceRecord!;
+      const stock = await transaction.finishedGoodsSkuStock.create({
+        data: {
+          organization_id: organizationId,
+          style_name: record.style_name?.trim() || line.item_name?.trim() || record.record_number,
+          order_no: bill.document_number,
+          article_no: line.item_name?.trim() || record.record_number,
+          brand: record.brand_id ? brandById.get(record.brand_id) ?? null : null,
+          size: line.size,
+          colour: record.color_id ? colorById.get(record.color_id) ?? null : null,
+          product_category: record.category_id ? categoryById.get(record.category_id) ?? null : null,
+          sub_product_category: record.sub_category_id ? subCategoryById.get(record.sub_category_id) ?? null : null,
+          gst_rate: line.gst_rate,
+          hsn_code: line.hsn_code,
+          purchase_price: line.purchase_price,
+          sales_price: line.sales_price,
+          added_user: actorId,
+          source: "POS_PURCHASE_BILL",
+          qty_in: line.quantity,
+          current_stock: line.quantity,
+          purchase_bill_line_id: line.id,
+        },
+        select: { id: true, sku_code: true },
+      });
+      created.push(stock);
+    }
+    const approvedBill = await transaction.posPurchaseBill.update({ where: { id: bill.id }, data: { status: "APPROVED" }, include: purchaseBillDetailInclude });
+    await transaction.auditEvent.create({
+      data: {
+        organization_id: organizationId,
+        user_id: actorId,
+        module: "POS_PURCHASE_BILL",
+        action: "CREATE_FINISHED_GOODS_STOCK",
+        entity_type: "pos_purchase_bill",
+        entity_id: bill.id,
+        details: { documentNumber: bill.document_number, lineCount: created.length, source: "POS_PURCHASE_BILL" },
+      },
+    });
+    return { bill: approvedBill, created, vendor };
+  });
+  return { bill: serializePurchaseBillDetail(result.bill, result.vendor), stock: result.created };
 }

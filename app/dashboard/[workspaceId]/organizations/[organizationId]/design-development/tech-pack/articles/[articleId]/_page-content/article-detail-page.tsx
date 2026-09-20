@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
@@ -34,7 +33,7 @@ type ArticleSummary = {
 type DetailTab = "overview" | "orders" | "materials";
 
 export default function ArticleDetailPage() {
-  const { workspaceId, organizationId, articleId } = useParams<{ workspaceId: string; organizationId: string; articleId: string }>();
+  const { organizationId, articleId } = useParams<{ workspaceId: string; organizationId: string; articleId: string }>();
   const [article, setArticle] = useState<ArticleRecord | null>(null);
   const [summary, setSummary] = useState<ArticleSummary | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
@@ -87,7 +86,6 @@ export default function ArticleDetailPage() {
 
   const articleFields = useMemo(() => article?.fields ?? {}, [article]);
 
-  const listPath = `/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/articles`;
   const articleName = String(article?.label || articleFields.article || "Article");
   const articleCode = String(article?.code || articleFields.article_code || "—");
   const designBy = String(articleFields.design_by || "—");
@@ -102,7 +100,6 @@ export default function ArticleDetailPage() {
   if (error) {
     return (
       <main className="p-6">
-        <Link href={listPath} className="text-sm font-semibold text-emerald-700">Back to articles</Link>
         <div className="mt-4 rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
       </main>
     );
@@ -111,7 +108,6 @@ export default function ArticleDetailPage() {
   if (!article) {
     return (
       <main className="p-6">
-        <Link href={listPath} className="text-sm font-semibold text-emerald-700">Back to articles</Link>
         <div className="mt-4 rounded border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Article not found.</div>
       </main>
     );
@@ -131,7 +127,6 @@ export default function ArticleDetailPage() {
     <main className="space-y-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
         <div>
-          <Link href={listPath} className="text-sm font-medium text-emerald-700 hover:text-emerald-800">Back to articles</Link>
           <div className="mt-2 flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-bold text-slate-900">{articleName}</h1>
             <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">{articleCode}</span>

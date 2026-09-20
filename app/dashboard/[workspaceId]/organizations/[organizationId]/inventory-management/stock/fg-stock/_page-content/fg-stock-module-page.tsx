@@ -1,9 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import Button from "@/components/ui/Button";
+import Select from "@/components/ui/Select";
 
 type MasterValue = { id: string; label: string; fields?: Record<string, unknown> };
 type StockRecord = {
@@ -51,6 +52,8 @@ type FormState = {
   barcode: string;
 };
 
+const fieldClass = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100";
+
 const emptyForm: FormState = {
   styleName: "", orderNo: "", articleNo: "", brand: "", size: "", colour: "",
   productCategory: "", subProductCategory: "", source: "DIRECT", qtyIn: "", qtyOut: "",
@@ -63,21 +66,13 @@ const sourceOptions = [
   ["WO_ORDER_GRN", "WO Order GRN"],
 ] as const;
 
-const fieldClass = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100";
-
 function directItemName(form: FormState) {
   return [form.productCategory, form.subProductCategory, form.brand, form.size, form.colour].filter(Boolean).join(" - ") || "Generated from catalogue selections";
 }
 
 function MasterSelect({ label, value, options, onChange }: { label: string; value: string; options: MasterValue[]; onChange: (value: string) => void }) {
   return (
-    <label className="block space-y-1">
-      <span className="text-xs font-semibold text-slate-700">{label}</span>
-      <select className={fieldClass} value={value} onChange={(event) => onChange(event.target.value)}>
-        <option value="">Select {label}</option>
-        {options.map((option) => <option key={option.id} value={option.label}>{option.label}</option>)}
-      </select>
-    </label>
+    <Select label={label} value={value} onChange={(event) => onChange(event.target.value)} options={[{ value: "", label: `Select ${label}` }, ...options.map((option) => ({ value: option.label, label: option.label }))]} className="rounded-lg" />
   );
 }
 
@@ -139,9 +134,7 @@ export default function FgStockModulePage({ moduleName, addMode = false }: { mod
 
   return (
     <main className="mx-auto max-w-[1500px] space-y-5">
-      <Link href=".." className="text-xs font-semibold text-emerald-700 hover:underline">&larr; FG Stock</Link>
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Finished Goods Stock</p>
         <h1 className="text-2xl font-bold text-slate-950">{moduleName}</h1>
       </div>
 
@@ -149,7 +142,7 @@ export default function FgStockModulePage({ moduleName, addMode = false }: { mod
         {(showForm || addMode) && <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4">
             <div><h2 className="text-lg font-bold text-slate-950">Add Finished Goods SKU Stock</h2><p className="mt-1 text-sm text-slate-500">Current stock is calculated from quantity in and quantity out.</p></div>
-            <button type="button" onClick={() => addMode ? router.push("..") : setShowForm(false)} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white">Cancel</button>
+            <Button type="button" variant="secondary" size="sm" onClick={() => addMode ? router.push("..") : setShowForm(false)}>Cancel</Button>
           </div>
           <form onSubmit={submit} className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
           <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">SKU ID</span><input disabled value={lastGeneratedSkuId || "Auto generated on save"} className={`${fieldClass} cursor-not-allowed bg-slate-100 text-slate-500`} /></label>

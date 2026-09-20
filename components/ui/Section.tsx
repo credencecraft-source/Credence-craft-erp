@@ -12,7 +12,7 @@ export default function Section({
   ...props
 }: SectionProps) {
   return (
-    <section {...props} className={cn("space-y-4", className)}>
+    <section {...props} className={cn("space-y-3", className)}>
       {children}
     </section>
   );

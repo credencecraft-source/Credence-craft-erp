@@ -4,6 +4,7 @@ export type SubModuleOption = {
   key: string;
   label: string;
   pathSegment?: string;
+  href?: string;
   children?: SubModuleOption[];
 };
 
@@ -16,6 +17,31 @@ export type ErpModule = {
 
 export const ERP_MODULES: ErpModule[] = [
   {
+    key: "online",
+    label: "Online",
+    pathSegment: "online",
+    children: [
+      {
+        key: "pre-order",
+        label: "Pre Order",
+        pathSegment: "pre-order",
+        children: [
+          { key: "b2b-dashboard", label: "B2B Dashboard", pathSegment: "b2b-dashboard" },
+          { key: "b2c-dashboard", label: "B2C Dashboard", pathSegment: "b2c-dashboard" },
+        ],
+      },
+      {
+        key: "ready-stock",
+        label: "Ready Stock",
+        pathSegment: "ready-stock",
+        children: [
+          { key: "b2b-dashboard", label: "B2B Dashboard", pathSegment: "b2b-dashboard" },
+          { key: "b2c-dashboard", label: "B2C Dashboard", pathSegment: "b2c-dashboard" },
+        ],
+      },
+    ],
+  },
+  {
     key: "pos",
     label: "POS",
     pathSegment: "pos",
@@ -24,6 +50,7 @@ export const ERP_MODULES: ErpModule[] = [
       { key: "purchase-bill", label: "Purchase Bill", pathSegment: "purchase-bill" },
       { key: "invoice", label: "Invoice", pathSegment: "invoice" },
       { key: "stock", label: "Stock", pathSegment: "stock" },
+      { key: "vendor-customer", label: "Vendor/Customer", href: "/admin/master-data/vendor" },
     ],
   },
   {
@@ -220,6 +247,7 @@ export const ERP_MODULES: ErpModule[] = [
         ],
       },
       { key: "users", label: "Users", pathSegment: "users" },
+      { key: "challan-numbers", label: "Challan Numbers", pathSegment: "challan-numbers" },
     ],
   },
   {
@@ -233,6 +261,7 @@ export const ERP_MODULES: ErpModule[] = [
 ];
 
 const BUSINESS_TYPE_MODULE_ALIASES: Record<string, string> = {
+  "online": "online",
   "pos": "pos",
   "point-of-sale": "pos",
   "order-management": "order-management",

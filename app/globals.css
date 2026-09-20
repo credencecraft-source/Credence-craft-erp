@@ -41,12 +41,17 @@
 
   html {
     min-width: 320px;
+    width: 100%;
+    overflow-x: hidden;
     background: var(--erp-bg);
     color: var(--erp-text);
   }
 
   body {
     min-height: 100vh;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
     background:
       radial-gradient(circle at top right, rgba(29, 127, 92, 0.12), transparent 25rem),
       linear-gradient(180deg, #f5f8f7 0%, #eef3f1 100%);
@@ -59,6 +64,13 @@
   select,
   textarea {
     font: inherit;
+  }
+
+  img,
+  svg,
+  video,
+  canvas {
+    max-width: 100%;
   }
 
   button:not(:disabled),
@@ -82,11 +94,15 @@
   }
 
   .erp-page-heading {
-    @apply text-xl font-bold tracking-tight text-slate-950 sm:text-2xl;
+    @apply text-lg font-bold tracking-tight text-slate-950 sm:text-xl;
   }
 
   .erp-eyebrow {
-    @apply text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--erp-brand)];
+    @apply text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--erp-brand)];
+  }
+
+  .erp-page-header {
+    @apply flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2;
   }
 
   .erp-table-head {

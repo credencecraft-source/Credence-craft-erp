@@ -34,9 +34,6 @@ export default async function QualityManagementSystemStagePage({
           <p className="mt-2 text-sm text-slate-600">
             This workspace is connected to the Quality Management System navigation and is ready for its inspection forms and records.
           </p>
-          <Link href={basePath} className="mt-5 inline-block text-sm font-semibold text-emerald-700 hover:text-emerald-800">
-            Back to Quality Management System -&gt;
-          </Link>
         </Card>
       </Section>
     </Page>

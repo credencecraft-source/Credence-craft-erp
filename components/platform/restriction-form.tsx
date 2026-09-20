@@ -5,6 +5,7 @@ import { useState } from "react";
 import Link from "next/link";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 import { ERP_MODULES } from "@/components/erp/erp-config-registry";
 
 export function RestrictionForm({ 
@@ -31,8 +32,8 @@ export function RestrictionForm({
 
       {/* Master Module Selection */}
       <div>
-        <label className="block text-xs font-semibold mb-1 text-slate-700">Master Module</label>
-        <select
+        <Select
+          label="Master Module"
           name="masterModule"
           required
           value={selectedMasterKey}
@@ -41,21 +42,15 @@ export function RestrictionForm({
             setSelectedMainKey("");
             setSelectedSubKey("");
           }}
-          className="w-full border p-2 text-xs rounded-lg bg-white"
-        >
-          <option value="">Select Master Module...</option>
-          {ERP_MODULES.map((mod) => (
-            <option key={mod.key} value={mod.key}>
-              {mod.label}
-            </option>
-          ))}
-        </select>
+          options={[{ value: "", label: "Select Master Module..." }, ...ERP_MODULES.map((mod) => ({ value: mod.key, label: mod.label }))]}
+          className="rounded-lg p-2 text-xs"
+        />
       </div>
 
       {/* Main Module Selection */}
       <div>
-        <label className="block text-xs font-semibold mb-1 text-slate-700">Main Module</label>
-        <select
+        <Select
+          label="Main Module"
           name="mainModule"
           required
           value={selectedMainKey}
@@ -64,44 +59,33 @@ export function RestrictionForm({
             setSelectedSubKey("");
           }}
           disabled={!selectedMasterKey || mainModules.length === 0}
-          className="w-full border p-2 text-xs rounded-lg bg-white disabled:bg-slate-100"
-        >
-          <option value="">{mainModules.length === 0 ? "No Main Modules (Root Only)" : "Select Main Module..."}</option>
-          {mainModules.map((main: any) => (
-            <option key={main.key} value={main.key}>
-              {main.label}
-            </option>
-          ))}
-        </select>
+          options={[{ value: "", label: mainModules.length === 0 ? "No Main Modules (Root Only)" : "Select Main Module..." }, ...mainModules.map((main: any) => ({ value: main.key, label: main.label }))]}
+          className="rounded-lg p-2 text-xs"
+        />
       </div>
 
       {/* Sub Module Selection */}
       <div>
-        <label className="block text-xs font-semibold mb-1 text-slate-700">Sub Module</label>
-        <select
+        <Select
+          label="Sub Module"
           name="subModule"
           required
           value={selectedSubKey}
           onChange={(e) => setSelectedSubKey(e.target.value)}
           disabled={!selectedMainKey || subModules.length === 0}
-          className="w-full border p-2 text-xs rounded-lg bg-white disabled:bg-slate-100"
-        >
-          <option value="">{subModules.length === 0 ? "No restrictable submodules" : "Select Sub Module..."}</option>
-          {subModules.map((sub: any) => (
-            <option key={sub.key} value={sub.key}>
-              {sub.label}
-            </option>
-          ))}
-        </select>
+          options={[{ value: "", label: subModules.length === 0 ? "No restrictable submodules" : "Select Sub Module..." }, ...subModules.map((sub: any) => ({ value: sub.key, label: sub.label }))]}
+          className="rounded-lg p-2 text-xs"
+        />
       </div>
 
       {/* Restriction Action Type */}
       <div>
-        <label className="block text-xs font-semibold mb-1 text-slate-700">Restriction Action</label>
-        <select name="restrictionType" className="w-full border p-2 text-xs rounded-lg bg-white">
-          <option value="block">Block Access (Redirect & Show Alert)</option>
-          <option value="hide">Hide Element (Remove from Sidebar)</option>
-        </select>
+        <Select
+          label="Restriction Action"
+          name="restrictionType"
+          options={[{ value: "block", label: "Block Access (Redirect & Show Alert)" }, { value: "hide", label: "Hide Element (Remove from Sidebar)" }]}
+          className="rounded-lg p-2 text-xs"
+        />
       </div>
 
       {/* Custom Alert Message Input */}

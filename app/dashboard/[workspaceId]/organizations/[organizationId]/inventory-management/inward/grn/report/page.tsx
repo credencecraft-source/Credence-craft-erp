@@ -104,7 +104,6 @@ export default function RmGrnReportPage() {
     <div className="mx-auto max-w-[1500px] space-y-4">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
-          <Link href={basePath} className="text-xs font-semibold text-emerald-700">&larr; RM GRN</Link>
           <h1 className="mt-3 text-2xl font-bold text-slate-900">RM GRN Report</h1>
         </div>
 
@@ -121,12 +120,12 @@ export default function RmGrnReportPage() {
               <p className="mt-1 text-xs text-slate-500">This will permanently remove {selectedIds.length} selected record{selectedIds.length === 1 ? "" : "s"} from the report.</p>
             </div>
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setShowDeleteConfirmation(false)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700">
+              <Button type="button" variant="secondary" size="sm" onClick={() => setShowDeleteConfirmation(false)}>
                 Cancel
-              </button>
-              <button type="button" onClick={() => void handleDeleteSelected()} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white">
+              </Button>
+              <Button type="button" variant="danger" size="sm" onClick={() => void handleDeleteSelected()}>
                 Delete Records
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>

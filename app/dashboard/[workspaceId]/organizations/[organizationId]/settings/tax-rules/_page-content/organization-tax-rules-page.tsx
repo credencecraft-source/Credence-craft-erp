@@ -91,13 +91,9 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">Organization Settings</p>
-          <h1 className="text-2xl font-bold text-slate-900">Tax Rules</h1>
-          <p className="mt-1 text-sm text-slate-600">Configure the default tax regime used across this organization.</p>
-        </div>
-        <Link href={`/dashboard/${route.workspaceId}/organizations/${route.organizationId}/settings`} className="text-sm font-semibold text-emerald-700">Back to Settings</Link>
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Tax Rules</h1>
+        <p className="mt-1 text-sm text-slate-600">Configure the default tax regime used across this organization.</p>
       </div>
 
       {message && <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{message}</div>}

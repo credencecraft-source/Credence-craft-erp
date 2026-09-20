@@ -1,6 +1,9 @@
 "use client";
 
 import React from "react";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 
 export default function AsnTab({
   form,
@@ -49,13 +52,14 @@ export default function AsnTab({
           <h3 className="text-xs font-bold text-slate-900">Advance Shipment Notices (ASN)</h3>
           <p className="text-[11px] text-slate-500">Manage outbound shipment notifications and dispatch details.</p>
         </div>
-        <button
+        <Button
+          size="sm"
           type="button"
           onClick={addAsnRow}
           className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
         >
           <span>+</span> Create ASN
-        </button>
+        </Button>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -79,7 +83,8 @@ export default function AsnTab({
                     <td className="p-3 text-center font-mono font-bold text-slate-600">{index + 1}</td>
                     <td className="p-3 font-mono font-bold text-slate-800">{row.asnNumber}</td>
                     <td className="p-3">
-                      <input
+                      <Input
+                        aria-label="Shipment date"
                         type="date"
                         value={row.shipmentDate}
                         onChange={(e) => updateAsnRow(row.id, "shipmentDate", e.target.value)}
@@ -87,7 +92,8 @@ export default function AsnTab({
                       />
                     </td>
                     <td className="p-3">
-                      <input
+                      <Input
+                        aria-label="Carrier"
                         type="text"
                         value={row.carrier}
                         onChange={(e) => updateAsnRow(row.id, "carrier", e.target.value)}
@@ -96,7 +102,8 @@ export default function AsnTab({
                       />
                     </td>
                     <td className="p-3 text-center">
-                      <input
+                      <Input
+                        aria-label="Total cartons"
                         type="number"
                         value={row.totalCartons}
                         onChange={(e) => updateAsnRow(row.id, "totalCartons", parseInt(e.target.value) || 0)}
@@ -104,18 +111,16 @@ export default function AsnTab({
                       />
                     </td>
                     <td className="p-3">
-                      <select
+                      <Select
+                        aria-label="ASN status"
                         value={row.status}
                         onChange={(e) => updateAsnRow(row.id, "status", e.target.value)}
                         className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs bg-white font-medium"
-                      >
-                        <option value="Dispatched">Dispatched</option>
-                        <option value="In Transit">In Transit</option>
-                        <option value="Delivered">Delivered</option>
-                      </select>
+                        options={[{ value: "Dispatched", label: "Dispatched" }, { value: "In Transit", label: "In Transit" }, { value: "Delivered", label: "Delivered" }]}
+                      />
                     </td>
                     <td className="p-3 text-center">
-                      <button type="button" onClick={() => removeAsnRow(row.id)} className="text-red-500 hover:text-red-700">✕</button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => removeAsnRow(row.id)} className="text-red-500">✕</Button>
                     </td>
                   </tr>
                 ))

@@ -11,7 +11,6 @@ export default async function Page({ params }: { params: Promise<{ workspaceId: 
   return (
     <UiPage as="div">
       <Section className="space-y-6">
-        <Link href={basePath} className="text-xs font-semibold text-sky-700">&larr; Packing List GRN</Link>
         <Card>
           <h1 className="text-2xl font-bold text-slate-900">Allocation</h1>
           <p className="mt-2 text-sm text-slate-600">Packing-list allocation records will appear here.</p>

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
@@ -114,22 +114,6 @@ export default function PurchaseOrderReportPage() {
 
   return (
     <div className="mx-auto max-w-[1500px] space-y-4">
-      <header className="flex items-center gap-3 border-b border-slate-200 pb-4">
-        <button
-          type="button"
-          onClick={() => router.push(basePath)}
-          aria-label="Back to procurement"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </button>
-        <div>
-          <p className="erp-eyebrow">Procurement</p>
-          <h1 className="erp-page-heading mt-1">Purchase Orders</h1>
-          <p className="mt-1 text-xs text-slate-500">Header-level Purchase Order register</p>
-        </div>
-      </header>
-
       {loading ? (
         <div className="erp-surface flex min-h-48 items-center justify-center gap-2 text-xs text-slate-500">
           <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />

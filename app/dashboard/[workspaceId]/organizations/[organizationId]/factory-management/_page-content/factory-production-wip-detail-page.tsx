@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
 
 import Card from "@/components/ui/Card";
@@ -52,7 +51,6 @@ const price = (value: number | null) => value === null ? "-" : Number(value).toL
 
 export default function FactoryProductionWipDetailPage() {
   const params = useParams<{ workspaceId: string; organizationId: string; processRecordId: string }>();
-  const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
   const processRecordId = params?.processRecordId ?? "";
   const [records, setRecords] = useState<WipRecord[]>([]);
@@ -182,7 +180,6 @@ export default function FactoryProductionWipDetailPage() {
   return (
     <Page as="div">
       <Section className="space-y-6">
-        <Link href={`/dashboard/${workspaceId}/organizations/${organizationId}/factory-management/production/shop-floor/wip`} className="text-xs font-semibold text-emerald-700 hover:text-emerald-800">&larr; Shop Floor WIP</Link>
         {loading && <Card className="p-6 text-sm text-slate-600">Loading process details...</Card>}
         {error && <Card className="border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</Card>}
         {!loading && !error && records.length > 0 && (

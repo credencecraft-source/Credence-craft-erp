@@ -1,8 +1,8 @@
 "use client";
 
 import { Printer } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Page from "@/components/ui/Page";
@@ -48,12 +48,12 @@ export default function SalesInvoicePage({
   workspaceId: string;
   organizationId: string;
 }) {
+  const base = `/dashboard/${workspaceId}/organizations/${organizationId}/finance-management/transactions`;
   const [invoices, setInvoices] = useState<SavedPosInvoice[]>([]);
   const [selected, setSelected] = useState<SavedPosInvoice | null>(null);
   const [visibleReportFields, setVisibleReportFields] = useState<Array<string | keyof SavedPosInvoice>>(
     reportFields.map((field) => field.key),
   );
-  const base = `/dashboard/${workspaceId}/organizations/${organizationId}/finance-management/transactions`;
   const createPath = `${base}/sales-invoice/new`;
 
   useEffect(() => {
@@ -89,9 +89,6 @@ export default function SalesInvoicePage({
       <Section className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
           <div>
-            <Link href={base} className="text-xs font-semibold text-sky-700">
-              &larr; Transactions
-            </Link>
             <h1 className="mt-3 text-3xl font-bold text-slate-900">Sales Invoice</h1>
           </div>
           <Link

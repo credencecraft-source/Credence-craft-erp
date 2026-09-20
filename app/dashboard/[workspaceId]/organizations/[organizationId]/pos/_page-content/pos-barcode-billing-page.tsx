@@ -1,7 +1,6 @@
 "use client";
 
 import { Printer, ScanLine, Search, X } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
@@ -419,12 +418,6 @@ export default function PosBarcodeBillingPage({
         <Section className="flex min-h-[calc(100vh-2rem)] flex-col gap-4">
           <div className="sticky top-0 z-20 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 bg-white/95 pb-4 backdrop-blur">
             <div>
-              <Link
-                href={base}
-                className="text-xs font-semibold text-emerald-700"
-              >
-                &larr; POS
-              </Link>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">

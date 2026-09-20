@@ -1,10 +1,13 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Button from "@/components/ui/Button";
+import Checkbox from "@/components/ui/Checkbox";
+import Modal from "@/components/ui/Modal";
 import Table from "@/components/ui/Table";
 import Tabs from "@/components/ui/Tabs";
 import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 
 export type FilterOperator = "contains" | "is" | "notContains" | "empty";
 
@@ -23,6 +26,7 @@ interface ReportGridProps<T> {
   rowIdSelector: (record: T) => string;
   selectedIds: string[];
   onRowClick: (recordId: string) => void;
+  onRecordClick?: (record: T) => void;
   onToggleSelectAll?: (checked: boolean) => void;
   onToggleRowSelection?: (recordId: string, checked: boolean) => void;
   statusOptions?: readonly string[];
@@ -33,6 +37,7 @@ interface ReportGridProps<T> {
   onDeleteSelected?: () => void;
   deleteSelectedLabel?: string;
   onCloneOrder?: (recordId: string) => void;
+  rowActionLabel?: string;
   renderCell: (fieldKey: string, record: T) => React.ReactNode;
   emptyMessage?: string;
 }
@@ -43,9 +48,11 @@ export function ReportGrid<T>({
   fields,
   visibleFields,
   onVisibleFieldsChange,
+  storageKey,
   rowIdSelector,
   selectedIds,
   onRowClick,
+  onRecordClick,
   onToggleSelectAll,
   onToggleRowSelection,
   statusOptions,
@@ -56,6 +63,7 @@ export function ReportGrid<T>({
   onDeleteSelected,
   deleteSelectedLabel = "Delete Selected",
   onCloneOrder,
+  rowActionLabel = "Clone",
   renderCell,
   emptyMessage = "No records found.",
 }: ReportGridProps<T>) {
@@ -67,6 +75,27 @@ export function ReportGrid<T>({
 
   const [showColumnModal, setShowColumnModal] = useState(false);
   const [tempVisibleFields, setTempVisibleFields] = useState<(keyof T | string)[]>([]);
+
+  useEffect(() => {
+    if (!storageKey) return;
+
+    try {
+      const storedFields = JSON.parse(localStorage.getItem(storageKey) ?? "null") as unknown;
+      if (Array.isArray(storedFields)) {
+        const validFields = storedFields.filter((field): field is keyof T | string =>
+          fields.some((definition) => String(definition.key) === String(field)),
+        );
+        if (
+          validFields.length > 0 &&
+          (validFields.length !== visibleFields.length || validFields.some((field, index) => field !== visibleFields[index]))
+        ) {
+          onVisibleFieldsChange(validFields);
+        }
+      }
+    } catch {
+      // Ignore invalid local preferences and keep the report defaults.
+    }
+  }, [fields, onVisibleFieldsChange, storageKey, visibleFields]);
 
   const handleOpenColumnModal = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -83,6 +112,7 @@ export function ReportGrid<T>({
 
   const handleSaveColumns = () => {
     onVisibleFieldsChange(tempVisibleFields);
+    if (storageKey) localStorage.setItem(storageKey, JSON.stringify(tempVisibleFields));
     setShowColumnModal(false);
   };
 
@@ -180,10 +210,11 @@ export function ReportGrid<T>({
           />
 
           {/* FILTER BUTTON WITH BADGE */}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={openFilterModal}
-            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-medium border border-slate-300 transition-colors flex items-center gap-1.5 relative"
+            className="text-[11px]"
             title="Advanced Filters"
           >
             <span>🔍 Filter</span>
@@ -192,17 +223,18 @@ export function ReportGrid<T>({
                 {activeFilterCount}
               </span>
             )}
-          </button>
+          </Button>
 
           {/* EYE BUTTON */}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleOpenColumnModal}
-            className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-medium border border-slate-300 transition-colors flex items-center justify-center"
+            className="text-[11px]"
             title="Manage Columns"
           >
             👁
-          </button>
+          </Button>
 
           {onDeleteSelected && selectedIds.length > 0 && (
             <Button variant="danger" size="sm" onClick={onDeleteSelected} className="h-7 px-2.5 text-[11px]">
@@ -224,8 +256,7 @@ export function ReportGrid<T>({
         <thead className="bg-slate-50 text-slate-700 uppercase tracking-wider text-[10px] border-b border-slate-200">
           <tr>
             <th className="p-2 w-8 text-center">
-              <input
-                type="checkbox"
+              <Checkbox
                 className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
                 checked={allFilteredSelected}
                 onChange={(e) => onToggleSelectAll?.(e.target.checked)}
@@ -253,14 +284,13 @@ export function ReportGrid<T>({
               return (
                 <tr
                   key={recordId}
-                  onClick={() => onRowClick(recordId)}
+                  onClick={() => { onRecordClick?.(record); onRowClick(recordId); }}
                   className={`cursor-pointer transition-colors ${
                     index % 2 === 0 ? "bg-white" : "bg-slate-50/40"
                   } ${isSelected ? "bg-emerald-50/60" : "hover:bg-slate-100/60"}`}
                 >
                   <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
                       checked={isSelected}
                       onChange={(e) => onToggleRowSelection?.(recordId, e.target.checked)}
@@ -273,13 +303,14 @@ export function ReportGrid<T>({
                   ))}
                   {onCloneOrder && (
                     <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        type="button"
+                      <Button
+                        variant="secondary"
+                        size="sm"
                         onClick={() => onCloneOrder(recordId)}
-                        className="rounded-md border border-emerald-200 px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-50"
+                        className="text-[10px]"
                       >
-                        Clone
-                      </button>
+                        {rowActionLabel}
+                      </Button>
                     </td>
                   )}
                 </tr>
@@ -290,18 +321,17 @@ export function ReportGrid<T>({
       </Table>
 
       {/* ADVANCED MULTI-FIELD FILTER MODAL */}
-      {showFilterModal && (
-        <div className="erp-popup-backdrop">
-          <div className="erp-popup-panel w-full max-w-lg space-y-3 p-3.5">
+      <Modal open={showFilterModal} onClose={() => setShowFilterModal(false)} ariaLabelledBy="report-filter-title" size="lg">
+          <div className="space-y-3 p-3.5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <h3 className="text-xs font-bold text-slate-900">Advanced Field Filters</h3>
-              <button
-                type="button"
+              <h3 id="report-filter-title" className="text-xs font-bold text-slate-900">Advanced Field Filters</h3>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setShowFilterModal(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold text-sm"
               >
                 ✕
-              </button>
+              </Button>
             </div>
 
             <div className="grid grid-cols-3 gap-2.5 font-bold text-[10px] text-slate-600 pb-1 border-b border-slate-200 uppercase tracking-wider">
@@ -319,29 +349,29 @@ export function ReportGrid<T>({
                       {field.label}
                     </div>
                     <div>
-                      <select
+                      <Select
                         value={currentFilter.operator}
                         onChange={(e) =>
                           handleTempFilterChange(String(field.key), e.target.value as FilterOperator, currentFilter.value)
                         }
-                        className="w-full border border-slate-300 rounded-md p-1 text-[11px] bg-white h-7"
-                      >
-                        <option value="contains">Contains</option>
-                        <option value="is">Is Exact</option>
-                        <option value="notContains">Does Not Contain</option>
-                        <option value="empty">Is Empty</option>
-                      </select>
+                        options={[
+                          { value: "contains", label: "Contains" },
+                          { value: "is", label: "Is Exact" },
+                          { value: "notContains", label: "Does Not Contain" },
+                          { value: "empty", label: "Is Empty" },
+                        ]}
+                        className="h-7 rounded-md p-1 text-[11px]"
+                      />
                     </div>
                     <div>
                       {currentFilter.operator !== "empty" ? (
-                        <input
-                          type="text"
+                        <Input
                           value={currentFilter.value}
                           onChange={(e) =>
                             handleTempFilterChange(String(field.key), currentFilter.operator, e.target.value)
                           }
                           placeholder="Value..."
-                          className="w-full border border-slate-300 rounded-md p-1 text-[11px] h-7"
+                          className="h-7 rounded-md p-1 text-[11px]"
                         />
                       ) : (
                         <span className="text-[10px] text-slate-400 italic">No value needed</span>
@@ -354,95 +384,91 @@ export function ReportGrid<T>({
 
             <div className="flex items-center justify-between pt-2.5 border-t border-slate-100">
               <div className="flex gap-1.5">
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={clearAllFilters}
-                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-medium"
                 >
                   Clear All
-                </button>
+                </Button>
                 {activeFilterCount > 0 && (
-                  <button
-                    type="button"
+                  <Button
+                    variant="danger"
+                    size="sm"
                     onClick={removeAllAppliedFilters}
-                    className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded-md text-[11px] font-medium"
                   >
                     Remove Active
-                  </button>
+                  </Button>
                 )}
               </div>
               <div className="flex gap-1.5">
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => setShowFilterModal(false)}
-                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-medium"
                 >
                   Cancel
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
                   onClick={applyAllFilters}
-                  className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-md text-[11px] font-medium"
                 >
                   Submit Filters
-                </button>
+                </Button>
               </div>
             </div>
           </div>
-        </div>
-      )}
+      </Modal>
 
       {/* COLUMN MODAL POPUP */}
-      {showColumnModal && (
-        <div className="erp-popup-backdrop">
-          <div className="erp-popup-panel w-full max-w-xs space-y-2 p-3">
+      <Modal open={showColumnModal} onClose={() => setShowColumnModal(false)} ariaLabelledBy="report-columns-title" size="sm">
+          <div className="space-y-2 p-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
-              <h3 className="text-[11px] font-bold text-slate-900">Toggle Columns</h3>
-              <button
-                type="button"
+              <h3 id="report-columns-title" className="text-[11px] font-bold text-slate-900">Toggle Columns</h3>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setShowColumnModal(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold text-xs"
               >
                 ✕
-              </button>
+              </Button>
             </div>
             
             <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
               {fields.map((field) => {
                 const isChecked = tempVisibleFields.includes(field.key);
                 return (
-                  <label key={String(field.key)} className="flex items-center gap-2 cursor-pointer text-[11px] font-medium text-slate-700 select-none hover:bg-slate-50 p-1 rounded">
-                    <input
-                      type="checkbox"
+                  <div key={String(field.key)} className="flex items-center gap-2 cursor-pointer text-[11px] font-medium text-slate-700 select-none hover:bg-slate-50 p-1 rounded">
+                    <Checkbox
                       checked={isChecked}
                       onChange={() => handleTempToggleField(String(field.key))}
                       className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
+                      label={field.label}
                     />
-                    {field.label}
-                  </label>
+                  </div>
                 );
               })}
             </div>
 
             <div className="flex justify-end gap-1 pt-1.5 border-t border-slate-100">
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => setShowColumnModal(false)}
-                className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-medium"
               >
                 Cancel
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
                 onClick={handleSaveColumns}
-                className="px-2 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-[11px] font-medium"
               >
                 Submit
-              </button>
+              </Button>
             </div>
           </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 }

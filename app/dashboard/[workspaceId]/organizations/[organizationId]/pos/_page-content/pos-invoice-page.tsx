@@ -1,7 +1,6 @@
 "use client";
 
 import { Printer } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
@@ -33,7 +32,6 @@ export default function PosInvoicePage({ workspaceId, organizationId }: { worksp
   const [visibleReportFields, setVisibleReportFields] = useState<Array<string | keyof SavedInvoice>>(
     reportFields.map((field) => field.key),
   );
-  const base = `/dashboard/${workspaceId}/organizations/${organizationId}/pos`;
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -57,7 +55,7 @@ export default function PosInvoicePage({ workspaceId, organizationId }: { worksp
   };
 
   return <Page as="div"><Section className="space-y-6">
-    <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-4"><div><Link href={base} className="text-xs font-semibold text-emerald-700">&larr; POS</Link><p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">POS Invoice</p><h1 className="mt-2 text-3xl font-bold text-slate-900">Saved Invoices</h1><p className="mt-2 text-sm text-slate-600">Review and print sales invoices saved from Quick Invoice.</p></div></div>
+    <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-4"><div><p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">POS Invoice</p><h1 className="mt-2 text-3xl font-bold text-slate-900">Saved Invoices</h1><p className="mt-2 text-sm text-slate-600">Review and print sales invoices saved from Quick Invoice.</p></div></div>
     {selected ? <InvoicePreview invoice={selected} onBack={() => setSelected(null)} /> : <ReportGrid title="Saved POS Invoices" records={invoices} fields={reportFields} visibleFields={visibleReportFields} onVisibleFieldsChange={setVisibleReportFields} rowIdSelector={(record) => record.invoiceNumber} selectedIds={[]} onRowClick={(recordId) => { const match = invoices.find((invoice) => invoice.invoiceNumber === recordId); if (match) setSelected(match); }} renderCell={renderCell} emptyMessage="No saved POS invoices yet." />}
   </Section></Page>;
 }

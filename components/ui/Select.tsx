@@ -10,6 +10,7 @@ interface Option {
 interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   label?: string;
   hint?: string;
+  error?: string;
   options?: Option[];
   children?: ReactNode;
 }
@@ -17,6 +18,7 @@ interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
 export default function Select({
   label,
   hint,
+  error,
   options,
   className = "",
   children,
@@ -30,13 +32,15 @@ export default function Select({
     <div className="space-y-1">
       {label && (
         <label htmlFor={selectId} className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
-          {label}
+          {label}{props.required ? " *" : ""}
         </label>
       )}
 
       <select
         id={selectId}
         {...props}
+        aria-invalid={error ? true : props["aria-invalid"]}
+        aria-describedby={[props["aria-describedby"], hint ? `${selectId}-hint` : "", error ? `${selectId}-error` : ""].filter(Boolean).join(" ") || undefined}
         className={cn(
           "w-full rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[var(--erp-brand)] focus:ring-2 focus:ring-[var(--erp-brand-soft)] disabled:cursor-not-allowed disabled:bg-slate-100",
           className,
@@ -49,7 +53,8 @@ export default function Select({
         ))}
         {children}
       </select>
-      {hint && <p className="text-xs text-slate-500">{hint}</p>}
+      {hint && <p id={`${selectId}-hint`} className="text-xs text-slate-500">{hint}</p>}
+      {error && <p id={`${selectId}-error`} className="text-xs font-medium text-red-700">{error}</p>}
     </div>
   );
 }

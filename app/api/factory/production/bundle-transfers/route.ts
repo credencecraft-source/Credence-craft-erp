@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
+import { reserveChallanNumber } from "@/lib/services/organizations/challan-number-configuration-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 import { prisma } from "@/lib/database/prisma-client";
 
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
         const grn = await transaction.factoryGrn.create({
           data: {
             organization_id: organization.id,
-            grn_no: `GRN-${Date.now()}-${transfer.id.slice(-6)}`,
+            grn_no: await reserveChallanNumber(organization.id, "FACTORY_GRN", transaction),
             grn_date: new Date(),
             work_order_id: transfer.work_order_id,
             bundle_transfer_id: transfer.id,

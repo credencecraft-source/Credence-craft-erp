@@ -445,6 +445,7 @@ model PosPurchaseRecord {
   updated_at        DateTime           @updatedAt
   organization      Organization       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   purchase_bill     PosPurchaseBill?  @relation(fields: [purchase_bill_id], references: [id], onDelete: SetNull)
+  bill_lines        PosPurchaseBillLine[]
   lines             PosPurchaseRecordLine[]
 
   @@index([organization_id, status, created_at])
@@ -514,6 +515,8 @@ model PosPurchaseBillLine {
   total              Decimal          @default(0) @db.Decimal(14, 4)
   created_at         DateTime         @default(now())
   purchase_bill      PosPurchaseBill  @relation(fields: [purchase_bill_id], references: [id], onDelete: Cascade)
+  sourceRecord       PosPurchaseRecord? @relation(fields: [source_record_id], references: [id], onDelete: SetNull)
+  finished_goods_stock FinishedGoodsSkuStock?
 
   @@index([purchase_bill_id])
   @@index([source_record_id])
@@ -629,7 +632,9 @@ model FinishedGoodsSkuStock {
   qty_in               Decimal      @default(0) @db.Decimal(14, 2)
   qty_out              Decimal      @default(0) @db.Decimal(14, 2)
   current_stock        Decimal      @default(0) @db.Decimal(14, 2)
+  purchase_bill_line_id String?      @unique
   organization         Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  purchase_bill_line   PosPurchaseBillLine? @relation(fields: [purchase_bill_line_id], references: [id], onDelete: SetNull)
 
   @@index([organization_id, style_name])
   @@index([organization_id, added_time])

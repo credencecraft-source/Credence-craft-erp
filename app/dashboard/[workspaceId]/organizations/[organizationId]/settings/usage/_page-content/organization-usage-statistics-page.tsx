@@ -32,12 +32,7 @@ export default async function OrganizationUsageStatisticsPage({
   return (
     <Page>
       <Section className="space-y-6">
-        <Link href={settingsPath} className="text-sm font-semibold text-emerald-700">
-          Back to Settings
-        </Link>
-
         <div>
-          <p className="erp-eyebrow">Organization Settings</p>
           <h1 className="erp-page-heading">Module Usage Statistics</h1>
           <p className="erp-page-subheading">
             {organization.organization_name} table usage and record counts.

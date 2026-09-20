@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
 
 type ArticleSummary = {
@@ -25,7 +24,7 @@ type ArticleSummary = {
 type DetailTab = "orders" | "sizes" | "bom";
 
 export default function ArticleOrderSummaryDetailPage() {
-  const { workspaceId, organizationId, article } = useParams<{ workspaceId: string; organizationId: string; article: string }>();
+  const { organizationId, article } = useParams<{ workspaceId: string; organizationId: string; article: string }>();
   const [summary, setSummary] = useState<ArticleSummary | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>("orders");
   const [error, setError] = useState("");
@@ -50,7 +49,6 @@ export default function ArticleOrderSummaryDetailPage() {
     if (organizationId && article) loadArticle();
   }, [organizationId, article]);
 
-  const summaryPath = `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order-summary`;
   if (error) return <div className="m-6 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!summary) return <div className="p-6 text-sm text-slate-500">Loading article details...</div>;
 
@@ -62,7 +60,6 @@ export default function ArticleOrderSummaryDetailPage() {
   return (
     <div className="space-y-5 p-6">
       <div className="border-b border-slate-200 pb-4">
-        <Link href={summaryPath} className="text-sm font-medium text-emerald-700 hover:text-emerald-800">Back to Article Summary</Link>
         <h1 className="mt-3 text-2xl font-bold text-slate-900">{summary.article}</h1>
         <p className="mt-1 text-sm text-slate-600">{summary.orderCount} orders · {summary.totalOrderQty.toLocaleString()} total order quantity · {buyersList.join(", ") || "No buyer"}</p>
       </div>

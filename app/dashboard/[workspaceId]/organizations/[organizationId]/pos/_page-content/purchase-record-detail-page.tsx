@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import Button from "@/components/ui/Button";
@@ -12,8 +11,7 @@ type LookupOption = { id: string; label: string; fields?: Record<string, unknown
 type BillLine = { id: string; itemName: string; size: string; quantity: string; purchasePrice: string; salesPrice: string; gstId: string; hsnCode: string };
 type SavedRecord = { id: string; itemType: "FINISHED_GOODS" | "RAW_MATERIAL"; styleName: string; brandId: string; sizeGroupId: string; colorId: string; categoryId: string; subCategoryId: string; lines: BillLine[] };
 
-export default function PurchaseRecordDetailPage({ workspaceId, organizationId, recordId }: { workspaceId: string; organizationId: string; recordId: string }) {
-  const base = `/dashboard/${workspaceId}/organizations/${organizationId}`;
+export default function PurchaseRecordDetailPage({ organizationId, recordId }: { workspaceId: string; organizationId: string; recordId: string }) {
   const [record, setRecord] = useState<SavedRecord | null>(null);
   const [gsts, setGsts] = useState<LookupOption[]>([]);
   const [hsns, setHsns] = useState<LookupOption[]>([]);
@@ -77,7 +75,6 @@ export default function PurchaseRecordDetailPage({ workspaceId, organizationId, 
     <Page as="div">
       <Section className="space-y-5">
         <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
-          <Link href={`${base}/pos/purchase-bill/new`} className="text-xs font-semibold text-emerald-700">&larr; Saved records</Link>
           <div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700">Purchase record</p><h1 className="mt-1 text-2xl font-bold text-slate-900">Record Details</h1></div>
         </div>
         {message && <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">{message}</p>}

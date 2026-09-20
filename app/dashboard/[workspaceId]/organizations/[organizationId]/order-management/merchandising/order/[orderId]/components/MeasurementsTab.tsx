@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
 
 type MeasurementItem = {
   id: string;
@@ -69,20 +71,23 @@ export default function MeasurementsTab({
           </h3>
         </div>
         <div className="flex items-center gap-3">
-          <button
+          <Button
+            size="sm"
             type="button"
             onClick={addMeasurementRow}
             className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-all flex items-center gap-1"
           >
             <span>+</span> Add POM
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             type="button"
             onClick={handlePrint}
             className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 transition-all flex items-center gap-2"
           >
             <span>🖨️</span> Print / Download PDF
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -120,7 +125,8 @@ export default function MeasurementsTab({
                       <tr key={row.id} className="hover:bg-slate-50/50">
                         <td className="p-2 font-mono font-bold text-slate-600">{row.code}</td>
                         <td className="p-2">
-                          <input
+                          <Input
+                            aria-label="Point of measurement"
                             type="text"
                             value={row.pom}
                             onChange={(e) => updateMeasurementRow(row.id, "pom", e.target.value)}
@@ -129,7 +135,8 @@ export default function MeasurementsTab({
                           />
                         </td>
                         <td className="p-2">
-                          <input
+                          <Input
+                            aria-label="Tolerance"
                             type="text"
                             value={row.tolerance}
                             onChange={(e) => updateMeasurementRow(row.id, "tolerance", e.target.value)}
@@ -137,7 +144,8 @@ export default function MeasurementsTab({
                           />
                         </td>
                         <td className="p-2 text-center">
-                          <input
+                          <Input
+                            aria-label="Small size measurement"
                             type="text"
                             value={row.s}
                             onChange={(e) => updateMeasurementRow(row.id, "s", e.target.value)}
@@ -146,7 +154,8 @@ export default function MeasurementsTab({
                           />
                         </td>
                         <td className="p-2 text-center">
-                          <input
+                          <Input
+                            aria-label="Medium size measurement"
                             type="text"
                             value={row.m}
                             onChange={(e) => updateMeasurementRow(row.id, "m", e.target.value)}
@@ -155,7 +164,8 @@ export default function MeasurementsTab({
                           />
                         </td>
                         <td className="p-2 text-center">
-                          <input
+                          <Input
+                            aria-label="Large size measurement"
                             type="text"
                             value={row.l}
                             onChange={(e) => updateMeasurementRow(row.id, "l", e.target.value)}
@@ -164,7 +174,8 @@ export default function MeasurementsTab({
                           />
                         </td>
                         <td className="p-2 text-center">
-                          <input
+                          <Input
+                            aria-label="Extra large size measurement"
                             type="text"
                             value={row.xl}
                             onChange={(e) => updateMeasurementRow(row.id, "xl", e.target.value)}
@@ -173,13 +184,15 @@ export default function MeasurementsTab({
                           />
                         </td>
                         <td className="p-2 text-center print:hidden">
-                          <button
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             type="button"
                             onClick={() => removeMeasurementRow(row.id)}
                             className="text-red-500 hover:text-red-700 font-semibold text-xs"
                           >
                             ✕
-                          </button>
+                          </Button>
                         </td>
                       </tr>
                     ))

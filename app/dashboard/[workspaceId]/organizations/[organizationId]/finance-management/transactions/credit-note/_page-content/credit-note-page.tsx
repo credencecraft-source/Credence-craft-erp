@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
@@ -44,7 +43,6 @@ export default function CreditNotePage({
   const [visibleReportFields, setVisibleReportFields] = useState<Array<string | keyof FinanceRecord>>(
     reportFields.map((field) => field.key),
   );
-  const base = `/dashboard/${workspaceId}/organizations/${organizationId}/finance-management/transactions`;
 
   useEffect(() => {
     const stored = window.localStorage.getItem(`finance-documents-${organizationId}`);
@@ -90,7 +88,6 @@ export default function CreditNotePage({
       <Section className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
           <div>
-            <Link href={base} className="text-xs font-semibold text-sky-700">&larr; Transactions</Link>
             <h1 className="mt-3 text-3xl font-bold text-slate-900">Credit Note</h1>
           </div>
         </div>

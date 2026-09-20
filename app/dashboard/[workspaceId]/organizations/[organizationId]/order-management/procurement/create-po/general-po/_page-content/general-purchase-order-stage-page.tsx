@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Check, ClipboardCheck, FilePlus2, PackageSearch } from "lucide-react";
+import { ArrowRight, Check, ClipboardCheck, FilePlus2, PackageSearch } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
 export type GeneralPurchaseOrderStage = "allocate-vendor" | "approve-price" | "create-po";
@@ -22,29 +22,16 @@ export default function GeneralPurchaseOrderStagePage({ stage }: { stage: Genera
   const nextStage = stages[stages.findIndex((item) => item.key === stage) + 1];
 
   return <div className="mx-auto max-w-6xl space-y-5">
-    <header className="flex items-center gap-3 border-b border-slate-200 pb-5">
-      <button type="button" onClick={() => router.push(typeSelectionPath)} aria-label="Back to PO type selection" className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"><ArrowLeft className="h-4 w-4" /></button>
-      <div><p className="erp-eyebrow">Procurement / General PO</p><h1 className="erp-page-heading mt-1">{currentStage.label}</h1><p className="mt-1 text-sm text-slate-500">General purchase order workflow</p></div>
-    </header>
-
     <nav className="grid gap-2 rounded-xl border border-slate-200 bg-white p-2 sm:grid-cols-3" aria-label="General PO stages">
       {stages.map((item) => <button key={item.key} type="button" onClick={() => router.push(`${basePath}/${item.key}`)} className={`flex items-center gap-2 rounded-lg border px-3 py-3 text-left ${item.key === stage ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50 hover:border-emerald-300"}`}><span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${item.key === stage ? "bg-emerald-700 text-white" : "bg-slate-200 text-slate-600"}`}>{item.number}</span><item.icon className="h-4 w-4 text-slate-500" /><span className="text-xs font-semibold text-slate-700">{item.label}</span></button>)}
     </nav>
 
     <section className="erp-surface overflow-hidden">
-      <div className="border-b border-slate-200 bg-slate-50 px-5 py-4"><p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700">Stage {currentStage.number}</p><h2 className="mt-1 text-base font-bold text-slate-950">{stageTitle(stage)}</h2><p className="mt-1 text-xs text-slate-500">{stageDescription(stage)}</p></div>
+      <div className="border-b border-slate-200 bg-slate-50 px-5 py-3"><h2 className="text-base font-bold text-slate-950">{currentStage.label}</h2></div>
       <div className="space-y-5 p-5">{stage === "allocate-vendor" && <AllocationPanel />}{stage === "approve-price" && <PricePanel />}{stage === "create-po" && <CreatePanel />}</div>
       <div className="flex justify-end border-t border-slate-200 bg-slate-50 px-5 py-3">{nextStage ? <button type="button" onClick={() => router.push(`${basePath}/${nextStage.key}`)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-xs font-bold text-white hover:bg-emerald-800">Continue to {nextStage.label} <ArrowRight className="h-4 w-4" /></button> : <button type="button" onClick={() => router.push(typeSelectionPath)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-xs font-bold text-white hover:bg-emerald-800"><Check className="h-4 w-4" /> Finish review</button>}</div>
     </section>
   </div>;
-}
-
-function stageTitle(stage: GeneralPurchaseOrderStage) {
-  return stage === "allocate-vendor" ? "Allocate vendor to general requirements" : stage === "approve-price" ? "Review and approve vendor price" : "Create general purchase order";
-}
-
-function stageDescription(stage: GeneralPurchaseOrderStage) {
-  return stage === "allocate-vendor" ? "Choose a vendor and prepare the general purchase order lines." : stage === "approve-price" ? "Confirm pricing and charges before the PO is created." : "Review the approved details and create the purchase order.";
 }
 
 function AllocationPanel() {

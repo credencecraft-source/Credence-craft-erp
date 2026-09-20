@@ -365,13 +365,6 @@ export default async function MasterDataEditorPage({
             <p>{definition.description}</p>
           </div>
 
-          <div>
-            <Link
-              href={`/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data`}
-            >
-              Back to masters
-            </Link>
-          </div>
         </div>
       ) : null}
 

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Check, ChevronDown, Loader2, LogOut } from "lucide-react";
+import Button from "@/components/ui/Button";
 
 type Option = {
   key: string;
@@ -78,7 +79,9 @@ export function MasterModuleSwitcher({
     <div className="flex items-center gap-3">
       {/* Module Switcher Dropdown */}
       <div ref={ref} className="relative">
-        <button
+        <Button
+          variant="secondary"
+          size="sm"
           type="button"
           onClick={() => setOpen((v) => !v)}
           className="flex h-9 min-w-[180px] items-center justify-between rounded-md border border-slate-300 bg-white px-3 text-sm font-medium cursor-pointer shadow-2xs hover:bg-slate-50 transition-colors"
@@ -95,7 +98,7 @@ export function MasterModuleSwitcher({
               open ? "rotate-180" : ""
             }`}
           />
-        </button>
+        </Button>
 
         {open && (
           <div className="absolute right-0 z-50 mt-2 w-64 rounded-md border border-slate-200 bg-white p-1 shadow-xl">
@@ -103,7 +106,9 @@ export function MasterModuleSwitcher({
               const active = option.key === value;
 
               return (
-                <button
+                <Button
+                  variant={active ? "secondary" : "ghost"}
+                  size="sm"
                   key={option.key}
                   type="button"
                   onClick={() => {
@@ -122,7 +127,7 @@ export function MasterModuleSwitcher({
                 >
                   <span>{option.label}</span>
                   {active && <Check className="h-4 w-4 text-emerald-600" />}
-                </button>
+                </Button>
               );
             })}
           </div>
@@ -130,7 +135,9 @@ export function MasterModuleSwitcher({
       </div>
 
       {/* Header-Level Logout Button */}
-      <button
+      <Button
+        variant="danger"
+        size="sm"
         type="button"
         disabled={isLoggingOut}
         onClick={() => {
@@ -150,7 +157,7 @@ export function MasterModuleSwitcher({
           <LogOut className="h-3.5 w-3.5" />
         )}
         Logout
-      </button>
+      </Button>
     </div>
   );
 }

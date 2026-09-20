@@ -1,6 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 
 export default function TnaTab({
   form,
@@ -67,18 +70,21 @@ export default function TnaTab({
           </p>
         </div>
 
-        <button
+        <Button
+          size="sm"
           type="button"
           onClick={addTnaRow}
           className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-all flex items-center gap-1"
         >
           <span>+</span> Add Milestone
-        </button>
+        </Button>
       </div>
 
       {/* SUB-TABS (Planned, Actual, Comparison) */}
       <div className="flex gap-2 border-b border-slate-200 pb-2">
-        <button
+        <Button
+          variant={activeSubTab === "planned" ? "primary" : "secondary"}
+          size="sm"
           type="button"
           onClick={() => setActiveSubTab("planned")}
           className={`px-3 py-1.5 font-semibold rounded-lg text-xs transition-colors ${
@@ -88,8 +94,10 @@ export default function TnaTab({
           }`}
         >
           Planned Schedule (Manual)
-        </button>
-        <button
+        </Button>
+        <Button
+          variant={activeSubTab === "actual" ? "primary" : "secondary"}
+          size="sm"
           type="button"
           onClick={() => setActiveSubTab("actual")}
           className={`px-3 py-1.5 font-semibold rounded-lg text-xs transition-colors ${
@@ -99,8 +107,10 @@ export default function TnaTab({
           }`}
         >
           Actual Tracker (Auto)
-        </button>
-        <button
+        </Button>
+        <Button
+          variant={activeSubTab === "comparison" ? "primary" : "secondary"}
+          size="sm"
           type="button"
           onClick={() => setActiveSubTab("comparison")}
           className={`px-3 py-1.5 font-semibold rounded-lg text-xs transition-colors ${
@@ -110,7 +120,7 @@ export default function TnaTab({
           }`}
         >
           Comparison & Summary
-        </button>
+        </Button>
       </div>
 
       {/* SUB-TAB 1: PLANNED (MANUAL) */}

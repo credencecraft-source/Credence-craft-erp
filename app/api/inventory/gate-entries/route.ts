@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/database/prisma-client";
 import { requireSessionUser } from "@/lib/auth/session-manager";
+import { reserveChallanNumber } from "@/lib/services/organizations/challan-number-configuration-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 const movementTypes = new Set(["CHALLAN", "VISITOR", "STAFF", "COURIER", "OTHER"]);
@@ -64,11 +64,11 @@ export async function POST(request: Request) {
       : null;
     if (movementType === "CHALLAN" && !purchaseOrder) throw new Error("A valid challan number is required for challan movement.");
 
-    const entry = await prisma.gateEntry.create({
+    const entry = await prisma.$transaction(async (transaction) => transaction.gateEntry.create({
       data: {
         organization_id: organization.id,
         purchase_order_id: purchaseOrder?.id,
-        entry_no: `GE-${Date.now()}-${randomUUID().slice(0, 6).toUpperCase()}`,
+        entry_no: await reserveChallanNumber(organization.id, "GATE_ENTRY", transaction),
         direction,
         movement_type: movementType,
         challan_no: challanNo || (purchaseOrder?.display_no ? `PO-${purchaseOrder.display_no}` : purchaseOrder?.purchase_order_no),
@@ -87,7 +87,7 @@ export async function POST(request: Request) {
         created_by: user.full_name || user.email,
       },
       include: { purchaseOrder: { select: { purchase_order_no: true } } },
-    });
+    }));
     return NextResponse.json({
       ok: true,
       entry,
