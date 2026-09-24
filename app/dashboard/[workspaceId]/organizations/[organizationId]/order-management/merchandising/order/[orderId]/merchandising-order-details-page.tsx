@@ -406,6 +406,15 @@ export default function MerchandisingOrderDetailsPage() {
   };
 
   const renderQuickMasterField = (field: MasterFieldDefinition) => {
+    const hiddenArticleQuickCreateFields = new Set([
+      "running_order_variants",
+      "running_order_qty",
+      "designed_date",
+      "design_by",
+      "article_code",
+    ]);
+    if (newMasterKey === "article" && hiddenArticleQuickCreateFields.has(field.key)) return null;
+
     const value = quickMasterFields[field.key];
     const setValue = (nextValue: unknown) => setQuickMasterFields((current) => ({ ...current, [field.key]: nextValue }));
 
@@ -517,6 +526,24 @@ export default function MerchandisingOrderDetailsPage() {
       setIsSaving(true);
       if (!form.article || form.article.trim() === "") {
         throw new Error("Blocking Field Missing: 'Article' is required.");
+      }
+      if (!orderId) {
+        const requiredFields: Array<[string, unknown]> = [
+          ["Entity Name", form.entityName],
+          ["Product Category", form.category],
+          ["Product Sub Category", form.subCategory],
+          ["Style Name", form.styleName],
+          ["Colors", form.colors],
+          ["Season", form.season],
+          ["Size Group", form.sizeGroup],
+        ];
+        const missingField = requiredFields.find(([, value]) => !String(value ?? "").trim());
+        if (missingField) {
+          throw new Error(`Blocking Field Missing: '${missingField[0]}' is required.`);
+        }
+        if (!Number.isFinite(Number(form.orderQty)) || Number(form.orderQty) <= 0) {
+          throw new Error("Blocking Field Missing: 'Order Qty' must be greater than 0.");
+        }
       }
       const endpoint = orderId
         ? `/api/orders/${encodeURIComponent(orderId)}?organizationId=${encodeURIComponent(organizationId)}`

@@ -40,19 +40,12 @@ export function segmentNamesForPlan(plan: { tier_key?: string | null; plan_name:
 }
 
 export async function listVersionSegmentPlansForOrganization(organizationId: string) {
-  const [organization, latestVersion] = await Promise.all([
-    prisma.organization.findUnique({
-      where: { id: organizationId },
-      select: { platform_version_id: true },
-    }),
-    prisma.platformVersion.findFirst({
-      where: { is_active: true },
-      orderBy: [{ created_at: "desc" }, { version_name: "desc" }],
-      select: { id: true },
-    }),
-  ]);
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { platform_version_id: true },
+  });
 
-  const versionId = organization?.platform_version_id ?? latestVersion?.id;
+  const versionId = organization?.platform_version_id;
   if (!versionId) return { plans: [], businessTypes: [], versionName: null };
 
   const version = await prisma.platformVersion.findUnique({
@@ -62,6 +55,7 @@ export async function listVersionSegmentPlansForOrganization(organizationId: str
       businessTypes: {
         include: {
           businessType: true,
+          tags: { orderBy: { label: "asc" } },
           segments: { where: { is_active: true }, include: { segment: true } },
         },
       },
@@ -70,15 +64,17 @@ export async function listVersionSegmentPlansForOrganization(organizationId: str
 
   if (!version) return { plans: [], businessTypes: [], versionName: null };
 
-  const businessTypeIds = version.businessTypes.map(({ business_type_id }) => business_type_id);
+  const billableBusinessTypes = version.businessTypes.filter(({ is_free }) => !is_free);
+  const businessTypeIds = billableBusinessTypes.map(({ business_type_id }) => business_type_id);
   const plans = await prisma.plan.findMany({
     where: { is_active: true, business_type_id: { in: businessTypeIds } },
     orderBy: { sort_order: "asc" },
     include: { businessType: true },
   });
 
-  const segmentPlans = version.businessTypes.flatMap((assignment) =>
-    assignment.segments.flatMap(({ id: segmentId, segment }) => {
+  const segmentPlans = billableBusinessTypes.flatMap((assignment) =>
+    assignment.segments.flatMap((segmentAssignment) => {
+      const { id: segmentId, segment } = segmentAssignment;
       const segmentName = normalizeSegmentName(segment.name);
       const plan = plans.find((candidate) => segmentNamesForPlan(candidate).has(segmentName));
       return [{
@@ -87,15 +83,17 @@ export async function listVersionSegmentPlansForOrganization(organizationId: str
         business_type_id: assignment.business_type_id,
         plan_name: plan?.plan_name ?? `${assignment.businessType.name} - ${segment.name}`,
         description: plan?.description ?? segment.description,
-        price: plan?.price ? plan.price.toNumber() : null,
+        price: segmentAssignment.price != null ? segmentAssignment.price.toNumber() : null,
+        segment_price: segmentAssignment.price != null ? segmentAssignment.price.toNumber() : null,
         billing_cycle: plan?.billing_cycle ?? null,
         is_active: plan?.is_active ?? true,
-        max_order_qty: plan?.max_order_qty ?? null,
         tier_key: plan?.tier_key ?? null,
         billing_plan_id: plan?.id ?? null,
-        is_pricing_configured: Boolean(plan),
+        is_pricing_configured: segmentAssignment.price != null,
         segment_id: segmentId,
         segment_name: segment.name,
+        segment_sort_order: segment.sort_order,
+        segment_label: segmentAssignment.label,
         version_name: version.version_name,
       }];
     }),
@@ -103,7 +101,10 @@ export async function listVersionSegmentPlansForOrganization(organizationId: str
 
   return {
     plans: segmentPlans,
-    businessTypes: version.businessTypes.map(({ businessType }) => businessType),
+    businessTypes: billableBusinessTypes.map(({ businessType, tags }) => ({
+      ...businessType,
+      tags: tags.map(({ id, label }) => ({ id, label })),
+    })),
     versionName: version.version_name,
   };
 }
@@ -197,7 +198,6 @@ export async function updatePlan(input: {
   description?: string;
   price?: number | null;
   billingCycle?: string | null;
-  maxOrderQty?: number | null;
 }) {
   const plan = await prisma.plan.findUnique({ where: { plan_id: input.planId } });
   if (!plan) throw new Error("Plan not found.");
@@ -205,17 +205,12 @@ export async function updatePlan(input: {
   if (input.price !== null && input.price !== undefined && input.price < 0) {
     throw new Error("Plan price cannot be negative.");
   }
-  if (input.maxOrderQty !== null && input.maxOrderQty !== undefined && input.maxOrderQty < 0) {
-    throw new Error("Order quantity limit cannot be negative.");
-  }
-
   const updatedPlan = await prisma.plan.update({
     where: { id: plan.id },
     data: {
       description: input.description?.trim() || null,
       price: input.price ?? null,
       billing_cycle: input.billingCycle?.trim() || null,
-      max_order_qty: input.maxOrderQty ?? null,
     },
     include: { businessType: true },
   });

@@ -188,6 +188,28 @@ export async function createOrganization(input: OrganizationCreateInput) {
         })),
         skipDuplicates: true,
       });
+      const defaultGstRates = [5, 12, 18, 28].map((rate, index) => ({
+        organization_id: organization.id,
+        name: `${rate}%`,
+        gst: rate,
+        cgst_rate: rate / 2,
+        sgst_rate: rate / 2,
+        igst_rate: rate,
+        is_active: true,
+        sort_order: index,
+      }));
+      const existingGstRates = await transaction.masterGst.findMany({
+        where: {
+          organization_id: organization.id,
+          name: { in: defaultGstRates.map((rate) => rate.name) },
+        },
+        select: { name: true },
+      });
+      const existingGstNames = new Set(existingGstRates.map((rate) => rate.name));
+      const missingGstRates = defaultGstRates.filter((rate) => !existingGstNames.has(rate.name));
+      if (missingGstRates.length > 0) {
+        await transaction.masterGst.createMany({ data: missingGstRates });
+      }
       await transaction.masterState.createMany({
         data: INDIAN_STATES.map((state, index) => ({ organization_id: organization.id, state, is_active: true, sort_order: index })),
         skipDuplicates: true,
@@ -266,8 +288,11 @@ export async function deleteOrganization(organizationId: string, workspaceUserId
     throw new Error("Organization not found.");
   }
 
-  await prisma.organization.delete({
-    where: { id: orgToDelete.id },
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRaw`SELECT set_config('app.skip_organization_audit', 'true', true)`;
+    await transaction.organization.delete({
+      where: { id: orgToDelete.id },
+    });
   });
 
   return { deleted: true, organizationId: organization.organization_id };
@@ -516,5 +541,8 @@ export async function deleteOrganizationFromPlatform(organizationId: string) {
 
   if (!organization) throw new Error("Organization not found.");
 
-  await prisma.organization.delete({ where: { id: organization.id } });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRaw`SELECT set_config('app.skip_organization_audit', 'true', true)`;
+    await transaction.organization.delete({ where: { id: organization.id } });
+  });
 }

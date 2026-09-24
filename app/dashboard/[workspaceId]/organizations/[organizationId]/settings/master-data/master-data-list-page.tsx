@@ -7,7 +7,7 @@ import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
-import { MASTER_DEFINITIONS, MASTER_MODULE_HIERARCHY, getMasterModuleGroupInfo } from "@/lib/master-data/master-data-registry";
+import { MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
 
 export default async function MasterDataListPage({
   params,
@@ -35,37 +35,9 @@ export default async function MasterDataListPage({
     notFound();
   }
 
-  const groupedMasters = MASTER_DEFINITIONS.filter((master) => !master.hidden).reduce<Record<string, Record<string, typeof MASTER_DEFINITIONS[number][]>>>(
-    (accumulator, master) => {
-      const { topLevel, subLevel } = getMasterModuleGroupInfo(master.key);
-
-      if (!accumulator[topLevel]) {
-        accumulator[topLevel] = {};
-      }
-
-      if (!accumulator[topLevel][subLevel]) {
-        accumulator[topLevel][subLevel] = [];
-      }
-
-      accumulator[topLevel][subLevel].push(master);
-      accumulator[topLevel][subLevel].sort((left, right) => (left.moduleOrder ?? 999) - (right.moduleOrder ?? 999));
-
-      return accumulator;
-    },
-    {},
-  );
-
-  const orderedGroups = Object.entries(MASTER_MODULE_HIERARCHY).map(([topLevelKey, topLevelConfig]) => ({
-    key: topLevelKey,
-    label: topLevelConfig.label,
-    subGroups: Object.entries(topLevelConfig.children).map(([subKey, subLabel]) => ({
-      key: subKey,
-      label: subLabel,
-      masters: groupedMasters[topLevelKey]?.[subKey] ?? [],
-    })).filter((group) => group.masters.length > 0),
-  })).filter((group) => group.subGroups.length > 0);
-
-  const ungroupedMasters = MASTER_DEFINITIONS.filter((master) => !master.hidden && !master.moduleGroup && !master.moduleSubGroup);
+  const masters = MASTER_DEFINITIONS
+    .filter((master) => !master.hidden)
+    .sort((left, right) => (left.moduleOrder ?? 999) - (right.moduleOrder ?? 999));
 
   return (
     <Page as="div">
@@ -82,112 +54,39 @@ export default async function MasterDataListPage({
           </p>
         </div>
 
-        <div className="space-y-8">
-          {orderedGroups.map((moduleGroup) => (
-            <div key={moduleGroup.key} className="space-y-4">
-              <div className="border-b border-slate-200 pb-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  {moduleGroup.label}
-                </p>
-              </div>
+        <Link
+          href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/organization-master-setup`}
+          className="block rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 transition hover:border-emerald-400 hover:bg-emerald-100"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">One-time setup</p>
+          <h2 className="mt-1 text-xl font-bold text-slate-900">Organization Master Setup</h2>
+          <p className="mt-1 text-sm text-slate-700">Create starter RM category types, categories, brands, and buyers together.</p>
+        </Link>
 
-              <div className="space-y-6">
-                {moduleGroup.subGroups.map((subGroup) => (
-                  <div key={`${moduleGroup.key}-${subGroup.key}`} className="space-y-3">
-                    <h2 className="text-lg font-bold text-slate-900">
-                      {subGroup.label}
-                    </h2>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {masters.map((master) => (
+            <Link
+              key={master.key}
+              href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${master.key}`}
+              className="group block"
+            >
+              <Card className="h-full px-3 py-3 transition-all duration-200 hover:border-emerald-300 hover:shadow-md">
+                <h3 className="text-sm font-bold leading-tight text-slate-900">
+                  {master.label}
+                </h3>
 
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      {subGroup.masters.map((master) => (
-                        <Link
-                          key={master.key}
-                          href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${master.key}`}
-                          className="group block"
-                        >
-                          <Card className="h-full transition-all duration-200 hover:border-emerald-300 hover:shadow-md">
-                            <div className="flex items-center justify-between">
-                              <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
-                                Master
-                              </p>
+                <div className="mt-3 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-emerald-700">
+                    Open
+                  </span>
 
-                              <Badge>Active</Badge>
-                            </div>
-
-                            <h3 className="mt-3 text-xl font-bold text-slate-900">
-                              {master.label}
-                            </h3>
-
-                            <p className="mt-2 text-sm text-slate-600">
-                              {master.description}
-                            </p>
-
-                            <div className="mt-6 flex items-center justify-between">
-                              <span className="text-sm font-semibold text-emerald-700">
-                                Open Module
-                              </span>
-
-                              <span aria-hidden="true" className="text-lg transition-transform group-hover:translate-x-1">
-                                →
-                              </span>
-                            </div>
-                          </Card>
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+                  <span aria-hidden="true" className="text-sm transition-transform group-hover:translate-x-1">
+                    →
+                  </span>
+                </div>
+              </Card>
+            </Link>
           ))}
-
-          {ungroupedMasters.length > 0 && (
-            <div className="space-y-4">
-              <div className="border-b border-slate-200 pb-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  General
-                </p>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {ungroupedMasters.map((master) => (
-                  <Link
-                    key={master.key}
-                    href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${master.key}`}
-                    className="group block"
-                  >
-                    <Card className="h-full transition-all duration-200 hover:border-emerald-300 hover:shadow-md">
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
-                          Master
-                        </p>
-
-                        <Badge>Active</Badge>
-                      </div>
-
-                      <h3 className="mt-3 text-xl font-bold text-slate-900">
-                        {master.label}
-                      </h3>
-
-                      <p className="mt-2 text-sm text-slate-600">
-                        {master.description}
-                      </p>
-
-                      <div className="mt-6 flex items-center justify-between">
-                        <span className="text-sm font-semibold text-emerald-700">
-                          Open Module
-                        </span>
-
-                        <span aria-hidden="true" className="text-lg transition-transform group-hover:translate-x-1">
-                          →
-                        </span>
-                      </div>
-                    </Card>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </Section>
     </Page>

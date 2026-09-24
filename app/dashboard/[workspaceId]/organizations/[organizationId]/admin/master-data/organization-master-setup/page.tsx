@@ -1,0 +1,1 @@
+export { default } from "../../../settings/master-data/organization-master-setup/page";

@@ -1,5 +1,4 @@
 import { revalidatePath } from "next/cache";
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { MasterRecordsTable } from "@/components/master-data/master-records-data-table";
@@ -15,6 +14,7 @@ import {
   syncSizeGroupSizes,
   updateMasterValue,
 } from "@/lib/master-data/master-data-constants";
+import type { MasterFieldValues } from "@/lib/master-data/master-data-constants";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 
 function serializeDecimal(value: unknown): unknown {
@@ -37,17 +37,26 @@ function serializeDecimal(value: unknown): unknown {
   return value;
 }
 
-function readFields(formData: FormData, fields: MasterFieldDefinition[]) {
-  return Object.fromEntries(fields.map((field) => {
+async function readFields(formData: FormData, fields: MasterFieldDefinition[]) {
+  const entries = await Promise.all(fields.map(async (field) => {
+    if (field.type === "image") {
+      const file = formData.get(`field_${field.key}`);
+      if (!(file instanceof File) || file.size === 0) return [field.key, null] as const;
+      if (!file.type.startsWith("image/")) throw new Error(`${field.label} must be an image file.`);
+      if (file.size > 2 * 1024 * 1024) throw new Error(`${field.label} must be 2 MB or smaller.`);
+      const bytes = Buffer.from(await file.arrayBuffer()).toString("base64");
+      return [field.key, `data:${file.type};base64,${bytes}`] as const;
+    }
     if (field.multiple) return [field.key, formData.getAll(`field_${field.key}`).map((value) => String(value).trim()).filter(Boolean)];
     const value = formData.get(`field_${field.key}`);
     if (field.type === "checkbox") return [field.key, value === "on"];
     if (field.type === "number" || field.type === "percentage") return [field.key, value ? Number(value) : null];
     return [field.key, String(value ?? "").trim() || null];
   }));
+  return Object.fromEntries(entries);
 }
 
-function getRecordLabel(fields: Record<string, string | number | boolean | null>, definition: { fields: MasterFieldDefinition[]; labelField?: string }) {
+function getRecordLabel(fields: Record<string, unknown>, definition: { fields: MasterFieldDefinition[]; labelField?: string }) {
   const firstValue = fields[definition.labelField ?? definition.fields[0]?.key];
   return String(firstValue ?? "").trim();
 }
@@ -164,7 +173,12 @@ async function createMasterValueAction(formData: FormData) {
   const organizationId = String(formData.get("organizationId") ?? "");
   const moduleKey = String(formData.get("moduleKey") ?? "");
   const definition = getMasterDefinition(moduleKey);
-  const fields = definition ? readFields(formData, definition.fields) : {};
+  let fields: MasterFieldValues = {};
+  try {
+    fields = definition ? await readFields(formData, definition.fields) : {};
+  } catch (error) {
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+  }
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
@@ -208,6 +222,7 @@ async function createMasterValueAction(formData: FormData) {
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
+  redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=create`);
 }
 
 async function updateMasterValueAction(formData: FormData) {
@@ -218,7 +233,12 @@ async function updateMasterValueAction(formData: FormData) {
   const moduleKey = String(formData.get("moduleKey") ?? "");
   const valueId = String(formData.get("valueId") ?? "");
   const definition = getMasterDefinition(moduleKey);
-  const fields = definition ? readFields(formData, definition.fields) : {};
+  let fields: MasterFieldValues = {};
+  try {
+    fields = definition ? await readFields(formData, definition.fields) : {};
+  } catch (error) {
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+  }
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
@@ -266,6 +286,7 @@ async function updateMasterValueAction(formData: FormData) {
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
+  redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=update`);
 }
 
 async function deleteMasterValueAction(formData: FormData) {
@@ -307,6 +328,7 @@ async function deleteMasterValueAction(formData: FormData) {
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
+  redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=delete`);
 }
 
 export default async function MasterDataEditorPage({
@@ -314,10 +336,10 @@ export default async function MasterDataEditorPage({
   searchParams,
 }: {
   params: Promise<{ workspaceId: string; organizationId: string; moduleKey: string }>;
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; saved?: string }>;
 }) {
   const { workspaceId, organizationId, moduleKey } = await params;
-  const { error } = await searchParams;
+  const { error, saved } = await searchParams;
   const user = await requireSessionUser();
 
   if (!user.workspace_id) {
@@ -371,6 +393,12 @@ export default async function MasterDataEditorPage({
       {error ? (
         <p className="mt-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800" role="alert">
           {error}
+        </p>
+      ) : null}
+
+      {saved ? (
+        <p className="mt-4 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800" role="status">
+          {saved === "create" ? `${definition.label} created successfully.` : saved === "update" ? `${definition.label} updated successfully.` : `${definition.label} deleted successfully.`}
         </p>
       ) : null}
 

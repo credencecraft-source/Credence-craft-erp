@@ -2,10 +2,12 @@ model Segment {
   id                         String                       @id @default(uuid())
   name                       String                       @unique @db.VarChar(100)
   description                String?                      @db.VarChar(500)
+  sort_order                 Int                          @default(0)
   is_active                  Boolean                      @default(true)
   created_at                 DateTime                     @default(now())
   updated_at                 DateTime                     @updatedAt
   versionBusinessTypeSegments VersionBusinessTypeSegment[]
+  versionTransactionRestrictions VersionTransactionRestriction[]
 
   @@index([is_active])
   @@map("segments")
@@ -20,6 +22,7 @@ model PlatformVersion {
   updated_at       DateTime              @updatedAt
   businessTypes    VersionBusinessType[]
   organizations    Organization[]
+  transactionRestrictions VersionTransactionRestriction[]
 
   @@index([is_active])
   @@map("platform_versions")
@@ -29,10 +32,12 @@ model VersionBusinessType {
   id                String                       @id @default(cuid())
   version_id        String
   business_type_id  String
+  is_free           Boolean                      @default(false)
   created_at        DateTime                     @default(now())
   version           PlatformVersion              @relation(fields: [version_id], references: [id], onDelete: Cascade)
   businessType      BusinessType                 @relation(fields: [business_type_id], references: [id], onDelete: Cascade)
   segments          VersionBusinessTypeSegment[]
+  tags              VersionBusinessTypeTag[]
 
   @@unique([version_id, business_type_id])
   @@index([business_type_id])
@@ -45,13 +50,41 @@ model VersionBusinessTypeSegment {
   segment_id               String
   is_active                Boolean             @default(true)
   created_at               DateTime            @default(now())
+  label                    String?             @db.VarChar(100)
+  price                    Decimal?            @db.Decimal(12, 2)
   versionBusinessType      VersionBusinessType @relation(fields: [version_business_type_id], references: [id], onDelete: Cascade)
   segment                 Segment             @relation(fields: [segment_id], references: [id], onDelete: Cascade)
   restrictions            SegmentRestriction[]
+  formRestrictions        SegmentFormRestriction[]
+  tags                    VersionBusinessTypeSegmentTag[]
 
   @@unique([version_business_type_id, segment_id])
   @@index([segment_id])
   @@map("version_business_type_segments")
+}
+
+model VersionBusinessTypeTag {
+  id                       String             @id @default(cuid())
+  version_business_type_id String
+  label                    String             @db.VarChar(100)
+  created_at               DateTime           @default(now())
+  versionBusinessType      VersionBusinessType @relation(fields: [version_business_type_id], references: [id], onDelete: Cascade)
+
+  @@unique([version_business_type_id, label])
+  @@index([version_business_type_id])
+  @@map("version_business_type_tags")
+}
+
+model VersionBusinessTypeSegmentTag {
+  id                              String                       @id @default(cuid())
+  version_business_type_segment_id String
+  label                           String                       @db.VarChar(100)
+  created_at                      DateTime                     @default(now())
+  assignment                      VersionBusinessTypeSegment  @relation(fields: [version_business_type_segment_id], references: [id], onDelete: Cascade)
+
+  @@unique([version_business_type_segment_id, label])
+  @@index([version_business_type_segment_id])
+  @@map("version_business_type_segment_tags")
 }
 
 model SegmentRestriction {
@@ -69,4 +102,37 @@ model SegmentRestriction {
 
   @@index([version_business_type_segment_id, restriction_type])
   @@map("segment_restrictions")
+}
+
+model SegmentFormRestriction {
+  restriction_id                 String                     @id @default(uuid())
+  version_business_type_segment_id String
+  form_key                       String                     @db.VarChar(150)
+  monthly_qty_limit              Int?
+  monthly_entry_limit            Int?
+  restricted_fields              String[]                   @default([])
+  field_sum_limits               Json                       @default("{}")
+  created_at                     DateTime                   @default(now())
+  updated_at                     DateTime                   @updatedAt
+  versionBusinessTypeSegment     VersionBusinessTypeSegment @relation(fields: [version_business_type_segment_id], references: [id], onDelete: Cascade)
+
+  @@unique([version_business_type_segment_id, form_key])
+  @@index([version_business_type_segment_id])
+  @@map("segment_form_restrictions")
+}
+
+model VersionTransactionRestriction {
+  restriction_id  String         @id @default(uuid())
+  version_id      String
+  segment_id      String
+  form_key        String         @db.VarChar(150)
+  monthly_entry_limit Int?
+  created_at      DateTime       @default(now())
+  updated_at      DateTime       @updatedAt
+  version         PlatformVersion @relation(fields: [version_id], references: [id], onDelete: Cascade)
+  segment         Segment        @relation(fields: [segment_id], references: [id], onDelete: Cascade)
+
+  @@unique([version_id, segment_id, form_key])
+  @@index([version_id, segment_id])
+  @@map("version_transaction_restrictions")
 }

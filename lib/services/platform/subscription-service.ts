@@ -6,10 +6,10 @@ import { prisma } from "@/lib/database/prisma-client";
 export const FREE_PLAN_NAME = "Free";
 
 export const STANDARD_PLAN_DEFINITIONS = [
-  { tierKey: "FREE", label: "Free", price: 0, maxOrderQty: 1000, color: "slate" },
-  { tierKey: "CLASSIC", label: "Classic", price: 4999, maxOrderQty: 10000, color: "blue" },
-  { tierKey: "PROFESSIONAL", label: "Professional", price: 9999, maxOrderQty: 50000, color: "violet" },
-  { tierKey: "ENTERPRISE", label: "Enterprise", price: 19999, maxOrderQty: null, color: "amber" },
+  { tierKey: "FREE", label: "Free", price: 0, color: "slate" },
+  { tierKey: "CLASSIC", label: "Classic", price: 4999, color: "blue" },
+  { tierKey: "PROFESSIONAL", label: "Professional", price: 9999, color: "violet" },
+  { tierKey: "ENTERPRISE", label: "Enterprise", price: 19999, color: "amber" },
 ] as const;
 
 export async function ensureStandardPlansForBusinessTypes(client: Prisma.TransactionClient | typeof prisma = prisma) {
@@ -65,13 +65,12 @@ export async function ensureStandardPlansForBusinessTypes(client: Prisma.Transac
           plan_id: randomUUID(),
           business_type_id: businessType.id,
           plan_name: standardPlanName,
-          description: `${definition.label} plan for ${businessType.name}. Configure feature restrictions and order quantity limits.`,
+          description: "",
           price: definition.price,
           billing_cycle: "monthly",
           tier_key: definition.tierKey,
           is_system_plan: true,
           display_color: definition.color,
-          max_order_qty: definition.maxOrderQty,
           sort_order: nextSortOrder,
         },
       });

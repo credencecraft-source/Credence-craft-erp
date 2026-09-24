@@ -1,7 +1,8 @@
 import { listVersionSegmentPlansForOrganization } from "@/lib/services/platform/plan-service";
 import { getEffectivePlansForOrganization, listSubscriptions } from "@/lib/services/platform/subscription-service";
 import { redirect } from "next/navigation";
-import { getOrganizationByPublicId } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
+import { requireSessionUser } from "@/lib/auth/session-manager";
 import { ERP_MODULES } from "@/components/erp/erp-config-registry";
 import { restrictionMatchesFeature, type FeaturePath } from "@/lib/services/platform/plan-restriction-matcher";
 import { getRestrictionsForPlans } from "@/lib/services/platform/segment-restriction-service";
@@ -55,7 +56,8 @@ export default async function Page({ params }: PageProps) {
   const resolvedParams = await params;
   const workspaceId = resolvedParams?.workspaceId;
   const organizationId = resolvedParams?.organizationId;
-  const organization = await getOrganizationByPublicId(organizationId);
+  const user = await requireSessionUser();
+  const organization = await getOrganizationForUser(user.id, organizationId);
 
   if (!organization) {
     redirect(`/dashboard/${workspaceId}/home`);

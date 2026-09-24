@@ -4,6 +4,7 @@ import { getPlanById } from "@/lib/services/platform/plan-service";
 import { createPendingSubscription } from "@/lib/services/platform/subscription-service";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { prisma } from "@/lib/database/prisma-client";
 import SubscriptionCheckoutForm from "./_page-content/subscription-checkout-form";
 
 interface PageProps {
@@ -20,6 +21,7 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
   const { workspaceId, organizationId } = await params;
   const query = (await searchParams) ?? {};
   const explicitPlanIds = valuesOf(query.planId);
+  const selectedSegmentIds = valuesOf(query.segmentId);
   const legacyPlanIds = Object.entries(query)
     .filter(([key]) => !["error", "billingCycle", "billingMonths", "planId"].includes(key))
     .flatMap(([, value]) => valuesOf(value));
@@ -33,7 +35,18 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
   const plans = (await Promise.all(selectedPlanIds.map((id) => getPlanById(id)))).filter(
     (plan): plan is NonNullable<typeof plan> => Boolean(plan),
   );
-  const monthlySubtotal = plans.reduce((sum, plan) => sum + Number(plan?.price || 0), 0);
+  const segmentAssignments = await prisma.versionBusinessTypeSegment.findMany({
+    where: { id: { in: selectedSegmentIds }, is_active: true },
+    select: { id: true, price: true, versionBusinessType: { select: { business_type_id: true } } },
+  });
+  const segmentPrices = new Map(segmentAssignments.map((assignment) => [assignment.id, assignment]));
+  const prices = plans.map((plan, index) => {
+    const assignment = segmentPrices.get(selectedSegmentIds[index] ?? "");
+    return assignment?.versionBusinessType.business_type_id === plan.business_type_id && assignment.price != null
+      ? Number(assignment.price)
+      : null;
+  });
+  const monthlySubtotal = prices.reduce((sum: number, price) => sum + (price ?? 0), 0);
   const pricingPlanUrl = `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan`;
 
   async function handleCheckoutAction(formData: FormData) {
@@ -49,17 +62,23 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
     }
 
     try {
-      for (const selectedPlanId of selectedPlanIds) {
+      for (const [index, selectedPlanId] of selectedPlanIds.entries()) {
         const plan = await getPlanById(selectedPlanId);
-        if (!plan || !plan.business_type_id || Number(plan.price || 0) <= 0) {
+        if (!plan || !plan.business_type_id) {
           throw new Error("One of the selected plans is no longer available.");
         }
+        const assignment = segmentPrices.get(selectedSegmentIds[index] ?? "");
+        if (assignment && assignment.versionBusinessType.business_type_id !== plan.business_type_id) {
+          throw new Error("The selected segment does not belong to this business type.");
+        }
+        const monthlyPrice = assignment?.price != null ? Number(assignment.price) : 0;
+        if (!assignment || monthlyPrice <= 0) throw new Error("The selected segment price is not available.");
         await createPendingSubscription({
           organizationId: actionOrganization.id,
           organizationName: actionOrganization.organization_name,
           businessTypeId: plan.business_type_id,
           planId: plan.id,
-          monthlyPrice: Number(plan.price || 0),
+          monthlyPrice,
           billingMonths: requestedMonths,
         });
       }
@@ -86,7 +105,7 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">No valid paid plans were selected. Return to the plan page and choose a paid tier.</div>
         ) : (
           <SubscriptionCheckoutForm
-            plans={plans.map((plan) => ({ id: plan.id, plan_name: plan.plan_name, price: plan.price }))}
+            plans={plans.map((plan, index) => ({ id: plan.id, plan_name: plan.plan_name, price: prices[index] ?? plan.price }))}
             organizationName={organization.organization_name}
             organizationId={organizationId}
             workspaceId={workspaceId}

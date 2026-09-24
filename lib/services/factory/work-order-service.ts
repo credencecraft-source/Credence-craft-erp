@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { splitBomSizes } from "@/lib/services/orders/order-quantity-calculations";
 
 export type WorkOrderQuantityInput = {
   sourceFinishedGoodsId?: string;
@@ -23,9 +24,9 @@ function positiveNumber(value: unknown) {
 
 function buildWorkOrderBomLines(bomItems: any[], sizeLines: Array<{ size: string | null; quantity: number }>, workOrderQty: number) {
   return bomItems.map((item: any) => {
-      const normalizedSize = String(item.size ?? "").trim();
-      const itemWorkOrderQty = normalizedSize
-        ? sizeLines.filter((line) => String(line.size ?? "").trim() === normalizedSize).reduce((sum, line) => sum + line.quantity, 0)
+      const selectedSizes = splitBomSizes(item.size);
+      const itemWorkOrderQty = selectedSizes.length > 0
+        ? sizeLines.filter((line) => selectedSizes.includes(String(line.size ?? "").trim())).reduce((sum, line) => sum + line.quantity, 0)
         : workOrderQty;
       const internalConsumption = positiveNumber(item.internalConsumption ?? item.consumption);
       const excessPercentage = positiveNumber(item.itemWiseExcessPercentage);

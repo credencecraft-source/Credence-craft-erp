@@ -10,10 +10,10 @@ import { ERP_MODULES } from "@/components/erp/erp-config-registry";
 
 export function RestrictionForm({ 
   cancelHref,
-  saveAction 
+  saveAction
 }: { 
   cancelHref: string;
-  saveAction: (formData: FormData) => void | Promise<void> 
+  saveAction: (formData: FormData) => void | Promise<void>
 }) {
   const [selectedMasterKey, setSelectedMasterKey] = useState("");
   const [selectedMainKey, setSelectedMainKey] = useState("");

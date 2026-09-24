@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Checkbox from "@/components/ui/Checkbox";
@@ -34,6 +35,15 @@ type MasterRecordsTableProps = {
   lookupOptions: Record<string, Array<{ id: string; value_id?: string; label: string; parent_id?: string | null }>>;
   childRecords?: ChildRecord[];
 };
+
+function SubmitButton({ children }: { children: string }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" variant="primary" size="sm" disabled={pending}>
+      {pending ? "Saving..." : children}
+    </Button>
+  );
+}
 
 export function MasterRecordsTable({
   records,
@@ -117,6 +127,8 @@ export function MasterRecordsTable({
     values: Record<string, unknown>,
     setValues: (values: Record<string, unknown>) => void
   ) => {
+    if (field.readOnly) return null;
+
     const value = values[field.key] ?? field.initialValue;
     if (field.type === "checkbox")
       return (
@@ -132,6 +144,18 @@ export function MasterRecordsTable({
             disabled={field.readOnly}
             className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:cursor-not-allowed"
           />
+      );
+    if (field.type === "image")
+      return (
+        <Input
+          key={field.key}
+          label={field.label}
+          type="file"
+          accept="image/*"
+          name={`field_${field.key}`}
+          hint="PNG, JPG, GIF, or WebP up to 2 MB."
+          onChange={() => undefined}
+        />
       );
     if (field.type === "picklist")
       return (
@@ -418,13 +442,7 @@ export function MasterRecordsTable({
                 >
                   Cancel
                 </Button>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="sm"
-                >
-                  Save Record
-                </Button>
+                <SubmitButton>Save Record</SubmitButton>
               </div>
             </form>
           </div>
@@ -464,13 +482,7 @@ export function MasterRecordsTable({
                 >
                   Cancel
                 </Button>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="sm"
-                >
-                  Save Changes
-                </Button>
+                <SubmitButton>Save Changes</SubmitButton>
               </div>
             </form>
           </div>

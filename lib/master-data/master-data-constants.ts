@@ -22,7 +22,7 @@ const delegates = {
   season: prisma.masterSeason, article: prisma.masterArticle, "gold-seal": prisma.masterGoldSeal, "gold-seal-variant": prisma.masterGoldSealVariant, color: prisma.masterColor, "size-group": prisma.masterSizeGroup, size: prisma.masterSize,
   uom: prisma.masterUom, "stock-uom-convert": prisma.masterStockUomConvert, "raw-material": prisma.masterRawMaterial, vendor: prisma.masterVendor, "gst-type": prisma.masterGstType, gst: prisma.masterGst,
   hsn: prisma.masterHsn, state: prisma.masterState, "measurement-chart": prisma.masterMeasurementChart, "size-wise-consumption": prisma.masterSizeWiseConsumption,
-  "product-master": prisma.masterProduct, "process-master": prisma.masterProcess, "process-template": prisma.masterProcessTemplate, "process-template-step": prisma.masterProcessTemplateStep, "operation-template": prisma.masterOperationTemplate, "operation-template-step": prisma.masterOperationTemplateStep, merchandiser: prisma.masterMerchandiser, status: prisma.masterStatus,
+  "product-master": prisma.masterProduct, "process-master": prisma.masterProcess, operation: prisma.masterOperation, "process-template": prisma.masterProcessTemplate, "process-template-step": prisma.masterProcessTemplateStep, "operation-template": prisma.masterOperationTemplate, "operation-template-step": prisma.masterOperationTemplateStep, merchandiser: prisma.masterMerchandiser, status: prisma.masterStatus,
   "order-volume": prisma.masterOrderVolume,
   "raw-material-type": prisma.masterRawMaterialType, "raw-material-category": prisma.masterRawMaterialCategory, "raw-material-sub-category": prisma.masterRawMaterialSubCategory,
 } as unknown as Record<string, MasterDelegate>;
@@ -32,14 +32,14 @@ const labelFields: Record<string, string> = {
   "pre-order-checklist": "pre_order_checklist", "currency-type": "currency_type", buyer: "buyer_name", season: "season", article: "article", "gold-seal": "gold_seal", "gold-seal-variant": "variant", color: "colors",
   "size-group": "size_group", size: "size", uom: "uom", "stock-uom-convert": "name", "raw-material": "raw_material_name", vendor: "vendor", "gst-type": "gst_type", gst: "name",
   hsn: "hsn_code", state: "state", "measurement-chart": "measurement_chart", "size-wise-consumption": "bom_template_name", "product-master": "product_master_name",
-  "process-master": "process_name", "process-template": "process_name", "process-template-step": "process_name", "operation-template": "operation_template_name", "operation-template-step": "operation", merchandiser: "merchandiser", status: "status", "order-volume": "order_volume",
+  "process-master": "process_name", operation: "operation_name", "process-template": "process_name", "process-template-step": "process_name", "operation-template": "operation_template_name", "operation-template-step": "operation", merchandiser: "merchandiser", status: "status", "order-volume": "order_volume",
   "raw-material-type": "raw_material_type", "raw-material-category": "raw_material_category", "raw-material-sub-category": "raw_material_sub_category",
 };
 
 const fieldColumns: Record<string, Record<string, string>> = {
   entity: { entity_name: "entity_name" },
   "category-type": { Category_Type1: "category_type", Books_Item_ID: "books_item_id" },
-  category: { Category_Type_Master: "category_type_id", Category_Name: "category_name", Maximum_Excess_Allowed: "maximum_excess_allowed", Create_Cost_Center: "create_cost_center", Status: "status" },
+  category: { Product_Master: "product_master_id", Category_Name: "category_name", Maximum_Excess_Allowed: "maximum_excess_allowed", Create_Cost_Center: "create_cost_center", Status: "status" },
   "sub-category": { category: "category_id", sub_category: "sub_category" },
   brand: { Brand: "brand", Maximum_Allowed_Excess: "maximum_allowed_excess", Auto_add_Excess_to_RM: "auto_add_excess_to_rm", Pre_Order_Checklist1: "pre_order_checklist_id", Status: "status" },
   buyer: { Buyer_Name: "buyer_name", Buyer_Email: "buyer_email", Currency_Type: "currency_type_id", Status: "status" },
@@ -56,7 +56,7 @@ const fieldColumns: Record<string, Record<string, string>> = {
   "product-master": { Product_Master_name: "product_master_name" }, "process-master": { Process_Name: "process_name" }, "process-template": { Process_Template_Name: "process_name", Process_Name: "process_name" }, "process-template-step": { Process: "process_id", Operation_Template: "operation_template_id", Sl_No: "sl_no" }, "operation-template": { Operation_Template_Name: "operation_template_name", Process: "process_id" }, "operation-template-step": { Operation: "operation", Sl_No: "sl_no", Price: "price" }, merchandiser: { merchandiser: "merchandiser" },
   status: { status: "status" }, "order-volume": { Order_Volume: "order_volume", From: "from_value", To: "to_value" },
   "raw-material-type": { Raw_Material_Type: "raw_material_type" },
-  "raw-material-category": { Raw_Material_Type1: "raw_material_type_id", Raw_Material_Category: "raw_material_category" },
+  "raw-material-category": { Raw_Material_Type1: "raw_material_type_id", Raw_Material_Category: "raw_material_category", Create_Cost_Center: "create_cost_center" },
   "raw-material-sub-category": { Raw_Material_Category1: "raw_material_category_id", Raw_Material_Sub_Category: "raw_material_sub_category" },
   "raw-material": { Raw_Material_Name: "raw_material_name", Category: "raw_material_category_id", Subcategory: "raw_material_sub_category_id", Stock_Uom1: "stock_uom_id", Category_Type: "raw_material_type_id", Is_this_Specific_for_a_Brand: "is_specific_for_brand", Size_Wise_Concemption: "size_wise_consumption", Size_Wise_Consemption_Master: "size_wise_consumption", Brand1: "brand", Show_All1: "show_all", Workdrive_Image_ID: "workdrive_image_id", Buyer_Item_Code: "buyer_item_code", Image_Url: "image_url", Item_Code: "item_code", Colour: "colour", Create_open_stock: "create_open_stock", Open_Stock: "open_stock", Open_Stock_Price: "open_stock_price", Vendor_Wise_Price_List: "vendor_wise_price_list" },
 };
@@ -176,23 +176,6 @@ async function buildData(organizationId: string, moduleKey: string, fields: Mast
     const val = typedValue(field, fields[field.key]);
     if (val !== null) {
       data[relationField] = val;
-    }
-  }
-
-  if (moduleKey === "category" && !data["category_type_id"]) {
-    const firstType = await delegates["category-type"].findFirst({ where: { organization_id: organizationId } });
-    if (firstType) {
-      data["category_type_id"] = firstType.id;
-    } else {
-      const createdType = await delegates["category-type"].create({
-        data: {
-          organization_id: organizationId,
-          category_type: "Default",
-          is_active: true,
-          sort_order: 0,
-        },
-      });
-      data["category_type_id"] = createdType.id;
     }
   }
 

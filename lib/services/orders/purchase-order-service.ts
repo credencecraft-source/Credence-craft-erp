@@ -162,11 +162,16 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
         sources: { create: masters.map((master) => ({ master_purchase_order_id: master.id })) },
         lines: { create: lines },
       },
-      include: purchaseOrderInclude,
     });
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
-  return serializePurchaseOrder(order);
+  const createdOrder = await prisma.purchaseOrder.findUnique({
+    where: { id: order.id },
+    include: purchaseOrderInclude,
+  });
+  if (!createdOrder) throw new Error("Purchase Order was created but could not be loaded.");
+
+  return serializePurchaseOrder(createdOrder);
 }
 
 export async function listPurchaseOrders(organizationId: string) {

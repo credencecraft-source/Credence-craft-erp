@@ -95,6 +95,7 @@ model Organization {
   masterProcesses               MasterProcess[]
   masterProcessTemplates        MasterProcessTemplate[]
   masterProcessTemplateSteps    MasterProcessTemplateStep[]
+  masterOperations              MasterOperation[]
   masterOperationTemplates      MasterOperationTemplate[]
   masterOperationTemplateSteps  MasterOperationTemplateStep[]
   masterMerchandisers           MasterMerchandiser[]
@@ -374,7 +375,6 @@ model Plan {
   tier_key         String?        @db.VarChar(30)
   is_system_plan   Boolean        @default(false)
   display_color    String?        @db.VarChar(30)
-  max_order_qty    Int?
   is_active        Boolean        @default(true)
   sort_order       Int            @default(0)
   created_at       DateTime       @default(now())
@@ -552,6 +552,7 @@ model MasterCategory {
   id                     String              @id @default(cuid())
   value_id               String              @unique @default(uuid())
   organization_id        String
+  product_master_id      String?
   category_type_id       String?
   category_name          String              @db.VarChar(255)
   maximum_excess_allowed Decimal?            @db.Decimal(10, 2)
@@ -563,11 +564,13 @@ model MasterCategory {
   created_at             DateTime            @default(now())
   updated_at             DateTime            @updatedAt
   organization           Organization        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  product_master         MasterProduct?      @relation(fields: [product_master_id], references: [id], onDelete: SetNull)
   category_type          MasterCategoryType? @relation(fields: [category_type_id], references: [id])
   subcategories          MasterSubCategory[]
 
   @@unique([organization_id, category_name])
   @@index([organization_id, is_active])
+  @@index([organization_id, product_master_id])
   @@map("master_categories")
 }
 
@@ -1021,6 +1024,7 @@ model MasterProduct {
   created_at          DateTime     @default(now())
   updated_at          DateTime     @updatedAt
   organization        Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  categories          MasterCategory[]
 
   @@unique([organization_id, product_master_name])
   @@index([organization_id, is_active])
@@ -1067,6 +1071,23 @@ model MasterProcessTemplate {
   @@unique([organization_id, process_name])
   @@index([organization_id, is_active])
   @@map("master_process_templates")
+}
+
+model MasterOperation {
+  id              String       @id @default(cuid())
+  value_id        String       @unique @default(uuid())
+  organization_id String
+  operation_name  String       @db.VarChar(255)
+  is_active       Boolean      @default(false)
+  sort_order      Int          @default(0)
+  legacy_metadata Json?
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, operation_name])
+  @@index([organization_id, is_active])
+  @@map("master_operations")
 }
 
 model MasterOperationTemplate {
@@ -1166,6 +1187,7 @@ model MasterRawMaterialCategory {
   organization_id       String
   raw_material_type_id  String?
   raw_material_category String                         @db.VarChar(255)
+  create_cost_center    Boolean                        @default(false)
   is_active             Boolean                        @default(false)
   sort_order            Int                            @default(0)
   legacy_metadata       Json?

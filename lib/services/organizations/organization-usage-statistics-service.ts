@@ -16,7 +16,7 @@ const organizationTableLabels: Record<string, string> = {
   destinationOrderShares: "Destination order shares",
   approvalRequests: "Approval requests",
   masterEntities: "Entities",
-  masterCategoryTypes: "Category types",
+  masterCategoryTypes: "RM category types",
   masterCategories: "Categories",
   masterSubCategories: "Sub-categories",
   masterBrands: "Brands",

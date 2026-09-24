@@ -6,6 +6,7 @@ import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { createVersion, deleteVersion, listVersions } from "@/lib/services/platform/version-service";
 
 export default async function PlatformVersionsPage({
@@ -20,6 +21,7 @@ export default async function PlatformVersionsPage({
 
   async function createAction(formData: FormData) {
     "use server";
+    await requirePlatformSessionAdmin();
     try {
       await createVersion({
         versionName: String(formData.get("versionName") || ""),
@@ -33,6 +35,7 @@ export default async function PlatformVersionsPage({
 
   async function deleteAction(formData: FormData) {
     "use server";
+    await requirePlatformSessionAdmin();
     try {
       await deleteVersion(String(formData.get("id") || ""));
     } catch (error) {

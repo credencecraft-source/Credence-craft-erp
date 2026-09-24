@@ -25,22 +25,43 @@ export default async function VersionBusinessTypeSegmentPage({
   const assignment = entry?.segments.find((item) => toSegmentUrlSegment(item.segment.name) === segmentName);
 
   if (!version || !entry || !assignment) redirect(`/platform/versions/${versionId}`);
+  if (versionName !== toUrlSegment(version.version_name) || businessTypeName !== toUrlSegment(entry.businessType.name) || segmentName !== toSegmentUrlSegment(assignment.segment.name)) {
+    redirect(`/platform/versions/${version.id}`);
+  }
 
   const canonicalPath = `/platform/versions/${version.id}/${toUrlSegment(version.version_name)}/${toUrlSegment(entry.businessType.name)}/${toSegmentUrlSegment(assignment.segment.name)}`;
-  if (versionName !== toUrlSegment(version.version_name) || businessTypeName !== toUrlSegment(entry.businessType.name) || segmentName !== toSegmentUrlSegment(assignment.segment.name)) redirect(canonicalPath);
+
   return (
-    <Page className="max-w-5xl">
+    <Page className="max-w-6xl">
       <Section className="space-y-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
-          <div><p className="erp-eyebrow">{version.version_name} / {entry.businessType.name}</p><h1 className="text-2xl font-bold text-slate-900">{assignment.segment.name.toUpperCase()}</h1><p className="text-sm text-slate-600">Segment details for {entry.businessType.name} in version {version.version_name}.</p></div>
-          <Link href={`/platform/versions/${version.id}/${toUrlSegment(version.version_name)}/${toUrlSegment(entry.businessType.name)}`} className="text-sm font-semibold text-slate-600 hover:text-slate-900">Back to segments</Link>
-        </div>
-        <Card className="p-6"><p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Segment</p><h2 className="mt-2 text-xl font-bold text-slate-900">{assignment.segment.name.toUpperCase()}</h2><p className="mt-3 text-sm text-slate-600">{assignment.segment.description || "No description has been configured for this segment yet."}</p><div className="mt-6 grid gap-4 border-t border-slate-100 pt-5 sm:grid-cols-2"><div><p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Version</p><p className="mt-1 font-semibold text-slate-900">{version.version_name}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Business Type</p><p className="mt-1 font-semibold text-slate-900">{entry.businessType.name}</p></div></div></Card>
-        <div className="grid gap-5 md:grid-cols-2">
-          <Link href={`${canonicalPath}/modulesbased-restriction`}>
-            <Card className="h-full p-6 transition-colors hover:border-emerald-300 hover:bg-emerald-50/30"><p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Restriction type 01</p><h2 className="mt-2 text-xl font-bold text-slate-900">Modules based restriction</h2><p className="mt-2 text-sm text-slate-600">Control access to the left-side ERP modules, submodules, and actions for this segment.</p><span className="mt-6 inline-block text-sm font-semibold text-emerald-700">Manage module restrictions →</span></Card>
+          <div>
+            <p className="erp-eyebrow">{version.version_name} / {entry.businessType.name}</p>
+            <h1 className="text-2xl font-bold text-slate-900">{assignment.segment.name.toUpperCase()} restrictions</h1>
+            <p className="text-sm text-slate-600">Choose the restriction type to configure for this business type segment.</p>
+          </div>
+          <Link href={canonicalPath.split("/").slice(0, -1).join("/")} className="text-sm font-semibold text-slate-600 hover:text-slate-900">
+            Back to {entry.businessType.name}
           </Link>
-          <Card className="h-full border-dashed p-6"><p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Restriction type 02</p><h2 className="mt-2 text-xl font-bold text-slate-900">Transaction based restriction</h2><p className="mt-2 text-sm text-slate-600">Control transaction-level limits and workflows for this segment.</p><span className="mt-6 inline-block text-sm font-semibold text-slate-400">Coming next</span></Card>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <Link href={`${canonicalPath}/modulesbased-restriction`}>
+            <Card className="h-full border-emerald-200 p-5 transition-colors hover:bg-emerald-50/40">
+              <p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Restriction type 01</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Module-based restrictions</h2>
+              <p className="mt-2 text-sm text-slate-600">Manage module, submodule, action, and route access for this segment.</p>
+              <span className="mt-5 inline-block text-sm font-semibold text-emerald-700">Open module restrictions</span>
+            </Card>
+          </Link>
+          <Link href={`${canonicalPath}/transactionbased-restriction`}>
+            <Card className="h-full border-violet-200 p-5 transition-colors hover:bg-violet-50/40">
+              <p className="text-xs font-semibold uppercase tracking-wider text-violet-600">Restriction type 02</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Transaction-based restrictions</h2>
+              <p className="mt-2 text-sm text-slate-600">Set monthly transaction entry limits for this segment.</p>
+              <span className="mt-5 inline-block text-sm font-semibold text-violet-700">Open transaction restrictions</span>
+            </Card>
+          </Link>
         </div>
       </Section>
     </Page>

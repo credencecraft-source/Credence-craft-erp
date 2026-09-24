@@ -3,9 +3,12 @@ import { redirect } from "next/navigation";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { listSegments } from "@/lib/services/platform/segment-service";
+import { addVersionBusinessTypeTags, removeVersionBusinessTypeTag } from "@/lib/services/platform/version-business-type-tag-service";
 import { addSegmentToVersionBusinessType, getVersionDetails, removeSegmentFromVersionBusinessType } from "@/lib/services/platform/version-service";
 
 export default async function VersionBusinessTypeSegmentsPage({ params }: { params: Promise<{ versionId: string; versionBusinessTypeId: string }> }) {
@@ -15,8 +18,23 @@ export default async function VersionBusinessTypeSegmentsPage({ params }: { para
   if (!version || !entry) redirect(`/platform/versions/${versionId}`);
   const assignedSegmentIds = new Set(entry.segments.map(({ segment_id }) => segment_id));
 
+  async function addTagAction(formData: FormData) {
+    "use server";
+    await requirePlatformSessionAdmin();
+    await addVersionBusinessTypeTags(versionBusinessTypeId, String(formData.get("labels") || ""));
+    redirect(`/platform/versions/${versionId}/business-types/${versionBusinessTypeId}`);
+  }
+
+  async function removeTagAction(formData: FormData) {
+    "use server";
+    await requirePlatformSessionAdmin();
+    await removeVersionBusinessTypeTag(String(formData.get("tagId") || ""));
+    redirect(`/platform/versions/${versionId}/business-types/${versionBusinessTypeId}`);
+  }
+
   async function addAction(formData: FormData) {
     "use server";
+    await requirePlatformSessionAdmin();
     try {
       await addSegmentToVersionBusinessType(versionBusinessTypeId, String(formData.get("segmentId") || ""));
     } catch {
@@ -27,6 +45,7 @@ export default async function VersionBusinessTypeSegmentsPage({ params }: { para
 
   async function removeAction(formData: FormData) {
     "use server";
+    await requirePlatformSessionAdmin();
     try {
       await removeSegmentFromVersionBusinessType(String(formData.get("assignmentId") || ""));
     } catch {
@@ -42,6 +61,8 @@ export default async function VersionBusinessTypeSegmentsPage({ params }: { para
           <div><p className="erp-eyebrow">{version.version_name} / Business Type</p><h1 className="text-2xl font-bold text-slate-900">{entry.businessType.name}</h1><p className="text-sm text-slate-600">Configure the segments available for this business type inside version {version.version_name}.</p></div>
           <Link href={`/platform/versions/${version.id}`} className="text-sm font-semibold text-slate-600 hover:text-slate-900">Back to {version.version_name}</Link>
         </div>
+
+        <Card className="p-6"><div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Business module header</p><h2 className="mt-1 text-lg font-bold text-slate-900">Audience tags</h2><p className="mt-1 text-sm text-slate-500">Add labels such as Retail, Wholesale, or Factory for this business type in this version.</p></div><form action={addTagAction} className="flex items-end gap-2"><Input name="labels" label="Tags" required placeholder="Retail, Wholesale" /><Button type="submit">Add tags</Button></form></div><div className="mt-5 flex flex-wrap gap-2">{entry.tags.map((tag) => <span key={tag.id} className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-800">{tag.label}<form action={removeTagAction}><input type="hidden" name="tagId" value={tag.id} /><button type="submit" className="text-emerald-600 hover:text-rose-600" aria-label={`Remove ${tag.label} tag`}>×</button></form></span>)}{entry.tags.length === 0 && <p className="text-sm text-slate-500">No audience tags added yet.</p>}</div></Card>
 
         <div className="grid gap-6 lg:grid-cols-[1fr_1.2fr]">
           <Card className="p-6"><h2 className="text-base font-bold text-slate-900">Add a segment</h2><p className="mt-1 text-sm text-slate-500">Choose from the platform segment catalog.</p><form action={addAction} className="mt-5 space-y-4"><select name="segmentId" required className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"><option value="">Select a segment...</option>{segments.filter((segment) => !assignedSegmentIds.has(segment.id)).map((segment) => <option key={segment.id} value={segment.id}>{segment.name}</option>)}</select><Button type="submit" className="w-full">Assign segment</Button></form></Card>

@@ -172,9 +172,6 @@ export default function FinishedGoodsTab({
               <th className="p-2 min-w-[90px]">Excess %</th>
               <th className="p-2 min-w-[100px]">Excess Qty</th>
               <th className="p-2 min-w-[100px]">Total Qty</th>
-              <th className="p-2 min-w-[110px]">Buyer Po Price</th>
-              <th className="p-2 min-w-[110px]">Exchange Price</th>
-              <th className="p-2 min-w-[110px]">Price In INR</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 align-top">
@@ -242,42 +239,6 @@ export default function FinishedGoodsTab({
                       readOnly
                       placeholder="0"
                       className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800"
-                    />
-                  </div>
-                </td>
-                <td className="p-2">
-                  <div className="flex flex-col gap-1.5 pt-5">
-                    <Input
-                      aria-label="Buyer PO Price"
-                      type="number"
-                      value={row.buyerPoPrice || ""}
-                      onChange={(event) => updateSizeRow(index, "buyerPoPrice", event.target.value)}
-                      placeholder="0.00"
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none w-full"
-                    />
-                  </div>
-                </td>
-                <td className="p-2">
-                  <div className="flex flex-col gap-1.5 pt-5">
-                    <Input
-                      aria-label="Exchange Price"
-                      type="number"
-                      value={row.exchangePrice || ""}
-                      onChange={(event) => updateSizeRow(index, "exchangePrice", event.target.value)}
-                      placeholder="0.00"
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none w-full"
-                    />
-                  </div>
-                </td>
-                <td className="p-2">
-                  <div className="flex flex-col gap-1.5 pt-5">
-                    <Input
-                      aria-label="Price in INR"
-                      type="number"
-                      value={row.priceInInr || ""}
-                      onChange={(event) => updateSizeRow(index, "priceInInr", event.target.value)}
-                      placeholder="0.00"
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none w-full"
                     />
                   </div>
                 </td>

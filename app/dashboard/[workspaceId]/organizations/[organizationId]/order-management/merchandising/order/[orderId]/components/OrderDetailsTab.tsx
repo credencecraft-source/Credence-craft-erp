@@ -64,7 +64,8 @@ export default function OrderDetailsTab({
     value: string,
     onChange: (value: string) => void,
     masterKey: string,
-    placeholder: string
+    placeholder: string,
+    required = false
   ) => {
     const lookupDefinition = orderLookups.find(
       (definition) => definition.lookupModuleKey === masterKey || definition.key === masterKey
@@ -107,7 +108,7 @@ export default function OrderDetailsTab({
     return (
       <label className="flex flex-col gap-1.5">
         <span className="flex items-center justify-between text-xs font-semibold text-slate-700">
-          <span>{label}</span>
+          <span>{label}{required ? " *" : ""}</span>
           <button
             type="button"
             onClick={() => onOpenCreateMaster(masterKey)}
@@ -117,6 +118,7 @@ export default function OrderDetailsTab({
           </button>
         </span>
         <select
+          required={required}
           value={value ?? ""}
           onChange={(event) => onChange(event.target.value)}
           className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
@@ -183,13 +185,14 @@ export default function OrderDetailsTab({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {renderMasterSelect("Entity Name", form.entityName, (val) => handleChange("entityName", val), "entity", "Select entity")}
-        {renderMasterSelect("Product Category", form.category, (val) => handleChange("category", val), "category", "Select product category")}
-        {renderMasterSelect("Product Sub Category", form.subCategory, (val) => handleChange("subCategory", val), "sub-category", "Select product sub category")}
+        {renderMasterSelect("Entity Name", form.entityName, (val) => handleChange("entityName", val), "entity", "Select entity", isCreateMode)}
+        {renderMasterSelect("Product Category", form.category, (val) => handleChange("category", val), "category", "Select product category", isCreateMode)}
+        {renderMasterSelect("Product Sub Category", form.subCategory, (val) => handleChange("subCategory", val), "sub-category", "Select product sub category", isCreateMode)}
 
         <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-semibold text-slate-700">Style Name</span>
+          <span className="text-xs font-semibold text-slate-700">Style Name{isCreateMode ? " *" : ""}</span>
           <input
+            required={isCreateMode}
             type="text"
             value={form.styleName ?? ""}
             onChange={(e) => handleChange("styleName", e.target.value)}
@@ -198,10 +201,10 @@ export default function OrderDetailsTab({
           />
         </label>
 
-        {renderMasterSelect("Colors", form.colors, (val) => handleChange("colors", val), "color", "Select color")}
-        {renderMasterSelect("Season", form.season, (val) => handleChange("season", val), "season", "Select season")}
+        {renderMasterSelect("Colors", form.colors, (val) => handleChange("colors", val), "color", "Select color", isCreateMode)}
+        {renderMasterSelect("Season", form.season, (val) => handleChange("season", val), "season", "Select season", isCreateMode)}
         <div className="flex flex-col gap-1.5">
-          {renderMasterSelect("Size Group", form.sizeGroup, (val) => handleChange("sizeGroup", val), "size-group", "Select size group")}
+          {renderMasterSelect("Size Group", form.sizeGroup, (val) => handleChange("sizeGroup", val), "size-group", "Select size group", isCreateMode)}
           {selectedSizeGroup && groupSizes.length > 0 ? (
             <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 p-2">
               <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">Available sizes</div>
@@ -240,8 +243,9 @@ export default function OrderDetailsTab({
         )}
 
         <label className="flex flex-col gap-1.5">
-          <span className="text-xs font-semibold text-slate-700">Order Qty</span>
+          <span className="text-xs font-semibold text-slate-700">Order Qty{isCreateMode ? " *" : ""}</span>
           <input
+            required={isCreateMode}
             type="number"
             value={form.orderQty ?? ""}
             onChange={(e) => handleChange("orderQty", e.target.value)}

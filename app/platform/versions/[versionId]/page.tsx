@@ -6,10 +6,6 @@ import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { getVersionDetails } from "@/lib/services/platform/version-service";
 
-function toUrlSegment(value: string) {
-  return encodeURIComponent(value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""));
-}
-
 export default async function VersionDetailPage({ params }: { params: Promise<{ versionId: string }> }) {
   const { versionId } = await params;
   const version = await getVersionDetails(versionId);
@@ -23,17 +19,25 @@ export default async function VersionDetailPage({ params }: { params: Promise<{ 
           <Link href="/platform/versions" className="text-sm font-semibold text-slate-600 hover:text-slate-900">Back to versions</Link>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {version.businessTypes.map((entry) => (
-            <Link key={entry.id} href={`/platform/versions/${version.id}/${toUrlSegment(version.version_name)}/${toUrlSegment(entry.businessType.name)}`} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-colors hover:border-emerald-300 hover:bg-emerald-50/30">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Business Type</p>
-              <h2 className="mt-2 text-lg font-bold text-slate-900">{entry.businessType.name}</h2>
-              <p className="mt-1 text-sm text-slate-500">{entry.segments.length} segments configured</p>
-              <span className="mt-5 inline-block text-sm font-semibold text-emerald-700">Manage segments →</span>
-            </Link>
-          ))}
-          {version.businessTypes.length === 0 && <Card className="p-8 text-center text-sm text-slate-500 md:col-span-2 lg:col-span-3">No active business types were available when this version was created.</Card>}
+        <div className="grid gap-4 md:grid-cols-2">
+          <Link href={`/platform/versions/${version.id}/module-based`}>
+            <Card className="h-full border-emerald-200 p-5 transition-colors hover:bg-emerald-50/40">
+              <p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Restriction type 01</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Module-based restrictions</h2>
+              <p className="mt-2 text-sm text-slate-600">Choose a business type and segment to manage module, submodule, and action access.</p>
+              <span className="mt-5 inline-block text-sm font-semibold text-emerald-700">Manage by business type →</span>
+            </Card>
+          </Link>
+          <Link href={`/platform/versions/${version.id}/transaction-based`}>
+            <Card className="h-full border-violet-200 p-5 transition-colors hover:bg-violet-50/40">
+              <p className="text-xs font-semibold uppercase tracking-wider text-violet-600">Restriction type 02</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Transaction-based restrictions</h2>
+              <p className="mt-2 text-sm text-slate-600">Set application-wide monthly record limits by transaction form and segment.</p>
+              <span className="mt-5 inline-block text-sm font-semibold text-violet-700">Manage transaction limits →</span>
+            </Card>
+          </Link>
         </div>
+
       </Section>
     </Page>
   );

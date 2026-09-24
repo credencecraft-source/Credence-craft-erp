@@ -2,8 +2,9 @@ import { createMaster, lookup, text } from "@/lib/master-data/master-data-models
 
 export const PRE_PRODUCTION_MASTER_DEFINITIONS = [
   createMaster("size-wise-consumption", "Size Wise Consumption", "Size wise consumption lookup values.", [text("Bom_Template_Name", "BOM Template Name", { required: true, unique: true })], { moduleGroup: "factory-management", moduleSubGroup: "pre-production", moduleOrder: 1 }),
-  createMaster("product-master", "Product Master", "Product master lookup values.", [text("Product_Master_name", "Product Master Name", { required: true, unique: true })], { moduleGroup: "factory-management", moduleSubGroup: "pre-production", moduleOrder: 2 }),
+  createMaster("product-master", "FG Product Master", "Finished goods product master lookup values.", [text("Product_Master_name", "FG Product Master Name", { required: true, unique: true })], { moduleGroup: "factory-management", moduleSubGroup: "pre-production", moduleOrder: 2 }),
   createMaster("process-master", "Process Master", "Reusable production operations used inside process templates.", [text("Process_Name", "Process Name", { required: true, unique: true })], { labelField: "Process_Name", moduleGroup: "factory-management", moduleSubGroup: "pre-production", moduleOrder: 3 }),
+  createMaster("operation", "Operation", "Reusable operations used inside operation templates.", [text("Operation_Name", "Operation Name", { required: true, unique: true })], { labelField: "Operation_Name", moduleGroup: "factory-management", moduleSubGroup: "pre-production", moduleOrder: 3.5 }),
   createMaster("process-template", "Process Template", "Production process templates with ordered process steps.", [
     text("Process_Template_Name", "Process Template Name", { required: true, unique: true }),
     {

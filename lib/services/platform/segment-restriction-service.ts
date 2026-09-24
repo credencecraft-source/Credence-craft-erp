@@ -55,10 +55,28 @@ export async function listSegmentRestrictions(versionBusinessTypeSegmentId: stri
   });
 }
 
+export async function listSegmentRestrictionsForAssignments(versionBusinessTypeSegmentIds: string[]) {
+  return prisma.segmentRestriction.findMany({
+    where: { version_business_type_segment_id: { in: [...new Set(versionBusinessTypeSegmentIds)] } },
+    orderBy: { created_at: "desc" },
+  });
+}
+
 export async function createSegmentRestriction(
   versionBusinessTypeSegmentId: string,
   input: SegmentRestrictionInput,
 ) {
+  const [restriction] = await createSegmentRestrictions([versionBusinessTypeSegmentId], input);
+  return restriction;
+}
+
+export async function createSegmentRestrictions(
+  versionBusinessTypeSegmentIds: string[],
+  input: SegmentRestrictionInput,
+) {
+  const segmentIds = [...new Set(versionBusinessTypeSegmentIds.filter(Boolean))];
+  if (segmentIds.length === 0) throw new Error("Select at least one segment.");
+
   const masterModule = input.masterModule.trim();
   const mainModule = input.mainModule.trim();
   const subModule = input.subModule.trim();
@@ -68,15 +86,18 @@ export async function createSegmentRestriction(
     throw new Error("Select a third-level submodule.");
   }
 
-  const assignment = await prisma.versionBusinessTypeSegment.findUnique({
-    where: { id: versionBusinessTypeSegmentId },
+  const assignments = await prisma.versionBusinessTypeSegment.findMany({
+    where: { id: { in: segmentIds } },
     include: { versionBusinessType: { include: { businessType: true } } },
   });
-  const erpModule = assignment
-    ? getErpModuleForBusinessTypeName(assignment.versionBusinessType.businessType.name)
-    : null;
+  if (assignments.length !== segmentIds.length) throw new Error("One or more selected segments do not exist.");
+  if (new Set(assignments.map(({ versionBusinessType }) => versionBusinessType.business_type_id)).size !== 1) {
+    throw new Error("Selected segments must belong to the same business type.");
+  }
 
-  if (!assignment || !erpModule || normalize(masterModule) !== normalize(erpModule.pathSegment)) {
+  const assignment = assignments[0];
+  const erpModule = getErpModuleForBusinessTypeName(assignment.versionBusinessType.businessType.name);
+  if (!erpModule || normalize(masterModule) !== normalize(erpModule.pathSegment)) {
     throw new Error("Restriction must belong to this business type's module.");
   }
 
@@ -86,22 +107,75 @@ export async function createSegmentRestriction(
   const formattedAction = normalize(actionLevel);
   const defaultMessage = `This feature is not available for the ${assignment.versionBusinessType.businessType.name} segment. Upgrade or contact your administrator to unlock ${masterModule} > ${mainModule} > ${subModule}.`;
 
-  return prisma.segmentRestriction.create({
-    data: {
-      version_business_type_segment_id: versionBusinessTypeSegmentId,
-      master_module: masterModule,
-      main_module: mainModule,
-      sub_module: subModule,
-      action_level: actionLevel,
-      url_pattern: `/dashboard/*/organizations/*/${formattedMaster}/${formattedMain}/${formattedSub}/${formattedAction}`,
-      restriction_type: input.restrictionType?.trim() || "block",
-      custom_message: input.customMessage?.trim() || defaultMessage,
-    },
-  });
+  return prisma.$transaction(
+    assignments.map(({ id }) => prisma.segmentRestriction.create({
+      data: {
+        version_business_type_segment_id: id,
+        master_module: masterModule,
+        main_module: mainModule,
+        sub_module: subModule,
+        action_level: actionLevel,
+        url_pattern: `/dashboard/*/organizations/*/${formattedMaster}/${formattedMain}/${formattedSub}/${formattedAction}`,
+        restriction_type: input.restrictionType?.trim() || "block",
+        custom_message: input.customMessage?.trim() || defaultMessage,
+      },
+    })),
+  );
 }
 
 export async function deleteSegmentRestriction(restrictionId: string) {
   return prisma.segmentRestriction.delete({ where: { restriction_id: restrictionId } });
+}
+
+export async function setSegmentRestrictionAssignment(
+  sourceRestrictionId: string,
+  targetSegmentId: string,
+  enabled: boolean,
+) {
+  const source = await prisma.segmentRestriction.findUnique({
+    where: { restriction_id: sourceRestrictionId },
+    include: { versionBusinessTypeSegment: true },
+  });
+  const target = await prisma.versionBusinessTypeSegment.findUnique({
+    where: { id: targetSegmentId },
+    include: { segment: true },
+  });
+
+  if (!source || !target || source.versionBusinessTypeSegment.version_business_type_id !== target.version_business_type_id) {
+    throw new Error("The selected segment does not belong to this business type.");
+  }
+
+  const matchingRestriction = await prisma.segmentRestriction.findFirst({
+    where: {
+      version_business_type_segment_id: targetSegmentId,
+      master_module: source.master_module,
+      main_module: source.main_module,
+      sub_module: source.sub_module,
+      action_level: source.action_level,
+      restriction_type: source.restriction_type,
+      custom_message: source.custom_message,
+    },
+  });
+
+  if (!enabled) {
+    if (matchingRestriction) await prisma.segmentRestriction.delete({ where: { restriction_id: matchingRestriction.restriction_id } });
+    return;
+  }
+
+  if (matchingRestriction) return matchingRestriction;
+
+  return prisma.segmentRestriction.create({
+    data: {
+      version_business_type_segment_id: targetSegmentId,
+      master_module: source.master_module,
+      main_module: source.main_module,
+      sub_module: source.sub_module,
+      action_level: source.action_level,
+      url_pattern: source.url_pattern,
+      restriction_type: source.restriction_type,
+      custom_message: source.custom_message,
+    },
+  });
 }
 
 export async function getEffectiveSegmentRestrictions(organizationId: string) {

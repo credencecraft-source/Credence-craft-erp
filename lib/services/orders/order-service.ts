@@ -1,18 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import { calculateBomRows, calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
-import { getEffectivePlansForOrganization } from "@/lib/services/platform/subscription-service";
+import { validateMonthlyFormLimits, validateRestrictedFormFields } from "@/lib/services/platform/segment-form-restriction-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
-
-async function validateOrderQuantityLimit(organizationId: string, orderQty: number) {
-  const effectivePlans = await getEffectivePlansForOrganization(organizationId);
-  const orderManagementPlan = effectivePlans.find(({ businessType }) => businessType.name.trim().toLowerCase() === "order management");
-  const maxOrderQty = orderManagementPlan?.plan?.max_order_qty;
-
-  if (maxOrderQty !== null && maxOrderQty !== undefined && orderQty > maxOrderQty) {
-    throw new Error(`Your current ${orderManagementPlan?.plan?.plan_name || "plan"} allows up to ${maxOrderQty.toLocaleString("en-IN")} order quantity. Please upgrade your plan.`);
-  }
-}
 
 export type OrderStatus =
   | "Draft"
@@ -558,7 +548,8 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
   const calculatedOrderQty = Array.isArray(input.rows)
     ? calculateFinishedGoodsRows(input.rows).orderQty
     : Number(input.orderQty ?? 0);
-  await validateOrderQuantityLimit(organizationId, calculatedOrderQty);
+  await validateRestrictedFormFields(organizationId, "merchandising_orders", input as unknown as Record<string, unknown>);
+  await validateMonthlyFormLimits(organizationId, "merchandising_orders", calculatedOrderQty);
 
   const createdOrder = await prisma.$transaction(async (transaction) => {
     const orderNo = await reserveNextOrderNumber(organizationId, transaction);
@@ -631,9 +622,10 @@ export async function updateOrder(
     throw new Error("Order not found");
   }
 
+  await validateRestrictedFormFields(organizationId, "merchandising_orders", input as unknown as Record<string, unknown>);
   const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : undefined;
   if (input.orderQty !== undefined && input.orderQty !== null) {
-    await validateOrderQuantityLimit(organizationId, Number(input.orderQty));
+    await validateMonthlyFormLimits(organizationId, "merchandising_orders", Number(input.orderQty), orderId);
   }
 
   return prisma.merchandisingOrder.update({
@@ -778,11 +770,22 @@ export async function updateOrderWithDetails(
       throw new Error("Order not found");
     }
 
+    const changedFormFields: Record<string, unknown> = {};
+    const currentOrder = order as unknown as Record<string, unknown>;
+    for (const field of ["entityName", "category", "subCategory", "season", "article", "styleName", "colors", "buyer", "brand", "sizeGroup", "haveSizeRatio", "ratioOrderQty", "orderQty", "deliveryDate"]) {
+      if (field in input && input[field as keyof CreateOrderInput] !== currentOrder[field]) {
+        changedFormFields[field] = input[field as keyof CreateOrderInput];
+      }
+    }
+    await validateRestrictedFormFields(organizationId, "merchandising_orders", changedFormFields);
+
     const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : undefined;
     const calculatedFinishedGoods = input.rows ? calculateFinishedGoodsRows(input.rows) : null;
-    await validateOrderQuantityLimit(
+    await validateMonthlyFormLimits(
       organizationId,
+      "merchandising_orders",
       calculatedFinishedGoods?.orderQty ?? (input.orderQty !== undefined ? Number(input.orderQty) : Number(order.orderQty ?? 0)),
+      orderId,
     );
     const updatedOrder = await transaction.merchandisingOrder.update({
       where: { id: orderId },
