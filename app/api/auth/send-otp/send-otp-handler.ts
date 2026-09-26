@@ -11,6 +11,10 @@ import {
 import { issueEmailOtp } from "@/lib/services/platform/platform-email-configuration-service";
 import { getDevUser, hasDevProfileName } from "@/lib/dev/dev-user-store-mock";
 import { prisma } from "@/lib/database/prisma-client";
+import {
+  DATABASE_UNAVAILABLE_MESSAGE,
+  isDatabaseUnavailableError,
+} from "@/lib/database/database-errors";
 import { ensurePlatformDefaults } from "@/lib/services/platform/platform-bootstrap-service";
 
 const SUPPORT_EMAIL = "jassimtkd@gmail.com";
@@ -129,8 +133,15 @@ export async function POST(request: Request) {
     await issueEmailOtp(email);
     return NextResponse.json({ ok: true, userExists: true, message: "OTP sent." });
   } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      return NextResponse.json(
+        { error: DATABASE_UNAVAILABLE_MESSAGE },
+        { status: 503 },
+      );
+    }
+
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unable to send OTP." },
+      { error: "Unable to send OTP. Please try again." },
       { status: 500 },
     );
   }

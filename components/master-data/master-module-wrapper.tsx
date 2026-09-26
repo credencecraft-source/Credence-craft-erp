@@ -7,10 +7,20 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Layers,
   ArrowLeft,
+  Boxes,
+  BriefcaseBusiness,
+  ClipboardList,
+  Crown,
+  Factory,
+  Gauge,
+  Landmark,
+  LayoutGrid,
+  Lock,
+  Package,
+  Settings,
   Sparkles,
   ChevronDown,
   ChevronRight,
-  Lock,
 } from "lucide-react";
 
 import { ERP_MODULES, getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
@@ -32,6 +42,21 @@ type BusinessTypeItem = {
   id: string;
   name: string;
 };
+
+const moduleIcons = {
+  online: Gauge,
+  pos: Landmark,
+  "order-management": ClipboardList,
+  "design-development": BriefcaseBusiness,
+  "factory-management": Factory,
+  "quality-management-system": Boxes,
+  "finance-management": Landmark,
+  "inventory-management": Package,
+  "security-management": Lock,
+  approvals: ClipboardList,
+  settings: Settings,
+  admin: LayoutGrid,
+} as const;
 
 type MasterModuleWrapperProps = {
   workspaceId: string;
@@ -61,6 +86,7 @@ export function MasterModuleWrapper({
   const pathname = usePathname();
   const router = useRouter();
   const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
+  const visibilityStorageKey = `erp-visible-modules:${organizationId}`;
 
   const checkIsBlocked = (targetPath: string) => {
     if (!restrictions || !restrictions.length) return null;
@@ -99,7 +125,7 @@ export function MasterModuleWrapper({
     }
   }, [currentBlockInfo, organizationPath, pathname, router]);
 
-  const moduleOptions = useMemo(() => {
+  const allModuleOptions = useMemo(() => {
     if (businessTypes.length > 0) {
       return businessTypes.flatMap((businessType) => {
         const linkedModule = getErpModuleForBusinessTypeName(businessType.name);
@@ -117,6 +143,49 @@ export function MasterModuleWrapper({
     }
     return ERP_MODULES;
   }, [businessTypes]);
+
+  const [hiddenModuleKeys, setHiddenModuleKeys] = useState<string[]>([]);
+  const [moduleSettingsOpen, setModuleSettingsOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      const storedVisibleKeys = JSON.parse(localStorage.getItem(visibilityStorageKey) || "null");
+      if (Array.isArray(storedVisibleKeys)) {
+        const visibleKeys = allModuleOptions
+          .map((option) => option.key)
+          .filter((key) => storedVisibleKeys.includes(key));
+        if (visibleKeys.length > 0) {
+          setHiddenModuleKeys(
+            allModuleOptions
+              .map((option) => option.key)
+              .filter((key) => !visibleKeys.includes(key)),
+          );
+        }
+      }
+    } catch {
+      // Ignore malformed local preferences and use the default visibility.
+    }
+  }, [allModuleOptions, visibilityStorageKey]);
+
+  const moduleOptions = useMemo(
+    () => allModuleOptions.filter((option) => !hiddenModuleKeys.includes(option.key)),
+    [allModuleOptions, hiddenModuleKeys],
+  );
+
+  const toggleModuleVisibility = (moduleKey: string) => {
+    const isHidden = hiddenModuleKeys.includes(moduleKey);
+    if (!isHidden && moduleOptions.length === 1) return;
+
+    const nextHiddenKeys = isHidden
+      ? hiddenModuleKeys.filter((key) => key !== moduleKey)
+      : [...hiddenModuleKeys, moduleKey];
+    const nextVisibleKeys = allModuleOptions
+      .map((option) => option.key)
+      .filter((key) => !nextHiddenKeys.includes(key));
+
+    setHiddenModuleKeys(nextHiddenKeys);
+    localStorage.setItem(visibilityStorageKey, JSON.stringify(nextVisibleKeys));
+  };
 
   const activeModule = useMemo(() => {
     return (
@@ -305,13 +374,32 @@ export function MasterModuleWrapper({
         <header className="flex min-h-14 min-w-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:px-6">
           <div className="flex min-w-0 items-center gap-2">
             <Layers className="h-5 w-5 text-emerald-600" />
-            <span className="truncate font-semibold capitalize">{activeModule.label}</span>
+            <span className="truncate font-semibold capitalize">{activeModule?.label ?? "Modules"}</span>
           </div>
 
           <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2 sm:gap-3">
+            <Link
+              href={`${organizationPath}/settings/pricing/plan`}
+              aria-label="Open subscription and pricing"
+              title="Subscription and pricing"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-amber-200 bg-amber-50 text-amber-600 transition-colors hover:border-amber-300 hover:bg-amber-100 hover:text-amber-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+            >
+              <Crown className="h-4 w-4" />
+            </Link>
             <SupportTicketTrigger organizationId={organizationId} />
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              aria-label="Configure visible modules"
+              title="Configure visible modules"
+              onClick={() => setModuleSettingsOpen(true)}
+              className="h-9 w-9 rounded-md border border-slate-200 p-0 text-slate-500 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
             <MasterModuleSwitcher
-              value={activeModule.key}
+              value={activeModule?.key ?? moduleOptions[0]?.key ?? ""}
               options={moduleOptions}
               onLogout={onLogout}
             />
@@ -338,6 +426,66 @@ export function MasterModuleWrapper({
           )}
         </main>
       </div>
+
+      <Modal
+        open={moduleSettingsOpen}
+        onClose={() => setModuleSettingsOpen(false)}
+        ariaLabelledBy="module-visibility-title"
+        size="lg"
+      >
+        <div className="border-b border-slate-200 px-5 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-600">Workspace view</p>
+              <h2 id="module-visibility-title" className="mt-1 text-lg font-semibold text-slate-900">Visible modules</h2>
+              <p className="mt-1 text-xs text-slate-500">Choose which modules appear in the header menu.</p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              aria-label="Close module settings"
+              onClick={() => setModuleSettingsOpen(false)}
+              className="px-2 text-xl leading-none text-slate-400 hover:text-slate-700"
+            >
+              &times;
+            </Button>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-3">
+          {allModuleOptions.map((option) => {
+            const isVisible = !hiddenModuleKeys.includes(option.key);
+            const iconKey = "moduleKey" in option && option.moduleKey ? option.moduleKey : option.key;
+            const Icon = moduleIcons[iconKey as keyof typeof moduleIcons] || LayoutGrid;
+            const canHide = isVisible && moduleOptions.length > 1;
+
+            return (
+              <Button
+                variant="ghost"
+                size="sm"
+                key={option.key}
+                type="button"
+                onClick={() => toggleModuleVisibility(option.key)}
+                className={`flex min-h-20 flex-col items-start justify-between rounded-lg border p-3 text-left transition ${
+                  isVisible
+                    ? "border-emerald-200 bg-emerald-50/70 text-emerald-900 hover:border-emerald-300"
+                    : "border-slate-200 bg-slate-50 text-slate-400 hover:border-slate-300"
+                }`}
+                aria-pressed={isVisible}
+                title={!canHide && isVisible ? "At least one module must remain visible" : undefined}
+              >
+                <span className="flex w-full items-center justify-between">
+                  <span className={`flex h-7 w-7 items-center justify-center rounded-md ${isVisible ? "bg-white text-emerald-600" : "bg-slate-200 text-slate-400"}`}>
+                    <Icon className="h-4 w-4" />
+                  </span>
+                  <span className={`h-1.5 w-1.5 rounded-full ${isVisible ? "bg-emerald-500" : "bg-slate-300"}`} />
+                </span>
+                <span className="mt-2 line-clamp-2 text-xs font-semibold">{option.label}</span>
+              </Button>
+            );
+          })}
+        </div>
+      </Modal>
 
       {blockedNotice && <Modal open onClose={() => setBlockedNotice(null)} ariaLabelledBy="blocked-module-title" size="md">
           <div className="w-full overflow-hidden">

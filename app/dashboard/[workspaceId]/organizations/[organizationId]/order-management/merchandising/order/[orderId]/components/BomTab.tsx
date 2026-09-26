@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { calculateBomRows, calculateFinishedGoodsRows, splitBomSizes } from "@/lib/services/orders/order-quantity-calculations";
+import { findDuplicateBomMaterialNames, getBomMaterialIdentity } from "@/lib/services/orders/bom-row-validation";
 import Button from "@/components/ui/Button";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
@@ -90,6 +91,7 @@ export default function BomTab({
   masterOptions?: Record<string, Array<{ id?: string; label?: string; value_id?: string; name?: string; parent_id?: string | null; parentValueId?: string | null; is_active?: boolean; fields?: Record<string, unknown> }>>;
 }) {
   const bomRows = form?.bomRows?.length > 0 ? form.bomRows : [defaultBomRow()];
+  const duplicateMaterials = findDuplicateBomMaterialNames(form?.bomRows ?? []);
   const finishedGoods = calculateFinishedGoodsRows(form?.rows ?? []);
   const calculatedBomRows = calculateBomRows(bomRows, finishedGoods.rows, finishedGoods.orderQty);
   const [selectedBomCategory, setSelectedBomCategory] = useState<string>("All");
@@ -300,7 +302,16 @@ export default function BomTab({
       const existingIndex = rows.findIndex((row: BomRow) => String(row.subCategory ?? "").trim() === subcategory);
       if (existingIndex >= 0) return current;
 
-      const rawMaterial = rawMaterials.length === 1 ? rawMaterials[0] : null;
+      const availableRawMaterials = rawMaterials.filter((option: any) => {
+        const candidate = {
+          category: selectedBomCategory,
+          subCategory: subcategory,
+          rawMaterialName: String(option.label ?? option.name ?? "").trim(),
+        };
+        const identity = getBomMaterialIdentity(candidate);
+        return !rows.some((row: BomRow) => getBomMaterialIdentity(row) === identity);
+      });
+      const rawMaterial = availableRawMaterials.length === 1 ? availableRawMaterials[0] : null;
       const rawMaterialName = rawMaterial ? String(rawMaterial.label ?? rawMaterial.name ?? "").trim() : "";
       const nextRow: BomRow = {
         ...defaultBomRow(selectedBomCategory),
@@ -557,6 +568,12 @@ export default function BomTab({
         </div>
       ) : null}
 
+      {duplicateMaterials.length > 0 && (
+        <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          Duplicate BOM material{duplicateMaterials.length === 1 ? "" : "s"}: {duplicateMaterials.join(", ")}. Keep one row per material in the order; add all applicable sizes to that row before saving.
+        </div>
+      )}
+
       <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-slate-200 bg-slate-50/40 shadow-inner">
         <fieldset disabled={isAllCategoryView} className="min-w-0 border-0 p-0">
           <table className="min-w-[1200px] table-fixed text-left text-xs">
@@ -686,8 +703,15 @@ export default function BomTab({
                 <td className="p-2 align-top">
                   {renderMasterSelect ? (() => {
                     const filteredRawMaterials = getFilteredRawMaterialOptions(String(row.category ?? ""), String(row.subCategory ?? ""));
-                    const safeOptions = filteredRawMaterials.length > 0 ? filteredRawMaterials : [];
                     const value = String(row.rawMaterialName ?? "");
+                    const safeOptions = filteredRawMaterials.filter((option: any) => {
+                      const rawMaterialName = String(option.label ?? option.name ?? "").trim();
+                      if (rawMaterialName.toLocaleLowerCase() === value.trim().toLocaleLowerCase()) return true;
+                      const identity = getBomMaterialIdentity({ ...row, rawMaterialName });
+                      return !(form?.bomRows ?? []).some((candidate: BomRow, candidateIndex: number) =>
+                        candidateIndex !== index && getBomMaterialIdentity(candidate) === identity,
+                      );
+                    });
 
                     return (
                       <Select

@@ -21,6 +21,8 @@
 }
 
 :root {
+  --font-geist-sans: "Segoe UI";
+  --font-geist-mono: "Cascadia Mono";
   --erp-bg: #f5f8f7;
   --erp-surface: #ffffff;
   --erp-surface-soft: #eef3f1;

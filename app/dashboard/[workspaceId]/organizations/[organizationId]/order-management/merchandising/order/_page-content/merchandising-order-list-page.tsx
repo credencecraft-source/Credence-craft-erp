@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Modal from "@/components/ui/Modal";
-import MerchandisingOrderCloneDialog from "@/components/erp/merchandising-order-clone-dialog";
+import MerchandisingOrderVariantDialog from "@/components/erp/merchandising-order-variant-dialog";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 
 type OrderRecord = {
@@ -28,6 +28,28 @@ type OrderRecord = {
   processStatus?: string | null;
   sourceStatus?: string | null;
 };
+
+type SourceFinishedGoodsRow = {
+  size?: unknown;
+  buyerSize?: unknown;
+  buyer_size?: unknown;
+  label?: unknown;
+  name?: unknown;
+};
+
+function toVariantSizeRows(rows: SourceFinishedGoodsRow[]) {
+  const seenSizes = new Set<string>();
+
+  return rows.flatMap((row) => {
+    const size = [row.size, row.buyerSize, row.buyer_size, row.label, row.name]
+      .map((value) => String(value ?? "").trim())
+      .find(Boolean);
+
+    if (!size || seenSizes.has(size)) return [];
+    seenSizes.add(size);
+    return [{ size, qty: "" }];
+  });
+}
 
 type FilterableOrderField =
   | "orderNo"
@@ -97,14 +119,12 @@ export default function MerchandisingOrdersPage() {
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [showCloneDialog, setShowCloneDialog] = useState(false);
-  const [cloneTargetOrderId, setCloneTargetOrderId] = useState<string | null>(null);
-  const [cloneRows, setCloneRows] = useState<Array<{ size: string; qty: string }>>([]);
-  const [cloneDraft, setCloneDraft] = useState({
-    article: "",
+  const [showVariantDialog, setShowVariantDialog] = useState(false);
+  const [variantTargetOrderId, setVariantTargetOrderId] = useState<string | null>(null);
+  const [variantRows, setVariantRows] = useState<Array<{ size: string; qty: string }>>([]);
+  const [variantDraft, setVariantDraft] = useState({
     styleName: "",
     colors: "",
-    orderQty: "",
   });
   const [visibleReportFields, setVisibleReportFields] = useState<FilterableOrderField[]>(
     reportFilterFields.map((field) => field.key),
@@ -188,7 +208,7 @@ export default function MerchandisingOrdersPage() {
     });
   };
 
-  const handleCloneOrder = async (orderId: string) => {
+  const handleVariantOrder = async (orderId: string) => {
     try {
       const response = await fetch(
         `/api/orders/${encodeURIComponent(orderId)}?organizationId=${encodeURIComponent(organizationId)}`,
@@ -196,73 +216,90 @@ export default function MerchandisingOrdersPage() {
       );
       const data = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(data?.error || "Unable to load order for cloning.");
+        throw new Error(data?.error || "Unable to load order for creating a variant.");
       }
 
       const order = data?.order ?? {};
-      const sizeRows = (order.finishedGoods ?? [])
-        .map((row: any) => {
-          const size = String(row.size ?? row.buyerSize ?? "").trim();
-          return size ? { size, qty: "" } : null;
-        })
-        .filter(Boolean) as Array<{ size: string; qty: string }>;
+      const sourceRows = Array.isArray(order.finishedGoods)
+        ? order.finishedGoods
+        : Array.isArray(order.finished_goods)
+          ? order.finished_goods
+          : [];
+      let sizeRows = toVariantSizeRows(sourceRows);
 
-      setCloneTargetOrderId(orderId);
-      setCloneRows(sizeRows);
-      setCloneDraft({
-        article: "",
+      const sourceSizeGroup = String(order.sizeGroup ?? "").trim();
+      if (sizeRows.length === 0 && sourceSizeGroup) {
+        const lookupResponse = await fetch(
+          `/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups`,
+          { cache: "no-store" },
+        );
+        const lookupData = await lookupResponse.json().catch(() => null);
+        if (!lookupResponse.ok) {
+          throw new Error(lookupData?.error || "Unable to load the source order's Size Group sizes.");
+        }
+
+        const sizeGroups = lookupData?.masterOptions?.["size-group"];
+        const selectedSizeGroup = Array.isArray(sizeGroups)
+          ? sizeGroups.find((group: Record<string, unknown>) =>
+              [group.label, group.id, group.value_id]
+                .some((value) => String(value ?? "").trim() === sourceSizeGroup),
+            )
+          : null;
+        const mappedSizes = Array.isArray(selectedSizeGroup?.sizes) ? selectedSizeGroup.sizes : [];
+        sizeRows = toVariantSizeRows(mappedSizes.map((size: unknown) =>
+          typeof size === "object" && size !== null ? size as SourceFinishedGoodsRow : { size },
+        ));
+      }
+
+      if (sizeRows.length === 0) {
+        throw new Error("The source order has no finished-goods sizes or mapped Size Group sizes to create a variant from.");
+      }
+
+      setVariantTargetOrderId(orderId);
+      setVariantRows(sizeRows);
+      setVariantDraft({
         styleName: "",
         colors: "",
-        orderQty: order.orderQty ?? "",
       });
-      setShowCloneDialog(true);
+      setShowVariantDialog(true);
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Unable to load order for cloning.");
+      alert(error instanceof Error ? error.message : "Unable to load order for creating a variant.");
     }
   };
 
-  const handleConfirmClone = () => {
-    if (!cloneTargetOrderId) return;
+  const handleConfirmVariant = () => {
+    if (!variantTargetOrderId) return;
 
-    const article = cloneDraft.article.trim();
-    const styleName = cloneDraft.styleName.trim();
-    const colors = cloneDraft.colors.trim();
-    const orderQty = String(cloneDraft.orderQty ?? "").trim();
+    const styleName = variantDraft.styleName.trim();
+    const colors = variantDraft.colors.trim();
 
-    if (!article || !styleName || !colors) {
-      alert("Please enter article name, style name, and color before cloning.");
+    if (!styleName || !colors) {
+      alert("Please enter style name and color before creating a variant.");
       return;
     }
 
-    if (!orderQty || Number(orderQty) <= 0) {
-      alert("Please enter a valid order quantity before cloning.");
-      return;
-    }
-
-    const cleanedRows = cloneRows
+    const cleanedRows = variantRows
       .map((row) => ({ size: row.size, qty: String(row.qty ?? "").trim() }))
       .filter((row) => row.size && row.qty !== "");
 
     if (cleanedRows.length === 0) {
-      alert("Please enter quantity for at least one size row before cloning.");
+      alert("Please enter quantity for at least one size row before creating a variant.");
       return;
     }
 
     const payload = {
-      article,
       styleName,
       colors,
-      orderQty,
       rows: cleanedRows,
     };
 
     const params = new URLSearchParams({
-      cloneFrom: cloneTargetOrderId,
-      cloneData: JSON.stringify(payload),
+      variantFrom: variantTargetOrderId,
+      variantData: JSON.stringify(payload),
     });
 
     startTransition(() => {
-      setShowCloneDialog(false);
+      setShowVariantDialog(false);
       router.push(
         `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/create?${params.toString()}`,
       );
@@ -320,7 +357,8 @@ export default function MerchandisingOrdersPage() {
           onStatusChange={(status) => setSelectedStatus(status as any)}
           onNewOrder={handleNewOrder}
           onDeleteSelected={() => setShowDeleteConfirmation(true)}
-          onCloneOrder={handleCloneOrder}
+          onRowAction={handleVariantOrder}
+          rowActionLabel="Variant"
           renderCell={(fieldKey, order) => {
             const val = order[fieldKey as keyof OrderRecord];
             return val !== null && val !== undefined ? String(val) : "";
@@ -328,14 +366,14 @@ export default function MerchandisingOrdersPage() {
         />
       </Card>
 
-      <MerchandisingOrderCloneDialog
-        open={showCloneDialog}
-        cloneDraft={cloneDraft}
-        cloneRows={cloneRows}
-        onDraftChange={(changes) => setCloneDraft((current) => ({ ...current, ...changes }))}
-        onRowsChange={setCloneRows}
-        onClose={() => setShowCloneDialog(false)}
-        onConfirm={handleConfirmClone}
+      <MerchandisingOrderVariantDialog
+        open={showVariantDialog}
+        variantDraft={variantDraft}
+        variantRows={variantRows}
+        onDraftChange={(changes) => setVariantDraft((current) => ({ ...current, ...changes }))}
+        onRowsChange={setVariantRows}
+        onClose={() => setShowVariantDialog(false)}
+        onConfirm={handleConfirmVariant}
       />
 
       {showDeleteConfirmation && (

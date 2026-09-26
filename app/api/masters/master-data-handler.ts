@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { createMasterValueForOrganization, getMasterValuesForOrganization, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-constants";
-import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-registry";
 import { prisma } from "@/lib/database/prisma-client";
 
@@ -23,10 +23,6 @@ export async function GET(request: Request) {
     }
 
     const organization = await getOrganizationForUser(user.id, organizationId);
-    if (!organization) {
-      return NextResponse.json({ error: "Organization not found." }, { status: 404 });
-    }
-
     if (!organization) {
       return NextResponse.json({ error: "Organization not found." }, { status: 404 });
     }
@@ -64,7 +60,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Organization, master module, and name are required." }, { status: 400 });
     }
 
-    const organization = await requireOrganizationAccess(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    const organization = await requireOrganizationPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
 
     const definitionExists = MASTER_DEFINITIONS.some((definition) => definition.key === moduleKey);
     if (!definitionExists) {

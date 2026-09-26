@@ -37,22 +37,28 @@ export default function FinishedGoodsTab({
   masterOptions = {},
   orderLookups = [],
   onOpenCreateMaster,
+  isVariantMode = false,
 }: {
   form: any;
   setForm: any;
   masterOptions?: Record<string, any[]>;
   orderLookups?: Array<{ key: string; lookupModuleKey?: string; dependsOn?: string }>;
   onOpenCreateMaster?: (masterKey: string) => void;
+  isVariantMode?: boolean;
 }) {
   const rows = form?.rows ?? [];
   const calculatedFinishedGoods = calculateFinishedGoodsRows(rows);
   const previousSizeGroup = useRef<string>("");
 
   useEffect(() => {
+    if (isVariantMode) return;
+
     const sizeGroup = String(form?.sizeGroup ?? "");
     if (!sizeGroup) {
       previousSizeGroup.current = "";
-      setForm((current: any) => Array.isArray(current.rows) && current.rows.length > 0 ? { ...current, rows: [] } : current);
+      setForm((current: any) => Array.isArray(current.rows) && current.rows.length > 0
+        ? { ...current, rows: [], orderQty: 0 }
+        : current.orderQty === 0 ? current : { ...current, orderQty: 0 });
       return;
     }
 
@@ -80,11 +86,12 @@ export default function FinishedGoodsTab({
       return {
         ...current,
         rows: nextRows,
+        orderQty: calculateFinishedGoodsRows(nextRows).orderQty,
       };
     });
 
     previousSizeGroup.current = sizeGroup;
-  }, [form?.sizeGroup, masterOptions, setForm]);
+  }, [form?.sizeGroup, isVariantMode, masterOptions, setForm]);
 
   const updateSizeRow = (index: number, field: keyof FinishedGoodsRow, value: string) => {
     setForm((current: any) => {

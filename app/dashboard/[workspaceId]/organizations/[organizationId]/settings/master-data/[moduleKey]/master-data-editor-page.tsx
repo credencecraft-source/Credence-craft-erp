@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { MasterRecordsTable } from "@/components/master-data/master-records-data-table";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
   MASTER_DEFINITIONS,
   createMasterValueForOrganization,
@@ -205,7 +205,7 @@ async function createMasterValueAction(formData: FormData) {
   if (!organization) {
     notFound();
   }
-  await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
+  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const created = await createMasterValueForOrganization(organization.id, moduleKey, {
     label,
@@ -261,7 +261,7 @@ async function updateMasterValueAction(formData: FormData) {
   if (!organization) {
     notFound();
   }
-  await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
+  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const childField = definition.fields.find((field) => (field.type === "child-list" && field.childModuleKey) || (field.type === "lookup" && field.multiple && field.lookupModuleKey));
   try {
@@ -316,7 +316,7 @@ async function deleteMasterValueAction(formData: FormData) {
   if (!organization) {
     notFound();
   }
-  await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
+  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   if (!getMasterDefinition(moduleKey)) {
     notFound();
@@ -355,6 +355,8 @@ export default async function MasterDataEditorPage({
   if (!organization) {
     notFound();
   }
+
+  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const definition = getMasterDefinition(moduleKey) ?? MASTER_DEFINITIONS.find((candidate) => candidate.key === moduleKey);
 

@@ -48,7 +48,7 @@ export default function LoginPage() {
       const payload = await parseJsonResponse(response);
       if (!response.ok) { if (payload.needsRegistration) { setMode("register"); setMessage("No account found. Please register first."); return; } throw new Error(payload.error || "Unable to send OTP."); }
       setOtpSent(true); setMessage("OTP sent to your email. It expires in 10 minutes.");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Something went wrong."); } finally { setLoading(false); }
+    } catch (error) { setMessage(!navigator.onLine ? "No internet connection. Check your connection and try again." : error instanceof Error ? error.message : "Something went wrong."); } finally { setLoading(false); }
   }
   async function verifyOtp() {
     if (!email.trim() || !otp.trim()) { setMessage("Please enter your email address and OTP."); return; }
@@ -58,7 +58,7 @@ export default function LoginPage() {
       const payload = await parseJsonResponse(response);
       if (!response.ok) throw new Error(payload.error || "Authentication failed.");
       window.location.assign(payload.redirectTo || "/dashboard");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "OTP verification failed."); } finally { setLoading(false); }
+    } catch (error) { setMessage(!navigator.onLine ? "No internet connection. Check your connection and try again." : error instanceof Error ? error.message : "OTP verification failed."); } finally { setLoading(false); }
   }
 
   return (

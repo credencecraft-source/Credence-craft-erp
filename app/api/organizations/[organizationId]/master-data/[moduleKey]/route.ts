@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
+import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { createMasterValueForOrganization, getMasterDefinition, getMasterValuesForOrganization, getSizeGroupSizesForOrganization, syncSizeGroupSizes } from "@/lib/master-data/master-data-constants";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-registry";
@@ -127,7 +128,10 @@ export async function GET(
     return NextResponse.json(values);
   } catch (error: any) {
     console.error("Error fetching master data:", error);
-    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+    if (isDatabaseUnavailableError(error)) {
+      return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
+    return NextResponse.json({ error: "Unable to load master data. Please try again." }, { status: 500 });
   }
 }
 

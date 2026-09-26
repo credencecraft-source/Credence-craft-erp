@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 
 import { normalizeOrganizationInput, validateOrganizationInput } from "./organization-validators";
@@ -262,6 +263,29 @@ export async function getOrganizationByPublicId(organizationId: string) {
   });
 }
 
+async function deleteOrganizationDependencies(transaction: Prisma.TransactionClient, organizationId: string) {
+  await transaction.factoryDailyProductionReportLine.deleteMany({
+    where: { report: { organization_id: organizationId } },
+  });
+  await transaction.factoryGrn.deleteMany({ where: { organization_id: organizationId } });
+  await transaction.factoryBundleTransfer.deleteMany({ where: { organization_id: organizationId } });
+  await transaction.workOrderProcessControllerProcess.deleteMany({
+    where: { controller: { workOrder: { organization_id: organizationId } } },
+  });
+  await transaction.workOrderProcessController.deleteMany({
+    where: { workOrder: { organization_id: organizationId } },
+  });
+  await transaction.orderProcessControllerProcess.deleteMany({
+    where: { controller: { order: { organization_id: organizationId } } },
+  });
+  await transaction.orderProcessController.deleteMany({
+    where: { order: { organization_id: organizationId } },
+  });
+  await transaction.merchandisingOrderProcessStep.deleteMany({
+    where: { order: { organization_id: organizationId } },
+  });
+}
+
 export async function deleteOrganization(organizationId: string, workspaceUserId: string) {
   const organization = await prisma.organization.findFirst({
     where: {
@@ -290,6 +314,7 @@ export async function deleteOrganization(organizationId: string, workspaceUserId
 
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRaw`SELECT set_config('app.skip_organization_audit', 'true', true)`;
+    await deleteOrganizationDependencies(transaction, orgToDelete.id);
     await transaction.organization.delete({
       where: { id: orgToDelete.id },
     });
@@ -543,6 +568,7 @@ export async function deleteOrganizationFromPlatform(organizationId: string) {
 
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRaw`SELECT set_config('app.skip_organization_audit', 'true', true)`;
+    await deleteOrganizationDependencies(transaction, organization.id);
     await transaction.organization.delete({ where: { id: organization.id } });
   });
 }

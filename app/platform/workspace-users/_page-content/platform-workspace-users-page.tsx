@@ -5,6 +5,7 @@ import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { deleteInactiveWorkspaceUser, listWorkspaceUsers } from "@/lib/services/platform/workspace-user-service";
+import { getWorkspaceUsageStatistics } from "@/lib/services/workspace/workspace-usage-statistics-service";
 
 export default async function PlatformWorkspaceUsersPage({
   searchParams,
@@ -13,6 +14,10 @@ export default async function PlatformWorkspaceUsersPage({
 }) {
   const query = (await searchParams) ?? {};
   const users = await listWorkspaceUsers();
+  const workspaceRecordTotals = await Promise.all(
+    users.map(async (user) => [user.id, (await getWorkspaceUsageStatistics(user.id)).totalRecords] as const),
+  );
+  const recordTotalsByUserId = new Map(workspaceRecordTotals);
 
   async function deleteInactiveUser(formData: FormData) {
     "use server";
@@ -47,6 +52,7 @@ export default async function PlatformWorkspaceUsersPage({
               <th className="px-4 py-3">Verification</th>
               <th className="px-4 py-3">Last login</th>
               <th className="px-4 py-3">Organisations</th>
+              <th className="px-4 py-3">Total records</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Action</th>
             </tr>
@@ -64,6 +70,9 @@ export default async function PlatformWorkspaceUsersPage({
                   <td className="px-4 py-3 text-slate-600">{user.email_verified ? "Verified" : "Pending"}</td>
                   <td className="px-4 py-3 text-slate-500">{user.last_login_at ? new Date(user.last_login_at).toLocaleDateString() : "Never"}</td>
                   <td className="px-4 py-3 font-semibold text-slate-800">{organisationCount}</td>
+                  <td className="px-4 py-3 font-semibold tabular-nums text-slate-800">
+                    {(recordTotalsByUserId.get(user.id) ?? 0).toLocaleString("en-IN")}
+                  </td>
                   <td className="px-4 py-3">
                     <Badge className={isInactive ? "bg-slate-100 text-slate-600" : "bg-emerald-100 text-emerald-800"}>
                       {isInactive ? "Inactive" : "Active"}
@@ -86,7 +95,7 @@ export default async function PlatformWorkspaceUsersPage({
             })}
             {users.length === 0 && (
               <tr>
-                <td className="px-4 py-6 text-center text-sm text-slate-500" colSpan={8}>No workspace users found.</td>
+                <td className="px-4 py-6 text-center text-sm text-slate-500" colSpan={9}>No workspace users found.</td>
               </tr>
             )}
           </tbody>

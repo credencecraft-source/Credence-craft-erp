@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
 
 export default function OrderDetailsTab({
   form,
@@ -135,6 +136,7 @@ export default function OrderDetailsTab({
   };
 
   const selectedSizeGroup = String(form.sizeGroup ?? "");
+  const finishedGoodsOrderQty = calculateFinishedGoodsRows(form?.rows ?? []).orderQty;
   const sizeGroupOptions = Array.isArray(masterOptions["size-group"]) ? masterOptions["size-group"] : [];
   const selectedGroup = sizeGroupOptions.find((group: any) => group.label === selectedSizeGroup || group.id === selectedSizeGroup || group.value_id === selectedSizeGroup);
   const groupSizes = Array.isArray(selectedGroup?.sizes) ? selectedGroup.sizes.map((size: any) => size.label ?? size.name ?? String(size)).filter(Boolean) : [];
@@ -219,15 +221,18 @@ export default function OrderDetailsTab({
           ) : null}
         </div>
 
-        <label className="flex items-center gap-2 pt-6">
+        <div className="flex items-center pt-6">
           <input
+            id="have-size-ratio"
             type="checkbox"
             checked={form.haveSizeRatio ?? false}
             onChange={(e) => handleChange("haveSizeRatio", e.target.checked)}
             className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
           />
-          <span className="text-xs font-semibold text-slate-700">Have Size Ratio</span>
-        </label>
+          <label htmlFor="have-size-ratio" className="ml-2 text-xs font-semibold text-slate-700">
+            Have Size Ratio
+          </label>
+        </div>
 
         {form.haveSizeRatio && (
           <label className="flex flex-col gap-1.5">
@@ -247,10 +252,10 @@ export default function OrderDetailsTab({
           <input
             required={isCreateMode}
             type="number"
-            value={form.orderQty ?? ""}
-            onChange={(e) => handleChange("orderQty", e.target.value)}
+            value={finishedGoodsOrderQty}
+            readOnly
             placeholder="0"
-            className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
+            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800 shadow-sm"
           />
         </label>
       </div>

@@ -110,7 +110,7 @@ export default function PurchaseBillReportPage({
           rowIdSelector={(record) => record.id}
           selectedIds={[]}
           onRowClick={(recordId) => router.push(`${base}/purchase-bill/${encodeURIComponent(recordId)}`)}
-          onCloneOrder={(recordId) => router.push(`${base}/purchase-bill/${encodeURIComponent(recordId)}`)}
+          onRowAction={(recordId) => router.push(`${base}/purchase-bill/${encodeURIComponent(recordId)}`)}
           rowActionLabel="Approve & Create Stock"
           renderCell={renderCell}
           emptyMessage="No purchase bill records found."

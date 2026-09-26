@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import { calculateBomRows, calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
+import { findDuplicateBomMaterialNames } from "@/lib/services/orders/bom-row-validation";
 import { validateMonthlyFormLimits, validateRestrictedFormFields } from "@/lib/services/platform/segment-form-restriction-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 
@@ -669,6 +670,11 @@ export async function updateBomItemsForOrder(
     throw new Error("Order not found");
   }
 
+  const duplicateMaterials = findDuplicateBomMaterialNames(bomRows ?? []);
+  if (duplicateMaterials.length > 0) {
+    throw new Error(`Duplicate BOM material${duplicateMaterials.length === 1 ? "" : "s"}: ${duplicateMaterials.join(", ")}. Keep one row per material in the order and add its sizes to that row.`);
+  }
+
   const existingItems = await database.billOfMaterialItem.findMany({
     where: { order_id: orderId },
     select: {
@@ -852,5 +858,164 @@ export async function updateOrderWithDetails(
 }
 
 export async function getArticleOrderSummaries(organizationId: string) {
-  return listOrders(organizationId);
+  const orders = await prisma.merchandisingOrder.findMany({
+    where: { organization_id: organizationId },
+    select: {
+      id: true,
+      orderNo: true,
+      entityName: true,
+      category: true,
+      subCategory: true,
+      season: true,
+      article: true,
+      styleName: true,
+      colors: true,
+      buyer: true,
+      brand: true,
+      sizeGroup: true,
+      orderQty: true,
+      deliveryDate: true,
+      finalStatus: true,
+      processStatus: true,
+      finishedGoods: {
+        select: {
+          id: true,
+          buyerSize: true,
+          size: true,
+          beforeExcessQty: true,
+          excess: true,
+          excessQty: true,
+          totalQty: true,
+        },
+        orderBy: [{ size: "asc" }, { id: "asc" }],
+      },
+      bomItems: {
+        select: {
+          id: true,
+          rawMaterialName: true,
+          categoryType: true,
+          category: true,
+          subCategory: true,
+          size: true,
+          totalRequiredQty: true,
+        },
+        orderBy: [{ rawMaterialName: "asc" }, { id: "asc" }],
+      },
+    },
+    orderBy: [{ season: "asc" }, { article: "asc" }, { orderNo: "asc" }, { id: "asc" }],
+  });
+
+  const grouped = new Map<string, {
+    season: string | null;
+    article: string | null;
+    orderCount: number;
+    totalOrderQty: number;
+    buyers: Set<string>;
+    orderNumbers: string[];
+    orders: Array<Record<string, unknown>>;
+    sizeTotals: Map<string, number>;
+    bomTotals: Map<string, {
+      rawMaterialName: string;
+      categoryType: string | null;
+      category: string | null;
+      subCategory: string | null;
+      size: string | null;
+      totalRequiredQty: number;
+      affectedOrderNumbers: Set<string>;
+    }>;
+  }>();
+
+  for (const order of orders) {
+    const season = order.season?.trim() || null;
+    const article = order.article?.trim() || null;
+    const groupKey = JSON.stringify([season, article]);
+    let summary = grouped.get(groupKey);
+
+    if (!summary) {
+      summary = {
+        season,
+        article,
+        orderCount: 0,
+        totalOrderQty: 0,
+        buyers: new Set<string>(),
+        orderNumbers: [],
+        orders: [],
+        sizeTotals: new Map<string, number>(),
+        bomTotals: new Map(),
+      };
+      grouped.set(groupKey, summary);
+    }
+
+    summary.orderCount += 1;
+    summary.totalOrderQty += Number(order.orderQty ?? 0);
+    if (order.buyer?.trim()) summary.buyers.add(order.buyer.trim());
+    summary.orderNumbers.push(order.orderNo);
+
+    summary.orders.push({
+      id: order.id,
+      orderNo: order.orderNo,
+      entityName: order.entityName,
+      category: order.category,
+      subCategory: order.subCategory,
+      season,
+      article,
+      styleName: order.styleName,
+      colors: order.colors,
+      buyer: order.buyer,
+      brand: order.brand,
+      sizeGroup: order.sizeGroup,
+      orderQty: order.orderQty,
+      deliveryDate: toDateOnly(order.deliveryDate),
+      finalStatus: order.finalStatus,
+      processStatus: order.processStatus,
+      finishedGoods: order.finishedGoods.map((row) => ({
+        id: row.id,
+        buyerSize: row.buyerSize,
+        size: row.size,
+        beforeExcessQty: row.beforeExcessQty,
+        excess: row.excess === null ? null : Number(row.excess),
+        excessQty: row.excessQty,
+        totalQty: row.totalQty,
+      })),
+    });
+
+    for (const row of order.finishedGoods) {
+      const size = row.size?.trim() || "Unassigned Size";
+      summary.sizeTotals.set(size, (summary.sizeTotals.get(size) ?? 0) + Number(row.totalQty ?? 0));
+    }
+
+    for (const item of order.bomItems) {
+      const key = JSON.stringify([item.rawMaterialName, item.categoryType, item.category, item.subCategory, item.size]);
+      let bomItem = summary.bomTotals.get(key);
+      if (!bomItem) {
+        bomItem = {
+          rawMaterialName: item.rawMaterialName ?? "Unassigned Material",
+          categoryType: item.categoryType,
+          category: item.category,
+          subCategory: item.subCategory,
+          size: item.size,
+          totalRequiredQty: 0,
+          affectedOrderNumbers: new Set<string>(),
+        };
+        summary.bomTotals.set(key, bomItem);
+      }
+      bomItem.totalRequiredQty += Number(item.totalRequiredQty ?? 0);
+      bomItem.affectedOrderNumbers.add(order.orderNo);
+    }
+  }
+
+  return [...grouped.values()].map((summary) => ({
+    season: summary.season,
+    article: summary.article,
+    orderCount: summary.orderCount,
+    totalOrderQty: summary.totalOrderQty,
+    buyers: [...summary.buyers].sort(),
+    orderNumbers: summary.orderNumbers,
+    orders: summary.orders,
+    sizes: [...summary.sizeTotals].map(([size, totalQty]) => ({ size, totalQty })),
+    bomItems: [...summary.bomTotals.values()].map((item) => ({
+      ...item,
+      affectedOrderNumbers: [...item.affectedOrderNumbers],
+    })),
+  }));
 }

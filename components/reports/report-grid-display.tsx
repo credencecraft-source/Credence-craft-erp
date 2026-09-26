@@ -36,7 +36,7 @@ interface ReportGridProps<T> {
   newActionLabel?: string;
   onDeleteSelected?: () => void;
   deleteSelectedLabel?: string;
-  onCloneOrder?: (recordId: string) => void;
+  onRowAction?: (recordId: string) => void;
   rowActionLabel?: string;
   renderCell: (fieldKey: string, record: T) => React.ReactNode;
   emptyMessage?: string;
@@ -62,8 +62,8 @@ export function ReportGrid<T>({
   newActionLabel = "+ New Order",
   onDeleteSelected,
   deleteSelectedLabel = "Delete Selected",
-  onCloneOrder,
-  rowActionLabel = "Clone",
+  onRowAction,
+  rowActionLabel = "Action",
   renderCell,
   emptyMessage = "No records found.",
 }: ReportGridProps<T>) {
@@ -267,13 +267,13 @@ export function ReportGrid<T>({
                 {field.label}
               </th>
             ))}
-            {onCloneOrder && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
+            {onRowAction && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200 bg-white text-slate-700 text-[11px]">
           {filteredRecords.length === 0 ? (
             <tr>
-              <td colSpan={visibleFieldDefinitions.length + 1 + (onCloneOrder ? 1 : 0)} className="p-6 text-center text-slate-500">
+              <td colSpan={visibleFieldDefinitions.length + 1 + (onRowAction ? 1 : 0)} className="p-6 text-center text-slate-500">
                 {emptyMessage}
               </td>
             </tr>
@@ -301,12 +301,12 @@ export function ReportGrid<T>({
                       {renderCell(String(field.key), record)}
                     </td>
                   ))}
-                  {onCloneOrder && (
+                  {onRowAction && (
                     <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <Button
                         variant="secondary"
                         size="sm"
-                        onClick={() => onCloneOrder(recordId)}
+                        onClick={() => onRowAction(recordId)}
                         className="text-[10px]"
                       >
                         {rowActionLabel}

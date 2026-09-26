@@ -5,7 +5,7 @@ export type OrganizationUsageStatistic = {
   recordCount: number;
 };
 
-const organizationTableLabels: Record<string, string> = {
+export const organizationTableLabels: Record<string, string> = {
   memberships: "Organization memberships",
   taxProfiles: "Organization tax profiles",
   erpSoftware: "ERP software",
@@ -73,7 +73,7 @@ const organizationTableLabels: Record<string, string> = {
   factoryGrns: "Factory GRNs",
 };
 
-const organizationUsageCountSelect = Object.fromEntries(
+export const organizationUsageCountSelect = Object.fromEntries(
   Object.keys(organizationTableLabels).map((key) => [key, true]),
 ) as Record<keyof typeof organizationTableLabels, true>;
 

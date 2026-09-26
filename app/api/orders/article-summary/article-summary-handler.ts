@@ -1,48 +1,60 @@
 import { NextResponse } from "next/server";
-import { requireSessionUser } from "@/lib/auth/session-manager";
+import { getSessionUser } from "@/lib/auth/session-manager";
 import { getArticleOrderSummaries } from "@/lib/services/orders/order-service";
-import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
+import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const organizationId = url.searchParams.get("organizationId")?.trim();
+  const workspaceId = url.searchParams.get("workspaceId")?.trim();
+  const hasArticle = url.searchParams.has("article");
+  const hasSeason = url.searchParams.has("season");
+
+  if (!organizationId) {
+    return NextResponse.json({ error: "Organization ID is required." }, { status: 400 });
+  }
+
+  if (hasArticle !== hasSeason) {
+    return NextResponse.json({ error: "Season and article must be provided together." }, { status: 400 });
+  }
+
+  const articleParam = url.searchParams.get("article");
+  const seasonParam = url.searchParams.get("season");
+  if ((articleParam?.length ?? 0) > 255 || (seasonParam?.length ?? 0) > 255) {
+    return NextResponse.json({ error: "Season or article value is too long." }, { status: 400 });
+  }
+
   try {
-    const user = await requireSessionUser();
-    const url = new URL(request.url);
-    const organizationId = url.searchParams.get("organizationId");
-    const articleParam = url.searchParams.get("article");
-
-    if (!organizationId) {
-      return NextResponse.json({ error: "Organization ID is required." }, { status: 400 });
+    const user = await getSessionUser();
+    if (!user) {
+      return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+    }
+    if (workspaceId && workspaceId !== user.workspace_id) {
+      return NextResponse.json({ error: "Access denied." }, { status: 403 });
     }
 
-    const organization = await getOrganizationForUser(user.id, organizationId);
-    if (!organization) {
-      return NextResponse.json({ error: "Access denied or organization not found." }, { status: 403 });
-    }
-
+    const organization = await requireOrganizationContext(user.id, organizationId);
     const summaries = await getArticleOrderSummaries(organization.id);
 
-    // If an article parameter is requested, return single detail shape
-    if (articleParam) {
-      const decodedArticle = decodeURIComponent(articleParam);
-      const found = (summaries ?? []).find((item: any) => item.article === decodedArticle);
+    if (hasArticle && hasSeason) {
+      const normalizeLabel = (value: string | null) => value?.trim() || null;
+      const requestedArticle = normalizeLabel(articleParam);
+      const requestedSeason = normalizeLabel(seasonParam);
+      const found = summaries.find((item) =>
+        item.article === requestedArticle && item.season === requestedSeason,
+      );
 
       if (!found) {
         return NextResponse.json({ error: "Article summary not found." }, { status: 404 });
       }
 
-      const summaryObj = found as Record<string, any>;
-      const orderNumbers = summaryObj.orderNumbers ?? [];
-
       const enrichedSummary = {
-        ...summaryObj,
-        colors: summaryObj.colors ?? [],
-        processes: summaryObj.processes ?? [],
-        bomItems: (summaryObj.bomItems ?? []).map((item: any) => {
-          const affectedOrderNumbers = item.affectedOrderNumbers || orderNumbers;
-          const isCommon = affectedOrderNumbers.length >= (orderNumbers.length || 1);
+        ...found,
+        bomItems: found.bomItems.map((item) => {
+          const affectedOrderNumbers = item.affectedOrderNumbers;
           return {
             ...item,
-            usageScope: isCommon ? "common" : "special",
+            usageScope: affectedOrderNumbers.length >= (found.orderCount || 1) ? "common" : "special",
             affectedOrderNumbers,
           };
         }),
@@ -54,7 +66,8 @@ export async function GET(request: Request) {
     // Otherwise return all summaries
     return NextResponse.json({ summaries });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to build the article order summary.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const message = error instanceof Error ? error.message : "";
+    const status = message.includes("Access denied") ? 403 : 500;
+    return NextResponse.json({ error: status === 403 ? "Access denied." : "Unable to build the article order summary." }, { status });
   }
 }

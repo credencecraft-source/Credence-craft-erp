@@ -14,6 +14,10 @@ import {
 import { verifyEmailOtp } from "@/lib/services/platform/platform-email-configuration-service";
 import { getDevUser, hasDevProfileName, setDevUser } from "@/lib/dev/dev-user-store-mock";
 import { prisma } from "@/lib/database/prisma-client";
+import {
+  DATABASE_UNAVAILABLE_MESSAGE,
+  isDatabaseUnavailableError,
+} from "@/lib/database/database-errors";
 import { setPlatformSessionCookie } from "@/lib/auth/platform-session-manager";
 
 const SUPPORT_EMAIL = "jassimtkd@gmail.com";
@@ -32,7 +36,11 @@ async function findUserByEmail(email: string) {
     return await prisma.workspaceUser.findUnique({
       where: { email },
     });
-  } catch {
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      throw error;
+    }
+
     return null;
   }
 }
@@ -46,7 +54,11 @@ async function findUserByProfileName(profileName: string) {
     return await prisma.workspaceUser.findUnique({
       where: { profile_name: profileName },
     });
-  } catch {
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      throw error;
+    }
+
     return null;
   }
 }
@@ -216,19 +228,16 @@ export async function POST(request: Request) {
 
     return response;
 } catch (error) {
-  console.error("VERIFY OTP ERROR:");
-  console.error(error);
-
-  if (error instanceof Error) {
-    console.error("MESSAGE:", error.message);
-    console.error("STACK:", error.stack);
+  if (isDatabaseUnavailableError(error)) {
+    return NextResponse.json(
+      { error: DATABASE_UNAVAILABLE_MESSAGE },
+      { status: 503 },
+    );
   }
 
   return NextResponse.json(
     {
-      error: error instanceof Error
-        ? error.message
-        : "Authentication failed.",
+      error: "Authentication failed. Please try again.",
     },
     { status: 500 }
   );

@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
+import { calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
 import OrderDetailsTab from "./components/OrderDetailsTab";
 import FinishedGoodsTab from "./components/FinishedGoodsTab";
 import BomTab from "./components/BomTab";
@@ -33,34 +34,30 @@ export default function MerchandisingOrderDetailsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const orderId = params?.orderId && params.orderId !== "create" ? params.orderId : undefined;
-  const cloneFrom = searchParams.get("cloneFrom");
-  const cloneDataParam = searchParams.get("cloneData");
-  const cloneConfig = useMemo(() => {
-    if (!cloneDataParam) return null;
+  const variantFrom = searchParams.get("variantFrom");
+  const variantDataParam = searchParams.get("variantData");
+  const variantConfig = useMemo(() => {
+    if (!variantDataParam) return null;
     try {
-      const parsed = JSON.parse(cloneDataParam) as {
-        article?: string;
+      const parsed = JSON.parse(variantDataParam) as {
         styleName?: string;
         colors?: string;
-        orderQty?: number | string;
         rows?: Array<{ size?: string; qty?: number | string }>;
       };
       return parsed;
     } catch {
       return null;
     }
-  }, [cloneDataParam]);
-  const cloneArticle = cloneConfig?.article ?? "";
-  const cloneStyleName = cloneConfig?.styleName ?? "";
-  const cloneColors = cloneConfig?.colors ?? "";
-  const cloneOrderQty = cloneConfig?.orderQty ?? "";
-  const cloneRowsLookup = useMemo(() => cloneConfig?.rows ?? [], [cloneConfig]);
+  }, [variantDataParam]);
+  const variantStyleName = variantConfig?.styleName ?? "";
+  const variantColors = variantConfig?.colors ?? "";
+  const variantRowsLookup = useMemo(() => variantConfig?.rows ?? [], [variantConfig]);
   const workspaceId = params?.workspaceId;
   const organizationId = params?.organizationId;
 
   const [activeTab, setActiveTab] = useState<TabType>("details");
   const [isSaving, setIsSaving] = useState(false);
-  const [isOrderLoading, setIsOrderLoading] = useState(Boolean(orderId || cloneFrom));
+  const [isOrderLoading, setIsOrderLoading] = useState(Boolean(orderId || variantFrom));
   const [newMasterKey, setNewMasterKey] = useState<string | null>(null);
   const [quickMasterFields, setQuickMasterFields] = useState<Record<string, unknown>>({});
   const [quickMasterLookupOptions, setQuickMasterLookupOptions] = useState<Record<string, any[]>>({});
@@ -134,7 +131,7 @@ export default function MerchandisingOrderDetailsPage() {
   }, [organizationId]);
 
   useEffect(() => {
-    const existingOrderId = orderId || cloneFrom;
+    const existingOrderId = orderId || variantFrom;
     if (!existingOrderId || !organizationId) {
       setIsOrderLoading(false);
       return;
@@ -158,19 +155,19 @@ export default function MerchandisingOrderDetailsPage() {
         const order = data.order;
         if (!isMounted || !order) return;
 
-        const clonedRows = (order.finishedGoods ?? []).map((row: Record<string, unknown>) => {
+        const variantRows = (order.finishedGoods ?? []).map((row: Record<string, unknown>) => {
           const rowSize = String(row.size ?? row.buyerSize ?? "").trim();
-          const matchingCloneRow = cloneRowsLookup.find((candidate) => String(candidate.size ?? "").trim() === rowSize);
-          const rowQty = matchingCloneRow?.qty !== undefined && matchingCloneRow?.qty !== null ? Number(matchingCloneRow.qty) : "";
+          const matchingVariantRow = variantRowsLookup.find((candidate) => String(candidate.size ?? "").trim() === rowSize);
+          const rowQty = matchingVariantRow?.qty !== undefined && matchingVariantRow?.qty !== null ? Number(matchingVariantRow.qty) : "";
 
           return {
             ...row,
             buyerSize: row.buyerSize ?? "",
-            size: row.size ?? "",
-            beforeExcessQty: row.beforeExcessQty ?? "",
-            excess: row.excess ?? "",
-            excessQty: rowQty === "" ? "" : rowQty,
-            totalQty: rowQty === "" ? "" : rowQty,
+            size: row.size ?? row.buyerSize ?? "",
+            beforeExcessQty: rowQty,
+            excess: "",
+            excessQty: "",
+            totalQty: rowQty,
             buyerPoPrice: row.buyerPoPrice ?? "",
             exchangePrice: row.exchangePrice ?? "",
             priceInInr: row.priceInInr ?? "",
@@ -180,37 +177,39 @@ export default function MerchandisingOrderDetailsPage() {
         setForm((current) => ({
           ...current,
           ...order,
-          ...(cloneFrom
+          ...(variantFrom
             ? {
                 orderNo: "",
-                article: cloneArticle || order.article || "",
-                styleName: cloneStyleName || order.styleName || "",
-                colors: cloneColors || order.colors || "",
-                orderQty: cloneOrderQty !== "" ? Number(cloneOrderQty) : "",
+                article: order.article || "",
+                styleName: variantStyleName || order.styleName || "",
+                colors: variantColors || order.colors || "",
+                orderQty: calculateFinishedGoodsRows(variantRows).orderQty,
                 ratioOrderQty: "",
                 finalStatus: "Draft",
                 processStatus: "Draft",
                 processTemplateId: "",
                 processRows: [],
-                rows: clonedRows,
+                rows: variantRows,
               }
             : {}),
           deliveryDate: order.deliveryDate ? String(order.deliveryDate).slice(0, 10) : "",
-          ratioOrderQty: cloneFrom ? "" : order.ratioOrderQty ?? "",
-          orderQty: cloneFrom ? (cloneOrderQty !== "" ? Number(cloneOrderQty) : "") : (order.orderQty ?? ""),
-          rows: (cloneFrom ? clonedRows : order.finishedGoods ?? []).map((row: Record<string, unknown>) => ({
-            ...row,
-            beforeExcessQty: row.beforeExcessQty ?? "",
-            excess: row.excess ?? "",
-            excessQty: row.excessQty ?? "",
-            totalQty: row.totalQty ?? "",
-            buyerPoPrice: row.buyerPoPrice ?? "",
-            exchangePrice: row.exchangePrice ?? "",
-            priceInInr: row.priceInInr ?? "",
-          })),
+          ratioOrderQty: variantFrom ? "" : order.ratioOrderQty ?? "",
+          orderQty: variantFrom ? calculateFinishedGoodsRows(variantRows).orderQty : (order.orderQty ?? ""),
+          rows: variantFrom
+            ? variantRows
+            : (order.finishedGoods ?? []).map((row: Record<string, unknown>) => ({
+                ...row,
+                beforeExcessQty: row.beforeExcessQty ?? "",
+                excess: row.excess ?? "",
+                excessQty: row.excessQty ?? "",
+                totalQty: row.totalQty ?? "",
+                buyerPoPrice: row.buyerPoPrice ?? "",
+                exchangePrice: row.exchangePrice ?? "",
+                priceInInr: row.priceInInr ?? "",
+              })),
           bomRows: order.bomItems ?? [],
-          processTemplateId: cloneFrom ? "" : order.processTemplate?.id ?? order.process_template_id ?? "",
-          processRows: cloneFrom
+          processTemplateId: variantFrom ? "" : order.processTemplate?.id ?? order.process_template_id ?? "",
+          processRows: variantFrom
             ? []
             : (order.processSteps ?? []).map((step: any) => ({
                 id: step.id,
@@ -240,7 +239,7 @@ export default function MerchandisingOrderDetailsPage() {
     return () => {
       isMounted = false;
     };
-  }, [cloneFrom, cloneArticle, cloneColors, cloneOrderQty, cloneRowsLookup, cloneStyleName, orderId, organizationId]);
+  }, [variantFrom, variantColors, variantRowsLookup, variantStyleName, orderId, organizationId]);
 
   // Handler to open/redirect to create master view using the `+ New` button
   const handleOpenCreateMaster = async (masterKey: string, returnFieldKey?: string) => {
@@ -649,7 +648,7 @@ export default function MerchandisingOrderDetailsPage() {
             isCreateMode={!orderId}
           />
         )}
-        {activeTab === "finishedGoods" && <FinishedGoodsTab form={form} setForm={setForm} masterOptions={masterOptions} onOpenCreateMaster={handleOpenCreateMaster} />}
+        {activeTab === "finishedGoods" && <FinishedGoodsTab form={form} setForm={setForm} masterOptions={masterOptions} onOpenCreateMaster={handleOpenCreateMaster} isVariantMode={Boolean(variantFrom)} />}
         {activeTab === "bom" && <BomTab form={form} setForm={setForm} renderMasterSelect={renderBomMasterSelect} onOpenCreateMaster={handleOpenCreateMaster} masterOptions={masterOptions} />}
         {activeTab === "costing" && <CostingTab form={form} setForm={setForm} />}
         {activeTab === "techPack" && <TecPackTab form={form} setForm={setForm} />}
