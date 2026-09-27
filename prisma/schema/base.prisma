@@ -63,6 +63,7 @@ model Organization {
   destinationOrderShares        OrderShare[]                   @relation("OrderShareDestinationOrganization")
   approvalRequests              ApprovalRequest[]
   masterEntities                MasterEntity[]
+  masterLocations               MasterLocation[]
   masterCategoryTypes           MasterCategoryType[]
   masterCategories              MasterCategory[]
   masterSubCategories           MasterSubCategory[]
@@ -523,10 +524,31 @@ model MasterEntity {
   created_at      DateTime     @default(now())
   updated_at      DateTime     @updatedAt
   organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  locations       MasterLocation[]
 
   @@unique([organization_id, entity_name])
   @@index([organization_id, is_active])
   @@map("master_entities")
+}
+
+model MasterLocation {
+  id              String       @id @default(cuid())
+  value_id        String       @unique @default(uuid())
+  organization_id String
+  entity_id       String
+  location_name   String       @db.VarChar(255)
+  is_active       Boolean      @default(false)
+  sort_order      Int          @default(0)
+  legacy_metadata Json?
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @default(now()) @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity          MasterEntity @relation(fields: [entity_id], references: [id], onDelete: Restrict)
+
+  @@unique([organization_id, location_name])
+  @@index([organization_id, entity_id])
+  @@index([organization_id, is_active])
+  @@map("master_locations")
 }
 
 model MasterCategoryType {

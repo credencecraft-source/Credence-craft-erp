@@ -1,33 +1,25 @@
 import { PrismaClient } from "@prisma/client";
+import { isDatabaseUnavailableError } from "@/lib/database/database-errors";
 
-const MAX_CONNECTION_RETRIES = 2;
-
-function isConnectionUnavailable(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-
-  const candidate = error as {
-    code?: unknown;
-    errorCode?: unknown;
-    message?: unknown;
-  };
-
-  return (
-    candidate.code === "P1001" ||
-    candidate.errorCode === "P1001" ||
-    (typeof candidate.message === "string" && /can't reach database server at/i.test(candidate.message))
-  );
-}
+// ERP rule: transient database blips should not add multi-second user-facing latency
+// to every button click across the application. Keep retries bounded and fail fast.
+const MAX_CONNECTION_RETRIES = 1;
+const CONNECTION_RETRY_DELAY_MS = 150;
 
 async function withConnectionRetry<T>(query: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await query();
     } catch (error) {
-      if (!isConnectionUnavailable(error) || attempt >= MAX_CONNECTION_RETRIES) {
+      if (!isDatabaseUnavailableError(error) || attempt >= MAX_CONNECTION_RETRIES) {
         throw error;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 300 * 2 ** attempt));
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(`Prisma connection retry ${attempt + 1}/${MAX_CONNECTION_RETRIES} in ${CONNECTION_RETRY_DELAY_MS}ms`);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, CONNECTION_RETRY_DELAY_MS));
     }
   }
 }

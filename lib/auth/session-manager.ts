@@ -1,9 +1,12 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { cache } from "react";
 
 import { getDevUserById } from "@/lib/dev/dev-user-store-mock";
 import { prisma } from "@/lib/database/prisma-client";
+import { createSessionToken, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS, verifySessionToken } from "@/lib/auth/session-token";
+
+export { createSessionToken, SESSION_COOKIE_NAME, signValue, verifySessionToken } from "@/lib/auth/session-token";
 
 export type SessionUser = {
   id: string;
@@ -17,62 +20,8 @@ export type SessionUser = {
   last_login_at: Date | null;
 };
 
-export const SESSION_COOKIE_NAME = "cc_session";
 const USE_DEV_USER_STORE = process.env.USE_DEV_USER_STORE === "true";
 const isDevBypass = process.env.NODE_ENV !== "production" && (USE_DEV_USER_STORE || !process.env.DATABASE_URL);
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
-
-export function signValue(value: string) {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret && process.env.NODE_ENV === "production") {
-    throw new Error("AUTH_SECRET must be configured in production.");
-  }
-
-  const signingSecret = secret || "dev-auth-secret-change-me";
-  return createHmac("sha256", signingSecret).update(value).digest("hex");
-}
-
-export function createSessionToken(userId: string) {
-  const expiresAt = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-  const payload = `${userId}.${expiresAt}`;
-  return `${payload}.${signValue(payload)}`;
-}
-
-export function verifySessionToken(token: string | null | undefined) {
-  if (!token) {
-    return null;
-  }
-
-  const [userId, expiresAtValue, signature] = token.split(".");
-
-  if (!userId || !expiresAtValue || !signature) {
-    return null;
-  }
-
-  const expiresAt = Number(expiresAtValue);
-  if (!Number.isSafeInteger(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000)) {
-    return null;
-  }
-
-  const payload = `${userId}.${expiresAtValue}`;
-  const expected = signValue(payload);
-  const input = Buffer.from(signature);
-  const expectedBuffer = Buffer.from(expected);
-
-  if (input.length !== expectedBuffer.length) {
-    return null;
-  }
-
-  try {
-    if (timingSafeEqual(input, expectedBuffer)) {
-      return userId;
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
 
 export async function setSessionCookie(userId: string) {
   const cookieStore = await cookies();
@@ -87,7 +36,7 @@ export async function setSessionCookie(userId: string) {
   });
 }
 
-export async function getSessionUser(): Promise<SessionUser | null> {
+export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value ?? null;
   const userId = verifySessionToken(token);
@@ -139,7 +88,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   } catch {
     return null;
   }
-}
+});
 
 export async function requireSessionUser(): Promise<SessionUser> {
   const user = await getSessionUser();

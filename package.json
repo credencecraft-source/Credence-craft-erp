@@ -8,10 +8,11 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
     "lint:ui": "eslint app components --rule local/no-raw-ui-controls:warn",
     "typecheck": "tsc --noEmit",
     "audit:production": "npm audit --omit=dev --audit-level=high",
-    "qa": "npm run audit:production && npm run lint && npm run typecheck && npm run build",
+    "qa": "npm run audit:production && npm test && npm run lint && npm run typecheck && npm run build",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -39,7 +40,8 @@
     "eslint-config-next": "^16.3.5",
     "eslint-plugin-react-hooks": "^7.1.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.7"
   },
   "allowScripts": {
     "prisma@6.19.3": true,

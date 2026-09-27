@@ -56,11 +56,23 @@ model VersionBusinessTypeSegment {
   segment                 Segment             @relation(fields: [segment_id], references: [id], onDelete: Cascade)
   restrictions            SegmentRestriction[]
   formRestrictions        SegmentFormRestriction[]
+  locationLimit           VersionBusinessTypeSegmentLocationLimit?
   tags                    VersionBusinessTypeSegmentTag[]
 
   @@unique([version_business_type_id, segment_id])
   @@index([segment_id])
   @@map("version_business_type_segments")
+}
+
+model VersionBusinessTypeSegmentLocationLimit {
+  id                               String                     @id @default(cuid())
+  version_business_type_segment_id String                     @unique
+  max_locations                    Int
+  created_at                       DateTime                   @default(now())
+  updated_at                       DateTime                   @updatedAt
+  assignment                       VersionBusinessTypeSegment @relation(fields: [version_business_type_segment_id], references: [id], onDelete: Cascade)
+
+  @@map("version_business_type_segment_location_limits")
 }
 
 model VersionBusinessTypeTag {

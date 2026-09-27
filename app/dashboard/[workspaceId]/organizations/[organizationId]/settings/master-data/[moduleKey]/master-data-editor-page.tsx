@@ -369,7 +369,7 @@ export default async function MasterDataEditorPage({
     ...(field.lookupModuleKey ? [field.lookupModuleKey] : []),
     ...(field.childFields ?? []).flatMap((child) => child.lookupModuleKey ? [child.lookupModuleKey] : []),
   ]))];
-  const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true)).map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id }))])));
+  const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true)).map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id, fields: item.fields }))])));
   const childModuleKey = definition.fields.find((field) => field.type === "child-list")?.childModuleKey
     ?? definition.fields.find((field) => field.type === "lookup" && field.multiple)?.lookupModuleKey;
   const childRecords = moduleKey === "size-group"

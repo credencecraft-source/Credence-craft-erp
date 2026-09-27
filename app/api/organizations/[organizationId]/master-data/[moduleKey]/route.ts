@@ -14,6 +14,7 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const includeInactive = searchParams.get("includeInactive") !== "false";
     const search = searchParams.get("search") || undefined;
+    const exactSearch = searchParams.get("exact") === "true";
     const requestedLimit = Number(searchParams.get("limit") || 100);
     const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 200) : 100;
 
@@ -64,15 +65,20 @@ export async function GET(
       });
     }
 
-    const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, { search, limit });
+    const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, { search, limit, exactSearch });
     if (moduleKey === "size-group") {
-      const sizeLinks = await getSizeGroupSizesForOrganization(organization.id);
+      const sizeLinks = await getSizeGroupSizesForOrganization(organization.id, values.map((group) => group.id));
+      const sizesByGroup = new Map<string, typeof sizeLinks[number][]>();
+      for (const link of sizeLinks) {
+        if (!includeInactive && !link.size.is_active) continue;
+        const groupSizes = sizesByGroup.get(link.groupId) ?? [];
+        groupSizes.push(link);
+        sizesByGroup.set(link.groupId, groupSizes);
+      }
+
       return NextResponse.json(values.map((group) => ({
         ...group,
-        sizes: sizeLinks
-          .filter((link) => link.groupId === group.id || link.groupId === group.value_id)
-          .filter((link) => includeInactive || link.size.is_active)
-          .map((link) => link.size),
+        sizes: (sizesByGroup.get(group.id) ?? []).map((link) => link.size),
       })));
     }
     if (moduleKey === "process-template") {

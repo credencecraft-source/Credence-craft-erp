@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/database/prisma-client";
+import { enforceInventoryLocationLimit } from "@/lib/services/platform/inventory-location-restriction-service";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 export { getMasterDefinition, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
 
@@ -17,7 +18,7 @@ type MasterDelegate = {
 };
 
 const delegates = {
-  entity: prisma.masterEntity, "category-type": prisma.masterCategoryType, category: prisma.masterCategory, "sub-category": prisma.masterSubCategory,
+  entity: prisma.masterEntity, location: prisma.masterLocation, "category-type": prisma.masterCategoryType, category: prisma.masterCategory, "sub-category": prisma.masterSubCategory,
   brand: prisma.masterBrand, "pre-order-checklist": prisma.masterPreOrderChecklist, "currency-type": prisma.masterCurrencyType, buyer: prisma.masterBuyer,
   season: prisma.masterSeason, article: prisma.masterArticle, "gold-seal": prisma.masterGoldSeal, "gold-seal-variant": prisma.masterGoldSealVariant, color: prisma.masterColor, "size-group": prisma.masterSizeGroup, size: prisma.masterSize,
   uom: prisma.masterUom, "stock-uom-convert": prisma.masterStockUomConvert, "raw-material": prisma.masterRawMaterial, vendor: prisma.masterVendor, "gst-type": prisma.masterGstType, gst: prisma.masterGst,
@@ -28,7 +29,7 @@ const delegates = {
 } as unknown as Record<string, MasterDelegate>;
 
 const labelFields: Record<string, string> = {
-  entity: "entity_name", "category-type": "category_type", category: "category_name", "sub-category": "sub_category", brand: "brand",
+  entity: "entity_name", location: "location_name", "category-type": "category_type", category: "category_name", "sub-category": "sub_category", brand: "brand",
   "pre-order-checklist": "pre_order_checklist", "currency-type": "currency_type", buyer: "buyer_name", season: "season", article: "article", "gold-seal": "gold_seal", "gold-seal-variant": "variant", color: "colors",
   "size-group": "size_group", size: "size", uom: "uom", "stock-uom-convert": "name", "raw-material": "raw_material_name", vendor: "vendor", "gst-type": "gst_type", gst: "name",
   hsn: "hsn_code", state: "state", "measurement-chart": "measurement_chart", "size-wise-consumption": "bom_template_name", "product-master": "product_master_name",
@@ -38,6 +39,7 @@ const labelFields: Record<string, string> = {
 
 const fieldColumns: Record<string, Record<string, string>> = {
   entity: { entity_name: "entity_name" },
+  location: { location_name: "location_name", entity_id: "entity_id" },
   "category-type": { Category_Type1: "category_type", Books_Item_ID: "books_item_id" },
   category: { Product_Master: "product_master_id", Category_Name: "category_name", Maximum_Excess_Allowed: "maximum_excess_allowed", Create_Cost_Center: "create_cost_center", Status: "status" },
   "sub-category": { category: "category_id", sub_category: "sub_category" },
@@ -214,7 +216,7 @@ export async function getMasterValuesForOrganization(
   organizationId: string,
   moduleKey: string,
   includeInactive = false,
-  options: { search?: string; limit?: number } = {},
+  options: { search?: string; limit?: number; exactSearch?: boolean } = {},
 ) {
   const definition = getMasterDefinition(moduleKey);
   const delegate = delegates[moduleKey];
@@ -226,7 +228,15 @@ export async function getMasterValuesForOrganization(
       organization_id: organizationId,
       ...(includeInactive ? {} : { is_active: true }),
       ...(search && labelFields[moduleKey]
-        ? { [labelFields[moduleKey]]: { contains: search, mode: "insensitive" } }
+        ? options.exactSearch
+          ? {
+              OR: [
+                { [labelFields[moduleKey]]: { equals: search, mode: "insensitive" } },
+                { id: search },
+                { value_id: search },
+              ],
+            }
+          : { [labelFields[moduleKey]]: { contains: search, mode: "insensitive" } }
         : {}),
     },
     orderBy: [{ sort_order: "asc" }, { [labelFields[moduleKey]]: "asc" }],
@@ -282,9 +292,14 @@ export async function getPendingMasterValuesForOrganization(organizationId: stri
   return (await getMasterValuesForOrganization(organizationId, moduleKey, true)).filter((entry) => !entry.is_active);
 }
 
-export async function getSizeGroupSizesForOrganization(organizationId: string) {
+export async function getSizeGroupSizesForOrganization(organizationId: string, sizeGroupIds?: string[]) {
+  if (sizeGroupIds && sizeGroupIds.length === 0) return [];
+
   const links = await prisma.masterSizeGroupSize.findMany({
-    where: { organization_id: organizationId },
+    where: {
+      organization_id: organizationId,
+      ...(sizeGroupIds ? { size_group_id: { in: sizeGroupIds } } : {}),
+    },
     include: { size: true },
     orderBy: { created_at: "asc" },
   });
@@ -339,6 +354,10 @@ export async function createMasterValueForOrganization(organizationId: string, m
       (transaction as unknown as Record<string, MasterDelegate>)[`master${moduleKey.split("-").map((part) => part[0].toUpperCase() + part.slice(1)).join("")}`] ?? delegate;
 
     const data = await buildData(organizationId, moduleKey, input.fields ?? {}, input.label.trim());
+
+    if (moduleKey === "location") {
+      await enforceInventoryLocationLimit(transaction, organizationId, input.label.trim());
+    }
 
     if (moduleKey === "article" || moduleKey === "gold-seal") {
       const codeField = moduleKey === "article" ? "article_code" : "gold_seal_code";

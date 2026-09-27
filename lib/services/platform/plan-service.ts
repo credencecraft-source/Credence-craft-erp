@@ -39,6 +39,23 @@ export function segmentNamesForPlan(plan: { tier_key?: string | null; plan_name:
   return new Set([mappedTier, normalizeSegmentName(planTier)].filter(Boolean));
 }
 
+type BusinessTypePlan = {
+  business_type_id: string | null;
+  tier_key?: string | null;
+  plan_name: string;
+};
+
+export function findPlanForVersionSegment<T extends BusinessTypePlan>(
+  plans: T[],
+  businessTypeId: string,
+  segmentName: string,
+) {
+  const normalizedSegmentName = normalizeSegmentName(segmentName);
+  return plans.find((candidate) =>
+    candidate.business_type_id === businessTypeId && segmentNamesForPlan(candidate).has(normalizedSegmentName),
+  );
+}
+
 export async function listVersionSegmentPlansForOrganization(organizationId: string) {
   const organization = await prisma.organization.findUnique({
     where: { id: organizationId },
@@ -46,23 +63,24 @@ export async function listVersionSegmentPlansForOrganization(organizationId: str
   });
 
   const versionId = organization?.platform_version_id;
-  if (!versionId) return { plans: [], businessTypes: [], versionName: null };
+  if (!versionId) return { plans: [], businessTypes: [], versionId: null, versionName: null };
 
   const version = await prisma.platformVersion.findUnique({
     where: { id: versionId },
     select: {
+      id: true,
       version_name: true,
       businessTypes: {
         include: {
           businessType: true,
           tags: { orderBy: { label: "asc" } },
-          segments: { where: { is_active: true }, include: { segment: true } },
+          segments: { where: { is_active: true }, include: { segment: true, locationLimit: true } },
         },
       },
     },
   });
 
-  if (!version) return { plans: [], businessTypes: [], versionName: null };
+  if (!version) return { plans: [], businessTypes: [], versionId: null, versionName: null };
 
   const billableBusinessTypes = version.businessTypes.filter(({ is_free }) => !is_free);
   const businessTypeIds = billableBusinessTypes.map(({ business_type_id }) => business_type_id);
@@ -75,8 +93,7 @@ export async function listVersionSegmentPlansForOrganization(organizationId: str
   const segmentPlans = billableBusinessTypes.flatMap((assignment) =>
     assignment.segments.flatMap((segmentAssignment) => {
       const { id: segmentId, segment } = segmentAssignment;
-      const segmentName = normalizeSegmentName(segment.name);
-      const plan = plans.find((candidate) => segmentNamesForPlan(candidate).has(segmentName));
+      const plan = findPlanForVersionSegment(plans, assignment.business_type_id, segment.name);
       return [{
         id: plan?.id ?? `segment-${segmentId}`,
         plan_id: plan?.plan_id ?? null,
@@ -91,6 +108,8 @@ export async function listVersionSegmentPlansForOrganization(organizationId: str
         billing_plan_id: plan?.id ?? null,
         is_pricing_configured: segmentAssignment.price != null,
         segment_id: segmentId,
+        location_limit: segmentAssignment.locationLimit?.max_locations ?? null,
+        platform_segment_id: segment.id,
         segment_name: segment.name,
         segment_sort_order: segment.sort_order,
         segment_label: segmentAssignment.label,
@@ -101,6 +120,7 @@ export async function listVersionSegmentPlansForOrganization(organizationId: str
 
   return {
     plans: segmentPlans,
+    versionId: version.id,
     businessTypes: billableBusinessTypes.map(({ businessType, tags }) => ({
       ...businessType,
       tags: tags.map(({ id, label }) => ({ id, label })),

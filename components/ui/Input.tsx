@@ -30,6 +30,7 @@ export default function Input({
       <input
         id={inputId}
         {...props}
+        suppressHydrationWarning
         aria-invalid={error ? true : props["aria-invalid"]}
         aria-describedby={[props["aria-describedby"], hint ? `${inputId}-hint` : "", error ? `${inputId}-error` : ""].filter(Boolean).join(" ") || undefined}
         className={cn(

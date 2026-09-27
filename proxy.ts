@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/auth/session-token";
 
 export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
@@ -17,7 +18,8 @@ export function proxy(request: NextRequest) {
     });
   }
 
-  if (!request.cookies.has("cc_session")) {
+  const sessionToken = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+  if (!verifySessionToken(sessionToken)) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }

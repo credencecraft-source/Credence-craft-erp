@@ -73,8 +73,11 @@ export async function createOrganizationInvitation(input: {
 }
 
 export async function listPendingInvitations(userId: string) {
-  await prisma.organizationInvitation.updateMany({ where: { invitee_user_id: userId, status: OrganizationInvitationStatus.PENDING, expires_at: { lte: new Date() } }, data: { status: OrganizationInvitationStatus.EXPIRED } });
-  return prisma.organizationInvitation.findMany({ where: { invitee_user_id: userId, status: OrganizationInvitationStatus.PENDING }, include: { organization: { select: { organization_name: true, organization_id: true } }, invitedBy: { select: { full_name: true } } }, orderBy: { created_at: "desc" } });
+  return prisma.organizationInvitation.findMany({ where: { invitee_user_id: userId, status: OrganizationInvitationStatus.PENDING, expires_at: { gt: new Date() } }, include: { organization: { select: { organization_name: true, organization_id: true } }, invitedBy: { select: { full_name: true } } }, orderBy: { created_at: "desc" } });
+}
+
+export async function countPendingInvitations(userId: string) {
+  return prisma.organizationInvitation.count({ where: { invitee_user_id: userId, status: OrganizationInvitationStatus.PENDING, expires_at: { gt: new Date() } } });
 }
 
 export async function acceptOrganizationInvitation(userId: string, token: string) {

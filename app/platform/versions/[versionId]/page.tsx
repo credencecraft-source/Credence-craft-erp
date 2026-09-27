@@ -36,6 +36,13 @@ export default async function VersionDetailPage({ params }: { params: Promise<{ 
               <span className="mt-5 inline-block text-sm font-semibold text-violet-700">Manage transaction limits →</span>
             </Card>
           </Link>
+          <Link href={`/platform/versions/${version.id}/custom-restrictions`}>
+            <Card className="h-full border-amber-200 p-5 transition-colors hover:bg-amber-50/40">
+              <p className="text-xs font-semibold uppercase tracking-wider text-amber-700">Restriction type 03</p>
+              <h2 className="mt-2 text-xl font-bold text-slate-900">Custom Restrictions</h2>
+              <span className="mt-5 inline-block text-sm font-semibold text-amber-800">Open custom restrictions →</span>
+            </Card>
+          </Link>
         </div>
 
       </Section>

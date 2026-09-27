@@ -5,9 +5,8 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { MasterModuleWrapper } from "@/components/master-data/master-module-wrapper";
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationShellContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
-import { getEffectiveSegmentRestrictions } from "@/lib/services/platform/segment-restriction-service";
 import { requireSessionUser } from "@/lib/auth/session-manager"; // Fixed typo (removed trailing 's')
 import { PendingOrganizationPrompt } from "@/components/organizations/pending-organization-prompt";
 
@@ -50,12 +49,17 @@ export default async function OrganizationShellLayout({
     ? new URL(rawPath).pathname 
     : rawPath;
   const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
+  if (currentPath === organizationPath) {
+    return children;
+  }
+
   const isOrganizationSettingsRoute =
     currentPath.startsWith(`${organizationPath}/settings`) &&
     !currentPath.startsWith(`${organizationPath}/settings/master-data`);
 
   // 3. Fetch and authorize the real organization before checking plan rules.
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const activeBusinessTypesPromise = listActiveBusinessTypes();
+  const organization = await getOrganizationShellContext(user.id, organizationId);
   
   if (!organization) {
     redirect(`/dashboard/${user.workspace_id}/home`);
@@ -78,10 +82,11 @@ export default async function OrganizationShellLayout({
     await requireOrganizationPermission(user.id, organizationId, requiredPermission);
   }
 
-  await validateOrganizationAccess(organization.organization_id, currentPath);
-
-  const scopedRestrictions = await getEffectiveSegmentRestrictions(organization.id);
-  const businessTypes = (await listActiveBusinessTypes()).map((businessType) => ({
+  const [scopedRestrictions, activeBusinessTypes] = await Promise.all([
+    validateOrganizationAccess(organization, currentPath),
+    activeBusinessTypesPromise,
+  ]);
+  const businessTypes = activeBusinessTypes.map((businessType) => ({
     ...businessType,
     name: businessType.name.trim().toLowerCase() === "settings"
       ? "Admin"

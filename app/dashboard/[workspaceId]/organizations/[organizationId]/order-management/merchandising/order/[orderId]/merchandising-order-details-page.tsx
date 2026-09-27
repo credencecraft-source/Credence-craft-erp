@@ -523,26 +523,29 @@ export default function MerchandisingOrderDetailsPage() {
   const handleSave = async () => {
     try {
       setIsSaving(true);
-      if (!form.article || form.article.trim() === "") {
-        throw new Error("Blocking Field Missing: 'Article' is required.");
+      const requiredFields: Array<[string, unknown]> = [
+        ["Buyer", form.buyer],
+        ["Brand", form.brand],
+        ["Article", form.article],
+        ["Delivery Date", form.deliveryDate],
+        ["Entity Name", form.entityName],
+        ["Product Category", form.category],
+        ["Product Sub Category", form.subCategory],
+        ["Style Name", form.styleName],
+        ["Colors", form.colors],
+        ["Season", form.season],
+        ["Size Group", form.sizeGroup],
+        ...(form.haveSizeRatio ? [["Ratio Order Qty", form.ratioOrderQty] as [string, unknown]] : []),
+      ];
+      const missingField = requiredFields.find(([, value]) => !String(value ?? "").trim());
+      if (missingField) {
+        throw new Error(`Blocking Field Missing: '${missingField[0]}' is required.`);
       }
-      if (!orderId) {
-        const requiredFields: Array<[string, unknown]> = [
-          ["Entity Name", form.entityName],
-          ["Product Category", form.category],
-          ["Product Sub Category", form.subCategory],
-          ["Style Name", form.styleName],
-          ["Colors", form.colors],
-          ["Season", form.season],
-          ["Size Group", form.sizeGroup],
-        ];
-        const missingField = requiredFields.find(([, value]) => !String(value ?? "").trim());
-        if (missingField) {
-          throw new Error(`Blocking Field Missing: '${missingField[0]}' is required.`);
-        }
-        if (!Number.isFinite(Number(form.orderQty)) || Number(form.orderQty) <= 0) {
-          throw new Error("Blocking Field Missing: 'Order Qty' must be greater than 0.");
-        }
+      if (!Number.isFinite(Number(form.orderQty)) || Number(form.orderQty) <= 0) {
+        throw new Error("Blocking Field Missing: 'Order Qty' must be greater than 0.");
+      }
+      if (form.haveSizeRatio && (!Number.isFinite(Number(form.ratioOrderQty)) || Number(form.ratioOrderQty) <= 0)) {
+        throw new Error("Blocking Field Missing: 'Ratio Order Qty' must be greater than 0.");
       }
       const endpoint = orderId
         ? `/api/orders/${encodeURIComponent(orderId)}?organizationId=${encodeURIComponent(organizationId)}`
@@ -602,7 +605,7 @@ export default function MerchandisingOrderDetailsPage() {
   ];
 
   return (
-    <div className="space-y-4 p-4 text-xs">
+    <div className={`space-y-4 p-4 text-xs${orderId ? "" : " pb-20"}`}>
       {/* Header and Tab Navigation Block */}
       <div className="flex flex-col gap-4 border-b border-slate-200 pb-4">
         <div className="flex items-center justify-between">
@@ -621,7 +624,7 @@ export default function MerchandisingOrderDetailsPage() {
 
           <div className="flex items-center gap-2">
             {orderId && <button type="button" onClick={openShareDialog} className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 font-semibold text-emerald-800 hover:bg-emerald-100">Share with Buyer</button>}
-            <button type="button" onClick={handleSave} disabled={isSaving} className="rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50">{isSaving ? "Saving..." : "Save Order"}</button>
+            {orderId && <button type="button" onClick={handleSave} disabled={isSaving} className="rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50">{isSaving ? "Saving..." : "Save Order"}</button>}
           </div>
         </div>
 
@@ -656,6 +659,21 @@ export default function MerchandisingOrderDetailsPage() {
         {activeTab === "process" && <ProcessTab form={form} setForm={setForm} organizationId={organizationId} isOrderLoading={isOrderLoading} />}
         {activeTab === "attachments" && <AttachmentsTab form={form} setForm={setForm} />}
       </div>
+
+      {!orderId && (
+        <div
+          role="region"
+          aria-label="Order actions"
+          className="fixed bottom-0 right-0 z-30 border-t border-slate-200 bg-white/95 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-[0_-4px_12px_rgba(15,23,42,0.08)] backdrop-blur"
+          style={{ left: "var(--organization-sidebar-width, 0px)" }}
+        >
+          <div className="flex justify-end px-6 py-2 sm:px-8">
+            <Button size="sm" onClick={handleSave} disabled={isSaving} className="min-w-28">
+            {isSaving ? "Saving..." : "Save Order"}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {newMasterKey && getMasterDefinition(newMasterKey) && (
         <Modal open onClose={closeQuickMaster} ariaLabelledBy="quick-master-title" size="md" className="p-5">

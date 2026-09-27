@@ -17,25 +17,22 @@ import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { logoutSession, requireSessionUser } from "@/lib/auth/session-manager";
-import { listOrganizationsForUser, deleteOrganization } from "@/lib/services/organizations/organization-service";
-import { prisma } from "@/lib/database/prisma-client";
+import { archiveOrganization, listWorkspaceOrganizationPage, restoreOrganization } from "@/lib/services/organizations/organization-service";
 import { OrganizationsGrid } from "./_components/organizations-grid";
 import { WorkspaceInvitationBell } from "./_components/workspace-invitation-bell";
-
-const isDevBypass =
-  process.env.NODE_ENV !== "production" && (process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL);
 
 export default async function WorkspaceHomePage({
   params,
   searchParams,
 }: {
   params: Promise<{ workspaceId: string }>;
-  searchParams?: Promise<{ success?: string }>;
+  searchParams?: Promise<{ success?: string; error?: string }>;
 }) {
   const { workspaceId } = await params;
   const user = await requireSessionUser();
-  const successMessage =
-    (await searchParams)?.success === "organization-created";
+  const search = await searchParams;
+  const successMessage = search?.success;
+  const errorMessage = search?.error;
 
   async function logoutAction() {
     "use server";
@@ -43,48 +40,43 @@ export default async function WorkspaceHomePage({
     redirect("/");
   }
 
-  async function deleteOrgAction(formData: FormData) {
+  async function archiveOrgAction(formData: FormData) {
     "use server";
     const orgId = String(formData.get("orgId") || "");
-    const verificationText = String(formData.get("verificationText") || "");
-    
-    if (verificationText !== "DELETE") {
-      return;
-    }
+    const confirmationName = String(formData.get("confirmationName") || "");
 
-    if (orgId) {
-      try {
-        await deleteOrganization(orgId, user.id);
-      } catch {
-        // Handle deletion error if needed
-      }
+    try {
+      await archiveOrganization(orgId, user.id, confirmationName);
+    } catch {
+      redirect(`/dashboard/${workspaceId}/home?error=organization-archive-failed`);
     }
-    redirect(`/dashboard/${workspaceId}/home`);
+    redirect(`/dashboard/${workspaceId}/home?success=organization-archived`);
+  }
+
+  async function restoreOrgAction(formData: FormData) {
+    "use server";
+    const orgId = String(formData.get("orgId") || "");
+
+    try {
+      await restoreOrganization(orgId, user.id);
+    } catch {
+      redirect(`/dashboard/${workspaceId}/home?error=organization-restore-failed`);
+    }
+    redirect(`/dashboard/${workspaceId}/home?success=organization-restored`);
   }
 
   if (!user.workspace_id) {
     redirect("/");
   }
 
-  let workspaceOwner: { id: string; workspace_id?: string } | null = null;
-
-  if (isDevBypass) {
-    workspaceOwner = user.workspace_id === workspaceId ? user : null;
-  } else {
-    try {
-      workspaceOwner = await prisma.workspaceUser.findFirst({
-        where: { workspace_id: workspaceId },
-      });
-    } catch {
-      workspaceOwner = null;
-    }
-  }
-
-  if (!workspaceOwner || workspaceOwner.id !== user.id) {
+  if (user.workspace_id !== workspaceId) {
     notFound();
   }
 
-  const organizations = await listOrganizationsForUser(user.id);
+  const { organizations, nextCursor, totalCount, activeCount } = await listWorkspaceOrganizationPage(user.id);
+  const organizationSnapshotKey = organizations
+    .map((organization) => `${organization.id}:${organization.approval_status}:${organization.is_active}`)
+    .join("|");
 
   return (
     <Page className="max-w-[1500px] px-3 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
@@ -93,9 +85,14 @@ export default async function WorkspaceHomePage({
           <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-emerald-950 shadow-sm" role="status">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-bold text-white"><Check className="h-4 w-4" /></div>
             <div>
-              <p className="text-sm font-bold">Organization created successfully</p>
-              <p className="mt-1 text-xs text-emerald-800">Your organization is ready and awaiting approval.</p>
+              <p className="text-sm font-bold">{successMessage === "organization-archived" ? "Organization archived" : successMessage === "organization-restored" ? "Organization restored" : "Organization created successfully"}</p>
+              <p className="mt-1 text-xs text-emerald-800">{successMessage === "organization-archived" ? "ERP records were retained and audited." : successMessage === "organization-restored" ? "The organization is active and awaiting approval." : "Your organization is ready and awaiting approval."}</p>
             </div>
+          </div>
+        )}
+        {errorMessage && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900" role="alert">
+            {errorMessage === "organization-archive-failed" ? "The organization could not be archived. Confirm the exact name and make sure you are its owner." : "The organization could not be restored. Refresh and try again."}
           </div>
         )}
 
@@ -134,7 +131,7 @@ export default async function WorkspaceHomePage({
             </div>
           </div>
           <div className="relative mt-10 grid gap-3 border-t border-white/10 pt-5 sm:grid-cols-3">
-            <div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Workspace pulse</p><p className="mt-1 text-sm font-medium text-white">{organizations.length} organization{organizations.length === 1 ? "" : "s"} connected</p></div>
+            <div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Workspace pulse</p><p className="mt-1 text-sm font-medium text-white">{activeCount} active · {totalCount} total</p></div>
             <div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Access level</p><p className="mt-1 text-sm font-medium text-white">Workspace owner</p></div>
             <div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Account</p><p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-white">{user.email_verified ? "Verified and active" : "Verification pending"} <ShieldCheck className="h-4 w-4 text-amber-300" /></p></div>
           </div>
@@ -153,7 +150,7 @@ export default async function WorkspaceHomePage({
               <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em] text-slate-900">Organizations directory</h2>
               <p className="mt-1 text-sm text-slate-500">Select an entity to open its operational workspace.</p>
             </div>
-            <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{organizations.length} active</span>
+            <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{activeCount} active</span>
           </div>
 
           {organizations.length === 0 ? (
@@ -176,10 +173,13 @@ export default async function WorkspaceHomePage({
               </div>
             </Card>
           ) : (
-            <OrganizationsGrid 
-              organizations={organizations} 
-              workspaceId={workspaceId} 
-              deleteOrgAction={deleteOrgAction} 
+            <OrganizationsGrid
+              key={organizationSnapshotKey}
+              organizations={organizations}
+              workspaceId={workspaceId}
+              initialCursor={nextCursor}
+              archiveOrgAction={archiveOrgAction}
+              restoreOrgAction={restoreOrgAction}
             />
           )}
         </Section>

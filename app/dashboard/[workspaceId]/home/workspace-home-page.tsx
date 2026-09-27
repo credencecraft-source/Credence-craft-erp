@@ -7,7 +7,7 @@ import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Badge from "@/components/ui/Badge";
 import { logoutSession, requireSessionUser } from "@/lib/auth/session-manager";
-import { listOrganizationsForUser, deleteOrganization } from "@/lib/services/organizations/organization-service";
+import { archiveOrganization, listOrganizationsForUser, restoreOrganization } from "@/lib/services/organizations/organization-service";
 import { prisma } from "@/lib/database/prisma-client";
 import { OrganizationsGrid } from "./_components/organizations-grid";
 import { WorkspaceInvitationBell } from "./_components/workspace-invitation-bell";
@@ -20,12 +20,13 @@ export default async function WorkspaceHomePage({
   searchParams,
 }: {
   params: Promise<{ workspaceId: string }>;
-  searchParams?: Promise<{ success?: string }>;
+  searchParams?: Promise<{ success?: string; error?: string }>;
 }) {
   const { workspaceId } = await params;
   const user = await requireSessionUser();
-  const successMessage =
-    (await searchParams)?.success === "organization-created";
+  const search = await searchParams;
+  const successMessage = search?.success;
+  const errorMessage = search?.error;
 
   async function logoutAction() {
     "use server";
@@ -34,23 +35,27 @@ export default async function WorkspaceHomePage({
     redirect("/");
   }
 
-  async function deleteOrgAction(formData: FormData) {
+  async function archiveOrgAction(formData: FormData) {
     "use server";
     const orgId = String(formData.get("orgId") || "");
-    const verificationText = String(formData.get("verificationText") || "");
-    
-    if (verificationText !== "DELETE") {
-      return;
-    }
+    const confirmationName = String(formData.get("confirmationName") || "");
 
-    if (orgId) {
-      try {
-        await deleteOrganization(orgId, user.id);
-      } catch (error) {
-        // Handle deletion error if needed
-      }
+    try {
+      await archiveOrganization(orgId, user.id, confirmationName);
+    } catch {
+      redirect(`/dashboard/${workspaceId}/home?error=organization-archive-failed`);
     }
-    redirect(`/dashboard/${workspaceId}/home`);
+    redirect(`/dashboard/${workspaceId}/home?success=organization-archived`);
+  }
+
+  async function restoreOrgAction(formData: FormData) {
+    "use server";
+    try {
+      await restoreOrganization(String(formData.get("orgId") || ""), user.id);
+    } catch {
+      redirect(`/dashboard/${workspaceId}/home?error=organization-restore-failed`);
+    }
+    redirect(`/dashboard/${workspaceId}/home?success=organization-restored`);
   }
 
   if (!user.workspace_id) {
@@ -84,9 +89,10 @@ export default async function WorkspaceHomePage({
       <Section className="space-y-8">
         {successMessage && (
           <div className="erp-alert erp-alert-success" role="status">
-            Organization created successfully.
+            {successMessage === "organization-archived" ? "Organization archived; its ERP records were retained." : successMessage === "organization-restored" ? "Organization restored and awaiting approval." : "Organization created successfully."}
           </div>
         )}
+        {errorMessage && <div className="erp-alert erp-alert-error" role="alert">The organization action failed. Confirm the name and your owner access, then try again.</div>}
 
         {/* Header */}
         <div className="erp-page-header">
@@ -177,10 +183,11 @@ export default async function WorkspaceHomePage({
               </div>
             </Card>
           ) : (
-            <OrganizationsGrid 
-              organizations={organizations} 
-              workspaceId={workspaceId} 
-              deleteOrgAction={deleteOrgAction} 
+            <OrganizationsGrid
+              organizations={organizations}
+              workspaceId={workspaceId}
+              archiveOrgAction={archiveOrgAction}
+              restoreOrgAction={restoreOrgAction}
             />
           )}
         </Section>

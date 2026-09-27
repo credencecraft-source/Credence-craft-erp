@@ -284,16 +284,19 @@ export async function ensureFreePlanSubscriptionsForOrganization(organizationId:
   }, { timeout: 15000 });
 }
 
-export async function getEffectivePlansForOrganization(organizationId: string) {
+export async function getEffectivePlansForOrganization(
+  organizationId: string,
+  database: Prisma.TransactionClient | typeof prisma = prisma,
+) {
   const [businessTypes, freePlans, subscriptions] = await Promise.all([
-    prisma.businessType.findMany({ where: { isActive: true }, orderBy: { name: "asc" } }),
-    prisma.plan.findMany({ where: { business_type_id: { not: null }, tier_key: "FREE" } }),
-    prisma.subscription.findMany({
+    database.businessType.findMany({ where: { isActive: true }, orderBy: { name: "asc" } }),
+    database.plan.findMany({ where: { business_type_id: { not: null }, tier_key: "FREE" } }),
+    database.subscription.findMany({
       where: { organization_id: organizationId },
       orderBy: { updated_at: "desc" },
     }),
   ]);
-  const plans = await prisma.plan.findMany({
+  const plans = await database.plan.findMany({
     where: { id: { in: subscriptions.map((subscription) => subscription.plan_id) } },
   });
   const planById = new Map(plans.map((plan) => [plan.id, plan]));

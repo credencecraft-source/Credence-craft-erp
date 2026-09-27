@@ -87,6 +87,24 @@
 }
 
 @layer utilities {
+  @keyframes navigation-loading-progress {
+    0% {
+      transform: translateX(-160%);
+    }
+
+    50% {
+      transform: translateX(80%);
+    }
+
+    100% {
+      transform: translateX(380%);
+    }
+  }
+
+  .animate-navigation-loading-progress {
+    animation: navigation-loading-progress 1.35s ease-in-out infinite;
+  }
+
   .erp-surface {
     @apply rounded-2xl border border-[var(--erp-border)] bg-[var(--erp-surface)] shadow-[var(--erp-shadow)];
   }
@@ -121,6 +139,16 @@
 
   .erp-popup-panel {
     @apply overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.2)];
+  }
+
+  :is(input, select, textarea)[data-erp-field-state="empty"],
+  :is(input, select, textarea)[data-erp-field-state="empty"]:focus {
+    border: 2px solid #dc2626;
+  }
+
+  :is(input, select, textarea)[data-erp-field-state="filled"],
+  :is(input, select, textarea)[data-erp-field-state="filled"]:focus {
+    border: 2px solid #16a34a;
   }
 }
 

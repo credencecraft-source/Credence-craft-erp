@@ -19,6 +19,9 @@ These rules govern every feature, bug fix, refactor, migration, route, API, serv
 - Enforce permissions in the service layer, not only in navigation or page layouts. Use the narrowest permission for the operation and separate view, create, edit, delete, submit, and approve capabilities where applicable.
 - Platform administration and organization administration are separate trust boundaries. Never use a platform lookup or `getOrganizationByPublicId` as a substitute for membership authorization.
 - Development user stores and default credentials must remain unavailable in production. Never log secrets, tokens, invitation URLs, personal data, or full request bodies.
+- Treat `.env`, `.env.*`, and deployment environment settings as read-only. Never create, edit, delete, reformat, print, or commit their values unless the user explicitly authorizes the specific change in the current request.
+- Treat `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `DIRECT_URL`, `PGHOST_UNPOOLED`, and Neon/Vercel database connection settings as protected. Do not rotate or alter hosts, ports, database names, users, passwords, or connection options. If a task appears to require a change, stop and explain the exact setting that needs the user's approval; diagnose using redacted metadata only.
+- Do not run destructive or data-writing commands against a production database to troubleshoot a connection. Prefer read-only checks, and verify the target environment before any approved database operation.
 - Validate and normalize all request bodies, query parameters, path parameters, dates, quantities, rates, enum values, and uploaded or imported data. Return safe user-facing errors and log only sanitized diagnostic context.
 
 ## ERP Business Controls

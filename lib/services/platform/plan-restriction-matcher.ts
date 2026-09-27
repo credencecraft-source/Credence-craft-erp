@@ -28,26 +28,39 @@ function matchesPart(rulePart: string, candidates: string[]) {
 }
 
 function isSubmoduleRule(rule: PlanRestrictionRule) {
-  return rule.restriction_type.toLowerCase() === "block"
+  return rule.restriction_type.trim().toLowerCase() === "block"
     && Boolean(rule.sub_module)
     && normalizeRestrictionPart(rule.sub_module || "") !== "*";
 }
 
+function hasSubmoduleTarget(rule: PlanRestrictionRule) {
+  return Boolean(rule.sub_module)
+    && normalizeRestrictionPart(rule.sub_module || "") !== "*";
+}
+
+function matchesRouteTarget(rule: PlanRestrictionRule, master: string, main: string, descendants: string[]) {
+  return matchesPart(rule.master_module || "*", [master])
+    && matchesPart(rule.main_module || "*", [main])
+    && matchesPart(rule.sub_module || "*", descendants);
+}
+
 export function restrictionMatchesFeature(rule: PlanRestrictionRule, feature: FeaturePath) {
-  if (!isSubmoduleRule(rule) || feature.sub.length === 0) return false;
+  const restrictionType = rule.restriction_type.trim().toLowerCase();
+  const isFeatureRestriction = restrictionType === "block" || restrictionType === "hide";
+  if (!isFeatureRestriction || !hasSubmoduleTarget(rule) || feature.sub.length === 0) return false;
   return matchesPart(rule.master_module || "*", [feature.master])
     && matchesPart(rule.main_module || "*", [feature.main, feature.route[1] || "", feature.key || ""])
     && matchesPart(rule.sub_module || "", [...feature.sub, ...feature.route.slice(2), feature.key || "", feature.label || ""]);
 }
 
 export function restrictionMatchesRoute(rule: PlanRestrictionRule, routeSegments: string[], featureKeys: string[] = []) {
-  if (!isSubmoduleRule(rule)) return false;
-  const master = routeSegments[0] || "";
-  const main = routeSegments[1] || "";
-  const descendants = [...featureKeys, ...routeSegments.slice(2)];
-  return matchesPart(rule.master_module || "*", [master])
-    && matchesPart(rule.main_module || "*", [main])
-    && matchesPart(rule.sub_module || "*", descendants);
+  if (!isSubmoduleRule(rule) || !hasSubmoduleTarget(rule)) return false;
+  return matchesRouteTarget(rule, routeSegments[0] || "", routeSegments[1] || "", [...featureKeys, ...routeSegments.slice(2)]);
+}
+
+export function restrictionMatchesHiddenRoute(rule: PlanRestrictionRule, routeSegments: string[], featureKeys: string[] = []) {
+  if (rule.restriction_type.trim().toLowerCase() !== "hide" || !hasSubmoduleTarget(rule)) return false;
+  return matchesRouteTarget(rule, routeSegments[0] || "", routeSegments[1] || "", [...featureKeys, ...routeSegments.slice(2)]);
 }
 
 export function getSidebarFeatureKeysForRoute(routeSegments: string[]) {

@@ -39,6 +39,7 @@ export default function Select({
       <select
         id={selectId}
         {...props}
+        suppressHydrationWarning
         aria-invalid={error ? true : props["aria-invalid"]}
         aria-describedby={[props["aria-describedby"], hint ? `${selectId}-hint` : "", error ? `${selectId}-error` : ""].filter(Boolean).join(" ") || undefined}
         className={cn(

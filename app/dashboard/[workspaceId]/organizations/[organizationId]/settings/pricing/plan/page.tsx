@@ -6,6 +6,7 @@ import { requireSessionUser } from "@/lib/auth/session-manager";
 import { ERP_MODULES } from "@/components/erp/erp-config-registry";
 import { restrictionMatchesFeature, type FeaturePath } from "@/lib/services/platform/plan-restriction-matcher";
 import { getRestrictionsForPlans } from "@/lib/services/platform/segment-restriction-service";
+import { getMonthlyOrderQuantityLimitsForAssignments, getMonthlyRecordLimitsForSegments } from "@/lib/services/platform/segment-form-restriction-service";
 import OrganizationPricingPlanPage from "./page-content/organization-pricing-plan-page";
 
 type FeatureSummary = FeaturePath & { key: string; label: string; path: string; available: boolean };
@@ -84,22 +85,28 @@ export default async function Page({ params }: PageProps) {
     price: plan.price ? Number(plan.price) : null,
   }));
 
-  const restrictionsByPlan = await getRestrictionsForPlans(organization.id, plans);
-  const planRestrictions = plans.flatMap((plan) =>
-    (restrictionsByPlan.get(plan.id) ?? []).map((restriction) => ({
-      ...restriction,
-      plan_id: plan.id,
-    })),
-  );
+  const restrictionsBySegment = await getRestrictionsForPlans(organization.id, plans);
+  const monthlyRestrictionData = versionCatalog.versionId
+    ? await Promise.all([
+        getMonthlyRecordLimitsForSegments(versionCatalog.versionId, plans.flatMap((plan) =>
+          plan.segment_id && plan.platform_segment_id
+            ? [{ assignmentId: plan.segment_id, platformSegmentId: plan.platform_segment_id }]
+            : [],
+        )),
+        getMonthlyOrderQuantityLimitsForAssignments(plans.map((plan) => plan.segment_id).filter((id): id is string => Boolean(id))),
+      ])
+    : [new Map(), new Map()];
+  const [monthlyRecordLimits, monthlyOrderQuantityLimits] = monthlyRestrictionData;
   const allSidebarFeatures = getSidebarFeatures();
   const planFeatures: Record<string, FeatureSummary[]> = Object.fromEntries(
     plans.map((plan) => {
-      const restrictions = planRestrictions.filter((rule) => rule.plan_id === plan.id && rule.restriction_type.toLowerCase() === "block");
+      const segmentKey = plan.segment_id ?? plan.id;
+      const restrictions = restrictionsBySegment.get(segmentKey) ?? [];
       const features = allSidebarFeatures.map((feature) => {
         const blocked = feature.sub.length > 0 && restrictions.some((rule) => restrictionMatchesFeature(rule, feature));
         return { ...feature, available: !blocked };
       });
-      return [plan.id, features];
+      return [segmentKey, features];
     }),
   );
 
@@ -118,6 +125,8 @@ export default async function Page({ params }: PageProps) {
       existingSubscriptions={existingSubscriptions || []}
       currentPlanIds={currentPlanIds}
       planFeatures={planFeatures}
+      monthlyRecordLimits={Object.fromEntries(monthlyRecordLimits)}
+      monthlyOrderQuantityLimits={Object.fromEntries(monthlyOrderQuantityLimits)}
       platformVersionName={versionCatalog.versionName}
     />
   );

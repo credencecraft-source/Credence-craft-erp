@@ -15,6 +15,12 @@ type VariantRow = {
 
 type MerchandisingOrderVariantDialogProps = {
   open: boolean;
+  isLoading: boolean;
+  isCreating: boolean;
+  loadError: string;
+  createError: string;
+  sourceOrderNo: string;
+  sizeGroup: string;
   variantDraft: VariantDraft;
   variantRows: VariantRow[];
   onDraftChange: (changes: Partial<VariantDraft>) => void;
@@ -25,6 +31,12 @@ type MerchandisingOrderVariantDialogProps = {
 
 export default function MerchandisingOrderVariantDialog({
   open,
+  isLoading,
+  isCreating,
+  loadError,
+  createError,
+  sourceOrderNo,
+  sizeGroup,
   variantDraft,
   variantRows,
   onDraftChange,
@@ -49,6 +61,7 @@ export default function MerchandisingOrderVariantDialog({
             <button
               type="button"
               onClick={onClose}
+              disabled={isCreating}
               className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
               aria-label="Close order variant dialog"
             >
@@ -58,26 +71,29 @@ export default function MerchandisingOrderVariantDialog({
         </div>
 
         <div className="space-y-3 p-4">
+          {isLoading && (
+            <p role="status" className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+              Preparing source order in the background. You can enter variant details while we load.
+            </p>
+          )}
           <div className="grid gap-3 md:grid-cols-3">
             <label className="flex flex-col gap-1 text-[10px] font-semibold text-slate-700">
-              Style name
+              Source Order No
               <input
                 type="text"
-                value={variantDraft.styleName}
-                onChange={(event) => onDraftChange({ styleName: event.target.value })}
-                className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                placeholder="Enter style name"
+                value={sourceOrderNo}
+                readOnly
+                className="rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs text-slate-600"
               />
             </label>
 
             <label className="flex flex-col gap-1 text-[10px] font-semibold text-slate-700">
-              Colour
+              Size Group
               <input
                 type="text"
-                value={variantDraft.colors}
-                onChange={(event) => onDraftChange({ colors: event.target.value })}
-                className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                placeholder="Enter colour"
+                value={sizeGroup}
+                readOnly
+                className="rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs text-slate-600"
               />
             </label>
 
@@ -92,6 +108,31 @@ export default function MerchandisingOrderVariantDialog({
                 aria-label="Calculated order quantity"
               />
             </label>
+
+            <label className="flex flex-col gap-1 text-[10px] font-semibold text-slate-700">
+              Style name
+              <input
+                type="text"
+                value={variantDraft.styleName}
+                disabled={isCreating}
+                onChange={(event) => onDraftChange({ styleName: event.target.value })}
+                className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                placeholder="Enter style name"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1 text-[10px] font-semibold text-slate-700">
+              Colour
+              <input
+                type="text"
+                value={variantDraft.colors}
+                disabled={isCreating}
+                onChange={(event) => onDraftChange({ colors: event.target.value })}
+                className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                placeholder="Enter colour"
+              />
+            </label>
+
           </div>
 
           <div className="overflow-hidden rounded-lg border border-slate-200">
@@ -102,8 +143,8 @@ export default function MerchandisingOrderVariantDialog({
 
             <div className="max-h-[50vh] overflow-y-auto">
               {variantRows.length === 0 ? (
-                <p className="px-3 py-6 text-center text-xs text-slate-500">
-                  No size rows available for this order.
+                <p className={`px-3 py-6 text-center text-xs ${loadError ? "text-rose-700" : "text-slate-500"}`} role={loadError ? "alert" : "status"}>
+                  {loadError || (isLoading ? "Preparing source order..." : "No size rows available for this order.")}
                 </p>
               ) : (
                 <table className="w-full text-left text-xs">
@@ -122,6 +163,7 @@ export default function MerchandisingOrderVariantDialog({
                             type="number"
                             min="0"
                             value={row.qty}
+                            disabled={isCreating}
                             onChange={(event) => {
                               const nextValue = event.target.value;
                               onRowsChange(variantRows.map((item, itemIndex) => itemIndex === index ? { ...item, qty: nextValue } : item));
@@ -139,9 +181,13 @@ export default function MerchandisingOrderVariantDialog({
             </div>
           </div>
 
+          {createError && <p className="text-xs text-rose-700" role="alert">{createError}</p>}
+
           <div className="flex justify-end gap-2 border-t border-slate-200 pt-3">
-            <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
-            <Button variant="primary" size="sm" onClick={onConfirm}>Continue</Button>
+            <Button variant="secondary" size="sm" onClick={onClose} disabled={isCreating}>Cancel</Button>
+            <Button variant="primary" size="sm" onClick={onConfirm} disabled={isLoading || isCreating || Boolean(loadError)}>
+              {isLoading ? "Preparing..." : isCreating ? "Creating..." : "Create Order"}
+            </Button>
           </div>
         </div>
     </Modal>

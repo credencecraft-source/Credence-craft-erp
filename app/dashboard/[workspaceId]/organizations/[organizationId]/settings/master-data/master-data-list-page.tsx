@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { ArrowUpRight } from "lucide-react";
 
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
-import { getMasterModuleGroupInfo, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
+import { MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
 
 export default async function MasterDataListPage({
   params,
@@ -38,26 +39,11 @@ export default async function MasterDataListPage({
 
   const masters = MASTER_DEFINITIONS
     .filter((master) => !master.hidden)
-    .sort((left, right) => (left.moduleOrder ?? 999) - (right.moduleOrder ?? 999));
-  const masterGroups = masters.reduce<Array<{ key: string; label: string; children: Array<{ key: string; label: string; masters: typeof masters }> }>>((groups, master) => {
-    const { topLevel, topLevelLabel, subLevel, subLevelLabel } = getMasterModuleGroupInfo(master.key);
-    let topGroup = groups.find((group) => group.key === topLevel);
-    if (!topGroup) {
-      topGroup = { key: topLevel, label: topLevelLabel, children: [] };
-      groups.push(topGroup);
-    }
-    let subGroup = topGroup.children.find((group) => group.key === subLevel);
-    if (!subGroup) {
-      subGroup = { key: subLevel, label: subLevelLabel, masters: [] };
-      topGroup.children.push(subGroup);
-    }
-    subGroup.masters.push(master);
-    return groups;
-  }, []);
+    .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
 
   return (
     <Page as="div">
-      <Section className="space-y-8">
+      <Section className="space-y-6">
         <Link
           href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/organization-master-setup`}
           className="block rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 transition hover:border-emerald-400 hover:bg-emerald-100"
@@ -67,37 +53,21 @@ export default async function MasterDataListPage({
           <p className="mt-1 text-sm text-slate-700">Create starter RM category types, categories, brands, and buyers together.</p>
         </Link>
 
-        <div className="space-y-8">
-          {masterGroups.map((topGroup) => (
-            <section key={topGroup.key} aria-labelledby={`master-group-${topGroup.key}`}>
-              <div className="mb-3 border-b border-slate-200 pb-2">
-                <h2 id={`master-group-${topGroup.key}`} className="text-lg font-bold text-slate-900">{topGroup.label}</h2>
-              </div>
-              <div className="space-y-5">
-                {topGroup.children.map((subGroup) => (
-                  <div key={`${topGroup.key}-${subGroup.key}`}>
-                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">{subGroup.label}</h3>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-                      {subGroup.masters.map((master) => (
-                        <Link
-                          key={master.key}
-                          href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${master.key}`}
-                          className="group block"
-                        >
-                          <Card className="h-full px-3 py-3 transition-all duration-200 hover:border-emerald-300 hover:shadow-md">
-                            <h4 className="text-sm font-bold leading-tight text-slate-900">{master.label}</h4>
-                            <div className="mt-3 flex items-center justify-between">
-                              <span className="text-xs font-semibold text-emerald-700">Open</span>
-                              <span aria-hidden="true" className="text-sm transition-transform group-hover:translate-x-1">→</span>
-                            </div>
-                          </Card>
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" aria-label="Master data modules, sorted alphabetically">
+          {masters.map((master) => (
+            <Link
+              key={master.key}
+              href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${master.key}`}
+              className="group block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2"
+            >
+              <Card className="flex h-full min-h-32 items-start justify-between gap-4 rounded-lg border-slate-200 p-4 shadow-sm transition hover:border-emerald-300 hover:shadow-md">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold leading-5 text-slate-900">{master.label}</h2>
+                  <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-slate-600">{master.description}</p>
+                </div>
+                <ArrowUpRight aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-slate-400 transition group-hover:text-emerald-700" />
+              </Card>
+            </Link>
           ))}
         </div>
       </Section>

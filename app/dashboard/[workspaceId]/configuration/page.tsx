@@ -108,7 +108,7 @@ export default async function WorkspaceConfigurationPage({
 
         {errorMessage === "has-organizations" && (
           <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 shadow-xs" role="status">
-            <span>Please delete all your active organizations from the workspace home before deleting the workspace.</span>
+            <span>Organization records remain attached to this workspace. Contact platform support to close it while preserving ERP retention and audit controls.</span>
           </div>
         )}
 
@@ -234,7 +234,7 @@ export default async function WorkspaceConfigurationPage({
               <h2 className="text-base font-semibold text-red-900">Delete Workspace</h2>
               <p className="text-xs text-slate-600 max-w-xl">
                 {hasOrganizations
-                  ? `You currently have ${organizations.length} active organization(s). Please delete them from your workspace home before deleting the workspace.`
+                  ? `You currently have ${organizations.length} organization record(s), including any archived organizations. Workspace deletion stays blocked while those records are retained.`
                   : "All organizations have been removed. You can now safely delete your workspace."}
               </p>
             </div>

@@ -30,6 +30,7 @@ export default function Textarea({
       <textarea
         id={textareaId}
         {...props}
+        suppressHydrationWarning
         aria-invalid={error ? true : props["aria-invalid"]}
         aria-describedby={[props["aria-describedby"], hint ? `${textareaId}-hint` : "", error ? `${textareaId}-error` : ""].filter(Boolean).join(" ") || undefined}
         className={cn(

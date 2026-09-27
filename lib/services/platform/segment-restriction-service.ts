@@ -256,7 +256,7 @@ export async function getRestrictionsForPlans(
       const filteredRestrictions = restrictions.filter((restriction) =>
         restrictionMatchesBusinessTypeModule(restriction, businessType?.name ?? null),
       );
-      return [plan.id, filteredRestrictions];
+      return [plan.segment_id ?? plan.id, filteredRestrictions];
     }),
   );
 }

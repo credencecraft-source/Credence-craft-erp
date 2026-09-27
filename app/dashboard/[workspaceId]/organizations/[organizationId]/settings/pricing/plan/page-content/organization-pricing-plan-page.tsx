@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Check, LockKeyhole, Plus, ShoppingCart } from "lucide-react";
 import { getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
 
 interface Plan {
@@ -11,6 +12,7 @@ interface Plan {
   is_pricing_configured?: boolean;
   plan_name: string;
   segment_name?: string | null;
+  location_limit?: number | null;
   segment_id?: string | null;
   segment_sort_order?: number;
   segment_price?: number | null;
@@ -27,6 +29,12 @@ interface FeatureSummary {
   path: string;
   sub: string[];
   available: boolean;
+}
+
+interface MonthlyRecordLimit {
+  formKey: string;
+  label: string;
+  monthlyEntryLimit: number;
 }
 
 interface BusinessType {
@@ -51,6 +59,8 @@ interface OrganizationPricingPlanPageProps {
   existingSubscriptions?: Subscription[];
   currentPlanIds?: Record<string, string>;
   planFeatures?: Record<string, FeatureSummary[]>;
+  monthlyRecordLimits?: Record<string, MonthlyRecordLimit[]>;
+  monthlyOrderQuantityLimits?: Record<string, number>;
   workspaceId: string;
   organizationId: string;
   platformVersionName?: string | null;
@@ -62,6 +72,8 @@ export default function OrganizationPricingPlanPage({
   existingSubscriptions = [],
   currentPlanIds = {},
   planFeatures = {},
+  monthlyRecordLimits = {},
+  monthlyOrderQuantityLimits = {},
   workspaceId,
   organizationId,
   platformVersionName = null,
@@ -279,6 +291,11 @@ export default function OrganizationPricingPlanPage({
                 ? nameParts.slice(1).join(" - ")
                 : plan.plan_name;
             const displayName = plan.segment_name || tierName;
+            const previousPlan = planIndex > 0 ? currentPlans[planIndex - 1] : null;
+            const previousPlanName = previousPlan?.segment_name
+              || (previousPlan?.plan_name.includes(" - ")
+                ? previousPlan.plan_name.split(" - ").slice(1).join(" - ")
+                : previousPlan?.plan_name);
 
             const isChosen =
               isModuleSelected && currentSelectedPlanId === plan.id;
@@ -287,20 +304,29 @@ export default function OrganizationPricingPlanPage({
             const effectivePrice = plan.segment_price ?? null;
             const isFreePlan = isPricingConfigured && (!effectivePrice || Number(effectivePrice) === 0);
             const isCurrentPlan = currentPlanIds[matchedBusinessType?.id || ""] === plan.id;
-            const featureList = planFeatures[plan.id] || [];
+            const featureList = planFeatures[plan.segment_id ?? plan.id] || [];
             const linkedModule = matchedBusinessType ? getErpModuleForBusinessTypeName(matchedBusinessType.name) : null;
             const visibleFeatureList = featureList.filter((feature) => feature.sub.length > 0 && linkedModule && (feature.path === linkedModule.pathSegment || feature.path.startsWith(`${linkedModule.pathSegment}/`)));
             const availableFeatures = visibleFeatureList.filter((feature) => feature.available);
+            const restrictedFeatures = visibleFeatureList.filter((feature) => !feature.available);
+            const isModuleUnavailable = visibleFeatureList.length > 0 && availableFeatures.length === 0;
+            const planHeaderColors = ["bg-emerald-700", "bg-sky-700", "bg-amber-600", "bg-teal-700"];
+            const planHeaderColor = isModuleUnavailable ? "bg-rose-700" : planHeaderColors[planIndex % planHeaderColors.length];
             const previousFeatureKeys = new Set(
               currentPlans
                 .slice(0, planIndex)
-                .flatMap((previousPlan) => planFeatures[previousPlan.id] || [])
+                .flatMap((previousPlan) => planFeatures[previousPlan.segment_id ?? previousPlan.id] ?? [])
                 .filter((feature) => feature.available && feature.sub.length > 0 && linkedModule && (feature.path === linkedModule.pathSegment || feature.path.startsWith(`${linkedModule.pathSegment}/`)))
                 .map((feature) => feature.key),
             );
-            const addedFeatures = availableFeatures.filter((feature) => !previousFeatureKeys.has(feature.key));
-            const inheritedFeatureCount = availableFeatures.length - addedFeatures.length;
-            const unavailableFeatures = visibleFeatureList.filter((feature) => !feature.available);
+            const additionalFeatures = availableFeatures.filter((feature) => !previousFeatureKeys.has(feature.key));
+            const formRecordLimits = monthlyRecordLimits[plan.segment_id ?? plan.id] ?? [];
+            const monthlyOrderQtyLimit = linkedModule?.pathSegment === "order-management"
+              ? monthlyOrderQuantityLimits[plan.segment_id ?? ""] ?? null
+              : null;
+            const locationLimit = linkedModule?.pathSegment === "inventory-management"
+              ? plan.location_limit ?? null
+              : null;
 
             const matchedPendingSub = existingSubscriptions.some(
               (sub) =>
@@ -312,118 +338,194 @@ export default function OrganizationPricingPlanPage({
             return (
               <div
                 key={plan.id}
-                className={`relative flex min-w-[min(86vw,21rem)] snap-start flex-col justify-between rounded-xl border bg-white p-4 shadow-sm transition-all sm:min-w-[20rem] lg:min-w-[21rem] ${
+                className={`relative flex min-w-[min(86vw,21rem)] snap-start flex-col justify-between rounded-xl border p-4 shadow-sm transition-all sm:min-w-[20rem] lg:min-w-[21rem] ${
                   isChosen
                     ? "border-emerald-600 ring-2 ring-emerald-500 shadow-md"
-                    : "border-slate-200"
+                    : isModuleUnavailable
+                    ? "border-rose-200 bg-rose-50/40"
+                    : "border-slate-200 bg-white"
                 }`}
               >
                 <div className="space-y-3">
-                  <div>
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-bold leading-5 text-slate-800">
-                        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded bg-slate-100 px-1 text-[10px] font-bold text-slate-500">{String(planIndex + 1).padStart(2, "0")}</span>
-                        {displayName}
-                        <span className="text-sm font-extrabold text-slate-950">
+                  <div className={`-mx-4 -mt-4 mb-1 rounded-t-[11px] px-4 py-3.5 text-white ${planHeaderColor}`}>
+                    {isPricingConfigured && !isModuleUnavailable && !isFreePlan && (
+                      <div className="mb-2 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            !isCurrentPlan &&
+                            !matchedPendingSub &&
+                            handleSelectPlan(plan.id, effectivePrice)
+                          }
+                          disabled={isCurrentPlan || matchedPendingSub}
+                          aria-label={isChosen ? `${displayName} added to cart` : `Add ${displayName} to cart`}
+                          className={`inline-flex items-center gap-1.5 rounded-lg border border-white/70 px-3 py-1.5 text-[10px] font-bold shadow-md transition-colors ${
+                            isCurrentPlan || matchedPendingSub
+                              ? "cursor-not-allowed bg-white/70 text-slate-500"
+                              : isChosen
+                              ? "bg-emerald-50 text-emerald-800 hover:bg-white"
+                              : "bg-white text-emerald-800 hover:bg-emerald-50"
+                          }`}
+                        >
+                          {isChosen ? <Check aria-hidden="true" className="h-3.5 w-3.5" /> : <ShoppingCart aria-hidden="true" className="h-3.5 w-3.5" />}
+                          {isCurrentPlan
+                            ? "Active Plan"
+                            : matchedPendingSub
+                            ? "Awaiting payment"
+                            : isChosen
+                            ? "Added to Cart"
+                            : "Add to Cart"}
+                        </button>
+                      </div>
+                    )}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="truncate text-base font-bold leading-5 text-white">{displayName}</h3>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-extrabold text-white">
                           {!isPricingConfigured
-                            ? "Pricing not configured"
+                            ? "Not priced"
                             : effectivePrice
-                            ? `- ₹${Number(effectivePrice).toLocaleString("en-IN")} / mo`
-                            : "- Free"}
-                        </span>
-                      </h3>
-
-                      {isCurrentPlan && (
-                        <span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-200 rounded-full uppercase tracking-wider">
-                          Active
-                        </span>
-                      )}
-                      {!isCurrentPlan && matchedPendingSub && (
-                        <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded-full uppercase tracking-wider">
-                          Awaiting payment
-                        </span>
-                      )}
+                            ? `₹${Number(effectivePrice).toLocaleString("en-IN")}`
+                            : "Free"}
+                        </p>
+                        {isPricingConfigured && effectivePrice !== 0 && (
+                          <p className="text-[9px] font-medium text-white/75">per month</p>
+                        )}
+                        {isModuleUnavailable ? (
+                          <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-white/30 bg-black/10 px-2 py-0.5 text-[9px] font-semibold">
+                            <LockKeyhole aria-hidden="true" className="h-3 w-3" />
+                            Unavailable
+                          </span>
+                        ) : isCurrentPlan ? (
+                          <span className="mt-1 inline-flex rounded-full border border-white/30 bg-black/10 px-2 py-0.5 text-[9px] font-semibold">Active</span>
+                        ) : matchedPendingSub ? (
+                          <span className="mt-1 inline-flex rounded-full border border-white/30 bg-black/10 px-2 py-0.5 text-[9px] font-semibold">Awaiting payment</span>
+                        ) : null}
+                      </div>
                     </div>
-
+                    {previousPlanName && (
+                      <div title={`Everything from ${previousPlanName}, plus additional features`} className="mt-2 flex max-w-full items-center gap-2 rounded-lg border border-emerald-100 bg-white px-2.5 py-2 shadow-sm">
+                        <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700">
+                          <Plus aria-hidden="true" className="h-3.5 w-3.5" />
+                        </span>
+                        <span className="min-w-0 text-[10px] leading-4 text-slate-600">
+                          Everything from <span className="font-bold text-slate-900">{previousPlanName}</span>
+                          <span className="font-semibold text-emerald-700"> + additional features</span>
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="border-t border-slate-100 pt-3">
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Included access</p>
-                          <p className="mt-1 text-[11px] font-semibold text-slate-700">
-                            {planIndex === 0 ? "Base access" : `Free + ${addedFeatures.length} added`}
-                          </p>
+                    <div className={`rounded-lg border p-3 ${isModuleUnavailable ? "border-rose-200 bg-rose-50/40" : "border-slate-200 bg-slate-50/60"}`}>
+                      <section>
+                        <div className="mb-2 flex items-center gap-2">
+                          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">1</span>
+                          <h4 className="text-xs font-semibold text-slate-800">Module Access</h4>
                         </div>
-                        <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-slate-600 shadow-sm">
-                          {availableFeatures.length} available
-                        </span>
-                      </div>
-                      <div className="mt-2 space-y-1.5">
-                        {addedFeatures.length > 0 ? (
-                          <>
-                            <p className="px-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700">
-                              {planIndex === 0 ? "Available features" : "Added in this tier"}
+                        <div className="space-y-1.5">
+                          {visibleFeatureList.length > 0 ? (
+                            <>
+                              {planIndex > 0 && additionalFeatures.length === 0 && restrictedFeatures.length === 0 && availableFeatures.length > 0 && (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-800">
+                                  <Check aria-hidden="true" className="h-3.5 w-3.5" />
+                                  Full Module Access
+                                </span>
+                              )}
+                              {(planIndex === 0 ? availableFeatures : additionalFeatures).map((feature) => (
+                                <div key={feature.key} className="flex items-center justify-between gap-2 rounded-md border border-emerald-100 bg-white px-2.5 py-2 text-[11px] font-medium text-slate-700">
+                                  <span className="truncate">{feature.label}</span>
+                                  <Check aria-label="Available" className="h-4 w-4 shrink-0 text-emerald-600" />
+                                </div>
+                              ))}
+                              {restrictedFeatures.length > 0 && (
+                                <>
+                                  <p className="px-1 pt-1 text-[10px] font-semibold text-rose-700">Restricted features</p>
+                                  {restrictedFeatures.map((feature) => (
+                                    <div key={feature.key} title={`${feature.label} is restricted in this segment`} className="flex items-center justify-between gap-2 rounded-md border border-rose-200 bg-white px-2.5 py-2 text-[11px] font-medium text-rose-800">
+                                      <span className="truncate">{feature.label}</span>
+                                      <span className="inline-flex shrink-0 items-center gap-1 text-[10px] font-bold text-rose-700">
+                                        <LockKeyhole aria-hidden="true" className="h-3.5 w-3.5" />
+                                        Restricted
+                                      </span>
+                                    </div>
+                                  ))}
+                                </>
+                              )}
+                            </>
+                          ) : (
+                            <p className="rounded-md border border-slate-200 bg-white px-2.5 py-2 text-[11px] text-slate-500">
+                              No module features are configured for this business type.
                             </p>
-                            {addedFeatures.map((feature) => (
-                              <div key={feature.key} className="flex items-center gap-2 rounded-lg border border-emerald-100 bg-white px-2.5 py-2 text-[11px] font-medium text-slate-700">
-                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-                                <span className="truncate">{feature.label}</span>
+                          )}
+                        </div>
+                      </section>
+
+                          {formRecordLimits.length > 0 && (
+                        <section className="mt-3 border-t border-slate-200 pt-3">
+                          <div className="mb-2 flex items-center gap-2">
+                            <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">2</span>
+                            <h4 className="text-xs font-semibold text-slate-800">Record Limits</h4>
+                          </div>
+                          <div className="space-y-1.5">
+                            {formRecordLimits.map((form) => (
+                              <div key={form.formKey} className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-[11px]">
+                                <span className="truncate font-medium text-slate-700">{form.label}</span>
+                                <span className="shrink-0 font-semibold text-slate-600">
+                                  {form.monthlyEntryLimit.toLocaleString("en-IN")} records
+                                </span>
                               </div>
                             ))}
-                          </>
-                        ) : (
-                          <p className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] font-medium text-slate-500">
-                            No added features in this tier.
-                          </p>
-                        )}
-                        {unavailableFeatures.length > 0 && (
-                          <p className="rounded-lg border border-rose-100 bg-rose-50 px-2.5 py-2 text-[11px] font-medium text-rose-700">
-                            {unavailableFeatures.length} restricted feature{unavailableFeatures.length === 1 ? "" : "s"} for this tier.
-                          </p>
-                        )}
-                      </div>
+                          </div>
+                        </section>
+                      )}
+
+                      {(monthlyOrderQtyLimit !== null || locationLimit !== null) && (
+                        <section className="mt-3 border-t border-slate-200 pt-3">
+                          <div className="mb-2 flex items-center gap-2">
+                            <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">{formRecordLimits.length > 0 ? "3" : "2"}</span>
+                            <h4 className="text-xs font-semibold text-slate-800">Custom Restrictions</h4>
+                          </div>
+                          <div className="space-y-1.5">
+                            {monthlyOrderQtyLimit !== null && (
+                              <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px]">
+                                <span className="font-medium text-slate-800">Order Qty Limit</span>
+                                <span className="shrink-0 font-semibold text-amber-900">{monthlyOrderQtyLimit.toLocaleString("en-IN")} PCS PER/MONTH</span>
+                              </div>
+                            )}
+                            {locationLimit !== null && (
+                              <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px]">
+                                <span className="font-medium text-slate-800">Location Limit</span>
+                                <span className="shrink-0 font-semibold text-amber-900">{locationLimit.toLocaleString("en-IN")} locations</span>
+                              </div>
+                            )}
+                          </div>
+                        </section>
+                      )}
                     </div>
                   </div>
                 </div>
 
-                <div className="mt-5 flex flex-col gap-2 border-t border-slate-100 pt-3">
+                {(!isPricingConfigured || isModuleUnavailable || isFreePlan) && (
+                  <div className="mt-5 flex flex-col gap-2 border-t border-slate-100 pt-3">
                   {!isPricingConfigured ? (
                     <div className="w-full rounded-lg border border-amber-200 bg-amber-50 py-2.5 text-center text-xs font-semibold text-amber-700">
                       Configure pricing for this version segment.
+                    </div>
+                  ) : isModuleUnavailable ? (
+                    <div className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-rose-200 bg-rose-100 py-2.5 text-xs font-semibold text-rose-800">
+                      <LockKeyhole aria-hidden="true" className="h-3.5 w-3.5" />
+                      Module unavailable
                     </div>
                   ) : isFreePlan ? (
                     <div className="w-full rounded-lg border border-emerald-200 bg-emerald-50 py-2.5 text-center text-xs font-semibold text-emerald-700">
                       Included by default. No subscription required.
                     </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        !isCurrentPlan &&
-                        !matchedPendingSub &&
-                        handleSelectPlan(plan.id, effectivePrice)
-                      }
-                      disabled={isCurrentPlan || matchedPendingSub}
-                      className={`w-full rounded-lg py-2.5 text-xs font-semibold transition-colors ${
-                        isCurrentPlan || matchedPendingSub
-                          ? "bg-slate-300 text-slate-500 cursor-not-allowed"
-                          : isChosen
-                          ? "bg-emerald-600 text-white shadow-sm cursor-pointer"
-                          : "bg-slate-100 text-slate-700 hover:bg-slate-200 cursor-pointer"
-                      }`}
-                    >
-                      {isCurrentPlan
-                        ? "Active Plan"
-                        : matchedPendingSub
-                        ? "Awaiting payment"
-                        : isChosen
-                        ? "Added to Cart"
-                        : `Add to Cart (${displayName})`}
-                    </button>
-                  )}
-                </div>
+                  ) : null}
+                  </div>
+                )}
               </div>
             );
           })}

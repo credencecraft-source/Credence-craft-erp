@@ -89,11 +89,16 @@ function isMissingTableError(error: unknown) {
   return message.includes("does not exist") || message.includes("P2021") || message.includes("table") && message.includes("public");
 }
 
-export async function listOrganizationsForUser(workspaceUserId: string) {
+async function findOrganizationsForUser(
+  workspaceUserId: string,
+  activeOnly: boolean,
+  cursor?: string,
+  take?: number,
+) {
   try {
     const organizations = await prisma.organization.findMany({
       where: {
-        is_active: true,
+        ...(activeOnly ? { is_active: true, approval_status: "APPROVED" } : {}),
         memberships: {
           some: {
             workspace_user_id: workspaceUserId,
@@ -101,22 +106,40 @@ export async function listOrganizationsForUser(workspaceUserId: string) {
           },
         },
       },
-      orderBy: {
-        created_at: "desc",
-      },
-      include: {
+      orderBy: [{ created_at: "desc" }, { id: "desc" }],
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      ...(take ? { take } : {}),
+      select: {
+        id: true,
+        organization_id: true,
+        organization_name: true,
+        gst_number: true,
+        approval_status: true,
+        is_active: true,
         memberships: {
           where: { workspace_user_id: workspaceUserId, is_active: true },
           select: { role: true },
           take: 1,
         },
+        roleDefinitions: { select: { role_key: true, label: true } },
+        rolePermissions: {
+          where: { permission: "ORGANIZATION_SETTINGS" },
+          select: { role: true },
+        },
       },
     });
 
-    return organizations.map(({ memberships, ...organization }) => ({
-      ...organization,
-      membership_role: memberships[0]?.role ?? "VIEWER",
-    }));
+    return organizations.map(({ memberships, roleDefinitions, rolePermissions, ...organization }) => {
+      const role = memberships[0]?.role ?? "VIEWER";
+      const roleLabel = roleDefinitions.find((definition) => definition.role_key === role)?.label
+        ?? role.split("_").map((word) => word.charAt(0) + word.slice(1).toLowerCase()).join(" ");
+      return {
+        ...organization,
+        membership_role: role,
+        membership_role_label: roleLabel,
+        can_manage_settings: role === "OWNER" || role === "ADMIN" || rolePermissions.some((item) => item.role === role),
+      };
+    });
   } catch (error) {
     if (isMissingTableError(error)) {
       return [];
@@ -124,6 +147,51 @@ export async function listOrganizationsForUser(workspaceUserId: string) {
 
     throw error;
   }
+}
+
+export async function listOrganizationsForUser(workspaceUserId: string) {
+  return findOrganizationsForUser(workspaceUserId, false);
+}
+
+export async function listActiveOrganizationsForUser(workspaceUserId: string) {
+  return findOrganizationsForUser(workspaceUserId, true);
+}
+
+export async function listWorkspaceOrganizationPage(workspaceUserId: string, cursor?: string) {
+  const pageSize = 24;
+  const rowsPromise = findOrganizationsForUser(workspaceUserId, false, cursor, pageSize + 1);
+  const toPage = (rows: Awaited<typeof rowsPromise>) => {
+    const hasMore = rows.length > pageSize;
+    const organizations = rows.slice(0, pageSize);
+    return {
+      organizations,
+      nextCursor: hasMore ? organizations[organizations.length - 1]?.id ?? null : null,
+    };
+  };
+
+  if (cursor) {
+    return { ...toPage(await rowsPromise), totalCount: null, activeCount: null };
+  }
+
+  const statusCountsPromise = prisma.organization.groupBy({
+        by: ["is_active", "approval_status"],
+        where: {
+          memberships: {
+            some: { workspace_user_id: workspaceUserId, is_active: true },
+          },
+        },
+        _count: { _all: true },
+      }).catch((error: unknown) => {
+        if (isMissingTableError(error)) return [];
+        throw error;
+      });
+  const [rows, statusCounts] = await Promise.all([rowsPromise, statusCountsPromise]);
+  const totalCount = statusCounts.reduce((total, item) => total + item._count._all, 0);
+  const activeCount = statusCounts.reduce(
+    (total, item) => total + (item.is_active && item.approval_status === "APPROVED" ? item._count._all : 0),
+    0,
+  );
+  return { ...toPage(rows), totalCount, activeCount };
 }
 
 export async function createOrganization(input: OrganizationCreateInput) {
@@ -231,6 +299,7 @@ export async function getOrganizationForUser(workspaceUserId: string, organizati
   return prisma.organization.findFirst({
     where: {
       organization_id: organizationId,
+      is_active: true,
       memberships: {
         some: {
           workspace_user_id: workspaceUserId,
@@ -245,6 +314,27 @@ export async function getOrganizationForUser(workspaceUserId: string, organizati
           modules: true,
         },
       },
+    },
+  });
+}
+
+export async function getOrganizationShellContext(workspaceUserId: string, organizationId: string) {
+  return prisma.organization.findFirst({
+    where: {
+      organization_id: organizationId,
+      is_active: true,
+      memberships: {
+        some: {
+          workspace_user_id: workspaceUserId,
+          is_active: true,
+        },
+      },
+    },
+    select: {
+      id: true,
+      organization_id: true,
+      organization_name: true,
+      approval_status: true,
     },
   });
 }
@@ -286,41 +376,65 @@ async function deleteOrganizationDependencies(transaction: Prisma.TransactionCli
   });
 }
 
-export async function deleteOrganization(organizationId: string, workspaceUserId: string) {
-  const organization = await prisma.organization.findFirst({
-    where: {
-      id: organizationId,
-      memberships: {
-        some: {
-          workspace_user_id: workspaceUserId,
-          is_active: true,
+export async function archiveOrganization(
+  organizationId: string,
+  workspaceUserId: string,
+  confirmationName: string,
+) {
+  return prisma.$transaction(async (transaction) => {
+    const organization = await transaction.organization.findFirst({
+      where: {
+        id: organizationId,
+        memberships: {
+          some: { workspace_user_id: workspaceUserId, role: "OWNER", is_active: true },
         },
       },
-    },
-  });
-
-  if (!organization) {
-    throw new Error("Organization not found.");
-  }
-
-  const membership = await requireOrganizationAccess(workspaceUserId, organizationId, ["OWNER"]);
-  const orgToDelete = await prisma.organization.findUnique({
-    where: { id: membership.organization_id },
-  });
-
-  if (!orgToDelete) {
-    throw new Error("Organization not found.");
-  }
-
-  await prisma.$transaction(async (transaction) => {
-    await transaction.$executeRaw`SELECT set_config('app.skip_organization_audit', 'true', true)`;
-    await deleteOrganizationDependencies(transaction, orgToDelete.id);
-    await transaction.organization.delete({
-      where: { id: orgToDelete.id },
+      select: { id: true, organization_id: true, organization_name: true, approval_status: true },
     });
-  });
 
-  return { deleted: true, organizationId: organization.organization_id };
+    if (!organization) throw new Error("Organization not found or owner access required.");
+    if (organization.organization_name !== confirmationName) {
+      throw new Error("Organization name confirmation did not match.");
+    }
+    if (organization.approval_status === "ARCHIVED") {
+      throw new Error("Organization is already archived.");
+    }
+
+    await transaction.$executeRaw`SELECT set_config('app.user_id', ${workspaceUserId}, true)`;
+    const updated = await transaction.organization.updateMany({
+      where: { id: organization.id, approval_status: organization.approval_status },
+      data: { approval_status: "ARCHIVED", is_active: false },
+    });
+    if (updated.count !== 1) throw new Error("Organization changed during archival. Refresh and try again.");
+
+    return { archived: true, organizationId: organization.organization_id };
+  });
+}
+
+export async function restoreOrganization(organizationId: string, workspaceUserId: string) {
+  return prisma.$transaction(async (transaction) => {
+    const organization = await transaction.organization.findFirst({
+      where: {
+        id: organizationId,
+        approval_status: "ARCHIVED",
+        memberships: {
+          some: { workspace_user_id: workspaceUserId, role: "OWNER", is_active: true },
+        },
+      },
+      select: { id: true, organization_id: true },
+    });
+
+    if (!organization) throw new Error("Archived organization not found or owner access required.");
+
+    await transaction.$executeRaw`SELECT set_config('app.user_id', ${workspaceUserId}, true)`;
+    const updated = await transaction.organization.updateMany({
+      where: { id: organization.id, approval_status: "ARCHIVED" },
+      data: { approval_status: "PENDING_APPROVAL", is_active: false },
+    });
+    if (updated.count !== 1) throw new Error("Organization changed during restoration. Refresh and try again.");
+
+    return { restored: true, organizationId: organization.organization_id };
+  });
 }
 
 export async function listOrganizationMembers(organizationId: string, workspaceUserId: string) {
@@ -411,6 +525,7 @@ export async function requireOrganizationAccess(
         { organization_id: organizationId },
         { organization: { organization_id: organizationId } },
       ],
+      organization: { is_active: true },
       workspace_user_id: workspaceUserId,
       is_active: true,
     },
@@ -439,6 +554,7 @@ export async function requireOrganizationContext(
   const organization = await prisma.organization.findFirst({
     where: {
       organization_id: publicOrganizationId,
+      is_active: true,
       memberships: {
         some: {
           workspace_user_id: workspaceUserId,
@@ -536,7 +652,7 @@ export async function deleteOrganizationRole(organizationId: string, workspaceUs
   if (role.is_system || role.role_key === "OWNER") throw new Error("Built-in roles cannot be deleted.");
   const [memberCount, invitationCount] = await Promise.all([
     prisma.organizationMembership.count({ where: { organization_id: membership.organization_id, role: roleKey, is_active: true } }),
-    prisma.organizationInvitation.count({ where: { organization_id: membership.organization_id, role: roleKey, status: "PENDING" } }),
+    prisma.organizationInvitation.count({ where: { organization_id: membership.organization_id, role: roleKey, status: "PENDING", expires_at: { gt: new Date() } } }),
   ]);
   if (memberCount > 0 || invitationCount > 0) throw new Error("Reassign members and cancel pending invitations before deleting this role.");
   await prisma.organizationRoleDefinition.delete({ where: { id: role.id } });
@@ -549,12 +665,25 @@ export async function updateOrganizationApprovalStatus(organizationId: string, a
     throw new Error("Select a valid organization approval status.");
   }
 
-  return prisma.organization.update({
-    where: { id: organizationId },
-    data: {
-      approval_status: normalizedStatus,
-      is_active: normalizedStatus === "APPROVED",
-    },
+  return prisma.$transaction(async (transaction) => {
+    const updated = await transaction.organization.updateMany({
+      where: { id: organizationId, approval_status: { not: "ARCHIVED" } },
+      data: {
+        approval_status: normalizedStatus,
+        is_active: normalizedStatus === "APPROVED",
+      },
+    });
+    if (updated.count !== 1) {
+      const existing = await transaction.organization.findUnique({
+        where: { id: organizationId },
+        select: { id: true, approval_status: true },
+      });
+      if (!existing) throw new Error("Organization not found.");
+      throw new Error("Restore the organization from its workspace before changing its approval status.");
+    }
+    const organization = await transaction.organization.findUnique({ where: { id: organizationId } });
+    if (!organization) throw new Error("Organization not found.");
+    return organization;
   });
 }
 

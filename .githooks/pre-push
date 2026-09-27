@@ -12,4 +12,6 @@ do
   esac
 done
 
+npm run qa || exit $?
+
 exit 0

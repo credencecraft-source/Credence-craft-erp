@@ -28,7 +28,7 @@ import { MasterModuleSwitcher } from "@/components/master-data/master-module-swi
 import { SupportTicketTrigger } from "@/components/organizations/support-ticket-trigger";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
-import { getSidebarFeatureKeysForRoute, normalizeRestrictionPart, restrictionMatchesRoute } from "@/lib/services/platform/plan-restriction-matcher";
+import { getSidebarFeatureKeysForRoute, normalizeRestrictionPart, restrictionMatchesHiddenRoute, restrictionMatchesRoute } from "@/lib/services/platform/plan-restriction-matcher";
 
 type SubItem = {
   key: string;
@@ -112,6 +112,24 @@ export function MasterModuleWrapper({
       }
     }
     return null;
+  };
+
+  const checkIsHidden = (targetPath: string) => {
+    if (!restrictions || !restrictions.length) return false;
+
+    const orgIndex = targetPath.indexOf(organizationId);
+    if (orgIndex === -1) return false;
+
+    const subPath = targetPath.substring(orgIndex + organizationId.length).replace(/^\/+/, "");
+    const segments = subPath.split("/").filter(Boolean);
+    const featureKeys = getSidebarFeatureKeysForRoute(segments);
+    const targetModule = normalizeRestrictionPart(segments[0] || "");
+
+    return restrictions.some((rule: any) => {
+      const owningModule = normalizeRestrictionPart(rule.plan_module_path || "");
+      if (owningModule && owningModule !== targetModule) return false;
+      return restrictionMatchesHiddenRoute(rule, segments, featureKeys);
+    });
   };
 
   const currentBlockInfo = useMemo(() => {
@@ -254,6 +272,7 @@ export function MasterModuleWrapper({
     exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
 
   const renderTreeItem = (item: SubItem, level = 0) => {
+    if (checkIsHidden(item.href)) return null;
     const active = isActive(item.href, true);
     const blockInfo = checkIsBlocked(item.href);
     const isBlocked = Boolean(blockInfo);
@@ -323,7 +342,10 @@ export function MasterModuleWrapper({
   };
 
   return (
-    <div className="flex h-screen min-w-0 overflow-hidden bg-slate-100">
+    <div
+      className="flex h-screen min-w-0 overflow-hidden bg-slate-100"
+      style={{ "--organization-sidebar-width": sidebarOpen ? "240px" : "60px" } as React.CSSProperties}
+    >
       <motion.aside
         initial={false}
         animate={{ width: sidebarOpen ? 240 : 60 }}

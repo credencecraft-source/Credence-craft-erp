@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import Button from "@/components/ui/Button";
 
 type Invitation = {
   id: string;
@@ -27,6 +28,9 @@ export default function WorkspaceNotificationDashboardPage() {
   const [activeType, setActiveType] = useState<NotificationType>("orders");
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [shares, setShares] = useState<OrderShare[]>([]);
+  const [shareCount, setShareCount] = useState(0);
+  const [nextShareCursor, setNextShareCursor] = useState<string | null>(null);
+  const [loadingMoreShares, setLoadingMoreShares] = useState(false);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [destinationByShare, setDestinationByShare] = useState<Record<string, string>>({});
@@ -35,18 +39,33 @@ export default function WorkspaceNotificationDashboardPage() {
 
   async function loadNotifications() {
     setLoading(true);
-    const [invitationResponse, organizationResponse, shareResponse, ticketResponse] = await Promise.all([
-      fetch("/api/workspace/invitations", { cache: "no-store" }),
-      fetch("/api/organizations", { cache: "no-store" }),
-      fetch("/api/workspace/order-shares", { cache: "no-store" }),
-      fetch("/api/workspace/support-tickets", { cache: "no-store" }),
-    ]);
+    try {
+      const responses = await Promise.all([
+        fetch("/api/workspace/invitations", { cache: "no-store" }),
+        fetch("/api/organizations", { cache: "no-store" }),
+        fetch("/api/workspace/order-shares", { cache: "no-store" }),
+        fetch("/api/workspace/support-tickets", { cache: "no-store" }),
+      ]);
+      const [invitationResult, organizationResult, shareResult, ticketResult] = await Promise.all(
+        responses.map((response) => response.ok ? response.json() : Promise.resolve(null)),
+      );
 
-    if (invitationResponse.ok) setInvitations((await invitationResponse.json()).invitations || []);
-    if (organizationResponse.ok) setOrganizations((await organizationResponse.json()).organizations || []);
-    if (shareResponse.ok) setShares((await shareResponse.json()).shares || []);
-    if (ticketResponse.ok) setTickets((await ticketResponse.json()).tickets || []);
-    setLoading(false);
+      if (invitationResult) setInvitations(invitationResult.invitations || []);
+      if (organizationResult) setOrganizations(organizationResult.organizations || []);
+      if (shareResult) {
+        setShares(shareResult.shares || []);
+        setShareCount(shareResult.totalCount ?? shareResult.shares?.length ?? 0);
+        setNextShareCursor(shareResult.nextCursor ?? null);
+      }
+      if (ticketResult) setTickets(ticketResult.tickets || []);
+      if (responses.some((response) => !response.ok)) {
+        setMessage("Some notifications could not be loaded. Refresh to try again.");
+      }
+    } catch {
+      setMessage("Notifications could not be loaded. Check your connection and try again.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -54,6 +73,22 @@ export default function WorkspaceNotificationDashboardPage() {
       void loadNotifications();
     });
   }, []);
+
+  async function loadMoreShares() {
+    if (!nextShareCursor || loadingMoreShares) return;
+    setLoadingMoreShares(true);
+    try {
+      const response = await fetch(`/api/workspace/order-shares?cursor=${encodeURIComponent(nextShareCursor)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error("Unable to load more order requests.");
+      const result = await response.json();
+      setShares((current) => [...current, ...(result.shares || [])]);
+      setNextShareCursor(result.nextCursor ?? null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to load more order requests.");
+    } finally {
+      setLoadingMoreShares(false);
+    }
+  }
 
   async function acceptInvitation(token: string) {
     const response = await fetch("/api/workspace/invitations", {
@@ -83,7 +118,7 @@ export default function WorkspaceNotificationDashboardPage() {
     if (response.ok) void loadNotifications();
   }
 
-  const total = shares.length + invitations.length + tickets.length;
+  const total = shareCount + invitations.length + tickets.length;
   const isOrders = activeType === "orders";
   const isInvitations = activeType === "invitations";
 
@@ -102,7 +137,7 @@ export default function WorkspaceNotificationDashboardPage() {
           <nav aria-label="Notification types" className="space-y-1">
             <button type="button" onClick={() => setActiveType("orders")} className={`flex w-full items-center justify-between rounded-lg px-3 py-3 text-left text-sm font-semibold transition ${isOrders ? "bg-emerald-50 text-emerald-800" : "text-slate-600 hover:bg-slate-50"}`}>
               <span className="flex items-center gap-3"><span aria-hidden="true">↗</span> Orders</span>
-              {shares.length > 0 && <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] text-white">{shares.length}</span>}
+              {shareCount > 0 && <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] text-white">{shareCount}</span>}
             </button>
             <button type="button" onClick={() => setActiveType("invitations")} className={`flex w-full items-center justify-between rounded-lg px-3 py-3 text-left text-sm font-semibold transition ${isInvitations ? "bg-emerald-50 text-emerald-800" : "text-slate-600 hover:bg-slate-50"}`}>
               <span className="flex items-center gap-3"><span aria-hidden="true">✉</span> Invitations</span>
@@ -119,13 +154,15 @@ export default function WorkspaceNotificationDashboardPage() {
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Request queue</p>
               <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">{isOrders ? "Order requests" : isInvitations ? "Organization invitations" : "Support tickets"}</h2>
             </div>
-            <span className="text-xs text-slate-500">{isOrders ? shares.length : isInvitations ? invitations.length : tickets.length} open</span>
+            <span className="text-xs text-slate-500">{isOrders ? shareCount : isInvitations ? invitations.length : tickets.length} open</span>
           </div>
 
           {message && <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800" role="status">{message}</div>}
           {loading ? <p className="py-16 text-center text-sm text-slate-500">Loading requests...</p> : isOrders ? (
             shares.length === 0 ? <EmptyState label="No order requests" detail="Shared orders will appear here when another organization sends one to your workspace." /> :
-              <div className="mt-6 space-y-3">{shares.map((share) => <article key={share.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><p className="text-sm font-bold text-slate-900">Order {share.sourceOrder.orderNo}</p><p className="mt-1 text-sm text-slate-500">Shared by {share.sourceOrganization.organization_name}{share.sourceOrder.brand ? ` · ${share.sourceOrder.brand}` : ""}</p>{share.sourceOrder.orderQty != null && <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Quantity <span className="ml-1 text-slate-700">{share.sourceOrder.orderQty.toLocaleString()}</span></p>}</div><div className="w-full max-w-sm"><label className="text-xs font-semibold text-slate-600" htmlFor={`destination-${share.id}`}>Create copy in</label><select id={`destination-${share.id}`} value={destinationByShare[share.id] || ""} onChange={(event) => setDestinationByShare((current) => ({ ...current, [share.id]: event.target.value }))} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"><option value="">Select organization</option>{organizations.map((organization) => <option key={organization.organization_id} value={organization.organization_id}>{organization.organization_name}</option>)}</select><div className="mt-3 flex justify-end gap-2"><button type="button" onClick={() => void processShare(share.id, "reject")} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">Reject</button><button type="button" onClick={() => void processShare(share.id, "accept")} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700">Accept and create</button></div></div></div></article>)}</div>
+              <div className="mt-6 space-y-3">{shares.map((share) => <article key={share.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><p className="text-sm font-bold text-slate-900">Order {share.sourceOrder.orderNo}</p><p className="mt-1 text-sm text-slate-500">Shared by {share.sourceOrganization.organization_name}{share.sourceOrder.brand ? ` · ${share.sourceOrder.brand}` : ""}</p>{share.sourceOrder.orderQty != null && <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Quantity <span className="ml-1 text-slate-700">{share.sourceOrder.orderQty.toLocaleString()}</span></p>}</div><div className="w-full max-w-sm"><label className="text-xs font-semibold text-slate-600" htmlFor={`destination-${share.id}`}>Create copy in</label><select id={`destination-${share.id}`} value={destinationByShare[share.id] || ""} onChange={(event) => setDestinationByShare((current) => ({ ...current, [share.id]: event.target.value }))} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"><option value="">Select organization</option>{organizations.map((organization) => <option key={organization.organization_id} value={organization.organization_id}>{organization.organization_name}</option>)}</select><div className="mt-3 flex justify-end gap-2"><button type="button" onClick={() => void processShare(share.id, "reject")} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">Reject</button><button type="button" onClick={() => void processShare(share.id, "accept")} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700">Accept and create</button></div></div></div></article>)}
+                {nextShareCursor && <div className="flex justify-center pt-2"><Button type="button" variant="secondary" onClick={() => void loadMoreShares()} disabled={loadingMoreShares}>{loadingMoreShares ? "Loading..." : "Load more order requests"}</Button></div>}
+              </div>
           ) : isInvitations ? invitations.length === 0 ? <EmptyState label="No invitations" detail="Organization invitations will appear here when someone adds you to their team." /> :
             <div className="mt-6 space-y-3">{invitations.map((invitation) => <article key={invitation.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-bold text-slate-900">Join {invitation.organization.organization_name}</p><p className="mt-1 text-sm text-slate-500">{invitation.invitedBy.full_name} invited you as <span className="font-semibold text-slate-700">{invitation.role}</span>.</p></div><div className="flex shrink-0 gap-2"><Link href={`/dashboard/invitations/${invitation.token}`} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">View</Link><button type="button" onClick={() => void acceptInvitation(invitation.token)} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700">Accept invitation</button></div></div></article>)}</div>
           : tickets.length === 0 ? <EmptyState label="No support tickets" detail="Your support conversations will appear here after you contact the activation team." /> : <div className="mt-6 space-y-3">{tickets.map((ticket) => <Link key={ticket.id} href={`/dashboard/${workspaceId}/notifications/tickets/${ticket.id}`} className="block rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:border-emerald-300"><div className="flex items-center justify-between gap-4"><div><p className="text-sm font-bold text-slate-900">{ticket.subject}</p><p className="mt-1 text-xs text-slate-500">Ticket {ticket.ticket_number.slice(0, 8)} · {new Date(ticket.created_at).toLocaleString()}</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{ticket.status.replace("_", " ")}</span></div></Link>)}</div>}
