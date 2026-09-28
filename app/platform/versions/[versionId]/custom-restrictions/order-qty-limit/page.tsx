@@ -20,8 +20,8 @@ export default async function OrderQuantityLimitRestrictionPage({
 }) {
   await requirePlatformSessionAdmin();
   const [{ versionId }, query] = await Promise.all([params, searchParams]);
-  const versions = await listOrderQuantityLimits();
-  if (!versions.some((version) => version.id === versionId)) notFound();
+  const versions = await listOrderQuantityLimits(versionId);
+  if (versions.length === 0) notFound();
 
   async function saveLimitsAction(formData: FormData) {
     "use server";

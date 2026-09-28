@@ -37,6 +37,7 @@ model Organization {
   organization_id               String                         @unique @default(uuid())
   organization_name             String                         @db.VarChar(255)
   gst_number                    String                         @db.VarChar(50)
+  mobile_number                 String?                        @db.VarChar(50)
   address_line_1                String?                        @db.VarChar(255)
   address_line_2                String?                        @db.VarChar(255)
   city                          String?                        @db.VarChar(100)
@@ -113,6 +114,7 @@ model Organization {
   roleDefinitions               OrganizationRoleDefinition[]
   supportTickets                SupportTicket[]
   orderNumberCounter            OrganizationOrderCounter?
+  dummyDataBatch                OrganizationDummyDataBatch?
   procurementDocumentCounters   ProcurementDocumentCounter[]
   challanNumberConfigurations   ChallanNumberConfiguration[]
   inventoryReceipts             InventoryReceipt[]
@@ -1371,6 +1373,20 @@ model OrganizationOrderCounter {
   organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
   @@map("organization_order_counters")
+}
+
+model OrganizationDummyDataBatch {
+  id                 String       @id @default(cuid())
+  organization_id    String       @unique
+  status             String       @default("EMPTY") @db.VarChar(20)
+  sample_order_id    String?      @unique
+  master_record_ids  Json         @default("{}")
+  created_at         DateTime     @default(now())
+  updated_at         DateTime     @updatedAt
+  organization       Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id, status])
+  @@map("organization_dummy_data_batches")
 }
 
 model MasterProcessTemplateStep {

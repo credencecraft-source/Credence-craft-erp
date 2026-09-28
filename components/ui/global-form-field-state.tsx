@@ -22,7 +22,7 @@ function updateFieldState(element: Element) {
   const isEmpty = control instanceof HTMLSelectElement && control.multiple
     ? !Array.from(control.selectedOptions).some((option) => option.value.trim())
     : control.value.trim() === "";
-  const state = isEmpty ? "empty" : "filled";
+  const state = isEmpty ? (control.required ? "empty-required" : "empty-optional") : "filled";
 
   control.setAttribute("data-erp-field-state", state);
 }
@@ -66,7 +66,7 @@ export default function GlobalFormFieldState() {
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ["disabled", "readonly", "aria-readonly", "data-erp-field-watch", "type"],
+      attributeFilter: ["disabled", "readonly", "required", "aria-readonly", "data-erp-field-watch", "type"],
     });
 
     const updateEventTarget = (event: Event) => {

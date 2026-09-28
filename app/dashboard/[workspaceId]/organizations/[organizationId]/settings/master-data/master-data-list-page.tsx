@@ -50,7 +50,7 @@ export default async function MasterDataListPage({
         >
           <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">One-time setup</p>
           <h2 className="mt-1 text-xl font-bold text-slate-900">Organization Master Setup</h2>
-          <p className="mt-1 text-sm text-slate-700">Create starter RM category types, categories, brands, and buyers together.</p>
+          <p className="mt-1 text-sm text-slate-700">Create related organization masters together.</p>
         </Link>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" aria-label="Master data modules, sorted alphabetically">

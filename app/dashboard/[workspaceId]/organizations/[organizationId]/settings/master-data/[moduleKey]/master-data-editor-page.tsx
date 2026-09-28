@@ -182,7 +182,7 @@ async function createMasterValueAction(formData: FormData) {
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  if (!workspaceId || !organizationId || !moduleKey || !definition) {
+  if (!workspaceId || !organizationId || !moduleKey || !definition || definition.hidden) {
     return;
   }
 
@@ -242,7 +242,7 @@ async function updateMasterValueAction(formData: FormData) {
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  if (!workspaceId || !organizationId || !moduleKey || !valueId || !label || !definition || hasMissingRequiredField(fields, definition)) {
+  if (!workspaceId || !organizationId || !moduleKey || !valueId || !label || !definition || definition.hidden || hasMissingRequiredField(fields, definition)) {
     return;
   }
 
@@ -318,7 +318,8 @@ async function deleteMasterValueAction(formData: FormData) {
   }
   await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
-  if (!getMasterDefinition(moduleKey)) {
+  const definition = getMasterDefinition(moduleKey);
+  if (!definition || definition.hidden) {
     notFound();
   }
 
@@ -360,22 +361,22 @@ export default async function MasterDataEditorPage({
 
   const definition = getMasterDefinition(moduleKey) ?? MASTER_DEFINITIONS.find((candidate) => candidate.key === moduleKey);
 
-  if (!definition) {
+  if (!definition || definition.hidden) {
     notFound();
   }
 
-  const values = await getMasterValuesForOrganization(organization.id, moduleKey, true);
+  const values = await getMasterValuesForOrganization(organization.id, moduleKey, true, { includeDummyData: true });
   const lookupKeys = [...new Set(definition.fields.flatMap((field) => [
     ...(field.lookupModuleKey ? [field.lookupModuleKey] : []),
     ...(field.childFields ?? []).flatMap((child) => child.lookupModuleKey ? [child.lookupModuleKey] : []),
   ]))];
-  const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true)).map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id, fields: item.fields }))])));
+  const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true, { includeDummyData: true })).map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id, fields: item.fields }))])));
   const childModuleKey = definition.fields.find((field) => field.type === "child-list")?.childModuleKey
     ?? definition.fields.find((field) => field.type === "lookup" && field.multiple)?.lookupModuleKey;
   const childRecords = moduleKey === "size-group"
-    ? (await getSizeGroupSizesForOrganization(organization.id)).map((item) => ({ parentId: item.groupId, label: item.size.label, fields: item.size.fields }))
+    ? (await getSizeGroupSizesForOrganization(organization.id, undefined, true)).map((item) => ({ parentId: item.groupId, label: item.size.label, fields: item.size.fields }))
     : childModuleKey
-      ? (await getMasterValuesForOrganization(organization.id, childModuleKey, true)).map((item) => ({ parentId: item.parent_id, label: item.label, fields: item.fields }))
+      ? (await getMasterValuesForOrganization(organization.id, childModuleKey, true, { includeDummyData: true })).map((item) => ({ parentId: item.parent_id, label: item.label, fields: item.fields }))
       : [];
   const shouldShowMasterHeader = moduleKey !== "article";
 

@@ -87,6 +87,21 @@ function initialRecords(
   });
 }
 
+function initialBulkInputs(
+  definitions: Definition[],
+  existing: Record<string, string[]>,
+) {
+  return Object.fromEntries(definitions.map((definition) => {
+    const existingLabels = new Set(
+      (existing[definition.key] ?? []).map((label) => label.trim().toLowerCase()),
+    );
+    const starterLabels = DEFAULT_SETUP_RECORDS
+      .filter((record) => record.moduleKey === definition.key && !existingLabels.has(record.label.toLowerCase()))
+      .map((record) => record.label);
+    return [definition.key, starterLabels.join(", ")];
+  }));
+}
+
 function SubmitButton({
   activeStage,
 }: {
@@ -208,20 +223,15 @@ export default function OrganizationMasterSetupForm({
   stage: Stage;
   activeStage: "independent" | "related" | "third";
 }) {
-  const [records, setRecords] = useState<SetupRecord[]>(() =>
-    initialRecords(stage.definitions, stage.existing),
+  const visibleDefinitions = stage.definitions.filter(
+    (definition) => definition.key !== "entity" && definition.key !== "product-master",
   );
-  const [bulkInputs, setBulkInputs] = useState<Record<string, string>>({
-    color: "",
-    "currency-type": "",
-    entity: "",
-    merchandiser: "",
-    "process-master": "",
-    "product-master": "",
-    "pre-order-checklist": "",
-    "raw-material-type": "",
-    size: "",
-  });
+  const [records, setRecords] = useState<SetupRecord[]>(() =>
+    initialRecords(visibleDefinitions, stage.existing),
+  );
+  const [bulkInputs, setBulkInputs] = useState<Record<string, string>>(() =>
+    initialBulkInputs(visibleDefinitions, stage.existing),
+  );
   const updateRecord = (index: number, update: Partial<SetupRecord>) =>
     setRecords((current) =>
       current.map((record, recordIndex) =>
@@ -257,7 +267,7 @@ export default function OrganizationMasterSetupForm({
           records: [
             ...records,
             ...(activeStage === "independent"
-              ? ["color", "currency-type", "entity", "merchandiser", "pre-order-checklist", "product-master", "process-master", "raw-material-type", "size"].flatMap((moduleKey) =>
+              ? ["color", "currency-type", "merchandiser", "pre-order-checklist", "process-master", "raw-material-type", "size"].flatMap((moduleKey) =>
                   (bulkInputs[moduleKey] ?? "")
                     .split(",")
                     .map((value) => value.trim())
@@ -309,14 +319,14 @@ export default function OrganizationMasterSetupForm({
           <p className="text-xs text-slate-600">Operation and material setup</p>
         </Link>
       </div>
-      {stage.definitions.length === 0 ? (
+      {visibleDefinitions.length === 0 ? (
         <Card>
           <p className="text-sm text-slate-600">
             No master types are available for this step.
           </p>
         </Card>
       ) : (
-        stage.definitions.map((definition) => {
+        visibleDefinitions.map((definition) => {
           const labelField = definition.labelField ?? definition.fields[0]?.key;
           const editableFields = definition.fields
             .filter((field) => field.key !== labelField && !field.readOnly)
@@ -537,6 +547,8 @@ export default function OrganizationMasterSetupForm({
                   <Button
                     className="ml-auto shrink-0"
                     type="submit"
+                    name="setupModule"
+                    value={definition.key}
                     variant="secondary"
                   >
                     Create {definition.label} Master

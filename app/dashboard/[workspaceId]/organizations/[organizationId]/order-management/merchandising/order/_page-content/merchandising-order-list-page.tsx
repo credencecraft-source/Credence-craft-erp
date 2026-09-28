@@ -408,6 +408,7 @@ export default function MerchandisingOrdersPage() {
           rowActionLabel="Variant"
           renderCell={(fieldKey, order) => {
             const val = order[fieldKey as keyof OrderRecord];
+            if (fieldKey === "sourceStatus" && val === "DEMO") return "Dummy Data";
             return val !== null && val !== undefined ? String(val) : "";
           }}
         />

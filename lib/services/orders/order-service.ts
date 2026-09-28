@@ -13,7 +13,7 @@ import {
 } from "@/lib/services/platform/segment-form-restriction-service";
 import { lockOrganizationOrderQuantityLimit } from "@/lib/services/platform/order-quantity-limit-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
-import { getSizeGroupSizesForOrganization } from "@/lib/master-data/master-data-constants";
+import { assertNoDummyMasterReferences, getSizeGroupSizesForOrganization } from "@/lib/master-data/master-data-constants";
 import { buildVariantOrderInput, type VariantCreateRequest, type VariantSourceOrder } from "@/lib/services/orders/order-variant-input";
 import { createPreparedVariantToken, readPreparedVariantToken } from "@/lib/services/orders/order-variant-preparation";
 
@@ -134,12 +134,30 @@ export async function reserveNextOrderNumber(
   organizationId: string,
   database: Prisma.TransactionClient | typeof prisma = prisma,
 ) {
-  const counter = await database.organizationOrderCounter.upsert({
+  const upsertArgs = {
     where: { organization_id: organizationId },
     create: { organization_id: organizationId, current_value: 1 },
     update: { current_value: { increment: 1 } },
     select: { current_value: true },
-  });
+  };
+  let counter;
+
+  try {
+    counter = await database.organizationOrderCounter.upsert(upsertArgs);
+  } catch (error) {
+    const errorCode = typeof error === "object" && error !== null && "code" in error
+      ? error.code
+      : null;
+    const errorMessage = error instanceof Error ? error.message : "";
+    const isClosedTransactionError = errorMessage.includes("Transaction API error: Transaction not found")
+      || (errorCode === "P2028" && /transaction.*(?:closed|expired|not found|invalid)/i.test(errorMessage));
+
+    if (database === prisma || !isClosedTransactionError) {
+      throw error;
+    }
+
+    counter = await prisma.organizationOrderCounter.upsert(upsertArgs);
+  }
 
   return `OD-${counter.current_value}`;
 }
@@ -774,6 +792,8 @@ export async function createOrder(
     throw new Error("Organization is required to create an order.");
   }
 
+  await assertNoDummyMasterReferences(organizationId, input as unknown as Record<string, unknown>);
+
   const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : null;
   const calculatedFinishedGoods = Array.isArray(input.rows) ? calculateFinishedGoodsRows(input.rows) : null;
   const calculatedOrderQty = calculatedFinishedGoods?.orderQty ?? Number(input.orderQty ?? 0);
@@ -1008,6 +1028,10 @@ export async function updateOrder(
     throw new Error("Order not found");
   }
 
+  if (order.sourceStatus !== "DEMO") {
+    await assertNoDummyMasterReferences(organizationId, input as unknown as Record<string, unknown>);
+  }
+
   await validateRestrictedFormFields(organizationId, "merchandising_orders", input as unknown as Record<string, unknown>);
   const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : undefined;
 
@@ -1224,6 +1248,10 @@ export async function updateOrderWithDetails(
 
     if (!order) {
       throw new Error("Order not found");
+    }
+
+    if (order.sourceStatus !== "DEMO") {
+      await assertNoDummyMasterReferences(organizationId, input as unknown as Record<string, unknown>);
     }
 
     await lockOrganizationOrderQuantityLimit(transaction, organizationId);

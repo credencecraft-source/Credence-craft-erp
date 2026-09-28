@@ -2,10 +2,16 @@
 
 import React from "react";
 import { headers } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { MasterModuleWrapper } from "@/components/master-data/master-module-wrapper";
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
 import { getOrganizationShellContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import {
+  createOrganizationDummyData,
+  deleteOrganizationDummyData,
+  getOrganizationDummyDataStatus,
+} from "@/lib/services/organizations/organization-dummy-data-service";
 import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
 import { requireSessionUser } from "@/lib/auth/session-manager"; // Fixed typo (removed trailing 's')
 import { PendingOrganizationPrompt } from "@/components/organizations/pending-organization-prompt";
@@ -69,6 +75,46 @@ export default async function OrganizationShellLayout({
     return <PendingOrganizationPrompt organizationId={organization.organization_id} />;
   }
 
+  async function createDummyDataAction() {
+    "use server";
+    const actionUser = await requireSessionUser();
+    if (actionUser.workspace_id !== workspaceId) {
+      return { created: false, orderNo: null, orderCount: 0, error: "Workspace access denied." };
+    }
+
+    try {
+      const result = await createOrganizationDummyData(actionUser.id, organizationId);
+      revalidatePath(organizationPath);
+      return result;
+    } catch (error) {
+      return {
+        created: false,
+        orderNo: null,
+        orderCount: 0,
+        error: error instanceof Error ? error.message : "Unable to create dummy data.",
+      };
+    }
+  }
+
+  async function deleteDummyDataAction() {
+    "use server";
+    const actionUser = await requireSessionUser();
+    if (actionUser.workspace_id !== workspaceId) {
+      return { deleted: false, error: "Workspace access denied." };
+    }
+
+    try {
+      const result = await deleteOrganizationDummyData(actionUser.id, organizationId);
+      revalidatePath(organizationPath);
+      return result;
+    } catch (error) {
+      return {
+        deleted: false,
+        error: error instanceof Error ? error.message : "Unable to delete dummy data.",
+      };
+    }
+  }
+
   if (currentPath.includes("/settings")) {
     const requiredPermission = currentPath.includes("/settings/roles")
       ? "MANAGE_ROLES"
@@ -82,10 +128,18 @@ export default async function OrganizationShellLayout({
     await requireOrganizationPermission(user.id, organizationId, requiredPermission);
   }
 
-  const [scopedRestrictions, activeBusinessTypes] = await Promise.all([
+  const [scopedRestrictions, activeBusinessTypes, dummyDataStatus] = await Promise.all([
     validateOrganizationAccess(organization, currentPath),
     activeBusinessTypesPromise,
+    getOrganizationDummyDataStatus(user.id, organizationId).catch(() => ({
+      status: "UNAVAILABLE",
+      createdAt: null,
+      orderNo: null,
+      orderCount: 0,
+      masterCount: 0,
+    })),
   ]);
+
   const businessTypes = activeBusinessTypes.map((businessType) => ({
     ...businessType,
     name: businessType.name.trim().toLowerCase() === "settings"
@@ -102,6 +156,9 @@ export default async function OrganizationShellLayout({
       workspaceId={workspaceId}
       organizationId={organizationId}
       organizationName={organization.organization_name}
+      createDummyData={createDummyDataAction}
+      deleteDummyData={deleteDummyDataAction}
+      dummyDataStatus={dummyDataStatus}
       businessTypes={businessTypes}
       restrictions={scopedRestrictions}
     >

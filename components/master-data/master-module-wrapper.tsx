@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, type ReactNode } from "react";
+import { useState, useMemo, useEffect, useTransition, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -19,6 +19,8 @@ import {
   Package,
   Settings,
   Sparkles,
+  Trash2,
+  X,
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
@@ -62,6 +64,9 @@ type MasterModuleWrapperProps = {
   workspaceId: string;
   organizationId: string;
   organizationName: string;
+  createDummyData: () => Promise<{ created: boolean; orderNo: string | null; orderCount?: number; error?: string }>;
+  deleteDummyData: () => Promise<{ deleted: boolean; error?: string }>;
+  dummyDataStatus: { status: string; orderNo: string | null; orderCount?: number; masterCount: number };
   value?: string;
   moduleLabel?: string;
   title?: string;
@@ -77,6 +82,9 @@ export function MasterModuleWrapper({
   workspaceId,
   organizationId,
   organizationName,
+  createDummyData,
+  deleteDummyData,
+  dummyDataStatus = { status: "UNAVAILABLE", orderNo: null, masterCount: 0 },
   children,
   modules = [],
   businessTypes = [],
@@ -164,6 +172,53 @@ export function MasterModuleWrapper({
 
   const [hiddenModuleKeys, setHiddenModuleKeys] = useState<string[]>([]);
   const [moduleSettingsOpen, setModuleSettingsOpen] = useState(false);
+  const [dummyDataHelpOpen, setDummyDataHelpOpen] = useState(false);
+  const [dummyDataResult, setDummyDataResult] = useState<{
+    created: boolean;
+    orderNo: string | null;
+    orderCount?: number;
+    error?: string;
+  } | null>(null);
+  const [dummyDataStateOverride, setDummyDataStateOverride] = useState<boolean | null>(null);
+  const [dummyDataDeleteConfirmation, setDummyDataDeleteConfirmation] = useState(false);
+  const [dummyDataDeleteError, setDummyDataDeleteError] = useState("");
+  const [dummyDataDeleteNotice, setDummyDataDeleteNotice] = useState("");
+  const [isUpdatingDummyData, startUpdatingDummyData] = useTransition();
+  const dummyDataActive = dummyDataStateOverride ?? dummyDataStatus.status === "ACTIVE";
+  const dummyDataAvailable = !["SCHEMA_NOT_READY", "UNAVAILABLE"].includes(dummyDataStatus.status);
+
+  function handleCreateDummyData() {
+    setDummyDataResult(null);
+    setDummyDataDeleteError("");
+    setDummyDataDeleteNotice("");
+    startUpdatingDummyData(async () => {
+      const result = await createDummyData();
+      setDummyDataResult(result);
+      if (!result.error) {
+        setDummyDataStateOverride(true);
+        setDummyDataHelpOpen(false);
+        setDummyDataDeleteConfirmation(false);
+        router.refresh();
+      }
+    });
+  }
+
+  function handleDeleteDummyData() {
+    setDummyDataDeleteError("");
+    startUpdatingDummyData(async () => {
+      const result = await deleteDummyData();
+      if (result.error) {
+        setDummyDataDeleteError(result.error);
+        return;
+      }
+      setDummyDataStateOverride(false);
+      setDummyDataDeleteConfirmation(false);
+      setDummyDataDeleteNotice(result.deleted ? "Dummy data was deleted." : "There is no dummy dataset to delete.");
+      setDummyDataResult(null);
+      setDummyDataHelpOpen(false);
+      router.refresh();
+    });
+  }
 
   useEffect(() => {
     try {
@@ -408,6 +463,18 @@ export function MasterModuleWrapper({
             >
               <Crown className="h-4 w-4" />
             </Link>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label="Learn about sample data"
+              aria-haspopup="dialog"
+              title="Sample data"
+              onClick={() => setDummyDataHelpOpen(true)}
+              className="h-9 w-9 rounded-md border border-emerald-200 bg-emerald-50 p-0 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-800 focus-visible:ring-emerald-500"
+            >
+              <Sparkles className="h-4 w-4" aria-hidden="true" />
+            </Button>
             <SupportTicketTrigger organizationId={organizationId} />
             <Button
               variant="ghost"
@@ -506,6 +573,127 @@ export function MasterModuleWrapper({
               </Button>
             );
           })}
+        </div>
+      </Modal>
+
+      <Modal
+        open={dummyDataHelpOpen}
+        onClose={() => {
+          setDummyDataHelpOpen(false);
+          setDummyDataDeleteConfirmation(false);
+        }}
+        ariaLabelledBy="dummy-data-help-title"
+        ariaDescribedBy="dummy-data-help-description"
+        size="md"
+      >
+        <div className="border-b border-emerald-100 bg-emerald-50/70 px-5 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-emerald-200 bg-white text-emerald-700">
+                <Sparkles className="h-5 w-5" aria-hidden="true" />
+              </span>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">Guided sample</p>
+                <h2 id="dummy-data-help-title" className="mt-1 text-base font-semibold text-slate-950">Explore a sample order</h2>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label="Close sample data information"
+              onClick={() => setDummyDataHelpOpen(false)}
+              className="h-8 w-8 rounded-md p-0 text-slate-500 hover:text-slate-800"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </div>
+        </div>
+        <div className="space-y-5 p-5">
+          <p id="dummy-data-help-description" className="text-sm leading-6 text-slate-600">
+            See how buyers, brands, categories, sizes, and a draft merchandising order connect before entering your own business data. The sample stays separate from live masters and can be removed later.
+          </p>
+          <div className="flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setDummyDataHelpOpen(false);
+                setDummyDataDeleteConfirmation(false);
+              }}
+            >
+              Not now
+            </Button>
+            {dummyDataActive ? (
+              <Button
+                type="button"
+                variant="danger"
+                onClick={() => setDummyDataDeleteConfirmation(true)}
+                disabled={isUpdatingDummyData}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                Delete dummy data
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                onClick={handleCreateDummyData}
+                disabled={isUpdatingDummyData || !dummyDataAvailable}
+              >
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+                {isUpdatingDummyData ? "Creating dummy data..." : "Create dummy data"}
+              </Button>
+            )}
+          </div>
+          {dummyDataStatus.status === "SCHEMA_NOT_READY" ? (
+            <p className="mt-3 text-sm text-amber-800" role="status">
+              Dummy-data tracking must be deployed before sample data can be created.
+            </p>
+          ) : null}
+          {dummyDataStatus.status === "UNAVAILABLE" ? (
+            <p className="mt-3 text-sm text-red-700" role="alert">
+              Organization settings permission is required to manage dummy data.
+            </p>
+          ) : null}
+          {dummyDataActive ? (
+            <p className="mt-3 text-sm text-slate-600" role="status">
+              {dummyDataStatus.orderNo
+                ? `${dummyDataStatus.orderCount ?? 1} sample orders · first ${dummyDataStatus.orderNo} · ${dummyDataStatus.masterCount} master records.`
+                : "A dummy-data batch already exists for this organization."}
+            </p>
+          ) : null}
+          {dummyDataDeleteConfirmation ? (
+            <div className="mt-4 space-y-3 rounded-md border border-red-200 bg-red-50 p-4">
+              <div>
+                <h3 className="text-sm font-semibold text-red-900">Delete the sample dataset?</h3>
+                <p className="mt-1 text-sm text-red-800">
+                  This removes the demo order and its tracked sample masters. Deletion is blocked if the order is already used by other records.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="secondary" onClick={() => setDummyDataDeleteConfirmation(false)} disabled={isUpdatingDummyData}>
+                  Cancel
+                </Button>
+                <Button type="button" variant="danger" onClick={handleDeleteDummyData} disabled={isUpdatingDummyData}>
+                  {isUpdatingDummyData ? "Deleting..." : "Confirm delete"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {dummyDataResult ? (
+            <p
+              className={`mt-3 text-sm ${dummyDataResult.error ? "text-red-700" : "text-emerald-700"}`}
+              role={dummyDataResult.error ? "alert" : "status"}
+            >
+              {dummyDataResult.error
+                ? dummyDataResult.error
+                : dummyDataResult.created
+                  ? `${dummyDataResult.orderCount ?? 1} sample orders created, starting with ${dummyDataResult.orderNo}.`
+                  : "Dummy data already exists for this organization."}
+            </p>
+          ) : null}
+          {dummyDataDeleteError ? <p className="mt-3 text-sm text-red-700" role="alert">{dummyDataDeleteError}</p> : null}
+          {dummyDataDeleteNotice ? <p className="mt-3 text-sm text-emerald-700" role="status">{dummyDataDeleteNotice}</p> : null}
         </div>
       </Modal>
 

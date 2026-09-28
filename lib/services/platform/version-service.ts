@@ -80,9 +80,169 @@ async function syncVersionCatalog(versionId: string) {
   }, { maxWait: 10_000, timeout: 30_000 });
 }
 
+export async function duplicateVersion(id: string, input?: { versionName?: string; description?: string }) {
+  await requirePlatformSessionAdmin();
+
+  const sourceVersion = await prisma.platformVersion.findUnique({
+    where: { id },
+    include: {
+      businessTypes: {
+        include: {
+          tags: true,
+          segments: {
+            include: {
+              tags: true,
+              restrictions: true,
+              formRestrictions: true,
+              locationLimit: true,
+            },
+          },
+        },
+      },
+      transactionRestrictions: true,
+    },
+  });
+
+  if (!sourceVersion) {
+    throw new Error("Version not found.");
+  }
+
+  const baseName = (input?.versionName?.trim() || `${sourceVersion.version_name} Copy`).trim();
+  let candidateName = baseName || `${sourceVersion.version_name} Copy`;
+  let counter = 2;
+
+  while (true) {
+    const existing = await prisma.platformVersion.findUnique({ where: { version_name: candidateName } });
+    if (!existing) break;
+    candidateName = `${baseName} ${counter}`;
+    counter += 1;
+  }
+
+  return prisma.$transaction(async (transaction) => {
+    const createdVersion = await transaction.platformVersion.create({
+      data: {
+        version_name: candidateName,
+        description: input?.description?.trim() ?? sourceVersion.description,
+        is_active: sourceVersion.is_active,
+      },
+      include: { _count: { select: { businessTypes: true } } },
+    });
+
+    for (const businessType of sourceVersion.businessTypes) {
+      const createdBusinessType = await transaction.versionBusinessType.create({
+        data: {
+          version_id: createdVersion.id,
+          business_type_id: businessType.business_type_id,
+          is_free: businessType.is_free,
+        },
+      });
+
+      for (const tag of businessType.tags) {
+        await transaction.versionBusinessTypeTag.create({
+          data: {
+            version_business_type_id: createdBusinessType.id,
+            label: tag.label,
+          },
+        });
+      }
+
+      for (const segment of businessType.segments) {
+        const createdSegment = await transaction.versionBusinessTypeSegment.create({
+          data: {
+            version_business_type_id: createdBusinessType.id,
+            segment_id: segment.segment_id,
+            is_active: segment.is_active,
+            label: segment.label,
+            price: segment.price ?? undefined,
+          },
+        });
+
+        for (const tag of segment.tags) {
+          await transaction.versionBusinessTypeSegmentTag.create({
+            data: {
+              version_business_type_segment_id: createdSegment.id,
+              label: tag.label,
+            },
+          });
+        }
+
+        if (segment.locationLimit) {
+          await transaction.versionBusinessTypeSegmentLocationLimit.create({
+            data: {
+              version_business_type_segment_id: createdSegment.id,
+              max_locations: segment.locationLimit.max_locations,
+            },
+          });
+        }
+
+        for (const restriction of segment.restrictions) {
+          await transaction.segmentRestriction.create({
+            data: {
+              version_business_type_segment_id: createdSegment.id,
+              master_module: restriction.master_module,
+              main_module: restriction.main_module,
+              sub_module: restriction.sub_module,
+              action_level: restriction.action_level,
+              url_pattern: restriction.url_pattern,
+              restriction_type: restriction.restriction_type,
+              custom_message: restriction.custom_message,
+            },
+          });
+        }
+
+        for (const formRestriction of segment.formRestrictions) {
+          await transaction.segmentFormRestriction.create({
+            data: {
+              version_business_type_segment_id: createdSegment.id,
+              form_key: formRestriction.form_key,
+              monthly_qty_limit: formRestriction.monthly_qty_limit,
+              monthly_entry_limit: formRestriction.monthly_entry_limit,
+              restricted_fields: formRestriction.restricted_fields,
+              field_sum_limits:
+                formRestriction.field_sum_limits === null
+                  ? Prisma.JsonNull
+                  : formRestriction.field_sum_limits,
+            },
+          });
+        }
+      }
+    }
+
+    for (const versionRestriction of sourceVersion.transactionRestrictions) {
+      await transaction.versionTransactionRestriction.create({
+        data: {
+          version_id: createdVersion.id,
+          segment_id: versionRestriction.segment_id,
+          form_key: versionRestriction.form_key,
+          monthly_entry_limit: versionRestriction.monthly_entry_limit,
+        },
+      });
+    }
+
+    return createdVersion;
+  }, { maxWait: 10_000, timeout: 120_000 });
+}
+
 export async function deleteVersion(id: string) {
   await requirePlatformSessionAdmin();
   return prisma.platformVersion.delete({ where: { id } });
+}
+
+export async function renameVersion(id: string, versionName: string) {
+  await requirePlatformSessionAdmin();
+  const normalizedName = versionName.trim();
+  if (!normalizedName) throw new Error("Version name is required.");
+
+  const existing = await prisma.platformVersion.findFirst({
+    where: { version_name: normalizedName, NOT: { id } },
+    select: { id: true },
+  });
+  if (existing) throw new Error("A version with this name already exists.");
+
+  return prisma.platformVersion.update({
+    where: { id },
+    data: { version_name: normalizedName },
+  });
 }
 
 export async function getVersionDetails(id: string) {

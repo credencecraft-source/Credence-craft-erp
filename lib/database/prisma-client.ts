@@ -6,7 +6,15 @@ import { isDatabaseUnavailableError } from "@/lib/database/database-errors";
 const MAX_CONNECTION_RETRIES = 1;
 const CONNECTION_RETRY_DELAY_MS = 150;
 
-async function withConnectionRetry<T>(query: () => Promise<T>): Promise<T> {
+export function shouldRetryPrismaQuery(context: { runInTransaction?: boolean } | undefined) {
+  return !context?.runInTransaction;
+}
+
+async function withConnectionRetry<T>(query: () => Promise<T>, context?: { runInTransaction?: boolean }): Promise<T> {
+  if (!shouldRetryPrismaQuery(context)) {
+    return query();
+  }
+
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await query();
@@ -29,8 +37,10 @@ function createPrismaClient(): PrismaClient {
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   }).$extends({
     query: {
-      $allOperations({ args, query }) {
-        return withConnectionRetry(() => query(args));
+      $allOperations(context: any) {
+        const { args, query } = context;
+        const runInTransaction = Boolean((context as { runInTransaction?: boolean }).runInTransaction);
+        return withConnectionRetry(() => query(args), { runInTransaction });
       },
     },
   }) as unknown as PrismaClient;

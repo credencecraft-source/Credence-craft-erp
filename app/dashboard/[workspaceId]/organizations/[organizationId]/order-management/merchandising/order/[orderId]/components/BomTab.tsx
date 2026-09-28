@@ -347,12 +347,12 @@ export default function BomTab({
           variant="ghost"
           onClick={() => { setSizePickerRowIndex(index); setSizeSearch(""); }}
           aria-label={selectedSizes.length > 0 ? `Edit sizes: ${selectedSizes.join(", ")}` : "Select sizes"}
-          className="flex min-h-7 w-full flex-wrap items-center justify-start gap-1 rounded-md border border-slate-300 bg-white p-1 text-left shadow-sm hover:border-emerald-400 hover:bg-emerald-50/30"
+          className="flex min-h-[48px] w-full flex-wrap items-center justify-start gap-1 rounded-xl border border-slate-300 bg-white p-1.5 text-left shadow-sm hover:border-emerald-400 hover:bg-emerald-50/30"
         >
           {selectedSizes.length === 0 ? (
-            <span className="px-1 text-[10px] font-normal text-slate-400">Select sizes</span>
+            <span className="px-1 text-[12px] font-normal text-slate-400">Select sizes</span>
           ) : selectedSizes.map((size) => (
-            <span key={size} className="rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-emerald-800">
+            <span key={size} className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold leading-4 text-emerald-800">
               {size}
             </span>
           ))}
@@ -576,34 +576,29 @@ export default function BomTab({
 
       <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-slate-200 bg-slate-50/40 shadow-inner">
         <fieldset disabled={isAllCategoryView} className="min-w-0 border-0 p-0">
-          <table className="min-w-[1200px] table-fixed text-left text-xs">
+          <table className="min-w-[1650px] table-fixed text-left text-sm">
           <colgroup>
-            <col className="w-[84px]" />
+            <col className="w-[120px]" />
+            <col className="w-[320px]" />
+            <col className="w-[560px]" />
+            <col className="w-[140px]" />
             <col className="w-[210px]" />
-            <col className="w-[420px]" />
-            <col className="w-[130px]" />
-            <col className="w-[150px]" />
-            {showAdvancedFields && <col className="w-[150px]" />}
-            {showAdvancedFields && <col className="w-[150px]" />}
-            <col className="w-[150px]" />
-            <col className="w-[150px]" />
-            <col className="w-[150px]" />
-            {showAdvancedFields && <col className="w-[150px]" />}
-            {showAdvancedFields && <col className="w-[150px]" />}
-            <col className="w-[150px]" />
-            <col className="w-[150px]" />
-            <col className="w-[130px]" />
-            <col className="w-[130px]" />
-            <col className="w-[130px]" />
-            <col className="w-[130px]" />
-            {showAdvancedFields && <col className="w-[90px]" />}
+            {showAdvancedFields && <col className="w-[190px]" />}
+            {showAdvancedFields && <col className="w-[190px]" />}
+            <col className="w-[190px]" />
+            <col className="w-[190px]" />
+            <col className="w-[190px]" />
+            {showAdvancedFields && <col className="w-[190px]" />}
+            {showAdvancedFields && <col className="w-[190px]" />}
+            <col className="w-[190px]" />
+            {showAdvancedFields && <col className="w-[120px]" />}
           </colgroup>
           <thead className="border-b border-slate-200 bg-white text-slate-600">
             <tr>
-              <th className="h-10 whitespace-normal p-1.5 text-center align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">Image</th>
-              <th className="h-10 whitespace-normal p-1.5 align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">
-                <div className="flex min-h-9 items-center gap-1">
-                  <span className="leading-3">Sub Category</span>
+              <th className="h-12 whitespace-normal p-2 text-center align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">Image</th>
+              <th className="h-12 whitespace-normal p-2 align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">
+                <div className="flex min-h-10 items-center gap-1">
+                  <span className="leading-4">Sub Category</span>
                   {onOpenCreateMaster && (
                     <Button
                       variant="ghost"
@@ -617,9 +612,9 @@ export default function BomTab({
                   )}
                 </div>
               </th>
-              <th className="h-10 whitespace-normal p-1.5 align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">
-                <div className="flex min-h-9 items-center gap-1">
-                  <span className="leading-3">Raw Material</span>
+              <th className="h-12 whitespace-normal p-2 align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">
+                <div className="flex min-h-10 items-center gap-1">
+                  <span className="leading-4">Raw Material</span>
                   {onOpenCreateMaster && (
                     <Button
                       variant="ghost"
@@ -633,10 +628,10 @@ export default function BomTab({
                   )}
                 </div>
               </th>
-              <th className="h-10 whitespace-normal p-1.5 align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">UOM</th>
-              <th className="h-10 whitespace-normal p-1.5 align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">
-                <div className="flex min-h-9 items-center gap-1">
-                  <span className="leading-3">Size</span>
+              <th className="h-12 whitespace-normal p-2 align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">UOM</th>
+              <th className="h-12 whitespace-normal p-2 align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">
+                <div className="flex min-h-10 items-center gap-1">
+                  <span className="leading-4">Size</span>
                   {onOpenCreateMaster && (
                     <Button
                       variant="ghost"
@@ -650,23 +645,23 @@ export default function BomTab({
                   )}
                 </div>
               </th>
-              {showAdvancedFields && <th className="h-10 whitespace-normal p-1.5 align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">Buyer Cons.</th>}
-              {showAdvancedFields && <th className="h-10 whitespace-normal p-1.5 align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">Buyer Rate</th>}
-              <th className="h-10 whitespace-normal p-1.5 align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">Int. Cons.</th>
-              <th className="h-10 whitespace-normal p-1.5 align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">Int. Rate</th>
-              <th className="h-10 whitespace-normal p-1.5 align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">Req. Qty</th>
-              {showAdvancedFields && <th className="h-10 whitespace-normal p-1.5 align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">Excess %</th>}
-              {showAdvancedFields && <th className="h-10 whitespace-normal p-1.5 align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">Excess Qty</th>}
-              <th className="h-10 whitespace-normal p-1.5 align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">Total Req.</th>
-              {showAdvancedFields && <th className="h-10 whitespace-normal p-1.5 align-middle text-[10px] font-bold uppercase leading-3 tracking-wide">Action</th>}
+              {showAdvancedFields && <th className="h-12 whitespace-normal p-2 align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">Buyer Cons.</th>}
+              {showAdvancedFields && <th className="h-12 whitespace-normal p-2 align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">Buyer Rate</th>}
+              <th className="h-12 whitespace-normal p-2 align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">Int. Cons.</th>
+              <th className="h-12 whitespace-normal p-2 align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">Int. Rate</th>
+              <th className="h-12 whitespace-normal p-2 align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">Req. Qty</th>
+              {showAdvancedFields && <th className="h-12 whitespace-normal p-2 align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">Excess %</th>}
+              {showAdvancedFields && <th className="h-12 whitespace-normal p-2 align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">Excess Qty</th>}
+              <th className="h-12 whitespace-normal p-2 align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">Total Req.</th>
+              {showAdvancedFields && <th className="h-12 whitespace-normal p-2 align-middle text-[11px] font-bold uppercase leading-4 tracking-wide">Action</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {visibleBomRows.map(({ row, index }: { row: BomRow; index: number }) => (
               <tr key={`${index}-${row.rawMaterialName || "row"}`} className="bg-white">
-                <td className="p-2 align-top">
+                <td className="p-2.5 align-top">
                   <div
-                    className="flex h-16 w-16 items-center justify-center overflow-hidden rounded border border-slate-200 bg-slate-50 text-center text-[9px] font-semibold uppercase leading-3 text-slate-400"
+                    className="flex h-18 w-18 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-center text-[10px] font-semibold uppercase leading-3 text-slate-400 shadow-sm"
                     title="Image from Raw Material master"
                   >
                     {row.image || getRawMaterialImage(String(row.rawMaterialName ?? "")) ? (
@@ -676,7 +671,7 @@ export default function BomTab({
                     )}
                   </div>
                 </td>
-                <td className="p-2 align-top">
+                <td className="p-2.5 align-top">
                   {renderMasterSelect ? (() => {
                     const filteredSubCategories = getFilteredSubCategoryOptions(String(row.category ?? ""));
                     const safeOptions = filteredSubCategories.filter((option: any) => option.label || option.name);
@@ -688,7 +683,7 @@ export default function BomTab({
                         value={value}
                         onChange={(event) => updateBomRow(index, "subCategory", event.target.value)}
                         options={[{ value: "", label: "Select sub category" }, ...safeOptions.map((option: any) => ({ value: option.label ?? option.name ?? "", label: option.label ?? option.name ?? "" }))]}
-                        className="rounded p-1 text-xs"
+                        className="min-h-[48px] rounded-xl border-slate-300 bg-white px-3 py-2.5 text-[15px] shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                       />
                     );
                   })() : (
@@ -696,11 +691,11 @@ export default function BomTab({
                       value={row.subCategory || ""}
                       onChange={(e) => updateBomRow(index, "subCategory", e.target.value)}
                       placeholder="Sub Category"
-                      className="w-full rounded border border-slate-200 px-2 py-1 text-xs"
+                      className="min-h-[48px] rounded-xl border-slate-300 bg-white px-3 py-2.5 text-[15px] shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                     />
                   )}
                 </td>
-                <td className="p-2 align-top">
+                <td className="p-2.5 align-top">
                   {renderMasterSelect ? (() => {
                     const filteredRawMaterials = getFilteredRawMaterialOptions(String(row.category ?? ""), String(row.subCategory ?? ""));
                     const value = String(row.rawMaterialName ?? "");
@@ -724,7 +719,7 @@ export default function BomTab({
                           updateBomRow(index, "image", getRawMaterialImage(rawMaterialName));
                         }}
                         options={[{ value: "", label: row.subCategory ? "Select raw material" : "Select sub category first" }, ...safeOptions.map((option: any) => ({ value: option.label ?? option.name ?? "", label: option.label ?? option.name ?? "" }))]}
-                        className="rounded p-1 text-xs"
+                        className="min-h-[48px] rounded-xl border-slate-300 bg-white px-3 py-2.5 text-[15px] shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                       />
                     );
                   })() : (
@@ -732,91 +727,91 @@ export default function BomTab({
                       value={row.rawMaterialName || ""}
                       onChange={(e) => updateBomRow(index, "rawMaterialName", e.target.value)}
                       placeholder="Name"
-                      className="w-full rounded border border-slate-200 px-2 py-1 text-xs"
+                      className="min-h-[48px] rounded-xl border-slate-300 bg-white px-3 py-2.5 text-[15px] shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                     />
                   )}
                 </td>
-                <td className="p-2 align-top">
+                <td className="p-2.5 align-top">
                   <Input
                     value={String(row.stockUom ?? getRawMaterialStockUom(String(row.rawMaterialName ?? "")))}
                     disabled
                     placeholder="Auto-filled"
-                    className="w-full rounded border border-slate-200 bg-slate-100 px-2 py-1 text-xs text-slate-600"
+                    className="min-h-[48px] rounded-xl border-slate-300 bg-slate-100 px-3 py-2.5 text-[15px] text-slate-600 shadow-sm"
                   />
                 </td>
-                <td className="min-w-[180px] whitespace-nowrap p-2 align-top">
+                <td className="min-w-[190px] whitespace-nowrap p-2.5 align-top">
                   {renderSizePicker(row, index)}
                 </td>
-                {showAdvancedFields && <td className="p-2 align-top">
+                {showAdvancedFields && <td className="p-2.5 align-top">
                   <Input
                     type="number"
                     value={row.buyerConsumption || ""}
                     onChange={(e) => updateBomRow(index, "buyerConsumption", e.target.value)}
                     placeholder="0"
-                    className="w-full rounded border border-slate-200 px-2 py-1 text-xs"
+                    className="min-h-[42px] rounded-lg border-slate-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                   />
                 </td>}
-                {showAdvancedFields && <td className="p-2 align-top">
+                {showAdvancedFields && <td className="p-2.5 align-top">
                   <Input
                     type="number"
                     value={row.buyerPrice || ""}
                     onChange={(e) => updateBomRow(index, "buyerPrice", e.target.value)}
                     placeholder="0.00"
-                    className="w-full rounded border border-slate-200 px-2 py-1 text-xs"
+                    className="min-h-[42px] rounded-lg border-slate-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                   />
                 </td>}
-                <td className="p-2 align-top">
+                <td className="p-2.5 align-top">
                   <Input
                     type="number"
                     value={row.internalConsumption || ""}
                     onChange={(e) => updateBomRow(index, "internalConsumption", e.target.value)}
                     placeholder="0"
-                    className="w-full rounded border border-slate-200 px-2 py-1 text-xs"
+                    className="min-h-[42px] rounded-lg border-slate-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                   />
                 </td>
-                <td className="p-2 align-top">
+                <td className="p-2.5 align-top">
                   <Input
                     type="number"
                     value={row.internalPrice || ""}
                     onChange={(e) => updateBomRow(index, "internalPrice", e.target.value)}
                     placeholder="0.00"
-                    className="w-full rounded border border-slate-200 px-2 py-1 text-xs"
+                    className="min-h-[42px] rounded-lg border-slate-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                   />
                 </td>
-                <td className="p-2 align-top">
+                <td className="p-2.5 align-top">
                   <Input
                     type="number"
                     value={row.requiredQty || ""}
                     readOnly
                     placeholder="0"
-                    className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs"
+                    className="min-h-[42px] rounded-lg border-slate-300 bg-slate-50 px-2.5 py-2 text-sm text-slate-600 shadow-sm"
                   />
                 </td>
-                {showAdvancedFields && <td className="p-2 align-top">
+                {showAdvancedFields && <td className="p-2.5 align-top">
                   <Input
                     type="number"
                     value={row.itemWiseExcessPercentage || ""}
                     onChange={(e) => updateBomRow(index, "itemWiseExcessPercentage", e.target.value)}
                     placeholder="0"
-                    className="w-full rounded border border-slate-200 px-2 py-1 text-xs"
+                    className="min-h-[42px] rounded-lg border-slate-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                   />
                 </td>}
-                {showAdvancedFields && <td className="p-2 align-top">
+                {showAdvancedFields && <td className="p-2.5 align-top">
                   <Input
                     type="number"
                     value={row.itemWiseExcessQty || ""}
                     readOnly
                     placeholder="0"
-                    className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs"
+                    className="min-h-[42px] rounded-lg border-slate-300 bg-slate-50 px-2.5 py-2 text-sm text-slate-600 shadow-sm"
                   />
                 </td>}
-                <td className="p-2 align-top">
+                <td className="p-2.5 align-top">
                   <input
                     type="number"
                     value={row.totalRequiredQty || ""}
                     readOnly
                     placeholder="0"
-                    className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs"
+                    className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2 text-sm text-slate-700 shadow-sm"
                   />
                 </td>
                 {showAdvancedFields && <td className="p-2 align-top">

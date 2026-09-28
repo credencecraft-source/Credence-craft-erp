@@ -83,6 +83,7 @@ export default function OrderDetailsTab({
       );
       const brandIds = new Set([brandOption?.id, brandOption?.value_id].filter(Boolean));
       options = options.filter((option: any) => {
+        if (option.is_dummy) return true;
         const relatedBrand = option.fields?.Brand1 ?? option.brand_id ?? option.brandId ?? option.brand;
         return relatedBrand === form.brand || brandIds.has(relatedBrand);
       });

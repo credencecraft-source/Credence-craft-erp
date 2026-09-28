@@ -17,6 +17,20 @@ type MasterDelegate = {
   upsert(args: MasterQuery): Promise<MasterRow>;
 };
 
+function belongsToDummyBatch(record: Record<string, unknown>, batchId: string) {
+  const metadata = record.legacy_metadata;
+  return typeof metadata === "object" && metadata !== null && !Array.isArray(metadata)
+    && (metadata as Record<string, unknown>).dummyDataBatchId === batchId;
+}
+
+async function isActiveDummyMaster(organizationId: string, record: MasterRow) {
+  const batch = await prisma.organizationDummyDataBatch.findFirst({
+    where: { organization_id: organizationId, status: "ACTIVE" },
+    select: { id: true },
+  });
+  return Boolean(batch && belongsToDummyBatch(record, batch.id));
+}
+
 const delegates = {
   entity: prisma.masterEntity, location: prisma.masterLocation, "category-type": prisma.masterCategoryType, category: prisma.masterCategory, "sub-category": prisma.masterSubCategory,
   brand: prisma.masterBrand, "pre-order-checklist": prisma.masterPreOrderChecklist, "currency-type": prisma.masterCurrencyType, buyer: prisma.masterBuyer,
@@ -128,8 +142,18 @@ async function hydrateArticleMetrics(organizationId: string, row: MasterRow) {
 
 async function resolveLookupId(organizationId: string, moduleKey: string, value: unknown) {
   if (!value) return null;
-  const result = await delegates[moduleKey].findFirst({ where: { organization_id: organizationId, OR: [{ id: String(value) }, { value_id: String(value) }, { [labelFields[moduleKey]]: String(value) }] } });
+  const activeDummyBatch = await prisma.organizationDummyDataBatch.findFirst({
+    where: { organization_id: organizationId, status: "ACTIVE" },
+    select: { id: true },
+  });
+  const result = await delegates[moduleKey].findFirst({ where: {
+    organization_id: organizationId,
+    OR: [{ id: String(value) }, { value_id: String(value) }, { [labelFields[moduleKey]]: String(value) }],
+  } });
   if (!result) throw new Error(`${getMasterDefinition(moduleKey)?.label ?? moduleKey} lookup value was not found in this organization.`);
+  if (activeDummyBatch && belongsToDummyBatch(result, activeDummyBatch.id)) {
+    throw new Error("Dummy master values cannot be used by regular organization records.");
+  }
   return result.id;
 }
 
@@ -216,14 +240,18 @@ export async function getMasterValuesForOrganization(
   organizationId: string,
   moduleKey: string,
   includeInactive = false,
-  options: { search?: string; limit?: number; exactSearch?: boolean } = {},
+  options: { search?: string; limit?: number; exactSearch?: boolean; includeDummyData?: boolean } = {},
 ) {
   const definition = getMasterDefinition(moduleKey);
   const delegate = delegates[moduleKey];
   if (!definition || !delegate) return [];
   const search = options.search?.trim();
   const limit = Math.min(Math.max(options.limit ?? 500, 1), 500);
-  const rows = await delegate.findMany({
+  const dummyBatch = await prisma.organizationDummyDataBatch.findFirst({
+    where: { organization_id: organizationId, status: "ACTIVE" },
+    select: { id: true },
+  });
+  const fetchedRows = await delegate.findMany({
     where: {
       organization_id: organizationId,
       ...(includeInactive ? {} : { is_active: true }),
@@ -240,8 +268,11 @@ export async function getMasterValuesForOrganization(
         : {}),
     },
     orderBy: [{ sort_order: "asc" }, { [labelFields[moduleKey]]: "asc" }],
-    take: limit,
+    take: limit + (dummyBatch && !options.includeDummyData ? 20 : 0),
   });
+  const rows = fetchedRows
+    .filter((row) => options.includeDummyData || !dummyBatch || !belongsToDummyBatch(row, dummyBatch.id))
+    .slice(0, limit);
   const lookupKeys = definition.fields
     .filter((field) => field.type === "lookup" && field.lookupModuleKey)
     .map((field) => field.lookupModuleKey as string);
@@ -280,6 +311,7 @@ export async function getMasterValuesForOrganization(
         : null,
       description: null,
       is_active: row.is_active,
+      is_dummy: Boolean(dummyBatch && belongsToDummyBatch(row, dummyBatch.id)),
       parent_id: parentColumns[moduleKey] ? (row[parentColumns[moduleKey]] as string | null) ?? null : null,
       fields,
     };
@@ -292,19 +324,96 @@ export async function getPendingMasterValuesForOrganization(organizationId: stri
   return (await getMasterValuesForOrganization(organizationId, moduleKey, true)).filter((entry) => !entry.is_active);
 }
 
-export async function getSizeGroupSizesForOrganization(organizationId: string, sizeGroupIds?: string[]) {
+export async function assertNoDummyMasterReferences(
+  organizationId: string,
+  references: Record<string, unknown>,
+) {
+  const batch = await prisma.organizationDummyDataBatch.findFirst({
+    where: { organization_id: organizationId, status: "ACTIVE" },
+    select: { master_record_ids: true },
+  });
+  if (!batch || !Array.isArray(batch.master_record_ids)) return;
+
+  const dummyIdsByModule = new Map<string, string[]>();
+  for (const item of batch.master_record_ids) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    if (typeof record.moduleKey !== "string" || typeof record.id !== "string") continue;
+    const ids = dummyIdsByModule.get(record.moduleKey) ?? [];
+    ids.push(record.id);
+    dummyIdsByModule.set(record.moduleKey, ids);
+  }
+
+  const fieldModules: Record<string, string> = {
+    category: "category",
+    subCategory: "sub-category",
+    season: "season",
+    article: "article",
+    buyer: "buyer",
+    brand: "brand",
+    sizeGroup: "size-group",
+  };
+  const submittedSizes = Array.isArray(references.rows)
+    ? references.rows.flatMap((row) => typeof row === "object" && row !== null
+      ? [String((row as Record<string, unknown>).size ?? (row as Record<string, unknown>).buyerSize ?? "").trim()]
+      : []).filter(Boolean)
+    : [];
+  const selections = [
+    ...Object.entries(fieldModules).map(([field, moduleKey]) => ({
+      moduleKey,
+      values: [String(references[field] ?? "").trim()].filter(Boolean),
+    })),
+    {
+      moduleKey: "color",
+      values: String(references.colors ?? "").split(",").map((value) => value.trim()).filter(Boolean),
+    },
+    { moduleKey: "size", values: submittedSizes },
+  ].filter(({ values }) => values.length > 0);
+
+  for (const { moduleKey, values } of selections) {
+    const dummyIds = dummyIdsByModule.get(moduleKey) ?? [];
+    if (dummyIds.length === 0) continue;
+    const rows = await delegates[moduleKey].findMany({
+      where: { organization_id: organizationId, id: { in: dummyIds } },
+    });
+    const dummyLabels = rows.map((row) => String(row[labelFields[moduleKey]] ?? "").trim().toLocaleLowerCase());
+    if (values.some((value) => dummyLabels.includes(value.toLocaleLowerCase()))) {
+      throw new Error("Dummy master values cannot be used by regular organization orders.");
+    }
+  }
+}
+
+export async function getSizeGroupSizesForOrganization(
+  organizationId: string,
+  sizeGroupIds?: string[],
+  includeDummyData = false,
+) {
   if (sizeGroupIds && sizeGroupIds.length === 0) return [];
 
-  const links = await prisma.masterSizeGroupSize.findMany({
-    where: {
-      organization_id: organizationId,
-      ...(sizeGroupIds ? { size_group_id: { in: sizeGroupIds } } : {}),
-    },
-    include: { size: true },
-    orderBy: { created_at: "asc" },
-  });
+  const [dummyBatch, links] = await Promise.all([
+    prisma.organizationDummyDataBatch.findFirst({
+      where: { organization_id: organizationId, status: "ACTIVE" },
+      select: { id: true },
+    }),
+    prisma.masterSizeGroupSize.findMany({
+      where: {
+        organization_id: organizationId,
+        ...(sizeGroupIds ? { size_group_id: { in: sizeGroupIds } } : {}),
+      },
+      include: { size: true },
+      orderBy: { created_at: "asc" },
+    }),
+  ]);
+  const dummyGroups = dummyBatch && !includeDummyData
+    ? await prisma.masterSizeGroup.findMany({
+        where: { organization_id: organizationId, ...(sizeGroupIds ? { id: { in: sizeGroupIds } } : {}) },
+        select: { id: true, legacy_metadata: true },
+      })
+    : [];
+  const dummyGroupIds = new Set(dummyGroups.filter((group) => belongsToDummyBatch(group, dummyBatch!.id)).map((group) => group.id));
 
-  return links.map((link) => ({
+  return links.filter((link) => includeDummyData || !dummyBatch
+    || (!dummyGroupIds.has(link.size_group_id) && !belongsToDummyBatch(link.size, dummyBatch.id))).map((link) => ({
     groupId: link.size_group_id,
     size: {
       id: link.size.id,
@@ -325,7 +434,14 @@ export async function syncSizeGroupSizes(organizationId: string, sizeGroupId: st
       OR: selectedLabels.flatMap((label) => [{ id: label }, { value_id: label }, { size: label }]),
     },
   });
-  const sizeByKey = new Map(sizes.flatMap((size) => [[size.id, size], [size.value_id, size], [size.size, size]]));
+  const dummyBatch = await prisma.organizationDummyDataBatch.findFirst({
+    where: { organization_id: organizationId, status: "ACTIVE" },
+    select: { id: true },
+  });
+  const selectableSizes = dummyBatch
+    ? sizes.filter((size) => !belongsToDummyBatch(size, dummyBatch.id))
+    : sizes;
+  const sizeByKey = new Map(selectableSizes.flatMap((size) => [[size.id, size], [size.value_id, size], [size.size, size]]));
   const selectedSizes = selectedLabels.map((label) => sizeByKey.get(label)).filter((size): size is (typeof sizes)[number] => Boolean(size));
 
   if (selectedSizes.length !== selectedLabels.length) {
@@ -444,6 +560,9 @@ export async function updateMasterValue(organizationId: string, valueId: string,
   for (const [moduleKey, delegate] of Object.entries(delegates)) {
     const existing = await delegate.findFirst({ where: { organization_id: organizationId, OR: [{ id: valueId }, { value_id: valueId }] } });
     if (existing) {
+      if (await isActiveDummyMaster(organizationId, existing)) {
+        throw new Error("Demo master values are managed by the Dummy Data batch and cannot be edited individually.");
+      }
       const data = input.fields ? await buildData(organizationId, moduleKey, input.fields, input.label?.trim() || String(existing[labelFields[moduleKey]])) : {};
       delete data.organization_id;
       if (input.is_active !== undefined) data.is_active = input.is_active;
@@ -457,6 +576,9 @@ export async function deleteMasterValue(organizationId: string, valueId: string)
   for (const [moduleKey, delegate] of Object.entries(delegates)) {
     const existing = await delegate.findFirst({ where: { organization_id: organizationId, OR: [{ id: valueId }, { value_id: valueId }] } });
     if (existing) {
+      if (await isActiveDummyMaster(organizationId, existing)) {
+        return { record: null, error: "Demo master values can only be removed by deleting the complete Dummy Data batch." };
+      }
       try {
         await prisma.$transaction(async (transaction) => {
           await transaction.approvalRequest.deleteMany({ where: { organization_id: organizationId, entity_ref_id: existing.value_id } });

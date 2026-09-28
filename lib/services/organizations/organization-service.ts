@@ -9,6 +9,7 @@ export type OrganizationCreateInput = {
   workspaceUserId: string;
   organizationName: string;
   gstNumber: string;
+  mobileNo?: string;
   addressLine1?: string;
   addressLine2?: string;
   city?: string;
@@ -199,6 +200,7 @@ export async function createOrganization(input: OrganizationCreateInput) {
     const validated = validateOrganizationInput({
       organizationName: input.organizationName,
       gstNumber: input.gstNumber,
+      mobileNo: input.mobileNo,
       addressLine1: input.addressLine1,
       addressLine2: input.addressLine2,
       city: input.city,
@@ -213,6 +215,7 @@ export async function createOrganization(input: OrganizationCreateInput) {
           organization_id: randomUUID(),
           organization_name: validated.organizationName,
           gst_number: validated.gstNumber,
+          mobile_number: validated.mobileNo || null,
           address_line_1: validated.addressLine1 || null,
           address_line_2: validated.addressLine2 || null,
           city: validated.city || null,
@@ -255,6 +258,18 @@ export async function createOrganization(input: OrganizationCreateInput) {
           is_active: true,
           sort_order: index,
         })),
+        skipDuplicates: true,
+      });
+      await transaction.masterRawMaterialType.createMany({
+        data: [{ organization_id: organization.id, raw_material_type: "Item", is_active: true, sort_order: 0 }],
+        skipDuplicates: true,
+      });
+      await transaction.masterProduct.createMany({
+        data: [{ organization_id: organization.id, product_master_name: "Finished Goods", is_active: true, sort_order: 0 }],
+        skipDuplicates: true,
+      });
+      await transaction.masterEntity.createMany({
+        data: [{ organization_id: organization.id, entity_name: validated.organizationName, is_active: true, sort_order: 0 }],
         skipDuplicates: true,
       });
       const defaultGstRates = [5, 12, 18, 28].map((rate, index) => ({
@@ -659,15 +674,21 @@ export async function deleteOrganizationRole(organizationId: string, workspaceUs
   return { deleted: true, role: roleKey };
 }
 
+import { normalizeSystemStatusKey } from "@/lib/auth/validation-rules";
+
 export async function updateOrganizationApprovalStatus(organizationId: string, approvalStatus: string) {
-  const normalizedStatus = approvalStatus.toUpperCase();
+  const normalizedStatus = normalizeSystemStatusKey(approvalStatus);
   if (!["PENDING_APPROVAL", "APPROVED", "REJECTED"].includes(normalizedStatus)) {
     throw new Error("Select a valid organization approval status.");
   }
 
   return prisma.$transaction(async (transaction) => {
     const updated = await transaction.organization.updateMany({
-      where: { id: organizationId, approval_status: { not: "ARCHIVED" } },
+      where: {
+        id: organizationId,
+        approval_status: { not: "ARCHIVED" },
+        ...(normalizedStatus === "APPROVED" ? { platformVersion: { is: { is_active: true } } } : {}),
+      },
       data: {
         approval_status: normalizedStatus,
         is_active: normalizedStatus === "APPROVED",
@@ -676,9 +697,20 @@ export async function updateOrganizationApprovalStatus(organizationId: string, a
     if (updated.count !== 1) {
       const existing = await transaction.organization.findUnique({
         where: { id: organizationId },
-        select: { id: true, approval_status: true },
+        select: {
+          id: true,
+          approval_status: true,
+          platform_version_id: true,
+          platformVersion: { select: { is_active: true } },
+        },
       });
       if (!existing) throw new Error("Organization not found.");
+      if (existing.approval_status === "ARCHIVED") {
+        throw new Error("Restore the organization from its workspace before changing its approval status.");
+      }
+      if (normalizedStatus === "APPROVED" && (!existing.platform_version_id || !existing.platformVersion?.is_active)) {
+        throw new Error("Assign an active platform version before approving this organization.");
+      }
       throw new Error("Restore the organization from its workspace before changing its approval status.");
     }
     const organization = await transaction.organization.findUnique({ where: { id: organizationId } });

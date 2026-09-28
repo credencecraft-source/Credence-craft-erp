@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { normalizeSystemStatusKey } from "@/lib/auth/validation-rules";
 import { requireOrganizationAccess } from "./organization-service";
 
 const TICKET_PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"] as const;
@@ -98,8 +99,8 @@ export async function addPlatformTicketMessage(ticketId: string, platformAdminId
 }
 
 export async function updateSupportTicketStatus(id: string, status: string) {
-  const normalizedStatus = status.toUpperCase();
-  if (!TICKET_STATUSES.includes(normalizedStatus as SupportTicketStatus)) throw new Error("Select a valid ticket status.");
+  const normalizedStatus = normalizeSystemStatusKey(status) as SupportTicketStatus;
+  if (!TICKET_STATUSES.includes(normalizedStatus)) throw new Error("Select a valid ticket status.");
 
   return prisma.supportTicket.update({
     where: { id },

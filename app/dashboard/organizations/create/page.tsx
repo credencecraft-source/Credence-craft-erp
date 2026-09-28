@@ -26,10 +26,10 @@ export default async function CreateOrganizationPage({
     const countryVal = String(formData.get("country") || "").trim();
     const pinCodeVal = String(formData.get("pinCode") || "").trim();
 
-    let newOrg: any;
+    let createdOrganizationId = "";
 
     try {
-      newOrg = await createOrganization({
+      const newOrg = await createOrganization({
         workspaceUserId: user.id,
         organizationName: organizationNameVal,
         mobileNo,
@@ -41,17 +41,20 @@ export default async function CreateOrganizationPage({
         state: stateVal,
         country: countryVal,
         pinCode: pinCodeVal,
-      } as any);
+      });
+      createdOrganizationId = newOrg.organization_id;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to create organization.";
       redirect(`/dashboard/organizations/create?error=1&message=${encodeURIComponent(message)}`);
     }
-
+    return { organizationId: createdOrganizationId };
   }
 
   return (
     <CreateOrganizationForm 
       workspaceId={user.workspace_id} 
+      userName={user.full_name || user.profile_name}
+      userEmail={user.email}
       error={params.error} 
       message={params.message}
       action={createOrganizationAction}

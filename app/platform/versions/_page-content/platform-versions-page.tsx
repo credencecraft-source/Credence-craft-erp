@@ -7,16 +7,16 @@ import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
-import { createVersion, deleteVersion, listVersions } from "@/lib/services/platform/version-service";
+import { createVersion, deleteVersion, duplicateVersion, listVersions } from "@/lib/services/platform/version-service";
 
 export default async function PlatformVersionsPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ error?: string }>;
+  searchParams?: Promise<{ error?: string; success?: string }>;
 }) {
   const [versions, params] = await Promise.all([
     listVersions(),
-    searchParams ?? Promise.resolve({ error: undefined } as { error?: string }),
+    searchParams ?? Promise.resolve({ error: undefined, success: undefined } as { error?: string; success?: string }),
   ]);
 
   async function createAction(formData: FormData) {
@@ -44,6 +44,17 @@ export default async function PlatformVersionsPage({
     redirect("/platform/versions");
   }
 
+  async function duplicateAction(formData: FormData) {
+    "use server";
+    await requirePlatformSessionAdmin();
+    try {
+      await duplicateVersion(String(formData.get("id") || ""));
+    } catch (error) {
+      redirect(`/platform/versions?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to duplicate version.")}`);
+    }
+    redirect("/platform/versions?success=Version%20duplicated.");
+  }
+
   return (
     <Page className="max-w-6xl">
       <Section className="space-y-6">
@@ -54,6 +65,7 @@ export default async function PlatformVersionsPage({
         </div>
 
         {params.error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{params.error}</p>}
+        {params.success && <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{params.success}</p>}
 
         <Card className="p-6">
           <form action={createAction} className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
@@ -71,9 +83,12 @@ export default async function PlatformVersionsPage({
                 <div><p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Version</p><h2 className="mt-1 text-xl font-bold text-slate-900">{version.version_name}</h2><p className="mt-1 text-sm text-slate-500">{version.description || "No description"}</p></div>
                 <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">{version._count.businessTypes} business types</span>
               </div>
-              <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4">
+              <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
                 <Link href={`/platform/versions/${version.id}`} className="text-sm font-semibold text-emerald-700 hover:text-emerald-900">Open configuration</Link>
-                <form action={deleteAction}><input type="hidden" name="id" value={version.id} /><button type="submit" className="text-xs font-semibold text-rose-600 hover:underline">Delete</button></form>
+                <div className="flex items-center gap-3">
+                  <form action={duplicateAction}><input type="hidden" name="id" value={version.id} /><button type="submit" className="text-xs font-semibold text-sky-600 hover:underline">Duplicate</button></form>
+                  <form action={deleteAction}><input type="hidden" name="id" value={version.id} /><button type="submit" className="text-xs font-semibold text-rose-600 hover:underline">Delete</button></form>
+                </div>
               </div>
             </div>
           ))}

@@ -1,0 +1,1 @@
+-- Intentionally empty; no schema changes are required for this migration.

@@ -141,9 +141,14 @@
     @apply overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.2)];
   }
 
-  :is(input, select, textarea)[data-erp-field-state="empty"],
-  :is(input, select, textarea)[data-erp-field-state="empty"]:focus {
+  :is(input, select, textarea)[data-erp-field-state="empty-required"],
+  :is(input, select, textarea)[data-erp-field-state="empty-required"]:focus {
     border: 2px solid #dc2626;
+  }
+
+  :is(input, select, textarea)[data-erp-field-state="empty-optional"],
+  :is(input, select, textarea)[data-erp-field-state="empty-optional"]:focus {
+    border: 2px solid #2563eb;
   }
 
   :is(input, select, textarea)[data-erp-field-state="filled"],

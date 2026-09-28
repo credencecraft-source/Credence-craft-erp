@@ -16,9 +16,10 @@ function parseMonthlyQuantityLimit(value: string) {
   return limit;
 }
 
-export async function listOrderQuantityLimits() {
+export async function listOrderQuantityLimits(versionId: string) {
   await requirePlatformSessionAdmin();
   const versions = await prisma.platformVersion.findMany({
+    where: { id: versionId },
     orderBy: { version_name: "asc" },
     include: {
       businessTypes: {

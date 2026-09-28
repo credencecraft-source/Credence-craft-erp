@@ -10,13 +10,17 @@ import Section from "@/components/ui/Section";
 
 interface CreateOrgFormProps {
   workspaceId: string;
+  userName: string;
+  userEmail: string;
   error?: string;
   message?: string;
-  action: (formData: FormData) => Promise<void>;
+  action: (formData: FormData) => Promise<{ organizationId: string }>;
 }
 
 export default function CreateOrganizationForm({
   workspaceId,
+  userName,
+  userEmail,
   error,
   message,
   action,
@@ -25,7 +29,7 @@ export default function CreateOrganizationForm({
     message || (error ? "Unable to complete verification. Please verify details." : "");
 
   // Verification States
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(userEmail);
   const [mobile, setMobile] = useState("");
 
   const [gstNumber, setGstNumber] = useState("");
@@ -33,9 +37,10 @@ export default function CreateOrganizationForm({
   const [gstError, setGstError] = useState("");
   const [isGstVerified, setIsGstVerified] = useState(false);
   const [showGstSuccess, setShowGstSuccess] = useState(false);
+  const [createdOrganizationId, setCreatedOrganizationId] = useState("");
 
   // Form Field States
-  const [ownerName, setOwnerName] = useState("");
+  const [ownerName, setOwnerName] = useState(userName);
   const [organizationName, setOrganizationName] = useState("");
   const [companyWebsite, setCompanyWebsite] = useState("");
   const [websiteError, setWebsiteError] = useState("");
@@ -43,9 +48,6 @@ export default function CreateOrganizationForm({
 
   const [priorErp, setPriorErp] = useState("TALLY");
   const [otherErpName, setOtherErpName] = useState("");
-
-  const [personalCity, setPersonalCity] = useState("");
-  const [personalState, setPersonalState] = useState("");
 
   const [addressLine1, setAddressLine1] = useState("");
   const [addressLine2, setAddressLine2] = useState("");
@@ -115,8 +117,6 @@ export default function CreateOrganizationForm({
         formData.append("ownerName", ownerName);
         formData.append("organizationEmail", email);
         formData.append("mobileNo", mobile);
-        formData.append("personalCity", personalCity);
-        formData.append("personalState", personalState);
         formData.append("linkedIn", linkedIn);
         formData.append("companyWebsite", companyWebsite);
         formData.append("priorErp", priorErp);
@@ -130,7 +130,8 @@ export default function CreateOrganizationForm({
         formData.append("country", country);
         formData.append("pinCode", fetchedPin);
 
-        await action(formData);
+        const result = await action(formData);
+        setCreatedOrganizationId(result.organizationId);
         setShowGstSuccess(true);
       } else {
         setGstError("❌ GST NOT FOUND or invalid response. Organization cannot be created.");
@@ -177,9 +178,9 @@ export default function CreateOrganizationForm({
               <div className="grid gap-4 sm:grid-cols-2">
                 <Input
                   name="ownerName"
-                  label="Founder/Owner Name"
+                  label="Your Name"
                   required
-                  placeholder="Jassim Mp"
+                  placeholder="Enter your name"
                   value={ownerName}
                   onChange={(e) => setOwnerName(e.target.value)}
                 />
@@ -188,7 +189,7 @@ export default function CreateOrganizationForm({
                   name="organizationEmail"
                   label="Email ID"
                   required
-                  placeholder="contact@credencecraft.com"
+                  placeholder="support@credencecraft.com"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -202,23 +203,6 @@ export default function CreateOrganizationForm({
                   type="tel"
                   value={mobile}
                   onChange={(e) => setMobile(e.target.value)}
-                />
-
-                <Input
-                  name="personalCity"
-                  label="Your City (Personal)"
-                  required
-                  placeholder="Kochi"
-                  value={personalCity}
-                  onChange={(e) => setPersonalCity(e.target.value)}
-                />
-                <Input
-                  name="personalState"
-                  label="Your State (Personal)"
-                  required
-                  placeholder="Kerala"
-                  value={personalState}
-                  onChange={(e) => setPersonalState(e.target.value)}
                 />
 
                 <Input
@@ -308,8 +292,6 @@ export default function CreateOrganizationForm({
 
                     <Input name="addressLine1" label="Address Line 1" required value={addressLine1} readOnly onChange={(e) => setAddressLine1(e.target.value)} />
                     <Input name="addressLine2" label="Address Line 2" value={addressLine2} readOnly onChange={(e) => setAddressLine2(e.target.value)} />
-                    <Input name="city" label="City" required value={city} readOnly onChange={(e) => setCity(e.target.value)} />
-                    <Input name="state" label="State" required value={state} readOnly onChange={(e) => setState(e.target.value)} />
                     <Input name="country" label="Country" required value={country} readOnly onChange={(e) => setCountry(e.target.value)} />
                     <Input name="pinCode" label="PIN Code" required value={pinCode} readOnly onChange={(e) => setPinCode(e.target.value)} />
                   </>
@@ -325,8 +307,8 @@ export default function CreateOrganizationForm({
               <div className="flex items-start gap-4">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xl font-bold text-emerald-700">✓</div>
                 <div>
-                  <h2 id="gst-success-title" className="text-xl font-bold text-slate-900">GST verified successfully</h2>
-                  <p className="mt-1 text-sm text-slate-600">Review the official GST details before creating your organization.</p>
+                  <h2 id="gst-success-title" className="text-xl font-bold text-slate-900">Organization created</h2>
+                  <p className="mt-1 text-sm text-slate-600">The organization is awaiting approval. Dummy data setup becomes available after approval and remains separate from your organization’s own master values.</p>
                 </div>
               </div>
 
@@ -340,6 +322,7 @@ export default function CreateOrganizationForm({
               </div>
 
               <div className="mt-6 flex justify-end gap-3">
+                <Link href={`/dashboard/${workspaceId}/organizations/${createdOrganizationId}/settings/dummy-data`} className="rounded-lg border border-emerald-700 px-4 py-2.5 text-sm font-semibold text-emerald-800 hover:bg-emerald-50">Open Dummy Data Setup</Link>
                 <Link href={`/dashboard/${workspaceId}/home?success=organization-created`} className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700">Go to dashboard</Link>
               </div>
             </div>

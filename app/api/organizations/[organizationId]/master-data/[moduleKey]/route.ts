@@ -37,7 +37,7 @@ export async function GET(
       const lookupValues = await Promise.all(
         lookupKeys.map(async (key) => [
           key,
-          await getMasterValuesForOrganization(organization.id, key, includeInactive, { limit }),
+          await getMasterValuesForOrganization(organization.id, key, includeInactive, { limit, includeDummyData: true }),
         ] as const),
       );
       const masterOptions = Object.fromEntries(lookupValues);
@@ -46,7 +46,7 @@ export async function GET(
       const brands = masterOptions.brand;
       const articles = masterOptions.article;
       const colors = masterOptions.color;
-      const sizeLinks = await getSizeGroupSizesForOrganization(organization.id);
+      const sizeLinks = await getSizeGroupSizesForOrganization(organization.id, undefined, true);
       const sizeGroups = masterOptions["size-group"].map((group) => ({
         ...group,
         sizes: sizeLinks.filter((link) => link.groupId === group.value_id || link.groupId === group.id).map((link) => link.size),
