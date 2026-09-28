@@ -85,6 +85,7 @@ describe("organization creation defaults", () => {
     await createOrganization({
       workspaceUserId: "workspace-user-id",
       organizationName: "Northwind Apparel",
+      organizationEmail: " SALES@NORTHWIND.COM ",
       gstNumber: "22AAAAA0000A1Z5",
       mobileNo: "9876543210",
     });
@@ -92,6 +93,7 @@ describe("organization creation defaults", () => {
     expect(transactionMock.organization.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         organization_name: "Northwind Apparel",
+        organization_email: "sales@northwind.com",
         gst_number: "22AAAAA0000A1Z5",
         mobile_number: "9876543210",
       }),
@@ -108,6 +110,17 @@ describe("organization creation defaults", () => {
       data: [{ organization_id: organization.id, entity_name: "Northwind Apparel", is_active: true, sort_order: 0 }],
       skipDuplicates: true,
     });
+  });
+
+  it("rejects an invalid organization email before writing", async () => {
+    await expect(createOrganization({
+      workspaceUserId: "workspace-user-id",
+      organizationName: "Northwind Apparel",
+      organizationEmail: "not-an-email",
+      gstNumber: "22AAAAA0000A1Z5",
+    })).rejects.toThrow("Organization email must be a valid email address of 320 characters or fewer.");
+
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 });
 

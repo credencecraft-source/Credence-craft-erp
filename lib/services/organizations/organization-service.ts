@@ -8,6 +8,7 @@ import { normalizeOrganizationInput, validateOrganizationInput } from "./organiz
 export type OrganizationCreateInput = {
   workspaceUserId: string;
   organizationName: string;
+  organizationEmail?: string;
   gstNumber: string;
   mobileNo?: string;
   addressLine1?: string;
@@ -199,6 +200,7 @@ export async function createOrganization(input: OrganizationCreateInput) {
   try {
     const validated = validateOrganizationInput({
       organizationName: input.organizationName,
+      organizationEmail: input.organizationEmail,
       gstNumber: input.gstNumber,
       mobileNo: input.mobileNo,
       addressLine1: input.addressLine1,
@@ -214,6 +216,7 @@ export async function createOrganization(input: OrganizationCreateInput) {
         data: {
           organization_id: randomUUID(),
           organization_name: validated.organizationName,
+          organization_email: validated.organizationEmail || null,
           gst_number: validated.gstNumber,
           mobile_number: validated.mobileNo || null,
           address_line_1: validated.addressLine1 || null,

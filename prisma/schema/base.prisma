@@ -36,6 +36,7 @@ model Organization {
   id                            String                         @id @default(cuid())
   organization_id               String                         @unique @default(uuid())
   organization_name             String                         @db.VarChar(255)
+  organization_email            String?                        @db.VarChar(320)
   gst_number                    String                         @db.VarChar(50)
   mobile_number                 String?                        @db.VarChar(50)
   address_line_1                String?                        @db.VarChar(255)

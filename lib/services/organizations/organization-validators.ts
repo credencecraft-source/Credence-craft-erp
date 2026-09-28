@@ -1,7 +1,8 @@
-import { normalizeDisplayText } from "@/lib/auth/validation-rules";
+import { isValidEmail, normalizeDisplayText, normalizeEmail } from "@/lib/auth/validation-rules";
 
 export type OrganizationInput = {
   organizationName: string;
+  organizationEmail?: string;
   gstNumber: string;
   mobileNo?: string;
   addressLine1?: string;
@@ -17,6 +18,7 @@ export const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A
 export function normalizeOrganizationInput(input: OrganizationInput) {
   return {
     organizationName: normalizeDisplayText(input.organizationName),
+    organizationEmail: normalizeEmail(input.organizationEmail ?? ""),
     gstNumber: String(input.gstNumber || "").trim().toUpperCase(),
     mobileNo: String(input.mobileNo || "").trim(),
     addressLine1: normalizeDisplayText(input.addressLine1),
@@ -37,6 +39,13 @@ export function validateOrganizationInput(input: OrganizationInput) {
 
   if (!normalized.gstNumber) {
     throw new Error("GST number is required.");
+  }
+
+  if (normalized.organizationEmail && (
+    normalized.organizationEmail.length > 320
+    || !isValidEmail(normalized.organizationEmail)
+  )) {
+    throw new Error("Organization email must be a valid email address of 320 characters or fewer.");
   }
 
   if (!GSTIN_PATTERN.test(normalized.gstNumber)) {

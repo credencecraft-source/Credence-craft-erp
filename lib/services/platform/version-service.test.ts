@@ -60,7 +60,7 @@ describe("version service", () => {
     vi.clearAllMocks();
     requirePlatformSessionAdminMock.mockResolvedValue({ id: "admin-id" });
     prismaMock.$transaction.mockImplementation(async (callback: (transaction: typeof transactionMock) => Promise<unknown>) => callback(transactionMock));
-    prismaMock.platformVersion.findUnique.mockResolvedValue({
+    prismaMock.platformVersion.findUnique.mockResolvedValueOnce({
       id: "source-version-id",
       version_name: "2026",
       description: "Original description",
@@ -103,7 +103,7 @@ describe("version service", () => {
         form_key: "order_form",
         monthly_entry_limit: 15,
       }],
-    });
+    }).mockResolvedValue(null);
     prismaMock.platformVersion.create.mockResolvedValue({ id: "version-copy-id", version_name: "2026 Copy", description: "Original description", is_active: true });
     prismaMock.versionBusinessType.create.mockResolvedValue({ id: "vbt-id" });
     prismaMock.versionBusinessTypeSegment.create.mockResolvedValue({ id: "vbts-id" });
