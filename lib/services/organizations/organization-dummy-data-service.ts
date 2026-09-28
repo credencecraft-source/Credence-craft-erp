@@ -193,15 +193,18 @@ function isDummyBatchTableMissing(error: unknown) {
     || ("message" in error && String(error.message).includes("organization_dummy_data_batches"));
 }
 
-async function authorizeOrganization(userId: string, routeOrganizationId: string) {
+async function authorizeOrganization(userId: string, routeOrganizationId: string, allowPendingOwner = false) {
   const membership = await requireOrganizationPermission(userId, routeOrganizationId, "ORGANIZATION_SETTINGS");
+  if (allowPendingOwner && membership.role !== "OWNER") {
+    throw new Error("Only the organization owner can prepare sample data before approval.");
+  }
   const organization = await prisma.organization.findFirst({
     where: {
       id: membership.organization_id,
       is_active: true,
-      approval_status: "APPROVED",
+      approval_status: allowPendingOwner ? { in: ["APPROVED", "PENDING_APPROVAL"] } : "APPROVED",
     },
-    select: { id: true, organization_name: true },
+    select: { id: true, organization_name: true, approval_status: true },
   });
 
   if (!organization) throw new Error("This organization is not available for dummy-data setup.");
@@ -246,7 +249,15 @@ export async function getOrganizationDummyDataStatus(userId: string, routeOrgani
 }
 
 export async function createOrganizationDummyData(userId: string, routeOrganizationId: string) {
-  const organization = await authorizeOrganization(userId, routeOrganizationId);
+  return createOrganizationDummyDataForUser(userId, routeOrganizationId, false);
+}
+
+export async function createOrganizationDummyDataForNewOrganization(userId: string, routeOrganizationId: string) {
+  return createOrganizationDummyDataForUser(userId, routeOrganizationId, true);
+}
+
+async function createOrganizationDummyDataForUser(userId: string, routeOrganizationId: string, allowPendingOwner: boolean) {
+  const organization = await authorizeOrganization(userId, routeOrganizationId, allowPendingOwner);
   const formRestriction = await getEffectiveSegmentFormRestriction(organization.id, "merchandising_orders");
   await Promise.all(SAMPLE_VALUES.sampleOrders.map((sampleOrder) => validateRestrictedFormFields(
     organization.id,

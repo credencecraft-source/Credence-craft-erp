@@ -64,7 +64,6 @@ type MasterModuleWrapperProps = {
   workspaceId: string;
   organizationId: string;
   organizationName: string;
-  createDummyData: () => Promise<{ created: boolean; orderNo: string | null; orderCount?: number; error?: string }>;
   deleteDummyData: () => Promise<{ deleted: boolean; error?: string }>;
   dummyDataStatus: { status: string; orderNo: string | null; orderCount?: number; masterCount: number };
   value?: string;
@@ -82,7 +81,6 @@ export function MasterModuleWrapper({
   workspaceId,
   organizationId,
   organizationName,
-  createDummyData,
   deleteDummyData,
   dummyDataStatus = { status: "UNAVAILABLE", orderNo: null, masterCount: 0 },
   children,
@@ -173,35 +171,12 @@ export function MasterModuleWrapper({
   const [hiddenModuleKeys, setHiddenModuleKeys] = useState<string[]>([]);
   const [moduleSettingsOpen, setModuleSettingsOpen] = useState(false);
   const [dummyDataHelpOpen, setDummyDataHelpOpen] = useState(false);
-  const [dummyDataResult, setDummyDataResult] = useState<{
-    created: boolean;
-    orderNo: string | null;
-    orderCount?: number;
-    error?: string;
-  } | null>(null);
   const [dummyDataStateOverride, setDummyDataStateOverride] = useState<boolean | null>(null);
   const [dummyDataDeleteConfirmation, setDummyDataDeleteConfirmation] = useState(false);
   const [dummyDataDeleteError, setDummyDataDeleteError] = useState("");
   const [dummyDataDeleteNotice, setDummyDataDeleteNotice] = useState("");
   const [isUpdatingDummyData, startUpdatingDummyData] = useTransition();
   const dummyDataActive = dummyDataStateOverride ?? dummyDataStatus.status === "ACTIVE";
-  const dummyDataAvailable = !["SCHEMA_NOT_READY", "UNAVAILABLE"].includes(dummyDataStatus.status);
-
-  function handleCreateDummyData() {
-    setDummyDataResult(null);
-    setDummyDataDeleteError("");
-    setDummyDataDeleteNotice("");
-    startUpdatingDummyData(async () => {
-      const result = await createDummyData();
-      setDummyDataResult(result);
-      if (!result.error) {
-        setDummyDataStateOverride(true);
-        setDummyDataHelpOpen(false);
-        setDummyDataDeleteConfirmation(false);
-        router.refresh();
-      }
-    });
-  }
 
   function handleDeleteDummyData() {
     setDummyDataDeleteError("");
@@ -214,7 +189,6 @@ export function MasterModuleWrapper({
       setDummyDataStateOverride(false);
       setDummyDataDeleteConfirmation(false);
       setDummyDataDeleteNotice(result.deleted ? "Dummy data was deleted." : "There is no dummy dataset to delete.");
-      setDummyDataResult(null);
       setDummyDataHelpOpen(false);
       router.refresh();
     });
@@ -467,13 +441,13 @@ export function MasterModuleWrapper({
               type="button"
               variant="ghost"
               size="sm"
-              aria-label="Learn about sample data"
+              aria-label="Delete sample data"
               aria-haspopup="dialog"
-              title="Sample data"
+              title="Delete sample data"
               onClick={() => setDummyDataHelpOpen(true)}
-              className="h-9 w-9 rounded-md border border-emerald-200 bg-emerald-50 p-0 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-800 focus-visible:ring-emerald-500"
+              className="h-9 w-9 rounded-md border border-red-200 bg-red-50 p-0 text-red-700 hover:border-red-300 hover:bg-red-100 hover:text-red-800 focus-visible:ring-red-500"
             >
-              <Sparkles className="h-4 w-4" aria-hidden="true" />
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
             </Button>
             <SupportTicketTrigger organizationId={organizationId} />
             <Button
@@ -593,8 +567,8 @@ export function MasterModuleWrapper({
                 <Sparkles className="h-5 w-5" aria-hidden="true" />
               </span>
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">Guided sample</p>
-                <h2 id="dummy-data-help-title" className="mt-1 text-base font-semibold text-slate-950">Explore a sample order</h2>
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-red-700">Sample data</p>
+                <h2 id="dummy-data-help-title" className="mt-1 text-base font-semibold text-slate-950">Delete sample data</h2>
               </div>
             </div>
             <Button
@@ -611,7 +585,7 @@ export function MasterModuleWrapper({
         </div>
         <div className="space-y-5 p-5">
           <p id="dummy-data-help-description" className="text-sm leading-6 text-slate-600">
-            See how buyers, brands, categories, sizes, and a draft merchandising order connect before entering your own business data. The sample stays separate from live masters and can be removed later.
+            Remove the sample orders and sample master records from this organization. Organization-owned values are preserved.
           </p>
           <div className="flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">
             <Button
@@ -632,22 +606,15 @@ export function MasterModuleWrapper({
                 disabled={isUpdatingDummyData}
               >
                 <Trash2 className="h-4 w-4" aria-hidden="true" />
-                Delete dummy data
+                Delete sample data
               </Button>
             ) : (
-              <Button
-                type="button"
-                onClick={handleCreateDummyData}
-                disabled={isUpdatingDummyData || !dummyDataAvailable}
-              >
-                <Sparkles className="h-4 w-4" aria-hidden="true" />
-                {isUpdatingDummyData ? "Creating dummy data..." : "Create dummy data"}
-              </Button>
+              <p className="text-sm text-slate-500" role="status">There is no sample data to delete.</p>
             )}
           </div>
           {dummyDataStatus.status === "SCHEMA_NOT_READY" ? (
             <p className="mt-3 text-sm text-amber-800" role="status">
-              Dummy-data tracking must be deployed before sample data can be created.
+              Dummy-data tracking must be deployed before sample data can be managed.
             </p>
           ) : null}
           {dummyDataStatus.status === "UNAVAILABLE" ? (
@@ -679,18 +646,6 @@ export function MasterModuleWrapper({
                 </Button>
               </div>
             </div>
-          ) : null}
-          {dummyDataResult ? (
-            <p
-              className={`mt-3 text-sm ${dummyDataResult.error ? "text-red-700" : "text-emerald-700"}`}
-              role={dummyDataResult.error ? "alert" : "status"}
-            >
-              {dummyDataResult.error
-                ? dummyDataResult.error
-                : dummyDataResult.created
-                  ? `${dummyDataResult.orderCount ?? 1} sample orders created, starting with ${dummyDataResult.orderNo}.`
-                  : "Dummy data already exists for this organization."}
-            </p>
           ) : null}
           {dummyDataDeleteError ? <p className="mt-3 text-sm text-red-700" role="alert">{dummyDataDeleteError}</p> : null}
           {dummyDataDeleteNotice ? <p className="mt-3 text-sm text-emerald-700" role="status">{dummyDataDeleteNotice}</p> : null}

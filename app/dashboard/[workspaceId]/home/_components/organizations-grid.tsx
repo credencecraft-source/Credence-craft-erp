@@ -35,6 +35,7 @@ export function OrganizationsGrid({
   restoreOrgAction: (formData: FormData) => Promise<void>;
 }) {
   const [archiveModalOrg, setArchiveModalOrg] = useState<WorkspaceOrganization | null>(null);
+  const [pendingApprovalOrg, setPendingApprovalOrg] = useState<WorkspaceOrganization | null>(null);
   const [confirmInput, setConfirmInput] = useState("");
   const dialogTitleRef = useRef<HTMLHeadingElement>(null);
   const [directoryOrganizations, setDirectoryOrganizations] = useState(organizations);
@@ -69,6 +70,8 @@ export function OrganizationsGrid({
           const canManageOrganization = organization.can_manage_settings;
           const isArchived = organization.approval_status === "ARCHIVED";
           const isOperational = organization.is_active && organization.approval_status === "APPROVED";
+          const isPendingApproval = organization.is_active && organization.approval_status === "PENDING_APPROVAL";
+          const canOpenOrganization = isOperational || isPendingApproval;
           const approvalLabel = isArchived
             ? "Archived"
             : isOperational
@@ -92,6 +95,18 @@ export function OrganizationsGrid({
                 }}
                 className="absolute inset-0 z-0 rounded-lg"
               />
+            )}
+            {isPendingApproval && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="md"
+                aria-label={`View approval status for ${organization.organization_name}`}
+                onClick={() => setPendingApprovalOrg(organization)}
+                className="absolute inset-0 z-0 h-auto min-h-0 w-auto rounded-lg border-0 bg-transparent p-0 shadow-none hover:bg-transparent"
+              >
+                <span className="sr-only">View approval status</span>
+              </Button>
             )}
             <div className="relative z-10 pointer-events-none">
               <div className="flex items-center justify-between">
@@ -143,10 +158,15 @@ export function OrganizationsGrid({
               </p>
             </div>
 
-            <div className={`relative z-10 mt-3 pt-2 border-t border-slate-100 flex items-center justify-between ${isOperational ? "pointer-events-none" : "pointer-events-auto"}`}>
+            <div className={`relative z-10 mt-3 pt-2 border-t border-slate-100 flex items-center justify-between ${canOpenOrganization ? "pointer-events-none" : "pointer-events-auto"}`}>
               {isOperational ? (
                 <span className="text-[11px] font-semibold text-emerald-700 flex items-center gap-1 w-full justify-between">
                   <span>Open Workspace</span>
+                  <span className="transition-transform group-hover:translate-x-0.5">→</span>
+                </span>
+              ) : isPendingApproval ? (
+                <span className="text-[11px] font-semibold text-amber-700 flex items-center gap-1 w-full justify-between">
+                  <span>View approval status</span>
                   <span className="transition-transform group-hover:translate-x-0.5">→</span>
                 </span>
               ) : isArchived && role === "OWNER" ? (
@@ -170,6 +190,34 @@ export function OrganizationsGrid({
           </Button>
         </div>
       )}
+
+      <Modal
+        open={pendingApprovalOrg !== null}
+        onClose={() => setPendingApprovalOrg(null)}
+        ariaLabelledBy="pending-organization-approval-title"
+        ariaDescribedBy="pending-organization-approval-description"
+        variant="info"
+        size="sm"
+      >
+        {pendingApprovalOrg && (
+          <div className="space-y-4 p-6">
+            <div>
+              <h2 id="pending-organization-approval-title" className="text-lg font-bold text-slate-900">
+                Waiting for organization approval
+              </h2>
+              <p className="mt-1 text-sm font-medium text-slate-700">{pendingApprovalOrg.organization_name}</p>
+            </div>
+            <p id="pending-organization-approval-description" className="text-sm leading-6 text-slate-600">
+              This organization is under review.
+            </p>
+            <div className="flex justify-end">
+              <Button type="button" onClick={() => setPendingApprovalOrg(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={archiveModalOrg !== null}

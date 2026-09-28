@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import Card from "@/components/ui/Card";
+import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
@@ -15,6 +17,7 @@ interface CreateOrgFormProps {
   error?: string;
   message?: string;
   action: (formData: FormData) => Promise<{ organizationId: string }>;
+  openOrganizationAction: (organizationId: string) => Promise<{ error: string | null }>;
 }
 
 export default function CreateOrganizationForm({
@@ -24,7 +27,9 @@ export default function CreateOrganizationForm({
   error,
   message,
   action,
+  openOrganizationAction,
 }: CreateOrgFormProps) {
+  const router = useRouter();
   const errorMessage =
     message || (error ? "Unable to complete verification. Please verify details." : "");
 
@@ -38,6 +43,8 @@ export default function CreateOrganizationForm({
   const [isGstVerified, setIsGstVerified] = useState(false);
   const [showGstSuccess, setShowGstSuccess] = useState(false);
   const [createdOrganizationId, setCreatedOrganizationId] = useState("");
+  const [openingOrganization, setOpeningOrganization] = useState(false);
+  const [sampleDataError, setSampleDataError] = useState("");
 
   // Form Field States
   const [ownerName, setOwnerName] = useState(userName);
@@ -142,6 +149,23 @@ export default function CreateOrganizationForm({
       setIsGstVerified(false);
     } finally {
       setLoadingGst(false);
+    }
+  }
+
+  async function handleOpenOrganization() {
+    setOpeningOrganization(true);
+    setSampleDataError("");
+    try {
+      const result = await openOrganizationAction(createdOrganizationId);
+      if (result.error) {
+        setSampleDataError(result.error);
+        return;
+      }
+      router.replace(`/dashboard/${workspaceId}/home`);
+    } catch {
+      setSampleDataError("Unable to create sample data. Please try again.");
+    } finally {
+      setOpeningOrganization(false);
     }
   }
 
@@ -308,7 +332,7 @@ export default function CreateOrganizationForm({
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xl font-bold text-emerald-700">✓</div>
                 <div>
                   <h2 id="gst-success-title" className="text-xl font-bold text-slate-900">Organization created</h2>
-                  <p className="mt-1 text-sm text-slate-600">The organization is awaiting approval. Dummy data setup becomes available after approval and remains separate from your organization’s own master values.</p>
+                  <p className="mt-1 text-sm text-slate-600">Sample apparel data will be created as you open the organization. Organization access remains subject to approval.</p>
                 </div>
               </div>
 
@@ -321,9 +345,11 @@ export default function CreateOrganizationForm({
                 <div className="sm:col-span-2"><p className="text-xs text-slate-500">Registered address</p><p className="mt-1 font-semibold text-slate-900">{addressLine1 || "Not available"}{addressLine2 ? `, ${addressLine2}` : ""}</p></div>
               </div>
 
-              <div className="mt-6 flex justify-end gap-3">
-                <Link href={`/dashboard/${workspaceId}/organizations/${createdOrganizationId}/settings/dummy-data`} className="rounded-lg border border-emerald-700 px-4 py-2.5 text-sm font-semibold text-emerald-800 hover:bg-emerald-50">Open Dummy Data Setup</Link>
-                <Link href={`/dashboard/${workspaceId}/home?success=organization-created`} className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700">Go to dashboard</Link>
+              {sampleDataError && <p className="mt-4 text-sm text-red-700" role="alert">{sampleDataError}</p>}
+              <div className="mt-6 flex justify-end">
+                <Button type="button" variant="primary" size="lg" onClick={handleOpenOrganization} disabled={openingOrganization} className="disabled:cursor-wait">
+                  {openingOrganization ? "Creating sample data..." : "Open Organization"}
+                </Button>
               </div>
             </div>
           </div>

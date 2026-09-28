@@ -79,6 +79,7 @@ import {
 const organization = {
   id: "internal-org-id",
   organization_name: "Northwind Apparel",
+  approval_status: "APPROVED",
 };
 
 beforeEach(() => {
@@ -87,7 +88,7 @@ beforeEach(() => {
     (callback: (transaction: typeof transactionMock) => Promise<unknown>) => callback(transactionMock),
   );
   prismaMock.organization.findFirst.mockResolvedValue(organization);
-  permissionMock.mockResolvedValue({ organization_id: organization.id });
+  permissionMock.mockResolvedValue({ organization_id: organization.id, role: "OWNER" });
   let nextOrderNumber = 1;
   orderNumberMock.mockImplementation(async () => `ORD-${String(nextOrderNumber++).padStart(4, "0")}`);
   transactionMock.organizationDummyDataBatch.upsert.mockResolvedValue({ id: "batch-id", status: "EMPTY" });
@@ -299,6 +300,28 @@ describe("organization dummy data service", () => {
     expect(transactionMock.organizationDummyDataBatch.update.mock.calls[0][0].data.master_record_ids
       .filter((record: { moduleKey?: string }) => record.moduleKey === "sample-order"))
       .toHaveLength(10);
+  });
+
+  it("allows only the owner to seed the newly created organization while approval is pending", async () => {
+    const { createOrganizationDummyDataForNewOrganization } = await import("./organization-dummy-data-service");
+    prismaMock.organization.findFirst.mockResolvedValue({ ...organization, approval_status: "PENDING_APPROVAL" });
+
+    await expect(createOrganizationDummyDataForNewOrganization("user-id", "public-org-id"))
+      .resolves.toEqual({ created: true, orderNo: "ORD-0001", orderCount: 10 });
+
+    permissionMock.mockResolvedValue({ organization_id: organization.id, role: "ADMIN" });
+    await expect(createOrganizationDummyDataForNewOrganization("admin-id", "public-org-id"))
+      .rejects.toThrow("Only the organization owner can prepare sample data before approval.");
+  });
+
+  it("keeps regular dummy-data setup unavailable until approval", async () => {
+    prismaMock.organization.findFirst.mockResolvedValue(null);
+
+    await expect(createOrganizationDummyData("user-id", "public-org-id"))
+      .rejects.toThrow("This organization is not available for dummy-data setup.");
+    expect(prismaMock.organization.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ approval_status: "APPROVED" }),
+    }));
   });
 
   it("does not create a second batch when dummy data is already active", async () => {

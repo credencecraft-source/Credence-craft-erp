@@ -285,25 +285,14 @@ export async function createOrganization(input: OrganizationCreateInput) {
         is_active: true,
         sort_order: index,
       }));
-      const existingGstRates = await transaction.masterGst.findMany({
-        where: {
-          organization_id: organization.id,
-          name: { in: defaultGstRates.map((rate) => rate.name) },
-        },
-        select: { name: true },
-      });
-      const existingGstNames = new Set(existingGstRates.map((rate) => rate.name));
-      const missingGstRates = defaultGstRates.filter((rate) => !existingGstNames.has(rate.name));
-      if (missingGstRates.length > 0) {
-        await transaction.masterGst.createMany({ data: missingGstRates });
-      }
+      await transaction.masterGst.createMany({ data: defaultGstRates, skipDuplicates: true });
       await transaction.masterState.createMany({
         data: INDIAN_STATES.map((state, index) => ({ organization_id: organization.id, state, is_active: true, sort_order: index })),
         skipDuplicates: true,
       });
 
       return organization;
-    });
+    }, { maxWait: 10000, timeout: 30000 });
   } catch (error) {
     if (isMissingTableError(error)) {
       throw new Error("Organization database table is not available yet. Run the Prisma migration or sync the database schema before creating organizations.");

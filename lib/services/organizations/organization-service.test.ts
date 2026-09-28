@@ -110,6 +110,20 @@ describe("organization creation defaults", () => {
       data: [{ organization_id: organization.id, entity_name: "Northwind Apparel", is_active: true, sort_order: 0 }],
       skipDuplicates: true,
     });
+    expect(transactionMock.masterGst.createMany).toHaveBeenCalledWith({
+      data: [5, 12, 18, 28].map((rate, index) => ({
+        organization_id: organization.id,
+        name: `${rate}%`,
+        gst: rate,
+        cgst_rate: rate / 2,
+        sgst_rate: rate / 2,
+        igst_rate: rate,
+        is_active: true,
+        sort_order: index,
+      })),
+      skipDuplicates: true,
+    });
+    expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 10000, timeout: 30000 });
   });
 
   it("rejects an invalid organization email before writing", async () => {

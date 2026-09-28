@@ -8,13 +8,11 @@ import { MasterModuleWrapper } from "@/components/master-data/master-module-wrap
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
 import { getOrganizationShellContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
-  createOrganizationDummyData,
   deleteOrganizationDummyData,
   getOrganizationDummyDataStatus,
 } from "@/lib/services/organizations/organization-dummy-data-service";
 import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
 import { requireSessionUser } from "@/lib/auth/session-manager"; // Fixed typo (removed trailing 's')
-import { PendingOrganizationPrompt } from "@/components/organizations/pending-organization-prompt";
 
 type OrganizationShellLayoutProps = {
   children: React.ReactNode;
@@ -72,28 +70,7 @@ export default async function OrganizationShellLayout({
   }
 
   if (organization.approval_status !== "APPROVED") {
-    return <PendingOrganizationPrompt organizationId={organization.organization_id} />;
-  }
-
-  async function createDummyDataAction() {
-    "use server";
-    const actionUser = await requireSessionUser();
-    if (actionUser.workspace_id !== workspaceId) {
-      return { created: false, orderNo: null, orderCount: 0, error: "Workspace access denied." };
-    }
-
-    try {
-      const result = await createOrganizationDummyData(actionUser.id, organizationId);
-      revalidatePath(organizationPath);
-      return result;
-    } catch (error) {
-      return {
-        created: false,
-        orderNo: null,
-        orderCount: 0,
-        error: error instanceof Error ? error.message : "Unable to create dummy data.",
-      };
-    }
+    redirect(`/dashboard/${workspaceId}/home`);
   }
 
   async function deleteDummyDataAction() {
@@ -156,7 +133,6 @@ export default async function OrganizationShellLayout({
       workspaceId={workspaceId}
       organizationId={organizationId}
       organizationName={organization.organization_name}
-      createDummyData={createDummyDataAction}
       deleteDummyData={deleteDummyDataAction}
       dummyDataStatus={dummyDataStatus}
       businessTypes={businessTypes}

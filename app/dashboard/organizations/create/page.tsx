@@ -1,7 +1,10 @@
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { createOrganization } from "@/lib/services/organizations/organization-service";
+import { createOrganizationDummyDataForNewOrganization } from "@/lib/services/organizations/organization-dummy-data-service";
 import { redirect } from "next/navigation";
 import CreateOrganizationForm from "./create-organization-form";
+
+export const maxDuration = 60;
 
 export default async function CreateOrganizationPage({
   searchParams,
@@ -50,6 +53,21 @@ export default async function CreateOrganizationPage({
     return { organizationId: createdOrganizationId };
   }
 
+  async function openOrganizationAction(organizationId: string) {
+    "use server";
+    const actionUser = await requireSessionUser();
+    if (actionUser.workspace_id !== user.workspace_id) {
+      return { error: "Workspace access denied." };
+    }
+
+    try {
+      await createOrganizationDummyDataForNewOrganization(actionUser.id, organizationId);
+      return { error: null };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Unable to create sample data." };
+    }
+  }
+
   return (
     <CreateOrganizationForm 
       workspaceId={user.workspace_id} 
@@ -58,6 +76,7 @@ export default async function CreateOrganizationPage({
       error={params.error} 
       message={params.message}
       action={createOrganizationAction}
+      openOrganizationAction={openOrganizationAction}
     />
   );
 }
