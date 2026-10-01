@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "db:migrate:status": "prisma migrate status",
-    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:deploy": "node scripts/deploy-prisma-migrations.cjs",
     "predev": "npm run db:migrate:status",
     "dev": "node scripts/start-dev-server.cjs",
     "predev:3000": "npm run db:migrate:status",
