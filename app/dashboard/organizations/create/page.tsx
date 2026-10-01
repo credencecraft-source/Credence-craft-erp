@@ -1,6 +1,5 @@
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { createOrganization } from "@/lib/services/organizations/organization-service";
-import { createOrganizationDummyDataForNewOrganization } from "@/lib/services/organizations/organization-dummy-data-service";
+import { countOrganizationsForUser, createOrganization } from "@/lib/services/organizations/organization-service";
 import { redirect } from "next/navigation";
 import CreateOrganizationForm from "./create-organization-form";
 
@@ -13,12 +12,12 @@ export default async function CreateOrganizationPage({
 }) {
   const user = await requireSessionUser();
   const params = (await searchParams) ?? {};
+  const isOnboardingRequired = await countOrganizationsForUser(user.id) === 0;
 
   async function createOrganizationAction(formData: FormData) {
     "use server";
 
     const organizationNameVal = String(formData.get("organizationName") || "").trim();
-    const ownerName = String(formData.get("ownerName") || "").trim();
     const mobileNo = String(formData.get("mobileNo") || "").trim();
     const organizationEmail = String(formData.get("organizationEmail") || "").trim();
     const gstNumberVal = String(formData.get("gstNumber") || "").trim().toUpperCase();
@@ -53,30 +52,15 @@ export default async function CreateOrganizationPage({
     return { organizationId: createdOrganizationId };
   }
 
-  async function openOrganizationAction(organizationId: string) {
-    "use server";
-    const actionUser = await requireSessionUser();
-    if (actionUser.workspace_id !== user.workspace_id) {
-      return { error: "Workspace access denied." };
-    }
-
-    try {
-      await createOrganizationDummyDataForNewOrganization(actionUser.id, organizationId);
-      return { error: null };
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : "Unable to create sample data." };
-    }
-  }
-
   return (
     <CreateOrganizationForm 
       workspaceId={user.workspace_id} 
       userName={user.full_name || user.profile_name}
       userEmail={user.email}
+      isOnboardingRequired={isOnboardingRequired}
       error={params.error} 
       message={params.message}
       action={createOrganizationAction}
-      openOrganizationAction={openOrganizationAction}
     />
   );
 }

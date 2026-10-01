@@ -1,6 +1,7 @@
 // @/lib/services/platform/subscription-service.ts
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 
 export const FREE_PLAN_NAME = "Free";
@@ -126,19 +127,51 @@ export async function listSubscriptionsPage(options: { organizationId?: string; 
 
   const hasNextPage = subscriptions.length > take;
   const pageSubscriptions = hasNextPage ? subscriptions.slice(0, take) : subscriptions;
+  const organizationIds = [...new Set(pageSubscriptions.map(({ organization_id }) => organization_id))];
+  const organizations = organizationIds.length > 0
+    ? await prisma.organization.findMany({
+        where: {
+          OR: [
+            { id: { in: organizationIds } },
+            { organization_id: { in: organizationIds } },
+          ],
+        },
+        select: {
+          id: true,
+          organization_id: true,
+          organization_name: true,
+          organization_number: true,
+        },
+      })
+    : [];
+  const organizationByReference = mapOrganizationsByReference(organizations);
+
   return {
     subscriptions: pageSubscriptions.map((sub) => ({
     ...sub,
-    organizationId: sub.organization_id,
+    organizationId: organizationByReference.get(sub.organization_id)?.id ?? sub.organization_id,
     businessTypeId: sub.business_type_id,
     planId: sub.plan_id,
     paymentStatus: sub.payment_status,
-    organization_name: sub.organization_id,
+    organizationName: organizationByReference.get(sub.organization_id)?.organization_name ?? sub.organization_name,
+    organization_name: organizationByReference.get(sub.organization_id)?.organization_name ?? sub.organization_name,
+    organizationPublicId: organizationByReference.get(sub.organization_id)?.organization_id ?? null,
+    organizationNumber: organizationByReference.get(sub.organization_id)?.organization_number ?? null,
+    organizationMissing: !organizationByReference.has(sub.organization_id),
     business_type_name: sub.business_type_id,
     plan_name: sub.plan_id,
     })),
     nextCursor: hasNextPage ? pageSubscriptions.at(-1)?.id ?? null : null,
   };
+}
+
+export function mapOrganizationsByReference<T extends { id: string; organization_id: string }>(organizations: T[]) {
+  const organizationsByReference = new Map<string, T>();
+  for (const organization of organizations) {
+    organizationsByReference.set(organization.id, organization);
+    organizationsByReference.set(organization.organization_id, organization);
+  }
+  return organizationsByReference;
 }
 
 export async function getSubscriptionsByOrganization(organizationId: string) {
@@ -197,7 +230,7 @@ export async function createPendingSubscription(data: {
   organizationName?: string;
   businessTypeId: string;
   planId: string;
-  monthlyPrice: number;
+  monthlyPrice: Prisma.Decimal;
   billingMonths: 6 | 12;
 }) {
   const plan = await prisma.plan.findUnique({ where: { id: data.planId } });
@@ -205,9 +238,9 @@ export async function createPendingSubscription(data: {
     throw new Error("The shared free plan does not require checkout.");
   }
 
-  const subtotalAmount = data.monthlyPrice * data.billingMonths;
-  const gstAmount = subtotalAmount * 0.18;
-  const totalAmount = subtotalAmount + gstAmount;
+  const subtotalAmount = data.monthlyPrice.mul(data.billingMonths).toDecimalPlaces(2);
+  const gstAmount = subtotalAmount.mul("0.18").toDecimalPlaces(2);
+  const totalAmount = subtotalAmount.add(gstAmount).toDecimalPlaces(2);
 
   return prisma.subscription.create({
     data: {
@@ -261,9 +294,107 @@ export async function updateSubscription(
   };
 }
 
-export async function deleteSubscription(id: string) {
-  return prisma.subscription.delete({
+export function orphanedSubscriptionAuditDetails(subscription: {
+  organization_id: string;
+  organization_name: string | null;
+}) {
+  return {
+    organizationReference: subscription.organization_id,
+    organizationName: subscription.organization_name,
+    reason: "The referenced organization record does not exist.",
+  };
+}
+
+export async function deleteSubscription(id: string, platformAdminId?: string) {
+  const subscription = await prisma.subscription.findUnique({
     where: { id },
+    select: { id: true, organization_id: true, organization_name: true },
+  });
+  if (!subscription) return { deleted: false };
+
+  const organization = await prisma.organization.findFirst({
+    where: {
+      OR: [
+        { id: subscription.organization_id },
+        { organization_id: subscription.organization_id },
+      ],
+    },
+    select: { id: true },
+  });
+
+  if (organization) {
+    return prisma.$transaction(async (transaction) => {
+      const currentSubscription = await transaction.subscription.findUnique({
+        where: { id: subscription.id },
+        select: { organization_id: true },
+      });
+      if (!currentSubscription) return { deleted: false };
+      if (currentSubscription.organization_id !== organization.id) {
+        await transaction.subscription.update({
+          where: { id: subscription.id },
+          data: { organization_id: organization.id },
+        });
+      }
+      const result = await transaction.subscription.deleteMany({
+        where: { id: subscription.id, organization_id: organization.id },
+      });
+      return { deleted: result.count === 1 };
+    });
+  }
+
+  if (!platformAdminId) {
+    throw new Error("This subscription has no matching organization and requires platform-admin cleanup.");
+  }
+  const platformAdmin = await requirePlatformSessionAdmin();
+  if (platformAdmin.id !== platformAdminId) {
+    throw new Error("Platform administrator authorization changed. Refresh and retry.");
+  }
+
+  return prisma.$transaction(async (transaction) => {
+    const currentSubscription = await transaction.subscription.findUnique({
+      where: { id: subscription.id },
+      select: { id: true, organization_id: true, organization_name: true },
+    });
+    if (!currentSubscription) return { deleted: false };
+
+    const recoveredOrganization = await transaction.organization.findFirst({
+      where: {
+        OR: [
+          { id: currentSubscription.organization_id },
+          { organization_id: currentSubscription.organization_id },
+        ],
+      },
+      select: { id: true },
+    });
+    if (recoveredOrganization) {
+      if (currentSubscription.organization_id !== recoveredOrganization.id) {
+        await transaction.subscription.update({
+          where: { id: currentSubscription.id },
+          data: { organization_id: recoveredOrganization.id },
+        });
+      }
+      const result = await transaction.subscription.deleteMany({
+        where: { id: currentSubscription.id, organization_id: recoveredOrganization.id },
+      });
+      return { deleted: result.count === 1 };
+    }
+
+    await transaction.$executeRaw`SELECT set_config('app.skip_organization_audit', 'true', true)`;
+    const deleted = await transaction.subscription.deleteMany({
+      where: { id: currentSubscription.id, organization_id: currentSubscription.organization_id },
+    });
+    if (deleted.count !== 1) return { deleted: false };
+
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: platformAdminId,
+        action: "ORPHANED_SUBSCRIPTION_DELETED",
+        entity_type: "Subscription",
+        entity_id: currentSubscription.id,
+        details: orphanedSubscriptionAuditDetails(currentSubscription),
+      },
+    });
+    return { deleted: true };
   });
 }
 

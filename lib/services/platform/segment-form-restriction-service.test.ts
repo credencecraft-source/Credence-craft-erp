@@ -74,12 +74,14 @@ describe("preloaded form restriction validation", () => {
   });
 
   it("still enforces monthly limits using a resolved restriction", async () => {
+    const countMock = vi.fn().mockResolvedValue(1);
+    const aggregateMock = vi.fn().mockResolvedValue({ _sum: { orderQty: 20 } });
     const database = {
       merchandisingOrder: {
-        count: vi.fn().mockResolvedValue(1),
-        aggregate: vi.fn().mockResolvedValue({ _sum: { orderQty: 20 } }),
+        count: countMock,
+        aggregate: aggregateMock,
       },
-    } as unknown as Parameters<typeof validateMonthlyFormLimits>[4];
+    } as unknown as NonNullable<Parameters<typeof validateMonthlyFormLimits>[4]>;
 
     await expect(validateMonthlyFormLimits(
       "organization-id",
@@ -89,5 +91,9 @@ describe("preloaded form restriction validation", () => {
       database,
       restriction,
     )).rejects.toThrow("This form allows 1 entries per month.");
+
+    const countedWhere = countMock.mock.calls[0][0].where;
+    expect(countedWhere.sourceStatus).toEqual({ not: "DEMO" });
+    expect(aggregateMock).toHaveBeenCalledWith(expect.objectContaining({ where: countedWhere }));
   });
 });

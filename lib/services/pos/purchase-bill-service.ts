@@ -539,12 +539,22 @@ export async function createPurchaseBillFinishedGoodsStock(organizationId: strin
     const colorById = new Map(colors.map((item) => [item.id, item.colors]));
     const categoryById = new Map(categories.map((item) => [item.id, item.category_name]));
     const subCategoryById = new Map(subCategories.map((item) => [item.id, item.sub_category]));
+    const stockLocation = await transaction.masterLocation.findFirst({
+      where: { organization_id: organizationId, is_active: true },
+      select: { id: true, entity_id: true },
+    });
+    if (!stockLocation) {
+      throw new Error("At least one active location is required before creating finished goods stock.");
+    }
+
     const created = [];
     for (const line of bill.lines) {
       const record = line.sourceRecord!;
       const stock = await transaction.finishedGoodsSkuStock.create({
         data: {
           organization_id: organizationId,
+          entity_id: stockLocation.entity_id,
+          location_id: stockLocation.id,
           style_name: record.style_name?.trim() || line.item_name?.trim() || record.record_number,
           order_no: bill.document_number,
           article_no: line.item_name?.trim() || record.record_number,

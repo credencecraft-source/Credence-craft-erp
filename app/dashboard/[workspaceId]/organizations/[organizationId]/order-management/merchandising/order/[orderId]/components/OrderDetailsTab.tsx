@@ -66,7 +66,8 @@ export default function OrderDetailsTab({
     onChange: (value: string) => void,
     masterKey: string,
     placeholder: string,
-    required = true
+    required = true,
+    disabled = false,
   ) => {
     const lookupDefinition = orderLookups.find(
       (definition) => definition.lookupModuleKey === masterKey || definition.key === masterKey
@@ -76,6 +77,10 @@ export default function OrderDetailsTab({
     const parentValue = parentField ? form[parentField] : "";
     
     let options = getMasterList(masterKey);
+
+    if (masterKey === "entity") {
+      options = options.filter((option: any) => option.is_active !== false);
+    }
 
     if (masterKey === "size-group" && form.brand) {
       const brandOption = getMasterList("brand").find(
@@ -111,16 +116,19 @@ export default function OrderDetailsTab({
       <label className="flex flex-col gap-1.5">
         <span className="flex items-center justify-between text-xs font-semibold text-slate-700">
           <span>{label}{required ? " *" : ""}</span>
-          <button
-            type="button"
-            onClick={() => onOpenCreateMaster(masterKey)}
-            className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
-          >
-            + New
-          </button>
+          {!disabled && (
+            <button
+              type="button"
+              onClick={() => onOpenCreateMaster(masterKey)}
+              className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"
+            >
+              + New
+            </button>
+          )}
         </span>
         <select
           required={required}
+          disabled={disabled}
           value={value ?? ""}
           onChange={(event) => onChange(event.target.value)}
           className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
@@ -189,7 +197,7 @@ export default function OrderDetailsTab({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {renderMasterSelect("Entity Name", form.entityName, (val) => handleChange("entityName", val), "entity", "Select entity")}
+        {renderMasterSelect("Entity Name", form.entityName, (val) => handleChange("entityName", val), "entity", "Select entity", isCreateMode, !isCreateMode)}
         {renderMasterSelect("Product Category", form.category, (val) => handleChange("category", val), "category", "Select product category")}
         {renderMasterSelect("Product Sub Category", form.subCategory, (val) => handleChange("subCategory", val), "sub-category", "Select product sub category")}
 

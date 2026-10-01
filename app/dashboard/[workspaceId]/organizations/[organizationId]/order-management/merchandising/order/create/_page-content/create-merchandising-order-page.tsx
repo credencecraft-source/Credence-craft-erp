@@ -20,14 +20,20 @@ export default function CreateMerchandisingOrderPage() {
         const res = await fetch(`/api/orders?organizationId=${encodeURIComponent(organizationId)}`, {
           cache: "no-store",
         });
-        if (res.ok) {
+        const contentType = res.headers.get("content-type") ?? "";
+        if (res.ok && contentType.includes("application/json")) {
           const data = await res.json();
           if (isMounted) {
-            setOrders(data.orders ?? data ?? []);
+            setOrders(Array.isArray(data.orders) ? data.orders : Array.isArray(data) ? data : []);
           }
+        } else if (isMounted) {
+          setOrders([]);
         }
       } catch (err) {
         console.error("Background sync failed", err);
+        if (isMounted) {
+          setOrders([]);
+        }
       }
     }
 

@@ -3,9 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "db:migrate:status": "prisma migrate status",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "predev": "npm run db:migrate:status",
     "dev": "node scripts/start-dev-server.cjs",
+    "predev:3000": "npm run db:migrate:status",
     "dev:3000": "next dev --port 3000 --hostname 0.0.0.0",
-    "build": "prisma generate && next build",
+    "build": "node scripts/clean-prisma-generated-client.cjs && prisma generate && next build",
+    "prestart": "npm run db:migrate:status",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
@@ -13,7 +18,7 @@
     "typecheck": "tsc --noEmit",
     "audit:production": "npm audit --omit=dev --audit-level=high",
     "qa": "npm run audit:production && npm test && npm run lint && npm run typecheck && npm run build",
-    "postinstall": "prisma generate"
+    "postinstall": "node scripts/clean-prisma-generated-client.cjs && prisma generate"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",
@@ -23,7 +28,7 @@
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "lucide-react": "^1.37.0",
-    "next": "^16.3.5",
+    "next": "16.3.8",
     "nodemailer": "^10.0.10",
     "prisma": "6.19.3",
     "react": "19.2.8",
@@ -50,6 +55,7 @@
     "unrs-resolver@1.12.2": true
   },
   "overrides": {
-    "deepmerge-ts": "8.0.2"
+    "deepmerge-ts": "8.0.2",
+    "dompurify": "3.4.16"
   }
 }

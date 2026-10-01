@@ -58,10 +58,29 @@ model VersionBusinessTypeSegment {
   formRestrictions        SegmentFormRestriction[]
   locationLimit           VersionBusinessTypeSegmentLocationLimit?
   tags                    VersionBusinessTypeSegmentTag[]
+  organizationPrices      OrganizationSegmentPrice[]
 
   @@unique([version_business_type_id, segment_id])
   @@index([segment_id])
   @@map("version_business_type_segments")
+}
+
+model OrganizationSegmentPrice {
+  id                              String                     @id @default(cuid())
+  organization_id                 String
+  version_business_type_segment_id String
+  snapshot_price                  Decimal?                   @db.Decimal(12, 2)
+  custom_price                    Decimal?                   @db.Decimal(12, 2)
+  updated_by_platform_admin_id    String?
+  created_at                      DateTime                   @default(now())
+  updated_at                      DateTime                   @updatedAt
+  organization                    Organization               @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  versionBusinessTypeSegment      VersionBusinessTypeSegment @relation(fields: [version_business_type_segment_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, version_business_type_segment_id])
+  @@index([organization_id, custom_price])
+  @@index([version_business_type_segment_id])
+  @@map("organization_segment_prices")
 }
 
 model VersionBusinessTypeSegmentLocationLimit {

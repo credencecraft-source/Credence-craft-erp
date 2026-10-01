@@ -1,13 +1,15 @@
+import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import { requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
-import { reserveNextOrderNumber } from "@/lib/services/orders/order-service";
+import { reserveNextOrderNumbers } from "@/lib/services/orders/order-service";
+import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
+import { lockOrganizationOrderQuantityLimit } from "@/lib/services/platform/order-quantity-limit-service";
 import {
   getEffectiveSegmentFormRestriction,
   validateMonthlyFormLimits,
   validateRestrictedFormFields,
 } from "@/lib/services/platform/segment-form-restriction-service";
-import { lockOrganizationOrderQuantityLimit } from "@/lib/services/platform/order-quantity-limit-service";
 
 type DemoMasterRecord = { moduleKey: string; id: string };
 const SAMPLE_DATASET_VERSION = "apparel-10-orders-2026-09";
@@ -166,14 +168,17 @@ function createSampleFinishedGoodsRows(orderQty: number, sizeGroupName: string, 
 
 function createSampleBomMaterialIndexes(orderIndex: number) {
   const targetCount = 30 + (orderIndex % 6);
-  const indexes = Array.from({ length: SAMPLE_VALUES.rawMaterials.length }, (_, index) => index);
+  const requiredIndexes: number[] = [...SAMPLE_VALUES.sampleOrders[orderIndex].bomMaterialIndexes];
+  const requiredIndexSet = new Set<number>(requiredIndexes);
+  const optionalIndexes = Array.from({ length: SAMPLE_VALUES.rawMaterials.length }, (_, index) => index)
+    .filter((index) => !requiredIndexSet.has(index));
 
-  for (let cursor = indexes.length - 1; cursor > 0; cursor -= 1) {
+  for (let cursor = optionalIndexes.length - 1; cursor > 0; cursor -= 1) {
     const swapIndex = (orderIndex + cursor + 7) % (cursor + 1);
-    [indexes[cursor], indexes[swapIndex]] = [indexes[swapIndex], indexes[cursor]];
+    [optionalIndexes[cursor], optionalIndexes[swapIndex]] = [optionalIndexes[swapIndex], optionalIndexes[cursor]];
   }
 
-  return indexes.slice(0, targetCount);
+  return [...requiredIndexes, ...optionalIndexes.slice(0, targetCount - requiredIndexes.length)];
 }
 
 function readMasterRecordIds(value: Prisma.JsonValue): DemoMasterRecord[] {
@@ -202,7 +207,7 @@ async function authorizeOrganization(userId: string, routeOrganizationId: string
     where: {
       id: membership.organization_id,
       is_active: true,
-      approval_status: allowPendingOwner ? { in: ["APPROVED", "PENDING_APPROVAL"] } : "APPROVED",
+      approval_status: "APPROVED",
     },
     select: { id: true, organization_name: true, approval_status: true },
   });
@@ -248,15 +253,15 @@ export async function getOrganizationDummyDataStatus(userId: string, routeOrgani
   };
 }
 
-export async function createOrganizationDummyData(userId: string, routeOrganizationId: string) {
-  return createOrganizationDummyDataForUser(userId, routeOrganizationId, false);
+export async function createOrganizationDummyData(userId: string, routeOrganizationId: string, requestedBy = userId) {
+  return createOrganizationDummyDataForUser(userId, routeOrganizationId, false, requestedBy);
 }
 
-export async function createOrganizationDummyDataForNewOrganization(userId: string, routeOrganizationId: string) {
-  return createOrganizationDummyDataForUser(userId, routeOrganizationId, true);
+export async function createOrganizationDummyDataForNewOrganization(userId: string, routeOrganizationId: string, requestedBy = userId) {
+  return createOrganizationDummyDataForUser(userId, routeOrganizationId, false, requestedBy);
 }
 
-async function createOrganizationDummyDataForUser(userId: string, routeOrganizationId: string, allowPendingOwner: boolean) {
+async function createOrganizationDummyDataForUser(userId: string, routeOrganizationId: string, allowPendingOwner: boolean, requestedBy: string) {
   const organization = await authorizeOrganization(userId, routeOrganizationId, allowPendingOwner);
   const formRestriction = await getEffectiveSegmentFormRestriction(organization.id, "merchandising_orders");
   await Promise.all(SAMPLE_VALUES.sampleOrders.map((sampleOrder) => validateRestrictedFormFields(
@@ -552,6 +557,16 @@ async function createOrganizationDummyDataForUser(userId: string, routeOrganizat
     });
     stockUoms.forEach((item) => record("uom", item.id));
     const stockUomIds = new Map(stockUoms.map((item) => [item.uom, item.id]));
+    const stockUomConversions = await transaction.masterStockUomConvert.createManyAndReturn({
+      data: [
+        ...SAMPLE_VALUES.stockUoms.map((uom, index) => ({ organization_id: organization.id, stock_uom_id: stockUomIds.get(uom)!, name: uom, how_many: "1", is_active: true, sort_order: index, legacy_metadata: metadata })),
+        { organization_id: organization.id, stock_uom_id: stockUomIds.get("MTR")!, name: "BOX", how_many: "10000", is_active: true, sort_order: 1, legacy_metadata: metadata },
+        { organization_id: organization.id, stock_uom_id: stockUomIds.get("MTR")!, name: "CONE", how_many: "1000", is_active: true, sort_order: 2, legacy_metadata: metadata },
+      ],
+      select: { id: true, name: true, stock_uom_id: true, how_many: true },
+    });
+    stockUomConversions.forEach((item) => record("stock-uom-convert", item.id));
+    const buyingUomByStockUom = new Map(stockUomConversions.map((item) => [item.stock_uom_id, { name: item.name, howMany: Number(item.how_many) }]));
 
     const rawMaterialOffset = await transaction.masterRawMaterial.count({ where: { organization_id: organization.id } });
     const rawMaterials = await transaction.masterRawMaterial.createManyAndReturn({
@@ -571,77 +586,321 @@ async function createOrganizationDummyDataForUser(userId: string, routeOrganizat
     rawMaterials.forEach((item) => record("raw-material", item.id));
 
     await lockOrganizationOrderQuantityLimit(transaction, organization.id);
-    const createdSampleOrders: Array<{ id: string; orderNo: string }> = [];
+    for (const sampleOrder of SAMPLE_VALUES.sampleOrders) {
+      await validateMonthlyFormLimits(
+        organization.id,
+        "merchandising_orders",
+        normalizeDummyOrderQty(sampleOrder.orderQty),
+        undefined,
+        transaction,
+        formRestriction,
+      );
+    }
+
+    const orderNumbers = await reserveNextOrderNumbers(organization.id, SAMPLE_VALUES.sampleOrders.length, transaction);
+    const orderRows = SAMPLE_VALUES.sampleOrders.map((sampleOrder, orderIndex) => ({
+      organization_id: organization.id,
+      entity_id: entity.id,
+      orderNo: orderNumbers[orderIndex],
+      entityName: organization.organization_name,
+      category: sampleOrder.category,
+      subCategory: sampleOrder.subCategory,
+      season: SAMPLE_VALUES.season,
+      article: sampleOrder.article,
+      styleName: sampleOrder.article,
+      colors: sampleOrder.color,
+      buyer: sampleOrder.buyer,
+      brand: sampleOrder.brand,
+      sizeGroup: sampleOrder.sizeGroup,
+      haveSizeRatio: false,
+      orderQty: normalizeDummyOrderQty(sampleOrder.orderQty),
+      deliveryDate: new Date(Date.now() + (30 + orderIndex * 3) * 24 * 60 * 60 * 1000),
+      finalStatus: "Draft",
+      sourceStatus: "DEMO",
+    }));
+    const createdSampleOrders = await transaction.merchandisingOrder.createManyAndReturn({
+      data: orderRows,
+      select: { id: true, orderNo: true },
+    });
+    if (createdSampleOrders.length !== SAMPLE_VALUES.sampleOrders.length) {
+      throw new Error("Sample orders could not be created as a complete batch.");
+    }
+    const ordersByNumber = new Map(createdSampleOrders.map((order) => [order.orderNo, order]));
+    const sampleOrdersByNumber = new Map(orderNumbers.map((orderNo, index) => [orderNo, SAMPLE_VALUES.sampleOrders[index]]));
+    for (const order of createdSampleOrders) record("sample-order", order.id);
+
+    const finishedGoodsRows: Array<{
+      order_id: string;
+      buyerSize: string;
+      size: string;
+      beforeExcessQty: number;
+      excess: string;
+      excessQty: number;
+      totalQty: number;
+    }> = [];
+    const bomRows: Array<{
+      order_id: string;
+      categoryType: string;
+      category: string;
+      subCategory: string;
+      rawMaterialName: string;
+      stockUom: string;
+      size: null;
+      orderQty: string;
+      buyerConsumption: string;
+      buyerPrice: null;
+      internalConsumption: string;
+      internalPrice: null;
+      valuePerGarmentRm: string;
+      consumption: string;
+      requiredQty: string;
+      itemWiseExcessPercentage: string;
+      itemWiseExcessQty: string;
+      totalRequiredQty: string;
+    }> = [];
     for (const [orderIndex, sampleOrder] of SAMPLE_VALUES.sampleOrders.entries()) {
+      const orderNo = orderNumbers[orderIndex];
+      const order = ordersByNumber.get(orderNo);
+      if (!order) throw new Error("A created sample order could not be matched to its reserved order number.");
+
       const boundedOrderQty = normalizeDummyOrderQty(sampleOrder.orderQty);
-      await validateMonthlyFormLimits(organization.id, "merchandising_orders", boundedOrderQty, undefined, transaction, formRestriction);
-      const orderNo = await reserveNextOrderNumber(organization.id, transaction);
-      const order = await transaction.merchandisingOrder.create({
+      finishedGoodsRows.push(...createSampleFinishedGoodsRows(boundedOrderQty, sampleOrder.sizeGroup, orderIndex).map((item) => ({
+        order_id: order.id,
+        buyerSize: item.size,
+        size: item.size,
+        beforeExcessQty: item.beforeExcessQty,
+        excess: "0",
+        excessQty: 0,
+        totalQty: item.beforeExcessQty,
+      })));
+
+      bomRows.push(...createSampleBomMaterialIndexes(orderIndex).map((materialIndex) => {
+        const item = SAMPLE_VALUES.rawMaterials[materialIndex];
+        return {
+          order_id: order.id,
+          categoryType: "Item",
+          category: item.category,
+          subCategory: item.subCategory,
+          rawMaterialName: item.name,
+          stockUom: item.uom,
+          size: null,
+          orderQty: String(boundedOrderQty),
+          buyerConsumption: "1",
+          buyerPrice: null,
+          internalConsumption: "1",
+          internalPrice: null,
+          valuePerGarmentRm: "1",
+          consumption: "1",
+          requiredQty: String(boundedOrderQty),
+          itemWiseExcessPercentage: "0",
+          itemWiseExcessQty: "0",
+          totalRequiredQty: String(boundedOrderQty),
+        };
+      }));
+    }
+    await transaction.finishedGoodsSizeWise.createMany({ data: finishedGoodsRows });
+    const createdBomRows = await transaction.billOfMaterialItem.createManyAndReturn({
+      data: bomRows,
+      select: {
+        id: true,
+        order_id: true,
+        category: true,
+        categoryType: true,
+        subCategory: true,
+        rawMaterialName: true,
+        stockUom: true,
+        internalConsumption: true,
+        internalPrice: true,
+        requiredQty: true,
+        totalRequiredQty: true,
+      },
+    });
+    const procurementGroups = new Map<string, typeof createdBomRows>();
+    for (const bomRow of createdBomRows) {
+      const key = [bomRow.rawMaterialName, bomRow.category, bomRow.subCategory, bomRow.stockUom]
+        .map((value) => String(value ?? "").trim().toLowerCase())
+        .join("|");
+      const group = procurementGroups.get(key) ?? [];
+      group.push(bomRow);
+      procurementGroups.set(key, group);
+    }
+    const dummyVendorIds = vendors.map((vendor) => vendor.id);
+    for (const [groupIndex, rows] of [...procurementGroups.values()]
+      .filter((group) => new Set(group.map((row) => row.order_id)).size > 1)
+      .entries()) {
+      const vendorId = dummyVendorIds[groupIndex % dummyVendorIds.length];
+      const groupedPoNo = await reserveProcurementDocumentNumber(organization.id, "GROUPED_PO", transaction);
+      const stockUomName = String(rows[0].stockUom ?? "");
+      const conversion = buyingUomByStockUom.get(stockUomIds.get(stockUomName)!);
+      const vendorPrice = 85 + groupIndex * 7;
+      const lines = rows.map((row) => {
+        const order = createdSampleOrders.find((sampleOrder) => sampleOrder.id === row.order_id);
+        if (!order) throw new Error("A sample BOM row could not be matched to its order.");
+        const sampleOrder = sampleOrdersByNumber.get(order.orderNo);
+        return {
+          source_bom_item_id: row.id,
+          source_order_id: row.order_id,
+          order_no: order.orderNo,
+          style_name: sampleOrder?.article ?? null,
+          brand: sampleOrder?.brand ?? null,
+          category: row.category,
+          category_type: row.categoryType,
+          sub_category: row.subCategory,
+          item_name: row.rawMaterialName,
+          stock_uom: row.stockUom,
+          internal_consumption: row.internalConsumption,
+          internal_price_bom: row.internalPrice,
+          required_qty: row.totalRequiredQty ?? row.requiredQty ?? "0",
+          grouped_qty: row.totalRequiredQty ?? row.requiredQty ?? "0",
+          vendor_price: vendorPrice,
+          total_spend: Number(row.totalRequiredQty ?? row.requiredQty) * vendorPrice,
+        };
+      });
+      const groupedPoInternalNo = `GPO-${batch.id}-${randomUUID().slice(0, 8).toUpperCase()}`;
+      const groupedPurchaseOrder = await transaction.groupedPurchaseOrder.create({
         data: {
           organization_id: organization.id,
-          orderNo,
-          entityName: organization.organization_name,
-          category: sampleOrder.category,
-          subCategory: sampleOrder.subCategory,
-          season: SAMPLE_VALUES.season,
-          article: sampleOrder.article,
-          styleName: sampleOrder.article,
-          colors: sampleOrder.color,
-          buyer: sampleOrder.buyer,
-          brand: sampleOrder.brand,
-          sizeGroup: sampleOrder.sizeGroup,
-          haveSizeRatio: false,
-          orderQty: boundedOrderQty,
-          deliveryDate: new Date(Date.now() + (30 + orderIndex * 3) * 24 * 60 * 60 * 1000),
-          finalStatus: "Draft",
-          sourceStatus: "DEMO",
+          entity_id: entity.id,
+          vendor_id: vendorId,
+          grouped_po_no: groupedPoInternalNo,
+          display_no: Number(groupedPoNo.replace("GP-", "")),
+          status: "PRICE_APPROVED",
+          submitted_by: userId,
+          approved_by: userId,
+          approved_at: new Date(),
+          raw_material: rows[0].rawMaterialName,
+          category_type: rows[0].categoryType,
+          category: rows[0].category,
+          sub_category: rows[0].subCategory,
+          total_required_qty: lines.reduce((total, line) => total + Number(line.required_qty ?? 0), 0),
+          total_grouped_qty: lines.reduce((total, line) => total + Number(line.grouped_qty ?? 0), 0),
+          no_of_styles: new Set(lines.map((line) => line.style_name).filter(Boolean)).size,
+          stock_uom: stockUomName,
+          buying_uom: conversion?.name ?? stockUomName,
+          convert_value: conversion?.howMany ?? 1,
+          vendor_price: vendorPrice,
+          vendor_price_inr: vendorPrice,
+          gst: [5, 12, 18][groupIndex % 3],
+          hsn_code: ["5208", "5515", "6006", "9606"][groupIndex % 4],
+          buying_qty: lines.reduce((total, line) => total + Number(line.grouped_qty ?? 0), 0) / (conversion?.howMany ?? 1),
+          lines: { create: lines as Prisma.GroupedPurchaseOrderLineUncheckedCreateWithoutGroupedPurchaseOrderInput[] },
         },
-        select: { id: true, orderNo: true },
+        select: { id: true, lines: { select: { id: true } } },
+      }) as unknown as { id: string; lines: Array<{ id: string }> };
+      record("grouped-purchase-order", groupedPurchaseOrder.id);
+      const masterGroupNumber = await reserveProcurementDocumentNumber(organization.id, "MASTER_GROUP", transaction);
+      const masterPurchaseOrder = await transaction.masterPurchaseOrder.create({
+        data: {
+          organization_id: organization.id,
+          entity_id: entity.id,
+          vendor_id: vendorId,
+          master_po_no: `MPO-${batch.id}-${randomUUID().slice(0, 8).toUpperCase()}`,
+          display_no: Number(masterGroupNumber.replace("MGP-", "")),
+          status: "MASTER_GROUPED",
+          created_by: userId,
+          raw_material: rows[0].rawMaterialName,
+          category: rows[0].category,
+          sub_category: rows[0].subCategory,
+          total_required_qty: lines.reduce((total, line) => total + Number(line.required_qty ?? 0), 0),
+          total_grouped_qty: lines.reduce((total, line) => total + Number(line.grouped_qty ?? 0), 0),
+          no_of_styles: new Set(lines.map((line) => line.style_name).filter(Boolean)).size,
+          sourceRecords: { create: { grouped_purchase_order_id: groupedPurchaseOrder.id } },
+          lines: {
+            create: lines.map((line, lineIndex) => ({
+              source_grouped_line_id: groupedPurchaseOrder.lines[lineIndex].id,
+              source_grouped_po_no: groupedPoInternalNo,
+              source_order_id: line.source_order_id,
+              source_order_no: line.order_no,
+              style_name: line.style_name,
+              brand: line.brand,
+              raw_material: line.item_name,
+              stock_uom: line.stock_uom,
+              category: line.category,
+              sub_category: line.sub_category,
+              required_qty: line.required_qty ?? "0",
+              grouped_qty: line.grouped_qty ?? "0",
+              vendor_price: line.vendor_price,
+              total_spend: line.total_spend,
+            })),
+          },
+        },
+        select: { id: true },
       });
-      createdSampleOrders.push(order);
-      record("sample-order", order.id);
-
-      const finishedGoodsRows = createSampleFinishedGoodsRows(boundedOrderQty, sampleOrder.sizeGroup, orderIndex);
-      await transaction.finishedGoodsSizeWise.createMany({
-        data: finishedGoodsRows.map((item) => ({
-          order_id: order.id,
-          buyerSize: item.size,
-          size: item.size,
-          beforeExcessQty: item.beforeExcessQty,
-          excess: "0",
-          excessQty: 0,
-          totalQty: item.beforeExcessQty,
-        })),
-      });
-
-      const bomMaterialIndexes = createSampleBomMaterialIndexes(orderIndex);
-      await transaction.billOfMaterialItem.createMany({
-        data: bomMaterialIndexes.map((materialIndex) => {
-          const item = SAMPLE_VALUES.rawMaterials[materialIndex];
-          return {
-            order_id: order.id,
-            categoryType: "Item",
-            category: item.category,
-            subCategory: item.subCategory,
-            rawMaterialName: item.name,
-            stockUom: item.uom,
-            size: null,
-            orderQty: String(boundedOrderQty),
-            buyerConsumption: "1",
-            buyerPrice: null,
-            internalConsumption: "1",
-            internalPrice: null,
-            valuePerGarmentRm: "1",
-            consumption: "1",
-            requiredQty: String(boundedOrderQty),
-            itemWiseExcessPercentage: "0",
-            itemWiseExcessQty: "0",
-            totalRequiredQty: String(boundedOrderQty),
-          };
-        }),
-      });
+      record("master-purchase-order", masterPurchaseOrder.id);
     }
-    const sampleOrder = createdSampleOrders[0];
+    const masterPurchaseOrderIds = createdRecords
+      .filter((item) => item.moduleKey === "master-purchase-order")
+      .map((item) => item.id);
+    const seededMasters = await transaction.masterPurchaseOrder.findMany({
+      where: { organization_id: organization.id, id: { in: masterPurchaseOrderIds } },
+      include: {
+        lines: true,
+        sourceRecords: { include: { groupedPurchaseOrder: { select: { gst: true, hsn_code: true } } } },
+      },
+    });
+    const mastersByVendor = new Map<string, typeof seededMasters>();
+    for (const master of seededMasters) {
+      const key = `${master.vendor_id}|${master.entity_id ?? ""}`;
+      const group = mastersByVendor.get(key) ?? [];
+      group.push(master);
+      mastersByVendor.set(key, group);
+    }
+    for (const masters of mastersByVendor.values()) {
+      const purchaseOrderNumber = await reserveProcurementDocumentNumber(organization.id, "PURCHASE_ORDER", transaction);
+      const purchaseOrderLines = masters.map((master) => {
+        const sourceValues = master.sourceRecords.flatMap((source) => [source.groupedPurchaseOrder.gst, source.groupedPurchaseOrder.hsn_code]);
+        const gst = sourceValues.find((value) => value !== null && typeof value !== "string") ?? null;
+        const hsnCode = sourceValues.find((value): value is string => typeof value === "string") ?? null;
+        const quantity = master.lines.reduce((total, line) => total + Number(line.grouped_qty), 0);
+        const price = master.lines.find((line) => line.vendor_price !== null)?.vendor_price ?? null;
+        const total = master.lines.reduce((sum, line) => sum + Number(line.total_spend ?? (Number(line.grouped_qty) * Number(line.vendor_price ?? 0))), 0);
+        return {
+          source_master_line_id: master.lines[0]?.id ?? master.id,
+          master_purchase_order_id: master.id,
+          raw_material: master.raw_material,
+          category: master.category,
+          sub_category: master.sub_category,
+          source_order_no: null,
+          style_name: null,
+          quantity,
+          price,
+          gst,
+          hsn_code: hsnCode,
+          total,
+        };
+      });
+      const purchaseOrder = await transaction.purchaseOrder.create({
+        data: {
+          organization_id: organization.id,
+          entity_id: masters[0].entity_id,
+          vendor_id: masters[0].vendor_id,
+          purchase_order_no: `PO-${batch.id}-${randomUUID().slice(0, 8).toUpperCase()}`,
+          display_no: Number(purchaseOrderNumber.replace("PO-", "")),
+          status: "PENDING_APPROVAL",
+          created_by: userId,
+          sources: { create: masters.map((master) => ({ master_purchase_order_id: master.id })) },
+          lines: { create: purchaseOrderLines },
+        },
+        select: { id: true, purchase_order_no: true },
+      });
+      await transaction.approvalRequest.create({
+        data: {
+          organization_id: organization.id,
+          module_key: "purchase-order",
+          module_name: "Purchase Order Approval",
+          entity_type: "purchase-order",
+          entity_key: purchaseOrder.purchase_order_no,
+          entity_label: purchaseOrder.purchase_order_no,
+          entity_ref_id: purchaseOrder.id,
+          requested_by: requestedBy,
+          status: "pending",
+          notes: `Purchase Order ${purchaseOrder.purchase_order_no} is waiting for approval.`,
+        },
+      });
+      record("purchase-order", purchaseOrder.id);
+    }
+    const sampleOrder = ordersByNumber.get(orderNumbers[0]);
+    if (!sampleOrder) throw new Error("The first sample order was not created.");
 
     await transaction.organizationDummyDataBatch.update({
       where: { id: batch.id, organization_id: organization.id },
@@ -672,7 +931,7 @@ async function createOrganizationDummyDataForUser(userId: string, routeOrganizat
     });
 
     return { created: true, orderNo: sampleOrder.orderNo, orderCount: createdSampleOrders.length };
-  }, { maxWait: 10000, timeout: 30000 });
+  }, { maxWait: 20000, timeout: 120000 });
 }
 
 export async function deleteOrganizationDummyData(userId: string, routeOrganizationId: string) {
@@ -704,45 +963,95 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
       ...ids("sample-order"),
       ...(batch.sample_order_id ? [batch.sample_order_id] : []),
     ])];
+    const sampleVendorIds = ids("vendor");
+    let sampleGroupedPurchaseOrderIds = ids("grouped-purchase-order");
+    let sampleMasterPurchaseOrderIds = ids("master-purchase-order");
     if (sampleOrderIds.length > 0) {
-      for (const sampleOrderId of sampleOrderIds) {
-        const dependentRecords = await transaction.merchandisingOrder.findFirst({
-          where: { id: sampleOrderId, organization_id: organization.id },
-          select: {
-            _count: {
-              select: {
-                workOrders: true,
-                outgoingShares: true,
-                acceptedShares: true,
-                groupedPurchaseOrderLines: true,
-              },
-            },
-          },
-        });
-        if (dependentRecords && Object.values(dependentRecords._count).some((count) => count > 0)) {
-          throw new Error("A sample order is already used by production, inventory, procurement, or sharing records. Remove those dependent records before deleting the dummy dataset.");
-        }
-      }
-      const dependentOrder = await transaction.merchandisingOrder.findFirst({
+      const sampleWorkOrderWhere = {
+        workOrder: {
+          organization_id: organization.id,
+          order_id: { in: sampleOrderIds },
+        },
+      };
+      await transaction.factoryDailyProductionReportLine.deleteMany({ where: sampleWorkOrderWhere });
+      await transaction.factoryGrn.deleteMany({
+        where: { organization_id: organization.id, ...sampleWorkOrderWhere },
+      });
+      await transaction.workOrderProcessController.deleteMany({ where: sampleWorkOrderWhere });
+      await transaction.factoryWorkOrder.deleteMany({
+        where: { organization_id: organization.id, order_id: { in: sampleOrderIds } },
+      });
+    }
+    const linkedGroupedPurchaseOrders = await transaction.groupedPurchaseOrder.findMany({
+      where: {
+        organization_id: organization.id,
+        OR: [
+          ...(sampleGroupedPurchaseOrderIds.length > 0 ? [{ id: { in: sampleGroupedPurchaseOrderIds } }] : []),
+          ...(sampleOrderIds.length > 0 ? [{ lines: { some: { source_order_id: { in: sampleOrderIds } } } }] : []),
+          ...(sampleVendorIds.length > 0 ? [{ vendor_id: { in: sampleVendorIds } }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+    sampleGroupedPurchaseOrderIds = [...new Set([
+      ...sampleGroupedPurchaseOrderIds,
+      ...linkedGroupedPurchaseOrders.map((order) => order.id),
+    ])];
+    const linkedMasterPurchaseOrders = await transaction.masterPurchaseOrder.findMany({
+      where: {
+        organization_id: organization.id,
+        OR: [
+          ...(sampleMasterPurchaseOrderIds.length > 0 ? [{ id: { in: sampleMasterPurchaseOrderIds } }] : []),
+          ...(sampleOrderIds.length > 0 ? [{ lines: { some: { source_order_id: { in: sampleOrderIds } } } }] : []),
+          ...(sampleGroupedPurchaseOrderIds.length > 0 ? [{ sourceRecords: { some: { grouped_purchase_order_id: { in: sampleGroupedPurchaseOrderIds } } } }] : []),
+          ...(sampleVendorIds.length > 0 ? [{ vendor_id: { in: sampleVendorIds } }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+    sampleMasterPurchaseOrderIds = [...new Set([
+      ...sampleMasterPurchaseOrderIds,
+      ...linkedMasterPurchaseOrders.map((order) => order.id),
+    ])];
+    await transaction.purchaseOrder.deleteMany({
+      where: {
+        organization_id: organization.id,
+        OR: [
+          ...((ids("purchase-order").length > 0) ? [{ id: { in: ids("purchase-order") } }] : []),
+          ...(sampleMasterPurchaseOrderIds.length > 0 ? [{ sources: { some: { master_purchase_order_id: { in: sampleMasterPurchaseOrderIds } } } }] : []),
+          ...(sampleVendorIds.length > 0 ? [{ vendor_id: { in: sampleVendorIds } }] : []),
+        ],
+      },
+    });
+    const samplePurchaseOrderIds = ids("purchase-order");
+    if (samplePurchaseOrderIds.length > 0) {
+      await transaction.approvalRequest.deleteMany({
         where: {
           organization_id: organization.id,
-          id: { notIn: sampleOrderIds },
-          OR: [
-            { category: { in: [...new Set(SAMPLE_VALUES.sampleOrders.map((order) => order.category))] } },
-            { subCategory: { in: [...new Set(SAMPLE_VALUES.sampleOrders.map((order) => order.subCategory))] } },
-            { season: SAMPLE_VALUES.season },
-            { article: { in: [...SAMPLE_VALUES.articles] } },
-            { buyer: { in: [...new Set(SAMPLE_VALUES.sampleOrders.map((order) => order.buyer))] } },
-            { brand: { in: [...new Set(SAMPLE_VALUES.sampleOrders.map((order) => order.brand))] } },
-            { sizeGroup: { in: [...new Set(SAMPLE_VALUES.sampleOrders.map((order) => order.sizeGroup))] } },
-            ...[...new Set(SAMPLE_VALUES.sampleOrders.map((order) => order.color))].map((color) => ({ colors: { contains: color } })),
-          ],
+          entity_type: "purchase-order",
+          entity_ref_id: { in: samplePurchaseOrderIds },
         },
-        select: { orderNo: true },
       });
-      if (dependentOrder) {
-        throw new Error(`Order ${dependentOrder.orderNo} references a demo master. Update that order to use organization-owned values before deleting the dummy dataset.`);
-      }
+    }
+    await transaction.masterPurchaseOrder.deleteMany({
+      where: {
+        organization_id: organization.id,
+        OR: [
+          ...(sampleMasterPurchaseOrderIds.length > 0 ? [{ id: { in: sampleMasterPurchaseOrderIds } }] : []),
+          ...(sampleVendorIds.length > 0 ? [{ vendor_id: { in: sampleVendorIds } }] : []),
+        ],
+      },
+    });
+    await transaction.groupedPurchaseOrder.deleteMany({
+      where: {
+        organization_id: organization.id,
+        OR: [
+          ...(sampleGroupedPurchaseOrderIds.length > 0 ? [{ id: { in: sampleGroupedPurchaseOrderIds } }] : []),
+          ...(sampleVendorIds.length > 0 ? [{ vendor_id: { in: sampleVendorIds } }] : []),
+        ],
+      },
+    });
+    if (sampleOrderIds.length > 0) {
       await transaction.merchandisingOrder.deleteMany({
         where: { id: { in: sampleOrderIds }, organization_id: organization.id },
       });
@@ -766,6 +1075,7 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
     await transaction.masterSeason.deleteMany({ where: { organization_id: organization.id, id: { in: ids("season") } } });
     await transaction.masterArticle.deleteMany({ where: { organization_id: organization.id, id: { in: ids("article") } } });
     await transaction.masterColor.deleteMany({ where: { organization_id: organization.id, id: { in: ids("color") } } });
+    await transaction.masterStockUomConvert.deleteMany({ where: { organization_id: organization.id, id: { in: ids("stock-uom-convert") } } });
     await transaction.masterUom.deleteMany({ where: { organization_id: organization.id, id: { in: ids("uom") } } });
 
     await transaction.auditEvent.create({

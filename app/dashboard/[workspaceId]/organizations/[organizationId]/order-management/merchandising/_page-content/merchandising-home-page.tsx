@@ -32,7 +32,8 @@ export default function GMMerchandiserDashboardPage() {
       const res = await fetch(`/api/orders?organizationId=${encodeURIComponent(organizationId)}`, {
         cache: "no-store",
       });
-      if (res.ok) {
+      const contentType = res.headers.get("content-type") ?? "";
+      if (res.ok && contentType.includes("application/json")) {
         const data = await res.json();
         const list = data.orders ?? data ?? [];
 

@@ -6,6 +6,7 @@ import Page from "@/components/ui/Page";
 import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
+import { BadgePercent } from "lucide-react";
 import { ensurePlatformDefaults } from "@/lib/services/platform/platform-bootstrap-service";
 import { assignOrganizationPlatformVersion, listOrganizationClientsPage, listPlatformVersions } from "@/lib/services/platform/client-service";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
@@ -61,6 +62,7 @@ export default async function PlatformClientsPage({ searchParams }: { searchPara
           <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
             <tr>
               <th className="px-2 py-2">Organization</th>
+              <th className="px-2 py-2">Organisation number</th>
               <th className="px-2 py-2">Account owner</th>
               <th className="px-2 py-2">GST No.</th>
               <th className="px-2 py-2">Mobile number</th>
@@ -78,6 +80,14 @@ export default async function PlatformClientsPage({ searchParams }: { searchPara
                   <Link href={`/platform/organisations/${client.id}`} className="text-emerald-700 hover:text-emerald-800 hover:underline">
                     {client.organization_name}
                   </Link>
+                  {client.hasCustomSegmentPricing && (
+                    <span role="img" aria-label="Custom price applies" title="Custom price applies to one or more segments" className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                      <BadgePercent aria-hidden="true" className="h-3 w-3" /> Custom Price
+                    </span>
+                  )}
+                </td>
+                <td className="whitespace-nowrap px-2 py-2 font-mono tabular-nums text-slate-600">
+                  {client.organization_number}
                 </td>
                 <td className="px-2 py-2 text-slate-600">{client.memberships[0]?.workspaceUser.email ?? "Unassigned"}</td>
                 <td className="px-2 py-2 text-slate-600">{client.gst_number || "Not provided"}</td>
@@ -137,7 +147,7 @@ export default async function PlatformClientsPage({ searchParams }: { searchPara
 
             {clients.length === 0 && (
               <tr>
-                <td className="px-2 py-4 text-center text-sm text-slate-500" colSpan={9}>
+                <td className="px-2 py-4 text-center text-sm text-slate-500" colSpan={10}>
                   No organizations yet.
                 </td>
               </tr>

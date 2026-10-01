@@ -15,7 +15,6 @@ import {
   ShieldCheck,
   Sparkles,
   Truck,
-  Warehouse,
   type LucideIcon,
 } from "lucide-react";
 
@@ -29,7 +28,7 @@ const moduleDetails: Record<string, { summary: string; outcome: string; icon: Lu
   "factory-management": { summary: "Move from pre-production work orders to shop-floor production and scan-and-pack completion.", outcome: "Make every production stage visible and accountable.", icon: Factory },
   "quality-management-system": { summary: "Check raw materials and finished goods against quality requirements.", outcome: "Catch defects earlier and reduce rework, returns, and rejected output.", icon: ShieldCheck },
   "finance-management": { summary: "Record sales, purchasing, bills, notes, and delivery documents around the operational record.", outcome: "Give leaders a clearer view of margin, commitments, and cash movement.", icon: ReceiptText },
-  "inventory-management": { summary: "Track inward receipts, outward material issues, and raw-material and finished-goods stock.", outcome: "Know what is available, where it is, and what is being consumed.", icon: Warehouse },
+  "inventory-management": { summary: "Track inward receipts, outward material issues, and raw-material and finished-goods stock.", outcome: "Know what is available, where it is, and what is being consumed.", icon: Boxes },
   "security-management": { summary: "Control gate entry and use gate-entry reports to maintain a dependable movement trail.", outcome: "Strengthen custody, accountability, and operational security.", icon: ShieldCheck },
   approvals: { summary: "Route master and purchase-order decisions through visible review points.", outcome: "Create control without slowing down the people doing the work.", icon: CheckCircle2 },
   settings: { summary: "Manage plans, users, and operational numbering for the organization.", outcome: "Scale with consistent access and cleaner administration.", icon: Boxes },

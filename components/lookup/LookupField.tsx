@@ -30,11 +30,7 @@ export default function LookupField({
   dependsOnValue,
   onChange,
 }: LookupFieldProps) {
-  const [search, setSearch] = useState(value);
-
-  useEffect(() => {
-    setSearch(value);
-  }, [value]);
+  const [search, setSearch] = useState(() => value);
 
   const filtered = useMemo(() => {
     if (!search) return options;

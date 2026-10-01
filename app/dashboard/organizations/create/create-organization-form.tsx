@@ -14,20 +14,20 @@ interface CreateOrgFormProps {
   workspaceId: string;
   userName: string;
   userEmail: string;
+  isOnboardingRequired: boolean;
   error?: string;
   message?: string;
   action: (formData: FormData) => Promise<{ organizationId: string }>;
-  openOrganizationAction: (organizationId: string) => Promise<{ error: string | null }>;
 }
 
 export default function CreateOrganizationForm({
   workspaceId,
   userName,
   userEmail,
+  isOnboardingRequired,
   error,
   message,
   action,
-  openOrganizationAction,
 }: CreateOrgFormProps) {
   const router = useRouter();
   const errorMessage =
@@ -42,9 +42,6 @@ export default function CreateOrganizationForm({
   const [gstError, setGstError] = useState("");
   const [isGstVerified, setIsGstVerified] = useState(false);
   const [showGstSuccess, setShowGstSuccess] = useState(false);
-  const [createdOrganizationId, setCreatedOrganizationId] = useState("");
-  const [openingOrganization, setOpeningOrganization] = useState(false);
-  const [sampleDataError, setSampleDataError] = useState("");
 
   // Form Field States
   const [ownerName, setOwnerName] = useState(userName);
@@ -85,87 +82,76 @@ export default function CreateOrganizationForm({
       return;
     }
 
+    const trimmedOrganizationName = organizationName.trim();
+    if (!trimmedOrganizationName) {
+      setGstError("Please enter the organization name before submitting.");
+      return;
+    }
+
     setLoadingGst(true);
     setGstError("");
 
     try {
-      const res = await fetch(
-        `https://sheet.gstincheck.co.in/check/866b7fa68c374dce92f9e5d02583661f/${gstNumber.trim().toUpperCase()}`
-      );
+      const res = await fetch("/api/organizations/verify-gst", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gstNumber: gstNumber.trim().toUpperCase() }),
+      });
       const resp = await res.json();
 
-      if (resp && resp.flag === true) {
-        const data = resp.data;
-        const fetchedOrgName = data.tradeNam || "";
-        setOrganizationName(fetchedOrgName);
-        
-        const pradr = data.pradr;
-        let fetchedAddr1 = "";
-        let fetchedCity = "";
-        let fetchedState = "";
-        let fetchedPin = "";
-
-        if (pradr && pradr.adr) {
-          fetchedAddr1 = pradr.adr.split(",")[0] || "";
-          fetchedCity = pradr.addr.dst || "";
-          fetchedState = pradr.addr.stcd || "";
-          fetchedPin = pradr.addr.pncd || "";
-        }
-
-        setAddressLine1(fetchedAddr1);
-        setCity(fetchedCity);
-        setState(fetchedState);
-        setPinCode(fetchedPin);
-        setIsGstVerified(true);
-
-        const formData = new FormData();
-        formData.append("role", "FOUNDER");
-        formData.append("aboutBio", "");
-        formData.append("ownerName", ownerName);
-        formData.append("organizationEmail", email);
-        formData.append("mobileNo", mobile);
-        formData.append("linkedIn", linkedIn);
-        formData.append("companyWebsite", companyWebsite);
-        formData.append("priorErp", priorErp);
-        if (priorErp === "OTHERS") formData.append("otherErpName", otherErpName);
-        formData.append("gstNumber", gstNumber.trim().toUpperCase());
-        formData.append("organizationName", fetchedOrgName);
-        formData.append("addressLine1", fetchedAddr1);
-        formData.append("addressLine2", addressLine2);
-        formData.append("city", fetchedCity);
-        formData.append("state", fetchedState);
-        formData.append("country", country);
-        formData.append("pinCode", fetchedPin);
-
-        const result = await action(formData);
-        setCreatedOrganizationId(result.organizationId);
-        setShowGstSuccess(true);
-      } else {
-        setGstError("❌ GST NOT FOUND or invalid response. Organization cannot be created.");
-        setIsGstVerified(false);
+      if (!res.ok || !resp?.valid) {
+        throw new Error(resp?.error || "GST verification failed.");
       }
-    } catch {
-      setGstError("Failed to fetch GST details. Organization creation aborted.");
+
+      const data = resp.data || {};
+      const fetchedOrgName = String(data.tradeNam || trimmedOrganizationName).trim();
+      setOrganizationName(fetchedOrgName);
+
+      const pradr = data.pradr;
+      let fetchedAddr1 = "";
+      let fetchedCity = "";
+      let fetchedState = "";
+      let fetchedPin = "";
+
+      if (pradr && pradr.adr) {
+        fetchedAddr1 = pradr.adr.split(",")[0] || "";
+        fetchedCity = pradr.addr.dst || "";
+        fetchedState = pradr.addr.stcd || "";
+        fetchedPin = pradr.addr.pncd || "";
+      }
+
+      setAddressLine1(fetchedAddr1 || addressLine1);
+      setCity(fetchedCity || city);
+      setState(fetchedState || state);
+      setPinCode(fetchedPin || pinCode);
+      setIsGstVerified(true);
+
+      const formData = new FormData();
+      formData.append("role", "FOUNDER");
+      formData.append("aboutBio", "");
+      formData.append("ownerName", ownerName);
+      formData.append("organizationEmail", email);
+      formData.append("mobileNo", mobile);
+      formData.append("linkedIn", linkedIn);
+      formData.append("companyWebsite", companyWebsite);
+      formData.append("priorErp", priorErp);
+      if (priorErp === "OTHERS") formData.append("otherErpName", otherErpName);
+      formData.append("gstNumber", gstNumber.trim().toUpperCase());
+      formData.append("organizationName", fetchedOrgName);
+      formData.append("addressLine1", fetchedAddr1 || addressLine1);
+      formData.append("addressLine2", addressLine2);
+      formData.append("city", fetchedCity || city);
+      formData.append("state", fetchedState || state);
+      formData.append("country", country);
+      formData.append("pinCode", fetchedPin || pinCode);
+
+      await action(formData);
+      setShowGstSuccess(true);
+    } catch (error) {
+      setGstError(error instanceof Error ? error.message : "Failed to verify GST details. Organization creation aborted.");
       setIsGstVerified(false);
     } finally {
       setLoadingGst(false);
-    }
-  }
-
-  async function handleOpenOrganization() {
-    setOpeningOrganization(true);
-    setSampleDataError("");
-    try {
-      const result = await openOrganizationAction(createdOrganizationId);
-      if (result.error) {
-        setSampleDataError(result.error);
-        return;
-      }
-      router.replace(`/dashboard/${workspaceId}/home`);
-    } catch {
-      setSampleDataError("Unable to create sample data. Please try again.");
-    } finally {
-      setOpeningOrganization(false);
     }
   }
 
@@ -180,12 +166,14 @@ export default function CreateOrganizationForm({
               Complete business entity verification and profile details.
             </p>
           </div>
-          <Link
-            href={`/dashboard/${workspaceId}/home`}
-            className="text-sm font-semibold text-emerald-700 hover:text-emerald-800"
-          >
-            Back to Workspace
-          </Link>
+          {!isOnboardingRequired && (
+            <Link
+              href={`/dashboard/${workspaceId}/home`}
+              className="text-sm font-semibold text-emerald-700 hover:text-emerald-800"
+            >
+              Back to Workspace
+            </Link>
+          )}
         </div>
 
         {errorMessage && (
@@ -207,6 +195,15 @@ export default function CreateOrganizationForm({
                   placeholder="Enter your name"
                   value={ownerName}
                   onChange={(e) => setOwnerName(e.target.value)}
+                />
+
+                <Input
+                  name="organizationName"
+                  label="Organization Name"
+                  required
+                  placeholder="Enter organization name"
+                  value={organizationName}
+                  onChange={(e) => setOrganizationName(e.target.value)}
                 />
 
                 <Input
@@ -329,10 +326,10 @@ export default function CreateOrganizationForm({
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true" aria-labelledby="gst-success-title">
             <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl sm:p-8">
               <div className="flex items-start gap-4">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xl font-bold text-emerald-700">✓</div>
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-100 text-xl font-bold text-amber-700">✓</div>
                 <div>
-                  <h2 id="gst-success-title" className="text-xl font-bold text-slate-900">Organization created</h2>
-                  <p className="mt-1 text-sm text-slate-600">Sample apparel data will be created as you open the organization. Organization access remains subject to approval.</p>
+                  <h2 id="gst-success-title" className="text-xl font-bold text-slate-900">Organization submitted for approval</h2>
+                  <p className="mt-1 text-sm text-slate-600">Your organization has been created and will remain locked until it is approved by the platform team.</p>
                 </div>
               </div>
 
@@ -345,10 +342,9 @@ export default function CreateOrganizationForm({
                 <div className="sm:col-span-2"><p className="text-xs text-slate-500">Registered address</p><p className="mt-1 font-semibold text-slate-900">{addressLine1 || "Not available"}{addressLine2 ? `, ${addressLine2}` : ""}</p></div>
               </div>
 
-              {sampleDataError && <p className="mt-4 text-sm text-red-700" role="alert">{sampleDataError}</p>}
               <div className="mt-6 flex justify-end">
-                <Button type="button" variant="primary" size="lg" onClick={handleOpenOrganization} disabled={openingOrganization} className="disabled:cursor-wait">
-                  {openingOrganization ? "Creating sample data..." : "Open Organization"}
+                <Button type="button" variant="primary" size="lg" onClick={() => router.replace(`/dashboard/${workspaceId}/home`)}>
+                  Back to Workspace
                 </Button>
               </div>
             </div>

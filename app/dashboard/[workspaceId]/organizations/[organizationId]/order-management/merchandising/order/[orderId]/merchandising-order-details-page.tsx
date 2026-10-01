@@ -1,20 +1,21 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { Suspense, useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 import { calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
-import OrderDetailsTab from "./components/OrderDetailsTab";
-import FinishedGoodsTab from "./components/FinishedGoodsTab";
-import BomTab from "./components/BomTab";
-import CostingTab from "./components/costing";
-import TecPackTab from "./components/Tecpack";
-import MeasurementsTab from "./components/MeasurementsTab";
-import ProcessTab from "./components/ProcessTab";
-import AttachmentsTab from "./components/Attachments";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
 import Tabs from "@/components/ui/Tabs";
+import OrderDetailsTab from "./components/OrderDetailsTab";
+
+const FinishedGoodsTab = React.lazy(() => import("./components/FinishedGoodsTab"));
+const BomTab = React.lazy(() => import("./components/BomTab"));
+const CostingTab = React.lazy(() => import("./components/costing"));
+const TecPackTab = React.lazy(() => import("./components/Tecpack"));
+const MeasurementsTab = React.lazy(() => import("./components/MeasurementsTab"));
+const ProcessTab = React.lazy(() => import("./components/ProcessTab"));
+const AttachmentsTab = React.lazy(() => import("./components/Attachments"));
 
 type TabType = "details" | "finishedGoods" | "bom" | "costing" | "techPack" | "measurements" | "process" | "attachments";
 type QuickMasterParent = {
@@ -70,6 +71,8 @@ export default function MerchandisingOrderDetailsPage() {
   // Master Data & Lookups State
   const [masterOptions, setMasterOptions] = useState<Record<string, any[]>>({});
   const [orderLookups, setOrderLookups] = useState<any[]>([]);
+  const lastMasterFetchRef = useRef(0);
+  const hasLoadedLookupsRef = useRef(false);
 
   const [form, setForm] = useState({
     rows: [] as any[],
@@ -100,7 +103,15 @@ export default function MerchandisingOrderDetailsPage() {
     processStatus: "Draft",
   });
 
-  const fetchMasterData = async (orgId: string) => {
+  const fetchMasterData = useCallback(async (orgId: string) => {
+    const now = Date.now();
+    if (hasLoadedLookupsRef.current && now - lastMasterFetchRef.current < 60000) {
+      return;
+    }
+
+    lastMasterFetchRef.current = now;
+    hasLoadedLookupsRef.current = true;
+
     try {
       const lookupsRes = await fetch(`/api/organizations/${orgId}/master-data/order-lookups`, { cache: "no-store" });
       if (lookupsRes.ok) {
@@ -114,21 +125,21 @@ export default function MerchandisingOrderDetailsPage() {
       }
     } catch (error) {
       console.error("Error fetching master options:", error);
+      hasLoadedLookupsRef.current = false;
     }
-  };
+  }, []);
 
-  // Fetch on mount and re-fetch when window regains focus (e.g., coming back from creating a master)
+  // Defer master lookups until the page is actually ready to use them, avoiding the
+  // repeated focus-driven refetch cycle that was making the order creation flow feel slow.
   useEffect(() => {
-    if (organizationId) {
-      fetchMasterData(organizationId);
+    if (!organizationId || hasLoadedLookupsRef.current) return;
 
-      const handleFocus = () => {
-        fetchMasterData(organizationId);
-      };
-      window.addEventListener("focus", handleFocus);
-      return () => window.removeEventListener("focus", handleFocus);
-    }
-  }, [organizationId]);
+    const timeoutId = window.setTimeout(() => {
+      void fetchMasterData(organizationId);
+    }, 150);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [fetchMasterData, organizationId]);
 
   useEffect(() => {
     const existingOrderId = orderId || variantFrom;
@@ -604,6 +615,40 @@ export default function MerchandisingOrderDetailsPage() {
     { id: "attachments", label: "Attachments", count: form.attachmentRows?.length ?? 0 },
   ];
 
+  const tabContentFallback = (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+      Loading order section...
+    </div>
+  );
+
+  const renderActiveTabContent = () => {
+    if (activeTab === "details") {
+      return (
+        <OrderDetailsTab
+          form={form}
+          setForm={setForm}
+          masterOptions={masterOptions}
+          orderLookups={orderLookups}
+          onOpenCreateMaster={handleOpenCreateMaster}
+          onSizeGroupChange={handleSizeGroupChange}
+          isCreateMode={!orderId}
+        />
+      );
+    }
+
+    return (
+      <Suspense fallback={tabContentFallback}>
+        {activeTab === "finishedGoods" && <FinishedGoodsTab form={form} setForm={setForm} masterOptions={masterOptions} onOpenCreateMaster={handleOpenCreateMaster} isVariantMode={Boolean(variantFrom)} />}
+        {activeTab === "bom" && <BomTab form={form} setForm={setForm} renderMasterSelect={renderBomMasterSelect} onOpenCreateMaster={handleOpenCreateMaster} masterOptions={masterOptions} />}
+        {activeTab === "costing" && <CostingTab form={form} setForm={setForm} />}
+        {activeTab === "techPack" && <TecPackTab form={form} setForm={setForm} />}
+        {activeTab === "measurements" && <MeasurementsTab form={form} setForm={setForm} />}
+        {activeTab === "process" && <ProcessTab form={form} setForm={setForm} organizationId={organizationId} isOrderLoading={isOrderLoading} />}
+        {activeTab === "attachments" && <AttachmentsTab form={form} setForm={setForm} />}
+      </Suspense>
+    );
+  };
+
   return (
     <div className={`space-y-4 p-4 text-xs${orderId ? "" : " pb-20"}`}>
       {/* Header and Tab Navigation Block */}
@@ -640,24 +685,7 @@ export default function MerchandisingOrderDetailsPage() {
 
       {/* Tab Content Area */}
       <div id="merchandising-order-tab-panel" className="pt-2" role="tabpanel">
-        {activeTab === "details" && (
-          <OrderDetailsTab
-            form={form}
-            setForm={setForm}
-            masterOptions={masterOptions}
-            orderLookups={orderLookups}
-            onOpenCreateMaster={handleOpenCreateMaster}
-            onSizeGroupChange={handleSizeGroupChange}
-            isCreateMode={!orderId}
-          />
-        )}
-        {activeTab === "finishedGoods" && <FinishedGoodsTab form={form} setForm={setForm} masterOptions={masterOptions} onOpenCreateMaster={handleOpenCreateMaster} isVariantMode={Boolean(variantFrom)} />}
-        {activeTab === "bom" && <BomTab form={form} setForm={setForm} renderMasterSelect={renderBomMasterSelect} onOpenCreateMaster={handleOpenCreateMaster} masterOptions={masterOptions} />}
-        {activeTab === "costing" && <CostingTab form={form} setForm={setForm} />}
-        {activeTab === "techPack" && <TecPackTab form={form} setForm={setForm} />}
-        {activeTab === "measurements" && <MeasurementsTab form={form} setForm={setForm} />}
-        {activeTab === "process" && <ProcessTab form={form} setForm={setForm} organizationId={organizationId} isOrderLoading={isOrderLoading} />}
-        {activeTab === "attachments" && <AttachmentsTab form={form} setForm={setForm} />}
+        {renderActiveTabContent()}
       </div>
 
       {!orderId && (

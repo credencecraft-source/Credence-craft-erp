@@ -54,9 +54,12 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
     try {
       const organizationSubscriptions = await listSubscriptions(actionOrganization.id);
       if (!organizationSubscriptions.some((subscription) => subscription.id === subId)) {
-        redirect(`${redirectBase}?error=${encodeURIComponent("Subscription not found.")}`);
+        redirect(`${redirectBase}?success=${encodeURIComponent("Subscription was already deleted.")}`);
       }
-      await deleteSubscription(subId);
+      const result = await deleteSubscription(subId);
+      if (!result.deleted) {
+        redirect(`${redirectBase}?success=${encodeURIComponent("Subscription was already deleted.")}`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to delete subscription.";
       redirect(`${redirectBase}?error=${encodeURIComponent(message)}`);

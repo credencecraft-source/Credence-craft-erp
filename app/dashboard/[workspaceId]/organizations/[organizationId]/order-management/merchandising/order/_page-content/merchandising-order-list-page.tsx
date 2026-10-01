@@ -152,11 +152,16 @@ export default function MerchandisingOrdersPage() {
         `/api/orders?organizationId=${encodeURIComponent(organizationId)}`,
         { cache: "no-store", signal },
       );
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!response.ok || !contentType.includes("application/json")) {
+        throw new Error(`Orders request failed: ${response.status} ${response.statusText} (${contentType || "non-json"})`);
+      }
       const data = await response.json();
-      setOrders(data?.orders ?? []);
+      setOrders(Array.isArray(data?.orders) ? data.orders : Array.isArray(data) ? data : []);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       console.error("Unable to load orders", error);
+      setOrders([]);
     }
   }, [organizationId]);
 

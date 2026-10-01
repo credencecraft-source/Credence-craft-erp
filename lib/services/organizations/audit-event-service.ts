@@ -11,8 +11,10 @@ export type AuditEventInput = {
   details?: Record<string, unknown> | null;
 };
 
-export async function createAuditEvent(input: AuditEventInput) {
-  return prisma.auditEvent.create({
+type AuditEventDatabase = Pick<Prisma.TransactionClient, "auditEvent">;
+
+export async function createAuditEvent(input: AuditEventInput, database: AuditEventDatabase = prisma) {
+  return database.auditEvent.create({
     data: {
       organization_id: input.organizationId,
       user_id: input.userId ?? null,

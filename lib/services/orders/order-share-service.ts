@@ -3,6 +3,7 @@ import { OrderShareStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
 import { requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { requireActiveOrganizationEntity } from "@/lib/services/organizations/organization-entity-service";
 import { reserveNextOrderNumber } from "@/lib/services/orders/order-service";
 import { lockOrganizationOrderQuantityLimit } from "@/lib/services/platform/order-quantity-limit-service";
 import { validateMonthlyFormLimits } from "@/lib/services/platform/segment-form-restriction-service";
@@ -113,11 +114,13 @@ export async function acceptOrderShare(input: {
     );
     const orderNo = await reserveNextOrderNumber(destinationMembership.organization_id, transaction);
     const source = share.sourceOrder;
+    const entity = await requireActiveOrganizationEntity(destinationMembership.organization_id, source.entityName, transaction);
     const order = await transaction.merchandisingOrder.create({
       data: {
         organization_id: destinationMembership.organization_id,
+        entity_id: entity.id,
         orderNo,
-        entityName: source.entityName,
+        entityName: entity.entity_name,
         category: source.category,
         subCategory: source.subCategory,
         season: source.season,

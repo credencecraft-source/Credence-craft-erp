@@ -15,6 +15,10 @@ const { prismaMock, transactionMock, requirePlatformSessionAdminMock } = vi.hois
     platformVersion: {
       findUnique: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({ id: "version-copy-id", version_name: "2026 Copy", description: "source description", is_active: true }),
+      delete: vi.fn().mockResolvedValue({ id: "version-id" }),
+    },
+    organization: {
+      count: vi.fn().mockResolvedValue(0),
     },
     businessType: { findMany: vi.fn().mockResolvedValue([]) },
     segment: { findMany: vi.fn().mockResolvedValue([]) },
@@ -53,7 +57,7 @@ vi.mock("@/lib/services/platform/segment-service", () => ({
   ensureDefaultSegments: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { duplicateVersion } from "./version-service";
+import { deleteVersion, duplicateVersion } from "./version-service";
 
 describe("version service", () => {
   beforeEach(() => {
@@ -138,5 +142,16 @@ describe("version service", () => {
         segment_id: "segment-1",
       }),
     }));
+  });
+
+  it("blocks deleting a version that is already assigned to an organization", async () => {
+    prismaMock.organization.count.mockResolvedValueOnce(1);
+
+    await expect(deleteVersion("version-id")).rejects.toThrow(
+      "This version is already assigned to one or more organizations and cannot be deleted."
+    );
+
+    expect(prismaMock.organization.count).toHaveBeenCalledWith({ where: { platform_version_id: "version-id" } });
+    expect(prismaMock.platformVersion.delete).not.toHaveBeenCalled();
   });
 });

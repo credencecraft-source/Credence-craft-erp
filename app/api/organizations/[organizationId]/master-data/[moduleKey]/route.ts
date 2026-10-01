@@ -13,6 +13,8 @@ export async function GET(
     const { organizationId, moduleKey } = await context.params;
     const { searchParams } = new URL(request.url);
     const includeInactive = searchParams.get("includeInactive") !== "false";
+    const includeDummyData = moduleKey === "vendor" && searchParams.get("includeDummyData") === "true";
+    const entityId = moduleKey === "location" ? searchParams.get("entityId") || undefined : undefined;
     const search = searchParams.get("search") || undefined;
     const exactSearch = searchParams.get("exact") === "true";
     const requestedLimit = Number(searchParams.get("limit") || 100);
@@ -65,7 +67,7 @@ export async function GET(
       });
     }
 
-    const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, { search, limit, exactSearch });
+    const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, { search, limit, exactSearch, includeDummyData, entityId });
     if (moduleKey === "size-group") {
       const sizeLinks = await getSizeGroupSizesForOrganization(organization.id, values.map((group) => group.id));
       const sizesByGroup = new Map<string, typeof sizeLinks[number][]>();

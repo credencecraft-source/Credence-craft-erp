@@ -269,7 +269,7 @@ function buildSizeRows(orders: ReviewOrder[]): SizeMatrixColumn[] {
 function FinishedGoodsMatrix({ orders, rows }: { orders: ReviewOrder[]; rows: SizeMatrixColumn[] }) {
   return (
     <div className="space-y-2">
-      <p className="text-xs text-slate-500">Saved planned order quantities, including planned excess. These are not production completion or warehouse stock.</p>
+      <p className="text-xs text-slate-500">Saved planned order quantities, including planned excess. These are not production completion or inventory stock.</p>
       <Table className="rounded-md shadow-none">
         <thead className="bg-slate-50 text-xs uppercase text-slate-600">
           <tr>

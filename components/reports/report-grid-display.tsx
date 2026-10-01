@@ -25,6 +25,7 @@ interface ReportGridProps<T> {
   storageKey?: string;
   rowIdSelector: (record: T) => string;
   selectedIds: string[];
+  selectable?: boolean;
   onRowClick: (recordId: string) => void;
   onRecordClick?: (record: T) => void;
   onToggleSelectAll?: (checked: boolean) => void;
@@ -38,6 +39,8 @@ interface ReportGridProps<T> {
   deleteSelectedLabel?: string;
   onRowAction?: (recordId: string) => void;
   rowActionLabel?: string;
+  rowActionDisabledSelector?: (record: T) => boolean;
+  onSearchQueryChange?: (query: string) => void;
   renderCell: (fieldKey: string, record: T) => React.ReactNode;
   emptyMessage?: string;
 }
@@ -51,6 +54,7 @@ export function ReportGrid<T>({
   storageKey,
   rowIdSelector,
   selectedIds,
+  selectable = true,
   onRowClick,
   onRecordClick,
   onToggleSelectAll,
@@ -64,6 +68,8 @@ export function ReportGrid<T>({
   deleteSelectedLabel = "Delete Selected",
   onRowAction,
   rowActionLabel = "Action",
+  rowActionDisabledSelector,
+  onSearchQueryChange,
   renderCell,
   emptyMessage = "No records found.",
 }: ReportGridProps<T>) {
@@ -205,7 +211,10 @@ export function ReportGrid<T>({
           <Input
             placeholder="Search report..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              onSearchQueryChange?.(e.target.value);
+            }}
             className="w-48 h-7 text-[11px] py-1 px-2"
           />
 
@@ -255,13 +264,15 @@ export function ReportGrid<T>({
       <Table>
         <thead className="bg-slate-50 text-slate-700 uppercase tracking-wider text-[10px] border-b border-slate-200">
           <tr>
-            <th className="p-2 w-8 text-center">
-              <Checkbox
-                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
-                checked={allFilteredSelected}
-                onChange={(e) => onToggleSelectAll?.(e.target.checked)}
-              />
-            </th>
+            {selectable && (
+              <th className="p-2 w-8 text-center">
+                <Checkbox
+                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
+                  checked={allFilteredSelected}
+                  onChange={(e) => onToggleSelectAll?.(e.target.checked)}
+                />
+              </th>
+            )}
             {visibleFieldDefinitions.map((field) => (
               <th key={String(field.key)} className="p-2 font-semibold whitespace-nowrap">
                 {field.label}
@@ -273,7 +284,7 @@ export function ReportGrid<T>({
         <tbody className="divide-y divide-slate-200 bg-white text-slate-700 text-[11px]">
           {filteredRecords.length === 0 ? (
             <tr>
-              <td colSpan={visibleFieldDefinitions.length + 1 + (onRowAction ? 1 : 0)} className="p-6 text-center text-slate-500">
+              <td colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (onRowAction ? 1 : 0)} className="p-6 text-center text-slate-500">
                 {emptyMessage}
               </td>
             </tr>
@@ -289,13 +300,15 @@ export function ReportGrid<T>({
                     index % 2 === 0 ? "bg-white" : "bg-slate-50/40"
                   } ${isSelected ? "bg-emerald-50/60" : "hover:bg-slate-100/60"}`}
                 >
-                  <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>
-                    <Checkbox
-                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
-                      checked={isSelected}
-                      onChange={(e) => onToggleRowSelection?.(recordId, e.target.checked)}
-                    />
-                  </td>
+                  {selectable && (
+                    <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
+                        checked={isSelected}
+                        onChange={(e) => onToggleRowSelection?.(recordId, e.target.checked)}
+                      />
+                    </td>
+                  )}
                   {visibleFieldDefinitions.map((field) => (
                     <td key={`${recordId}-${String(field.key)}`} className="p-2 whitespace-nowrap">
                       {renderCell(String(field.key), record)}
@@ -307,6 +320,7 @@ export function ReportGrid<T>({
                         variant="secondary"
                         size="sm"
                         onClick={() => onRowAction(recordId)}
+                        disabled={rowActionDisabledSelector?.(record)}
                         className="text-[10px]"
                       >
                         {rowActionLabel}

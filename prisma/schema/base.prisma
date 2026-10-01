@@ -5,7 +5,6 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 model WorkspaceUser {
@@ -34,6 +33,7 @@ model WorkspaceUser {
 
 model Organization {
   id                            String                         @id @default(cuid())
+  organization_number           String                         @unique @default(dbgenerated("lpad(nextval('organization_number_sequence'::regclass)::text, 10, '0'::text)")) @db.VarChar(10)
   organization_id               String                         @unique @default(uuid())
   organization_name             String                         @db.VarChar(255)
   organization_email            String?                        @db.VarChar(320)
@@ -110,6 +110,7 @@ model Organization {
   posPurchaseRecords            PosPurchaseRecord[]
   posPurchaseBills              PosPurchaseBill[]
   subscriptions                 Subscription[]
+  segmentPrices                 OrganizationSegmentPrice[]
   invitations                   OrganizationInvitation[]
   rolePermissions               OrganizationRolePermission[]
   roleDefinitions               OrganizationRoleDefinition[]
@@ -119,7 +120,11 @@ model Organization {
   procurementDocumentCounters   ProcurementDocumentCounter[]
   challanNumberConfigurations   ChallanNumberConfiguration[]
   inventoryReceipts             InventoryReceipt[]
+  rmGrnVerifications            RmGrnVerification[]
+  rmGrnVerificationAllocations  RmGrnVerificationAllocation[]
+  rmGrnOrderAllocations         RmGrnOrderAllocation[]
   rawMaterialStocks             RawMaterialStock[]
+  rawMaterialStockBookings      RawMaterialStockBooking[]
   finishedGoodsStocks           FinishedGoodsStock[]
   finishedGoodsSkuStocks        FinishedGoodsSkuStock[]
   gateEntries                   GateEntry[]
@@ -277,8 +282,24 @@ model PlatformAdmin {
   updated_at     DateTime        @updatedAt
   last_login_at  DateTime?
   ticketMessages TicketMessage[]
+  auditEvents    PlatformAuditEvent[]
 
   @@map("platform_admins")
+}
+
+model PlatformAuditEvent {
+  id                String        @id @default(cuid())
+  platform_admin_id String?
+  action            String        @db.VarChar(100)
+  entity_type       String        @db.VarChar(150)
+  entity_id         String        @db.VarChar(255)
+  details           Json?
+  created_at        DateTime      @default(now())
+  platformAdmin     PlatformAdmin? @relation(fields: [platform_admin_id], references: [id], onDelete: SetNull)
+
+  @@index([platform_admin_id, created_at])
+  @@index([entity_type, entity_id, created_at])
+  @@map("platform_audit_events")
 }
 
 model PlatformEmailConfiguration {
@@ -528,8 +549,14 @@ model MasterEntity {
   updated_at      DateTime     @updatedAt
   organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   locations       MasterLocation[]
+  merchandisingOrders MerchandisingOrder[] @relation("MerchandisingOrderEntity")
+  groupedPurchaseOrders GroupedPurchaseOrder[] @relation("GroupedPurchaseOrderEntity")
+  masterPurchaseOrders MasterPurchaseOrder[] @relation("MasterPurchaseOrderEntity")
+  purchaseOrders PurchaseOrder[] @relation("PurchaseOrderEntity")
+  inventoryReceipts InventoryReceipt[] @relation("InventoryReceiptEntity")
 
   @@unique([organization_id, entity_name])
+  @@unique([organization_id, id])
   @@index([organization_id, is_active])
   @@map("master_entities")
 }
@@ -546,9 +573,14 @@ model MasterLocation {
   created_at      DateTime     @default(now())
   updated_at      DateTime     @default(now()) @updatedAt
   organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  entity          MasterEntity @relation(fields: [entity_id], references: [id], onDelete: Restrict)
+  entity          MasterEntity @relation(fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
+  inventoryReceipts InventoryReceipt[]
+  rawMaterialStocks RawMaterialStock[]
+  finishedGoodsStocks FinishedGoodsStock[]
+  finishedGoodsSkuStocks FinishedGoodsSkuStock[]
 
   @@unique([organization_id, location_name])
+  @@unique([organization_id, entity_id, id])
   @@index([organization_id, entity_id])
   @@index([organization_id, is_active])
   @@map("master_locations")
@@ -913,6 +945,7 @@ model MasterVendor {
   gst_number            String?                @db.VarChar(50)
   registered_state      String?                @db.VarChar(100)
   registered_state_id   String?
+  is_current_store      Boolean                @default(false)
   is_active             Boolean                @default(false)
   sort_order            Int                    @default(0)
   legacy_metadata       Json?
@@ -923,7 +956,9 @@ model MasterVendor {
   groupedPurchaseOrders GroupedPurchaseOrder[]
   masterPurchaseOrders  MasterPurchaseOrder[]
   purchaseOrders        PurchaseOrder[]
+  rawMaterialStockBookings RawMaterialStockBooking[]
 
+  @@unique([organization_id, id])
   @@index([organization_id, is_active])
   @@map("master_vendors")
 }

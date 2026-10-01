@@ -1,6 +1,7 @@
 model MerchandisingOrder {
   id                        String                          @id @default(cuid())
   organization_id           String                          @map("organization_id")
+  entity_id                 String?
   orderNo                   String                          @db.VarChar(100)
   entityName                String?                         @db.VarChar(255)
   category                  String?                         @db.VarChar(255)
@@ -23,6 +24,7 @@ model MerchandisingOrder {
   created_at                DateTime                        @default(now()) @map("created_at")
   updated_at                DateTime                        @updatedAt @map("updated_at")
   organization              Organization                    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity                    MasterEntity?                   @relation("MerchandisingOrderEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
   processTemplate           MasterProcessTemplate?          @relation(fields: [process_template_id], references: [id], onDelete: SetNull)
   processSteps              MerchandisingOrderProcessStep[]
   processController         OrderProcessController?
@@ -34,6 +36,7 @@ model MerchandisingOrder {
   workOrders                FactoryWorkOrder[]
 
   @@unique([organization_id, orderNo])
+  @@index([organization_id, entity_id, created_at])
   @@index([organization_id, created_at])
   @@map("merchandising_orders")
 }
@@ -169,6 +172,7 @@ model BillOfMaterialItem {
   created_at                DateTime                   @default(now()) @map("created_at")
   updated_at                DateTime                   @updatedAt @map("updated_at")
   groupedPurchaseOrderLines GroupedPurchaseOrderLine[]
+  rawMaterialStockBookings RawMaterialStockBooking[]
   workOrderBomLines         FactoryWorkOrderBomLine[]
 
   @@index([order_id])
@@ -178,6 +182,8 @@ model BillOfMaterialItem {
 model GroupedPurchaseOrder {
   id                 String                     @id @default(cuid())
   organization_id    String
+  entity_id          String?
+  source_type        String                     @default("VENDOR") @db.VarChar(20)
   vendor_id          String
   grouped_po_no      String                     @db.VarChar(100)
   display_no         Int?
@@ -218,20 +224,27 @@ model GroupedPurchaseOrder {
   created_at         DateTime                   @default(now())
   updated_at         DateTime                   @updatedAt
   organization       Organization               @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity             MasterEntity?              @relation("GroupedPurchaseOrderEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
   vendor             MasterVendor               @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
   lines              GroupedPurchaseOrderLine[]
+  stockBookings      RawMaterialStockBooking[]
   masterGroupSource  MasterPurchaseOrderSource?
+  rmGrnAllocations   RmGrnVerificationAllocation[]
+  stockVerification  RmGrnVerification?
 
   @@unique([organization_id, grouped_po_no])
   @@unique([organization_id, display_no])
+  @@unique([organization_id, id])
   @@index([organization_id, status, created_at])
   @@index([organization_id, vendor_id])
+  @@index([organization_id, entity_id])
   @@map("grouped_purchase_orders")
 }
 
 model MasterPurchaseOrder {
   id                   String                      @id @default(cuid())
   organization_id      String
+  entity_id            String?
   vendor_id            String
   master_po_no         String                      @db.VarChar(100)
   display_no           Int?
@@ -246,15 +259,18 @@ model MasterPurchaseOrder {
   created_at           DateTime                    @default(now())
   updated_at           DateTime                    @updatedAt
   organization         Organization                @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity               MasterEntity?               @relation("MasterPurchaseOrderEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
   vendor               MasterVendor                @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
   sourceRecords        MasterPurchaseOrderSource[]
   lines                MasterPurchaseOrderLine[]
   purchaseOrderSources PurchaseOrderSource[]
   purchaseOrderLines   PurchaseOrderLine[]
+  grnVerifications    RmGrnVerification[]
 
   @@unique([organization_id, master_po_no])
   @@unique([organization_id, display_no])
   @@index([organization_id, status, created_at])
+  @@index([organization_id, entity_id])
   @@map("master_purchase_orders")
 }
 
@@ -320,8 +336,9 @@ model GroupedPurchaseOrderLine {
   groupedPurchaseOrder      GroupedPurchaseOrder @relation(fields: [grouped_purchase_order_id], references: [id], onDelete: Cascade)
   sourceBomItem             BillOfMaterialItem   @relation(fields: [source_bom_item_id], references: [id], onDelete: Cascade)
   sourceOrder               MerchandisingOrder   @relation(fields: [source_order_id], references: [id], onDelete: Cascade)
+  rmGrnOrderAllocations     RmGrnOrderAllocation[]
 
-  @@unique([source_bom_item_id])
+  @@unique([grouped_purchase_order_id, source_bom_item_id])
   @@index([grouped_purchase_order_id])
   @@index([source_order_id])
   @@map("grouped_purchase_order_lines")
@@ -358,6 +375,7 @@ model Subscription {
 model PurchaseOrder {
   id                String                @id @default(cuid())
   organization_id   String
+  entity_id         String?
   vendor_id         String
   purchase_order_no String                @db.VarChar(100)
   display_no        Int?
@@ -372,6 +390,7 @@ model PurchaseOrder {
   po_date           DateTime              @default(now())
   delivery_date     DateTime?
   organization      Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity            MasterEntity?         @relation("PurchaseOrderEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
   vendor            MasterVendor          @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
   sources           PurchaseOrderSource[]
   lines             PurchaseOrderLine[]
@@ -382,6 +401,7 @@ model PurchaseOrder {
   @@unique([organization_id, display_no])
   @@index([organization_id, status, created_at])
   @@index([organization_id, vendor_id])
+  @@index([organization_id, entity_id])
   @@map("purchase_orders")
 }
 
@@ -538,22 +558,26 @@ model ProcurementDocumentCounter {
 model InventoryReceipt {
   id                String                 @id @default(cuid())
   organization_id   String
+  entity_id         String
+  location_id       String
   purchase_order_id String
   receipt_no        String                 @db.VarChar(100)
   status            String                 @default("POSTED") @db.VarChar(30)
-  warehouse         String                 @db.VarChar(150)
   received_date     DateTime               @default(now())
   received_by       String?                @db.VarChar(255)
   notes             String?                @db.VarChar(1000)
   created_at        DateTime               @default(now())
   updated_at        DateTime               @updatedAt
   organization      Organization           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity            MasterEntity           @relation("InventoryReceiptEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
+  location          MasterLocation         @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
   purchaseOrder     PurchaseOrder          @relation(fields: [purchase_order_id], references: [id], onDelete: Restrict)
   lines             InventoryReceiptLine[]
 
   @@unique([organization_id, receipt_no])
   @@index([organization_id, received_date])
   @@index([purchase_order_id])
+  @@index([organization_id, entity_id, location_id])
   @@map("inventory_receipts")
 }
 
@@ -569,42 +593,150 @@ model InventoryReceiptLine {
   created_at             DateTime          @default(now())
   receipt                InventoryReceipt  @relation(fields: [receipt_id], references: [id], onDelete: Cascade)
   purchaseOrderLine      PurchaseOrderLine @relation(fields: [purchase_order_line_id], references: [id], onDelete: Restrict)
+  rmGrnVerification      RmGrnVerification?
+  rawMaterialStock       RawMaterialStock?
 
   @@unique([receipt_id, purchase_order_line_id])
   @@index([purchase_order_line_id])
   @@map("inventory_receipt_lines")
 }
 
+model RmGrnVerification {
+  id                        String               @id @default(cuid())
+  organization_id           String
+  inventory_receipt_line_id String?              @unique
+  source_grouped_purchase_order_id String?
+  master_purchase_order_id  String?
+  po_quantity               Decimal              @default(0) @db.Decimal(14, 2)
+  grouped_qty_grn           Decimal              @default(0) @db.Decimal(14, 2)
+  verified_quantity         Decimal              @db.Decimal(14, 2)
+  approved_quantity         Decimal              @default(0) @db.Decimal(14, 2)
+  rejected_quantity         Decimal              @default(0) @db.Decimal(14, 2)
+  fresh_excess               Decimal              @default(0) @db.Decimal(14, 2)
+  total_excess               Decimal              @default(0) @db.Decimal(14, 2)
+  available_to_allocate      Decimal              @default(0) @db.Decimal(14, 2)
+  grouped_allocated           Decimal              @default(0) @db.Decimal(14, 2)
+  grouped_balance_to_allocate Decimal              @default(0) @db.Decimal(14, 2)
+  created_by                String?              @db.VarChar(255)
+  updated_by                String?              @db.VarChar(255)
+  created_at                DateTime             @default(now())
+  updated_at                DateTime             @updatedAt
+  organization              Organization         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  inventoryReceiptLine      InventoryReceiptLine? @relation(fields: [inventory_receipt_line_id], references: [id], onDelete: Cascade)
+  sourceGroupedPurchaseOrder GroupedPurchaseOrder? @relation(fields: [organization_id, source_grouped_purchase_order_id], references: [organization_id, id], onDelete: Restrict)
+  masterPurchaseOrder       MasterPurchaseOrder? @relation(fields: [master_purchase_order_id], references: [id], onDelete: Restrict)
+  allocations               RmGrnVerificationAllocation[]
+
+  @@unique([organization_id, source_grouped_purchase_order_id])
+  @@index([organization_id, created_at])
+  @@index([organization_id, master_purchase_order_id])
+  @@map("rm_grn_verifications")
+}
+
+model RmGrnVerificationAllocation {
+  id                        String              @id @default(cuid())
+  organization_id           String
+  verification_id           String
+  grouped_purchase_order_id String
+  verification_allocated    Decimal             @default(0) @db.Decimal(14, 2)
+  created_at                DateTime            @default(now())
+  updated_at                DateTime            @updatedAt
+  organization              Organization        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  verification              RmGrnVerification   @relation(fields: [verification_id], references: [id], onDelete: Cascade)
+  groupedPurchaseOrder      GroupedPurchaseOrder @relation(fields: [grouped_purchase_order_id], references: [id], onDelete: Restrict)
+  orderAllocations          RmGrnOrderAllocation[]
+
+  @@unique([verification_id, grouped_purchase_order_id])
+  @@unique([organization_id, id])
+  @@index([organization_id, grouped_purchase_order_id])
+  @@map("rm_grn_verification_allocations")
+}
+
+model RmGrnOrderAllocation {
+  id                            String                     @id @default(cuid())
+  organization_id               String
+  verification_allocation_id    String
+  grouped_purchase_order_line_id String
+  allocated_quantity            Decimal                    @default(0) @db.Decimal(14, 2)
+  created_by                    String?                    @db.VarChar(255)
+  updated_by                    String?                    @db.VarChar(255)
+  created_at                    DateTime                   @default(now())
+  updated_at                    DateTime                   @updatedAt
+  organization                  Organization               @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  verificationAllocation        RmGrnVerificationAllocation @relation(fields: [organization_id, verification_allocation_id], references: [organization_id, id], onDelete: Cascade)
+  groupedPurchaseOrderLine      GroupedPurchaseOrderLine    @relation(fields: [grouped_purchase_order_line_id], references: [id], onDelete: Restrict)
+
+  @@unique([verification_allocation_id, grouped_purchase_order_line_id])
+  @@index([organization_id, verification_allocation_id])
+  @@index([organization_id, grouped_purchase_order_line_id])
+  @@map("rm_grn_order_allocations")
+}
+
 model RawMaterialStock {
   id                String       @id @default(cuid())
   organization_id   String
+  entity_id         String
+  location_id       String
   raw_material      String       @db.VarChar(255)
-  warehouse         String       @db.VarChar(150)
+  source_type       String       @default("LEGACY") @db.VarChar(20)
+  inventory_receipt_line_id String? @unique
   quantity_on_hand  Decimal      @default(0) @db.Decimal(14, 2)
   quantity_reserved Decimal      @default(0) @db.Decimal(14, 2)
   quantity_issued   Decimal      @default(0) @db.Decimal(14, 2)
+  created_at        DateTime     @default(now())
   updated_at        DateTime     @updatedAt
   organization      Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  location          MasterLocation @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
+  receiptLine       InventoryReceiptLine? @relation(fields: [inventory_receipt_line_id], references: [id], onDelete: SetNull)
+  bookings          RawMaterialStockBooking[]
 
-  @@unique([organization_id, raw_material, warehouse])
-  @@index([organization_id, warehouse])
+  @@unique([organization_id, id])
+  @@index([organization_id, raw_material, location_id, created_at])
+  @@index([organization_id, location_id])
   @@map("raw_material_stocks")
+}
+
+model RawMaterialStockBooking {
+  id                 String             @id @default(cuid())
+  organization_id    String
+  grouped_purchase_order_id String?
+  take_from_stock_id String
+  current_store_vendor_id String
+  source_bom_item_id String
+  booked_quantity    Decimal            @db.Decimal(14, 2)
+  fulfilled_quantity Decimal            @default(0) @db.Decimal(14, 2)
+  status             String             @default("BOOKED") @db.VarChar(30)
+  booked_by          String?            @db.VarChar(255)
+  created_at         DateTime           @default(now())
+  organization       Organization       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  groupedPurchaseOrder GroupedPurchaseOrder? @relation(fields: [organization_id, grouped_purchase_order_id], references: [organization_id, id], onDelete: Restrict)
+  takeFromStock      RawMaterialStock   @relation(fields: [organization_id, take_from_stock_id], references: [organization_id, id], onDelete: Restrict)
+  currentStoreVendor MasterVendor        @relation(fields: [organization_id, current_store_vendor_id], references: [organization_id, id], onDelete: Restrict)
+  sourceBomItem      BillOfMaterialItem @relation(fields: [source_bom_item_id], references: [id], onDelete: Restrict)
+
+  @@index([organization_id, created_at])
+  @@index([organization_id, grouped_purchase_order_id])
+  @@index([organization_id, take_from_stock_id])
+  @@index([source_bom_item_id])
+  @@map("raw_material_stock_bookings")
 }
 
 model FinishedGoodsStock {
   id                String       @id @default(cuid())
   organization_id   String
+  entity_id         String
+  location_id       String
   style_name        String       @db.VarChar(255)
   size              String?      @db.VarChar(100)
-  warehouse         String       @db.VarChar(150)
   quantity_on_hand  Decimal      @default(0) @db.Decimal(14, 2)
   quantity_reserved Decimal      @default(0) @db.Decimal(14, 2)
   quantity_issued   Decimal      @default(0) @db.Decimal(14, 2)
   updated_at        DateTime     @updatedAt
   organization      Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  location          MasterLocation @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
 
-  @@unique([organization_id, style_name, size, warehouse])
-  @@index([organization_id, warehouse])
+  @@unique([organization_id, style_name, size, location_id])
+  @@index([organization_id, location_id])
   @@map("finished_goods_stocks")
 }
 
@@ -613,6 +745,8 @@ model FinishedGoodsSkuStock {
   sku_code             String?      @db.VarChar(50)
   barcode              String?      @db.VarChar(150)
   organization_id      String
+  entity_id            String
+  location_id          String
   style_name           String       @db.VarChar(255)
   order_no             String       @db.VarChar(100)
   article_no           String       @db.VarChar(100)
@@ -634,9 +768,11 @@ model FinishedGoodsSkuStock {
   current_stock        Decimal      @default(0) @db.Decimal(14, 2)
   purchase_bill_line_id String?      @unique
   organization         Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  location             MasterLocation @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
   purchase_bill_line   PosPurchaseBillLine? @relation(fields: [purchase_bill_line_id], references: [id], onDelete: SetNull)
 
   @@index([organization_id, style_name])
+  @@index([organization_id, location_id])
   @@index([organization_id, added_time])
   @@unique([organization_id, sku_code])
   @@unique([organization_id, barcode])

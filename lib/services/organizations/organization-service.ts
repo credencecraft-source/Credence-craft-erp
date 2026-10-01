@@ -82,13 +82,19 @@ export async function createOrganizationRole(organizationId: string, workspaceUs
   return { ...role, permissions: validPermissions };
 }
 
-function isMissingTableError(error: unknown) {
+function getDatabaseSchemaError(error: unknown) {
   if (!(error instanceof Error)) {
-    return false;
+    return null;
   }
 
   const message = error.message || "";
-  return message.includes("does not exist") || message.includes("P2021") || message.includes("table") && message.includes("public");
+  if (message.includes("organizations.organization_number") || message.includes("P2022")) {
+    return new Error("Organization schema is out of date. Apply the pending Prisma migration before continuing.");
+  }
+  if (message.includes("P2021") || /table .* does not exist/i.test(message)) {
+    return new Error("Organization database table is not available yet. Run the Prisma migration or sync the database schema before creating organizations.");
+  }
+  return null;
 }
 
 async function findOrganizationsForUser(
@@ -113,6 +119,7 @@ async function findOrganizationsForUser(
       ...(take ? { take } : {}),
       select: {
         id: true,
+        organization_number: true,
         organization_id: true,
         organization_name: true,
         gst_number: true,
@@ -137,22 +144,37 @@ async function findOrganizationsForUser(
         ?? role.split("_").map((word) => word.charAt(0) + word.slice(1).toLowerCase()).join(" ");
       return {
         ...organization,
+        organization_number: organization.organization_number.toString().padStart(10, "0"),
         membership_role: role,
         membership_role_label: roleLabel,
         can_manage_settings: role === "OWNER" || role === "ADMIN" || rolePermissions.some((item) => item.role === role),
       };
     });
   } catch (error) {
-    if (isMissingTableError(error)) {
-      return [];
-    }
-
+    const schemaError = getDatabaseSchemaError(error);
+    if (schemaError) throw schemaError;
     throw error;
   }
 }
 
 export async function listOrganizationsForUser(workspaceUserId: string) {
   return findOrganizationsForUser(workspaceUserId, false);
+}
+
+export async function countOrganizationsForUser(workspaceUserId: string) {
+  try {
+    return await prisma.organization.count({
+      where: {
+        memberships: {
+          some: { workspace_user_id: workspaceUserId, is_active: true },
+        },
+      },
+    });
+  } catch (error) {
+    const schemaError = getDatabaseSchemaError(error);
+    if (schemaError) throw schemaError;
+    throw error;
+  }
 }
 
 export async function listActiveOrganizationsForUser(workspaceUserId: string) {
@@ -184,7 +206,8 @@ export async function listWorkspaceOrganizationPage(workspaceUserId: string, cur
         },
         _count: { _all: true },
       }).catch((error: unknown) => {
-        if (isMissingTableError(error)) return [];
+        const schemaError = getDatabaseSchemaError(error);
+        if (schemaError) throw schemaError;
         throw error;
       });
   const [rows, statusCounts] = await Promise.all([rowsPromise, statusCountsPromise]);
@@ -211,7 +234,7 @@ export async function createOrganization(input: OrganizationCreateInput) {
       pinCode: input.pinCode,
     });
 
-    return await prisma.$transaction(async (transaction) => {
+    const organization = await prisma.$transaction(async (transaction) => {
       const organization = await transaction.organization.create({
         data: {
           organization_id: randomUUID(),
@@ -293,11 +316,14 @@ export async function createOrganization(input: OrganizationCreateInput) {
 
       return organization;
     }, { maxWait: 10000, timeout: 30000 });
-  } catch (error) {
-    if (isMissingTableError(error)) {
-      throw new Error("Organization database table is not available yet. Run the Prisma migration or sync the database schema before creating organizations.");
-    }
 
+    return {
+      ...organization,
+      organization_number: organization.organization_number.toString().padStart(10, "0"),
+    };
+  } catch (error) {
+    const schemaError = getDatabaseSchemaError(error);
+    if (schemaError) throw schemaError;
     throw error;
   }
 }

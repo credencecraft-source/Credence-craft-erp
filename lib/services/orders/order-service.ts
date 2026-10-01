@@ -13,6 +13,7 @@ import {
 } from "@/lib/services/platform/segment-form-restriction-service";
 import { lockOrganizationOrderQuantityLimit } from "@/lib/services/platform/order-quantity-limit-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
+import { requireActiveOrganizationEntity } from "@/lib/services/organizations/organization-entity-service";
 import { assertNoDummyMasterReferences, getSizeGroupSizesForOrganization } from "@/lib/master-data/master-data-constants";
 import { buildVariantOrderInput, type VariantCreateRequest, type VariantSourceOrder } from "@/lib/services/orders/order-variant-input";
 import { createPreparedVariantToken, readPreparedVariantToken } from "@/lib/services/orders/order-variant-preparation";
@@ -162,6 +163,25 @@ export async function reserveNextOrderNumber(
   return `OD-${counter.current_value}`;
 }
 
+export async function reserveNextOrderNumbers(
+  organizationId: string,
+  count: number,
+  database: Prisma.TransactionClient | typeof prisma = prisma,
+) {
+  if (!Number.isSafeInteger(count) || count < 1) {
+    throw new Error("Order number count must be a positive integer.");
+  }
+
+  const counter = await database.organizationOrderCounter.upsert({
+    where: { organization_id: organizationId },
+    create: { organization_id: organizationId, current_value: count },
+    update: { current_value: { increment: count } },
+    select: { current_value: true },
+  });
+  const firstNumber = counter.current_value - count + 1;
+  return Array.from({ length: count }, (_, index) => `OD-${firstNumber + index}`);
+}
+
 export async function listOrders(organizationId: string, limit = 100) {
   const page = await listOrdersPage(organizationId, { limit });
   return page.orders;
@@ -190,6 +210,7 @@ export async function listOrdersPage(
       id: true,
       orderNo: true,
       entityName: true,
+      entity_id: true,
       category: true,
       subCategory: true,
       season: true,
@@ -246,15 +267,90 @@ export async function listOrdersLegacy(organizationId: string) {
 export async function getOrderById(id: string, organizationId: string) {
   return prisma.merchandisingOrder.findFirst({
     where: { id, organization_id: organizationId },
-    include: {
-      finishedGoods: true,
-      bomItems: true,
+    select: {
+      id: true,
+      organization_id: true,
+      entity_id: true,
+      orderNo: true,
+      entityName: true,
+      category: true,
+      subCategory: true,
+      season: true,
+      article: true,
+      styleName: true,
+      colors: true,
+      buyer: true,
+      brand: true,
+      sizeGroup: true,
+      haveSizeRatio: true,
+      ratioOrderQty: true,
+      orderQty: true,
+      deliveryDate: true,
+      finalStatus: true,
+      processStatus: true,
+      sourceStatus: true,
+      process_template_id: true,
+      created_at: true,
+      updated_at: true,
+      finishedGoods: {
+        select: {
+          id: true,
+          buyerSize: true,
+          size: true,
+          beforeExcessQty: true,
+          excess: true,
+          excessQty: true,
+          totalQty: true,
+          buyerPoPrice: true,
+          exchangePrice: true,
+          priceInInr: true,
+        },
+      },
+      bomItems: {
+        select: {
+          id: true,
+          categoryType: true,
+          category: true,
+          subCategory: true,
+          rawMaterialName: true,
+          stockUom: true,
+          size: true,
+          orderQty: true,
+          buyerConsumption: true,
+          buyerPrice: true,
+          internalConsumption: true,
+          internalPrice: true,
+          valuePerGarmentRm: true,
+          consumption: true,
+          requiredQty: true,
+          itemWiseExcessPercentage: true,
+          itemWiseExcessQty: true,
+          totalRequiredQty: true,
+        },
+      },
       processTemplate: { select: { id: true, value_id: true, process_name: true } },
       processSteps: {
         orderBy: { sl_no: "asc" },
-        include: {
+        select: {
+          id: true,
+          order_id: true,
+          source_template_step_id: true,
+          process_id: true,
+          process_name: true,
+          sl_no: true,
+          cost: true,
           process: { select: { id: true, value_id: true, process_name: true } },
-          operations: { orderBy: { sl_no: "asc" } },
+          operations: {
+            orderBy: { sl_no: "asc" },
+            select: {
+              id: true,
+              order_process_step_id: true,
+              source_operation_template_step_id: true,
+              operation: true,
+              sl_no: true,
+              price: true,
+            },
+          },
         },
       },
     },
@@ -740,7 +836,7 @@ export async function listBomItemsPage(
       itemWiseExcessQty: true,
       totalRequiredQty: true,
       created_at: true,
-      order: { select: { orderNo: true, styleName: true, brand: true, buyer: true } },
+      order: { select: { orderNo: true, styleName: true, brand: true, buyer: true, entity_id: true, entityName: true } },
     },
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
     take: take + 1,
@@ -755,6 +851,8 @@ export async function listBomItemsPage(
     id: item.id,
     orderId: item.order_id,
     orderNo: item.order.orderNo,
+    entityId: item.order.entity_id,
+    entityName: item.order.entityName ?? "Missing Entity",
     orderQty: item.orderQty,
     styleName: item.order.styleName,
     brand: item.order.brand,
@@ -803,6 +901,7 @@ export async function createOrder(
   const createdOrder = await prisma.$transaction(async (transaction) => {
     await lockOrganizationOrderQuantityLimit(transaction, organizationId);
     await validateMonthlyFormLimits(organizationId, "merchandising_orders", calculatedOrderQty, undefined, transaction, formRestriction);
+    const entity = await requireActiveOrganizationEntity(organizationId, input.entityName, transaction);
     const orderNo = await reserveNextOrderNumber(organizationId, transaction);
     const processTemplate = options.processSnapshot
       ? null
@@ -826,8 +925,9 @@ export async function createOrder(
     const createdOrder = await transaction.merchandisingOrder.create({
       data: {
         organization: { connect: { id: organizationId } },
+        entity: { connect: { organization_id_id: { organization_id: organizationId, id: entity.id } } },
         orderNo,
-        entityName: input.entityName ?? null,
+        entityName: entity.entity_name,
         category: input.category ?? null,
         subCategory: input.subCategory ?? null,
         season: input.season ?? null,
@@ -1037,14 +1137,19 @@ export async function updateOrder(
 
   return prisma.$transaction(async (transaction) => {
     await lockOrganizationOrderQuantityLimit(transaction, organizationId);
+    const entity = await requireActiveOrganizationEntity(organizationId, input.entityName ?? order.entity_id ?? order.entityName, transaction);
+    if (order.entity_id && order.entity_id !== entity.id) {
+      throw new Error("Entity cannot be changed after the order is created.");
+    }
     if (input.orderQty !== undefined && input.orderQty !== null) {
       await validateMonthlyFormLimits(organizationId, "merchandising_orders", Number(input.orderQty), orderId, transaction);
     }
     return transaction.merchandisingOrder.update({
       where: { id: orderId },
       data: {
+      entity_id: entity.id,
+      entityName: entity.entity_name,
       ...(input.orderNo !== undefined && { orderNo: input.orderNo }),
-      ...(input.entityName !== undefined && { entityName: input.entityName ?? null }),
       ...(input.category !== undefined && { category: input.category ?? null }),
       ...(input.subCategory !== undefined && { subCategory: input.subCategory ?? null }),
       ...(input.season !== undefined && { season: input.season ?? null }),
@@ -1250,6 +1355,11 @@ export async function updateOrderWithDetails(
       throw new Error("Order not found");
     }
 
+    const entity = await requireActiveOrganizationEntity(organizationId, input.entityName ?? order.entity_id ?? order.entityName, transaction);
+    if (order.entity_id && order.entity_id !== entity.id) {
+      throw new Error("Entity cannot be changed after the order is created.");
+    }
+
     if (order.sourceStatus !== "DEMO") {
       await assertNoDummyMasterReferences(organizationId, input as unknown as Record<string, unknown>);
     }
@@ -1277,8 +1387,9 @@ export async function updateOrderWithDetails(
     const updatedOrder = await transaction.merchandisingOrder.update({
       where: { id: orderId },
       data: {
+        entity_id: entity.id,
+        entityName: entity.entity_name,
         ...(input.orderNo !== undefined && { orderNo: input.orderNo }),
-        ...(input.entityName !== undefined && { entityName: input.entityName ?? null }),
         ...(input.category !== undefined && { category: input.category ?? null }),
         ...(input.subCategory !== undefined && { subCategory: input.subCategory ?? null }),
         ...(input.season !== undefined && { season: input.season ?? null }),

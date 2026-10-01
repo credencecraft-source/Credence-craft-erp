@@ -39,6 +39,9 @@ applyTo: "**/*.{ts,tsx,prisma,sql,css,md}"
 - Run `npm run lint`, `npm run typecheck`, and `npm run build` for focused iteration as appropriate.
 - Run `npm run qa` before completion; it also runs the production dependency audit.
 - For Prisma changes, run `prisma generate`, validate the migration on a disposable database, and inspect the generated SQL and indexes.
+- Before serving code that uses changed schema, apply and verify the migration in that environment. Use `npm run db:migrate:status` as a read-only check and `npm run db:migrate:deploy` only as an explicit release operation after verifying the target from redacted metadata.
+- Standard dev/start scripts must perform a read-only migration-status preflight and fail fast on pending migrations; they must not auto-apply migrations. Deployment pipelines apply migrations before the new code is served, not from request handlers or independently in each replica.
+- Never catch Prisma missing-table/missing-column errors and return empty data or success. Treat schema drift as a deployment/readiness failure with an actionable message.
 - Review the final diff for accidental scope expansion, secret exposure, missing tenant filters, unsafe deletes, inconsistent UI, and missing tests.
 - Do not claim test coverage when no test runner is configured; distinguish executable checks from manual smoke checks and unverified workflows.
 - Push only when explicitly requested and only to a confirmed test branch and remote. Never push directly to production, force-push, rewrite history, or include unrelated changes.

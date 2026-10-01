@@ -23,6 +23,9 @@ const { prismaMock, transactionMock } = vi.hoisted(() => {
     $transaction: vi.fn(),
     organization: {
       findUnique: vi.fn(),
+      findMany: vi.fn(),
+      groupBy: vi.fn(),
+      count: vi.fn(),
       updateMany: vi.fn(),
     },
   };
@@ -40,13 +43,16 @@ import {
 } from "@/lib/auth/validation-rules";
 import {
   archiveOrganization,
+  countOrganizationsForUser,
   createOrganization,
+  listWorkspaceOrganizationPage,
   restoreOrganization,
   updateOrganizationApprovalStatus,
 } from "./organization-service";
 
 const organization = {
   id: "org-internal-id",
+  organization_number: "0000000123",
   organization_id: "org-public-id",
   organization_name: "Northwind Apparel",
   approval_status: "APPROVED",
@@ -135,6 +141,48 @@ describe("organization creation defaults", () => {
     })).rejects.toThrow("Organization email must be a valid email address of 320 characters or fewer.");
 
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("organization directory identifiers", () => {
+  it("returns fixed-width numeric IDs that can be serialized to the directory client", async () => {
+    prismaMock.organization.findMany.mockResolvedValue([{
+      id: "org-internal-id",
+      organization_number: "0000000123",
+      organization_id: "org-public-id",
+      organization_name: "Northwind Apparel",
+      gst_number: "22AAAAA0000A1Z5",
+      approval_status: "APPROVED",
+      is_active: true,
+      memberships: [{ role: "OWNER" }],
+      roleDefinitions: [{ role_key: "OWNER", label: "Owner" }],
+      rolePermissions: [],
+    }]);
+    prismaMock.organization.groupBy.mockResolvedValue([{
+      is_active: true,
+      approval_status: "APPROVED",
+      _count: { _all: 1 },
+    }]);
+
+    const page = await listWorkspaceOrganizationPage("workspace-user-id");
+
+    expect(page.organizations[0].organization_number).toBe("0000000123");
+    expect(() => JSON.stringify(page)).not.toThrow();
+  });
+});
+
+describe("organization onboarding count", () => {
+  it("counts only organizations with an active membership for the authenticated workspace user", async () => {
+    prismaMock.organization.count.mockResolvedValue(0);
+
+    await expect(countOrganizationsForUser("workspace-user-id")).resolves.toBe(0);
+    expect(prismaMock.organization.count).toHaveBeenCalledWith({
+      where: {
+        memberships: {
+          some: { workspace_user_id: "workspace-user-id", is_active: true },
+        },
+      },
+    });
   });
 });
 

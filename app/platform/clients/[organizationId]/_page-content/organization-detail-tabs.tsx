@@ -11,10 +11,12 @@ interface OrganizationDetailPanel {
 
 export default function OrganizationDetailTabs({
   panels,
+  initialValue,
 }: {
   panels: OrganizationDetailPanel[];
+  initialValue?: string;
 }) {
-  const [activeTab, setActiveTab] = useState(panels[0]?.value ?? "");
+  const [activeTab, setActiveTab] = useState(initialValue ?? panels[0]?.value ?? "");
   const panelIdPrefix = useId();
   const tabs: Tab[] = panels.map((panel) => ({
     label: panel.label,

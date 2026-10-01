@@ -40,7 +40,7 @@ export default async function OrganizationDummyDataPage({
     if (actionUser.workspace_id !== workspaceId) notFound();
     let result;
     try {
-      result = await createOrganizationDummyData(actionUser.id, organizationId);
+      result = await createOrganizationDummyData(actionUser.id, organizationId, actionUser.full_name || actionUser.email);
     } catch (error) {
       redirect(`${pagePath}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to create dummy data.")}`);
     }
@@ -67,6 +67,26 @@ export default async function OrganizationDummyDataPage({
     redirect(`${pagePath}?notice=${encodeURIComponent(result.deleted ? "Dummy data was deleted. Organization setup and baseline master values were preserved." : "There is no dummy dataset to delete.")}`);
   }
 
+  async function recreateDummyDataTestAction() {
+    "use server";
+    const actionUser = await requireSessionUser();
+    if (actionUser.workspace_id !== workspaceId) notFound();
+    let result;
+    try {
+      const deleted = await deleteOrganizationDummyData(actionUser.id, organizationId);
+      if (!deleted.deleted) throw new Error("There is no active demo dataset to recreate.");
+      result = await createOrganizationDummyData(actionUser.id, organizationId, actionUser.full_name || actionUser.email);
+    } catch (error) {
+      redirect(`${pagePath}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to recreate dummy data.")}`);
+    }
+    revalidatePath(pagePath);
+    revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/order-management/procurement`);
+    revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/order-management/procurement/create-po/style-wise`);
+    revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/order-management/procurement/purchase-order`);
+    revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/create`);
+    redirect(`${pagePath}?notice=${encodeURIComponent(`Demo dataset recreated with ${result.orderCount} sample orders and five pending sample Purchase Orders.`)}`);
+  }
+
   return (
     <Page>
       <Section className="space-y-6">
@@ -81,7 +101,7 @@ export default async function OrganizationDummyDataPage({
           <p className="erp-eyebrow mt-4">Organization Setup</p>
           <h1 className="erp-page-heading">Dummy Data</h1>
           <p className="erp-page-subheading">
-            Create a separate sample dataset for {organization.organization_name}, including the master records and dependent orders.
+            Create a separate sample dataset for {organization.organization_name}, including master data, sample orders, and procurement approvals.
           </p>
         </div>
 
@@ -109,6 +129,7 @@ export default async function OrganizationDummyDataPage({
             available={dataset.status !== "SCHEMA_NOT_READY"}
             createAction={createDummyDataAction}
             deleteAction={deleteDummyDataAction}
+            recreateAction={recreateDummyDataTestAction}
           />
         </Card>
       </Section>

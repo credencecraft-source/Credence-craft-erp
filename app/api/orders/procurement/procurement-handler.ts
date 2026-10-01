@@ -4,10 +4,11 @@ import { requireSessionUser } from "@/lib/auth/session-manager";
 import {
   createGroupedPurchaseOrder,
   getProcurementSummary,
-  listAllocatableBomRows,
+  listAllocatableBomRowsPage,
   listGroupedPurchaseOrders,
+  listGroupedPurchaseOrdersPage,
 } from "@/lib/services/orders/grouped-purchase-order-service";
-import { createMasterPurchaseOrder, listMasterPurchaseOrders } from "@/lib/services/orders/master-purchase-order-service";
+import { createMasterPurchaseOrder, listMasterPurchaseOrdersPage } from "@/lib/services/orders/master-purchase-order-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request) {
@@ -23,13 +24,36 @@ export async function GET(request: Request) {
       return NextResponse.json(await getProcurementSummary(organization.id));
     }
     if (view === "allocatable") {
-      return NextResponse.json({ bomRows: await listAllocatableBomRows(organization.id) });
+      const limitValue = Number(url.searchParams.get("limit") ?? 100);
+      return NextResponse.json(await listAllocatableBomRowsPage(organization.id, {
+        cursor: url.searchParams.get("cursor") ?? undefined,
+        limit: Number.isFinite(limitValue) ? limitValue : 100,
+      }));
     }
 
-    const status = view === "all" ? undefined : ["PENDING_PRICE_APPROVAL", "PRICE_APPROVED"];
+    if (view === "all") {
+      return NextResponse.json({ groupedPurchaseOrders: await listGroupedPurchaseOrders(organization.id) });
+    }
+    const status = ["PENDING_PRICE_APPROVAL", "PRICE_APPROVED"];
+    const limitValue = Number(url.searchParams.get("limit") ?? 50);
+    const pageInput = {
+      cursor: url.searchParams.get("cursor") ?? undefined,
+      limit: Number.isFinite(limitValue) ? limitValue : 50,
+    };
+    const include = url.searchParams.get("include") ?? "both";
+    const groupedPagePromise = include !== "master"
+      ? listGroupedPurchaseOrdersPage(organization.id, status, pageInput)
+      : Promise.resolve(null);
+    const masterPagePromise = view === "create" && include !== "grouped"
+      ? listMasterPurchaseOrdersPage(organization.id, {
+          cursor: url.searchParams.get("masterCursor") ?? undefined,
+          limit: Number.isFinite(limitValue) ? limitValue : 50,
+        })
+      : Promise.resolve(null);
+    const [groupedPage, masterPage] = await Promise.all([groupedPagePromise, masterPagePromise]);
     return NextResponse.json({
-      groupedPurchaseOrders: await listGroupedPurchaseOrders(organization.id, status),
-      ...(view === "create" ? { masterPurchaseOrders: await listMasterPurchaseOrders(organization.id) } : {}),
+      ...(groupedPage ? { ...groupedPage, nextGroupedCursor: groupedPage.nextCursor } : {}),
+      ...(masterPage ? { ...masterPage, nextMasterCursor: masterPage.nextCursor } : {}),
     });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load procurement records." }, { status: 400 });

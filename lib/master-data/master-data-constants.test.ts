@@ -55,6 +55,57 @@ beforeEach(() => {
   );
 });
 
+describe("raw material creation", () => {
+  it("maps lookup IDs to Prisma relation columns", async () => {
+    const lookups = [
+      [models.masterRawMaterialCategory, "raw-category-id"],
+      [models.masterRawMaterialSubCategory, "raw-subcategory-id"],
+      [models.masterUom, "uom-id"],
+      [models.masterRawMaterialType, "raw-type-id"],
+      [models.masterSizeWiseConsumption, "consumption-id"],
+      [models.masterBrand, "brand-id"],
+      [models.masterColor, "colour-id"],
+    ] as const;
+
+    for (const [lookup, id] of lookups) {
+      lookup.findFirst.mockResolvedValue({ id, legacy_metadata: null });
+    }
+
+    await createMasterValueForOrganization("org-id", "raw-material", {
+      label: "JASSIMTKTEST",
+      fields: {
+        Raw_Material_Name: "JASSIMTKTEST",
+        Category: "raw-category-id",
+        Subcategory: "raw-subcategory-id",
+        Stock_Uom1: "uom-id",
+        Category_Type: "raw-type-id",
+        Size_Wise_Concemption: true,
+        Size_Wise_Consemption_Master: "consumption-id",
+        Brand1: "brand-id",
+        Colour: "colour-id",
+      },
+    });
+
+    expect(models.masterRawMaterial.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organization_id: "org-id",
+        raw_material_name: "JASSIMTKTEST",
+        raw_material_category_id: "raw-category-id",
+        raw_material_sub_category_id: "raw-subcategory-id",
+        stock_uom_id: "uom-id",
+        raw_material_type_id: "raw-type-id",
+        size_wise_consumption: true,
+        size_wise_consumption_id: "consumption-id",
+        brand_id: "brand-id",
+        colour_id: "colour-id",
+      }),
+    });
+    const createData = models.masterRawMaterial.create.mock.calls[0][0].data;
+    expect(createData).not.toHaveProperty("brand");
+    expect(createData).not.toHaveProperty("colour");
+  });
+});
+
 describe("dummy master isolation", () => {
   it("hides batch-tagged values while keeping baseline values selectable", async () => {
     (prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({ id: "demo-batch-id" });

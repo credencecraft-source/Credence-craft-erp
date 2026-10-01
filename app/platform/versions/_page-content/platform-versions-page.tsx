@@ -77,21 +77,38 @@ export default async function PlatformVersionsPage({
         </Card>
 
         <div className="grid gap-4 md:grid-cols-2">
-          {versions.map((version) => (
-            <div key={version.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-4">
-                <div><p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Version</p><h2 className="mt-1 text-xl font-bold text-slate-900">{version.version_name}</h2><p className="mt-1 text-sm text-slate-500">{version.description || "No description"}</p></div>
-                <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">{version._count.businessTypes} business types</span>
-              </div>
-              <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
-                <Link href={`/platform/versions/${version.id}`} className="text-sm font-semibold text-emerald-700 hover:text-emerald-900">Open configuration</Link>
-                <div className="flex items-center gap-3">
-                  <form action={duplicateAction}><input type="hidden" name="id" value={version.id} /><button type="submit" className="text-xs font-semibold text-sky-600 hover:underline">Duplicate</button></form>
-                  <form action={deleteAction}><input type="hidden" name="id" value={version.id} /><button type="submit" className="text-xs font-semibold text-rose-600 hover:underline">Delete</button></form>
+          {versions.map((version) => {
+            const inUse = version._count.organizations > 0;
+
+            return (
+              <div key={version.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-4">
+                  <div><p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Version</p><h2 className="mt-1 text-xl font-bold text-slate-900">{version.version_name}</h2><p className="mt-1 text-sm text-slate-500">{version.description || "No description"}</p></div>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">{version._count.businessTypes} business types</span>
+                    <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">{version._count.organizations} organization{version._count.organizations === 1 ? "" : "s"} assigned</span>
+                  </div>
+                </div>
+                <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
+                  <Link href={`/platform/versions/${version.id}`} className="text-sm font-semibold text-emerald-700 hover:text-emerald-900">Open configuration</Link>
+                  <div className="flex items-center gap-3">
+                    <form action={duplicateAction}><input type="hidden" name="id" value={version.id} /><button type="submit" className="text-xs font-semibold text-sky-600 hover:underline">Duplicate</button></form>
+                    <form action={deleteAction}>
+                      <input type="hidden" name="id" value={version.id} />
+                      <button
+                        type="submit"
+                        disabled={inUse}
+                        title={inUse ? "This version is already assigned to at least one organization and cannot be deleted." : "Delete version"}
+                        className={`text-xs font-semibold ${inUse ? "cursor-not-allowed text-slate-400" : "text-rose-600 hover:underline"}`}
+                      >
+                        {inUse ? "In use" : "Delete"}
+                      </button>
+                    </form>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {versions.length === 0 && <Card className="p-8 text-center text-sm text-slate-500 md:col-span-2">No versions created yet.</Card>}
         </div>
       </Section>

@@ -3,14 +3,44 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { requireSameOrganizationEntity } from "@/lib/services/organizations/organization-entity-service";
 import { reserveProcurementDocumentNumber } from "./procurement-document-number-service";
 import { calculateTax } from "./gst-calculation-service";
 
 const purchaseOrderInclude = {
+  entity: { select: { id: true, entity_name: true } },
   vendor: { select: { id: true, vendor: true, legacy_metadata: true, gst_number: true, registered_state: true, registeredState: { select: { state: true } } } },
   sources: { select: { master_purchase_order_id: true } },
   lines: { orderBy: { source_order_no: "asc" as const }, include: { masterPurchaseOrder: { select: { display_no: true, master_po_no: true, lines: { select: { stock_uom: true } }, sourceRecords: { select: { groupedPurchaseOrder: { select: { buying_uom: true } } } } } } } },
 } as const;
+
+const purchaseOrderReportSelect = {
+  id: true,
+  entity_id: true,
+  entity: { select: { id: true, entity_name: true } },
+  display_no: true,
+  purchase_order_no: true,
+  status: true,
+  po_date: true,
+  delivery_date: true,
+  created_at: true,
+  vendor: { select: { id: true, vendor: true, legacy_metadata: true } },
+  lines: {
+    select: {
+      total: true,
+      quantity: true,
+      price: true,
+      gst: true,
+      hsn_code: true,
+      masterPurchaseOrder: {
+        select: {
+          lines: { take: 1, select: { stock_uom: true } },
+          sourceRecords: { take: 1, select: { groupedPurchaseOrder: { select: { buying_uom: true } } } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.PurchaseOrderSelect;
 
 const numberValue = (value: Prisma.Decimal | number | string | null | undefined) => value == null ? null : Number(value);
 const vendorEmail = (metadata: unknown) => {
@@ -24,6 +54,8 @@ function serializePurchaseOrder(order: Prisma.PurchaseOrderGetPayload<{ include:
   const total = order.lines.reduce((sum, line) => sum + Number(line.total ?? (Number(line.quantity) * Number(line.price ?? 0))), 0);
   return {
     id: order.id,
+    entityId: order.entity?.id ?? order.entity_id,
+    entityName: order.entity?.entity_name ?? "Missing Entity",
     purchaseOrderNo: order.display_no ? `PO-${order.display_no}` : order.purchase_order_no,
     purchaseOrderInternalNo: order.purchase_order_no,
     status: order.status,
@@ -72,15 +104,26 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
     const masters = await transaction.masterPurchaseOrder.findMany({
       where: { id: { in: uniqueIds }, organization_id: organizationId },
       include: {
+        entity: { select: { id: true, is_active: true } },
         vendor: { select: { id: true, gst_number: true, registered_state: true, registeredState: { select: { state: true } } } },
         lines: true,
-        sourceRecords: { include: { groupedPurchaseOrder: { select: { gst: true, hsn_code: true } } } },
+        sourceRecords: { include: { groupedPurchaseOrder: { select: { source_type: true, gst: true, hsn_code: true } } } },
         purchaseOrderSources: { select: { purchase_order_id: true } },
       },
     });
     if (masters.length !== uniqueIds.length) throw new Error("One or more Master Groups are unavailable.");
+    if (masters.some((master) => master.sourceRecords.some((source) => source.groupedPurchaseOrder.source_type === "STOCK"))) {
+      throw new Error("Stock Master Groups must be completed through store verification, not vendor Purchase Order generation.");
+    }
     const existingSource = masters.flatMap((master) => master.purchaseOrderSources);
     if (existingSource.length > 0) throw new Error("One or more selected Master Groups already have a Purchase Order.");
+    const entityId = requireSameOrganizationEntity(
+      masters.map((master) => master.entity_id),
+      "Select Master Groups belonging to the same Entity.",
+    );
+    if (masters.some((master) => !master.entity?.is_active)) {
+      throw new Error("Select Master Groups belonging to an active Entity.");
+    }
     const vendorId = masters[0].vendor_id;
     if (masters.some((master) => master.vendor_id !== vendorId)) throw new Error("Select Master Groups from the same vendor.");
     const organization = await transaction.organization.findUnique({ where: { id: organizationId }, select: { gst_number: true, state: true, country: true } });
@@ -153,6 +196,7 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
     return transaction.purchaseOrder.create({
       data: {
         organization_id: organizationId,
+        entity_id: entityId,
         vendor_id: vendorId,
         purchase_order_no: `PO-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`,
         display_no: displayNo,
@@ -177,6 +221,57 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
 export async function listPurchaseOrders(organizationId: string) {
   const orders = await prisma.purchaseOrder.findMany({ where: { organization_id: organizationId }, include: purchaseOrderInclude, orderBy: { created_at: "desc" } });
   return orders.map(serializePurchaseOrder);
+}
+
+export async function listPurchaseOrderReportPage(
+  organizationId: string,
+  input: { cursor?: string; limit?: number; search?: string } = {},
+) {
+  const limit = Math.min(100, Math.max(1, Math.trunc(input.limit ?? 50)));
+  const search = String(input.search ?? "").trim().slice(0, 100);
+  const rows = await prisma.purchaseOrder.findMany({
+    where: {
+      organization_id: organizationId,
+      ...(search ? {
+        OR: [
+          { purchase_order_no: { contains: search, mode: "insensitive" } },
+          { status: { contains: search, mode: "insensitive" } },
+          { vendor: { vendor: { contains: search, mode: "insensitive" } } },
+          { entity: { entity_name: { contains: search, mode: "insensitive" } } },
+          { lines: { some: { hsn_code: { contains: search, mode: "insensitive" } } } },
+        ],
+      } : {}),
+    },
+    select: purchaseOrderReportSelect,
+    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    take: limit + 1,
+    ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+  });
+  const hasNextPage = rows.length > limit;
+  const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
+  const purchaseOrders = pageRows.map((order) => ({
+    id: order.id,
+    entityId: order.entity?.id ?? order.entity_id,
+    entityName: order.entity?.entity_name ?? "Missing Entity",
+    purchaseOrderNo: order.display_no ? `PO-${order.display_no}` : order.purchase_order_no,
+    status: order.status,
+    poDate: order.po_date,
+    deliveryDate: order.delivery_date,
+    createdAt: order.created_at,
+    vendor: { id: order.vendor.id, name: order.vendor.vendor, email: vendorEmail(order.vendor.legacy_metadata) },
+    total: order.lines.reduce((sum, line) => sum + Number(line.total ?? (Number(line.quantity) * Number(line.price ?? 0))), 0),
+    lines: order.lines.map((line) => ({
+      gst: numberValue(line.gst),
+      hsnCode: line.hsn_code,
+      buyingUom: line.masterPurchaseOrder?.sourceRecords[0]?.groupedPurchaseOrder.buying_uom ?? null,
+      stockUom: line.masterPurchaseOrder?.lines[0]?.stock_uom ?? null,
+    })),
+  }));
+
+  return {
+    purchaseOrders,
+    nextCursor: hasNextPage ? pageRows[pageRows.length - 1]?.id ?? null : null,
+  };
 }
 
 export async function getPurchaseOrder(organizationId: string, id: string) {

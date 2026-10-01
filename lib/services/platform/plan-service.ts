@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/database/prisma-client";
 import { ensureStandardPlansForBusinessTypes } from "@/lib/services/platform/subscription-service";
+import { resolveOrganizationSegmentPrice } from "@/lib/services/platform/organization-segment-pricing-service";
 
 export async function listPlans() {
   await ensureStandardPlansForBusinessTypes();
@@ -82,6 +83,22 @@ export async function listVersionSegmentPlansForOrganization(organizationId: str
 
   if (!version) return { plans: [], businessTypes: [], versionId: null, versionName: null };
 
+  const versionSegmentIds = version.businessTypes.flatMap(({ segments }) => segments.map(({ id }) => id));
+  const organizationPrices = await prisma.organizationSegmentPrice.findMany({
+    where: {
+      organization_id: organizationId,
+      version_business_type_segment_id: { in: versionSegmentIds },
+    },
+    select: {
+      version_business_type_segment_id: true,
+      snapshot_price: true,
+      custom_price: true,
+    },
+  });
+  const organizationPriceBySegment = new Map(
+    organizationPrices.map((price) => [price.version_business_type_segment_id, price]),
+  );
+
   const billableBusinessTypes = version.businessTypes.filter(({ is_free }) => !is_free);
   const businessTypeIds = billableBusinessTypes.map(({ business_type_id }) => business_type_id);
   const plans = await prisma.plan.findMany({
@@ -94,14 +111,20 @@ export async function listVersionSegmentPlansForOrganization(organizationId: str
     assignment.segments.flatMap((segmentAssignment) => {
       const { id: segmentId, segment } = segmentAssignment;
       const plan = findPlanForVersionSegment(plans, assignment.business_type_id, segment.name);
+      const organizationPrice = organizationPriceBySegment.get(segmentId) ?? null;
+      const snapshotPrice = organizationPrice ? organizationPrice.snapshot_price : segmentAssignment.price;
+      const effectivePrice = resolveOrganizationSegmentPrice(organizationPrice, segmentAssignment.price);
       return [{
         id: plan?.id ?? `segment-${segmentId}`,
         plan_id: plan?.plan_id ?? null,
         business_type_id: assignment.business_type_id,
         plan_name: plan?.plan_name ?? `${assignment.businessType.name} - ${segment.name}`,
         description: plan?.description ?? segment.description,
-        price: segmentAssignment.price != null ? segmentAssignment.price.toNumber() : null,
-        segment_price: segmentAssignment.price != null ? segmentAssignment.price.toNumber() : null,
+        price: effectivePrice?.toNumber() ?? null,
+        segment_price: effectivePrice?.toNumber() ?? null,
+        version_price: segmentAssignment.price?.toNumber() ?? null,
+        organization_snapshot_price: snapshotPrice?.toNumber() ?? null,
+        is_custom_price: organizationPrice?.custom_price != null,
         billing_cycle: plan?.billing_cycle ?? null,
         is_active: plan?.is_active ?? true,
         tier_key: plan?.tier_key ?? null,

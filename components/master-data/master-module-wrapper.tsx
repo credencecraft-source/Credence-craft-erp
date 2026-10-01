@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useTransition, type ReactNode } from "react";
+import { useState, useMemo, useEffect, useTransition, useCallback, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -64,6 +64,7 @@ type MasterModuleWrapperProps = {
   workspaceId: string;
   organizationId: string;
   organizationName: string;
+  createDummyData: () => Promise<{ created: boolean; orderNo: string | null; orderCount: number; error?: string }>;
   deleteDummyData: () => Promise<{ deleted: boolean; error?: string }>;
   dummyDataStatus: { status: string; orderNo: string | null; orderCount?: number; masterCount: number };
   value?: string;
@@ -81,6 +82,7 @@ export function MasterModuleWrapper({
   workspaceId,
   organizationId,
   organizationName,
+  createDummyData,
   deleteDummyData,
   dummyDataStatus = { status: "UNAVAILABLE", orderNo: null, masterCount: 0 },
   children,
@@ -94,7 +96,7 @@ export function MasterModuleWrapper({
   const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
   const visibilityStorageKey = `erp-visible-modules:${organizationId}`;
 
-  const checkIsBlocked = (targetPath: string) => {
+  const checkIsBlocked = useCallback((targetPath: string) => {
     if (!restrictions || !restrictions.length) return null;
 
     const orgIndex = targetPath.indexOf(organizationId);
@@ -118,9 +120,9 @@ export function MasterModuleWrapper({
       }
     }
     return null;
-  };
+  }, [organizationId, restrictions]);
 
-  const checkIsHidden = (targetPath: string) => {
+  const checkIsHidden = useCallback((targetPath: string) => {
     if (!restrictions || !restrictions.length) return false;
 
     const orgIndex = targetPath.indexOf(organizationId);
@@ -136,11 +138,11 @@ export function MasterModuleWrapper({
       if (owningModule && owningModule !== targetModule) return false;
       return restrictionMatchesHiddenRoute(rule, segments, featureKeys);
     });
-  };
+  }, [organizationId, restrictions]);
 
   const currentBlockInfo = useMemo(() => {
     return checkIsBlocked(pathname);
-  }, [restrictions, pathname, organizationPath]);
+  }, [checkIsBlocked, pathname]);
 
   useEffect(() => {
     if (currentBlockInfo && !pathname.includes("/access-blocked")) {
@@ -168,15 +170,50 @@ export function MasterModuleWrapper({
     return ERP_MODULES;
   }, [businessTypes]);
 
-  const [hiddenModuleKeys, setHiddenModuleKeys] = useState<string[]>([]);
+  const [hiddenModuleKeys, setHiddenModuleKeys] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+
+    try {
+      const storedVisibleKeys = JSON.parse(localStorage.getItem(visibilityStorageKey) || "null");
+      if (!Array.isArray(storedVisibleKeys)) return [];
+
+      const visibleKeys = allModuleOptions
+        .map((option) => option.key)
+        .filter((key) => storedVisibleKeys.includes(key));
+      if (visibleKeys.length === 0) return [];
+
+      return allModuleOptions
+        .map((option) => option.key)
+        .filter((key) => !visibleKeys.includes(key));
+    } catch {
+      return [];
+    }
+  });
   const [moduleSettingsOpen, setModuleSettingsOpen] = useState(false);
   const [dummyDataHelpOpen, setDummyDataHelpOpen] = useState(false);
   const [dummyDataStateOverride, setDummyDataStateOverride] = useState<boolean | null>(null);
-  const [dummyDataDeleteConfirmation, setDummyDataDeleteConfirmation] = useState(false);
   const [dummyDataDeleteError, setDummyDataDeleteError] = useState("");
   const [dummyDataDeleteNotice, setDummyDataDeleteNotice] = useState("");
   const [isUpdatingDummyData, startUpdatingDummyData] = useTransition();
   const dummyDataActive = dummyDataStateOverride ?? dummyDataStatus.status === "ACTIVE";
+  const dummyDataAvailable = !["SCHEMA_NOT_READY", "UNAVAILABLE"].includes(dummyDataStatus.status);
+
+  function handleCreateDummyData() {
+    setDummyDataDeleteError("");
+    setDummyDataDeleteNotice("");
+    startUpdatingDummyData(async () => {
+      const result = await createDummyData();
+      if (result.error) {
+        setDummyDataDeleteError(result.error);
+        return;
+      }
+      setDummyDataStateOverride(true);
+      setDummyDataDeleteNotice(result.created
+        ? `Created ${result.orderCount} sample orders${result.orderNo ? `, starting with ${result.orderNo}` : ""}.`
+        : "Sample data already exists for this organization.");
+      router.refresh();
+    });
+  }
 
   function handleDeleteDummyData() {
     setDummyDataDeleteError("");
@@ -187,32 +224,11 @@ export function MasterModuleWrapper({
         return;
       }
       setDummyDataStateOverride(false);
-      setDummyDataDeleteConfirmation(false);
       setDummyDataDeleteNotice(result.deleted ? "Dummy data was deleted." : "There is no dummy dataset to delete.");
       setDummyDataHelpOpen(false);
       router.refresh();
     });
   }
-
-  useEffect(() => {
-    try {
-      const storedVisibleKeys = JSON.parse(localStorage.getItem(visibilityStorageKey) || "null");
-      if (Array.isArray(storedVisibleKeys)) {
-        const visibleKeys = allModuleOptions
-          .map((option) => option.key)
-          .filter((key) => storedVisibleKeys.includes(key));
-        if (visibleKeys.length > 0) {
-          setHiddenModuleKeys(
-            allModuleOptions
-              .map((option) => option.key)
-              .filter((key) => !visibleKeys.includes(key)),
-          );
-        }
-      }
-    } catch {
-      // Ignore malformed local preferences and use the default visibility.
-    }
-  }, [allModuleOptions, visibilityStorageKey]);
 
   const moduleOptions = useMemo(
     () => allModuleOptions.filter((option) => !hiddenModuleKeys.includes(option.key)),
@@ -441,9 +457,9 @@ export function MasterModuleWrapper({
               type="button"
               variant="ghost"
               size="sm"
-              aria-label="Delete sample data"
+              aria-label="Manage sample data"
               aria-haspopup="dialog"
-              title="Delete sample data"
+              title="Manage sample data"
               onClick={() => setDummyDataHelpOpen(true)}
               className="h-9 w-9 rounded-md border border-red-200 bg-red-50 p-0 text-red-700 hover:border-red-300 hover:bg-red-100 hover:text-red-800 focus-visible:ring-red-500"
             >
@@ -554,7 +570,6 @@ export function MasterModuleWrapper({
         open={dummyDataHelpOpen}
         onClose={() => {
           setDummyDataHelpOpen(false);
-          setDummyDataDeleteConfirmation(false);
         }}
         ariaLabelledBy="dummy-data-help-title"
         ariaDescribedBy="dummy-data-help-description"
@@ -567,8 +582,8 @@ export function MasterModuleWrapper({
                 <Sparkles className="h-5 w-5" aria-hidden="true" />
               </span>
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-red-700">Sample data</p>
-                <h2 id="dummy-data-help-title" className="mt-1 text-base font-semibold text-slate-950">Delete sample data</h2>
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">Sample data</p>
+                <h2 id="dummy-data-help-title" className="mt-1 text-base font-semibold text-slate-950">Sample data actions</h2>
               </div>
             </div>
             <Button
@@ -585,28 +600,34 @@ export function MasterModuleWrapper({
         </div>
         <div className="space-y-5 p-5">
           <p id="dummy-data-help-description" className="text-sm leading-6 text-slate-600">
-            Remove the sample orders and sample master records from this organization. Organization-owned values are preserved.
+            Create sample orders and masters or remove the existing sample dataset. Organization-owned values are preserved.
           </p>
           <div className="flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">
             <Button
               type="button"
               variant="secondary"
-              onClick={() => {
-                setDummyDataHelpOpen(false);
-                setDummyDataDeleteConfirmation(false);
-              }}
+              onClick={() => setDummyDataHelpOpen(false)}
             >
               Not now
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={handleCreateDummyData}
+              disabled={isUpdatingDummyData || !dummyDataAvailable}
+            >
+              <Sparkles className="h-4 w-4" aria-hidden="true" />
+              Create sample data
             </Button>
             {dummyDataActive ? (
               <Button
                 type="button"
                 variant="danger"
-                onClick={() => setDummyDataDeleteConfirmation(true)}
+                onClick={handleDeleteDummyData}
                 disabled={isUpdatingDummyData}
               >
                 <Trash2 className="h-4 w-4" aria-hidden="true" />
-                Delete sample data
+                {isUpdatingDummyData ? "Deleting..." : "Delete sample data"}
               </Button>
             ) : (
               <p className="text-sm text-slate-500" role="status">There is no sample data to delete.</p>
@@ -629,26 +650,8 @@ export function MasterModuleWrapper({
                 : "A dummy-data batch already exists for this organization."}
             </p>
           ) : null}
-          {dummyDataDeleteConfirmation ? (
-            <div className="mt-4 space-y-3 rounded-md border border-red-200 bg-red-50 p-4">
-              <div>
-                <h3 className="text-sm font-semibold text-red-900">Delete the sample dataset?</h3>
-                <p className="mt-1 text-sm text-red-800">
-                  This removes the demo order and its tracked sample masters. Deletion is blocked if the order is already used by other records.
-                </p>
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="secondary" onClick={() => setDummyDataDeleteConfirmation(false)} disabled={isUpdatingDummyData}>
-                  Cancel
-                </Button>
-                <Button type="button" variant="danger" onClick={handleDeleteDummyData} disabled={isUpdatingDummyData}>
-                  {isUpdatingDummyData ? "Deleting..." : "Confirm delete"}
-                </Button>
-              </div>
-            </div>
-          ) : null}
-          {dummyDataDeleteError ? <p className="mt-3 text-sm text-red-700" role="alert">{dummyDataDeleteError}</p> : null}
           {dummyDataDeleteNotice ? <p className="mt-3 text-sm text-emerald-700" role="status">{dummyDataDeleteNotice}</p> : null}
+          {dummyDataDeleteError ? <p className="mt-3 text-sm text-red-700" role="alert">{dummyDataDeleteError}</p> : null}
         </div>
       </Modal>
 

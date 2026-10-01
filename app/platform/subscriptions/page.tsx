@@ -103,13 +103,13 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
 
   async function remove(formData: FormData) {
     "use server";
-    await requirePlatformSessionAdmin();
+    const admin = await requirePlatformSessionAdmin();
     try {
-      await deleteSubscription(String(formData.get("id")));
+      const result = await deleteSubscription(String(formData.get("id")), admin.id);
+      redirect(`/platform/subscriptions?success=${encodeURIComponent(result.deleted ? "Deleted successfully." : "Subscription was already deleted.")}`);
     } catch (error: any) {
       redirect(`/platform/subscriptions?error=${encodeURIComponent(error.message)}`);
     }
-    redirect(`/platform/subscriptions?success=${encodeURIComponent("Deleted successfully.")}`);
   }
 
   return (
@@ -224,7 +224,9 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
           <Table>
             <thead className="bg-slate-50 text-xs text-slate-500 uppercase">
               <tr>
-                <th className="px-3 py-3">Org Name</th>
+                <th className="px-3 py-3">Organization Name</th>
+                <th className="px-3 py-3">Organization ID</th>
+                <th className="px-3 py-3">Organization Number</th>
                 <th className="px-3 py-3">Plan Name</th>
                 <th className="px-3 py-3">Start Date</th>
                 <th className="px-3 py-3">End Date</th>
@@ -248,8 +250,11 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                 return (
                   <tr key={subId} className="hover:bg-slate-50">
                     <td className="px-3 py-3 font-bold text-slate-900">
-                      {sub.organization_name || sub.organizationName || "—"}
+                      {sub.organizationName || sub.organization_name || "—"}
+                      {sub.organizationMissing && <span className="mt-1 block text-[10px] font-semibold text-rose-700">Organization record missing</span>}
                     </td>
+                    <td className="max-w-48 break-all px-3 py-3 font-mono text-[10px] text-slate-600">{sub.organizationPublicId || (sub.organizationMissing ? "Unavailable" : "—")}</td>
+                    <td className="whitespace-nowrap px-3 py-3 font-mono tabular-nums text-slate-700">{sub.organizationNumber || (sub.organizationMissing ? "Unavailable" : "—")}</td>
                     <td className="px-3 py-3">{sub.plan_name || (plan as any)?.name || (plan as any)?.plan_name || "—"}</td>
                     <td className="px-3 py-3">{startStr || "—"}</td>
                     <td className="px-3 py-3">{endStr || "—"}</td>
@@ -265,7 +270,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                         </form>
                       )}
                       <a href={`/platform/subscriptions?edit=${subId}`} className="text-emerald-600 font-semibold">Edit</a>
-                      <form action={remove} className="inline">
+                      <form action={remove} className="inline" title={sub.organizationMissing ? "Delete orphaned subscription and record the action in platform audit" : "Delete subscription"}>
                         <input type="hidden" name="id" value={subId} />
                         <button className="text-red-600 font-semibold">Delete</button>
                       </form>

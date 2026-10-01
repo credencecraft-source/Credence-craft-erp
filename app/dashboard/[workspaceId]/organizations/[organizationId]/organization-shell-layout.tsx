@@ -8,6 +8,7 @@ import { MasterModuleWrapper } from "@/components/master-data/master-module-wrap
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
 import { getOrganizationShellContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
+  createOrganizationDummyData,
   deleteOrganizationDummyData,
   getOrganizationDummyDataStatus,
 } from "@/lib/services/organizations/organization-dummy-data-service";
@@ -53,6 +54,18 @@ export default async function OrganizationShellLayout({
     ? new URL(rawPath).pathname 
     : rawPath;
   const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
+
+  const activeBusinessTypesPromise = listActiveBusinessTypes();
+  const organization = await getOrganizationShellContext(user.id, organizationId);
+
+  if (!organization) {
+    redirect(`/dashboard/${user.workspace_id}/home`);
+  }
+
+  if (organization.approval_status !== "APPROVED") {
+    redirect(`/dashboard/${workspaceId}/home`);
+  }
+
   if (currentPath === organizationPath) {
     return children;
   }
@@ -62,15 +75,25 @@ export default async function OrganizationShellLayout({
     !currentPath.startsWith(`${organizationPath}/settings/master-data`);
 
   // 3. Fetch and authorize the real organization before checking plan rules.
-  const activeBusinessTypesPromise = listActiveBusinessTypes();
-  const organization = await getOrganizationShellContext(user.id, organizationId);
-  
-  if (!organization) {
-    redirect(`/dashboard/${user.workspace_id}/home`);
-  }
+  async function createDummyDataAction() {
+    "use server";
+    const actionUser = await requireSessionUser();
+    if (actionUser.workspace_id !== workspaceId) {
+      return { created: false, orderNo: null, orderCount: 0, error: "Workspace access denied." };
+    }
 
-  if (organization.approval_status !== "APPROVED") {
-    redirect(`/dashboard/${workspaceId}/home`);
+    try {
+      const result = await createOrganizationDummyData(actionUser.id, organizationId, actionUser.full_name || actionUser.email);
+      revalidatePath(organizationPath);
+      return result;
+    } catch (error) {
+      return {
+        created: false,
+        orderNo: null,
+        orderCount: 0,
+        error: error instanceof Error ? error.message : "Unable to create sample data.",
+      };
+    }
   }
 
   async function deleteDummyDataAction() {
@@ -133,6 +156,7 @@ export default async function OrganizationShellLayout({
       workspaceId={workspaceId}
       organizationId={organizationId}
       organizationName={organization.organization_name}
+      createDummyData={createDummyDataAction}
       deleteDummyData={deleteDummyDataAction}
       dummyDataStatus={dummyDataStatus}
       businessTypes={businessTypes}

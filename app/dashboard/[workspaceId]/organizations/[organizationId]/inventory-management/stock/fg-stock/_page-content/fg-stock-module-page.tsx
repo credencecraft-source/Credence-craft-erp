@@ -7,8 +7,11 @@ import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 
 type MasterValue = { id: string; label: string; fields?: Record<string, unknown> };
+type LocationOption = { id: string; label: string };
 type StockRecord = {
   id: string;
+  location_id: string;
+  location: { location_name: string };
   sku_code: string | null;
   barcode: string | null;
   style_name: string;
@@ -33,6 +36,7 @@ type StockRecord = {
 };
 
 type FormState = {
+  locationId: string;
   styleName: string;
   orderNo: string;
   articleNo: string;
@@ -55,7 +59,7 @@ type FormState = {
 const fieldClass = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100";
 
 const emptyForm: FormState = {
-  styleName: "", orderNo: "", articleNo: "", brand: "", size: "", colour: "",
+  locationId: "", styleName: "", orderNo: "", articleNo: "", brand: "", size: "", colour: "",
   productCategory: "", subProductCategory: "", source: "DIRECT", qtyIn: "", qtyOut: "",
   gstRate: "", hsnCode: "", purchasePrice: "", salesPrice: "", mrp: "", barcode: "",
 };
@@ -82,6 +86,7 @@ export default function FgStockModulePage({ moduleName, addMode = false }: { mod
   const pathname = usePathname();
   const [form, setForm] = useState<FormState>(emptyForm);
   const [records, setRecords] = useState<StockRecord[]>([]);
+  const [locations, setLocations] = useState<LocationOption[]>([]);
   const [masters, setMasters] = useState<Record<string, MasterValue[]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -93,13 +98,16 @@ export default function FgStockModulePage({ moduleName, addMode = false }: { mod
   const currentStock = Math.max(0, Number(form.qtyIn || 0) - Number(form.qtyOut || 0));
   const loadData = async () => {
     setLoading(true);
-    const [stockResponse, masterResponse] = await Promise.all([
+    const [stockResponse, masterResponse, locationsResponse] = await Promise.all([
       fetch(`/api/inventory/stock/fg-sku?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" }),
       fetch(`/api/masters?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" }),
+      fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/location?includeInactive=false`, { cache: "no-store" }),
     ]);
     const stockPayload = await stockResponse.json();
     const masterPayload = await masterResponse.json();
+    const locationsPayload = await locationsResponse.json();
     setRecords(stockPayload.records ?? []);
+    setLocations(Array.isArray(locationsPayload) ? locationsPayload : []);
     setMasters(Object.fromEntries((masterPayload.masters ?? []).map((master: { module_key: string; values: MasterValue[] }) => [master.module_key, master.values])));
     setLoading(false);
   };
@@ -115,10 +123,15 @@ export default function FgStockModulePage({ moduleName, addMode = false }: { mod
     event.preventDefault();
     setSaving(true);
     setMessage("");
+    if (!form.locationId) {
+      setMessage("Select an active Location before saving the stock record.");
+      setSaving(false);
+      return;
+    }
     const response = await fetch("/api/inventory/stock/fg-sku", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ organizationId, ...form, qtyIn: Number(form.qtyIn || 0), qtyOut: Number(form.qtyOut || 0) }),
+      body: JSON.stringify({ organizationId, ...form, locationId: form.locationId, qtyIn: Number(form.qtyIn || 0), qtyOut: Number(form.qtyOut || 0) }),
     });
     const payload = await response.json();
     if (!response.ok) {
@@ -147,6 +160,7 @@ export default function FgStockModulePage({ moduleName, addMode = false }: { mod
           <form onSubmit={submit} className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
           <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">SKU ID</span><input disabled value={lastGeneratedSkuId || "Auto generated on save"} className={`${fieldClass} cursor-not-allowed bg-slate-100 text-slate-500`} /></label>
           <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Customer Barcode</span><input className={fieldClass} value={form.barcode} onChange={(event) => updateForm("barcode", event.target.value)} placeholder="Scan or enter customer barcode" /></label>
+          <Select label="Location" value={form.locationId} onChange={(event) => updateForm("locationId", event.target.value)} disabled={locations.length === 0} options={[{ value: "", label: locations.length === 0 ? "No active Locations" : "Select Location" }, ...locations.map((location) => ({ value: location.id, label: location.label }))]} />
           {form.source === "DIRECT" ? <label className="block space-y-1 sm:col-span-2"><span className="text-xs font-semibold text-slate-700">General Catalogue Item Name</span><input disabled value={directItemName(form)} className={`${fieldClass} cursor-not-allowed bg-slate-100 text-slate-500`} /></label> : <><label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Style Name *</span><input required className={fieldClass} value={form.styleName} onChange={(event) => updateForm("styleName", event.target.value)} /></label><label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Order No *</span><input required className={fieldClass} value={form.orderNo} onChange={(event) => updateForm("orderNo", event.target.value)} /></label><MasterSelect label="Article No *" value={form.articleNo} options={masters.article ?? []} onChange={(value) => updateForm("articleNo", value)} /></>}
           <MasterSelect label="Brand" value={form.brand} options={masters.brand ?? []} onChange={(value) => updateForm("brand", value)} />
           <MasterSelect label="Size" value={form.size} options={masters.size ?? []} onChange={(value) => updateForm("size", value)} />
@@ -171,19 +185,19 @@ export default function FgStockModulePage({ moduleName, addMode = false }: { mod
           title="Finished Goods SKU Stock"
           records={sortedRecords}
           fields={[
-            { key: "sku_code", label: "SKU Code" }, { key: "barcode", label: "Customer Barcode" }, { key: "id", label: "Record ID / Barcode" }, { key: "style_name", label: "Style Name" }, { key: "order_no", label: "Order No" }, { key: "article_no", label: "Article No" },
+            { key: "sku_code", label: "SKU Code" }, { key: "barcode", label: "Customer Barcode" }, { key: "id", label: "Record ID / Barcode" }, { key: "location", label: "Location" }, { key: "style_name", label: "Style Name" }, { key: "order_no", label: "Order No" }, { key: "article_no", label: "Article No" },
             { key: "brand", label: "Brand" }, { key: "size", label: "Size" }, { key: "colour", label: "Colour" }, { key: "product_category", label: "Product Category" },
             { key: "sub_product_category", label: "Sub Product Category" }, { key: "gst_rate", label: "GST %" }, { key: "hsn_code", label: "HSN Code" }, { key: "purchase_price", label: "Purchase Price" }, { key: "sales_price", label: "Sales Price" }, { key: "mrp", label: "MRP" }, { key: "added_time", label: "Added Time" }, { key: "added_user", label: "Added User" },
             { key: "source", label: "Source" }, { key: "qty_in", label: "Qty In" }, { key: "qty_out", label: "Qty Out" }, { key: "current_stock", label: "Current Stock" },
           ]}
-          visibleFields={visibleFields.length > 0 ? visibleFields : ["sku_code", "barcode", "id", "style_name", "order_no", "article_no", "brand", "size", "colour", "product_category", "sub_product_category", "gst_rate", "hsn_code", "purchase_price", "sales_price", "mrp", "added_time", "added_user", "source", "qty_in", "qty_out", "current_stock"]}
+          visibleFields={visibleFields.length > 0 ? visibleFields : ["sku_code", "barcode", "id", "location", "style_name", "order_no", "article_no", "brand", "size", "colour", "product_category", "sub_product_category", "gst_rate", "hsn_code", "purchase_price", "sales_price", "mrp", "added_time", "added_user", "source", "qty_in", "qty_out", "current_stock"]}
           onVisibleFieldsChange={(fields) => setVisibleFields(fields.map(String))}
           rowIdSelector={(record) => record.id}
           selectedIds={[]}
           onRowClick={(recordId) => router.push(`${pathname}/${encodeURIComponent(recordId)}`)}
           onNewOrder={() => router.push(`${pathname}/add`)}
           newActionLabel="+ Add Record"
-          renderCell={(fieldKey, record) => fieldKey === "added_time" ? new Date(record.added_time).toLocaleString() : fieldKey === "source" ? record.source.replaceAll("_", " ") : String(record[fieldKey as keyof StockRecord] ?? "-")}
+          renderCell={(fieldKey, record) => fieldKey === "location" ? record.location.location_name : fieldKey === "added_time" ? new Date(record.added_time).toLocaleString() : fieldKey === "source" ? record.source.replaceAll("_", " ") : String(record[fieldKey as keyof StockRecord] ?? "-")}
           emptyMessage={loading ? "Loading stock records..." : "No finished goods SKU stock records yet."}
         />}
       </section>

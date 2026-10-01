@@ -19,12 +19,10 @@ export default function PriceApprovalDetailPage() {
   const [error, setError] = useState("");
 
   const loadOrder = useCallback(async () => {
-    const response = await fetch(`/api/orders/procurement?organizationId=${encodeURIComponent(organizationId)}&view=all`, { cache: "no-store" });
+    const response = await fetch(`/api/orders/procurement/${encodeURIComponent(groupedPurchaseOrderId)}?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" });
     const data = await response.json();
     if (!response.ok) throw new Error(data?.error || "Unable to load grouped PO details.");
-    const matchingOrder = (data.groupedPurchaseOrders ?? []).find((item: GroupedPurchaseOrder) => item.id === groupedPurchaseOrderId) ?? null;
-    if (!matchingOrder) throw new Error("The grouped PO could not be found.");
-    setOrder(matchingOrder);
+    setOrder(data.groupedPurchaseOrder ?? null);
   }, [groupedPurchaseOrderId, organizationId]);
 
   useEffect(() => {

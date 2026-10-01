@@ -107,9 +107,6 @@ export default async function WorkspaceHomePage({
               <h1 className="mt-4 max-w-xl text-3xl font-semibold tracking-[-0.03em] text-white sm:text-4xl lg:text-5xl">
                 Good to see you, {user.full_name.split(" ")[0]}.
               </h1>
-              <p className="mt-4 max-w-lg text-sm leading-6 text-emerald-50/70 sm:text-base">
-                Your business operations, entities, and next decisions in one considered workspace.
-              </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <WorkspaceInvitationBell />
@@ -130,29 +127,34 @@ export default async function WorkspaceHomePage({
               </form>
             </div>
           </div>
-          <div className="relative mt-10 grid gap-3 border-t border-white/10 pt-5 sm:grid-cols-3">
-            <div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Workspace pulse</p><p className="mt-1 text-sm font-medium text-white">{activeCount} active · {totalCount} total</p></div>
-            <div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Access level</p><p className="mt-1 text-sm font-medium text-white">Workspace owner</p></div>
-            <div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Account</p><p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-white">{user.email_verified ? "Verified and active" : "Verification pending"} <ShieldCheck className="h-4 w-4 text-amber-300" /></p></div>
+          <div className="relative mt-10 grid gap-4 border-t border-white/10 pt-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Workspace pulse</p>
+              <p className="mt-1 text-sm font-medium text-white">{activeCount} active · {totalCount} total</p>
+            </div>
+            <div className="min-w-0">
+              <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50"><UserRound className="h-3.5 w-3.5" /> Profile</p>
+              <p className="mt-1 truncate text-sm font-medium text-white">{user.profile_name}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50"><Mail className="h-3.5 w-3.5" /> Email</p>
+              <p className="mt-1 truncate text-sm font-medium text-white" title={user.email}>{user.email}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Access level</p>
+              <p className="mt-1 text-sm font-medium text-white">Workspace owner</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Security</p>
+              <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-white">{user.email_verified ? "Verified account" : "Pending verification"} <ShieldCheck className="h-4 w-4 text-amber-300" /></p>
+            </div>
           </div>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="rounded-2xl border border-slate-200/80 bg-white px-5 py-4 shadow-[0_10px_30px_rgba(15,23,42,0.04)]"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><UserRound className="h-4 w-4" /></span><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Profile</p><p className="mt-1 truncate text-sm font-semibold text-slate-800">{user.profile_name}</p></div></div></div>
-          <div className="rounded-2xl border border-slate-200/80 bg-white px-5 py-4 shadow-[0_10px_30px_rgba(15,23,42,0.04)]"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50 text-amber-700"><Mail className="h-4 w-4" /></span><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Email</p><p className="mt-1 truncate text-sm font-semibold text-slate-800" title={user.email}>{user.email}</p></div></div></div>
-          <div className="rounded-2xl border border-slate-200/80 bg-white px-5 py-4 shadow-[0_10px_30px_rgba(15,23,42,0.04)]"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-50 text-sky-700"><ShieldCheck className="h-4 w-4" /></span><div><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Security</p><p className="mt-1 text-sm font-semibold text-slate-800">{user.email_verified ? "Verified account" : "Pending verification"}</p></div></div></div>
         </div>
 
         <Section className="space-y-5 pt-2">
-          <div className="flex flex-col gap-3 border-b border-slate-200/80 pb-4 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-700"><Building2 className="h-3.5 w-3.5" /> Your portfolio</div>
-              <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em] text-slate-900">Organizations directory</h2>
-              <p className="mt-1 text-sm text-slate-500">Select an entity to open its operational workspace.</p>
-            </div>
+          <div className="flex justify-end">
             <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{activeCount} active</span>
           </div>
-
           {organizations.length === 0 ? (
             <Card className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-none">
               <div className="mx-auto max-w-sm space-y-3">

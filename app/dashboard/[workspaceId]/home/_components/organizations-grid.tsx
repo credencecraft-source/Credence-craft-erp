@@ -11,6 +11,7 @@ import NavigationLoadingOverlay from "@/components/ui/NavigationLoadingOverlay";
 
 type WorkspaceOrganization = {
   id: string;
+  organization_number: string;
   organization_id: string;
   organization_name: string;
   gst_number: string;
@@ -83,7 +84,7 @@ export function OrganizationsGrid({
                 : "Pending approval";
 
           return (
-          <div key={organization.id} className="group relative flex flex-col justify-between rounded-lg border border-slate-200/80 bg-white p-3.5 shadow-2xs transition-all hover:border-slate-300 hover:shadow-sm">
+          <div key={organization.id} className="group relative flex flex-col justify-between rounded-lg border border-emerald-100 bg-white p-3.5 shadow-[0_3px_14px_rgba(16,42,36,0.06)] transition-all hover:border-emerald-300 hover:shadow-[0_10px_26px_rgba(16,42,36,0.12)]">
             {isOperational && (
               <Link
                 href={`/dashboard/${workspaceId}/organizations/${organization.organization_id}/order-management/merchandising/order`}
@@ -110,7 +111,7 @@ export function OrganizationsGrid({
             )}
             <div className="relative z-10 pointer-events-none">
               <div className="flex items-center justify-between">
-                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-50 text-emerald-700 font-bold text-xs shadow-2xs">
+                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[#102a24] text-emerald-100 font-bold text-xs shadow-2xs">
                   {organization.organization_name ? organization.organization_name.charAt(0).toUpperCase() : "O"}
                 </div>
                 
@@ -153,9 +154,10 @@ export function OrganizationsGrid({
               <h3 className="mt-2.5 text-sm font-semibold text-slate-900 tracking-tight truncate" title={organization.organization_name}>
                 {organization.organization_name}
               </h3>
-              <p className="text-[11px] text-slate-500 font-mono truncate">
-                GST: {organization.gst_number || "N/A"}
-              </p>
+              <div className="mt-1 flex min-w-0 items-center gap-2 text-[10px]">
+                <span className="shrink-0 rounded-sm bg-emerald-50 px-1.5 py-0.5 font-mono font-semibold text-emerald-800">ID {organization.organization_number}</span>
+                <span className="truncate font-mono text-slate-500">GST: {organization.gst_number || "N/A"}</span>
+              </div>
             </div>
 
             <div className={`relative z-10 mt-3 pt-2 border-t border-slate-100 flex items-center justify-between ${canOpenOrganization ? "pointer-events-none" : "pointer-events-auto"}`}>

@@ -7,8 +7,10 @@ import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { assignOrganizationPlatformVersion, getOrganizationClient, listPlatformVersions } from "@/lib/services/platform/client-service";
+import { listOrganizationSegmentPricing, resetOrganizationSegmentPrice, setOrganizationSegmentCustomPrice } from "@/lib/services/platform/organization-segment-pricing-service";
 import { deleteOrganizationFromPlatform, updateOrganizationApprovalStatus } from "@/lib/services/organizations/organization-service";
 import OrganizationDetailTabs from "./organization-detail-tabs";
+import OrganizationSubscriptionPricing from "./organization-subscription-pricing";
 
 function Detail({ label, value }: { label: string; value: string }) {
   return (
@@ -24,7 +26,7 @@ export default async function PlatformOrganizationDetailsPage({
   searchParams,
 }: {
   params: Promise<{ organizationId: string }>;
-  searchParams?: Promise<{ error?: string }>;
+  searchParams?: Promise<{ error?: string; success?: string; tab?: string; businessType?: string }>;
 }) {
   const { organizationId } = await params;
   const query = (await searchParams) ?? {};
@@ -35,6 +37,36 @@ export default async function PlatformOrganizationDetailsPage({
 
   if (!organization) {
     notFound();
+  }
+  const pricing = await listOrganizationSegmentPricing(organizationId);
+
+  async function saveCustomSegmentPrice(formData: FormData) {
+    "use server";
+    const businessTypeId = String(formData.get("businessTypeId") || "");
+    try {
+      await setOrganizationSegmentCustomPrice(
+        organizationId,
+        String(formData.get("assignmentId") || ""),
+        String(formData.get("price") || ""),
+      );
+    } catch (error) {
+      redirect(`/platform/organisations/${organizationId}?tab=subscriptions&businessType=${encodeURIComponent(businessTypeId)}&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to save custom price.")}`);
+    }
+    redirect(`/platform/organisations/${organizationId}?tab=subscriptions&businessType=${encodeURIComponent(businessTypeId)}&success=${encodeURIComponent("Custom price saved.")}`);
+  }
+
+  async function resetCustomSegmentPrice(formData: FormData) {
+    "use server";
+    const businessTypeId = String(formData.get("businessTypeId") || "");
+    try {
+      await resetOrganizationSegmentPrice(
+        organizationId,
+        String(formData.get("assignmentId") || ""),
+      );
+    } catch (error) {
+      redirect(`/platform/organisations/${organizationId}?tab=subscriptions&businessType=${encodeURIComponent(businessTypeId)}&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to reset custom price.")}`);
+    }
+    redirect(`/platform/organisations/${organizationId}?tab=subscriptions&businessType=${encodeURIComponent(businessTypeId)}&success=${encodeURIComponent("Organization price reset to its version snapshot.")}`);
   }
 
   async function updateApprovalStatus(formData: FormData) {
@@ -79,6 +111,7 @@ export default async function PlatformOrganizationDetailsPage({
     <Page className="max-w-7xl">
       <Section className="space-y-6">
         {query.error && <p className="rounded-lg bg-red-50 p-3 text-xs text-red-700">{query.error}</p>}
+        {query.success && <p className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">{query.success}</p>}
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(26rem,0.85fr)] xl:items-center">
           <header>
             <Link href="/platform/organisations" className="text-sm font-semibold text-emerald-700 hover:text-emerald-800">
@@ -128,7 +161,7 @@ export default async function PlatformOrganizationDetailsPage({
           </section>
         </div>
 
-        <OrganizationDetailTabs panels={[
+        <OrganizationDetailTabs initialValue={query.tab === "subscriptions" ? "subscriptions" : undefined} panels={[
           {
             label: "Overview",
             value: "overview",
@@ -182,6 +215,30 @@ export default async function PlatformOrganizationDetailsPage({
                   <Detail label="Plan description" value={organization.plan?.description ?? "Not provided"} />
                   <Detail label="Platform version" value={organization.platformVersion?.version_name ?? "Not assigned"} />
                 </dl>
+              </section>
+            ),
+          },
+          {
+            label: "Subscriptions",
+            value: "subscriptions",
+            content: (
+              <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                <div className="border-b border-slate-200 px-4 py-3">
+                  <h2 className="text-sm font-bold text-slate-900">Version segment pricing</h2>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {pricing.versionName
+                      ? `${pricing.versionName} prices are captured when assigned. Custom prices change billing only; version restrictions and limits remain unchanged.`
+                      : "Assign a platform version to configure this organization's segment prices."}
+                  </p>
+                </div>
+                {pricing.businessTypes.length > 0 ? (
+                  <OrganizationSubscriptionPricing
+                    businessTypes={pricing.businessTypes}
+                    initialBusinessTypeId={query.businessType}
+                    onSaveCustomSegmentPrice={saveCustomSegmentPrice}
+                    onResetCustomSegmentPrice={resetCustomSegmentPrice}
+                  />
+                ) : <p className="p-4 text-sm text-slate-500">No business types or segments are configured for the assigned version.</p>}
               </section>
             ),
           },

@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
+import { requireSameOrganizationEntity } from "@/lib/services/organizations/organization-entity-service";
 import { reserveProcurementDocumentNumber } from "./procurement-document-number-service";
 
 const PRICE_APPROVAL_STATUS = "PENDING_PRICE_APPROVAL";
@@ -78,6 +80,9 @@ function serializeLine(line: {
 
 function serializePurchaseOrder(order: {
   id: string;
+  entity_id: string | null;
+  entity: { id: string; entity_name: string } | null;
+  source_type: string;
   grouped_po_no: string;
   display_no: number | null;
   status: string;
@@ -118,6 +123,9 @@ function serializePurchaseOrder(order: {
 }) {
   return {
     id: order.id,
+    entityId: order.entity?.id ?? order.entity_id,
+    entityName: order.entity?.entity_name ?? "Missing Entity",
+    sourceType: order.source_type,
     groupedPoNo: order.display_no ? `GP-${order.display_no}` : order.grouped_po_no,
     groupedPoInternalNo: order.grouped_po_no,
     status: order.status,
@@ -180,9 +188,10 @@ async function enrichPurchaseOrderTaxFields<T extends ReturnType<typeof serializ
 }
 
 const groupedPurchaseOrderInclude = {
+  entity: { select: { id: true, entity_name: true } },
   vendor: { select: { id: true, vendor: true, gst_number: true, registered_state: true, registeredState: { select: { state: true } } } },
   lines: {
-    orderBy: { created_at: "asc" as const },
+    orderBy: [{ created_at: "asc" }, { id: "asc" }],
     select: {
       id: true,
       source_bom_item_id: true,
@@ -204,63 +213,170 @@ const groupedPurchaseOrderInclude = {
       vendor_price: true,
     },
   },
-} as const;
+} satisfies Prisma.GroupedPurchaseOrderInclude;
+
+const allocatableBomItemSelect = {
+  id: true,
+  order_id: true,
+  categoryType: true,
+  category: true,
+  subCategory: true,
+  rawMaterialName: true,
+  stockUom: true,
+  internalConsumption: true,
+  internalPrice: true,
+  requiredQty: true,
+  totalRequiredQty: true,
+  order: {
+    select: {
+      orderNo: true,
+      styleName: true,
+      brand: true,
+      entity_id: true,
+      entityName: true,
+      entity: { select: { id: true, entity_name: true, is_active: true } },
+    },
+  },
+} satisfies Prisma.BillOfMaterialItemSelect;
+
+type AllocatableBomItem = Prisma.BillOfMaterialItemGetPayload<{ select: typeof allocatableBomItemSelect }>;
+
+type AllocationQuantityTotals = {
+  groupedByBomId: Map<string, Prisma.Decimal>;
+  bookedByBomId: Map<string, Prisma.Decimal>;
+  fulfilledByBomId: Map<string, Prisma.Decimal>;
+};
+
+async function loadAllocationQuantityTotals(organizationId: string, sourceBomItemIds?: string[]): Promise<AllocationQuantityTotals> {
+  if (sourceBomItemIds && sourceBomItemIds.length === 0) {
+    return { groupedByBomId: new Map(), bookedByBomId: new Map(), fulfilledByBomId: new Map() };
+  }
+  const [groupedQuantities, bookingQuantities] = await Promise.all([
+    prisma.groupedPurchaseOrderLine.groupBy({
+      by: ["source_bom_item_id"],
+      where: {
+        ...(sourceBomItemIds ? { source_bom_item_id: { in: sourceBomItemIds } } : {}),
+        groupedPurchaseOrder: { organization_id: organizationId, source_type: "VENDOR" },
+      },
+      _sum: { grouped_qty: true },
+    }),
+    prisma.rawMaterialStockBooking.groupBy({
+      by: ["source_bom_item_id", "status"],
+      where: {
+        organization_id: organizationId,
+        status: { in: ["BOOKED", "FULFILLED"] },
+        ...(sourceBomItemIds ? { source_bom_item_id: { in: sourceBomItemIds } } : {}),
+      },
+      _sum: { booked_quantity: true, fulfilled_quantity: true },
+    }),
+  ]);
+  const groupedByBomId = new Map(groupedQuantities.map((group) => [
+    group.source_bom_item_id,
+    group._sum.grouped_qty ?? new Prisma.Decimal(0),
+  ]));
+  const bookedByBomId = new Map<string, Prisma.Decimal>();
+  const fulfilledByBomId = new Map<string, Prisma.Decimal>();
+  for (const booking of bookingQuantities) {
+    if (booking.status === "BOOKED") {
+      bookedByBomId.set(booking.source_bom_item_id, booking._sum.booked_quantity ?? new Prisma.Decimal(0));
+    } else if (booking.status === "FULFILLED") {
+      fulfilledByBomId.set(booking.source_bom_item_id, booking._sum.fulfilled_quantity ?? new Prisma.Decimal(0));
+    }
+  }
+
+  return { groupedByBomId, bookedByBomId, fulfilledByBomId };
+}
+
+function remainingBomQuantity(
+  row: { id: string; totalRequiredQty: Prisma.Decimal | null; requiredQty: Prisma.Decimal | null },
+  totals: AllocationQuantityTotals,
+) {
+  const requiredQty = new Prisma.Decimal(row.totalRequiredQty ?? row.requiredQty ?? 0);
+  const remainingQty = requiredQty
+    .minus(totals.groupedByBomId.get(row.id) ?? 0)
+    .minus(totals.bookedByBomId.get(row.id) ?? 0)
+    .minus(totals.fulfilledByBomId.get(row.id) ?? 0);
+  return remainingQty.gt(0) ? remainingQty : new Prisma.Decimal(0);
+}
+
+function serializeAllocatableBomRows(rows: AllocatableBomItem[], totals: AllocationQuantityTotals) {
+  return rows.flatMap((row) => {
+    const requiredQty = new Prisma.Decimal(row.totalRequiredQty ?? row.requiredQty ?? 0);
+    const remainingQty = remainingBomQuantity(row, totals);
+    if (!remainingQty.gt(0)) return [];
+    return [{
+      id: row.id,
+      orderId: row.order_id,
+      orderNo: row.order.orderNo,
+      entityId: row.order.entity?.id ?? row.order.entity_id,
+      entityName: row.order.entity?.entity_name ?? row.order.entityName ?? "Missing Entity",
+      styleName: row.order.styleName,
+      brand: row.order.brand,
+      category: row.category,
+      categoryType: row.categoryType,
+      subCategory: row.subCategory,
+      itemName: row.rawMaterialName,
+      stockUom: row.stockUom,
+      internalConsumption: decimalValue(row.internalConsumption),
+      internalPriceBom: decimalValue(row.internalPrice),
+      requiredQty: decimalValue(requiredQty),
+      remainingQty: decimalValue(remainingQty),
+    }];
+  });
+}
 
 export async function listAllocatableBomRows(organizationId: string) {
-  const rows = await prisma.billOfMaterialItem.findMany({
-    where: {
-      order: { organization_id: organizationId },
-      groupedPurchaseOrderLines: { none: {} },
-    },
-    select: {
-      id: true,
-      order_id: true,
-      orderQty: true,
-      categoryType: true,
-      category: true,
-      subCategory: true,
-      rawMaterialName: true,
-      stockUom: true,
-      internalConsumption: true,
-      internalPrice: true,
-      requiredQty: true,
-      totalRequiredQty: true,
-      order: { select: { orderNo: true, styleName: true, brand: true } },
-    },
-    orderBy: [{ created_at: "desc" }, { id: "desc" }],
-    take: 500,
-  });
+  const [rows, totals] = await Promise.all([
+    prisma.billOfMaterialItem.findMany({
+      where: { order: { organization_id: organizationId } },
+      select: allocatableBomItemSelect,
+      orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    }),
+    loadAllocationQuantityTotals(organizationId),
+  ]);
+  return serializeAllocatableBomRows(rows, totals);
+}
 
-  return rows.map((row) => ({
-    id: row.id,
-    orderId: row.order_id,
-    orderNo: row.order.orderNo,
-    styleName: row.order.styleName,
-    brand: row.order.brand,
-    category: row.category,
-    categoryType: row.categoryType,
-    subCategory: row.subCategory,
-    itemName: row.rawMaterialName,
-    stockUom: row.stockUom,
-    internalConsumption: decimalValue(row.internalConsumption),
-    internalPriceBom: decimalValue(row.internalPrice),
-    requiredQty: decimalValue(row.totalRequiredQty ?? row.requiredQty),
-  }));
+export async function listAllocatableBomRowsPage(
+  organizationId: string,
+  input: { cursor?: string; limit?: number } = {},
+) {
+  const limit = Math.min(100, Math.max(1, Math.trunc(input.limit ?? 50)));
+  const rows = await prisma.billOfMaterialItem.findMany({
+    where: { order: { organization_id: organizationId } },
+    select: allocatableBomItemSelect,
+    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    take: limit + 1,
+    ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+  });
+  const hasNextPage = rows.length > limit;
+  const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
+  const totals = await loadAllocationQuantityTotals(organizationId, pageRows.map((row) => row.id));
+  return {
+    bomRows: serializeAllocatableBomRows(pageRows, totals),
+    nextCursor: hasNextPage ? pageRows[pageRows.length - 1]?.id ?? null : null,
+  };
+}
+
+async function countAllocatableBomRows(organizationId: string) {
+  const [rows, totals] = await Promise.all([
+    prisma.billOfMaterialItem.findMany({
+      where: { order: { organization_id: organizationId } },
+      select: { id: true, requiredQty: true, totalRequiredQty: true },
+    }),
+    loadAllocationQuantityTotals(organizationId),
+  ]);
+  return rows.reduce((count, row) => count + (remainingBomQuantity(row, totals).gt(0) ? 1 : 0), 0);
 }
 
 export async function getProcurementSummary(organizationId: string) {
-  const [pendingVendorAllocation, pendingPriceApproval, readyForPo] = await prisma.$transaction([
-    prisma.billOfMaterialItem.count({
-      where: {
-        order: { organization_id: organizationId },
-        groupedPurchaseOrderLines: { none: {} },
-      },
-    }),
+  const [pendingVendorAllocation, pendingPriceApproval, readyForPo] = await Promise.all([
+    countAllocatableBomRows(organizationId),
     prisma.groupedPurchaseOrder.count({
       where: { organization_id: organizationId, status: PRICE_APPROVAL_STATUS },
     }),
     prisma.groupedPurchaseOrder.count({
-      where: { organization_id: organizationId, status: APPROVED_STATUS },
+      where: { organization_id: organizationId, source_type: "VENDOR", status: APPROVED_STATUS },
     }),
   ]);
 
@@ -302,8 +418,15 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
         internalPrice: true,
         requiredQty: true,
         totalRequiredQty: true,
-        order: { select: { orderNo: true, styleName: true, brand: true } },
-        groupedPurchaseOrderLines: { select: { id: true } },
+        order: {
+          select: {
+            orderNo: true,
+            styleName: true,
+            brand: true,
+            entity_id: true,
+            entity: { select: { id: true, entity_name: true, is_active: true } },
+          },
+        },
       },
     });
 
@@ -311,8 +434,48 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
       throw new Error("One or more selected raw-material rows are no longer available.");
     }
 
-    const allocated = bomItems.find((item) => item.groupedPurchaseOrderLines.length > 0);
-    if (allocated) throw new Error(`Raw-material row ${allocated.id} has already been allocated.`);
+    const groupingKey = (item: {
+      rawMaterialName: string | null;
+      category: string | null;
+      subCategory: string | null;
+      stockUom: string | null;
+    }) => [item.rawMaterialName, item.category, item.subCategory, item.stockUom]
+      .map((value) => String(value ?? "").trim().toLowerCase())
+      .join("|");
+    const firstGroupingKey = groupingKey(bomItems[0]);
+    if (bomItems.some((item) => groupingKey(item) !== firstGroupingKey)) {
+      throw new Error("Select BOM rows for one raw material, category, subcategory, and stock UOM per grouped PO.");
+    }
+
+    const entityId = requireSameOrganizationEntity(
+      bomItems.map((item) => item.order.entity_id),
+      "Select BOM rows from one active Entity. Orders without an active Entity cannot be procured.",
+    );
+    if (bomItems.some((item) => !item.order.entity?.is_active)) {
+      throw new Error("Select BOM rows from one active Entity. Orders without an active Entity cannot be procured.");
+    }
+
+    const itemIds = [...uniqueLines.keys()];
+    const [bookedQuantities, fulfilledQuantities, groupedQuantities] = await Promise.all([
+      transaction.rawMaterialStockBooking.groupBy({
+        by: ["source_bom_item_id"],
+        where: { organization_id: input.organizationId, status: "BOOKED", source_bom_item_id: { in: itemIds } },
+        _sum: { booked_quantity: true },
+      }),
+      transaction.rawMaterialStockBooking.groupBy({
+        by: ["source_bom_item_id"],
+        where: { organization_id: input.organizationId, status: "FULFILLED", source_bom_item_id: { in: itemIds } },
+        _sum: { fulfilled_quantity: true },
+      }),
+      transaction.groupedPurchaseOrderLine.groupBy({
+        by: ["source_bom_item_id"],
+        where: { source_bom_item_id: { in: itemIds }, groupedPurchaseOrder: { organization_id: input.organizationId, source_type: "VENDOR" } },
+        _sum: { grouped_qty: true },
+      }),
+    ]);
+    const bookedByBomId = new Map(bookedQuantities.map((row) => [row.source_bom_item_id, row._sum.booked_quantity ?? new Prisma.Decimal(0)]));
+    const fulfilledByBomId = new Map(fulfilledQuantities.map((row) => [row.source_bom_item_id, row._sum.fulfilled_quantity ?? new Prisma.Decimal(0)]));
+    const groupedByBomId = new Map(groupedQuantities.map((row) => [row.source_bom_item_id, row._sum.grouped_qty ?? new Prisma.Decimal(0)]));
 
     const rawMaterialNames = [...new Set(bomItems.map((item) => item.rawMaterialName).filter((name): name is string => Boolean(name)))];
     const rawMaterialMasters = await transaction.masterRawMaterial.findMany({
@@ -324,8 +487,12 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
     const lines = bomItems.map((item) => {
       const requiredQty = positiveNumber(item.totalRequiredQty ?? item.requiredQty, "Required Qty");
       const groupedQty = positiveNumber(uniqueLines.get(item.id)?.groupedQty, "Grouped Qty");
-      if (groupedQty > requiredQty) {
-        throw new Error(`Grouped Qty cannot exceed Required Qty for ${item.order.orderNo}.`);
+      const remainingQty = new Prisma.Decimal(requiredQty)
+        .minus(bookedByBomId.get(item.id) ?? 0)
+        .minus(fulfilledByBomId.get(item.id) ?? 0)
+        .minus(groupedByBomId.get(item.id) ?? 0);
+      if (new Prisma.Decimal(groupedQty).gt(remainingQty)) {
+        throw new Error(`Grouped Qty cannot exceed the remaining requirement for ${item.order.orderNo}.`);
       }
       const stockUom = stockUomByRawMaterial.get(String(item.rawMaterialName ?? "").trim().toLowerCase()) ?? item.stockUom;
       return {
@@ -341,7 +508,7 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
         stock_uom: stockUom,
         internal_consumption: item.internalConsumption,
         internal_price_bom: item.internalPrice,
-        required_qty: new Prisma.Decimal(requiredQty),
+        required_qty: remainingQty,
         grouped_qty: new Prisma.Decimal(groupedQty),
       };
     });
@@ -359,6 +526,7 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
     const order = await transaction.groupedPurchaseOrder.create({
       data: {
         organization_id: input.organizationId,
+        entity_id: entityId,
         vendor_id: vendor.id,
         grouped_po_no: `GPO-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`,
         display_no: displayNo,
@@ -392,17 +560,121 @@ export async function listGroupedPurchaseOrders(organizationId: string, status?:
   return enrichPurchaseOrderTaxFields(organizationId, orders.map(serializePurchaseOrder));
 }
 
-export async function deleteGroupedPurchaseOrder(organizationId: string, id: string) {
+export async function listGroupedPurchaseOrdersPage(
+  organizationId: string,
+  status: string | string[] | undefined,
+  input: { cursor?: string; limit?: number } = {},
+) {
+  const limit = Math.min(100, Math.max(1, Math.trunc(input.limit ?? 50)));
+  const rows = await prisma.groupedPurchaseOrder.findMany({
+    where: { organization_id: organizationId, ...(status ? { status: Array.isArray(status) ? { in: status } : status } : {}) },
+    include: groupedPurchaseOrderInclude,
+    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    take: limit + 1,
+    ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+  });
+  const hasNextPage = rows.length > limit;
+  const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
+  return {
+    groupedPurchaseOrders: await enrichPurchaseOrderTaxFields(organizationId, pageRows.map(serializePurchaseOrder)),
+    nextCursor: hasNextPage ? pageRows[pageRows.length - 1]?.id ?? null : null,
+  };
+}
+
+export async function getGroupedPurchaseOrder(organizationId: string, id: string) {
+  const order = await prisma.groupedPurchaseOrder.findFirst({
+    where: { id, organization_id: organizationId },
+    include: groupedPurchaseOrderInclude,
+  });
+  if (!order) throw new Error("Grouped PO not found.");
+  const [enriched] = await enrichPurchaseOrderTaxFields(organizationId, [serializePurchaseOrder(order)]);
+  return enriched;
+}
+
+export async function deleteGroupedPurchaseOrder(organizationId: string, id: string, actorId: string) {
   await prisma.$transaction(async (transaction) => {
     const order = await transaction.groupedPurchaseOrder.findFirst({
       where: { id, organization_id: organizationId },
-      select: { id: true, masterGroupSource: { select: { id: true } } },
+      select: {
+        id: true,
+        grouped_po_no: true,
+        display_no: true,
+        source_type: true,
+        status: true,
+        total_grouped_qty: true,
+        masterGroupSource: { select: { id: true } },
+      },
     });
     if (!order) throw new Error("Grouped PO not found.");
     if (order.masterGroupSource) throw new Error("Delete the Master Group before deleting this Grouped PO.");
+    if (![PRICE_APPROVAL_STATUS, APPROVED_STATUS].includes(order.status)) {
+      throw new Error("Only pending or approved price-approval records can be deleted.");
+    }
 
-    await transaction.groupedPurchaseOrder.delete({ where: { id: order.id } });
-  });
+    let releasedStockBookingCount = 0;
+    if (order.source_type === "STOCK") {
+      const bookings = await transaction.rawMaterialStockBooking.findMany({
+        where: { organization_id: organizationId, grouped_purchase_order_id: order.id, status: "BOOKED" },
+        select: { id: true, take_from_stock_id: true, booked_quantity: true },
+      });
+      const bookedTotal = bookings.reduce((total, booking) => total.plus(booking.booked_quantity), new Prisma.Decimal(0));
+      if (bookings.length === 0 || !order.total_grouped_qty || !bookedTotal.equals(order.total_grouped_qty)) {
+        throw new Error("Stock reservations do not match this Grouped PO quantity. Resolve the reservation discrepancy before deleting it.");
+      }
+
+      const bookedByStockId = new Map<string, Prisma.Decimal>();
+      for (const booking of bookings) {
+        bookedByStockId.set(
+          booking.take_from_stock_id,
+          (bookedByStockId.get(booking.take_from_stock_id) ?? new Prisma.Decimal(0)).plus(booking.booked_quantity),
+        );
+      }
+
+      for (const [stockId, quantity] of bookedByStockId) {
+        const released = await transaction.rawMaterialStock.updateMany({
+          where: { id: stockId, organization_id: organizationId, quantity_reserved: { gte: quantity } },
+          data: { quantity_reserved: { decrement: quantity } },
+        });
+        if (released.count !== 1) {
+          throw new Error("Unable to release the reserved stock quantity safely. Reload and try again.");
+        }
+      }
+
+      const clearedBookings = await transaction.rawMaterialStockBooking.updateMany({
+        where: {
+          organization_id: organizationId,
+          id: { in: bookings.map((booking) => booking.id) },
+          status: "BOOKED",
+          grouped_purchase_order_id: order.id,
+        },
+        data: { status: "REJECTED", grouped_purchase_order_id: null },
+      });
+      if (clearedBookings.count !== bookings.length) {
+        throw new Error("Stock reservations changed while deleting this Grouped PO. Reload and try again.");
+      }
+      releasedStockBookingCount = bookings.length;
+    }
+
+    await createAuditEvent({
+      organizationId,
+      userId: actorId,
+      module: order.source_type === "STOCK" ? "Inventory Management" : "Procurement",
+      action: "DELETE",
+      entityType: "GroupedPurchaseOrder",
+      entityId: order.id,
+      details: {
+        grouped_po_no: order.display_no ? `GP-${order.display_no}` : order.grouped_po_no,
+        source_type: order.source_type,
+        previous_status: order.status,
+        released_stock_booking_count: releasedStockBookingCount,
+      },
+    }, transaction);
+
+    const deleted = await transaction.groupedPurchaseOrder.deleteMany({
+      where: { id: order.id, organization_id: organizationId, status: order.status },
+    });
+    if (deleted.count !== 1) throw new Error("Grouped PO changed while it was being deleted. Reload and try again.");
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
 }
 
 export async function updateGroupedPurchaseOrderPrices(
@@ -456,12 +728,42 @@ export async function approveGroupedPurchaseOrder(organizationId: string, groupe
 export async function rejectGroupedPurchaseOrder(organizationId: string, groupedPurchaseOrderId: string, reason: string) {
   const cleanReason = reason.trim();
   if (!cleanReason) throw new Error("A rejection reason is required.");
-  const updated = await prisma.groupedPurchaseOrder.updateMany({
-    where: { id: groupedPurchaseOrderId, organization_id: organizationId, status: PRICE_APPROVAL_STATUS },
-    data: { status: REJECTED_STATUS, rejection_reason: cleanReason },
-  });
-  if (updated.count === 0) throw new Error("Grouped PO is not pending price approval.");
-  return { ok: true };
+  return prisma.$transaction(async (transaction) => {
+    const order = await transaction.groupedPurchaseOrder.findFirst({
+      where: { id: groupedPurchaseOrderId, organization_id: organizationId, status: PRICE_APPROVAL_STATUS },
+      select: { id: true, source_type: true },
+    });
+    if (!order) throw new Error("Grouped PO is not pending price approval.");
+
+    if (order.source_type === "STOCK") {
+      const bookings = await transaction.rawMaterialStockBooking.groupBy({
+        by: ["take_from_stock_id"],
+        where: { organization_id: organizationId, grouped_purchase_order_id: order.id, status: "BOOKED" },
+        _sum: { booked_quantity: true },
+      });
+      if (bookings.length === 0) throw new Error("No active stock reservations are linked to this approval record.");
+
+      for (const booking of bookings) {
+        const quantity = booking._sum.booked_quantity ?? new Prisma.Decimal(0);
+        const released = await transaction.rawMaterialStock.updateMany({
+          where: { id: booking.take_from_stock_id, organization_id: organizationId, quantity_reserved: { gte: quantity } },
+          data: { quantity_reserved: { decrement: quantity } },
+        });
+        if (released.count !== 1) throw new Error("Unable to release the reserved stock quantity safely.");
+      }
+
+      await transaction.rawMaterialStockBooking.updateMany({
+        where: { organization_id: organizationId, grouped_purchase_order_id: order.id, status: "BOOKED" },
+        data: { status: "REJECTED" },
+      });
+    }
+
+    await transaction.groupedPurchaseOrder.update({
+      where: { id: order.id, organization_id: organizationId },
+      data: { status: REJECTED_STATUS, rejection_reason: cleanReason },
+    });
+    return { ok: true };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export const GROUPED_PURCHASE_ORDER_STATUSES = {

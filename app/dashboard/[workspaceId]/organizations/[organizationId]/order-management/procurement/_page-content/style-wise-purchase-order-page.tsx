@@ -14,14 +14,17 @@ import {
   X,
 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
+import Tabs from "@/components/ui/Tabs";
 
 type BomRow = {
   id: string;
+  entityId?: string | null;
+  entityName?: string | null;
   orderId: string;
   orderNo: string | null;
   styleName: string | null;
@@ -32,9 +35,18 @@ type BomRow = {
   stockUom: string | null;
   internalConsumption: number | null;
   requiredQty: number | null;
+  remainingQty: number | null;
 };
 
-type VendorOption = { id: string; label: string };
+type VendorOption = { id: string; label: string; isCurrentStore: boolean };
+type RawMaterialStockOption = {
+  id: string;
+  entity_id: string;
+  raw_material: string;
+  location: { location_name: string };
+  quantity_on_hand: number | string;
+  quantity_reserved: number | string;
+};
 type GstOption = {
   id: string;
   label: string;
@@ -49,6 +61,8 @@ type UomConvertOption = {
 };
 type MaterialGroup = {
   key: string;
+  entityId: string | null;
+  entityName: string;
   rawMaterialName: string;
   stockUom: string | null;
   category: string;
@@ -62,12 +76,15 @@ type MaterialCategory = {
   groupCount: number;
   lineCount: number;
 };
-type GroupedLine = Omit<BomRow, "orderId"> & {
+type GroupedLine = Omit<BomRow, "orderId" | "remainingQty"> & {
   groupedQty: string;
   vendorPrice: string;
 };
 export type GroupedPurchaseOrder = {
   id: string;
+  sourceType?: string;
+  entityId: string | null;
+  entityName: string;
   groupedPoNo: string;
   status: string;
   submittedAt: string;
@@ -132,8 +149,11 @@ export type GroupedPurchaseOrder = {
 
 export type MasterPurchaseOrder = {
   id: string;
+  entityId: string | null;
+  entityName: string;
   masterPoNo: string;
   status: string;
+  sourceType: string;
   rawMaterial: string | null;
   category: string | null;
   subCategory: string | null;
@@ -192,12 +212,13 @@ export default function StyleWisePurchaseOrderPage({
   initialStage?: StyleWiseStage;
 }) {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
-  const router = useRouter();
   const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
   const procurementPath = `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/procurement`;
   const styleWisePath = `${procurementPath}/create-po/style-wise`;
   const [stage, setStage] = useState<StyleWiseStage>(initialStage);
+  const loadedStageData = useRef(new Set<string>());
+  const stageDataRequests = useRef(new Map<string, Promise<void>>());
   const [bomRows, setBomRows] = useState<BomRow[]>([]);
   const [vendors, setVendors] = useState<VendorOption[]>([]);
   const [gstOptions, setGstOptions] = useState<GstOption[]>([]);
@@ -207,8 +228,13 @@ export default function StyleWisePurchaseOrderPage({
   const [masterPurchaseOrders, setMasterPurchaseOrders] = useState<
     MasterPurchaseOrder[]
   >([]);
-  const [loading, setLoading] = useState(true);
-  const [priceLoading, setPriceLoading] = useState(false);
+  const [loading, setLoading] = useState(initialStage === "allocate");
+  const [priceLoading, setPriceLoading] = useState(initialStage !== "allocate");
+  const [groupedNextCursor, setGroupedNextCursor] = useState<string | null>(null);
+  const [masterNextCursor, setMasterNextCursor] = useState<string | null>(null);
+  const [loadingMoreDataset, setLoadingMoreDataset] = useState<"grouped" | "master" | null>(null);
+  const [allocationNextCursor, setAllocationNextCursor] = useState<string | null>(null);
+  const [loadingMoreAllocation, setLoadingMoreAllocation] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedMaterialKey, setSelectedMaterialKey] = useState<string | null>(
     null,
@@ -218,32 +244,48 @@ export default function StyleWisePurchaseOrderPage({
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
-  const loadAllocatableRows = async () => {
-    const response = await fetch(
-      `/api/orders/procurement?organizationId=${encodeURIComponent(organizationId)}&view=allocatable`,
-      { cache: "no-store" },
-    );
+  const loadAllocatableRows = async (append = false) => {
+    const query = new URLSearchParams({ organizationId, view: "allocatable", limit: "100" });
+    if (append && allocationNextCursor) query.set("cursor", allocationNextCursor);
+    const response = await fetch(`/api/orders/procurement?${query.toString()}`, { cache: "no-store" });
     const data = await response.json();
     if (!response.ok)
       throw new Error(data?.error || "Unable to load raw-material rows.");
-    setBomRows(data.bomRows ?? []);
+    const page = data.bomRows ?? [];
+    setBomRows((current) => append ? [...current, ...page] : page);
+    setAllocationNextCursor(data.nextCursor ?? null);
+    if (!append) loadedStageData.current.add(`${organizationId}:allocation`);
+  };
+
+  const loadMoreAllocatableRows = async () => {
+    if (!allocationNextCursor || loadingMoreAllocation) return;
+    setLoadingMoreAllocation(true);
+    try {
+      await loadAllocatableRows(true);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load more raw-material rows.");
+    } finally {
+      setLoadingMoreAllocation(false);
+    }
   };
 
   const loadVendors = async () => {
     const response = await fetch(
-      `/api/organizations/${encodeURIComponent(organizationId)}/master-data/vendor?includeInactive=false`,
+      `/api/organizations/${encodeURIComponent(organizationId)}/master-data/vendor?includeInactive=false&includeDummyData=true`,
       { cache: "no-store" },
     );
     const data = await response.json();
     if (!response.ok) throw new Error(data?.error || "Unable to load vendors.");
     setVendors(
       (Array.isArray(data) ? data : []).map(
-        (value: { id: string; label: string }) => ({
+        (value: { id: string; label: string; fields?: Record<string, unknown> }) => ({
           id: value.id,
           label: value.label,
+          isCurrentStore: value.fields?.Is_this_Current_Store === true,
         }),
       ),
     );
+    loadedStageData.current.add(`${organizationId}:vendors`);
   };
 
   const loadGstOptions = async () => {
@@ -255,30 +297,105 @@ export default function StyleWisePurchaseOrderPage({
     if (!response.ok)
       throw new Error(data?.error || "Unable to load GST master.");
     setGstOptions(Array.isArray(data) ? data : []);
+    loadedStageData.current.add(`${organizationId}:gst`);
   };
 
-  const loadPriceApprovals = async () => {
-    setPriceLoading(true);
+  const loadPriceApprovals = async (appendDataset?: "grouped" | "master", requestedView?: "price-approval" | "create") => {
+    if (!appendDataset) {
+      loadedStageData.current.delete(`${organizationId}:price`);
+      loadedStageData.current.delete(`${organizationId}:create`);
+    }
+    if (appendDataset) setLoadingMoreDataset(appendDataset);
     try {
-      const view = stage === "create" ? "create" : "price-approval";
+      const view = requestedView ?? (stage === "create" ? "create" : "price-approval");
+      const query = new URLSearchParams({ organizationId, view, limit: "50" });
+      if (!appendDataset) query.set("include", view === "create" ? "master" : "grouped");
+      if (appendDataset) {
+        query.set("include", appendDataset);
+        const cursor = appendDataset === "grouped" ? groupedNextCursor : masterNextCursor;
+        if (cursor) query.set(appendDataset === "grouped" ? "cursor" : "masterCursor", cursor);
+      }
       const response = await fetch(
-        `/api/orders/procurement?organizationId=${encodeURIComponent(organizationId)}&view=${view}`,
+        `/api/orders/procurement?${query.toString()}`,
         { cache: "no-store" },
       );
       const data = await response.json();
       if (!response.ok)
         throw new Error(data?.error || "Unable to load price approvals.");
-      setGroupedPurchaseOrders(data.groupedPurchaseOrders ?? []);
-      setMasterPurchaseOrders(data.masterPurchaseOrders ?? []);
+      if (Array.isArray(data.groupedPurchaseOrders)) {
+        setGroupedPurchaseOrders((current) => appendDataset === "grouped" ? [...current, ...data.groupedPurchaseOrders] : data.groupedPurchaseOrders);
+        setGroupedNextCursor(data.nextGroupedCursor ?? null);
+        loadedStageData.current.add(`${organizationId}:price`);
+      }
+      if (Array.isArray(data.masterPurchaseOrders)) {
+        setMasterPurchaseOrders((current) => appendDataset === "master" ? [...current, ...data.masterPurchaseOrders] : data.masterPurchaseOrders);
+        setMasterNextCursor(data.nextMasterCursor ?? null);
+        loadedStageData.current.add(`${organizationId}:create`);
+      }
     } finally {
-      setPriceLoading(false);
+      if (appendDataset) setLoadingMoreDataset(null);
     }
+  };
+
+  const loadOnce = (key: string, loader: () => Promise<void>) => {
+    const cacheKey = `${organizationId}:${key}`;
+    if (loadedStageData.current.has(cacheKey)) return Promise.resolve();
+    const existing = stageDataRequests.current.get(cacheKey);
+    if (existing) return existing;
+    const request = loader()
+      .then(() => { loadedStageData.current.add(cacheKey); })
+      .finally(() => stageDataRequests.current.delete(cacheKey));
+    stageDataRequests.current.set(cacheKey, request);
+    return request;
+  };
+
+  const loadStageData = (targetStage: StyleWiseStage) => {
+    const requests: Promise<void>[] = [];
+    if (targetStage === "allocate") {
+      const needsAllocation = !loadedStageData.current.has(`${organizationId}:allocation`);
+      const needsVendors = !loadedStageData.current.has(`${organizationId}:vendors`);
+      if (needsAllocation) requests.push(loadOnce("allocation", loadAllocatableRows));
+      if (needsVendors) requests.push(loadOnce("vendors", loadVendors));
+      return Promise.all(requests).then(() => undefined);
+    }
+
+    if (targetStage === "price") {
+      if (!loadedStageData.current.has(`${organizationId}:price`)) {
+        requests.push(loadOnce("price", () => loadPriceApprovals(undefined, "price-approval")));
+      }
+      if (!loadedStageData.current.has(`${organizationId}:gst`)) requests.push(loadOnce("gst", loadGstOptions));
+    } else if (!loadedStageData.current.has(`${organizationId}:create`)) {
+      requests.push(loadOnce("create", () => loadPriceApprovals(undefined, "create")));
+    }
+    return Promise.all(requests).then(() => undefined);
+  };
+
+  const selectStage = (nextStage: StyleWiseStage) => {
+    const nextPath = nextStage === "allocate"
+      ? styleWisePath
+      : `${styleWisePath}/${nextStage === "price" ? "approve-price" : "create-po"}`;
+    if (window.location.pathname !== nextPath) window.history.pushState(null, "", nextPath);
+    if (nextStage === "allocate") {
+      setPriceLoading(false);
+      if (!loadedStageData.current.has(`${organizationId}:allocation`) || !loadedStageData.current.has(`${organizationId}:vendors`)) setLoading(true);
+    } else {
+      setLoading(false);
+      const needsPriceData = nextStage === "price"
+        ? !loadedStageData.current.has(`${organizationId}:price`) || !loadedStageData.current.has(`${organizationId}:gst`)
+        : !loadedStageData.current.has(`${organizationId}:create`);
+      setPriceLoading(needsPriceData);
+    }
+    setStage(nextStage);
+  };
+
+  const preloadStage = (targetStage: StyleWiseStage) => {
+    void loadStageData(targetStage).catch(() => undefined);
   };
 
   useEffect(() => {
     if (stage !== "allocate") return;
     let mounted = true;
-    Promise.all([loadAllocatableRows(), loadVendors()])
+    loadStageData("allocate")
       .catch((loadError) => {
         if (mounted)
           setError(
@@ -297,14 +414,24 @@ export default function StyleWisePurchaseOrderPage({
 
   useEffect(() => {
     if (stage !== "price" && stage !== "create") return;
-    Promise.all([loadPriceApprovals(), loadGstOptions()]).catch((loadError) =>
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Unable to load price approvals.",
-      ),
-    );
+    let mounted = true;
+    loadStageData(stage)
+      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load price approvals."))
+      .finally(() => {
+        if (mounted) setPriceLoading(false);
+      });
+    return () => { mounted = false; };
   }, [stage, organizationId]);
+
+  useEffect(() => {
+    const syncStageFromHistory = () => {
+      if (window.location.pathname === styleWisePath) setStage("allocate");
+      else if (window.location.pathname === `${styleWisePath}/approve-price`) setStage("price");
+      else if (window.location.pathname === `${styleWisePath}/create-po`) setStage("create");
+    };
+    window.addEventListener("popstate", syncStageFromHistory);
+    return () => window.removeEventListener("popstate", syncStageFromHistory);
+  }, [styleWisePath]);
 
   const filteredRows = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -331,9 +458,11 @@ export default function StyleWisePurchaseOrderPage({
       const rawMaterialName = text(row.itemName, "Unclassified material");
       const category = text(row.category, "General");
       const subCategory = text(row.subCategory, "Uncategorised");
-      const key = `${rawMaterialName.toLowerCase()}|${category.toLowerCase()}|${subCategory.toLowerCase()}`;
+      const key = `${row.entityId ?? "missing"}|${rawMaterialName.toLowerCase()}|${category.toLowerCase()}|${subCategory.toLowerCase()}|${text(row.stockUom, "").toLowerCase()}`;
       const group = grouped.get(key) ?? {
         key,
+        entityId: row.entityId ?? null,
+        entityName: text(row.entityName, "Missing Entity"),
         rawMaterialName,
         stockUom: row.stockUom,
         category,
@@ -341,7 +470,7 @@ export default function StyleWisePurchaseOrderPage({
         groupedQty: 0,
         rows: [],
       };
-      group.groupedQty += Number(row.requiredQty ?? 0);
+      group.groupedQty += Number(row.remainingQty ?? row.requiredQty ?? 0);
       group.rows.push(row);
       grouped.set(key, group);
     }
@@ -410,7 +539,7 @@ export default function StyleWisePurchaseOrderPage({
   const openPriceStage = () => {
     setError("");
     setNotice("");
-    setStage("price");
+    selectStage("price");
   };
 
   return (
@@ -420,21 +549,27 @@ export default function StyleWisePurchaseOrderPage({
           number="01"
           label="Allocate vendor"
           active={stage === "allocate"}
-          onClick={() => router.push(styleWisePath)}
+          onClick={() => selectStage("allocate")}
+          onMouseEnter={() => preloadStage("allocate")}
+          onFocus={() => preloadStage("allocate")}
           icon={PackageSearch}
         />
         <StageButton
           number="02"
           label="Approve price"
           active={stage === "price"}
-          onClick={() => router.push(`${styleWisePath}/approve-price`)}
+          onClick={() => selectStage("price")}
+          onMouseEnter={() => preloadStage("price")}
+          onFocus={() => preloadStage("price")}
           icon={ClipboardCheck}
         />
         <StageButton
           number="03"
           label="Create PO"
           active={stage === "create"}
-          onClick={() => router.push(`${styleWisePath}/create-po`)}
+          onClick={() => selectStage("create")}
+          onMouseEnter={() => preloadStage("create")}
+          onFocus={() => preloadStage("create")}
           icon={Check}
         />
       </div>
@@ -571,6 +706,14 @@ export default function StyleWisePurchaseOrderPage({
               )}
             </div>
           )}
+          {allocationNextCursor && (
+            <div className="flex justify-center">
+              <Button type="button" variant="secondary" size="sm" disabled={loadingMoreAllocation} onClick={() => void loadMoreAllocatableRows()}>
+                {loadingMoreAllocation ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                {loadingMoreAllocation ? "Loading raw materials" : "Load more raw materials"}
+              </Button>
+            </div>
+          )}
         </section>
       ) : stage === "price" ? (
         <PriceApprovalStage
@@ -579,12 +722,19 @@ export default function StyleWisePurchaseOrderPage({
           loading={priceLoading}
           organizationId={organizationId}
           onUpdated={loadPriceApprovals}
-          onApproved={() => setStage("create")}
+          onApproved={() => selectStage("create")}
           onError={setError}
+          hasMore={Boolean(groupedNextCursor)}
+          loadingMore={loadingMoreDataset === "grouped"}
+          onLoadMore={() => loadPriceApprovals("grouped").catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load more grouped POs."))}
         />
       ) : (
         <MasterPurchaseOrderReport
           masterPurchaseOrders={masterPurchaseOrders}
+          onUpdated={loadPriceApprovals}
+          hasMore={Boolean(masterNextCursor)}
+          loadingMore={loadingMoreDataset === "master"}
+          onLoadMore={() => loadPriceApprovals("master").catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load more Master Groups."))}
         />
       )}
 
@@ -594,10 +744,10 @@ export default function StyleWisePurchaseOrderPage({
           vendors={vendors}
           organizationId={organizationId}
           onClose={() => setShowGroupedForm(false)}
-          onCreated={() => {
+          onCreated={(source) => {
             setShowGroupedForm(false);
             setSelectedIds(new Set());
-            setNotice("Grouped PO submitted for Stage 2 price approval.");
+            setNotice(source === "stock" ? "Stock booked and reserved in General Inventory." : "Grouped PO submitted for Stage 2 price approval.");
             void loadAllocatableRows();
           }}
           onError={setError}
@@ -668,7 +818,7 @@ function MaterialGroupCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700">
-            {group.category}
+            {group.entityName} - {group.category}
           </p>
           <h3 className="mt-1 truncate text-base font-bold text-slate-950">
             {group.rawMaterialName}
@@ -839,6 +989,8 @@ function StageButton({
   active,
   disabled,
   onClick,
+  onMouseEnter,
+  onFocus,
   icon: Icon,
 }: {
   number: string;
@@ -846,6 +998,8 @@ function StageButton({
   active: boolean;
   disabled?: boolean;
   onClick?: () => void;
+  onMouseEnter?: () => void;
+  onFocus?: () => void;
   icon: typeof Check;
 }) {
   return (
@@ -853,6 +1007,8 @@ function StageButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onFocus={onFocus}
       className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-left ${active ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50"} ${disabled ? "cursor-not-allowed opacity-60" : "hover:border-emerald-300"}`}
     >
       <span
@@ -880,7 +1036,7 @@ function GroupedPurchaseOrderForm({
   vendors: VendorOption[];
   organizationId: string;
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: (source: "stock" | "vendor") => void;
   onError: (message: string) => void;
 }) {
   const routeParams = useParams<{
@@ -889,23 +1045,98 @@ function GroupedPurchaseOrderForm({
   }>();
   const router = useRouter();
   const [vendorId, setVendorId] = useState("");
+  const [takingFromStock, setTakingFromStock] = useState(false);
+  const [stockRows, setStockRows] = useState<RawMaterialStockOption[]>([]);
+  const [stockIds, setStockIds] = useState<Record<string, string>>({});
+  const [stockLoading, setStockLoading] = useState(true);
   const [lines, setLines] = useState<Record<string, string>>(() =>
     Object.fromEntries(
-      rows.map((row) => [row.id, String(row.requiredQty ?? "")]),
+      rows.map((row) => [row.id, String(row.remainingQty ?? row.requiredQty ?? "")]),
     ),
   );
   const [submitting, setSubmitting] = useState(false);
-  const updateQty = (id: string, value: string, requiredQty: number | null) =>
+  const currentStoreVendor = vendors.find((vendor) => vendor.isCurrentStore);
+  const stockOptionsFor = (row: BomRow) => stockRows.filter((stock) =>
+    stock.entity_id === row.entityId
+    && stock.raw_material.trim().toLowerCase() === String(row.itemName ?? "").trim().toLowerCase()
+    && Number(stock.quantity_on_hand) > Number(stock.quantity_reserved),
+  );
+  const availableQty = (stock: RawMaterialStockOption) => Number(stock.quantity_on_hand) - Number(stock.quantity_reserved);
+  const currentStockOptions = rows[0]
+    ? stockRows.filter((stock) =>
+        stock.entity_id === rows[0].entityId
+        && stock.raw_material.trim().toLowerCase() === String(rows[0].itemName ?? "").trim().toLowerCase()
+        && availableQty(stock) > 0,
+      )
+    : [];
+  const currentStockQty = currentStockOptions.reduce(
+    (total, stock) => total + availableQty(stock),
+    0,
+  );
+  const selectedStockFor = (row: BomRow) => {
+    const options = stockOptionsFor(row);
+    return options.find((stock) => stock.id === stockIds[row.id]) ?? (options.length === 1 ? options[0] : null);
+  };
+
+  useEffect(() => {
+    let mounted = true;
+    fetch(`/api/inventory/stock?organizationId=${encodeURIComponent(organizationId)}&type=RM`, { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.error || "Unable to load available stock.");
+        if (mounted) setStockRows(Array.isArray(data.stock) ? data.stock : []);
+      })
+      .catch((error) => onError(error instanceof Error ? error.message : "Unable to load available stock."))
+      .finally(() => { if (mounted) setStockLoading(false); });
+    return () => { mounted = false; };
+  }, [organizationId, onError]);
+
+  const selectStockAllocation = (checked: boolean) => {
+    setTakingFromStock(checked);
+    if (!checked) {
+      setVendorId("");
+      setLines(Object.fromEntries(rows.map((row) => [row.id, String(row.remainingQty ?? row.requiredQty ?? "")])));
+      return;
+    }
+    if (currentStoreVendor) setVendorId(currentStoreVendor.id);
+    setLines(Object.fromEntries(rows.map((row) => {
+      const options = stockOptionsFor(row);
+      const selectedStock = options.find((stock) => stock.id === stockIds[row.id]) ?? (options.length === 1 ? options[0] : null);
+      return [row.id, selectedStock ? String(Math.min(Number(row.remainingQty ?? row.requiredQty ?? 0), availableQty(selectedStock))) : "0"];
+    })));
+  };
+
+  const updateQty = (row: BomRow, value: string) =>
     setLines((current) => ({
       ...current,
-      [id]:
-        value === ""
-          ? ""
-          : String(Math.min(Number(value), Number(requiredQty ?? 0))),
+      [row.id]: value === "" ? "" : String(Math.min(
+        Number(value),
+        Number(row.remainingQty ?? row.requiredQty ?? 0),
+        takingFromStock ? (selectedStockFor(row) ? availableQty(selectedStockFor(row)!) : 0) : Number.POSITIVE_INFINITY,
+      )),
     }));
   const submit = async () => {
     setSubmitting(true);
     try {
+      if (takingFromStock) {
+        const bookingLines = rows.filter((row) => Number(lines[row.id]) > 0).map((row) => ({
+          bomItemId: row.id,
+          takeFromStockId: stockIds[row.id] || stockOptionsFor(row)[0]?.id || "",
+          bookedQuantity: lines[row.id],
+        }));
+        if (!currentStoreVendor) throw new Error("Mark one Vendor Master record as the current store before booking stock.");
+        if (bookingLines.some((line) => !line.takeFromStockId)) throw new Error("Select an available stock source for every booked line.");
+        if (bookingLines.length === 0) throw new Error("Enter a positive quantity to book from stock.");
+        const response = await fetch(`/api/inventory/booked-stock?organizationId=${encodeURIComponent(organizationId)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ organizationId, currentStoreVendorId: currentStoreVendor.id, lines: bookingLines }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.error || "Unable to book stock.");
+        onCreated("stock");
+        return;
+      }
       const response = await fetch(
         `/api/orders/procurement?organizationId=${encodeURIComponent(organizationId)}`,
         {
@@ -914,7 +1145,7 @@ function GroupedPurchaseOrderForm({
           body: JSON.stringify({
             organizationId,
             vendorId,
-            lines: rows.map((row) => ({
+            lines: rows.filter((row) => Number(lines[row.id]) > 0).map((row) => ({
               bomItemId: row.id,
               groupedQty: lines[row.id],
             })),
@@ -924,7 +1155,7 @@ function GroupedPurchaseOrderForm({
       const data = await response.json();
       if (!response.ok)
         throw new Error(data?.error || "Unable to submit grouped PO.");
-      onCreated();
+      onCreated("vendor");
     } catch (error) {
       onError(
         error instanceof Error ? error.message : "Unable to submit grouped PO.",
@@ -933,6 +1164,12 @@ function GroupedPurchaseOrderForm({
       setSubmitting(false);
     }
   };
+  const invalidStockLines = rows.some((row) => Number(lines[row.id] ?? 0) > 0 && (
+    !selectedStockFor(row)
+    || Number(lines[row.id]) > Number(row.remainingQty ?? row.requiredQty ?? 0)
+    || Number(lines[row.id]) > availableQty(selectedStockFor(row)!)
+  ));
+  const noStockQuantity = rows.every((row) => Number(lines[row.id] ?? 0) <= 0);
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-3"
@@ -941,36 +1178,73 @@ function GroupedPurchaseOrderForm({
       aria-labelledby="grouped-po-title"
     >
       <div className="flex max-h-[92vh] w-full max-w-[1250px] flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
-        <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
-          <div>
+        <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700">
-              New grouped PO
+              {takingFromStock ? "Take from Stock" : "New grouped PO"}
             </p>
             <h2
               id="grouped-po-title"
               className="mt-1 text-lg font-bold text-slate-950"
             >
-              Allocate selected raw materials
+              {takingFromStock ? "Book selected inventory" : "Allocate selected raw materials"}
             </h2>
             <p className="mt-1 text-xs text-slate-500">
-              This grouped PO will be submitted to Stage 2 price approval.
+              {takingFromStock ? "Booked quantity is reserved in General Inventory and reduces the remaining BOM requirement." : "This grouped PO will be submitted to Stage 2 price approval."}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close grouped PO form"
-            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex flex-wrap items-start justify-end gap-2">
+            <div className="min-w-[118px] rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-right">
+              <p className="text-[9px] font-bold uppercase tracking-wide text-emerald-800">
+                Available stock
+              </p>
+              <p className="text-sm font-bold tabular-nums text-emerald-950">
+                {stockLoading
+                  ? "Loading..."
+                  : `${formatNumber(currentStockQty)} ${text(rows[0]?.stockUom, "units")}`}
+              </p>
+            </div>
+            {!stockLoading && currentStockQty > 0 && (
+              <div className="rounded-md border border-slate-200 bg-white px-3 py-2 shadow-sm">
+                <Checkbox
+                  checked={takingFromStock}
+                  disabled={!currentStoreVendor}
+                  onChange={(event) => selectStockAllocation(event.target.checked)}
+                  label="Take from Stock"
+                  className="h-3.5 w-3.5"
+                />
+                {takingFromStock && currentStoreVendor ? (
+                  <p className="ml-6 mt-1 text-[10px] font-semibold text-emerald-800">
+                    Current store: {currentStoreVendor.label}
+                  </p>
+                ) : !currentStoreVendor ? (
+                  <p className="ml-6 mt-1 max-w-52 text-[10px] text-slate-500">
+                    Mark an active vendor as the current store to enable stock booking.
+                  </p>
+                ) : null}
+              </div>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              aria-label="Close grouped PO form"
+              className="min-h-7 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
         <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
           <label className="block max-w-sm text-xs font-bold text-slate-700">
             Vendor lookup
-            <select
+            <Select
               value={vendorId}
-              onChange={(event) => setVendorId(event.target.value)}
+              disabled={takingFromStock}
+              onChange={(event) => {
+                setVendorId(event.target.value);
+                setLines(Object.fromEntries(rows.map((row) => [row.id, String(row.remainingQty ?? row.requiredQty ?? "")])));
+              }}
               className="mt-1.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-emerald-500"
             >
               <option value="">Select vendor</option>
@@ -979,26 +1253,27 @@ function GroupedPurchaseOrderForm({
                   {vendor.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <div className="mt-2 flex max-w-sm justify-end">
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() =>
                 router.push(
                   `/dashboard/${routeParams.workspaceId}/organizations/${routeParams.organizationId}/admin/master-data/vendor`,
                 )
               }
-              className="shrink-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+              className="shrink-0 rounded-md px-3 py-2 text-xs font-semibold"
             >
               Open Vendor Master
-            </button>
+            </Button>
           </div>
         </div>
         <div className="min-h-0 overflow-auto p-5">
           <div className="mb-2 flex items-center justify-between">
             <p className="text-xs font-bold text-slate-900">
-              Grouped PO subform
+              {takingFromStock ? "Stock booking subform" : "Grouped PO subform"}
             </p>
             <span className="text-[10px] text-slate-500">
               {rows.length} selected lines
@@ -1013,9 +1288,10 @@ function GroupedPurchaseOrderForm({
                 <th className="px-2.5 py-2">Category</th>
                 <th className="px-2.5 py-2">Subcategory</th>
                 <th className="px-2.5 py-2">Item</th>
+                {takingFromStock && <th className="px-2.5 py-2">Stock Source</th>}
                 <th className="px-2.5 py-2">Internal Consumption</th>
-                <th className="px-2.5 py-2 text-right">Required Qty</th>
-                <th className="px-2.5 py-2 text-right">Grouped Qty</th>
+                <th className="px-2.5 py-2 text-right">Remaining Qty</th>
+                <th className="px-2.5 py-2 text-right">{takingFromStock ? "Booked Qty" : "Grouped Qty"}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1031,22 +1307,36 @@ function GroupedPurchaseOrderForm({
                   <td className="px-2.5 py-2 font-semibold text-slate-900">
                     {text(row.itemName)}
                   </td>
+                  {takingFromStock && <td className="min-w-56 px-2.5 py-2">
+                    {stockOptionsFor(row).length > 1 ? <Select
+                      aria-label={`Select stock location for ${text(row.itemName)}`}
+                      value={stockIds[row.id] ?? ""}
+                      onChange={(event) => {
+                        const stock = stockOptionsFor(row).find((item) => item.id === event.target.value);
+                        setStockIds((current) => ({ ...current, [row.id]: event.target.value }));
+                        if (stock) setLines((current) => ({ ...current, [row.id]: String(Math.min(Number(row.remainingQty ?? row.requiredQty ?? 0), availableQty(stock))) }));
+                      }}
+                      className="w-full rounded border border-slate-300 bg-white px-2 py-1 outline-none focus:border-emerald-500"
+                    ><option value="">Select stock location</option>{stockOptionsFor(row).map((stock) => <option key={stock.id} value={stock.id}>{stock.location.location_name} · available {formatNumber(availableQty(stock))}</option>)}</Select>
+                      : selectedStockFor(row) ? <span>{selectedStockFor(row)!.location.location_name} · {formatNumber(availableQty(selectedStockFor(row)!))} available</span>
+                        : <span className="text-amber-700">No available stock</span>}
+                  </td>}
                   <td className="px-2.5 py-2">
                     {formatNumber(row.internalConsumption)}
                   </td>
                   <td className="px-2.5 py-2 text-right font-bold">
-                    {formatNumber(row.requiredQty)}
+                    {formatNumber(row.remainingQty ?? row.requiredQty)}
                   </td>
                   <td className="px-2.5 py-2 text-right">
-                    <input
+                    <Input
+                      aria-label={`${takingFromStock ? "Booked" : "Grouped"} quantity for ${text(row.orderNo)}`}
                       type="number"
                       min="0"
-                      max={row.requiredQty ?? undefined}
+                      max={takingFromStock ? (selectedStockFor(row) ? Math.min(Number(row.remainingQty ?? row.requiredQty ?? 0), availableQty(selectedStockFor(row)!)) : 0) : row.remainingQty ?? row.requiredQty ?? undefined}
                       step="0.01"
                       value={lines[row.id] ?? ""}
-                      onChange={(event) =>
-                        updateQty(row.id, event.target.value, row.requiredQty)
-                      }
+                      onChange={(event) => updateQty(row, event.target.value)}
+                      disabled={takingFromStock && !selectedStockFor(row)}
                       className="w-28 rounded border border-slate-300 px-2 py-1 text-right outline-none focus:border-emerald-500"
                     />
                   </td>
@@ -1056,22 +1346,24 @@ function GroupedPurchaseOrderForm({
           </table>
         </div>
         <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3">
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={onClose}
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+            className="rounded-md px-3 py-2 text-xs font-semibold text-slate-600"
           >
             Cancel
-          </button>
-          <button
-            type="button"
-            disabled={!vendorId || submitting}
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={submitting || (takingFromStock ? (!currentStoreVendor || stockLoading || invalidStockLines || noStockQuantity) : !vendorId)}
             onClick={submit}
-            className="inline-flex items-center gap-1.5 rounded-md bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            className="rounded-md px-4 py-2 text-xs font-bold"
           >
             {submitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{" "}
-            Submit grouped PO
-          </button>
+            {takingFromStock ? "Book Stock" : "Submit grouped PO"}
+          </Button>
         </div>
       </div>
     </div>
@@ -1086,6 +1378,9 @@ function PriceApprovalStage({
   onUpdated,
   onApproved,
   onError,
+  hasMore,
+  loadingMore,
+  onLoadMore,
 }: {
   groupedPurchaseOrders: GroupedPurchaseOrder[];
   gstOptions: GstOption[];
@@ -1094,6 +1389,9 @@ function PriceApprovalStage({
   onUpdated: () => Promise<void>;
   onApproved: () => void;
   onError: (message: string) => void;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => Promise<void>;
 }) {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
@@ -1105,6 +1403,9 @@ function PriceApprovalStage({
   const approvedOrders = groupedPurchaseOrders.filter(
     (item) => item.status === "PRICE_APPROVED",
   );
+  const masterGroupEligibleOrders = approvedOrders;
+  const selectedOrder = masterGroupEligibleOrders.find((item) => selectedIds.has(item.id));
+  const selectedSourceType = selectedOrder ? selectedOrder.sourceType ?? "VENDOR" : null;
   const approveSelectedRecords = async () => {
     setApproving(true);
     try {
@@ -1116,7 +1417,9 @@ function PriceApprovalStage({
           body: JSON.stringify({
             organizationId,
             action: "master-group",
-            groupedPurchaseOrderIds: [...selectedIds],
+            groupedPurchaseOrderIds: masterGroupEligibleOrders
+              .filter((item) => selectedIds.has(item.id))
+              .map((item) => item.id),
           }),
         },
       );
@@ -1166,9 +1469,12 @@ function PriceApprovalStage({
     }
   };
   const deleteRecord = async (order: GroupedPurchaseOrder) => {
+    const deleteEffects = order.sourceType === "STOCK"
+      ? " Its reserved stock will be released and its booking history retained."
+      : " Its grouped subform records will also be deleted.";
     if (
       !window.confirm(
-        `Delete Grouped PO ${order.groupedPoNo}? Its grouped subform records will also be deleted.`,
+        `Delete Grouped PO ${order.groupedPoNo}?${deleteEffects}`,
       )
     )
       return;
@@ -1204,7 +1510,7 @@ function PriceApprovalStage({
         price approvals
       </div>
     );
-  const selectedCount = approvedOrders.filter((item) =>
+  const selectedCount = masterGroupEligibleOrders.filter((item) =>
     selectedIds.has(item.id),
   ).length;
   return (
@@ -1212,7 +1518,7 @@ function PriceApprovalStage({
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-sm font-bold text-slate-950">
-            Approve vendor prices
+            Review grouped material prices
           </h2>
         </div>
         <button
@@ -1240,6 +1546,7 @@ function PriceApprovalStage({
                   <th className="px-3 py-3">Grouped PO</th>
                   <th className="px-3 py-3">Raw material</th>
                   <th className="px-3 py-3">Vendor</th>
+                  <th className="px-3 py-3">Sourcing</th>
                   <th className="px-3 py-3">Status</th>
                   <th className="px-3 py-3 text-right">Price</th>
                   <th className="px-3 py-3 text-right">Qty</th>
@@ -1312,7 +1619,7 @@ function PriceApprovalStage({
                         <input
                           type="checkbox"
                           aria-label={`Select ${order.groupedPoNo}`}
-                          disabled={!approved}
+                          disabled={!approved || (selectedSourceType !== null && selectedSourceType !== (order.sourceType ?? "VENDOR"))}
                           checked={selected}
                           onChange={() =>
                             setSelectedIds((current) => {
@@ -1332,6 +1639,11 @@ function PriceApprovalStage({
                       </td>
                       <td className="px-3 py-3 text-slate-700">
                         {order.vendor.name}
+                      </td>
+                      <td className="px-3 py-3">
+                        <span className={`rounded px-2 py-1 text-[9px] font-bold ${order.sourceType === "STOCK" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}>
+                          {order.sourceType === "STOCK" ? "Inventory" : "Supplier PO"}
+                        </span>
                       </td>
                       <td className="px-3 py-3">
                         <span
@@ -1381,7 +1693,7 @@ function PriceApprovalStage({
                             </button>
                           ) : approved ? (
                             <span className="text-[10px] font-semibold text-emerald-700">
-                              Ready for Master Group
+                              {order.sourceType === "STOCK" ? "Stock cost approved" : "Ready for Master Group"}
                             </span>
                           ) : (
                             <span className="text-[10px] font-semibold text-slate-500">
@@ -1412,14 +1724,30 @@ function PriceApprovalStage({
           </div>
         </div>
       )}
+      {hasMore && (
+        <div className="flex justify-center">
+          <Button type="button" variant="secondary" size="sm" disabled={loadingMore} onClick={() => void onLoadMore()}>
+            {loadingMore ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            {loadingMore ? "Loading grouped POs" : "Load more grouped POs"}
+          </Button>
+        </div>
+      )}
     </section>
   );
 }
 
 function MasterPurchaseOrderReport({
   masterPurchaseOrders,
+  onUpdated,
+  hasMore,
+  loadingMore,
+  onLoadMore,
 }: {
   masterPurchaseOrders: MasterPurchaseOrder[];
+  onUpdated: () => Promise<void>;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => Promise<void>;
 }) {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
@@ -1428,8 +1756,11 @@ function MasterPurchaseOrderReport({
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
   const [generating, setGenerating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [notifyingId, setNotifyingId] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState("");
   const [deletionError, setDeletionError] = useState("");
+  const [notificationError, setNotificationError] = useState("");
+  const [activeTab, setActiveTab] = useState("po-creation");
   const [poDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [deliveryDate] = useState(() =>
     new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
@@ -1442,9 +1773,12 @@ function MasterPurchaseOrderReport({
       return next;
     });
   const deleteMaster = async (master: MasterPurchaseOrder) => {
+    const deletionEffects = master.sourceType === "STOCK"
+      ? " Its Store notification, GRN verification, and allocations will also be deleted. Verified stock will be restored if it has not since been used or reserved, and source groups will return to price approval."
+      : " Its subform records will also be deleted.";
     if (
       !window.confirm(
-        `Delete Master Group ${master.masterPoNo}? Its subform records will also be deleted.`,
+        `Delete Master Group ${master.masterPoNo}?${deletionEffects}`,
       )
     )
       return;
@@ -1464,6 +1798,11 @@ function MasterPurchaseOrderReport({
         next.delete(master.id);
         return next;
       });
+      try {
+        await onUpdated();
+      } catch {
+        setDeletionError("Master Group was deleted, but the procurement list could not be refreshed.");
+      }
     } catch (error) {
       setDeletionError(
         error instanceof Error
@@ -1474,8 +1813,32 @@ function MasterPurchaseOrderReport({
       setDeletingId(null);
     }
   };
+  const notifyStore = async (master: MasterPurchaseOrder) => {
+    setNotifyingId(master.id);
+    setNotificationError("");
+    try {
+      const organizationId = params?.organizationId ?? "demo-org";
+      const response = await fetch(`/api/orders/procurement/master/${encodeURIComponent(master.id)}?organizationId=${encodeURIComponent(organizationId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId, action: "notify-store" }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "Unable to notify the Internal Store.");
+      await onUpdated();
+    } catch (error) {
+      setNotificationError(error instanceof Error ? error.message : "Unable to notify the Internal Store.");
+    } finally {
+      setNotifyingId(null);
+    }
+  };
   const visibleMasters = masterPurchaseOrders.filter(
-    (master) => !deletedIds.has(master.id) && !master.purchaseOrderCreated,
+    (master) => !deletedIds.has(master.id) && (master.sourceType === "STOCK" || !master.purchaseOrderCreated),
+  );
+  const tabMasters = visibleMasters.filter((master) =>
+    activeTab === "notify-store"
+      ? master.sourceType === "STOCK"
+      : master.sourceType === "VENDOR",
   );
   const generatePurchaseOrders = async () => {
     setGenerating(true);
@@ -1519,20 +1882,31 @@ function MasterPurchaseOrderReport({
             Create purchase order
           </h2>
           <p className="mt-1 text-xs text-slate-500">
-            Select Master Groups and generate one final Purchase Order for each.
+            Vendor groups generate Purchase Orders. Stock groups are sent to the Internal Store for verification.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={generatePurchaseOrders}
-          disabled={generating || selectedIds.size === 0}
-          className="rounded-md bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-        >
-          {generating
-            ? "Generating..."
-            : `Generate Purchase Order${selectedIds.size ? ` (${selectedIds.size})` : ""}`}
-        </button>
+        {activeTab === "po-creation" && (
+          <button
+            type="button"
+            onClick={generatePurchaseOrders}
+            disabled={generating || selectedIds.size === 0}
+            className="rounded-md bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            {generating
+              ? "Generating..."
+              : `Generate Purchase Order${selectedIds.size ? ` (${selectedIds.size})` : ""}`}
+          </button>
+        )}
       </div>
+      <Tabs
+        tabs={[
+          { label: "PO Creation", value: "po-creation" },
+          { label: "Notify Store", value: "notify-store" },
+        ]}
+        value={activeTab}
+        onChange={setActiveTab}
+        ariaLabel="Purchase order actions"
+      />
       {generationError && (
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
           {generationError}
@@ -1543,18 +1917,27 @@ function MasterPurchaseOrderReport({
           {deletionError}
         </div>
       )}
-      {visibleMasters.length === 0 ? (
-        <div className="erp-surface flex min-h-40 items-center justify-center text-xs text-slate-500">
-          No Master Groups are ready for PO creation.
+      {notificationError && (
+        <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {notificationError}
+        </div>
+      )}
+      {tabMasters.length === 0 ? (
+          <div className="erp-surface flex min-h-40 items-center justify-center text-xs text-slate-500">
+          {activeTab === "notify-store"
+            ? "No stock Master Groups are ready for store notification."
+            : "No vendor Master Groups are ready for PO creation."}
         </div>
       ) : (
         <div className="erp-surface overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1200px] text-left text-xs">
+            <table className="w-full min-w-[1400px] text-left text-xs">
               <thead className="border-b border-slate-200 bg-slate-50 text-[9px] font-bold uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="w-10 px-3 py-3">Select</th>
                   <th className="px-3 py-3">Master Group</th>
+                  <th className="px-3 py-3">Entity</th>
+                  <th className="px-3 py-3">Source</th>
                   <th className="px-3 py-3">Raw material</th>
                   <th className="px-3 py-3">Vendor</th>
                   <th className="px-3 py-3 text-right">Price</th>
@@ -1564,11 +1947,12 @@ function MasterPurchaseOrderReport({
                   <th className="px-3 py-3 text-right">GST</th>
                   <th className="px-3 py-3">HSN code</th>
                   <th className="px-3 py-3 text-right">Total</th>
+                  <th className="px-3 py-3">Status</th>
                   <th className="px-3 py-3">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {visibleMasters.map((master) => (
+                {tabMasters.map((master) => (
                   <tr
                     key={master.id}
                     onClick={() =>
@@ -1582,16 +1966,20 @@ function MasterPurchaseOrderReport({
                       className="px-3 py-3"
                       onClick={(event) => event.stopPropagation()}
                     >
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${master.masterPoNo}`}
-                        checked={selectedIds.has(master.id)}
-                        onChange={() => toggleMaster(master.id)}
-                      />
+                      {master.sourceType === "VENDOR" && (
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${master.masterPoNo}`}
+                          checked={selectedIds.has(master.id)}
+                          onChange={() => toggleMaster(master.id)}
+                        />
+                      )}
                     </td>
                     <td className="px-3 py-3 font-bold text-slate-900">
                       {master.masterPoNo}
                     </td>
+                    <td className="px-3 py-3 text-slate-700">{master.entityName || "Missing Entity"}</td>
+                    <td className="px-3 py-3">{master.sourceType === "STOCK" ? "Stock" : "Vendor"}</td>
                     <td className="px-3 py-3 font-semibold text-slate-800">
                       {text(master.rawMaterial)}
                     </td>
@@ -1613,30 +2001,53 @@ function MasterPurchaseOrderReport({
                     <td className="px-3 py-3 text-right font-bold">
                       {formatNumber(master.total)}
                     </td>
+                    <td className="px-3 py-3 font-semibold">
+                      {master.status === "STORE_NOTIFIED"
+                        ? "Awaiting Store Verification"
+                        : master.status === "STOCK_ALLOCATED"
+                          ? "Stock Allocated"
+                          : master.status === "MASTER_GROUPED"
+                            ? master.sourceType === "STOCK" ? "Ready to notify Store" : "Ready for PO"
+                            : master.status}
+                    </td>
                     <td
                       className="px-3 py-3"
                       onClick={(event) => event.stopPropagation()}
                     >
-                      <button
-                        type="button"
-                        disabled={deletingId === master.id}
-                        onClick={() => void deleteMaster(master)}
-                        aria-label={`Delete ${master.masterPoNo}`}
-                        title="Delete Master Group"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {deletingId === master.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <div className="flex items-center gap-2">
+                        {master.sourceType === "STOCK" && (master.status === "MASTER_GROUPED" ? (
+                          <Button type="button" size="sm" disabled={notifyingId === master.id || deletingId === master.id} onClick={() => void notifyStore(master)}>
+                            {notifyingId === master.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Store className="h-3.5 w-3.5" />}
+                            Notify Store
+                          </Button>
                         ) : (
-                          <Trash2 className="h-3.5 w-3.5" />
-                        )}
-                      </button>
+                          <span className="text-slate-500">{master.status === "STORE_NOTIFIED" ? "Store notified" : "Completed"}</span>
+                        ))}
+                        <button
+                          type="button"
+                          disabled={deletingId === master.id || notifyingId === master.id}
+                          onClick={() => void deleteMaster(master)}
+                          aria-label={`Delete ${master.masterPoNo}`}
+                          title={master.sourceType === "STOCK" ? "Delete Master Group and linked Store records" : "Delete Master Group"}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {deletingId === master.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+      {hasMore && (
+        <div className="flex justify-center">
+          <Button type="button" variant="secondary" size="sm" disabled={loadingMore} onClick={() => void onLoadMore()}>
+            {loadingMore ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            {loadingMore ? "Loading Master Groups" : "Load more Master Groups"}
+          </Button>
         </div>
       )}
     </section>
@@ -1724,6 +2135,7 @@ function CreatePoStage({
               <thead className="border-b border-slate-200 bg-slate-50 text-[9px] font-bold uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-3 py-3">Grouped PO</th>
+                  <th className="px-3 py-3">Entity</th>
                   <th className="px-3 py-3">Vendor</th>
                   <th className="px-3 py-3">Raw Material</th>
                   <th className="px-3 py-3 text-right">Grouped Qty</th>
@@ -1737,6 +2149,7 @@ function CreatePoStage({
                     <td className="px-3 py-3 font-bold text-slate-900">
                       {order.groupedPoNo}
                     </td>
+                    <td className="px-3 py-3 text-slate-700">{order.entityName || "Missing Entity"}</td>
                     <td className="px-3 py-3 text-slate-700">
                       {order.vendor.name}
                     </td>
@@ -1961,6 +2374,7 @@ export function DetailedPriceApprovalCard({
   return (
     <div className="erp-surface p-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Field label="Entity" value={order.entityName || "Missing Entity"} readOnly />
         <Field label="Vendor" value={order.vendor.name} readOnly />
         <Field label="Raw material" value={text(order.rawMaterial)} readOnly />
         <Field

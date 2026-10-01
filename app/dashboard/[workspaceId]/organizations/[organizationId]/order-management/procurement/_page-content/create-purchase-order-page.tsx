@@ -6,6 +6,8 @@ import { useEffect, useMemo, useState } from "react";
 
 type BomRow = {
   id: string;
+  entityId?: string | null;
+  entityName?: string | null;
   orderNo?: string | null;
   styleName?: string | null;
   brand?: string | null;
@@ -32,6 +34,8 @@ type BomRow = {
 
 type MaterialGroup = {
   key: string;
+  entityId: string | null;
+  entityName: string;
   label: string;
   mainLabel: string;
   subCategory: string;
@@ -42,6 +46,7 @@ type MaterialGroup = {
 type ReportColumn = { key: keyof BomRow; label: string };
 
 const reportColumns: ReportColumn[] = [
+  { key: "entityName", label: "Entity" },
   { key: "orderNo", label: "Order No" },
   { key: "styleName", label: "Style Name" },
   { key: "brand", label: "Brand" },
@@ -115,8 +120,10 @@ export default function CreatePurchaseOrderPage() {
     bomRows.forEach((row) => {
       const label = text(row.rawMaterialName, "Unclassified material");
       const subCategory = text(row.subCategory, "Uncategorised");
-      const key = `${label.toLowerCase()}|${subCategory.toLowerCase()}`;
-      const group = grouped.get(key) ?? { key, label, mainLabel: text(row.mainLabel, label), subCategory, category: text(row.category, "General"), rows: [] };
+      const category = text(row.category, "General");
+      const stockUom = text(row.stockUom, "");
+      const key = `${row.entityId ?? "missing"}|${label.toLowerCase()}|${category.toLowerCase()}|${subCategory.toLowerCase()}|${stockUom.toLowerCase()}`;
+      const group = grouped.get(key) ?? { key, entityId: row.entityId ?? null, entityName: text(row.entityName, "Missing Entity"), label, mainLabel: text(row.mainLabel, label), subCategory, category, rows: [] };
       group.rows.push(row);
       grouped.set(key, group);
     });
@@ -125,7 +132,7 @@ export default function CreatePurchaseOrderPage() {
 
   const filteredGroups = groups.filter((group) => {
     const needle = search.trim().toLowerCase();
-    return !needle || `${group.label} ${group.mainLabel} ${group.subCategory} ${group.category}`.toLowerCase().includes(needle);
+    return !needle || `${group.entityName} ${group.label} ${group.mainLabel} ${group.subCategory} ${group.category}`.toLowerCase().includes(needle);
   });
   const selectedGroup = groups.find((group) => group.key === selectedKey) ?? null;
   const stageTabs = [
@@ -159,7 +166,7 @@ function MaterialGroupCard({ group, onClick }: { group: MaterialGroup; onClick: 
   const orders = Array.from(new Set(group.rows.map((row) => text(row.orderNo))));
   const styles = Array.from(new Set(group.rows.map((row) => text(row.styleName, text(row.orderNo)))));
   const total = group.rows.reduce((sum, row) => sum + Number(row.totalRequiredQty ?? row.requiredQty ?? 0), 0);
-  return <button type="button" onClick={onClick} className="group w-full rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-emerald-300 hover:shadow-md"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate text-[9px] font-bold uppercase tracking-[0.13em] text-emerald-700">{group.category}</p><h3 className="mt-0.5 truncate text-sm font-bold text-slate-950">{group.label}</h3><p className="mt-0.5 truncate text-[10px] text-slate-500">{group.subCategory}</p></div><ChevronRight className="h-4 w-4 shrink-0 text-slate-400 group-hover:text-emerald-600" /></div><div className="mt-2 grid grid-cols-2 gap-2 border-y border-slate-100 py-2"><div><p className="text-[9px] font-bold uppercase text-slate-500">Required</p><p className="text-sm font-bold text-slate-950">{formatNumber(total)}</p></div><div><p className="text-[9px] font-bold uppercase text-slate-500">Styles</p><p className="text-sm font-bold text-slate-950">{styles.length}</p></div></div><p className="mt-2 truncate text-[10px] text-slate-500">{orders.length} orders · {group.rows.length} BOM lines</p></button>;
+  return <button type="button" onClick={onClick} className="group w-full rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-emerald-300 hover:shadow-md"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate text-[9px] font-bold uppercase tracking-[0.13em] text-emerald-700">{group.entityName} · {group.category}</p><h3 className="mt-0.5 truncate text-sm font-bold text-slate-950">{group.label}</h3><p className="mt-0.5 truncate text-[10px] text-slate-500">{group.subCategory}</p></div><ChevronRight className="h-4 w-4 shrink-0 text-slate-400 group-hover:text-emerald-600" /></div><div className="mt-2 grid grid-cols-2 gap-2 border-y border-slate-100 py-2"><div><p className="text-[9px] font-bold uppercase text-slate-500">Required</p><p className="text-sm font-bold text-slate-950">{formatNumber(total)}</p></div><div><p className="text-[9px] font-bold uppercase text-slate-500">Styles</p><p className="text-sm font-bold text-slate-950">{styles.length}</p></div></div><p className="mt-2 truncate text-[10px] text-slate-500">{orders.length} orders · {group.rows.length} BOM lines</p></button>;
 }
 
 function LegacyMaterialReport({ group, onBack }: { group: MaterialGroup; onBack: () => void }) {

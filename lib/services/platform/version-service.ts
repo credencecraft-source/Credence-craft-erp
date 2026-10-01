@@ -7,7 +7,7 @@ export async function listVersions() {
   return prisma.platformVersion.findMany({
     orderBy: { version_name: "desc" },
     include: {
-      _count: { select: { businessTypes: true } },
+      _count: { select: { businessTypes: true, organizations: true } },
     },
   });
 }
@@ -225,6 +225,15 @@ export async function duplicateVersion(id: string, input?: { versionName?: strin
 
 export async function deleteVersion(id: string) {
   await requirePlatformSessionAdmin();
+
+  const assignedOrganizationCount = await prisma.organization.count({
+    where: { platform_version_id: id },
+  });
+
+  if (assignedOrganizationCount > 0) {
+    throw new Error("This version is already assigned to one or more organizations and cannot be deleted.");
+  }
+
   return prisma.platformVersion.delete({ where: { id } });
 }
 

@@ -24,6 +24,15 @@ These rules govern every feature, bug fix, refactor, migration, route, API, serv
 - Do not run destructive or data-writing commands against a production database to troubleshoot a connection. Prefer read-only checks, and verify the target environment before any approved database operation.
 - Validate and normalize all request bodies, query parameters, path parameters, dates, quantities, rates, enum values, and uploaded or imported data. Return safe user-facing errors and log only sanitized diagnostic context.
 
+## Database Schema And Migration Operations
+
+- Every Prisma schema change must include a reviewed migration, regenerated client, disposable-database migration test, and deployment ordering that applies the migration before code requiring the new schema is served.
+- Use the centralized commands `npm run db:migrate:status` for read-only verification and `npm run db:migrate:deploy` for explicit migration deployment. Standard `npm run dev`, `npm run dev:3000`, and `npm start` must fail fast when migrations are pending; they must never silently migrate a database.
+- Deployment pipelines must run `npm run db:migrate:deploy` as a release/build step before serving the new application version. Keep the pipeline command centralized; do not run migrations independently in each application replica or request handler.
+- Before any migration write, verify the target environment from redacted metadata. Apply migrations to disposable/non-production databases for validation; production migrations run only through the approved deployment pipeline. Never point a local development command at an unverified or production database.
+- Do not catch Prisma missing-table or missing-column errors and convert them to empty collections, defaults, or success. Treat schema drift as a deployment/readiness failure with a safe, actionable message; preserve the original diagnostic classification.
+- A feature that queries a newly added table or column is not complete until the migration is applied and verified in every environment that serves that code.
+
 ## ERP Business Controls
 
 - Model document lifecycles explicitly: draft, submitted, approved, rejected, posted, cancelled, and locked where relevant. Enforce legal transitions server-side.

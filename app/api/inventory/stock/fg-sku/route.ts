@@ -38,6 +38,14 @@ export async function POST(request: Request) {
     const body = await request.json() as Record<string, unknown>;
     const organizationId = String(body.organizationId ?? "");
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "INVENTORY"]);
+    const locationId = String(body.locationId ?? "").trim();
+    const location = locationId
+      ? await prisma.masterLocation.findFirst({
+        where: { id: locationId, organization_id: organization.id, is_active: true },
+        select: { id: true, entity_id: true },
+      })
+      : null;
+    if (!location) return NextResponse.json({ error: "Select an active Location for this stock record." }, { status: 400 });
     const source = String(body.source ?? "");
     const directItemName = [body.productCategory, body.subProductCategory, body.brand, body.size, body.colour]
       .map((value) => String(value ?? "").trim())
@@ -59,6 +67,8 @@ export async function POST(request: Request) {
     const record = await prisma.finishedGoodsSkuStock.create({
       data: {
         organization_id: organization.id,
+        entity_id: location.entity_id,
+        location_id: location.id,
         sku_code: await nextSkuCode(organization.id),
         barcode: String(body.barcode ?? "").trim() || null,
         style_name: styleName,
@@ -106,12 +116,20 @@ export async function PUT(request: Request) {
     const articleNo = String(body.articleNo ?? existing.article_no).trim();
     const qtyIn = Number(body.qtyIn ?? existing.qty_in);
     const qtyOut = Number(body.qtyOut ?? existing.qty_out);
+    const locationId = String(body.locationId ?? existing.location_id).trim();
+    const location = await prisma.masterLocation.findFirst({
+      where: { id: locationId, organization_id: organization.id, is_active: true },
+      select: { id: true, entity_id: true },
+    });
+    if (!location) return NextResponse.json({ error: "Select an active Location for this stock record." }, { status: 400 });
     if (!styleName || !orderNo || !articleNo || !SOURCES.includes(source as (typeof SOURCES)[number])) return NextResponse.json({ error: "Style name, order no, article no, and a valid source are required." }, { status: 400 });
     if (![qtyIn, qtyOut].every((value) => Number.isFinite(value) && value >= 0)) return NextResponse.json({ error: "Quantity values must be non-negative numbers." }, { status: 400 });
 
     const record = await prisma.finishedGoodsSkuStock.update({
       where: { id: recordId },
       data: {
+        entity_id: location.entity_id,
+        location_id: location.id,
         style_name: styleName, order_no: orderNo, article_no: articleNo,
         barcode: String(body.barcode ?? "").trim() || null,
         brand: String(body.brand ?? "").trim() || null, size: String(body.size ?? "").trim() || null, colour: String(body.colour ?? "").trim() || null,

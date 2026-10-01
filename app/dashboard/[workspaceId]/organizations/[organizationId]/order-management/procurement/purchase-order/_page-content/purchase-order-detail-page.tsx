@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 type PurchaseOrder = {
   purchaseOrderNo: string;
+  entityName: string;
   status: string;
   poDate: string;
   deliveryDate: string | null;
@@ -113,6 +114,7 @@ export default function PurchaseOrderDetailPage() {
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <HeaderField label="PO number" value={order.purchaseOrderNo} />
+          <HeaderField label="Entity" value={order.entityName || "Missing Entity"} />
           <HeaderField label="Vendor name" value={order.vendor.name} />
           <HeaderField label="PO date" value={date(order.poDate)} />
           <HeaderField label="Delivery date" value={date(order.deliveryDate)} />

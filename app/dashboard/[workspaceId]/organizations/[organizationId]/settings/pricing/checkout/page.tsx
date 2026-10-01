@@ -1,7 +1,8 @@
 import React from "react";
 import { redirect } from "next/navigation";
-import { getPlanById } from "@/lib/services/platform/plan-service";
+import { findPlanForVersionSegment, getPlanById } from "@/lib/services/platform/plan-service";
 import { createPendingSubscription } from "@/lib/services/platform/subscription-service";
+import { resolveOrganizationSegmentPrice } from "@/lib/services/platform/organization-segment-pricing-service";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { prisma } from "@/lib/database/prisma-client";
@@ -23,56 +24,135 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
   const explicitPlanIds = valuesOf(query.planId);
   const selectedSegmentIds = valuesOf(query.segmentId);
   const legacyPlanIds = Object.entries(query)
-    .filter(([key]) => !["error", "billingCycle", "billingMonths", "planId"].includes(key))
+    .filter(([key]) => !["error", "billingCycle", "billingMonths", "planId", "segmentId"].includes(key))
     .flatMap(([, value]) => valuesOf(value));
-  const selectedPlanIds = [...new Set(explicitPlanIds.length ? explicitPlanIds : legacyPlanIds)];
+  const selectedPlanIds = explicitPlanIds.length ? explicitPlanIds : legacyPlanIds;
   const billingMonths = Number(query.billingMonths) === 6 ? 6 : 12;
   const user = await requireSessionUser();
   const organization = await getOrganizationForUser(user.id, organizationId);
 
   if (!organization) redirect(`/dashboard/${workspaceId}/home`);
 
-  const plans = (await Promise.all(selectedPlanIds.map((id) => getPlanById(id)))).filter(
-    (plan): plan is NonNullable<typeof plan> => Boolean(plan),
-  );
   const segmentAssignments = await prisma.versionBusinessTypeSegment.findMany({
-    where: { id: { in: selectedSegmentIds }, is_active: true },
-    select: { id: true, price: true, versionBusinessType: { select: { business_type_id: true } } },
+    where: {
+      id: { in: selectedSegmentIds },
+      is_active: true,
+      versionBusinessType: { is: { version_id: organization.platform_version_id ?? "" } },
+    },
+    select: {
+      id: true,
+      price: true,
+      segment: { select: { name: true } },
+      versionBusinessType: { select: { business_type_id: true } },
+    },
   });
-  const segmentPrices = new Map(segmentAssignments.map((assignment) => [assignment.id, assignment]));
-  const prices = plans.map((plan, index) => {
-    const assignment = segmentPrices.get(selectedSegmentIds[index] ?? "");
-    return assignment?.versionBusinessType.business_type_id === plan.business_type_id && assignment.price != null
-      ? Number(assignment.price)
-      : null;
+  const assignmentById = new Map(segmentAssignments.map((assignment) => [assignment.id, assignment]));
+  const organizationPrices = await prisma.organizationSegmentPrice.findMany({
+    where: {
+      organization_id: organization.id,
+      version_business_type_segment_id: { in: segmentAssignments.map(({ id }) => id) },
+    },
+    select: {
+      version_business_type_segment_id: true,
+      snapshot_price: true,
+      custom_price: true,
+    },
   });
-  const monthlySubtotal = prices.reduce((sum: number, price) => sum + (price ?? 0), 0);
+  const organizationPriceBySegment = new Map(
+    organizationPrices.map((price) => [price.version_business_type_segment_id, price]),
+  );
+  const loadedPlans = await Promise.all(selectedPlanIds.map((id) => getPlanById(id)));
+  const checkoutItems = selectedPlanIds.flatMap((planId, index) => {
+    const plan = loadedPlans[index];
+    const assignment = assignmentById.get(selectedSegmentIds[index] ?? "");
+    if (
+      !plan ||
+      !plan.is_active ||
+      !assignment ||
+      plan.business_type_id !== assignment.versionBusinessType.business_type_id ||
+      findPlanForVersionSegment([plan], assignment.versionBusinessType.business_type_id, assignment.segment.name) !== plan
+    ) return [];
+
+    const organizationPrice = organizationPriceBySegment.get(assignment.id) ?? null;
+    const price = resolveOrganizationSegmentPrice(organizationPrice, assignment.price);
+    return [{ plan, price }];
+  });
+  const hasInvalidSelection =
+    selectedPlanIds.length === 0 ||
+    selectedPlanIds.length !== selectedSegmentIds.length ||
+    checkoutItems.length !== selectedPlanIds.length;
+  const monthlySubtotal = checkoutItems.reduce(
+    (sum, item) => sum + (item.price?.toNumber() ?? 0),
+    0,
+  );
   const pricingPlanUrl = `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan`;
 
   async function handleCheckoutAction(formData: FormData) {
     "use server";
     const actionUser = await requireSessionUser();
+    if (actionUser.workspace_id !== workspaceId) redirect(`/dashboard/${actionUser.workspace_id}/home`);
     const actionOrganization = await getOrganizationForUser(actionUser.id, organizationId);
     if (!actionOrganization) redirect(`/dashboard/${workspaceId}/home`);
     await requireOrganizationAccess(actionUser.id, actionOrganization.organization_id, ["OWNER", "ADMIN"]);
 
     const requestedMonths = Number(formData.get("billingMonths"));
-    if (!selectedPlanIds.length || (requestedMonths !== 6 && requestedMonths !== 12)) {
+    if (
+      !selectedPlanIds.length ||
+      selectedPlanIds.length !== selectedSegmentIds.length ||
+      (requestedMonths !== 6 && requestedMonths !== 12)
+    ) {
       redirect(`${pricingPlanUrl}?error=${encodeURIComponent("Select a valid paid plan and a 6 or 12 month term.")}`);
     }
 
     try {
-      for (const [index, selectedPlanId] of selectedPlanIds.entries()) {
-        const plan = await getPlanById(selectedPlanId);
-        if (!plan || !plan.business_type_id) {
+      const currentAssignments = await prisma.versionBusinessTypeSegment.findMany({
+        where: {
+          id: { in: selectedSegmentIds },
+          is_active: true,
+          versionBusinessType: { is: { version_id: actionOrganization.platform_version_id ?? "" } },
+        },
+        select: {
+          id: true,
+          price: true,
+          segment: { select: { name: true } },
+          versionBusinessType: { select: { business_type_id: true } },
+        },
+      });
+      const currentAssignmentById = new Map(currentAssignments.map((assignment) => [assignment.id, assignment]));
+      const currentOrganizationPrices = await prisma.organizationSegmentPrice.findMany({
+        where: {
+          organization_id: actionOrganization.id,
+          version_business_type_segment_id: { in: currentAssignments.map(({ id }) => id) },
+        },
+        select: {
+          version_business_type_segment_id: true,
+          snapshot_price: true,
+          custom_price: true,
+        },
+      });
+      const currentPriceBySegment = new Map(
+        currentOrganizationPrices.map((price) => [price.version_business_type_segment_id, price]),
+      );
+      const currentPlans = await Promise.all(selectedPlanIds.map((id) => getPlanById(id)));
+      const seenBusinessTypes = new Set<string>();
+
+      for (const index of selectedPlanIds.keys()) {
+        const plan = currentPlans[index];
+        const assignment = currentAssignmentById.get(selectedSegmentIds[index] ?? "");
+        if (!plan || !plan.is_active || !plan.business_type_id || !assignment) {
           throw new Error("One of the selected plans is no longer available.");
         }
-        const assignment = segmentPrices.get(selectedSegmentIds[index] ?? "");
-        if (assignment && assignment.versionBusinessType.business_type_id !== plan.business_type_id) {
-          throw new Error("The selected segment does not belong to this business type.");
+        if (
+          assignment.versionBusinessType.business_type_id !== plan.business_type_id ||
+          findPlanForVersionSegment([plan], assignment.versionBusinessType.business_type_id, assignment.segment.name) !== plan ||
+          seenBusinessTypes.has(plan.business_type_id)
+        ) {
+          throw new Error("The selected plan and segment do not match the organization's assigned version.");
         }
-        const monthlyPrice = assignment?.price != null ? Number(assignment.price) : 0;
-        if (!assignment || monthlyPrice <= 0) throw new Error("The selected segment price is not available.");
+        seenBusinessTypes.add(plan.business_type_id);
+        const organizationPrice = currentPriceBySegment.get(assignment.id) ?? null;
+        const monthlyPrice = resolveOrganizationSegmentPrice(organizationPrice, assignment.price);
+        if (!monthlyPrice || monthlyPrice.lessThanOrEqualTo(0)) throw new Error("The selected segment price is not available.");
         await createPendingSubscription({
           organizationId: actionOrganization.id,
           organizationName: actionOrganization.organization_name,
@@ -101,11 +181,11 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
 
         {typeof query.error === "string" && query.error && <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs font-medium text-red-700">{query.error}</p>}
 
-        {plans.length === 0 ? (
+        {hasInvalidSelection ? (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">No valid paid plans were selected. Return to the plan page and choose a paid tier.</div>
         ) : (
           <SubscriptionCheckoutForm
-            plans={plans.map((plan, index) => ({ id: plan.id, plan_name: plan.plan_name, price: prices[index] ?? plan.price }))}
+            plans={checkoutItems.map(({ plan, price }) => ({ id: plan.id, plan_name: plan.plan_name, price: price?.toNumber() ?? null }))}
             organizationName={organization.organization_name}
             organizationId={organizationId}
             workspaceId={workspaceId}

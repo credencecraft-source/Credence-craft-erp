@@ -268,6 +268,7 @@ export async function validateMonthlyFormLimits(
   const where = {
     organization_id: organizationId,
     created_at: { gte: monthStart },
+    sourceStatus: { not: "DEMO" },
     ...(currentRecordId ? { id: { not: currentRecordId } } : {}),
   };
   const [entryCount, quantityTotal] = await Promise.all([
