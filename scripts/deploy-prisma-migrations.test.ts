@@ -1,8 +1,10 @@
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 type MigrationResult = { code: number; output: string };
 type MigrationRetryModule = {
+  getPrismaCliPath: () => string;
   isAdvisoryLockTimeout: (output: string) => boolean;
   runMigrationsWithRetry: (
     run: () => Promise<MigrationResult>,
@@ -12,10 +14,14 @@ type MigrationRetryModule = {
 };
 
 const require = createRequire(import.meta.url);
-const { isAdvisoryLockTimeout, runMigrationsWithRetry } = require("./deploy-prisma-migrations.cjs") as MigrationRetryModule;
+const { getPrismaCliPath, isAdvisoryLockTimeout, runMigrationsWithRetry } = require("./deploy-prisma-migrations.cjs") as MigrationRetryModule;
 const lockTimeout = "Error: P1002. Context: Timed out trying to acquire a postgres advisory lock.";
 
 describe("Prisma migration lock retry", () => {
+  it("resolves Prisma's declared CLI executable", () => {
+    expect(existsSync(getPrismaCliPath())).toBe(true);
+  });
+
   it("recognizes only advisory-lock P1002 timeouts", () => {
     expect(isAdvisoryLockTimeout(lockTimeout)).toBe(true);
     expect(isAdvisoryLockTimeout("Error: P1002 database server was reached but timed out.")).toBe(false);

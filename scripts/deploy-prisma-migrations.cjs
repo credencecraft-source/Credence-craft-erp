@@ -1,4 +1,5 @@
 const { spawn } = require("node:child_process");
+const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 
 const MAX_ATTEMPTS = 5;
@@ -8,9 +9,17 @@ function isAdvisoryLockTimeout(output) {
     && /timed out trying to acquire a postgres advisory lock/i.test(output);
 }
 
+function getPrismaCliPath() {
+  const packagePath = path.resolve(__dirname, "..", "node_modules", "prisma", "package.json");
+  const prismaPackage = require(packagePath);
+  const bin = typeof prismaPackage.bin === "string" ? prismaPackage.bin : prismaPackage.bin?.prisma;
+  if (!bin) throw new Error("Prisma package does not declare a CLI executable.");
+  return path.resolve(path.dirname(packagePath), bin);
+}
+
 function runPrismaMigrateDeploy() {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [require.resolve("prisma"), "migrate", "deploy"], {
+    const child = spawn(process.execPath, [getPrismaCliPath(), "migrate", "deploy"], {
       stdio: ["inherit", "pipe", "pipe"],
     });
     let output = "";
@@ -61,4 +70,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { isAdvisoryLockTimeout, runMigrationsWithRetry };
+module.exports = { getPrismaCliPath, isAdvisoryLockTimeout, runMigrationsWithRetry };
