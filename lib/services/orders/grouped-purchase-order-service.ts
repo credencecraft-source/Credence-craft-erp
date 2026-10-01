@@ -640,16 +640,15 @@ export async function deleteGroupedPurchaseOrder(organizationId: string, id: str
         }
       }
 
-      const clearedBookings = await transaction.rawMaterialStockBooking.updateMany({
+      const deletedBookings = await transaction.rawMaterialStockBooking.deleteMany({
         where: {
           organization_id: organizationId,
           id: { in: bookings.map((booking) => booking.id) },
           status: "BOOKED",
           grouped_purchase_order_id: order.id,
         },
-        data: { status: "REJECTED", grouped_purchase_order_id: null },
       });
-      if (clearedBookings.count !== bookings.length) {
+      if (deletedBookings.count !== bookings.length) {
         throw new Error("Stock reservations changed while deleting this Grouped PO. Reload and try again.");
       }
       releasedStockBookingCount = bookings.length;

@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   createAuditEvent: vi.fn(),
   transactionClient: {
     groupedPurchaseOrder: { findFirst: vi.fn(), update: vi.fn(), deleteMany: vi.fn() },
-    rawMaterialStockBooking: { findMany: vi.fn(), groupBy: vi.fn(), updateMany: vi.fn() },
+    rawMaterialStockBooking: { findMany: vi.fn(), groupBy: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
     rawMaterialStock: { updateMany: vi.fn() },
   },
 }));
@@ -43,6 +43,7 @@ describe("stock-origin grouped price approval", () => {
     mocks.transactionClient.groupedPurchaseOrder.update.mockResolvedValue({ id: "group-1" });
     mocks.transactionClient.groupedPurchaseOrder.deleteMany.mockResolvedValue({ count: 1 });
     mocks.transactionClient.rawMaterialStockBooking.findMany.mockResolvedValue([]);
+    mocks.transactionClient.rawMaterialStockBooking.deleteMany.mockResolvedValue({ count: 0 });
     mocks.createAuditEvent.mockResolvedValue({});
   });
 
@@ -60,7 +61,7 @@ describe("stock-origin grouped price approval", () => {
       { id: "booking-1", take_from_stock_id: "stock-1", booked_quantity: new Prisma.Decimal("1.5") },
       { id: "booking-2", take_from_stock_id: "stock-1", booked_quantity: new Prisma.Decimal("2") },
     ]);
-    mocks.transactionClient.rawMaterialStockBooking.updateMany.mockResolvedValue({ count: 2 });
+    mocks.transactionClient.rawMaterialStockBooking.deleteMany.mockResolvedValue({ count: 2 });
 
     await expect(deleteGroupedPurchaseOrder("org-1", "group-1", "user-1")).resolves.toBeUndefined();
 
@@ -68,15 +69,16 @@ describe("stock-origin grouped price approval", () => {
       where: { id: "stock-1", organization_id: "org-1", quantity_reserved: { gte: new Prisma.Decimal("3.5") } },
       data: { quantity_reserved: { decrement: new Prisma.Decimal("3.5") } },
     });
-    expect(mocks.transactionClient.rawMaterialStockBooking.updateMany).toHaveBeenCalledWith({
+    expect(mocks.transactionClient.rawMaterialStockBooking.deleteMany).toHaveBeenCalledWith({
       where: {
         organization_id: "org-1",
         id: { in: ["booking-1", "booking-2"] },
         status: "BOOKED",
         grouped_purchase_order_id: "group-1",
       },
-      data: { status: "REJECTED", grouped_purchase_order_id: null },
     });
+    expect(mocks.transactionClient.rawMaterialStockBooking.deleteMany.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.transactionClient.groupedPurchaseOrder.deleteMany.mock.invocationCallOrder[0]);
     expect(mocks.transactionClient.groupedPurchaseOrder.deleteMany).toHaveBeenCalledWith({
       where: { id: "group-1", organization_id: "org-1", status: "PRICE_APPROVED" },
     });
@@ -106,7 +108,7 @@ describe("stock-origin grouped price approval", () => {
     await expect(deleteGroupedPurchaseOrder("org-1", "group-1", "user-1"))
       .rejects.toThrow("Unable to release the reserved stock quantity safely.");
 
-    expect(mocks.transactionClient.rawMaterialStockBooking.updateMany).not.toHaveBeenCalled();
+    expect(mocks.transactionClient.rawMaterialStockBooking.deleteMany).not.toHaveBeenCalled();
     expect(mocks.transactionClient.groupedPurchaseOrder.deleteMany).not.toHaveBeenCalled();
     expect(mocks.createAuditEvent).not.toHaveBeenCalled();
   });
