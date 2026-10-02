@@ -207,6 +207,7 @@ describe("organization dummy data service", () => {
     await expect(createOrganizationDummyData("user-id", "public-org-id", "Sample Operator"))
       .resolves.toEqual({ created: true, orderNo: "ORD-0001", orderCount: 10 });
 
+    expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 20000, timeout: 150000 });
     expect(permissionMock).toHaveBeenCalledWith("user-id", "public-org-id", "ORGANIZATION_SETTINGS");
     expect(transactionMock.masterEntity.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: organization.id, entity_name: organization.organization_name, is_active: true },

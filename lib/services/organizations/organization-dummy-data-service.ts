@@ -935,7 +935,7 @@ async function createOrganizationDummyDataForUser(userId: string, routeOrganizat
     });
 
     return { created: true, orderNo: sampleOrder.orderNo, orderCount: createdSampleOrders.length };
-  }, { maxWait: 20000, timeout: 120000 });
+  }, { maxWait: 20000, timeout: 150000 });
 }
 
 export async function deleteOrganizationDummyData(userId: string, routeOrganizationId: string) {
