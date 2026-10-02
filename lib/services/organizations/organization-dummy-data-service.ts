@@ -586,16 +586,20 @@ async function createOrganizationDummyDataForUser(userId: string, routeOrganizat
     rawMaterials.forEach((item) => record("raw-material", item.id));
 
     await lockOrganizationOrderQuantityLimit(transaction, organization.id);
-    for (const sampleOrder of SAMPLE_VALUES.sampleOrders) {
-      await validateMonthlyFormLimits(
-        organization.id,
-        "merchandising_orders",
-        normalizeDummyOrderQty(sampleOrder.orderQty),
-        undefined,
-        transaction,
-        formRestriction,
-      );
-    }
+    const sampleOrderCount = SAMPLE_VALUES.sampleOrders.length;
+    const sampleOrderQuantity = SAMPLE_VALUES.sampleOrders.reduce(
+      (total, sampleOrder) => total + normalizeDummyOrderQty(sampleOrder.orderQty),
+      0,
+    );
+    await validateMonthlyFormLimits(
+      organization.id,
+      "merchandising_orders",
+      sampleOrderQuantity,
+      undefined,
+      transaction,
+      formRestriction,
+      sampleOrderCount,
+    );
 
     const orderNumbers = await reserveNextOrderNumbers(organization.id, SAMPLE_VALUES.sampleOrders.length, transaction);
     const orderRows = SAMPLE_VALUES.sampleOrders.map((sampleOrder, orderIndex) => ({

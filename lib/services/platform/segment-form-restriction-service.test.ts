@@ -118,4 +118,33 @@ describe("preloaded form restriction validation", () => {
     expect(countedWhere.sourceStatus).toEqual({ not: "DEMO" });
     expect(aggregateMock).toHaveBeenCalledWith(expect.objectContaining({ where: countedWhere }));
   });
+
+  it("counts every entry when validating a batch of records", async () => {
+    const database = {
+      merchandisingOrder: {
+        count: vi.fn().mockResolvedValue(0),
+        aggregate: vi.fn().mockResolvedValue({ _sum: { orderQty: 0 } }),
+      },
+    } as unknown as NonNullable<Parameters<typeof validateMonthlyFormLimits>[4]>;
+
+    await expect(validateMonthlyFormLimits(
+      "organization-id",
+      "merchandising_orders",
+      40,
+      undefined,
+      database,
+      { ...restriction, monthly_entry_limit: 10 },
+      10,
+    )).resolves.toBeUndefined();
+
+    await expect(validateMonthlyFormLimits(
+      "organization-id",
+      "merchandising_orders",
+      40,
+      undefined,
+      database,
+      { ...restriction, monthly_entry_limit: 9 },
+      10,
+    )).rejects.toThrow("This form allows 9 entries per month.");
+  });
 });

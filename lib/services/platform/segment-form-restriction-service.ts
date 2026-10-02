@@ -256,6 +256,7 @@ export async function validateMonthlyFormLimits(
   currentRecordId?: string,
   database: Prisma.TransactionClient | typeof prisma = prisma,
   resolvedRestriction?: Awaited<ReturnType<typeof getEffectiveSegmentFormRestriction>>,
+  additionalEntryCount = 1,
 ) {
   const restriction = resolvedRestriction === undefined
     ? await getEffectiveSegmentFormRestriction(organizationId, formKey)
@@ -281,7 +282,7 @@ export async function validateMonthlyFormLimits(
   const currentQuantityTotal = quantityTotal._sum.orderQty ?? new Prisma.Decimal(0);
   const monthlyQuantityLimit = restriction.monthly_qty_limit;
 
-  if (restriction.monthly_entry_limit !== null && entryCount + 1 > restriction.monthly_entry_limit) {
+  if (restriction.monthly_entry_limit !== null && entryCount + additionalEntryCount > restriction.monthly_entry_limit) {
     throw new Error(`This form allows ${restriction.monthly_entry_limit.toLocaleString("en-IN")} entries per month.`);
   }
   if (exceedsMonthlyQuantityLimit(currentQuantityTotal, Math.max(quantity, 0), monthlyQuantityLimit)) {

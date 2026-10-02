@@ -312,7 +312,16 @@ describe("organization dummy data service", () => {
     expect(transactionMock.masterSizeGroupSize.createMany.mock.calls[0][0].data).toHaveLength(11);
     expect(orderNumbersMock).toHaveBeenCalledWith(organization.id, 10, transactionMock);
     expect(orderLimitLockMock).toHaveBeenCalledWith(transactionMock, organization.id);
-    expect(monthlyFormLimitsMock).toHaveBeenCalledTimes(10);
+    expect(monthlyFormLimitsMock).toHaveBeenCalledTimes(1);
+    expect(monthlyFormLimitsMock).toHaveBeenCalledWith(
+      organization.id,
+      "merchandising_orders",
+      4020,
+      undefined,
+      transactionMock,
+      null,
+      10,
+    );
     const orderRows: Array<{
       entity_id: string;
       orderQty: number;
