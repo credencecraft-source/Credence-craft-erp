@@ -59,6 +59,12 @@ export default async function OrganizationSettingsPage({ params }: { params: Pro
               <p className="mt-2 text-sm text-slate-600">Review organization reporting activity.</p>
             </Card>
           </Link>
+          <Link href={`${base}/audit-history`}>
+            <Card className="transition hover:border-emerald-300">
+              <h2 className="text-lg font-bold text-slate-900">Audit History</h2>
+              <p className="mt-2 text-sm text-slate-600">Review recorded activity across this organization.</p>
+            </Card>
+          </Link>
           <Link href={`${base}/pricing/plan`}>
             <Card className="transition hover:border-emerald-300">
               <h2 className="text-lg font-bold text-slate-900">Pricing &amp; Subscriptions</h2>

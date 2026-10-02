@@ -1,6 +1,6 @@
 import React from "react";
 import { redirect } from "next/navigation";
-import Button from "@/components/ui/Button";
+import FormSubmitButton from "@/components/ui/FormSubmitButton";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
@@ -104,12 +104,15 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
   async function remove(formData: FormData) {
     "use server";
     const admin = await requirePlatformSessionAdmin();
+    let wasDeleted = false;
     try {
       const result = await deleteSubscription(String(formData.get("id")), admin.id);
-      redirect(`/platform/subscriptions?success=${encodeURIComponent(result.deleted ? "Deleted successfully." : "Subscription was already deleted.")}`);
+      wasDeleted = result.deleted;
     } catch (error: any) {
-      redirect(`/platform/subscriptions?error=${encodeURIComponent(error.message)}`);
+      const message = error instanceof Error ? error.message : "Unable to delete subscription.";
+      redirect(`/platform/subscriptions?error=${encodeURIComponent(message)}`);
     }
+    redirect(`/platform/subscriptions?success=${encodeURIComponent(wasDeleted ? "Deleted successfully." : "Subscription was already deleted.")}`);
   }
 
   return (
@@ -213,7 +216,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
 
                 <div className="flex justify-end gap-2 pt-2">
                   <a href="/platform/subscriptions" className="px-3 py-2 border text-xs rounded-lg">Cancel</a>
-                  <Button type="submit">Save</Button>
+                  <FormSubmitButton pendingLabel="Saving...">Save</FormSubmitButton>
                 </div>
               </form>
             </Card>
@@ -266,13 +269,13 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                       {String(sub.payment_status || sub.paymentStatus || "").toLowerCase() !== "paid" && (
                         <form action={updateStatus} className="inline">
                           <input type="hidden" name="id" value={subId} />
-                          <button type="submit" className="rounded border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">Approve</button>
+                          <FormSubmitButton variant="secondary" size="sm" pendingLabel="Approving..." className="rounded border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs text-emerald-700 hover:bg-emerald-100">Approve</FormSubmitButton>
                         </form>
                       )}
                       <a href={`/platform/subscriptions?edit=${subId}`} className="text-emerald-600 font-semibold">Edit</a>
                       <form action={remove} className="inline" title={sub.organizationMissing ? "Delete orphaned subscription and record the action in platform audit" : "Delete subscription"}>
                         <input type="hidden" name="id" value={subId} />
-                        <button className="text-red-600 font-semibold">Delete</button>
+                        <FormSubmitButton variant="ghost" size="sm" pendingLabel="Deleting..." className="text-red-600 hover:bg-red-50">Delete</FormSubmitButton>
                       </form>
                     </td>
                   </tr>

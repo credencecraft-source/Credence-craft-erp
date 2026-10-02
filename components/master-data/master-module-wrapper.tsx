@@ -28,6 +28,7 @@ import {
 import { ERP_MODULES, getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
 import { MasterModuleSwitcher } from "@/components/master-data/master-module-switcher";
 import { SupportTicketTrigger } from "@/components/organizations/support-ticket-trigger";
+import OrganizationTrialStatus from "@/components/organizations/organization-trial-status";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
 import { getSidebarFeatureKeysForRoute, normalizeRestrictionPart, restrictionMatchesHiddenRoute, restrictionMatchesRoute } from "@/lib/services/platform/plan-restriction-matcher";
@@ -64,6 +65,9 @@ type MasterModuleWrapperProps = {
   workspaceId: string;
   organizationId: string;
   organizationName: string;
+  trialEnabled: boolean;
+  trialStartedAt: string | null;
+  trialEndsAt: string | null;
   createDummyData: () => Promise<{ created: boolean; orderNo: string | null; orderCount: number; error?: string }>;
   deleteDummyData: () => Promise<{ deleted: boolean; error?: string }>;
   dummyDataStatus: { status: string; orderNo: string | null; orderCount?: number; masterCount: number };
@@ -82,6 +86,9 @@ export function MasterModuleWrapper({
   workspaceId,
   organizationId,
   organizationName,
+  trialEnabled,
+  trialStartedAt,
+  trialEndsAt,
   createDummyData,
   deleteDummyData,
   dummyDataStatus = { status: "UNAVAILABLE", orderNo: null, masterCount: 0 },
@@ -95,6 +102,8 @@ export function MasterModuleWrapper({
   const router = useRouter();
   const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
   const visibilityStorageKey = `erp-visible-modules:${organizationId}`;
+  const hasTrialWindow = trialEnabled && Boolean(trialStartedAt && trialEndsAt);
+  const [trialExpired, setTrialExpired] = useState(!hasTrialWindow);
 
   const checkIsBlocked = useCallback((targetPath: string) => {
     if (!restrictions || !restrictions.length) return null;
@@ -190,6 +199,7 @@ export function MasterModuleWrapper({
     }
   });
   const [moduleSettingsOpen, setModuleSettingsOpen] = useState(false);
+  const [pricingDialogOpen, setPricingDialogOpen] = useState(false);
   const [dummyDataHelpOpen, setDummyDataHelpOpen] = useState(false);
   const [dummyDataStateOverride, setDummyDataStateOverride] = useState<boolean | null>(null);
   const [dummyDataDeleteError, setDummyDataDeleteError] = useState("");
@@ -445,14 +455,27 @@ export function MasterModuleWrapper({
           </div>
 
           <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2 sm:gap-3">
-            <Link
-              href={`${organizationPath}/settings/pricing/plan`}
-              aria-label="Open subscription and pricing"
-              title="Subscription and pricing"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-amber-200 bg-amber-50 text-amber-600 transition-colors hover:border-amber-300 hover:bg-amber-100 hover:text-amber-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
-            >
-              <Crown className="h-4 w-4" />
-            </Link>
+            {trialExpired && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setPricingDialogOpen(true)}
+                aria-label="Open subscription and pricing"
+                aria-haspopup="dialog"
+                title="Subscription and pricing"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-amber-200 bg-amber-50 p-0 text-amber-600 transition-colors hover:border-amber-300 hover:bg-amber-100 hover:text-amber-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+              >
+                <Crown className="h-4 w-4" />
+              </Button>
+            )}
+            <OrganizationTrialStatus
+              organizationId={organizationId}
+              trialEnabled={trialEnabled}
+              trialStartedAt={trialStartedAt}
+              trialEndsAt={trialEndsAt}
+              onExpiryChange={setTrialExpired}
+            />
             <Button
               type="button"
               variant="ghost"
@@ -505,6 +528,59 @@ export function MasterModuleWrapper({
           )}
         </main>
       </div>
+
+      <Modal
+        open={pricingDialogOpen}
+        onClose={() => setPricingDialogOpen(false)}
+        ariaLabelledBy="subscription-pricing-title"
+        ariaDescribedBy="subscription-pricing-description"
+        size="sm"
+      >
+        <div className="border-b border-amber-100 bg-amber-50/70 px-5 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="grid h-10 w-10 place-items-center rounded-lg border border-amber-200 bg-white text-amber-700">
+                <Crown className="h-5 w-5" aria-hidden="true" />
+              </span>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-amber-700">Organization billing</p>
+                <h2 id="subscription-pricing-title" className="mt-1 text-base font-semibold text-slate-950">Subscription and pricing</h2>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label="Close subscription and pricing dialog"
+              onClick={() => setPricingDialogOpen(false)}
+              className="h-8 w-8 rounded-md p-0 text-slate-500 hover:text-slate-800"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </div>
+        </div>
+        <div className="space-y-3 p-5">
+          <p id="subscription-pricing-description" className="text-sm leading-5 text-slate-600">
+            Review your active modules or choose plans for this organization.
+          </p>
+          <Link
+            href={`${organizationPath}/settings/pricing/plan`}
+            onClick={() => setPricingDialogOpen(false)}
+            className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+          >
+            <span>Browse plans and pricing</span>
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+          <Link
+            href={`${organizationPath}/settings/pricing/current-plan`}
+            onClick={() => setPricingDialogOpen(false)}
+            className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+          >
+            <span>Current subscription</span>
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        </div>
+      </Modal>
 
       <Modal
         open={moduleSettingsOpen}

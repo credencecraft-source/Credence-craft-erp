@@ -47,6 +47,60 @@ export async function createSupportTicket(input: {
   });
 }
 
+export async function requestExpiredTrialExtension(
+  organizationId: string,
+  submittedByUserId: string,
+  now = new Date(),
+) {
+  const membership = await requireOrganizationAccess(submittedByUserId, organizationId);
+  const organization = await prisma.organization.findUnique({
+    where: { id: membership.organization_id },
+    select: {
+      approval_status: true,
+      trial_enabled: true,
+      trial_started_at: true,
+      trial_ends_at: true,
+    },
+  });
+
+  if (
+    !organization
+    || organization.approval_status !== "APPROVED"
+    || !organization.trial_enabled
+    || !organization.trial_started_at
+    || !organization.trial_ends_at
+    || organization.trial_ends_at > now
+  ) {
+    throw new Error("A trial extension can only be requested after the trial expires.");
+  }
+
+  const subject = "Trial extension request";
+  const existingTicket = await prisma.supportTicket.findFirst({
+    where: {
+      organization_id: membership.organization_id,
+      submitted_by_user_id: submittedByUserId,
+      subject,
+      status: { in: ["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS"] },
+    },
+  });
+  if (existingTicket) return { ticket: existingTicket, alreadyRequested: true };
+
+  const ticket = await prisma.supportTicket.create({
+    data: {
+      id: randomUUID(),
+      ticket_number: randomUUID(),
+      organization_id: membership.organization_id,
+      submitted_by_user_id: submittedByUserId,
+      request_type: "TICKET",
+      subject,
+      description: "The organization trial has expired. Please review this request for a trial extension.",
+      priority: "NORMAL",
+    },
+  });
+
+  return { ticket, alreadyRequested: false };
+}
+
 export async function listSupportTickets() {
   return prisma.supportTicket.findMany({
     include: {

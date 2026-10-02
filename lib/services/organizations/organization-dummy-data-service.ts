@@ -207,7 +207,7 @@ async function authorizeOrganization(userId: string, routeOrganizationId: string
     where: {
       id: membership.organization_id,
       is_active: true,
-      approval_status: "APPROVED",
+      approval_status: allowPendingOwner ? "PENDING_APPROVAL" : "APPROVED",
     },
     select: { id: true, organization_name: true, approval_status: true },
   });
@@ -258,7 +258,7 @@ export async function createOrganizationDummyData(userId: string, routeOrganizat
 }
 
 export async function createOrganizationDummyDataForNewOrganization(userId: string, routeOrganizationId: string, requestedBy = userId) {
-  return createOrganizationDummyDataForUser(userId, routeOrganizationId, false, requestedBy);
+  return createOrganizationDummyDataForUser(userId, routeOrganizationId, true, requestedBy);
 }
 
 async function createOrganizationDummyDataForUser(userId: string, routeOrganizationId: string, allowPendingOwner: boolean, requestedBy: string) {

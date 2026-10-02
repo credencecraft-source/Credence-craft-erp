@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/database/prisma-client";
 import { getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
+import { isOrganizationTrialActive } from "@/lib/services/platform/organization-trial-service";
 import { getEffectivePlansForOrganization } from "@/lib/services/platform/subscription-service";
 
 export type SegmentRestrictionInput = {
@@ -179,6 +180,8 @@ export async function setSegmentRestrictionAssignment(
 }
 
 export async function getEffectiveSegmentRestrictions(organizationId: string) {
+  if (await isOrganizationTrialActive(organizationId)) return [];
+
   const [versionId, effectivePlans] = await Promise.all([
     getOrganizationVersionId(organizationId),
     getEffectivePlansForOrganization(organizationId),

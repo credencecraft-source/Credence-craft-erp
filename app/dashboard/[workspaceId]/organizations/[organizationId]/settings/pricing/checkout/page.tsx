@@ -1,7 +1,7 @@
 import React from "react";
 import { redirect } from "next/navigation";
 import { findPlanForVersionSegment, getPlanById } from "@/lib/services/platform/plan-service";
-import { createPendingSubscription } from "@/lib/services/platform/subscription-service";
+import { createPendingSubscriptions, getEffectivePlansForOrganization } from "@/lib/services/platform/subscription-service";
 import { resolveOrganizationSegmentPrice } from "@/lib/services/platform/organization-segment-pricing-service";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
@@ -29,6 +29,7 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
   const selectedPlanIds = explicitPlanIds.length ? explicitPlanIds : legacyPlanIds;
   const billingMonths = Number(query.billingMonths) === 6 ? 6 : 12;
   const user = await requireSessionUser();
+  if (user.workspace_id !== workspaceId) redirect(`/dashboard/${user.workspace_id}/home`);
   const organization = await getOrganizationForUser(user.id, organizationId);
 
   if (!organization) redirect(`/dashboard/${workspaceId}/home`);
@@ -81,11 +82,32 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
     selectedPlanIds.length === 0 ||
     selectedPlanIds.length !== selectedSegmentIds.length ||
     checkoutItems.length !== selectedPlanIds.length;
-  const monthlySubtotal = checkoutItems.reduce(
-    (sum, item) => sum + (item.price?.toNumber() ?? 0),
-    0,
+  const effectivePlans = await getEffectivePlansForOrganization(organization.id);
+  const now = new Date();
+  const projectedStartByBusinessType = new Map(
+    effectivePlans.map(({ businessType, subscription, isFree }) => [
+      businessType.id,
+      !isFree && subscription?.end_date && subscription.end_date > now ? subscription.end_date : now,
+    ]),
   );
+  const displayPlans = checkoutItems.map(({ plan, price }) => {
+    const projectedStart = projectedStartByBusinessType.get(plan.business_type_id ?? "") ?? now;
+    return {
+      id: plan.id,
+      plan_name: plan.plan_name,
+      price: price?.toNumber() ?? null,
+      projectedStartDate: projectedStart.toISOString(),
+    };
+  });
   const pricingPlanUrl = `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/plan`;
+  const checkoutParams = new URLSearchParams();
+  selectedPlanIds.forEach((planId, index) => {
+    checkoutParams.append("planId", planId);
+    const segmentId = selectedSegmentIds[index];
+    if (segmentId) checkoutParams.append("segmentId", segmentId);
+  });
+  checkoutParams.set("billingMonths", String(billingMonths));
+  const checkoutUrl = `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/checkout?${checkoutParams.toString()}`;
 
   async function handleCheckoutAction(formData: FormData) {
     "use server";
@@ -135,6 +157,7 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
       );
       const currentPlans = await Promise.all(selectedPlanIds.map((id) => getPlanById(id)));
       const seenBusinessTypes = new Set<string>();
+      const pendingItems = [];
 
       for (const index of selectedPlanIds.keys()) {
         const plan = currentPlans[index];
@@ -153,18 +176,21 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
         const organizationPrice = currentPriceBySegment.get(assignment.id) ?? null;
         const monthlyPrice = resolveOrganizationSegmentPrice(organizationPrice, assignment.price);
         if (!monthlyPrice || monthlyPrice.lessThanOrEqualTo(0)) throw new Error("The selected segment price is not available.");
-        await createPendingSubscription({
-          organizationId: actionOrganization.id,
-          organizationName: actionOrganization.organization_name,
+        pendingItems.push({
           businessTypeId: plan.business_type_id,
           planId: plan.id,
           monthlyPrice,
-          billingMonths: requestedMonths,
         });
       }
+      await createPendingSubscriptions({
+        organizationId: actionOrganization.id,
+        organizationName: actionOrganization.organization_name,
+        items: pendingItems,
+        billingMonths: requestedMonths,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to submit the payment request.";
-      redirect(`${pricingPlanUrl}?error=${encodeURIComponent(message)}`);
+      redirect(`${checkoutUrl}&error=${encodeURIComponent(message)}`);
     }
 
     redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan?success=${encodeURIComponent("Payment request submitted. Awaiting payment approval.")}`);
@@ -185,11 +211,8 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">No valid paid plans were selected. Return to the plan page and choose a paid tier.</div>
         ) : (
           <SubscriptionCheckoutForm
-            plans={checkoutItems.map(({ plan, price }) => ({ id: plan.id, plan_name: plan.plan_name, price: price?.toNumber() ?? null }))}
+            plans={displayPlans}
             organizationName={organization.organization_name}
-            organizationId={organizationId}
-            workspaceId={workspaceId}
-            monthlySubtotal={monthlySubtotal}
             defaultBillingMonths={billingMonths as 6 | 12}
             pricingPlanUrl={pricingPlanUrl}
             handleCheckoutAction={handleCheckoutAction}

@@ -14,6 +14,7 @@ import {
 } from "@/lib/services/organizations/organization-dummy-data-service";
 import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
 import { requireSessionUser } from "@/lib/auth/session-manager"; // Fixed typo (removed trailing 's')
+import { hasOrganizationTrialAccess, startOrganizationTrialOnFirstOpen } from "@/lib/services/platform/organization-trial-service";
 
 type OrganizationShellLayoutProps = {
   children: React.ReactNode;
@@ -64,6 +65,18 @@ export default async function OrganizationShellLayout({
 
   if (organization.approval_status !== "APPROVED") {
     redirect(`/dashboard/${workspaceId}/home`);
+  }
+
+  await startOrganizationTrialOnFirstOpen(organization.id, user.id);
+  if (!await hasOrganizationTrialAccess(organization.id)
+    && !currentPath.includes("/access-blocked")
+    && !currentPath.includes("/settings/pricing")) {
+    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/access-blocked?message=${encodeURIComponent("Your 24-hour organization trial has ended. Activate a subscription or contact the platform administrator.")}`);
+  }
+
+  const trialOrganization = await getOrganizationShellContext(user.id, organizationId);
+  if (!trialOrganization) {
+    redirect(`/dashboard/${user.workspace_id}/home`);
   }
 
   if (currentPath === organizationPath) {
@@ -156,6 +169,9 @@ export default async function OrganizationShellLayout({
       workspaceId={workspaceId}
       organizationId={organizationId}
       organizationName={organization.organization_name}
+      trialEnabled={trialOrganization.trial_enabled}
+      trialStartedAt={trialOrganization.trial_started_at?.toISOString() ?? null}
+      trialEndsAt={trialOrganization.trial_ends_at?.toISOString() ?? null}
       createDummyData={createDummyDataAction}
       deleteDummyData={deleteDummyDataAction}
       dummyDataStatus={dummyDataStatus}

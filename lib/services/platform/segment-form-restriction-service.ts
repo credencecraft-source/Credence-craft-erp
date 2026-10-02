@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/database/prisma-client";
 import { Prisma } from "@prisma/client";
 import { getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
+import { isOrganizationTrialActive } from "@/lib/services/platform/organization-trial-service";
 import { getEffectivePlansForOrganization } from "@/lib/services/platform/subscription-service";
 import {
   getVersionTransactionRestrictions,
@@ -191,6 +192,8 @@ export async function getEffectiveSegmentFormRestriction(
   organizationId: string,
   formKey: string,
 ) {
+  if (await isOrganizationTrialActive(organizationId)) return null;
+
   const [effectivePlans, organization] = await Promise.all([
     getEffectivePlansForOrganization(organizationId),
     prisma.organization.findUnique({ where: { id: organizationId }, select: { platform_version_id: true } }),

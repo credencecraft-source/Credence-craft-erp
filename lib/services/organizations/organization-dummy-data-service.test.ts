@@ -86,6 +86,7 @@ vi.mock("@/lib/services/platform/order-quantity-limit-service", () => ({
 
 import {
   createOrganizationDummyData,
+  createOrganizationDummyDataForNewOrganization,
   deleteOrganizationDummyData,
   getOrganizationDummyDataStatus,
 } from "./organization-dummy-data-service";
@@ -420,16 +421,23 @@ describe("organization dummy data service", () => {
       .toHaveLength(10);
   });
 
-  it("blocks dummy-data seeding and opening until the organization is approved", async () => {
-    const { createOrganizationDummyDataForNewOrganization } = await import("./organization-dummy-data-service");
+  it("allows only the pending organization's owner to seed during onboarding", async () => {
     prismaMock.organization.findFirst.mockResolvedValue(null);
 
     await expect(createOrganizationDummyDataForNewOrganization("user-id", "public-org-id"))
       .rejects.toThrow("This organization is not available for dummy-data setup.");
 
+    permissionMock.mockResolvedValue({ organization_id: organization.id, role: "ADMIN" });
+    prismaMock.organization.findFirst.mockResolvedValue({ ...organization, approval_status: "PENDING_APPROVAL" });
+    await expect(createOrganizationDummyDataForNewOrganization("user-id", "public-org-id"))
+      .rejects.toThrow("Only the organization owner can prepare sample data before approval.");
+
     permissionMock.mockResolvedValue({ organization_id: organization.id, role: "OWNER" });
     await expect(createOrganizationDummyDataForNewOrganization("user-id", "public-org-id"))
-      .rejects.toThrow("This organization is not available for dummy-data setup.");
+      .resolves.toMatchObject({ created: true, orderCount: 10 });
+    expect(prismaMock.organization.findFirst).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ approval_status: "PENDING_APPROVAL" }),
+    }));
   });
 
   it("keeps regular dummy-data setup unavailable until approval", async () => {

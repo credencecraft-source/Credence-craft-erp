@@ -86,7 +86,7 @@ export default async function WorkspaceHomePage({
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-bold text-white"><Check className="h-4 w-4" /></div>
             <div>
               <p className="text-sm font-bold">{successMessage === "organization-archived" ? "Organization archived" : successMessage === "organization-restored" ? "Organization restored" : "Organization created successfully"}</p>
-              <p className="mt-1 text-xs text-emerald-800">{successMessage === "organization-archived" ? "ERP records were retained and audited." : successMessage === "organization-restored" ? "The organization is active and awaiting approval." : "Your organization is ready and awaiting approval."}</p>
+              <p className="mt-1 text-xs text-emerald-800">{successMessage === "organization-archived" ? "ERP records were retained and audited." : successMessage === "organization-restored" ? "The organization is active and awaiting approval." : successMessage === "organization-created-background" ? "Sample data is being prepared in the background. Your organization is awaiting platform approval." : "Your organization is ready and awaiting approval."}</p>
             </div>
           </div>
         )}

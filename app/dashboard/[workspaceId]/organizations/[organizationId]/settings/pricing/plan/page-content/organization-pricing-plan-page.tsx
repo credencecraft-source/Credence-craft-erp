@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, LockKeyhole, Plus, ShoppingCart } from "lucide-react";
+import { Check, LoaderCircle, LockKeyhole, Plus, ShoppingCart } from "lucide-react";
 import { getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
+import Button from "@/components/ui/Button";
 
 interface Plan {
   id: string;
@@ -48,7 +49,7 @@ interface BusinessType {
 interface Subscription {
   id?: string;
   planId?: string;
-  businessTypeId?: string;
+  businessTypeId?: string | null;
   paymentStatus?: string;
   serviceStatus?: string;
 }
@@ -79,6 +80,7 @@ export default function OrganizationPricingPlanPage({
   platformVersionName = null,
 }: OrganizationPricingPlanPageProps) {
   const router = useRouter();
+  const [isCheckoutPending, startCheckoutTransition] = useTransition();
   const safePlans = Array.isArray(plans) ? plans : [];
   const safeBusinessTypes = Array.isArray(businessTypes) ? businessTypes : [];
 
@@ -168,9 +170,11 @@ export default function OrganizationPricingPlanPage({
       if (plan?.billing_plan_id) params.append("planId", plan.billing_plan_id);
       if (plan?.segment_id) params.append("segmentId", plan.segment_id);
     });
-    router.push(
-      `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/checkout?${params.toString()}`
-    );
+    startCheckoutTransition(() => {
+      router.push(
+        `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/checkout?${params.toString()}`
+      );
+    });
   };
 
   const totalPrice = Object.entries(selections).reduce(
@@ -184,48 +188,51 @@ export default function OrganizationPricingPlanPage({
   );
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4 px-4 py-4 pb-24 sm:px-6">
-      <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 md:flex-row md:items-center md:justify-between">
+    <div className="mx-auto max-w-[1440px] space-y-3 px-3 py-3 pb-8 sm:px-4 lg:px-5">
+      <div className="flex flex-col gap-2 border-b border-[var(--erp-border)] pb-2.5 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="erp-eyebrow">Settings</p>
-          <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-950">
-            Pricing & Subscriptions
-          </h1>
+          <h1 className="mt-0.5 text-lg font-bold tracking-tight text-slate-950 sm:text-xl">Pricing &amp; Subscriptions</h1>
         </div>
         <div className="flex flex-wrap items-center gap-1.5 md:justify-end">
-          <div className="mr-1 flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-1.5 text-white shadow-sm">
-            <div>
-              <span className="block text-[9px] font-semibold uppercase tracking-wider text-slate-400">Cart total</span>
-              <span className="text-sm font-black text-emerald-400">₹{totalPrice.toLocaleString("en-IN")} <span className="text-[9px] font-normal text-slate-300">/ mo</span></span>
+          <div className="flex items-center gap-2 rounded-lg border border-emerald-900 bg-emerald-950 px-2.5 py-1.5 text-white shadow-sm">
+            <div className="min-w-[5.25rem]">
+              <span className="block text-[9px] font-semibold uppercase tracking-wider text-emerald-200/75">Cart total</span>
+              <span className="text-sm font-bold text-white">₹{totalPrice.toLocaleString("en-IN")} <span className="text-[9px] font-normal text-emerald-100/75">/ mo</span></span>
             </div>
-            <button
+            <Button
+              variant="primary"
+              size="sm"
               type="button"
               onClick={handleProceedToCheckout}
-              disabled={Object.keys(selections).length === 0}
-              className="rounded-md bg-emerald-600 px-2.5 py-1.5 text-[10px] font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={Object.keys(selections).length === 0 || isCheckoutPending}
+              className="min-h-7 rounded-md border-emerald-500 bg-emerald-600 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-emerald-500"
             >
-              Pay Now ({Object.keys(selections).length})
-            </button>
+              {isCheckoutPending && <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+              {isCheckoutPending ? "Opening checkout..." : `Pay Now (${Object.keys(selections).length})`}
+            </Button>
             {Object.keys(selections).length > 0 && (
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 type="button"
                 onClick={handleClearCart}
-                className="text-[10px] font-semibold text-slate-300 transition-colors hover:text-white"
+                className="min-h-7 px-1.5 text-[10px] font-semibold text-emerald-100 hover:text-white"
               >
                 Remove cart
-              </button>
+              </Button>
             )}
           </div>
-            <button type="button" onClick={() => router.back()} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50">
+            <button type="button" onClick={() => router.back()} className="rounded-lg border border-[var(--erp-border)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-[var(--erp-surface-soft)]">
               Back
             </button>
-            <button type="button" onClick={() => router.push(`/dashboard/${workspaceId}/home`)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50">
+            <button type="button" onClick={() => router.push(`/dashboard/${workspaceId}/home`)} className="rounded-lg border border-[var(--erp-border)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-[var(--erp-surface-soft)]">
               Dashboard
             </button>
             <button
               type="button"
               onClick={() => router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan`)}
-              className="rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm transition-colors hover:bg-slate-800"
+              className="rounded-lg bg-[var(--erp-brand)] px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-sm transition-colors hover:bg-[var(--erp-brand-hover)]"
             >
               View Active Plan
             </button>
@@ -233,7 +240,7 @@ export default function OrganizationPricingPlanPage({
       </div>
 
       <div>
-        <div className="flex flex-wrap gap-1.5 border-b border-slate-200 pb-3">
+        <div className="flex flex-wrap gap-1.5 border-b border-[var(--erp-border)] pb-2">
           {audienceTags.map((tag) => {
             const active = activeTag === tag.label;
             const hasSelection = tag.businessTypes.some((businessType) => Boolean(selections[businessType.name]));
@@ -246,7 +253,7 @@ export default function OrganizationPricingPlanPage({
                   setActiveTag(tag.label);
                   setActiveModule(null);
                 }}
-                className={`rounded-md px-3 py-1.5 text-[11px] font-bold transition-colors ${active ? "bg-emerald-600 text-white shadow-sm" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                className={`rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${active ? "bg-[var(--erp-brand)] text-white shadow-sm" : "border border-[var(--erp-border)] bg-white text-slate-700 hover:bg-[var(--erp-surface-soft)]"}`}
               >
                 {tag.label}
                 {hasSelection && <span className={`ml-2 inline-block h-2 w-2 rounded-full ${active ? "bg-white" : "bg-emerald-500"}`} />}
@@ -256,7 +263,7 @@ export default function OrganizationPricingPlanPage({
           {audienceTags.length === 0 && <p className="text-sm text-slate-500">No audience tags have been configured for this pricing version yet.</p>}
         </div>
         {selectedTag && (
-          <div className="mt-3">
+          <div className="mt-2">
             <div className="flex flex-wrap gap-1.5">
               {relatedBusinessTypes.map((businessType) => {
                 const active = activeModule === businessType.name;
@@ -266,7 +273,7 @@ export default function OrganizationPricingPlanPage({
                     key={businessType.id}
                     type="button"
                     onClick={() => setActiveModule(businessType.name)}
-                    className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${active ? "bg-slate-900 text-white" : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-white"}`}
+                    className={`rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${active ? "bg-slate-800 text-white shadow-sm" : "border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] text-slate-700 hover:bg-white"}`}
                   >
                     {businessType.name}
                   </button>
@@ -278,12 +285,12 @@ export default function OrganizationPricingPlanPage({
       </div>
 
       {activeModule && currentPlans.length > 0 ? (
-        <div className="space-y-2 pb-12">
-          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Segments</p>
-            <span className="text-[11px] font-semibold text-slate-400">{currentPlans.length} available</span>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between border-b border-[var(--erp-border)] pb-1.5">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--erp-muted)]">Available plans</p>
+            <span className="text-[11px] font-medium text-slate-500">{currentPlans.length} options</span>
           </div>
-          <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-3">
+          <div className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {currentPlans.map((plan, planIndex) => {
             const nameParts = (plan.plan_name || "").split(" - ");
             const tierName =
@@ -310,8 +317,9 @@ export default function OrganizationPricingPlanPage({
             const availableFeatures = visibleFeatureList.filter((feature) => feature.available);
             const restrictedFeatures = visibleFeatureList.filter((feature) => !feature.available);
             const isModuleUnavailable = visibleFeatureList.length > 0 && availableFeatures.length === 0;
-            const planHeaderColors = ["bg-emerald-700", "bg-sky-700", "bg-amber-600", "bg-teal-700"];
-            const planHeaderColor = isModuleUnavailable ? "bg-rose-700" : planHeaderColors[planIndex % planHeaderColors.length];
+            const planHeaderColor = isModuleUnavailable
+              ? "bg-rose-800"
+              : "bg-gradient-to-br from-emerald-900 via-emerald-800 to-teal-800";
             const previousFeatureKeys = new Set(
               currentPlans
                 .slice(0, planIndex)
@@ -338,18 +346,18 @@ export default function OrganizationPricingPlanPage({
             return (
               <div
                 key={plan.id}
-                className={`relative flex min-w-[min(86vw,21rem)] snap-start flex-col justify-between rounded-xl border p-4 shadow-sm transition-all sm:min-w-[20rem] lg:min-w-[21rem] ${
+                className={`relative flex min-w-0 flex-col justify-between rounded-xl border p-3 shadow-sm transition-all ${
                   isChosen
-                    ? "border-emerald-600 ring-2 ring-emerald-500 shadow-md"
+                    ? "border-emerald-600 bg-emerald-50/30 ring-2 ring-emerald-500/30 shadow-md"
                     : isModuleUnavailable
                     ? "border-rose-200 bg-rose-50/40"
-                    : "border-slate-200 bg-white"
+                    : "border-[var(--erp-border)] bg-white hover:border-emerald-300 hover:shadow-md"
                 }`}
               >
-                <div className="space-y-3">
-                  <div className={`-mx-4 -mt-4 mb-1 rounded-t-[11px] px-4 py-3.5 text-white ${planHeaderColor}`}>
+                <div className="space-y-2">
+                  <div className={`-mx-3 -mt-3 mb-0 rounded-t-[11px] px-3 py-2.5 text-white ${planHeaderColor}`}>
                     {isPricingConfigured && !isModuleUnavailable && !isFreePlan && (
-                      <div className="mb-2 flex justify-end">
+                      <div className="mb-1.5 flex justify-end">
                         <button
                           type="button"
                           onClick={() =>
@@ -359,7 +367,7 @@ export default function OrganizationPricingPlanPage({
                           }
                           disabled={isCurrentPlan || matchedPendingSub}
                           aria-label={isChosen ? `${displayName} added to cart` : `Add ${displayName} to cart`}
-                          className={`inline-flex items-center gap-1.5 rounded-lg border border-white/70 px-3 py-1.5 text-[10px] font-bold shadow-md transition-colors ${
+                          className={`inline-flex min-h-7 items-center gap-1.5 rounded-md border border-white/60 px-2.5 py-1 text-[10px] font-semibold shadow-sm transition-colors ${
                             isCurrentPlan || matchedPendingSub
                               ? "cursor-not-allowed bg-white/70 text-slate-500"
                               : isChosen
@@ -378,12 +386,12 @@ export default function OrganizationPricingPlanPage({
                         </button>
                       </div>
                     )}
-                    <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <h3 className="truncate text-base font-bold leading-5 text-white">{displayName}</h3>
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className="text-sm font-extrabold text-white">
+                        <p className="text-base font-bold text-white">
                           {!isPricingConfigured
                             ? "Not priced"
                             : effectivePrice
@@ -406,7 +414,7 @@ export default function OrganizationPricingPlanPage({
                       </div>
                     </div>
                     {previousPlanName && (
-                      <div title={`Everything from ${previousPlanName}, plus additional features`} className="mt-2 flex max-w-full items-center gap-2 rounded-lg border border-emerald-100 bg-white px-2.5 py-2 shadow-sm">
+                      <div title={`Everything from ${previousPlanName}, plus additional features`} className="mt-2 flex max-w-full items-center gap-1.5 rounded-md border border-white/30 bg-white/95 px-2 py-1.5 shadow-sm">
                         <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700">
                           <Plus aria-hidden="true" className="h-3.5 w-3.5" />
                         </span>
@@ -418,11 +426,11 @@ export default function OrganizationPricingPlanPage({
                     )}
                   </div>
 
-                  <div className="border-t border-slate-100 pt-3">
-                    <div className={`rounded-lg border p-3 ${isModuleUnavailable ? "border-rose-200 bg-rose-50/40" : "border-slate-200 bg-slate-50/60"}`}>
+                  <div className="border-t border-slate-100 pt-2">
+                    <div className={`rounded-lg border p-2 ${isModuleUnavailable ? "border-rose-200 bg-rose-50/40" : "border-[var(--erp-border)] bg-[var(--erp-surface-soft)]/70"}`}>
                       <section>
-                        <div className="mb-2 flex items-center gap-2">
-                          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">1</span>
+                        <div className="mb-1.5 flex items-center gap-1.5">
+                          <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-slate-200 text-[9px] font-bold text-slate-700">1</span>
                           <h4 className="text-xs font-semibold text-slate-800">Module Access</h4>
                         </div>
                         <div className="space-y-1.5">
@@ -435,7 +443,7 @@ export default function OrganizationPricingPlanPage({
                                 </span>
                               )}
                               {(planIndex === 0 ? availableFeatures : additionalFeatures).map((feature) => (
-                                <div key={feature.key} className="flex items-center justify-between gap-2 rounded-md border border-emerald-100 bg-white px-2.5 py-2 text-[11px] font-medium text-slate-700">
+                                <div key={feature.key} className="flex items-center justify-between gap-2 rounded border border-emerald-100 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700">
                                   <span className="truncate">{feature.label}</span>
                                   <Check aria-label="Available" className="h-4 w-4 shrink-0 text-emerald-600" />
                                 </div>
@@ -444,7 +452,7 @@ export default function OrganizationPricingPlanPage({
                                 <>
                                   <p className="px-1 pt-1 text-[10px] font-semibold text-rose-700">Restricted features</p>
                                   {restrictedFeatures.map((feature) => (
-                                    <div key={feature.key} title={`${feature.label} is restricted in this segment`} className="flex items-center justify-between gap-2 rounded-md border border-rose-200 bg-white px-2.5 py-2 text-[11px] font-medium text-rose-800">
+                                    <div key={feature.key} title={`${feature.label} is restricted in this segment`} className="flex items-center justify-between gap-2 rounded border border-rose-200 bg-white px-2 py-1.5 text-[11px] font-medium text-rose-800">
                                       <span className="truncate">{feature.label}</span>
                                       <span className="inline-flex shrink-0 items-center gap-1 text-[10px] font-bold text-rose-700">
                                         <LockKeyhole aria-hidden="true" className="h-3.5 w-3.5" />
@@ -456,7 +464,7 @@ export default function OrganizationPricingPlanPage({
                               )}
                             </>
                           ) : (
-                            <p className="rounded-md border border-slate-200 bg-white px-2.5 py-2 text-[11px] text-slate-500">
+                            <p className="rounded border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-500">
                               No module features are configured for this business type.
                             </p>
                           )}
@@ -464,14 +472,14 @@ export default function OrganizationPricingPlanPage({
                       </section>
 
                           {formRecordLimits.length > 0 && (
-                        <section className="mt-3 border-t border-slate-200 pt-3">
-                          <div className="mb-2 flex items-center gap-2">
-                            <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">2</span>
+                        <section className="mt-2 border-t border-slate-200 pt-2">
+                          <div className="mb-1.5 flex items-center gap-1.5">
+                            <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-slate-200 text-[9px] font-bold text-slate-700">2</span>
                             <h4 className="text-xs font-semibold text-slate-800">Record Limits</h4>
                           </div>
                           <div className="space-y-1.5">
                             {formRecordLimits.map((form) => (
-                              <div key={form.formKey} className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-[11px]">
+                              <div key={form.formKey} className="flex items-center justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1.5 text-[11px]">
                                 <span className="truncate font-medium text-slate-700">{form.label}</span>
                                 <span className="shrink-0 font-semibold text-slate-600">
                                   {form.monthlyEntryLimit.toLocaleString("en-IN")} records
@@ -483,20 +491,20 @@ export default function OrganizationPricingPlanPage({
                       )}
 
                       {(monthlyOrderQtyLimit !== null || locationLimit !== null) && (
-                        <section className="mt-3 border-t border-slate-200 pt-3">
-                          <div className="mb-2 flex items-center gap-2">
-                            <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">{formRecordLimits.length > 0 ? "3" : "2"}</span>
+                        <section className="mt-2 border-t border-slate-200 pt-2">
+                          <div className="mb-1.5 flex items-center gap-1.5">
+                            <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-slate-200 text-[9px] font-bold text-slate-700">{formRecordLimits.length > 0 ? "3" : "2"}</span>
                             <h4 className="text-xs font-semibold text-slate-800">Custom Restrictions</h4>
                           </div>
                           <div className="space-y-1.5">
                             {monthlyOrderQtyLimit !== null && (
-                              <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px]">
+                              <div className="flex items-center justify-between gap-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px]">
                                 <span className="font-medium text-slate-800">Order Qty Limit</span>
                                 <span className="shrink-0 font-semibold text-amber-900">{monthlyOrderQtyLimit.toLocaleString("en-IN")} PCS PER/MONTH</span>
                               </div>
                             )}
                             {locationLimit !== null && (
-                              <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px]">
+                              <div className="flex items-center justify-between gap-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px]">
                                 <span className="font-medium text-slate-800">Location Limit</span>
                                 <span className="shrink-0 font-semibold text-amber-900">{locationLimit.toLocaleString("en-IN")} locations</span>
                               </div>
@@ -509,7 +517,7 @@ export default function OrganizationPricingPlanPage({
                 </div>
 
                 {(!isPricingConfigured || isModuleUnavailable || isFreePlan) && (
-                  <div className="mt-5 flex flex-col gap-2 border-t border-slate-100 pt-3">
+                  <div className="mt-3 flex flex-col gap-1.5 border-t border-slate-100 pt-2.5">
                   {!isPricingConfigured ? (
                     <div className="w-full rounded-lg border border-amber-200 bg-amber-50 py-2.5 text-center text-xs font-semibold text-amber-700">
                       Configure pricing for this version segment.
@@ -532,7 +540,7 @@ export default function OrganizationPricingPlanPage({
           </div>
         </div>
       ) : activeModule ? (
-        <div className="p-8 text-center bg-white rounded-2xl border border-slate-200 space-y-2">
+        <div className="space-y-1.5 rounded-xl border border-slate-200 bg-white p-5 text-center">
           <p className="text-xs font-medium text-slate-600">
             No version segments are configured for {activeModule} yet.
           </p>

@@ -1,9 +1,12 @@
+import { after } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { countOrganizationsForUser, createOrganization } from "@/lib/services/organizations/organization-service";
-import { redirect } from "next/navigation";
+import { countOrganizationsForUser } from "@/lib/services/organizations/organization-service";
+import { createOrganizationDummyDataForNewOrganization } from "@/lib/services/organizations/organization-dummy-data-service";
+import { GstVerificationError } from "@/lib/services/organizations/gst-verification-service";
+import { createOrganizationFromGst } from "@/lib/services/organizations/organization-onboarding-service";
 import CreateOrganizationForm from "./create-organization-form";
 
-export const maxDuration = 60;
+export const maxDuration = 180;
 
 export default async function CreateOrganizationPage({
   searchParams,
@@ -17,39 +20,38 @@ export default async function CreateOrganizationPage({
   async function createOrganizationAction(formData: FormData) {
     "use server";
 
-    const organizationNameVal = String(formData.get("organizationName") || "").trim();
     const mobileNo = String(formData.get("mobileNo") || "").trim();
     const organizationEmail = String(formData.get("organizationEmail") || "").trim();
     const gstNumberVal = String(formData.get("gstNumber") || "").trim().toUpperCase();
-    const addressLine1Val = String(formData.get("addressLine1") || "").trim();
-    const addressLine2Val = String(formData.get("addressLine2") || "").trim();
-    const cityVal = String(formData.get("city") || "").trim();
-    const stateVal = String(formData.get("state") || "").trim();
-    const countryVal = String(formData.get("country") || "").trim();
-    const pinCodeVal = String(formData.get("pinCode") || "").trim();
-
-    let createdOrganizationId = "";
+    const actionUser = await requireSessionUser();
 
     try {
-      const newOrg = await createOrganization({
-        workspaceUserId: user.id,
-        organizationName: organizationNameVal,
-        mobileNo,
-        organizationEmail,
+      const result = await createOrganizationFromGst({
+        workspaceUserId: actionUser.id,
         gstNumber: gstNumberVal,
-        addressLine1: addressLine1Val,
-        addressLine2: addressLine2Val,
-        city: cityVal,
-        state: stateVal,
-        country: countryVal,
-        pinCode: pinCodeVal,
+        organizationEmail,
+        mobileNo,
       });
-      createdOrganizationId = newOrg.organization_id;
+      after(async () => {
+        try {
+          await createOrganizationDummyDataForNewOrganization(
+            actionUser.id,
+            result.organizationId,
+            actionUser.full_name || actionUser.email,
+          );
+        } catch {
+          console.error("Background organization sample-data setup failed.");
+        }
+      });
+      return { ok: true as const };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to create organization.";
-      redirect(`/dashboard/organizations/create?error=1&message=${encodeURIComponent(message)}`);
+      const message = error instanceof GstVerificationError
+        ? error.message
+        : error instanceof Error && /^(Organization name is required|Organization email must|Organization schema is out of date|Organization database table is not available yet|GST number is required|GST number must|Mobile number must)/.test(error.message)
+          ? error.message
+          : "Unable to create the organization. Please try again or contact support.";
+      return { ok: false as const, error: message };
     }
-    return { organizationId: createdOrganizationId };
   }
 
   return (
@@ -58,7 +60,7 @@ export default async function CreateOrganizationPage({
       userName={user.full_name || user.profile_name}
       userEmail={user.email}
       isOnboardingRequired={isOnboardingRequired}
-      error={params.error} 
+      error={params.error}
       message={params.message}
       action={createOrganizationAction}
     />

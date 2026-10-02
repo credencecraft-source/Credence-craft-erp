@@ -47,6 +47,10 @@ model Organization {
   pin_code                      String?                        @db.VarChar(20)
   is_active                     Boolean                        @default(true)
   approval_status               String                         @default("PENDING_APPROVAL") @db.VarChar(40)
+  trial_started_at              DateTime?
+  trial_ends_at                 DateTime?
+  trial_enabled                 Boolean                        @default(true)
+  trial_extension_hours         Int                            @default(0)
   plan_id                       String?
   platform_version_id           String?
   database_connection_id        String?

@@ -9,8 +9,10 @@ import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager
 import { assignOrganizationPlatformVersion, getOrganizationClient, listPlatformVersions } from "@/lib/services/platform/client-service";
 import { listOrganizationSegmentPricing, resetOrganizationSegmentPrice, setOrganizationSegmentCustomPrice } from "@/lib/services/platform/organization-segment-pricing-service";
 import { deleteOrganizationFromPlatform, updateOrganizationApprovalStatus } from "@/lib/services/organizations/organization-service";
+import { extendOrganizationTrial, removeOrganizationTrial } from "@/lib/services/platform/organization-trial-service";
 import OrganizationDetailTabs from "./organization-detail-tabs";
 import OrganizationSubscriptionPricing from "./organization-subscription-pricing";
+import OrganizationTrialControls from "../../_page-content/organization-trial-controls";
 
 function Detail({ label, value }: { label: string; value: string }) {
   return (
@@ -98,6 +100,28 @@ export default async function PlatformOrganizationDetailsPage({
     redirect(`/platform/organisations/${organizationId}`);
   }
 
+  async function extendTrial(formData: FormData) {
+    "use server";
+    await requirePlatformSessionAdmin();
+    try {
+      await extendOrganizationTrial(organizationId, Number(formData.get("extensionHours")));
+    } catch (error) {
+      redirect(`/platform/organisations/${organizationId}?tab=trial&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to extend trial.")}`);
+    }
+    redirect(`/platform/organisations/${organizationId}?tab=trial&success=${encodeURIComponent("Trial extended.")}`);
+  }
+
+  async function removeTrial() {
+    "use server";
+    await requirePlatformSessionAdmin();
+    try {
+      await removeOrganizationTrial(organizationId);
+    } catch (error) {
+      redirect(`/platform/organisations/${organizationId}?tab=trial&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to remove trial.")}`);
+    }
+    redirect(`/platform/organisations/${organizationId}?tab=trial&success=${encodeURIComponent("Trial removed.")}`);
+  }
+
   const address = [
     organization.address_line_1,
     organization.address_line_2,
@@ -161,7 +185,7 @@ export default async function PlatformOrganizationDetailsPage({
           </section>
         </div>
 
-        <OrganizationDetailTabs initialValue={query.tab === "subscriptions" ? "subscriptions" : undefined} panels={[
+        <OrganizationDetailTabs initialValue={query.tab === "subscriptions" || query.tab === "trial" ? query.tab : undefined} panels={[
           {
             label: "Overview",
             value: "overview",
@@ -239,6 +263,42 @@ export default async function PlatformOrganizationDetailsPage({
                     onResetCustomSegmentPrice={resetCustomSegmentPrice}
                   />
                 ) : <p className="p-4 text-sm text-slate-500">No business types or segments are configured for the assigned version.</p>}
+              </section>
+            ),
+          },
+          {
+            label: "Trial",
+            value: "trial",
+            content: (
+              <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                <div className="border-b border-slate-200 px-4 py-3">
+                  <h2 className="text-sm font-bold text-slate-900">Organisation trial</h2>
+                  <p className="mt-1 text-xs text-slate-500">Manage trial access and extensions for this organisation.</p>
+                </div>
+                <dl className="grid gap-x-8 gap-y-4 p-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <Detail
+                    label="Status"
+                    value={!organization.trial_enabled
+                      ? "Removed"
+                      : !organization.trial_started_at
+                        ? "Starts on first open"
+                        : organization.trial_ends_at && organization.trial_ends_at > new Date()
+                          ? "Active"
+                          : "Expired"}
+                  />
+                  <Detail label="Started" value={organization.trial_started_at ? new Date(organization.trial_started_at).toLocaleString() : "Not started"} />
+                  <Detail label="Ends" value={organization.trial_ends_at ? new Date(organization.trial_ends_at).toLocaleString() : "Not set"} />
+                  <Detail label="Configured extension" value={`${organization.trial_extension_hours} hours`} />
+                </dl>
+                <div className="border-t border-slate-200 p-4">
+                  <OrganizationTrialControls
+                    organizationId={organization.id}
+                    organizationName={organization.organization_name}
+                    trialEnabled={organization.trial_enabled}
+                    extendAction={extendTrial}
+                    removeAction={removeTrial}
+                  />
+                </div>
               </section>
             ),
           },

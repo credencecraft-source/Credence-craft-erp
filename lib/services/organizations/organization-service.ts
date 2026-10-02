@@ -4,6 +4,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 
 import { normalizeOrganizationInput, validateOrganizationInput } from "./organization-validators";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { hasOrganizationTrialAccess, startOrganizationTrialOnApproval, startOrganizationTrialOnFirstOpen } from "@/lib/services/platform/organization-trial-service";
 
 export type OrganizationCreateInput = {
   workspaceUserId: string;
@@ -368,6 +370,9 @@ export async function getOrganizationShellContext(workspaceUserId: string, organ
       organization_id: true,
       organization_name: true,
       approval_status: true,
+      trial_enabled: true,
+      trial_started_at: true,
+      trial_ends_at: true,
     },
   });
 }
@@ -612,6 +617,11 @@ export async function requireOrganizationContext(
     throw new Error("Access denied: organization not found or membership is inactive.");
   }
 
+  await startOrganizationTrialOnFirstOpen(organization.id, workspaceUserId);
+  if (!await hasOrganizationTrialAccess(organization.id)) {
+    throw new Error("This organization's trial has ended. Activate a subscription or contact the platform administrator.");
+  }
+
   if (allowedRoles && !allowedRoles.includes(membership.role)) {
     throw new Error("Access denied: insufficient organization permissions.");
   }
@@ -699,6 +709,7 @@ export async function updateOrganizationApprovalStatus(organizationId: string, a
   if (!["PENDING_APPROVAL", "APPROVED", "REJECTED"].includes(normalizedStatus)) {
     throw new Error("Select a valid organization approval status.");
   }
+  const platformAdmin = await requirePlatformSessionAdmin();
 
   return prisma.$transaction(async (transaction) => {
     const updated = await transaction.organization.updateMany({
@@ -730,6 +741,9 @@ export async function updateOrganizationApprovalStatus(organizationId: string, a
         throw new Error("Assign an active platform version before approving this organization.");
       }
       throw new Error("Restore the organization from its workspace before changing its approval status.");
+    }
+    if (normalizedStatus === "APPROVED") {
+      await startOrganizationTrialOnApproval(transaction, organizationId, platformAdmin.id);
     }
     const organization = await transaction.organization.findUnique({ where: { id: organizationId } });
     if (!organization) throw new Error("Organization not found.");

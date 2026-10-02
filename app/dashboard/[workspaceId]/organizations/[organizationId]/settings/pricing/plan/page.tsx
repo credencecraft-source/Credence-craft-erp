@@ -31,17 +31,17 @@ function getSidebarFeatures() {
     }
   };
 
-  for (const module of ERP_MODULES) {
+  for (const erpModule of ERP_MODULES) {
     features.push({
-      key: module.key,
-      label: module.label,
-      path: module.pathSegment,
-      master: module.key,
+      key: erpModule.key,
+      label: erpModule.label,
+      path: erpModule.pathSegment,
+      master: erpModule.key,
       main: "*",
       sub: [],
-      route: [module.pathSegment],
+      route: [erpModule.pathSegment],
     });
-    visit(module.children, [module.key], [module.pathSegment]);
+    visit(erpModule.children, [erpModule.key], [erpModule.pathSegment]);
   }
   return features;
 }
@@ -58,6 +58,7 @@ export default async function Page({ params }: PageProps) {
   const workspaceId = resolvedParams?.workspaceId;
   const organizationId = resolvedParams?.organizationId;
   const user = await requireSessionUser();
+  if (user.workspace_id !== workspaceId) redirect(`/dashboard/${user.workspace_id}/home`);
   const organization = await getOrganizationForUser(user.id, organizationId);
 
   if (!organization) {
@@ -66,18 +67,16 @@ export default async function Page({ params }: PageProps) {
 
   const [versionCatalog, allSubscriptions, effectivePlans] = await Promise.all([
     listVersionSegmentPlansForOrganization(organization.id),
-    listSubscriptions(organization.id).catch(() => []),
+    listSubscriptions(organization.id),
     getEffectivePlansForOrganization(organization.id),
   ]);
 
-  const existingSubscriptions = (allSubscriptions ?? [])
-    .filter((sub: any) => String(sub.organizationId || sub.organization_id || "") === String(organization.id))
-    .map((sub: any) => ({
+  const existingSubscriptions = allSubscriptions.map((sub) => ({
       id: sub.id,
-      planId: sub.planId ?? sub.plan_id ?? null,
-      businessTypeId: sub.businessTypeId ?? sub.business_type_id ?? null,
-      paymentStatus: sub.paymentStatus ?? sub.payment_status ?? null,
-      serviceStatus: sub.serviceStatus ?? sub.service_status ?? null,
+      planId: sub.planId,
+      businessTypeId: sub.businessTypeId,
+      paymentStatus: sub.paymentStatus,
+      serviceStatus: sub.service_status,
     }));
 
   const plans = versionCatalog.plans.map((plan) => ({
@@ -85,17 +84,19 @@ export default async function Page({ params }: PageProps) {
     price: plan.price ? Number(plan.price) : null,
   }));
 
-  const restrictionsBySegment = await getRestrictionsForPlans(organization.id, plans);
-  const monthlyRestrictionData = versionCatalog.versionId
-    ? await Promise.all([
-        getMonthlyRecordLimitsForSegments(versionCatalog.versionId, plans.flatMap((plan) =>
-          plan.segment_id && plan.platform_segment_id
-            ? [{ assignmentId: plan.segment_id, platformSegmentId: plan.platform_segment_id }]
-            : [],
-        )),
-        getMonthlyOrderQuantityLimitsForAssignments(plans.map((plan) => plan.segment_id).filter((id): id is string => Boolean(id))),
-      ])
-    : [new Map(), new Map()];
+  const [restrictionsBySegment, monthlyRestrictionData] = await Promise.all([
+    getRestrictionsForPlans(organization.id, plans),
+    versionCatalog.versionId
+      ? Promise.all([
+          getMonthlyRecordLimitsForSegments(versionCatalog.versionId, plans.flatMap((plan) =>
+            plan.segment_id && plan.platform_segment_id
+              ? [{ assignmentId: plan.segment_id, platformSegmentId: plan.platform_segment_id }]
+              : [],
+          )),
+          getMonthlyOrderQuantityLimitsForAssignments(plans.map((plan) => plan.segment_id).filter((id): id is string => Boolean(id))),
+        ])
+      : Promise.resolve([new Map(), new Map()]),
+  ]);
   const [monthlyRecordLimits, monthlyOrderQuantityLimits] = monthlyRestrictionData;
   const allSidebarFeatures = getSidebarFeatures();
   const planFeatures: Record<string, FeatureSummary[]> = Object.fromEntries(
@@ -122,7 +123,7 @@ export default async function Page({ params }: PageProps) {
       organizationId={organizationId}
       plans={plans}
       businessTypes={versionCatalog.businessTypes}
-      existingSubscriptions={existingSubscriptions || []}
+      existingSubscriptions={existingSubscriptions}
       currentPlanIds={currentPlanIds}
       planFeatures={planFeatures}
       monthlyRecordLimits={Object.fromEntries(monthlyRecordLimits)}

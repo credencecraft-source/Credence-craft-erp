@@ -108,9 +108,34 @@ function isFreePlan(plan: { price: unknown; tier_key?: string | null; business_t
   return plan.tier_key === "FREE" || Number(plan.price ?? 0) <= 0;
 }
 
+export function isSubscriptionActiveAt(
+  subscription: {
+    payment_status: string;
+    service_status: string;
+    start_date: Date;
+    end_date: Date | null;
+  },
+  plan: { price: unknown; tier_key?: string | null },
+  now = new Date(),
+) {
+  return !isFreePlan(plan)
+    && subscription.payment_status.toLowerCase() === "paid"
+    && subscription.service_status.toLowerCase() === "active"
+    && subscription.start_date <= now
+    && (!subscription.end_date || subscription.end_date > now);
+}
+
 export async function listSubscriptions(organizationId?: string, limit = 100) {
   const page = await listSubscriptionsPage({ organizationId, limit });
-  return page.subscriptions;
+  const now = new Date();
+  return page.subscriptions.map((subscription) => ({
+    ...subscription,
+    isExpired: subscription.payment_status.toLowerCase() === "paid"
+      && Boolean(subscription.end_date && subscription.end_date <= now),
+    isScheduled: subscription.payment_status.toLowerCase() === "paid"
+      && subscription.service_status.toLowerCase() === "active"
+      && subscription.start_date > now,
+  }));
 }
 
 export async function listSubscriptionsPage(options: { organizationId?: string; cursor?: string; limit?: number } = {}) {
@@ -192,106 +217,262 @@ export async function getSubscriptionsByOrganization(organizationId: string) {
   }));
 }
 
+function normalizePaymentStatus(value: string | undefined) {
+  const status = (value || "paid").toLowerCase();
+  if (status !== "paid" && status !== "pending") throw new Error("Payment status must be paid or pending.");
+  return status;
+}
+
+function normalizeServiceStatus(value: string | undefined) {
+  const status = (value || "active").toLowerCase();
+  if (status !== "active" && status !== "inactive") throw new Error("Service status must be active or inactive.");
+  return status;
+}
+
+function normalizeBillingMonths(value: number | undefined) {
+  if (value === undefined) return 12;
+  if (value !== 6 && value !== 12) throw new Error("Billing term must be 6 or 12 months.");
+  return value;
+}
+
+function parseSubscriptionDate(value: string | undefined, label: string, isEndDate = false) {
+  if (!value) throw new Error(`${label} is required.`);
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) throw new Error(`${label} is invalid.`);
+  if (isEndDate && /^\d{4}-\d{2}-\d{2}$/.test(value)) date.setUTCHours(23, 59, 59, 999);
+  return date;
+}
+
+function calculateSubscriptionAmounts(monthlyPrice: Prisma.Decimal, billingMonths: number) {
+  const subtotalAmount = monthlyPrice.mul(billingMonths).toDecimalPlaces(2);
+  const gstAmount = subtotalAmount.mul("0.18").toDecimalPlaces(2);
+  return {
+    subtotal_amount: subtotalAmount,
+    gst_amount: gstAmount,
+    total_amount: subtotalAmount.add(gstAmount).toDecimalPlaces(2),
+  };
+}
+
 export async function createSubscription(data: {
   organizationId: string;
+  organizationName?: string;
   businessTypeId?: string;
   planId: string;
   startDate: string;
   endDate?: string;
   paymentStatus?: string;
+  serviceStatus?: string;
+  billingMonths?: number;
 }) {
-  const paymentStatus = (data.paymentStatus || "paid").toLowerCase();
+  const admin = await requirePlatformSessionAdmin();
+  const paymentStatus = normalizePaymentStatus(data.paymentStatus);
+  const serviceStatus = normalizeServiceStatus(data.serviceStatus);
+  const billingMonths = normalizeBillingMonths(data.billingMonths);
+  const startDate = parseSubscriptionDate(data.startDate, "Start date");
+  const endDate = data.endDate ? parseSubscriptionDate(data.endDate, "End date", true) : null;
+  if (endDate && endDate <= startDate) throw new Error("End date must be after the start date.");
   const plan = await prisma.plan.findUnique({ where: { id: data.planId } });
 
   if (!plan || isFreePlan(plan)) {
     throw new Error("The shared free plan does not require a subscription.");
   }
+  const businessTypeId = data.businessTypeId || plan.business_type_id;
+  if (!businessTypeId || plan.business_type_id !== businessTypeId) {
+    throw new Error("The selected plan does not belong to the selected business type.");
+  }
+  const organization = await prisma.organization.findUnique({ where: { id: data.organizationId }, select: { id: true } });
+  if (!organization) throw new Error("Organization not found.");
+  const amounts = calculateSubscriptionAmounts(new Prisma.Decimal(plan.price ?? 0), billingMonths);
 
-  const subscription = await prisma.subscription.create({
-    data: {
-      id: randomUUID(),
-      organization_id: data.organizationId,
-      business_type_id: data.businessTypeId || null,
-      plan_id: data.planId,
-      start_date: new Date(data.startDate),
-      end_date: data.endDate ? new Date(data.endDate) : null,
-      payment_status: paymentStatus,
-    },
+  return prisma.$transaction(async (transaction) => {
+    const subscription = await transaction.subscription.create({
+      data: {
+        id: randomUUID(),
+        organization_id: data.organizationId,
+        organization_name: data.organizationName || null,
+        business_type_id: businessTypeId,
+        plan_id: data.planId,
+        start_date: startDate,
+        end_date: endDate,
+        payment_status: paymentStatus,
+        service_status: serviceStatus,
+        billing_months: billingMonths,
+        ...amounts,
+      },
+    });
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: admin.id,
+        action: "SUBSCRIPTION_CREATED",
+        entity_type: "Subscription",
+        entity_id: subscription.id,
+        details: {
+          organizationId: subscription.organization_id,
+          businessTypeId: subscription.business_type_id,
+          planId: subscription.plan_id,
+          startDate: subscription.start_date.toISOString(),
+          endDate: subscription.end_date?.toISOString() ?? null,
+          paymentStatus: subscription.payment_status,
+          serviceStatus: subscription.service_status,
+          billingMonths: subscription.billing_months,
+        },
+      },
+    });
+    return { ...subscription, paymentStatus };
   });
-
-  return {
-    ...subscription,
-    paymentStatus,
-  };
 }
 
-export async function createPendingSubscription(data: {
+export async function createPendingSubscriptions(data: {
   organizationId: string;
   organizationName?: string;
-  businessTypeId: string;
-  planId: string;
-  monthlyPrice: Prisma.Decimal;
+  items: Array<{
+    businessTypeId: string;
+    planId: string;
+    monthlyPrice: Prisma.Decimal;
+  }>;
   billingMonths: 6 | 12;
 }) {
-  const plan = await prisma.plan.findUnique({ where: { id: data.planId } });
-  if (!plan || isFreePlan(plan)) {
-    throw new Error("The shared free plan does not require checkout.");
+  if (data.items.length === 0) throw new Error("Select at least one paid plan.");
+  const businessTypeIds = data.items.map(({ businessTypeId }) => businessTypeId);
+  if (new Set(businessTypeIds).size !== businessTypeIds.length) {
+    throw new Error("Select only one plan per business type.");
   }
 
-  const subtotalAmount = data.monthlyPrice.mul(data.billingMonths).toDecimalPlaces(2);
-  const gstAmount = subtotalAmount.mul("0.18").toDecimalPlaces(2);
-  const totalAmount = subtotalAmount.add(gstAmount).toDecimalPlaces(2);
+  return prisma.$transaction(async (transaction) => {
+    const pendingSubscriptions = await transaction.subscription.findMany({
+      where: {
+        organization_id: data.organizationId,
+        business_type_id: { in: businessTypeIds },
+        payment_status: { in: ["pending", "PENDING"] },
+      },
+    });
+    if (pendingSubscriptions.length > 0) {
+      const isSameRequest = pendingSubscriptions.length === data.items.length
+        && data.items.every((item) => pendingSubscriptions.some((subscription) =>
+          subscription.business_type_id === item.businessTypeId
+          && subscription.plan_id === item.planId
+          && subscription.billing_months === data.billingMonths,
+        ));
+      if (isSameRequest) return pendingSubscriptions;
+      throw new Error("A different subscription request is already awaiting approval for one or more selected modules.");
+    }
 
-  return prisma.subscription.create({
-    data: {
-      organization_id: data.organizationId,
-      organization_name: data.organizationName || null,
-      business_type_id: data.businessTypeId,
-      plan_id: data.planId,
-      payment_status: "pending",
-      service_status: "inactive",
-      billing_months: data.billingMonths,
-      subtotal_amount: subtotalAmount,
-      gst_amount: gstAmount,
-      total_amount: totalAmount,
-    },
-  });
+    const planIds = data.items.map(({ planId }) => planId);
+    const plans = await transaction.plan.findMany({ where: { id: { in: planIds } } });
+    const planById = new Map(plans.map((plan) => [plan.id, plan]));
+    const subscriptions = [];
+
+    for (const item of data.items) {
+      const plan = planById.get(item.planId);
+      if (!plan || !plan.is_active || isFreePlan(plan) || plan.business_type_id !== item.businessTypeId) {
+        throw new Error("One of the selected plans is no longer available.");
+      }
+
+      const subtotalAmount = item.monthlyPrice.mul(data.billingMonths).toDecimalPlaces(2);
+      const gstAmount = subtotalAmount.mul("0.18").toDecimalPlaces(2);
+      const totalAmount = subtotalAmount.add(gstAmount).toDecimalPlaces(2);
+      subscriptions.push(await transaction.subscription.create({
+        data: {
+          organization_id: data.organizationId,
+          organization_name: data.organizationName || null,
+          business_type_id: item.businessTypeId,
+          plan_id: item.planId,
+          payment_status: "pending",
+          service_status: "inactive",
+          billing_months: data.billingMonths,
+          subtotal_amount: subtotalAmount,
+          gst_amount: gstAmount,
+          total_amount: totalAmount,
+        },
+      }));
+    }
+
+    return subscriptions;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export async function updateSubscription(
   id: string,
   data: {
     organizationId: string;
+    organizationName?: string;
     businessTypeId?: string;
     planId: string;
     startDate: string;
     endDate?: string;
     paymentStatus?: string;
+    serviceStatus?: string;
+    billingMonths?: number;
   }
 ) {
-  const paymentStatus = (data.paymentStatus || "paid").toLowerCase();
+  const admin = await requirePlatformSessionAdmin();
+  const paymentStatus = normalizePaymentStatus(data.paymentStatus);
+  const serviceStatus = normalizeServiceStatus(data.serviceStatus);
+  const billingMonths = normalizeBillingMonths(data.billingMonths);
+  const startDate = parseSubscriptionDate(data.startDate, "Start date");
+  const endDate = data.endDate ? parseSubscriptionDate(data.endDate, "End date", true) : null;
+  if (endDate && endDate <= startDate) throw new Error("End date must be after the start date.");
   const plan = await prisma.plan.findUnique({ where: { id: data.planId } });
 
   if (!plan || isFreePlan(plan)) {
     throw new Error("The shared free plan does not require a subscription.");
   }
+  const businessTypeId = data.businessTypeId || plan.business_type_id;
+  if (!businessTypeId || plan.business_type_id !== businessTypeId) {
+    throw new Error("The selected plan does not belong to the selected business type.");
+  }
+  const organization = await prisma.organization.findUnique({ where: { id: data.organizationId }, select: { id: true } });
+  if (!organization) throw new Error("Organization not found.");
+  const amounts = calculateSubscriptionAmounts(new Prisma.Decimal(plan.price ?? 0), billingMonths);
 
-  const subscription = await prisma.subscription.update({
-    where: { id },
-    data: {
-      organization_id: data.organizationId,
-      business_type_id: data.businessTypeId || null,
-      plan_id: data.planId,
-      start_date: new Date(data.startDate),
-      end_date: data.endDate ? new Date(data.endDate) : null,
-      payment_status: paymentStatus,
-    },
+  return prisma.$transaction(async (transaction) => {
+    const before = await transaction.subscription.findUnique({ where: { id } });
+    if (!before) throw new Error("Subscription not found.");
+    const subscription = await transaction.subscription.update({
+      where: { id },
+      data: {
+        organization_id: data.organizationId,
+        organization_name: data.organizationName || null,
+        business_type_id: businessTypeId,
+        plan_id: data.planId,
+        start_date: startDate,
+        end_date: endDate,
+        payment_status: paymentStatus,
+        service_status: serviceStatus,
+        billing_months: billingMonths,
+        ...amounts,
+      },
+    });
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: admin.id,
+        action: "SUBSCRIPTION_UPDATED",
+        entity_type: "Subscription",
+        entity_id: subscription.id,
+        details: {
+          before: {
+            organizationId: before.organization_id,
+            businessTypeId: before.business_type_id,
+            planId: before.plan_id,
+            paymentStatus: before.payment_status,
+            serviceStatus: before.service_status,
+            startDate: before.start_date.toISOString(),
+            endDate: before.end_date?.toISOString() ?? null,
+          },
+          after: {
+            organizationId: subscription.organization_id,
+            businessTypeId: subscription.business_type_id,
+            planId: subscription.plan_id,
+            paymentStatus: subscription.payment_status,
+            serviceStatus: subscription.service_status,
+            startDate: subscription.start_date.toISOString(),
+            endDate: subscription.end_date?.toISOString() ?? null,
+          },
+        },
+      },
+    });
+    return { ...subscription, paymentStatus };
   });
-
-  return {
-    ...subscription,
-    paymentStatus,
-  };
 }
 
 export function orphanedSubscriptionAuditDetails(subscription: {
@@ -305,7 +486,49 @@ export function orphanedSubscriptionAuditDetails(subscription: {
   };
 }
 
-export async function deleteSubscription(id: string, platformAdminId?: string) {
+export async function deleteSubscription(
+  id: string,
+  platformAdminId?: string,
+  organizationId?: string,
+  workspaceUserId?: string,
+) {
+  if (organizationId) {
+    if (!workspaceUserId) throw new Error("An authenticated organization actor is required.");
+    return prisma.$transaction(async (transaction) => {
+      const subscription = await transaction.subscription.findFirst({
+        where: { id, organization_id: organizationId, payment_status: { in: ["pending", "PENDING"] } },
+      });
+      if (!subscription) return { deleted: false };
+      const result = await transaction.subscription.deleteMany({
+        where: { id, organization_id: organizationId, payment_status: { in: ["pending", "PENDING"] } },
+      });
+      if (result.count === 1) {
+        await transaction.auditEvent.create({
+          data: {
+            organization_id: organizationId,
+            user_id: workspaceUserId,
+            module: "pricing",
+            action: "PENDING_SUBSCRIPTION_DELETED",
+            entity_type: "Subscription",
+            entity_id: id,
+            details: {
+              businessTypeId: subscription.business_type_id,
+              planId: subscription.plan_id,
+              paymentStatus: subscription.payment_status,
+            },
+          },
+        });
+      }
+      return { deleted: result.count === 1 };
+    });
+  }
+
+  if (!platformAdminId) throw new Error("A platform administrator is required to delete this subscription.");
+  const platformAdmin = await requirePlatformSessionAdmin();
+  if (platformAdmin.id !== platformAdminId) {
+    throw new Error("Platform administrator authorization changed. Refresh and retry.");
+  }
+
   const subscription = await prisma.subscription.findUnique({
     where: { id },
     select: { id: true, organization_id: true, organization_name: true },
@@ -338,16 +561,23 @@ export async function deleteSubscription(id: string, platformAdminId?: string) {
       const result = await transaction.subscription.deleteMany({
         where: { id: subscription.id, organization_id: organization.id },
       });
+      if (result.count === 1) {
+        await transaction.platformAuditEvent.create({
+          data: {
+            platform_admin_id: platformAdminId,
+            action: "SUBSCRIPTION_DELETED",
+            entity_type: "Subscription",
+            entity_id: subscription.id,
+            details: {
+              organizationId: organization.id,
+              organizationName: subscription.organization_name,
+              reason: "Deleted by platform administrator.",
+            },
+          },
+        });
+      }
       return { deleted: result.count === 1 };
     });
-  }
-
-  if (!platformAdminId) {
-    throw new Error("This subscription has no matching organization and requires platform-admin cleanup.");
-  }
-  const platformAdmin = await requirePlatformSessionAdmin();
-  if (platformAdmin.id !== platformAdminId) {
-    throw new Error("Platform administrator authorization changed. Refresh and retry.");
   }
 
   return prisma.$transaction(async (transaction) => {
@@ -439,7 +669,8 @@ export async function getEffectivePlansForOrganization(
 
   for (const subscription of subscriptions) {
     if (!subscription.business_type_id) continue;
-    if (!planById.has(subscription.plan_id)) continue;
+    const plan = planById.get(subscription.plan_id);
+    if (!plan || !isSubscriptionActiveAt(subscription, plan, now)) continue;
 
     const current = latestByBusinessType.get(subscription.business_type_id);
     if (!current || new Date(subscription.updated_at).getTime() > new Date(current.updated_at).getTime()) {
@@ -450,14 +681,7 @@ export async function getEffectivePlansForOrganization(
   return businessTypes.map((businessType) => {
     const subscription = latestByBusinessType.get(businessType.id);
     const subscriptionPlan = subscription ? planById.get(subscription.plan_id) : null;
-    const subscriptionIsActive = Boolean(
-      subscription &&
-      subscriptionPlan &&
-      !isFreePlan(subscriptionPlan) &&
-      ["paid"].includes(subscription.payment_status.toLowerCase()) &&
-      subscription.service_status.toLowerCase() !== "inactive" &&
-      (!subscription.end_date || subscription.end_date > now),
-    );
+    const subscriptionIsActive = Boolean(subscription && subscriptionPlan);
 
     return {
       businessType,
@@ -535,22 +759,97 @@ export async function updateSubscriptionStatus(id: string, paymentStatus: string
   });
 }
 
+export function addBillingMonths(date: Date, months: number) {
+  const result = new Date(date);
+  const targetMonth = result.getUTCMonth() + months;
+  const targetYear = result.getUTCFullYear() + Math.floor(targetMonth / 12);
+  const normalizedMonth = targetMonth % 12;
+  const lastDay = new Date(Date.UTC(targetYear, normalizedMonth + 1, 0)).getUTCDate();
+  result.setUTCDate(1);
+  result.setUTCFullYear(targetYear, normalizedMonth, Math.min(date.getUTCDate(), lastDay));
+  return result;
+}
+
 export async function approveSubscription(id: string) {
-  return prisma.subscription.update({
-    where: { id },
-    data: {
-      payment_status: "paid",
-      service_status: "active",
-    },
-  });
+  const admin = await requirePlatformSessionAdmin();
+
+  return prisma.$transaction(async (transaction) => {
+    const subscription = await transaction.subscription.findUnique({ where: { id } });
+    if (!subscription) throw new Error("Subscription not found.");
+    if (subscription.payment_status.toLowerCase() === "paid") return subscription;
+    if (subscription.payment_status.toLowerCase() !== "pending") {
+      throw new Error("Only pending subscriptions can be approved.");
+    }
+    if (!subscription.business_type_id) {
+      throw new Error("Assign a business type before approving this subscription.");
+    }
+
+    const now = new Date();
+    const currentSubscriptions = await transaction.subscription.findMany({
+      where: {
+        organization_id: subscription.organization_id,
+        business_type_id: subscription.business_type_id,
+        id: { not: subscription.id },
+        payment_status: { in: ["paid", "PAID"] },
+        service_status: { in: ["active", "ACTIVE"] },
+        start_date: { lte: now },
+        OR: [{ end_date: null }, { end_date: { gt: now } }],
+      },
+      orderBy: { updated_at: "desc" },
+    });
+    const activeTermEndDate = currentSubscriptions.reduce<Date | null>((latestEndDate, current) =>
+      current.end_date && current.end_date > (latestEndDate ?? now) ? current.end_date : latestEndDate,
+    null);
+    const startDate = activeTermEndDate ?? now;
+    const billingMonths = subscription.billing_months === 6 ? 6 : 12;
+    const endDate = addBillingMonths(startDate, billingMonths);
+    const update = await transaction.subscription.updateMany({
+      where: { id: subscription.id, payment_status: { in: ["pending", "PENDING"] } },
+      data: {
+        payment_status: "paid",
+        service_status: "active",
+        billing_months: billingMonths,
+        start_date: startDate,
+        end_date: endDate,
+      },
+    });
+
+    if (update.count !== 1) {
+      const latest = await transaction.subscription.findUnique({ where: { id: subscription.id } });
+      if (latest?.payment_status.toLowerCase() === "paid") return latest;
+      throw new Error("Subscription status changed before approval. Refresh and retry.");
+    }
+
+    const approvedSubscription = await transaction.subscription.findUniqueOrThrow({ where: { id: subscription.id } });
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: admin.id,
+        action: "SUBSCRIPTION_APPROVED",
+        entity_type: "Subscription",
+        entity_id: approvedSubscription.id,
+        details: {
+          organizationId: approvedSubscription.organization_id,
+          businessTypeId: approvedSubscription.business_type_id,
+          planId: approvedSubscription.plan_id,
+          billingMonths,
+          startDate: approvedSubscription.start_date.toISOString(),
+          endDate: approvedSubscription.end_date?.toISOString() ?? null,
+        },
+      },
+    });
+    return approvedSubscription;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export async function countActiveSubscriptionsByPlan() {
+  const now = new Date();
   const groups = await prisma.subscription.groupBy({
     by: ["plan_id"],
     where: {
       payment_status: { in: ["paid", "PAID"] },
-      OR: [{ end_date: null }, { end_date: { gt: new Date() } }],
+      service_status: { in: ["active", "ACTIVE"] },
+      start_date: { lte: now },
+      OR: [{ end_date: null }, { end_date: { gt: now } }],
     },
     _count: { _all: true },
   });

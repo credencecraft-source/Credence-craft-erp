@@ -1,11 +1,9 @@
 // @/lib/services/platform/plan-service.ts
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/database/prisma-client";
-import { ensureStandardPlansForBusinessTypes } from "@/lib/services/platform/subscription-service";
 import { resolveOrganizationSegmentPrice } from "@/lib/services/platform/organization-segment-pricing-service";
 
 export async function listPlans() {
-  await ensureStandardPlansForBusinessTypes();
   const plans = await prisma.plan.findMany({
     where: { business_type_id: { not: null } },
     orderBy: { sort_order: "asc" },

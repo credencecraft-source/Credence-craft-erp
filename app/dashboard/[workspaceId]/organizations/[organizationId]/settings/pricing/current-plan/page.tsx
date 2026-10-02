@@ -6,6 +6,7 @@ import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/service
 import { getEffectivePlansForOrganization, listSubscriptions, deleteSubscription } from "@/lib/services/platform/subscription-service";
 import { listPlans } from "@/lib/services/platform/plan-service";
 import { listBusinessTypes } from "@/lib/services/platform/business-type-service";
+import FormSubmitButton from "@/components/ui/FormSubmitButton";
 
 interface PageProps {
   params: Promise<{
@@ -21,23 +22,39 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
   const workspaceId = resolvedParams?.workspaceId;
   const organizationId = resolvedParams?.organizationId;
   const user = await requireSessionUser();
+  if (user.workspace_id !== workspaceId) redirect(`/dashboard/${user.workspace_id}/home`);
   const organization = await getOrganizationForUser(user.id, organizationId);
 
   if (!organization) {
     redirect(`/dashboard/${workspaceId}/home`);
   }
 
-  const [plans, allBusinessTypes, effectivePlans] = await Promise.all([
+  const [plans, allBusinessTypes, effectivePlans, subscriptions] = await Promise.all([
     listPlans(),
     listBusinessTypes(),
     getEffectivePlansForOrganization(organization.id),
+    listSubscriptions(organization.id),
   ]);
+  const planById = new Map(plans.map((plan) => [plan.id, plan]));
+  const businessTypeById = new Map(allBusinessTypes.map((businessType) => [businessType.id, businessType]));
+  const activeSubscriptionIds = new Set(
+    effectivePlans.flatMap(({ subscription }) => subscription ? [subscription.id] : []),
+  );
+  const orgSubscriptions = subscriptions.map((subscription) => ({
+    ...subscription,
+    planId: subscription.plan_id,
+    businessTypeId: subscription.business_type_id,
+    plan_name: planById.get(subscription.plan_id)?.plan_name ?? "Unknown plan",
+    business_type_name: businessTypeById.get(subscription.business_type_id ?? "")?.name ?? "—",
+    isCurrentPlan: activeSubscriptionIds.has(subscription.id),
+  }));
 
   const redirectBase = `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan`;
 
   async function deleteSubscriptionAction(formData: FormData) {
     "use server";
     const actionUser = await requireSessionUser();
+    if (actionUser.workspace_id !== workspaceId) redirect(`/dashboard/${actionUser.workspace_id}/home`);
     const actionOrganization = await getOrganizationForUser(actionUser.id, organizationId);
 
     if (!actionOrganization) {
@@ -56,7 +73,7 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
       if (!organizationSubscriptions.some((subscription) => subscription.id === subId)) {
         redirect(`${redirectBase}?success=${encodeURIComponent("Subscription was already deleted.")}`);
       }
-      const result = await deleteSubscription(subId);
+      const result = await deleteSubscription(subId, undefined, actionOrganization.id, actionUser.id);
       if (!result.deleted) {
         redirect(`${redirectBase}?success=${encodeURIComponent("Subscription was already deleted.")}`);
       }
@@ -67,26 +84,6 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
 
     redirect(`${redirectBase}?success=${encodeURIComponent("Subscription deleted successfully.")}`);
   }
-
-  const currentPlanIdsByBusinessType = new Map(
-    effectivePlans
-      .filter(({ plan, isFree }) => Boolean(plan) && !isFree)
-      .map(({ businessType, plan }) => [businessType.id, plan!.id]),
-  );
-
-  const orgSubscriptions = effectivePlans.flatMap(({ businessType, plan, subscription, isFree }) => {
-    if (!plan || isFree) return [];
-    return [{
-    ...(subscription ?? {}),
-    organizationId: organization.id,
-    businessTypeId: businessType.id,
-    planId: plan.id,
-    plan_name: plan.plan_name,
-    isFreePlan: isFree,
-    payment_status: isFree ? "free" : subscription?.payment_status,
-    service_status: subscription?.service_status ?? "active",
-    }];
-  });
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -136,64 +133,24 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
             </thead>
             <tbody className="divide-y divide-slate-100">
               {orgSubscriptions.length > 0 ? (
-                orgSubscriptions.map((sub: any, idx: number) => {
-                  const subPlanId = String(sub.planId || sub.plan_id || sub.plan || "").trim();
-
-                  const matchedPlan = plans.find((p: any) => {
-                    const planId = String(p.id || p._id || "").trim();
-                    return planId === subPlanId;
-                  });
-
-                  const planName =
-                    (matchedPlan as any)?.plan_name ||
-                    (matchedPlan as any)?.name ||
-                    sub.plan_name ||
-                    sub.planName ||
-                    "—";
-
-                  // Extract business type from matched plan name pattern (e.g. "Factory Management - Basic" -> "Factory Management")
-                  // Fallback to searching business types via matchedPlan or subscription properties if available
-                  const subBtId = String(sub.businessTypeId || sub.business_type_id || sub.businessType || (matchedPlan as any)?.businessTypeId || (matchedPlan as any)?.business_type_id || "").trim();
-                  
-                  const matchedBusinessType = allBusinessTypes.find((bt: any) => {
-                    const btId = String(bt.id || bt._id || "").trim();
-                    return btId === subBtId;
-                  });
-
-                  const derivedBusinessTypeFromName = planName.includes(" - ") ? planName.split(" - ")[0] : null;
-
-                  const businessTypeName =
-                    (matchedBusinessType as any)?.name ||
-                    sub.business_type_name ||
-                    sub.businessTypeName ||
-                    derivedBusinessTypeFromName ||
-                    "—";
-
-                  const rawStartDate = sub.startDate || sub.start_date || "";
-                  const rawEndDate = sub.endDate || sub.end_date || sub.expireDate || "";
-
-                  const startDate = rawStartDate ? String(rawStartDate).split("T")[0] : "—";
-                  const endDate = rawEndDate ? String(rawEndDate).split("T")[0] : "";
-
-                  const paymentType = sub.paymentType || sub.payment_type || "Offline";
-                  const paymentStatus = String(sub.paymentStatus || sub.payment_status || "pending").toLowerCase();
-
-                  const rawStatus = String(
-                    sub.status || sub.subscriptionStatus || sub.subscription_status || sub.serviceStatus || sub.service_status || ""
-                  ).toLowerCase();
-
-                  const today = new Date().toISOString().split("T")[0];
-                  const isDateValid = !endDate || endDate >= today;
-                  const isFreePlan = Boolean(sub.isFreePlan);
-                  const isPaid = paymentStatus === "paid" || isFreePlan;
-
-                  const serviceStatus = String(sub.serviceStatus || sub.service_status || rawStatus || "").toLowerCase();
-                  const isActive = isPaid && isDateValid && serviceStatus !== "inactive" && serviceStatus !== "pending";
-                  const paymentLabel = isFreePlan ? "Included" : paymentStatus === "pending" ? "Awaiting payment" : paymentStatus;
-                  const isCurrentPlan = !isFreePlan && currentPlanIdsByBusinessType.get(sub.businessTypeId || "") === subPlanId;
+                orgSubscriptions.map((sub) => {
+                  const subPlanId = String(sub.planId ?? "").trim();
+                  const matchedPlan = planById.get(subPlanId);
+                  const planName = matchedPlan?.plan_name ?? sub.plan_name;
+                  const matchedBusinessType = businessTypeById.get(String(sub.businessTypeId ?? ""));
+                  const businessTypeName = matchedBusinessType?.name ?? sub.business_type_name;
+                  const startDate = sub.start_date ? String(sub.start_date).split("T")[0] : "—";
+                  const endDate = sub.end_date ? String(sub.end_date).split("T")[0] : "";
+                  const paymentType = "Offline";
+                  const paymentStatus = String(sub.payment_status || "pending").toLowerCase();
+                  const serviceStatus = String(sub.service_status || "inactive").toLowerCase();
+                  const isActive = activeSubscriptionIds.has(String(sub.id));
+                  const paymentLabel = paymentStatus === "pending" ? "Awaiting payment" : paymentStatus;
+                  const serviceLabel = isActive ? "Active" : paymentStatus === "pending" ? "Awaiting approval" : sub.isScheduled ? "Scheduled" : sub.isExpired ? "Expired" : serviceStatus;
+                  const isCurrentPlan = Boolean(sub.isCurrentPlan);
 
                   return (
-                    <tr key={sub.id || sub._id || `sub-${idx}`} className="hover:bg-slate-50/50">
+                    <tr key={sub.id} className="hover:bg-slate-50/50">
                       <td className="p-3 font-bold text-slate-800">
                         <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200">
                           {businessTypeName}
@@ -211,14 +168,14 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                       </td>
                       <td className="p-3 text-slate-600">{startDate}</td>
                       <td className="p-3 text-slate-600">{endDate || "—"}</td>
-                      <td className="p-3 text-slate-600">{sub.billingMonths ? `${sub.billingMonths} months` : "—"}</td>
-                      <td className="p-3 text-slate-600">{sub.totalAmount != null ? `₹${Number(sub.totalAmount).toLocaleString("en-IN")}` : "—"}</td>
+                      <td className="p-3 text-slate-600">{sub.billing_months ? `${sub.billing_months} months` : "—"}</td>
+                      <td className="p-3 text-slate-600">{sub.total_amount != null ? `₹${Number(sub.total_amount).toLocaleString("en-IN")}` : "—"}</td>
                       <td className="p-3">
                         <span className="font-semibold text-slate-700">{paymentType}</span>
                       </td>
                       <td className="p-3">
                         <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                          isFreePlan || paymentStatus === "paid"
+                          paymentStatus === "paid"
                             ? "bg-emerald-50 text-emerald-700 border border-emerald-200" 
                             : "bg-amber-50 text-amber-700 border border-amber-200"
                         }`}>
@@ -231,19 +188,21 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                             ? "bg-emerald-50 text-emerald-700 border border-emerald-200" 
                             : "bg-red-50 text-red-700 border border-red-200"
                         }`}>
-                          {isActive ? "Active" : "Inactive"}
+                          {serviceLabel}
                         </span>
                       </td>
                       <td className="p-3 text-right">
-                        {!isActive ? (
+                        {paymentStatus === "pending" ? (
                           <form action={deleteSubscriptionAction}>
-                            <input type="hidden" name="subId" value={sub.id || sub._id} />
-                            <button
-                              type="submit"
+                            <input type="hidden" name="subId" value={sub.id} />
+                            <FormSubmitButton
+                              variant="danger"
+                              size="sm"
+                              pendingLabel="Deleting..."
                               className="px-2 py-1 rounded bg-red-600 text-white font-semibold hover:bg-red-700 transition-colors text-[10px]"
                             >
                               Delete
-                            </button>
+                            </FormSubmitButton>
                           </form>
                         ) : (
                           <span className="text-slate-400 text-[10px]">—</span>
@@ -254,8 +213,8 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                 })
               ) : (
                 <tr>
-                  <td colSpan={9} className="p-6 text-center text-slate-500 italic">
-                    No active subscriptions found.
+                  <td colSpan={10} className="p-6 text-center text-slate-500 italic">
+                    No paid subscription requests found.
                   </td>
                 </tr>
               )}

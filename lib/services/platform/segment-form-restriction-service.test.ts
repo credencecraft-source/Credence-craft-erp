@@ -1,4 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  prisma: { organization: { findUnique: vi.fn() } },
+  getEffectivePlansForOrganization: vi.fn(),
+  isOrganizationTrialActive: vi.fn(),
+}));
+
+vi.mock("@/lib/database/prisma-client", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/services/platform/subscription-service", () => ({ getEffectivePlansForOrganization: mocks.getEffectivePlansForOrganization }));
+vi.mock("@/lib/services/platform/organization-trial-service", () => ({ isOrganizationTrialActive: mocks.isOrganizationTrialActive }));
+
 import {
   getConfiguredMonthlyRecordLimits,
   exceedsMonthlyQuantityLimit,
@@ -8,6 +19,17 @@ import {
   validateMonthlyFormLimits,
   validateRestrictedFormFields,
 } from "./segment-form-restriction-service";
+
+describe("trial form access", () => {
+  it("does not apply form field or monthly limits during an active trial", async () => {
+    mocks.isOrganizationTrialActive.mockResolvedValue(true);
+
+    await expect(getEffectiveSegmentFormRestriction("internal-organization-id", "merchandising_orders")).resolves.toBeNull();
+
+    expect(mocks.isOrganizationTrialActive).toHaveBeenCalledWith("internal-organization-id");
+    expect(mocks.getEffectivePlansForOrganization).not.toHaveBeenCalled();
+  });
+});
 
 describe("factory monthly record limit pricing data", () => {
   it("rejects monthly order quantities above the cap but allows the exact cap", () => {

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { prismaMock, transactionMock } = vi.hoisted(() => {
+const { prismaMock, transactionMock, requirePlatformSessionAdmin } = vi.hoisted(() => {
   const transactionMock = {
     $executeRaw: vi.fn(),
+    platformAuditEvent: { create: vi.fn() },
     organization: {
       create: vi.fn(),
       findFirst: vi.fn(),
@@ -29,10 +30,12 @@ const { prismaMock, transactionMock } = vi.hoisted(() => {
       updateMany: vi.fn(),
     },
   };
-  return { prismaMock, transactionMock };
+  const requirePlatformSessionAdmin = vi.fn();
+  return { prismaMock, transactionMock, requirePlatformSessionAdmin };
 });
 
 vi.mock("@/lib/database/prisma-client", () => ({ prisma: prismaMock }));
+vi.mock("@/lib/auth/platform-session-manager", () => ({ requirePlatformSessionAdmin }));
 
 import {
   normalizeDisplayText,
@@ -60,6 +63,7 @@ const organization = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  requirePlatformSessionAdmin.mockResolvedValue({ id: "platform-admin-id" });
   prismaMock.$transaction.mockImplementation(
     (callback: (transaction: typeof transactionMock) => Promise<unknown>) => callback(transactionMock),
   );
@@ -278,11 +282,18 @@ describe("organization archive lifecycle", () => {
 
   it("allows approval when a platform version is assigned", async () => {
     transactionMock.organization.updateMany.mockResolvedValue({ count: 1 });
-    transactionMock.organization.findUnique.mockResolvedValue({
+    transactionMock.organization.findUnique
+      .mockResolvedValueOnce({
+        approval_status: "APPROVED",
+        trial_started_at: null,
+        trial_enabled: true,
+        trial_extension_hours: 0,
+      })
+      .mockResolvedValueOnce({
       ...organization,
       platform_version_id: "version-id",
       platformVersion: { is_active: true },
-    });
+      });
 
     await expect(updateOrganizationApprovalStatus("org-internal-id", "APPROVED"))
       .resolves.toEqual({ ...organization, platform_version_id: "version-id", platformVersion: { is_active: true } });
@@ -294,6 +305,16 @@ describe("organization archive lifecycle", () => {
       },
       data: { approval_status: "APPROVED", is_active: true },
     });
+    expect(transactionMock.organization.updateMany).toHaveBeenCalledWith({
+      where: { id: "org-internal-id", approval_status: "APPROVED", trial_started_at: null, trial_enabled: true },
+      data: {
+        trial_started_at: expect.any(Date),
+        trial_ends_at: expect.any(Date),
+      },
+    });
+    expect(transactionMock.platformAuditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ platform_admin_id: "platform-admin-id", action: "ORGANIZATION_TRIAL_STARTED" }),
+    }));
   });
 
   it("rejects approval when the assigned platform version is inactive", async () => {

@@ -2,9 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { GSTIN_PATTERN } from "@/lib/services/organizations/organization-validators";
-
-const GST_CHECK_URL = process.env.GST_CHECK_URL || "https://sheet.gstincheck.co.in/check";
-const GST_CHECK_API_KEY = process.env.GST_CHECK_API_KEY;
+import { fetchGstRegistration, GstVerificationError } from "@/lib/services/organizations/gst-verification-service";
 
 export async function POST(request: Request) {
   const user = await requireSessionUser();
@@ -24,28 +22,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ valid: false, error: "GST number must be in valid GSTIN format." }, { status: 400 });
     }
 
-    if (!GST_CHECK_API_KEY) {
-      return NextResponse.json({ valid: true, data: {} }, { status: 200 });
-    }
-
-    const response = await fetch(`${GST_CHECK_URL}/${GST_CHECK_API_KEY}/${gstNumber}`, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      return NextResponse.json({ valid: false, error: "GST verification service is unavailable. Please try again." }, { status: 502 });
-    }
-
-    const payload = await response.json();
-    if (payload && payload.flag === true) {
-      return NextResponse.json({ valid: true, data: payload.data || {} }, { status: 200 });
-    }
-
-    return NextResponse.json({ valid: false, error: "GST number could not be verified." }, { status: 400 });
+    const data = await fetchGstRegistration(gstNumber);
+    return NextResponse.json({ valid: true, data }, { status: 200 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to verify GST details.";
-    return NextResponse.json({ valid: false, error: message }, { status: 400 });
+    const status = error instanceof GstVerificationError ? error.statusCode : 502;
+    return NextResponse.json({ valid: false, error: message }, { status });
   }
 }
