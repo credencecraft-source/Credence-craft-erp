@@ -133,6 +133,7 @@ async function getPriorAllocationTotals(
   organizationId: string,
   groupIds: string[],
   exceptVerificationId?: string,
+  excludedVerificationIds: string[] = [],
 ) {
   if (groupIds.length === 0) return new Map<string, Prisma.Decimal>();
   const allocations = await database.rmGrnVerificationAllocation.groupBy({
@@ -140,7 +141,14 @@ async function getPriorAllocationTotals(
     where: {
       organization_id: organizationId,
       grouped_purchase_order_id: { in: groupIds },
-      ...(exceptVerificationId ? { verification_id: { not: exceptVerificationId } } : {}),
+      ...(exceptVerificationId || excludedVerificationIds.length > 0
+        ? {
+            verification_id: {
+              ...(exceptVerificationId ? { not: exceptVerificationId } : {}),
+              ...(excludedVerificationIds.length > 0 ? { notIn: excludedVerificationIds } : {}),
+            },
+          }
+        : {}),
     },
     _sum: { verification_allocated: true },
   });
@@ -309,7 +317,10 @@ export async function getRmGrnVerificationDraftsForPurchaseOrder(organizationId:
   });
 }
 
-export async function listRmGrnVerificationAllocations(organizationId: string) {
+export async function listRmGrnVerificationAllocations(
+  organizationId: string,
+  { styleWiseInventory = false }: { styleWiseInventory?: boolean } = {},
+) {
   const records = await prisma.rmGrnVerificationAllocation.findMany({
     where: { organization_id: organizationId },
     select: {
@@ -317,7 +328,18 @@ export async function listRmGrnVerificationAllocations(organizationId: string) {
       created_at: true,
       verification_allocated: true,
       orderAllocations: {
-        select: { allocated_quantity: true },
+        select: {
+          allocated_quantity: true,
+          groupedPurchaseOrderLine: {
+            select: {
+              id: true,
+              order_no: true,
+              style_name: true,
+              grouped_qty: true,
+              groupedPurchaseOrder: { select: { id: true, organization_id: true } },
+            },
+          },
+        },
       },
       groupedPurchaseOrder: {
         select: {
@@ -350,6 +372,7 @@ export async function listRmGrnVerificationAllocations(organizationId: string) {
                 select: {
                   organization_id: true,
                   receipt_no: true,
+                  notes: true,
                   purchaseOrder: { select: { organization_id: true, purchase_order_no: true, display_no: true } },
                 },
               },
@@ -360,10 +383,44 @@ export async function listRmGrnVerificationAllocations(organizationId: string) {
     },
     orderBy: { created_at: "desc" },
   });
-  const groupIds = [...new Set(records.map((record) => record.groupedPurchaseOrder.id))];
-  const totalAllocatedByGroup = await getPriorAllocationTotals(prisma, organizationId, groupIds);
+  const isDummySample = (record: (typeof records)[number]) =>
+    record.verification.inventoryReceiptLine?.receipt.notes?.startsWith("Dummy sample batch ") ?? false;
+  const isFullyAllocated = (record: (typeof records)[number]) => {
+    const allocated = record.orderAllocations.reduce(
+      (total, allocation) => total.plus(allocation.allocated_quantity),
+      zero(),
+    );
+    return record.verification_allocated.greaterThan(0)
+      && allocated.greaterThanOrEqualTo(record.verification_allocated);
+  };
+  const hiddenSampleVerificationIds = styleWiseInventory
+    ? [...new Set(records.filter((record) => isDummySample(record) && !isFullyAllocated(record)).map((record) => record.verification.id))]
+    : [];
+  const visibleRecords = styleWiseInventory
+    ? records.filter((record) => !isDummySample(record) || isFullyAllocated(record))
+    : records;
+  const totalAllocatedByOrderLine = new Map<string, Prisma.Decimal>();
+  for (const record of records) {
+    for (const allocation of record.orderAllocations) {
+      const line = allocation.groupedPurchaseOrderLine;
+      if (
+        line.groupedPurchaseOrder.organization_id !== organizationId
+        || line.groupedPurchaseOrder.id !== record.groupedPurchaseOrder.id
+      ) continue;
+      const total = totalAllocatedByOrderLine.get(line.id) ?? zero();
+      totalAllocatedByOrderLine.set(line.id, total.plus(allocation.allocated_quantity));
+    }
+  }
+  const groupIds = [...new Set(visibleRecords.map((record) => record.groupedPurchaseOrder.id))];
+  const totalAllocatedByGroup = await getPriorAllocationTotals(
+    prisma,
+    organizationId,
+    groupIds,
+    undefined,
+    hiddenSampleVerificationIds,
+  );
 
-  return records.flatMap((record) => {
+  return visibleRecords.flatMap((record) => {
     const grouping = record.groupedPurchaseOrder;
     const verification = record.verification;
     const receiptLine = verification.inventoryReceiptLine;
@@ -374,10 +431,32 @@ export async function listRmGrnVerificationAllocations(organizationId: string) {
       (total, allocation) => total.plus(allocation.allocated_quantity),
       zero(),
     );
-    if (orderAllocated.greaterThanOrEqualTo(record.verification_allocated)) return [];
+    const allocationComplete = orderAllocated.greaterThanOrEqualTo(record.verification_allocated);
+    if (allocationComplete && !styleWiseInventory) return [];
 
     const totalGroupedQty = grouping.total_grouped_qty ?? zero();
     const balanceToAllocate = totalGroupedQty.minus(totalAllocatedByGroup.get(grouping.id) ?? zero());
+    const orderAllocations = record.orderAllocations.flatMap((allocation) => {
+      const line = allocation.groupedPurchaseOrderLine;
+      if (
+        allocation.allocated_quantity.isZero()
+        || line.groupedPurchaseOrder.organization_id !== organizationId
+        || line.groupedPurchaseOrder.id !== grouping.id
+      ) return [];
+
+      const totalAllocated = totalAllocatedByOrderLine.get(line.id) ?? allocation.allocated_quantity;
+      const alreadyAllocated = totalAllocated.minus(allocation.allocated_quantity);
+      const lineBalance = line.grouped_qty.minus(totalAllocated);
+      return [{
+        groupedPurchaseOrderLineId: line.id,
+        orderNo: line.order_no ?? "",
+        styleNo: line.style_name ?? "",
+        alreadyAllocated: (alreadyAllocated.isNegative() ? zero() : alreadyAllocated).toString(),
+        balanceToAllocate: (lineBalance.isNegative() ? zero() : lineBalance).toString(),
+        grouped: line.grouped_qty.toString(),
+        allocate: allocation.allocated_quantity.toString(),
+      }];
+    });
     if (receiptLine) {
       const receipt = receiptLine.receipt;
       if (receipt.organization_id !== organizationId || receipt.purchaseOrder.organization_id !== organizationId) return [];
@@ -396,6 +475,7 @@ export async function listRmGrnVerificationAllocations(organizationId: string) {
         totalGroupedQty: totalGroupedQty.toString(),
         verificationAllocated: record.verification_allocated.toString(),
         balanceToAllocate: (balanceToAllocate.isNegative() ? zero() : balanceToAllocate).toString(),
+        orderAllocations,
       }];
     }
     if (!stockGroup || stockGroup.organization_id !== organizationId || stockGroup.source_type !== "STOCK") return [];
@@ -412,6 +492,7 @@ export async function listRmGrnVerificationAllocations(organizationId: string) {
       totalGroupedQty: totalGroupedQty.toString(),
       verificationAllocated: record.verification_allocated.toString(),
       balanceToAllocate: (balanceToAllocate.isNegative() ? zero() : balanceToAllocate).toString(),
+      orderAllocations,
     }];
   });
 }
@@ -455,7 +536,7 @@ export async function saveRmGrnVerificationInTransaction(
     const calculated = calculateHeaderQuantities(verified, approved, groupedQtyGrn);
     if (!Array.isArray(input.allocations)) throw new InvalidActualCountError();
 
-    const allocationValues = new Map<string, Prisma.Decimal>();
+      const allocationValues = new Map<string, Prisma.Decimal>();
     for (const item of input.allocations as AllocationInput[]) {
       const groupedPurchaseOrderId = String(item?.groupedPurchaseOrderId ?? "").trim();
       if (!groupingCapacities.has(groupedPurchaseOrderId) || allocationValues.has(groupedPurchaseOrderId)) {

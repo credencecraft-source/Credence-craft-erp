@@ -23,6 +23,15 @@ type AllocationRow = {
   totalGroupedQty: number | string;
   verificationAllocated: number | string;
   balanceToAllocate: number | string;
+  orderAllocations: Array<{
+    groupedPurchaseOrderLineId: string;
+    orderNo: string;
+    styleNo: string;
+    alreadyAllocated: number | string;
+    balanceToAllocate: number | string;
+    grouped: number | string;
+    allocate: number | string;
+  }>;
 };
 
 type AllocationDetailRow = {
@@ -72,34 +81,7 @@ type AllocationLine = {
   maxAllocatable: number | string;
 };
 
-type GroupedProcurementOrder = {
-  groupedPoNo?: string | null;
-  totalGroupedQty?: number | null;
-  lines?: Array<{
-    orderNo?: string | null;
-    styleName?: string | null;
-    groupedQty?: number | null;
-  }>;
-};
-
 const quantity = (value: number | string) => Number(value).toLocaleString("en-IN", { maximumFractionDigits: 2 });
-
-const normalizeGroupingNumber = (value: string) => value.trim().toUpperCase().replace(/\s+/g, "");
-
-const applyTopDownAllocation = (rows: AllocationLine[], headerAvailable: number): AllocationLine[] => {
-  let remaining = Math.max(headerAvailable, 0);
-  return rows.map((row) => {
-    const groupedQty = Number(row.grouped || 0);
-    const allocate = remaining > 0 ? Math.min(groupedQty, remaining) : 0;
-    remaining = Math.max(remaining - allocate, 0);
-    return {
-      ...row,
-      alreadyAllocated: 0,
-      balanceToAllocate: Math.max(groupedQty - allocate, 0),
-      allocate,
-    };
-  });
-};
 
 export default function GrnAllocationReportPage({
   title = "GRN Allocation Report",
@@ -156,7 +138,8 @@ export default function GrnAllocationReportPage({
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(`/api/inventory/grn-verifications?organizationId=${encodeURIComponent(organizationId)}&allocationRegister=true`, {
+    const sampleFilter = allocationDetailsOnly ? "&styleWiseInventory=true" : "";
+    void fetch(`/api/inventory/grn-verifications?organizationId=${encodeURIComponent(organizationId)}&allocationRegister=true${sampleFilter}`, {
       cache: "no-store",
       signal: controller.signal,
     })
@@ -166,38 +149,10 @@ export default function GrnAllocationReportPage({
         const allocationRows = Array.isArray(data.allocations) ? data.allocations as AllocationRow[] : [];
         setRecords(allocationRows);
 
-        if (allocationDetailsOnly && allocationRows.length > 0) {
-          const procurementResponse = await fetch(`/api/orders/procurement?organizationId=${encodeURIComponent(organizationId)}&view=all`, {
-            cache: "no-store",
-            signal: controller.signal,
-          });
-          const procurementData = await procurementResponse.json();
-          if (!procurementResponse.ok) throw new Error(procurementData?.error || "Unable to load grouped procurement orders.");
-
-          const groupedOrders = Array.isArray(procurementData.groupedPurchaseOrders)
-            ? procurementData.groupedPurchaseOrders as GroupedProcurementOrder[]
-            : [];
-          const detailRows = allocationRows.flatMap((row) => {
-            const groupingNumber = normalizeGroupingNumber(row.groupingNumber);
-            const groupedOrder = groupedOrders.find((order) =>
-              normalizeGroupingNumber(String(order.groupedPoNo ?? "")) === groupingNumber,
-            );
-            const sourceLines = groupedOrder?.lines?.length
-              ? groupedOrder.lines
-              : [{ orderNo: "", styleName: "", groupedQty: Number(row.totalGroupedQty || 0) }];
-            const lines = applyTopDownAllocation(sourceLines.map((line) => ({
-              groupedPurchaseOrderLineId: "",
-              orderNo: line.orderNo ?? "",
-              styleNo: line.styleName ?? "",
-              alreadyAllocated: 0,
-              balanceToAllocate: Number(line.groupedQty ?? 0),
-              grouped: Number(line.groupedQty ?? 0),
-              allocate: 0,
-              maxAllocatable: Number(line.groupedQty ?? 0),
-            })), Number(row.verificationAllocated ?? 0));
-
-            return lines.map((line, index): AllocationDetailRow => ({
-              id: `${row.id}-${index}`,
+        if (allocationDetailsOnly) {
+          const detailRows = allocationRows.flatMap((row) =>
+            row.orderAllocations.map((line): AllocationDetailRow => ({
+              id: `${row.id}-${line.groupedPurchaseOrderLineId}`,
               grnNumber: row.grnNumber,
               purchaseOrderNumber: row.purchaseOrderNumber,
               orderNo: line.orderNo,
@@ -206,8 +161,8 @@ export default function GrnAllocationReportPage({
               balanceToAllocate: line.balanceToAllocate,
               grouped: line.grouped,
               allocate: line.allocate,
-            }));
-          });
+            })),
+          );
           setAllocationDetailRecords(detailRows);
         }
       })

@@ -40,7 +40,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ stockTasks });
     }
     if (searchParams.get("allocationRegister") === "true") {
-      const allocations = await listRmGrnVerificationAllocations(organization.id);
+      const allocations = searchParams.get("styleWiseInventory") === "true"
+        ? await listRmGrnVerificationAllocations(organization.id, { styleWiseInventory: true })
+        : await listRmGrnVerificationAllocations(organization.id);
       return NextResponse.json({ allocations });
     }
 

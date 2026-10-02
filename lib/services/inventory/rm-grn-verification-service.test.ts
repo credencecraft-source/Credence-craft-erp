@@ -77,6 +77,17 @@ const sourceLine = (withMaster = true) => ({
   },
 });
 
+const savedOrderAllocation = (allocatedQuantity: string, groupedQuantity: string) => ({
+  allocated_quantity: new Prisma.Decimal(allocatedQuantity),
+  groupedPurchaseOrderLine: {
+    id: "group-line-1",
+    order_no: "ORDER-1",
+    style_name: "STYLE-1",
+    grouped_qty: new Prisma.Decimal(groupedQuantity),
+    groupedPurchaseOrder: { id: "group-1", organization_id: "org-1" },
+  },
+});
+
 describe("RM GRN Verification", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -215,9 +226,105 @@ describe("RM GRN Verification", () => {
       totalGroupedQty: "10",
       verificationAllocated: "2",
       balanceToAllocate: "6",
+      orderAllocations: [],
     }]);
     expect(mocks.allocationFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: "org-1" },
+    }));
+  });
+
+  it("lists sample GRNs in Style-wise Inventory only after Step 8 allocations are complete", async () => {
+    const allocationRecord = {
+      id: "allocation-real",
+      created_at: new Date("2026-10-02T00:00:00Z"),
+      verification_allocated: new Prisma.Decimal("3"),
+      orderAllocations: [],
+      groupedPurchaseOrder: {
+        id: "group-1",
+        organization_id: "org-1",
+        grouped_po_no: "group-internal",
+        display_no: 8,
+        total_grouped_qty: new Prisma.Decimal("10"),
+      },
+      verification: {
+        id: "verification-real",
+        organization_id: "org-1",
+        masterPurchaseOrder: null,
+        inventoryReceiptLine: {
+          raw_material: "Cotton",
+          receipt: {
+            organization_id: "org-1",
+            receipt_no: "GRN-REAL",
+            notes: "Regular receipt",
+            purchaseOrder: { organization_id: "org-1", purchase_order_no: "po-internal", display_no: 12 },
+          },
+        },
+      },
+    };
+    const pendingSampleAllocation = {
+      ...allocationRecord,
+      id: "allocation-sample-pending",
+      verification_allocated: new Prisma.Decimal("2"),
+      verification: {
+        ...allocationRecord.verification,
+        id: "verification-sample-pending",
+        inventoryReceiptLine: {
+          ...allocationRecord.verification.inventoryReceiptLine,
+          receipt: {
+            ...allocationRecord.verification.inventoryReceiptLine.receipt,
+            receipt_no: "GRN-SAMPLE",
+            notes: "Dummy sample batch batch-1",
+          },
+        },
+      },
+    };
+    const completedSampleAllocation = {
+      ...pendingSampleAllocation,
+      id: "allocation-sample-complete",
+      orderAllocations: [savedOrderAllocation("2", "5")],
+      verification: {
+        ...pendingSampleAllocation.verification,
+        id: "verification-sample-complete",
+      },
+    };
+    const completedRealAllocation = {
+      ...allocationRecord,
+      id: "allocation-real-complete",
+      orderAllocations: [savedOrderAllocation("3", "8")],
+    };
+    mocks.allocationFindMany.mockResolvedValue([
+      pendingSampleAllocation,
+      completedSampleAllocation,
+      completedRealAllocation,
+    ]);
+    mocks.allocationGroupBy.mockResolvedValue([{
+      grouped_purchase_order_id: "group-1",
+      _sum: { verification_allocated: new Prisma.Decimal("5") },
+    }]);
+
+    await expect(listRmGrnVerificationAllocations("org-1", { styleWiseInventory: true }))
+      .resolves.toMatchObject([
+        { id: "allocation-sample-complete", grnNumber: "GRN-SAMPLE", verificationAllocated: "2" },
+        {
+          id: "allocation-real-complete",
+          grnNumber: "GRN-REAL",
+          orderAllocations: [{
+            groupedPurchaseOrderLineId: "group-line-1",
+            orderNo: "ORDER-1",
+            styleNo: "STYLE-1",
+            alreadyAllocated: "2",
+            balanceToAllocate: "3",
+            grouped: "8",
+            allocate: "3",
+          }],
+        },
+      ]);
+
+    expect(mocks.allocationGroupBy).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "org-1",
+        verification_id: { notIn: ["verification-sample-pending"] },
+      }),
     }));
   });
 
@@ -226,7 +333,7 @@ describe("RM GRN Verification", () => {
       id: "completed-allocation-1",
       created_at: new Date("2026-09-30T00:00:00Z"),
       verification_allocated: new Prisma.Decimal("2"),
-      orderAllocations: [{ allocated_quantity: new Prisma.Decimal("2") }],
+      orderAllocations: [savedOrderAllocation("2", "5")],
       groupedPurchaseOrder: {
         id: "group-1",
         organization_id: "org-1",
@@ -296,6 +403,7 @@ describe("RM GRN Verification", () => {
       totalGroupedQty: "10",
       verificationAllocated: "7",
       balanceToAllocate: "3",
+      orderAllocations: [],
     }]);
   });
 

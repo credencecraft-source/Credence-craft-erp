@@ -64,6 +64,16 @@ describe("RM GRN Verification route", () => {
     expect(mocks.listRmGrnVerificationAllocations).toHaveBeenCalledWith("internal-org-1");
   });
 
+  it("requests completed sample allocations for Style-wise Inventory", async () => {
+    const response = await GET(new Request("http://localhost/api/inventory/grn-verifications?organizationId=public-org&allocationRegister=true&styleWiseInventory=true"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.listRmGrnVerificationAllocations).toHaveBeenCalledWith(
+      "internal-org-1",
+      { styleWiseInventory: true },
+    );
+  });
+
   it("loads notified stock verification tasks for the authorized organization", async () => {
     mocks.listPendingStockVerificationTasks.mockResolvedValue([{ sourceGroupedPurchaseOrderId: "stock-group-1" }]);
     const response = await GET(new Request("http://localhost/api/inventory/grn-verifications?organizationId=public-org&verificationRegister=true"));
