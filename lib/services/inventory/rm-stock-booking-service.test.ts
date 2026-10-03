@@ -6,10 +6,10 @@ const mocks = vi.hoisted(() => ({
   transactionClient: {
     masterVendor: { findFirst: vi.fn() },
     billOfMaterialItem: { findMany: vi.fn() },
-    rawMaterialStockBooking: { groupBy: vi.fn(), createMany: vi.fn() },
+    rawMaterialStockBooking: { groupBy: vi.fn(), findMany: vi.fn(), createMany: vi.fn() },
     groupedPurchaseOrderLine: { groupBy: vi.fn() },
     rawMaterialStock: { findMany: vi.fn(), update: vi.fn() },
-    groupedPurchaseOrder: { create: vi.fn() },
+    groupedPurchaseOrder: { findFirst: vi.fn(), create: vi.fn() },
     procurementDocumentCounter: { upsert: vi.fn() },
   },
 }));
@@ -43,6 +43,8 @@ describe("raw-material stock booking", () => {
       order: { orderNo: "ORD-1", styleName: "Style 1", brand: "Brand", entity_id: "entity-1", entity: { is_active: true } },
     }]);
     mocks.transactionClient.rawMaterialStockBooking.groupBy.mockResolvedValue([]);
+    mocks.transactionClient.rawMaterialStockBooking.findMany.mockResolvedValue([]);
+    mocks.transactionClient.groupedPurchaseOrder.findFirst.mockResolvedValue(null);
     mocks.transactionClient.groupedPurchaseOrderLine.groupBy.mockResolvedValue([]);
     mocks.transactionClient.rawMaterialStock.findMany.mockResolvedValue([{
       id: "stock-1",
@@ -63,7 +65,6 @@ describe("raw-material stock booking", () => {
       currentStoreVendorId: "store-1",
       lines: [{ bomItemId: "bom-1", takeFromStockId: "stock-1", bookedQuantity: "5" }],
     });
-
     expect(result).toEqual({ bookedLines: 1, groupedPurchaseOrderId: "grouped-stock-1" });
     expect(mocks.transactionClient.rawMaterialStock.update).toHaveBeenCalledWith({
       where: { id: "stock-1", organization_id: "organization-1" },
@@ -90,6 +91,38 @@ describe("raw-material stock booking", () => {
         total_grouped_qty: new Prisma.Decimal("5"),
       }),
     }));
+  });
+
+  it("resumes an existing sample stock group without reserving inventory twice", async () => {
+    mocks.transactionClient.groupedPurchaseOrder.findFirst.mockResolvedValue({
+      id: "grouped-stock-1",
+      source_type: "STOCK",
+      vendor_id: "store-1",
+      lines: [{ source_bom_item_id: "bom-1", grouped_qty: new Prisma.Decimal("5") }],
+    });
+    mocks.transactionClient.rawMaterialStockBooking.findMany.mockResolvedValue([{
+      source_bom_item_id: "bom-1",
+      take_from_stock_id: "stock-1",
+      booked_quantity: new Prisma.Decimal("5"),
+      status: "BOOKED",
+    }]);
+
+    const result = await createRawMaterialStockBookings({
+      organizationId: "organization-1",
+      bookedBy: "Buyer",
+      currentStoreVendorId: "store-1",
+      sampleBatchId: "batch-1",
+      sampleGroupOrdinal: 2,
+      lines: [{ bomItemId: "bom-1", takeFromStockId: "stock-1", bookedQuantity: "5" }],
+    });
+
+    expect(result).toEqual({ bookedLines: 1, groupedPurchaseOrderId: "grouped-stock-1" });
+    expect(mocks.transactionClient.groupedPurchaseOrder.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "organization-1", grouped_po_no: "GPO-batch-1-S02" },
+    }));
+    expect(mocks.transactionClient.rawMaterialStock.update).not.toHaveBeenCalled();
+    expect(mocks.transactionClient.rawMaterialStockBooking.createMany).not.toHaveBeenCalled();
+    expect(mocks.transactionClient.groupedPurchaseOrder.create).not.toHaveBeenCalled();
   });
 
   it("rejects a booking that exceeds currently available inventory", async () => {

@@ -783,10 +783,10 @@ export function MasterModuleWrapper({
               ) : null}
               <ol className="divide-y divide-slate-200 rounded-md border border-slate-200 bg-white">
                 {[
-                  { number: 1 as const, title: "Create Master, Orders, and BOM", detail: "Add sample masters, ten draft orders, finished goods, and BOM rows." },
-                  { number: 2 as const, title: "Create Grouping", detail: "Build ten sample grouped purchase orders from the shared BOM requirements." },
-                  { number: 3 as const, title: "Add Price, GST, HSN, Buying UOM, and Approve", detail: "Assign varied sample terms and approve every grouped purchase order in this step." },
-                  { number: 4 as const, title: "Create Master Grouping", detail: "Create a master group for every approved grouped purchase order." },
+                  { number: 1 as const, title: "Create Master, Orders, and BOM", detail: "Add sample masters, a current-store vendor, opening raw-material stock, ten draft orders, finished goods, and BOM rows." },
+                  { number: 2 as const, title: "Create Grouping", detail: "Take available sample inventory for a few materials and allocate the remaining BOM quantities across ten vendor grouped purchase orders." },
+                  { number: 3 as const, title: "Add Price, GST, HSN, Buying UOM, and Approve", detail: "Assign sample terms and approve every vendor- and stock-source grouped purchase order." },
+                  { number: 4 as const, title: "Create Master Grouping", detail: "Create a master group for every approved vendor- and stock-source grouped purchase order." },
                   { number: 5 as const, title: "Create and Approve Purchase Orders", detail: "Generate at least ten vendor Purchase Orders, submit each for approval, and approve every PO." },
                   { number: 6 as const, title: "Create RM Gate Entries", detail: "Create five inward gate entries and five pending GRNs, each linked to a different approved Purchase Order." },
                   { number: 7 as const, title: "Verify Sample GRNs", detail: "Verify every GRN material line with varied physical quantities using the standard verification workflow." },

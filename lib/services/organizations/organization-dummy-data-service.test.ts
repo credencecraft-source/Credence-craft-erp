@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 
-const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPurchaseOrderMock, masterPurchaseOrderMock, generatePurchaseOrdersMock, submitPurchaseOrderMock, createSampleGateEntriesMock, createSampleGrnsMock, verifySampleGrnsMock, allocateSampleGrnsMock, monthlyFormLimitsMock, orderLimitLockMock } = vi.hoisted(() => {
+const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPurchaseOrderMock, masterPurchaseOrderMock, stockBookingsMock, generatePurchaseOrdersMock, submitPurchaseOrderMock, createSampleGateEntriesMock, createSampleGrnsMock, verifySampleGrnsMock, allocateSampleGrnsMock, monthlyFormLimitsMock, orderLimitLockMock } = vi.hoisted(() => {
   const delegate = () => ({
     count: vi.fn().mockResolvedValue(0),
     create: vi.fn().mockResolvedValue({ id: "created-id" }),
@@ -25,6 +25,8 @@ const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPu
     masterColor: delegate(),
     masterCurrencyType: delegate(),
     masterEntity: delegate(),
+    rawMaterialStock: delegate(),
+    rawMaterialStockBooking: delegate(),
     masterProduct: delegate(),
     masterRawMaterial: delegate(),
     masterVendor: delegate(),
@@ -63,7 +65,9 @@ const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPu
     organizationDummyDataBatch: { findUnique: vi.fn(), update: vi.fn().mockResolvedValue({}) },
     groupedPurchaseOrder: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     merchandisingOrder: { findFirst: vi.fn(), findMany: vi.fn() },
-    masterVendor: { findMany: vi.fn() },
+    masterVendor: { findFirst: vi.fn(), findMany: vi.fn() },
+    rawMaterialStock: { findMany: vi.fn() },
+    rawMaterialStockBooking: { findMany: vi.fn() },
     masterStockUomConvert: { findMany: vi.fn().mockResolvedValue([]) },
     billOfMaterialItem: { findMany: vi.fn() },
     masterPurchaseOrder: { findFirst: vi.fn() },
@@ -79,6 +83,7 @@ const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPu
     orderNumbersMock: vi.fn(),
     groupedPurchaseOrderMock: vi.fn(),
     masterPurchaseOrderMock: vi.fn(),
+    stockBookingsMock: vi.fn(),
     generatePurchaseOrdersMock: vi.fn(),
     submitPurchaseOrderMock: vi.fn(),
     createSampleGateEntriesMock: vi.fn(),
@@ -102,6 +107,9 @@ vi.mock("@/lib/services/orders/grouped-purchase-order-service", () => ({
 }));
 vi.mock("@/lib/services/orders/master-purchase-order-service", () => ({
   createMasterPurchaseOrder: masterPurchaseOrderMock,
+}));
+vi.mock("@/lib/services/inventory/rm-stock-booking-service", () => ({
+  createRawMaterialStockBookings: stockBookingsMock,
 }));
 vi.mock("@/lib/services/orders/purchase-order-service", () => ({
   generatePurchaseOrders: generatePurchaseOrdersMock,
@@ -151,12 +159,18 @@ beforeEach(() => {
   prismaMock.$transaction.mockImplementation(
     (callback: (transaction: typeof transactionMock) => Promise<unknown>) => callback(transactionMock),
   );
+  transactionMock.rawMaterialStockBooking.findMany.mockResolvedValue([]);
+  transactionMock.groupedPurchaseOrder.findMany.mockResolvedValue([]);
+  transactionMock.masterPurchaseOrder.findMany.mockResolvedValue([]);
   prismaMock.organization.findFirst.mockResolvedValue(organization);
   prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue(null);
   prismaMock.groupedPurchaseOrder.findMany.mockResolvedValue([]);
   prismaMock.merchandisingOrder.findFirst.mockResolvedValue(null);
   prismaMock.merchandisingOrder.findMany.mockResolvedValue([]);
   prismaMock.masterVendor.findMany.mockResolvedValue([]);
+  prismaMock.masterVendor.findFirst.mockResolvedValue(null);
+  prismaMock.rawMaterialStock.findMany.mockResolvedValue([]);
+  prismaMock.rawMaterialStockBooking.findMany.mockResolvedValue([]);
   prismaMock.masterStockUomConvert.findMany.mockResolvedValue([]);
   prismaMock.billOfMaterialItem.findMany.mockResolvedValue([]);
   prismaMock.masterPurchaseOrder.findFirst.mockResolvedValue(null);
@@ -171,6 +185,11 @@ beforeEach(() => {
   orderNumbersMock.mockResolvedValue(Array.from({ length: 10 }, (_, index) => `ORD-${String(index + 1).padStart(4, "0")}`));
   groupedPurchaseOrderMock.mockImplementation(async () => ({ id: `grouped-demo-${groupedPurchaseOrderMock.mock.calls.length}` }));
   masterPurchaseOrderMock.mockImplementation(async () => ({ id: `master-demo-${masterPurchaseOrderMock.mock.calls.length}` }));
+  stockBookingsMock.mockImplementation(async () => ({
+    id: `booking-demo-${stockBookingsMock.mock.calls.length}`,
+    groupedPurchaseOrderId: `stock-grouped-demo-${stockBookingsMock.mock.calls.length}`,
+    bookedLines: 1,
+  }));
   generatePurchaseOrdersMock.mockImplementation(async () => ({
     id: `purchase-order-demo-${generatePurchaseOrdersMock.mock.calls.length}`,
     status: "DRAFT",
@@ -192,6 +211,7 @@ beforeEach(() => {
   transactionMock.organizationDummyDataBatch.update.mockResolvedValue({});
   transactionMock.organizationDummyDataBatch.upsert.mockResolvedValue({ id: "batch-id", status: "EMPTY" });
   transactionMock.masterEntity.findFirst.mockResolvedValue({ id: "org-entity-id" });
+  transactionMock.masterLocation.findFirst.mockResolvedValue({ id: "active-location-id" });
   transactionMock.masterProduct.findFirst.mockResolvedValue({ id: "finished-goods-id" });
   transactionMock.masterRawMaterialType.findFirst.mockResolvedValue({ id: "raw-material-type-id" });
   transactionMock.masterCategory.createManyAndReturn.mockResolvedValue([
@@ -205,10 +225,12 @@ beforeEach(() => {
     "Blackberrys", "Andamen", "Peter England", "Benetton", "Bombay Shirt Company",
     "Rare Rabbit", "Turtle", "Allen Solly", "Louis Philippe", "Van Heusen",
   ].map((brand, index) => ({ id: `brand-demo-${index}`, brand })));
-  transactionMock.masterVendor.createManyAndReturn.mockResolvedValue([
-    "ARAVIND FABRICS", "VARDHAMAN", "RAYMONDS", "UNITED PLASTIC", "GIRIRAG PACKAGING", "CORD THREAD",
-    "DEMO VENDOR NORTH", "DEMO VENDOR SOUTH", "DEMO VENDOR EAST", "DEMO VENDOR WEST",
-  ].map((vendor, index) => ({ id: `vendor-demo-${index}`, vendor })));
+  transactionMock.masterVendor.createManyAndReturn.mockImplementation(
+    (args: { data: Array<{ vendor: string }> }) => Promise.resolve(args.data.map((item, index) => ({
+      id: `vendor-demo-${index}`,
+      vendor: item.vendor,
+    }))),
+  );
   transactionMock.masterCurrencyType.createManyAndReturn.mockResolvedValue([
     { id: "currency-inr-id", currency_type: "INR" },
     { id: "currency-dollar-id", currency_type: "Dollar" },
@@ -257,6 +279,11 @@ beforeEach(() => {
     (args: { data: Array<{ raw_material_name: string }> }) => Promise.resolve(args.data.map((item, index) => ({
       id: `raw-material-demo-${index}`,
       raw_material_name: item.raw_material_name,
+    }))),
+  );
+  transactionMock.rawMaterialStock.createManyAndReturn.mockImplementation(
+    (args: { data: Array<{ raw_material: string }> }) => Promise.resolve(args.data.map((_, index) => ({
+      id: `raw-material-stock-demo-${index}`,
     }))),
   );
   transactionMock.billOfMaterialItem.createManyAndReturn.mockImplementation(
@@ -337,6 +364,16 @@ describe("organization dummy data service", () => {
       expect.objectContaining({ category_id: "category-jacket-id", sub_category: "Bomber Jacket" }),
     ]));
     expect(transactionMock.masterBrand.createManyAndReturn.mock.calls[0][0].data).toHaveLength(10);
+    const sampleVendorRows = transactionMock.masterVendor.createManyAndReturn.mock.calls[0][0].data;
+    expect(sampleVendorRows).toHaveLength(11);
+    expect(sampleVendorRows.filter((vendor: { is_current_store: boolean }) => vendor.is_current_store))
+      .toEqual([expect.objectContaining({
+        organization_id: organization.id,
+        vendor: `${organization.organization_name} - Current Store`,
+        is_current_store: true,
+        is_active: true,
+      })]);
+    expect(sampleVendorRows.slice(0, 10).every((vendor: { is_current_store: boolean }) => !vendor.is_current_store)).toBe(true);
     expect(transactionMock.masterBuyer.createManyAndReturn.mock.calls[0][0].data).toEqual(expect.arrayContaining([
       expect.objectContaining({ buyer_name: "Impulse", currency_type_id: "currency-inr-id" }),
       expect.objectContaining({ buyer_name: "Benetton", currency_type_id: "currency-dollar-id" }),
@@ -364,6 +401,23 @@ describe("organization dummy data service", () => {
     ]);
     const rawMaterialRows = transactionMock.masterRawMaterial.createManyAndReturn.mock.calls[0][0].data;
     expect(rawMaterialRows).toHaveLength(39);
+    const sampleStockRows = transactionMock.rawMaterialStock.createManyAndReturn.mock.calls[0][0].data;
+    expect(sampleStockRows).toHaveLength(38);
+    expect(sampleStockRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        organization_id: organization.id,
+        entity_id: "org-entity-id",
+        location_id: "active-location-id",
+        raw_material: "MAIN FABRIC -AW24ANDMSYD059 KG 3395",
+        quantity_on_hand: new Prisma.Decimal(250),
+        source_type: "MANUAL",
+      }),
+      expect.objectContaining({
+        raw_material: "POLY WRAP FILM",
+        quantity_on_hand: new Prisma.Decimal(80),
+      }),
+    ]));
+    expect(sampleStockRows.some((row: { raw_material: string }) => row.raw_material === "Transport charge")).toBe(false);
     expect(rawMaterialRows.map((item: { raw_material_name: string }) => item.raw_material_name)).toEqual([
       "MAIN FABRIC -AW24ANDMSYD059 KG 3395",
       "INTERLINING - 3630 - CHARCOAL",
@@ -500,14 +554,54 @@ describe("organization dummy data service", () => {
           { moduleKey: "size-group", id: "size-group-shirt-id" },
           { moduleKey: "raw-material-category", id: "raw-category-fabric-id" },
           { moduleKey: "uom", id: "uom-mtr-id" },
+          { moduleKey: "raw-material-stock", id: "raw-material-stock-demo-0" },
         ]),
       }),
     }));
+    expect(transactionMock.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: "CREATE_DUMMY_DATA_STAGE",
+        details: expect.objectContaining({ raw_material_stock_count: 38 }),
+      }),
+    }));
     expect(transactionMock.organizationDummyDataBatch.update.mock.calls[0][0].data.master_record_ids)
-      .toContainEqual({ datasetVersion: "apparel-10-orders-2026-09" });
+      .toContainEqual({ datasetVersion: "apparel-10-orders-2026-10" });
     expect(transactionMock.organizationDummyDataBatch.update.mock.calls[0][0].data.master_record_ids
       .filter((record: { moduleKey?: string }) => record.moduleKey === "sample-order"))
       .toHaveLength(10);
+  });
+
+  it("creates a removable sample location when the organization has no active inventory location", async () => {
+    transactionMock.masterLocation.findFirst.mockResolvedValue(null);
+    transactionMock.masterLocation.create.mockResolvedValue({ id: "sample-location-id" });
+
+    await createOrganizationDummyData("user-id", "public-org-id", "Sample Operator");
+
+    expect(transactionMock.masterLocation.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        organization_id: organization.id,
+        entity_id: "org-entity-id",
+        location_name: "Sample Data Store - tch-id",
+        is_active: true,
+      }),
+    }));
+    expect(transactionMock.rawMaterialStock.createManyAndReturn.mock.calls[0][0].data[0])
+      .toEqual(expect.objectContaining({ location_id: "sample-location-id" }));
+    expect(transactionMock.organizationDummyDataBatch.update.mock.calls[0][0].data.master_record_ids)
+      .toContainEqual({ moduleKey: "location", id: "sample-location-id" });
+  });
+
+  it("preserves an existing current-store vendor without creating another current store", async () => {
+    transactionMock.masterVendor.findFirst.mockResolvedValue({ id: "existing-current-store-id", is_active: true });
+
+    await createOrganizationDummyData("user-id", "public-org-id", "Sample Operator");
+
+    const vendorRows = transactionMock.masterVendor.createManyAndReturn.mock.calls[0][0].data;
+    expect(vendorRows).toHaveLength(10);
+    expect(vendorRows.every((vendor: { is_current_store: boolean }) => !vendor.is_current_store)).toBe(true);
+    expect(transactionMock.masterVendor.updateMany).not.toHaveBeenCalled();
+    expect(transactionMock.organizationDummyDataBatch.update.mock.calls[0][0].data.master_record_ids)
+      .not.toContainEqual({ moduleKey: "vendor", id: "existing-current-store-id" });
   });
 
   it("waits for every grouped PO price approval before creating master groups", async () => {
@@ -578,7 +672,10 @@ describe("organization dummy data service", () => {
       prismaMock.groupedPurchaseOrder.findFirst.mockResolvedValueOnce({
         id: `grouped-demo-${index + 1}`,
         vendor_id: input.vendorId,
-        lines: input.lines.map((line: { bomItemId: string }) => ({ source_bom_item_id: line.bomItemId })),
+        lines: input.lines.map((line: { bomItemId: string; groupedQty: string }) => ({
+          source_bom_item_id: line.bomItemId,
+          grouped_qty: new Prisma.Decimal(line.groupedQty),
+        })),
       });
     });
     groupedPurchaseOrderMock.mockClear();
@@ -587,9 +684,64 @@ describe("organization dummy data service", () => {
     expect(groupedPurchaseOrderMock).not.toHaveBeenCalled();
   });
 
+  it("groups sample inventory from stock and vendors without double-sourcing BOM quantities", async () => {
+    const orderIds = Array.from({ length: 10 }, (_, index) => `order-${index + 1}`);
+    const vendorNames = [
+      "ARAVIND FABRICS", "VARDHAMAN", "RAYMONDS", "UNITED PLASTIC", "GIRIRAG PACKAGING",
+      "CORD THREAD", "DEMO VENDOR NORTH", "DEMO VENDOR SOUTH", "DEMO VENDOR EAST", "DEMO VENDOR WEST",
+    ];
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "IN_PROGRESS",
+      stage: "CREATE_GROUPS",
+      master_record_ids: [
+        ...orderIds.map((id) => ({ moduleKey: "sample-order", id })),
+        ...vendorNames.map((_, index) => ({ moduleKey: "vendor", id: `vendor-${index + 1}` })),
+        { moduleKey: "raw-material-stock", id: "stock-material-1" },
+        { moduleKey: "raw-material-stock", id: "stock-material-2" },
+      ],
+      checkpoint: {},
+    });
+    prismaMock.merchandisingOrder.findMany.mockResolvedValue(orderIds.map((id, index) => ({ id, orderNo: `ORD-${index + 1}` })));
+    prismaMock.masterVendor.findMany.mockResolvedValue(vendorNames.map((vendor, index) => ({ id: `vendor-${index + 1}`, vendor })));
+    prismaMock.masterVendor.findFirst.mockResolvedValue({ id: "current-store-vendor" });
+    prismaMock.rawMaterialStock.findMany.mockResolvedValue([
+      { id: "stock-material-1", raw_material: "material-1", quantity_on_hand: new Prisma.Decimal("4"), quantity_reserved: new Prisma.Decimal("0") },
+      { id: "stock-material-2", raw_material: "material-2", quantity_on_hand: new Prisma.Decimal("4"), quantity_reserved: new Prisma.Decimal("0") },
+    ]);
+    prismaMock.billOfMaterialItem.findMany.mockResolvedValue(Array.from({ length: 10 }, (_, index) => [
+      { id: `bom-${index + 1}-a`, order_id: orderIds[index], rawMaterialName: `material-${index + 1}`, category: "FABRIC", categoryType: "Item", subCategory: `SUB-${index + 1}`, stockUom: "MTR", requiredQty: "10", totalRequiredQty: "10" },
+      { id: `bom-${index + 1}-b`, order_id: orderIds[(index + 1) % 10], rawMaterialName: `material-${index + 1}`, category: "FABRIC", categoryType: "Item", subCategory: `SUB-${index + 1}`, stockUom: "MTR", requiredQty: "10", totalRequiredQty: "10" },
+    ]).flat());
+
+    await expect(startDummyDataWizardStep("user-id", "public-org-id", 2))
+      .resolves.toMatchObject({ groupedPurchaseOrderCount: 12, status: "AWAITING_GROUPED_APPROVAL" });
+
+    expect(stockBookingsMock).toHaveBeenCalledTimes(2);
+    expect(stockBookingsMock.mock.calls.map(([input]) => input.lines[0].bookedQuantity)).toEqual(["4", "4"]);
+    expect(stockBookingsMock.mock.calls.map(([input]) => input.sampleGroupOrdinal)).toEqual([1, 3]);
+    expect(groupedPurchaseOrderMock).toHaveBeenCalledTimes(10);
+    expect(groupedPurchaseOrderMock.mock.calls.flatMap(([input]) => input.lines)).toContainEqual({
+      bomItemId: "bom-1-a",
+      groupedQty: "6",
+    });
+    expect(groupedPurchaseOrderMock.mock.calls.flatMap(([input]) => input.lines)).toContainEqual({
+      bomItemId: "bom-2-a",
+      groupedQty: "6",
+    });
+    expect(prismaMock.organizationDummyDataBatch.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        checkpoint: expect.objectContaining({
+          completedGroupedPurchaseOrders: 12,
+          totalGroupedPurchaseOrders: 12,
+        }),
+      }),
+    }));
+  });
+
   it("assigns sample terms and approves every grouped PO in Step 3 in production", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
-    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
+    const groupedIds = Array.from({ length: 12 }, (_, index) => `group-${index + 1}`);
     prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
       id: "batch-id",
       status: "AWAITING_GROUPED_APPROVAL",
@@ -600,7 +752,10 @@ describe("organization dummy data service", () => {
     prismaMock.groupedPurchaseOrder.findMany
       .mockResolvedValueOnce(groupedIds.map((id, index) => ({
         id,
-        grouped_po_no: `GPO-batch-id-${String(index + 1).padStart(2, "0")}`,
+        grouped_po_no: index < 10
+          ? `GPO-batch-id-${String(index + 1).padStart(2, "0")}`
+          : `GPO-batch-id-S${String(index - 9).padStart(2, "0")}`,
+        source_type: index < 10 ? "VENDOR" : "STOCK",
         status: "PENDING_PRICE_APPROVAL",
         stock_uom: "MTR",
         total_grouped_qty: new Prisma.Decimal("2"),
@@ -617,12 +772,12 @@ describe("organization dummy data service", () => {
         approved: true,
         status: "IN_PROGRESS",
         stage: "CREATE_MASTER_GROUPS",
-        approvedCount: 10,
-        totalCount: 10,
+        approvedCount: 12,
+        totalCount: 12,
       });
 
-    expect(transactionMock.groupedPurchaseOrderLine.updateMany).toHaveBeenCalledTimes(10);
-    expect(transactionMock.groupedPurchaseOrder.updateMany).toHaveBeenCalledTimes(10);
+    expect(transactionMock.groupedPurchaseOrderLine.updateMany).toHaveBeenCalledTimes(12);
+    expect(transactionMock.groupedPurchaseOrder.updateMany).toHaveBeenCalledTimes(12);
     for (const [callIndex, [call]] of transactionMock.groupedPurchaseOrder.updateMany.mock.calls.entries()) {
       expect(call.where.status).toBe("PENDING_PRICE_APPROVAL");
       expect(call.data.vendor_price).toBeGreaterThanOrEqual(60);
@@ -696,12 +851,16 @@ describe("organization dummy data service", () => {
   });
 
   it("creates one master group per approved sample group and stops before PO creation", async () => {
-    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
+    const groupedIds = Array.from({ length: 12 }, (_, index) => `group-${index + 1}`);
     prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
       id: "batch-id",
       status: "AWAITING_GROUPED_APPROVAL",
       stage: "GROUPED_APPROVAL",
-      master_record_ids: groupedIds.map((id) => ({ moduleKey: "grouped-purchase-order", id })),
+      master_record_ids: groupedIds.map((id, index) => ({
+        moduleKey: "grouped-purchase-order",
+        id,
+        ...(index >= 10 ? { sourceType: "STOCK" } : { sourceType: "VENDOR" }),
+      })),
       checkpoint: {},
     });
     prismaMock.groupedPurchaseOrder.findMany.mockResolvedValue(groupedIds.map((id) => ({ id, status: "PRICE_APPROVED" })));
@@ -709,8 +868,11 @@ describe("organization dummy data service", () => {
     prismaMock.purchaseOrder.findFirst.mockResolvedValue(null);
 
     await expect(advanceOrganizationDummyData("user-id", "public-org-id", "Sample Operator"))
-      .resolves.toEqual({ advanced: true, status: "IN_PROGRESS", stage: "CREATE_MASTER_GROUPS", completedCount: 10, totalCount: 10 });
-    expect(masterPurchaseOrderMock).toHaveBeenCalledTimes(10);
+      .resolves.toEqual({ advanced: true, status: "IN_PROGRESS", stage: "CREATE_MASTER_GROUPS", completedCount: 12, totalCount: 12 });
+    expect(masterPurchaseOrderMock).toHaveBeenCalledTimes(12);
+    expect(prismaMock.organizationDummyDataBatch.update.mock.calls.some(([args]) =>
+      args.data.master_record_ids?.some((record: { sourceType?: string }) => record.sourceType === "STOCK"),
+    )).toBe(true);
     expect(generatePurchaseOrdersMock).not.toHaveBeenCalled();
     expect(submitPurchaseOrderMock).not.toHaveBeenCalled();
     expect(prismaMock.organizationDummyDataBatch.update).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -720,15 +882,23 @@ describe("organization dummy data service", () => {
   });
 
   it("creates, submits, and approves at least ten purchase orders in Step 5", async () => {
-    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
-    const masterIds = Array.from({ length: 10 }, (_, index) => `master-${index + 1}`);
+    const groupedIds = Array.from({ length: 12 }, (_, index) => `group-${index + 1}`);
+    const masterIds = Array.from({ length: 12 }, (_, index) => `master-${index + 1}`);
     prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
       id: "batch-id",
       status: "IN_PROGRESS",
       stage: "CREATE_MASTER_GROUPS",
       master_record_ids: [
-        ...groupedIds.map((id) => ({ moduleKey: "grouped-purchase-order", id })),
-        ...masterIds.map((id) => ({ moduleKey: "master-purchase-order", id })),
+        ...groupedIds.map((id, index) => ({
+          moduleKey: "grouped-purchase-order",
+          id,
+          sourceType: index < 10 ? "VENDOR" : "STOCK",
+        })),
+        ...masterIds.map((id, index) => ({
+          moduleKey: "master-purchase-order",
+          id,
+          sourceType: index < 10 ? "VENDOR" : "STOCK",
+        })),
       ],
       checkpoint: {},
     });
@@ -1059,7 +1229,7 @@ describe("organization dummy data service", () => {
 
   it("does not create a second batch when dummy data is already active", async () => {
     const currentVersion = [
-      { datasetVersion: "apparel-10-orders-2026-09" },
+      { datasetVersion: "apparel-10-orders-2026-10" },
       ...Array.from({ length: 10 }, (_, index) => ({ moduleKey: "sample-order", id: `sample-order-${index}` })),
     ];
     prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({ status: "ACTIVE", master_record_ids: currentVersion });
@@ -1222,6 +1392,8 @@ describe("organization dummy data service", () => {
         { moduleKey: "purchase-order", id: "purchase-order-demo-id" },
         { moduleKey: "gate-entry", id: "gate-entry-demo-id" },
         { moduleKey: "inventory-receipt", id: "receipt-demo-id" },
+        { moduleKey: "raw-material-stock", id: "sample-stock-demo-id" },
+        { moduleKey: "location", id: "sample-location-demo-id" },
       ],
     });
     transactionMock.groupedPurchaseOrder.findMany.mockResolvedValue([{ id: "grouped-po-demo-id" }]);
@@ -1250,8 +1422,78 @@ describe("organization dummy data service", () => {
     expect(transactionMock.inventoryReceipt.deleteMany).toHaveBeenCalledWith({
       where: { organization_id: organization.id, id: { in: ["receipt-demo-id"] } },
     });
+    expect(transactionMock.rawMaterialStock.deleteMany).toHaveBeenCalledWith({
+      where: { organization_id: organization.id, id: { in: ["sample-stock-demo-id"] } },
+    });
+    expect(transactionMock.masterLocation.deleteMany).toHaveBeenCalledWith({
+      where: { organization_id: organization.id, id: { in: ["sample-location-demo-id"] } },
+    });
+    expect(transactionMock.rawMaterialStock.deleteMany.mock.invocationCallOrder[0])
+      .toBeLessThan(transactionMock.masterRawMaterial.deleteMany.mock.invocationCallOrder[0]);
     expect(transactionMock.masterVendor.deleteMany).toHaveBeenCalledWith({
       where: { organization_id: organization.id, id: { in: ["vendor-demo-id"] } },
+    });
+  });
+
+  it("does not remove sample stock that is still referenced by a booking", async () => {
+    transactionMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "ACTIVE",
+      sample_order_id: null,
+      master_record_ids: [{ moduleKey: "raw-material-stock", id: "sample-stock-demo-id" }],
+    });
+    transactionMock.rawMaterialStockBooking.findMany.mockResolvedValue([{
+      id: "booking-id",
+      grouped_purchase_order_id: "unrelated-group",
+      take_from_stock_id: "sample-stock-demo-id",
+      booked_quantity: new Prisma.Decimal("1"),
+      fulfilled_quantity: new Prisma.Decimal("0"),
+      status: "BOOKED",
+    }]);
+
+    await expect(deleteOrganizationDummyData("user-id", "public-org-id"))
+      .rejects.toThrow("Sample stock has bookings that cannot be safely reversed. Resolve those bookings before removing sample data.");
+    expect(transactionMock.rawMaterialStock.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("releases sample stock reservations before deleting its stock groups", async () => {
+    transactionMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "ACTIVE",
+      sample_order_id: null,
+      master_record_ids: [
+        { moduleKey: "raw-material-stock", id: "sample-stock-demo-id" },
+        { moduleKey: "grouped-purchase-order", id: "sample-stock-group", sourceType: "STOCK" },
+        { moduleKey: "master-purchase-order", id: "sample-stock-master", sourceType: "STOCK" },
+      ],
+    });
+    transactionMock.groupedPurchaseOrder.findMany.mockResolvedValue([{ id: "sample-stock-group" }]);
+    transactionMock.masterPurchaseOrder.findMany.mockResolvedValue([{ id: "sample-stock-master" }]);
+    transactionMock.rawMaterialStockBooking.findMany.mockResolvedValue([{
+      id: "sample-booking",
+      grouped_purchase_order_id: "sample-stock-group",
+      take_from_stock_id: "sample-stock-demo-id",
+      booked_quantity: new Prisma.Decimal("2"),
+      fulfilled_quantity: new Prisma.Decimal("0"),
+      status: "BOOKED",
+    }]);
+
+    await expect(deleteOrganizationDummyData("user-id", "public-org-id"))
+      .resolves.toEqual({ deleted: true });
+
+    expect(transactionMock.rawMaterialStock.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "sample-stock-demo-id",
+        organization_id: organization.id,
+        quantity_reserved: { gte: new Prisma.Decimal("2") },
+      },
+      data: { quantity_reserved: { decrement: new Prisma.Decimal("2") } },
+    });
+    expect(transactionMock.rawMaterialStockBooking.deleteMany).toHaveBeenCalledWith({
+      where: { organization_id: organization.id, id: { in: ["sample-booking"] } },
+    });
+    expect(transactionMock.rawMaterialStock.deleteMany).toHaveBeenCalledWith({
+      where: { organization_id: organization.id, id: { in: ["sample-stock-demo-id"] } },
     });
   });
 

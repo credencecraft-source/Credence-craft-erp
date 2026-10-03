@@ -71,8 +71,16 @@ export async function createRawMaterialStockBookings(input: {
   organizationId: string;
   bookedBy: string;
   currentStoreVendorId: string;
+  sampleBatchId?: string;
+  sampleGroupOrdinal?: number;
   lines: StockBookingLineInput[];
 }) {
+  if (
+    (input.sampleBatchId === undefined) !== (input.sampleGroupOrdinal === undefined)
+    || (input.sampleGroupOrdinal !== undefined && (!Number.isSafeInteger(input.sampleGroupOrdinal) || input.sampleGroupOrdinal < 1))
+  ) {
+    throw new Error("Sample stock-group identifiers must include a batch and positive group number.");
+  }
   const uniqueLines = new Map(input.lines.map((line) => [line.bomItemId, line]));
   if (uniqueLines.size === 0) throw new Error("Select at least one raw-material row.");
   if (uniqueLines.size !== input.lines.length) throw new Error("A BOM row cannot be booked more than once in one submission.");
@@ -93,6 +101,56 @@ export async function createRawMaterialStockBookings(input: {
       select: { id: true },
     });
     if (!currentStoreVendor) throw new Error("Select an active Vendor Master record marked as the current store.");
+
+    if (input.sampleBatchId && input.sampleGroupOrdinal) {
+      const groupedPoNo = `GPO-${input.sampleBatchId}-S${String(input.sampleGroupOrdinal).padStart(2, "0")}`;
+      const existing = await transaction.groupedPurchaseOrder.findFirst({
+        where: { organization_id: input.organizationId, grouped_po_no: groupedPoNo },
+        select: {
+          id: true,
+          source_type: true,
+          vendor_id: true,
+          lines: { select: { source_bom_item_id: true, grouped_qty: true } },
+        },
+      });
+      if (existing) {
+        const expectedLines = [...uniqueLines].map(([bomItemId, line]) => ({
+          bomItemId,
+          quantity: quantities.get(bomItemId)!,
+          stockId: line.takeFromStockId,
+        }));
+        const bookings = await transaction.rawMaterialStockBooking.findMany({
+          where: { organization_id: input.organizationId, grouped_purchase_order_id: existing.id },
+          select: {
+            source_bom_item_id: true,
+            take_from_stock_id: true,
+            booked_quantity: true,
+            status: true,
+          },
+        });
+        const lineMatches = existing.lines.length === expectedLines.length
+          && expectedLines.every((expected) => existing.lines.some(
+            (line) => line.source_bom_item_id === expected.bomItemId
+              && new Prisma.Decimal(line.grouped_qty).eq(expected.quantity),
+          ));
+        const bookingsMatch = bookings.length === expectedLines.length
+          && expectedLines.every((expected) => bookings.some(
+            (booking) => booking.source_bom_item_id === expected.bomItemId
+              && booking.take_from_stock_id === expected.stockId
+              && booking.status === "BOOKED"
+              && new Prisma.Decimal(booking.booked_quantity).eq(expected.quantity),
+          ));
+        if (
+          existing.source_type !== "STOCK"
+          || existing.vendor_id !== currentStoreVendor.id
+          || !lineMatches
+          || !bookingsMatch
+        ) {
+          throw new Error("A sample stock-group checkpoint conflicts with existing stock bookings.");
+        }
+        return { bookedLines: bookings.length, groupedPurchaseOrderId: existing.id };
+      }
+    }
 
     const bomItems = await transaction.billOfMaterialItem.findMany({
       where: {
@@ -240,7 +298,9 @@ export async function createRawMaterialStockBookings(input: {
         entity_id: entityId,
         source_type: "STOCK",
         vendor_id: currentStoreVendor.id,
-        grouped_po_no: `GPO-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`,
+        grouped_po_no: input.sampleBatchId && input.sampleGroupOrdinal
+          ? `GPO-${input.sampleBatchId}-S${String(input.sampleGroupOrdinal).padStart(2, "0")}`
+          : `GPO-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`,
         display_no: displayNo,
         status: "PENDING_PRICE_APPROVAL",
         submitted_by: input.bookedBy,

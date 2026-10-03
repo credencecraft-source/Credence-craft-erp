@@ -11,6 +11,7 @@ import { createDummySampleGateEntries } from "@/lib/services/inventory/dummy-sam
 import { createDummySampleGrns } from "@/lib/services/inventory/dummy-sample-grn-service";
 import { verifyDummySampleGrns } from "@/lib/services/inventory/dummy-sample-verification-service";
 import { allocateDummySampleGrnsTopDown } from "@/lib/services/inventory/dummy-sample-allocation-service";
+import { createRawMaterialStockBookings } from "@/lib/services/inventory/rm-stock-booking-service";
 import { lockOrganizationOrderQuantityLimit } from "@/lib/services/platform/order-quantity-limit-service";
 import {
   getEffectiveSegmentFormRestriction,
@@ -18,8 +19,8 @@ import {
   validateRestrictedFormFields,
 } from "@/lib/services/platform/segment-form-restriction-service";
 
-type DemoMasterRecord = { moduleKey: string; id: string };
-const SAMPLE_DATASET_VERSION = "apparel-10-orders-2026-09";
+type DemoMasterRecord = { moduleKey: string; id: string; sourceType?: "STOCK" | "VENDOR" };
+const SAMPLE_DATASET_VERSION = "apparel-10-orders-2026-10";
 const MAX_DUMMY_ORDER_QTY = 4000;
 
 function normalizeDummyOrderQty(orderQty: number) {
@@ -207,8 +208,14 @@ function readMasterRecordIds(value: Prisma.JsonValue): DemoMasterRecord[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((record) => {
     if (typeof record !== "object" || record === null || Array.isArray(record)) return [];
-    const { moduleKey, id } = record;
-    return typeof moduleKey === "string" && typeof id === "string" ? [{ moduleKey, id }] : [];
+    const { moduleKey, id, sourceType } = record;
+    return typeof moduleKey === "string" && typeof id === "string"
+      ? [{
+          moduleKey,
+          id,
+          ...(sourceType === "STOCK" || sourceType === "VENDOR" ? { sourceType } : {}),
+        }]
+      : [];
   });
 }
 
@@ -425,9 +432,9 @@ export async function getOrganizationDummyDataStatus(userId: string, routeOrgani
     && orderCount === 10;
   const completedSteps = [
     ...(stepOneComplete ? [1] : []),
-    ...(groupedPurchaseOrders.length === 10 ? [2] : []),
-    ...(groupedPurchaseOrders.length === 10 && groupedPurchaseOrders.every((order) => ["PRICE_APPROVED", "MASTER_GROUPED"].includes(order.status)) ? [3] : []),
-    ...(masterGroupCount === 10 ? [4] : []),
+    ...(groupedPurchaseOrders.length >= 10 ? [2] : []),
+    ...(groupedPurchaseOrders.length >= 10 && groupedPurchaseOrders.every((order) => ["PRICE_APPROVED", "MASTER_GROUPED"].includes(order.status)) ? [3] : []),
+    ...(masterGroupCount === groupedPurchaseOrders.length && masterGroupCount >= 10 ? [4] : []),
     ...(purchaseOrdersApproved ? [5] : []),
     ...(gateEntriesComplete && sampleGrnsComplete ? [6] : []),
     ...(gateEntriesComplete && sampleGrnsComplete && sampleGrnsVerified ? [7] : []),
@@ -451,7 +458,7 @@ export async function getOrganizationDummyDataStatus(userId: string, routeOrgani
     createdAt: batch?.created_at ?? null,
     orderNo,
     orderCount,
-    masterCount: batchRecords.filter((record) => record.moduleKey !== "sample-order").length,
+    masterCount: batchRecords.filter((record) => !["sample-order", "raw-material-stock"].includes(record.moduleKey)).length,
     groupedPurchaseOrders,
     completedSteps,
     currentStep,
@@ -562,6 +569,16 @@ async function createOrganizationDummyDataForUser(
       throw new Error("Required organization master values are missing. Complete organization master setup first.");
     }
 
+    const existingCurrentStoreVendor = await transaction.masterVendor.findFirst({
+      where: { organization_id: organization.id, is_current_store: true },
+      select: { id: true, is_active: true },
+    });
+    if (existingCurrentStoreVendor && !existingCurrentStoreVendor.is_active) {
+      throw new Error("An inactive vendor is marked as the current store. Activate it before creating sample data.");
+    }
+    const sampleCurrentStoreVendor = existingCurrentStoreVendor
+      ? null
+      : `${organization.organization_name} - Current Store`;
     const metadata = { dummyDataBatchId: batch.id } satisfies Prisma.InputJsonObject;
     const [categoryConflicts, subCategoryConflicts, brandConflicts, buyerConflicts, currencyConflicts, vendorConflicts, seasonConflict, articleConflicts, colorConflicts, sizeConflicts, sizeGroupConflicts, rawCategoryConflicts, rawSubCategoryConflicts, stockUomConflicts, rawMaterialConflicts] = await Promise.all([
       transaction.masterCategory.findMany({ where: { organization_id: organization.id, category_name: { in: [...SAMPLE_VALUES.categories] } }, select: { id: true } }),
@@ -569,7 +586,13 @@ async function createOrganizationDummyDataForUser(
       transaction.masterBrand.findMany({ where: { organization_id: organization.id, brand: { in: [...SAMPLE_VALUES.brands] } }, select: { id: true } }),
       transaction.masterBuyer.findMany({ where: { organization_id: organization.id, buyer_name: { in: SAMPLE_VALUES.buyers.map((item) => item.name) } }, select: { id: true } }),
       transaction.masterCurrencyType.findMany({ where: { organization_id: organization.id, currency_type: { in: [...SAMPLE_VALUES.currencies] } }, select: { id: true } }),
-      transaction.masterVendor.findMany({ where: { organization_id: organization.id, vendor: { in: [...SAMPLE_VALUES.vendors] } }, select: { id: true } }),
+      transaction.masterVendor.findMany({
+        where: {
+          organization_id: organization.id,
+          vendor: { in: [...SAMPLE_VALUES.vendors, ...(sampleCurrentStoreVendor ? [sampleCurrentStoreVendor] : [])] },
+        },
+        select: { id: true },
+      }),
       transaction.masterSeason.findFirst({ where: { organization_id: organization.id, season: SAMPLE_VALUES.season }, select: { id: true } }),
       transaction.masterArticle.findMany({ where: { organization_id: organization.id, article: { in: [...SAMPLE_VALUES.articles] } }, select: { id: true } }),
       transaction.masterColor.findMany({ where: { organization_id: organization.id, colors: { in: [...SAMPLE_VALUES.colors] } }, select: { id: true } }),
@@ -590,6 +613,28 @@ async function createOrganizationDummyDataForUser(
 
     const createdRecords: DemoMasterRecord[] = [];
     const record = (moduleKey: string, id: string) => createdRecords.push({ moduleKey, id });
+    const activeStockLocation = await transaction.masterLocation.findFirst({
+      where: {
+        organization_id: organization.id,
+        entity_id: entity.id,
+        is_active: true,
+        entity: { is_active: true },
+      },
+      orderBy: [{ sort_order: "asc" }, { id: "asc" }],
+      select: { id: true },
+    });
+    const stockLocation = activeStockLocation ?? await transaction.masterLocation.create({
+      data: {
+        organization_id: organization.id,
+        entity_id: entity.id,
+        location_name: `Sample Data Store - ${batch.id.slice(-6)}`,
+        is_active: true,
+        sort_order: 0,
+        legacy_metadata: metadata,
+      },
+      select: { id: true },
+    });
+    if (!activeStockLocation) record("location", stockLocation.id);
     const categoryOffset = await transaction.masterCategory.count({ where: { organization_id: organization.id } });
     const categories = await transaction.masterCategory.createManyAndReturn({
       data: SAMPLE_VALUES.categories.map((categoryName, index) => ({
@@ -663,9 +708,13 @@ async function createOrganizationDummyDataForUser(
 
     const vendorOffset = await transaction.masterVendor.count({ where: { organization_id: organization.id } });
     const vendors = await transaction.masterVendor.createManyAndReturn({
-      data: SAMPLE_VALUES.vendors.map((vendor, index) => ({
+      data: [
+        ...SAMPLE_VALUES.vendors.map((vendor) => ({ vendor, is_current_store: false })),
+        ...(sampleCurrentStoreVendor ? [{ vendor: sampleCurrentStoreVendor, is_current_store: true }] : []),
+      ].map((item, index) => ({
         organization_id: organization.id,
-        vendor,
+        vendor: item.vendor,
+        is_current_store: item.is_current_store,
         is_active: true,
         sort_order: vendorOffset + index,
         legacy_metadata: metadata,
@@ -818,6 +867,27 @@ async function createOrganizationDummyDataForUser(
       select: { id: true },
     });
     rawMaterials.forEach((item) => record("raw-material", item.id));
+    const sampleStock = await transaction.rawMaterialStock.createManyAndReturn({
+      data: rawMaterials.flatMap((rawMaterial, index) => {
+        const sampleMaterial = SAMPLE_VALUES.rawMaterials[index];
+        if (sampleMaterial.category === "SERVICE") return [];
+        const quantity = sampleMaterial.uom === "MTR"
+          ? 250 + (index % 5) * 25
+          : sampleMaterial.uom === "KG"
+            ? 50 + (index % 4) * 10
+            : 500 + (index % 6) * 100;
+        return [{
+          organization_id: organization.id,
+          entity_id: entity.id,
+          location_id: stockLocation.id,
+          raw_material: sampleMaterial.name,
+          quantity_on_hand: new Prisma.Decimal(quantity),
+          source_type: "MANUAL",
+        }];
+      }),
+      select: { id: true },
+    });
+    sampleStock.forEach((item) => record("raw-material-stock", item.id));
 
     await lockOrganizationOrderQuantityLimit(transaction, organization.id);
     const sampleOrderCount = SAMPLE_VALUES.sampleOrders.length;
@@ -984,7 +1054,13 @@ async function createOrganizationDummyDataForUser(
           action: "CREATE_DUMMY_DATA_STAGE",
           entity_type: "OrganizationDummyDataBatch",
           entity_id: batch.id,
-          details: { stage: "CREATE_GROUPS", order_count: createdSampleOrders.length },
+          details: {
+            stage: "CREATE_GROUPS",
+            order_count: createdSampleOrders.length,
+            raw_material_stock_count: sampleStock.length,
+            raw_material_stock_source: "MANUAL",
+            stock_location_id: stockLocation.id,
+          },
         },
       });
       return {
@@ -1303,22 +1379,159 @@ async function createSampleGroupedPurchaseOrders(
   }
 
   const trackedRecords = [...records];
-  const groupedPurchaseOrderIds: string[] = [];
+  const groupedPurchaseOrderIds = trackedRecords
+    .filter((record) => record.moduleKey === "grouped-purchase-order")
+    .map((record) => record.id);
+  const bookedQuantityByBomId = new Map<string, Prisma.Decimal>();
+  const sampleStockIds = records
+    .filter((record) => record.moduleKey === "raw-material-stock")
+    .map((record) => record.id);
+  const sampleStocks = sampleStockIds.length === 0 ? [] : await prisma.rawMaterialStock.findMany({
+    where: { organization_id: organizationId, id: { in: sampleStockIds } },
+    select: { id: true, raw_material: true, quantity_on_hand: true, quantity_reserved: true },
+  });
+  const currentStoreVendor = await prisma.masterVendor.findFirst({
+    where: { organization_id: organizationId, is_current_store: true, is_active: true },
+    select: { id: true },
+  });
+  const remainingStockByMaterial = new Map(
+    sampleStocks.map((stock) => [
+      stock.raw_material.trim().toLowerCase(),
+      {
+        id: stock.id,
+        available: new Prisma.Decimal(stock.quantity_on_hand).minus(stock.quantity_reserved),
+        onHand: new Prisma.Decimal(stock.quantity_on_hand),
+      },
+    ]),
+  );
+  const stockCandidates = eligibleGroups.flatMap(([groupKey, rows], groupIndex) => {
+    const stock = remainingStockByMaterial.get(String(rows[0]?.rawMaterialName ?? "").trim().toLowerCase());
+    return stock && stock.onHand.gt(0)
+      ? [{ groupKey, rows, stock, groupOrdinal: groupIndex + 1 }]
+      : [];
+  }).slice(0, 2);
+  if (stockCandidates.length > 0 && !currentStoreVendor) {
+    throw new Error("Activate a vendor marked as the current store before grouping sample stock.");
+  }
+  let completedStockGroups = trackedRecords.filter(
+    (record) => record.moduleKey === "grouped-purchase-order" && record.sourceType === "STOCK",
+  ).length;
+  if (currentStoreVendor) {
+    for (const candidate of stockCandidates) {
+      const bomRow = candidate.rows.find((row) =>
+        new Prisma.Decimal(row.totalRequiredQty ?? row.requiredQty ?? 0).gt(0),
+      );
+      if (!bomRow) continue;
+      const required = new Prisma.Decimal(bomRow.totalRequiredQty ?? bomRow.requiredQty ?? 0);
+      const stockGroupNo = `GPO-${batchId}-S${String(candidate.groupOrdinal).padStart(2, "0")}`;
+      const existingStockGroup = await prisma.groupedPurchaseOrder.findFirst({
+        where: { organization_id: organizationId, grouped_po_no: stockGroupNo },
+        select: {
+          id: true,
+          vendor_id: true,
+          source_type: true,
+          lines: { select: { source_bom_item_id: true, grouped_qty: true } },
+        },
+      });
+      const existingStockLine = existingStockGroup?.lines.find((line) => line.source_bom_item_id === bomRow.id);
+      if (
+        existingStockGroup
+        && (
+          existingStockGroup.source_type !== "STOCK"
+          || existingStockGroup.vendor_id !== currentStoreVendor.id
+          || existingStockGroup.lines.length !== 1
+          || !existingStockLine
+        )
+      ) {
+        throw new Error("A sample stock-group checkpoint conflicts with an existing grouped purchase order.");
+      }
+      const quantity = existingStockLine
+        ? new Prisma.Decimal(existingStockLine.grouped_qty)
+        : candidate.stock.available.lt(required.div(2))
+          ? candidate.stock.available
+          : required.div(2);
+      if (!quantity.gt(0)) continue;
+
+      const booking = await createRawMaterialStockBookings({
+        organizationId,
+        bookedBy: userId,
+        currentStoreVendorId: currentStoreVendor.id,
+        sampleBatchId: batchId,
+        sampleGroupOrdinal: candidate.groupOrdinal,
+        lines: [{
+          bomItemId: bomRow.id,
+          takeFromStockId: candidate.stock.id,
+          bookedQuantity: quantity.toString(),
+        }],
+      });
+      bookedQuantityByBomId.set(bomRow.id, quantity);
+      if (!groupedPurchaseOrderIds.includes(booking.groupedPurchaseOrderId)) {
+        groupedPurchaseOrderIds.push(booking.groupedPurchaseOrderId);
+        completedStockGroups += 1;
+      }
+      if (!existingStockGroup) candidate.stock.available = candidate.stock.available.minus(quantity);
+      if (!trackedRecords.some((record) =>
+        record.moduleKey === "grouped-purchase-order" && record.id === booking.groupedPurchaseOrderId,
+      )) {
+        trackedRecords.push({
+          moduleKey: "grouped-purchase-order",
+          id: booking.groupedPurchaseOrderId,
+          sourceType: "STOCK",
+        });
+      } else {
+        const trackedStockGroup = trackedRecords.find((record) =>
+          record.moduleKey === "grouped-purchase-order" && record.id === booking.groupedPurchaseOrderId,
+        );
+        if (trackedStockGroup) trackedStockGroup.sourceType = "STOCK";
+      }
+      const checkpointRecords = [
+        ...trackedRecords.map((record) => ({ ...record })),
+        { datasetVersion: SAMPLE_DATASET_VERSION },
+      ] as Prisma.InputJsonArray;
+      await prisma.organizationDummyDataBatch.update({
+        where: { id: batchId, organization_id: organizationId },
+        data: {
+          status: "IN_PROGRESS",
+          stage: "CREATE_GROUPS",
+          last_error: null,
+          master_record_ids: checkpointRecords,
+          checkpoint: {
+            orderIds: sampleOrderRecords.map((order) => order.id),
+            groupedPurchaseOrderIds,
+            completedGroupedPurchaseOrders: groupedPurchaseOrderIds.length,
+            totalGroupedPurchaseOrders: 10 + stockCandidates.length,
+            nextGroupKey: candidate.groupKey,
+          },
+        },
+      });
+    }
+  }
+
   for (const [groupIndex, [groupKey, rows]] of eligibleGroups.entries()) {
     const groupedPoNo = `GPO-${batchId}-${String(groupIndex + 1).padStart(2, "0")}`;
     const vendorId = orderedVendorIds[groupIndex]!;
     const existing = await prisma.groupedPurchaseOrder.findFirst({
       where: { organization_id: organizationId, grouped_po_no: groupedPoNo },
-      select: { id: true, vendor_id: true, lines: { select: { source_bom_item_id: true } } },
+      select: { id: true, vendor_id: true, lines: { select: { source_bom_item_id: true, grouped_qty: true } } },
     });
+    const expectedQuantities = rows.map((row) => ({
+      bomItemId: row.id,
+      groupedQuantity: new Prisma.Decimal(row.totalRequiredQty ?? row.requiredQty ?? 0)
+        .minus(bookedQuantityByBomId.get(row.id) ?? 0),
+    }));
+    if (expectedQuantities.some((line) => !line.groupedQuantity.gt(0))) {
+      throw new Error("Sample stock allocations must leave a positive quantity for each vendor group.");
+    }
 
     let groupedPurchaseOrderId: string;
     if (existing) {
-      const expectedBomIds = new Set(rows.map((row) => row.id));
       if (
         existing.vendor_id !== vendorId
-        || existing.lines.length !== expectedBomIds.size
-        || existing.lines.some((line) => !expectedBomIds.has(line.source_bom_item_id))
+        || existing.lines.length !== expectedQuantities.length
+        || expectedQuantities.some((expected) => !existing.lines.some(
+          (line) => line.source_bom_item_id === expected.bomItemId
+            && new Prisma.Decimal(line.grouped_qty).eq(expected.groupedQuantity),
+        ))
       ) {
         throw new Error("A sample procurement checkpoint conflicts with an existing grouped purchase order.");
       }
@@ -1331,15 +1544,15 @@ async function createSampleGroupedPurchaseOrders(
         submittedByUserId: userId,
         sampleBatchId: batchId,
         sampleGroupOrdinal: groupIndex + 1,
-        lines: rows.map((row) => ({
-          bomItemId: row.id,
-          groupedQty: String(row.totalRequiredQty ?? row.requiredQty ?? 0),
+        lines: expectedQuantities.map((line) => ({
+          bomItemId: line.bomItemId,
+          groupedQty: line.groupedQuantity.toString(),
         })),
       });
       groupedPurchaseOrderId = groupedPurchaseOrder.id;
     }
 
-    groupedPurchaseOrderIds.push(groupedPurchaseOrderId);
+    if (!groupedPurchaseOrderIds.includes(groupedPurchaseOrderId)) groupedPurchaseOrderIds.push(groupedPurchaseOrderId);
     if (!trackedRecords.some((record) => record.moduleKey === "grouped-purchase-order" && record.id === groupedPurchaseOrderId)) {
       trackedRecords.push({ moduleKey: "grouped-purchase-order", id: groupedPurchaseOrderId });
     }
@@ -1358,7 +1571,7 @@ async function createSampleGroupedPurchaseOrders(
           orderIds: sampleOrderRecords.map((order) => order.id),
           groupedPurchaseOrderIds,
           completedGroupedPurchaseOrders: groupedPurchaseOrderIds.length,
-          totalGroupedPurchaseOrders: 10,
+          totalGroupedPurchaseOrders: 10 + completedStockGroups,
           nextGroupKey: groupKey,
         },
       },
@@ -1374,7 +1587,7 @@ async function createSampleGroupedPurchaseOrders(
         orderIds: sampleOrderRecords.map((order) => order.id),
         groupedPurchaseOrderIds,
         completedGroupedPurchaseOrders: groupedPurchaseOrderIds.length,
-        totalGroupedPurchaseOrders: 10,
+        totalGroupedPurchaseOrders: groupedPurchaseOrderIds.length,
       },
       last_error: null,
     },
@@ -1519,7 +1732,7 @@ export async function startDummyDataWizardStep(
   const groupedPurchaseOrderIds = records
     .filter((record) => record.moduleKey === "grouped-purchase-order")
     .map((record) => record.id);
-  if (groupedPurchaseOrderIds.length !== 10) throw new Error("Ten batch-owned grouped purchase orders are required.");
+  if (groupedPurchaseOrderIds.length < 10) throw new Error("Ten batch-owned grouped purchase orders are required.");
 
   if (step === 3) {
     if (batch.stage !== "GROUPED_APPROVAL" || batch.status !== "AWAITING_GROUPED_APPROVAL") {
@@ -1532,7 +1745,7 @@ export async function startDummyDataWizardStep(
     where: { id: { in: groupedPurchaseOrderIds }, organization_id: organization.id },
     select: { id: true, status: true },
   });
-  if (groups.length !== 10 || groups.some((group) => !["PRICE_APPROVED", "MASTER_GROUPED"].includes(group.status))) {
+  if (groups.length !== groupedPurchaseOrderIds.length || groups.some((group) => !["PRICE_APPROVED", "MASTER_GROUPED"].includes(group.status))) {
     throw new Error("Approve the sample grouped purchase orders before continuing.");
   }
 
@@ -1541,7 +1754,7 @@ export async function startDummyDataWizardStep(
   }
 
   const masterPurchaseOrderIds = records
-    .filter((record) => record.moduleKey === "master-purchase-order")
+    .filter((record) => record.moduleKey === "master-purchase-order" && record.sourceType !== "STOCK")
     .map((record) => record.id);
   if (masterPurchaseOrderIds.length !== 10) throw new Error("Create all ten sample master groups before generating purchase orders.");
   if (step === 5) {
@@ -1728,13 +1941,19 @@ async function prepareSampleGroupedPurchaseOrderPrices(
     select: {
       id: true,
       grouped_po_no: true,
+      source_type: true,
       status: true,
       stock_uom: true,
       total_grouped_qty: true,
       lines: { select: { id: true, grouped_qty: true } },
     },
   });
-  if (orders.length !== 10) throw new Error("The sample grouped purchase order records could not be loaded.");
+  if (orders.length !== groupedPurchaseOrderIds.length || orders.length < 10) {
+    throw new Error("The sample grouped purchase order records could not be loaded.");
+  }
+  if (orders.filter((order) => order.source_type === "VENDOR").length !== 10) {
+    throw new Error("Ten vendor-source sample grouped purchase orders are required.");
+  }
   const stockUomConversions = await prisma.masterStockUomConvert.findMany({
     where: {
       organization_id: organizationId,
@@ -1757,10 +1976,16 @@ async function prepareSampleGroupedPurchaseOrderPrices(
     if (!["PENDING_PRICE_APPROVAL", "PRICE_APPROVED"].includes(order.status)) {
       throw new Error("A sample grouped purchase order is no longer available for pricing.");
     }
+    const suffix = order.grouped_po_no.slice(groupedNoPrefix.length);
+    if (
+      (order.source_type === "STOCK" && !/^S\d{2}$/.test(suffix))
+      || (order.source_type === "VENDOR" && (!/^\d{2}$/.test(suffix) || Number(suffix) < 1 || Number(suffix) > 10))
+      || !["STOCK", "VENDOR"].includes(order.source_type)
+    ) {
+      throw new Error("A sample grouped purchase order has an invalid batch number or source.");
+    }
     if (order.status === "PRICE_APPROVED") continue;
     if (order.lines.length === 0) throw new Error("A sample grouped purchase order has no lines to price.");
-    const ordinal = Number(order.grouped_po_no.slice(groupedNoPrefix.length));
-    if (!Number.isInteger(ordinal) || ordinal < 1 || ordinal > 10) throw new Error("A sample grouped purchase order has an invalid batch number.");
     const sampleSeed = createHash("sha256").update(`${batchId}:${order.id}`).digest();
     const vendorPrice = 60 + (sampleSeed.readUInt16BE(0) % 141);
     const gst = [5, 12, 18][sampleSeed.readUInt16BE(2) % 3];
@@ -1866,8 +2091,8 @@ async function prepareSampleGroupedPurchaseOrderPrices(
     approved: true,
     status: "IN_PROGRESS",
     stage: "CREATE_MASTER_GROUPS",
-    approvedCount: 10,
-    totalCount: 10,
+    approvedCount: orders.length,
+    totalCount: orders.length,
   };
 }
 
@@ -1936,6 +2161,7 @@ async function createSampleMasterGroups(
   groupedPurchaseOrderIds: string[],
 ) {
   const masterPurchaseOrderIds: string[] = [];
+  const totalMasterGroups = groupedPurchaseOrderIds.length;
   for (const groupedPurchaseOrderId of groupedPurchaseOrderIds) {
     const existingMaster = await prisma.masterPurchaseOrder.findFirst({
       where: {
@@ -1948,14 +2174,17 @@ async function createSampleMasterGroups(
       ? existingMaster
       : await createMasterPurchaseOrder(organizationId, [groupedPurchaseOrderId], requestedBy);
     masterPurchaseOrderIds.push(master.id);
+    const sourceType = records.find((record) =>
+      record.moduleKey === "grouped-purchase-order" && record.id === groupedPurchaseOrderId,
+    )?.sourceType ?? "VENDOR";
     if (!records.some((record) => record.moduleKey === "master-purchase-order" && record.id === master.id)) {
-      records.push({ moduleKey: "master-purchase-order", id: master.id });
+      records.push({ moduleKey: "master-purchase-order", id: master.id, sourceType });
     }
     await checkpointDummyDataRecords(organizationId, batchId, records, "CREATE_MASTER_GROUPS", {
       groupedPurchaseOrderIds,
       masterPurchaseOrderIds,
       completedMasterGroups: masterPurchaseOrderIds.length,
-      totalMasterGroups: 10,
+      totalMasterGroups,
     });
   }
   await prisma.organizationDummyDataBatch.update({
@@ -1973,7 +2202,13 @@ async function createSampleMasterGroups(
       details: { stage: "CREATE_MASTER_GROUPS", master_purchase_order_count: masterPurchaseOrderIds.length },
     },
   }).then(() => undefined));
-  return { advanced: true, status: "IN_PROGRESS", stage: "CREATE_MASTER_GROUPS", completedCount: 10, totalCount: 10 };
+  return {
+    advanced: true,
+    status: "IN_PROGRESS",
+    stage: "CREATE_MASTER_GROUPS",
+    completedCount: totalMasterGroups,
+    totalCount: totalMasterGroups,
+  };
 }
 
 async function createSamplePurchaseOrders(
@@ -1985,7 +2220,7 @@ async function createSamplePurchaseOrders(
   groupedPurchaseOrderIds: string[],
   masterPurchaseOrderIds: string[],
 ) {
-  if (masterPurchaseOrderIds.length < 10) {
+  if (masterPurchaseOrderIds.length !== 10) {
     throw new Error("At least ten sample master groups are required to create Purchase Orders.");
   }
   const purchaseOrderIds: string[] = [];
@@ -2079,21 +2314,28 @@ export async function advanceOrganizationDummyData(
       select: { id: true, status: true },
     });
     const approvedCount = groups.filter((group) => group.status === "PRICE_APPROVED" || group.status === "MASTER_GROUPED").length;
-    if (groups.length !== 10 || approvedCount !== 10) {
+    if (groups.length !== groupedPurchaseOrderIds.length || approvedCount !== groupedPurchaseOrderIds.length) {
       return {
         advanced: false,
         status: batch.status,
         stage: batch.stage,
         completedCount: approvedCount,
-        totalCount: 10,
+        totalCount: groupedPurchaseOrderIds.length,
       };
     }
     return startDummyDataWizardStep(userId, routeOrganizationId, 4, requestedBy);
   }
 
   if (batch.stage === "CREATE_MASTER_GROUPS" && batch.status === "IN_PROGRESS") {
-    const masterGroupCount = records.filter((record) => record.moduleKey === "master-purchase-order").length;
-    return startDummyDataWizardStep(userId, routeOrganizationId, masterGroupCount === 10 ? 5 : 4, requestedBy);
+    const groupedPurchaseOrderCount = records.filter((record) => record.moduleKey === "grouped-purchase-order").length;
+    const masterRecords = records.filter((record) => record.moduleKey === "master-purchase-order");
+    const vendorMasterGroupCount = masterRecords.filter((record) => record.sourceType !== "STOCK").length;
+    return startDummyDataWizardStep(
+      userId,
+      routeOrganizationId,
+      masterRecords.length === groupedPurchaseOrderCount && vendorMasterGroupCount === 10 ? 5 : 4,
+      requestedBy,
+    );
   }
 
   if (batch.stage === "SUBMIT_PURCHASE_ORDERS" && batch.status === "IN_PROGRESS") {
@@ -2208,6 +2450,16 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
     const categoryIds = ids("category");
     const sizeGroupIds = ids("size-group");
 
+    const sampleOrderIds = [...new Set([
+      ...ids("sample-order"),
+      ...(batch.sample_order_id ? [batch.sample_order_id] : []),
+    ])];
+    const sampleStockIds = ids("raw-material-stock");
+    const trackedSampleStockGroupIds = createdRecords
+      .filter((record) => record.moduleKey === "grouped-purchase-order" && record.sourceType === "STOCK")
+      .map((record) => record.id);
+    let sampleGroupedPurchaseOrderIds = ids("grouped-purchase-order");
+    let sampleMasterPurchaseOrderIds = ids("master-purchase-order");
     const claimed = await transaction.organizationDummyDataBatch.updateMany({
       where: { id: batch.id, organization_id: organization.id, status: batch.status },
       data: { status: "DELETING" },
@@ -2215,13 +2467,7 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
     if (claimed.count !== 1) {
       throw new Error("Dummy-data cleanup has already started. Refresh the page and try again.");
     }
-    const sampleOrderIds = [...new Set([
-      ...ids("sample-order"),
-      ...(batch.sample_order_id ? [batch.sample_order_id] : []),
-    ])];
     const sampleVendorIds = ids("vendor");
-    let sampleGroupedPurchaseOrderIds = ids("grouped-purchase-order");
-    let sampleMasterPurchaseOrderIds = ids("master-purchase-order");
     if (sampleOrderIds.length > 0) {
       const sampleWorkOrderWhere = {
         workOrder: {
@@ -2247,12 +2493,73 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
           ...(sampleVendorIds.length > 0 ? [{ vendor_id: { in: sampleVendorIds } }] : []),
         ],
       },
-      select: { id: true },
+      select: { id: true, grouped_po_no: true, source_type: true },
     });
     sampleGroupedPurchaseOrderIds = [...new Set([
       ...sampleGroupedPurchaseOrderIds,
       ...linkedGroupedPurchaseOrders.map((order) => order.id),
     ])];
+    const sampleStockGroupIdSet = new Set([
+      ...trackedSampleStockGroupIds,
+      ...linkedGroupedPurchaseOrders
+        .filter((order) =>
+          order.source_type === "STOCK"
+          && order.grouped_po_no?.startsWith(`GPO-${batch.id}-`)
+          && /^S\d{2}$/.test(order.grouped_po_no.slice(`GPO-${batch.id}-`.length)),
+        )
+        .map((order) => order.id),
+    ]);
+    const bookingScope = [
+      ...(sampleStockIds.length > 0 ? [{ take_from_stock_id: { in: sampleStockIds } }] : []),
+      ...(sampleGroupedPurchaseOrderIds.length > 0
+        ? [{ grouped_purchase_order_id: { in: sampleGroupedPurchaseOrderIds } }]
+        : []),
+    ];
+    const stockBookings = bookingScope.length === 0 ? [] : await transaction.rawMaterialStockBooking.findMany({
+      where: { organization_id: organization.id, OR: bookingScope },
+      select: {
+        id: true,
+        grouped_purchase_order_id: true,
+        take_from_stock_id: true,
+        booked_quantity: true,
+        fulfilled_quantity: true,
+        status: true,
+      },
+    });
+    const sampleStockIdSet = new Set(sampleStockIds);
+    if (stockBookings.some((booking) =>
+      !sampleStockIdSet.has(booking.take_from_stock_id)
+      || !booking.grouped_purchase_order_id
+      || !sampleStockGroupIdSet.has(booking.grouped_purchase_order_id)
+      || booking.status !== "BOOKED"
+      || !new Prisma.Decimal(booking.fulfilled_quantity).eq(0),
+    )) {
+      throw new Error("Sample stock has bookings that cannot be safely reversed. Resolve those bookings before removing sample data.");
+    }
+    if (stockBookings.length > 0) {
+      const reservedByStockId = new Map<string, Prisma.Decimal>();
+      for (const booking of stockBookings) {
+        reservedByStockId.set(
+          booking.take_from_stock_id,
+          (reservedByStockId.get(booking.take_from_stock_id) ?? new Prisma.Decimal(0))
+            .plus(booking.booked_quantity),
+        );
+      }
+      for (const [stockId, quantity] of reservedByStockId) {
+        const updated = await transaction.rawMaterialStock.updateMany({
+          where: {
+            id: stockId,
+            organization_id: organization.id,
+            quantity_reserved: { gte: quantity },
+          },
+          data: { quantity_reserved: { decrement: quantity } },
+        });
+        if (updated.count !== 1) throw new Error("A sample stock reservation changed before cleanup could release it.");
+      }
+      await transaction.rawMaterialStockBooking.deleteMany({
+        where: { organization_id: organization.id, id: { in: stockBookings.map((booking) => booking.id) } },
+      });
+    }
     await transaction.gateEntry.deleteMany({
       where: {
         organization_id: organization.id,
@@ -2324,6 +2631,12 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
         where: { id: { in: sampleOrderIds }, organization_id: organization.id },
       });
     }
+    await transaction.rawMaterialStock.deleteMany({
+      where: { organization_id: organization.id, id: { in: sampleStockIds } },
+    });
+    await transaction.masterLocation.deleteMany({
+      where: { organization_id: organization.id, id: { in: ids("location") } },
+    });
     await transaction.masterRawMaterial.deleteMany({ where: { organization_id: organization.id, id: { in: ids("raw-material") } } });
     await transaction.masterRawMaterialSubCategory.deleteMany({ where: { organization_id: organization.id, id: { in: ids("raw-material-sub-category") } } });
     await transaction.masterRawMaterialCategory.deleteMany({ where: { organization_id: organization.id, id: { in: ids("raw-material-category") } } });
