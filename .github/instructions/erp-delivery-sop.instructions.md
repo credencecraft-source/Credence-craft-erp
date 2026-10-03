@@ -27,25 +27,32 @@ applyTo: "**/*.{ts,tsx,prisma,sql,css,md}"
 - Use explicit lifecycle transitions, database constraints, atomic counters, Decimal arithmetic, and safe audit events.
 - Reuse shared UI and reporting primitives. Include loading, error, empty, disabled, and confirmation states.
 
-## 4. Validate Immediately
+## 4. Validate The Changed Slice Immediately
 
 - After the first substantive edit, run the narrowest executable check available for the touched slice.
 - If it fails, repair that same slice and rerun the same check before expanding scope.
 - For APIs, test unauthenticated, wrong-workspace, non-member, insufficient-role, cross-tenant-ID, invalid-input, duplicate-request, and happy-path cases.
 - For documents and inventory, test legal and illegal lifecycle transitions, quantity overages, duplicate posting, concurrent writes where relevant, and reversal behavior.
+- Do not defer checks needed to establish the changed slice's security, tenant isolation, authorization, lifecycle, financial, stock, counter, or data-integrity behavior. Run the focused checks relevant to the change before handoff.
+- For Prisma changes, perform the required schema/client workflow and disposable-database migration verification before handoff when the environment permits. Never use a production database for validation; explicitly report any unavailable verification.
 
-## 5. Release Gate
+## 5. User-Test Handoff And Confirmation Gate
 
-- Run `npm run lint`, `npm run typecheck`, and `npm run build` for focused iteration as appropriate.
-- Run `npm run qa` before completion; it also runs the production dependency audit.
-- For Prisma changes, run `prisma generate`, validate the migration on a disposable database, and inspect the generated SQL and indexes.
-- Before serving code that uses changed schema, apply and verify the migration in that environment. Use `npm run db:migrate:status` as a read-only check and `npm run db:migrate:deploy` only as an explicit release operation after verifying the target from redacted metadata.
+- After the focused checks pass, stop before running repository-wide QA. Give the user a concise summary of the change, the checks actually run, and practical manual test steps for the changed behavior.
+- State clearly that full QA and release readiness are pending. Ask the user to test/review the slice and explicitly confirm before continuing; do not infer confirmation from silence or from a request to implement the change.
+- If the user reports a problem, fix the focused slice and rerun its targeted checks, then hand it back for another user test. Do not start full QA until the user confirms the behavior is acceptable.
+- If a manual test is not practical or relevant, say why and ask the user to confirm review of the focused result before continuing.
+
+## 6. Full QA After User Confirmation
+
+- Only after explicit user confirmation, run the broader validation appropriate to the change, then run `npm run qa` before declaring the change complete. The quality gate includes production dependency audit, ESLint, strict TypeScript, and production build.
+- For Prisma changes, run `prisma generate`, inspect the generated SQL and indexes, and verify the migration against a disposable database. Before serving code that uses changed schema, apply and verify the migration in that environment. Use `npm run db:migrate:status` as a read-only check and `npm run db:migrate:deploy` only as an explicit release operation after verifying the target from redacted metadata.
 - Standard dev/start scripts must perform a read-only migration-status preflight and fail fast on pending migrations; they must not auto-apply migrations. Deployment pipelines apply migrations before the new code is served, not from request handlers or independently in each replica.
 - Never catch Prisma missing-table/missing-column errors and return empty data or success. Treat schema drift as a deployment/readiness failure with an actionable message.
 - Review the final diff for accidental scope expansion, secret exposure, missing tenant filters, unsafe deletes, inconsistent UI, and missing tests.
-- Do not claim test coverage when no test runner is configured; distinguish executable checks from manual smoke checks and unverified workflows.
+- Run relevant regression tests with the configured test runner; distinguish automated tests from manual smoke checks and unverified workflows.
 - Push only when explicitly requested and only to a confirmed test branch and remote. Never push directly to production, force-push, rewrite history, or include unrelated changes.
 
-## 6. Completion Record
+## 7. Completion Record
 
-Report the implemented behavior, files changed, validation commands and outcomes, migration/deployment notes, and any remaining warnings or unverified workflows. Never claim A-grade readiness while a critical security issue, failing quality gate, unresolved migration risk, or material test gap remains.
+Before user confirmation, report the implemented behavior, files changed, focused validation commands and outcomes, manual test steps, and clearly identify full QA as pending. After confirmation and full QA, report all validation commands and outcomes, migration/deployment notes, and remaining warnings or unverified workflows. Never claim release readiness while a critical security issue, failing quality gate, unresolved migration risk, or material test gap remains.
