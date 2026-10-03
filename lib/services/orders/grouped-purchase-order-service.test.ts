@@ -5,11 +5,13 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   bomFindMany: vi.fn(),
   groupedPurchaseOrderFindFirst: vi.fn(),
+  groupedPurchaseOrderUpdate: vi.fn(),
   groupedPurchaseOrderCount: vi.fn(),
   groupedLineGroupBy: vi.fn(),
   bookingGroupBy: vi.fn(),
   createAuditEvent: vi.fn(),
   transactionClient: {
+    masterVendor: { findFirst: vi.fn() },
     groupedPurchaseOrder: { findFirst: vi.fn(), update: vi.fn(), deleteMany: vi.fn() },
     rawMaterialStockBooking: { findMany: vi.fn(), groupBy: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
     rawMaterialStock: { updateMany: vi.fn() },
@@ -20,14 +22,14 @@ vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
     $transaction: mocks.transaction,
     billOfMaterialItem: { findMany: mocks.bomFindMany },
-    groupedPurchaseOrder: { findFirst: mocks.groupedPurchaseOrderFindFirst, count: mocks.groupedPurchaseOrderCount },
+    groupedPurchaseOrder: { findFirst: mocks.groupedPurchaseOrderFindFirst, count: mocks.groupedPurchaseOrderCount, update: mocks.groupedPurchaseOrderUpdate },
     groupedPurchaseOrderLine: { groupBy: mocks.groupedLineGroupBy },
     rawMaterialStockBooking: { groupBy: mocks.bookingGroupBy },
   },
 }));
 vi.mock("@/lib/services/organizations/audit-event-service", () => ({ createAuditEvent: mocks.createAuditEvent }));
 
-import { deleteGroupedPurchaseOrder, getGroupedPurchaseOrder, getProcurementSummary, listAllocatableBomRows, listAllocatableBomRowsPage, rejectGroupedPurchaseOrder } from "./grouped-purchase-order-service";
+import { approveGroupedPurchaseOrder, createGroupedPurchaseOrder, deleteGroupedPurchaseOrder, getGroupedPurchaseOrder, getProcurementSummary, listAllocatableBomRows, listAllocatableBomRowsPage, rejectGroupedPurchaseOrder } from "./grouped-purchase-order-service";
 
 describe("stock-origin grouped price approval", () => {
   beforeEach(() => {
@@ -45,6 +47,29 @@ describe("stock-origin grouped price approval", () => {
     mocks.transactionClient.rawMaterialStockBooking.findMany.mockResolvedValue([]);
     mocks.transactionClient.rawMaterialStockBooking.deleteMany.mockResolvedValue({ count: 0 });
     mocks.createAuditEvent.mockResolvedValue({});
+  });
+
+  it("extends the transaction only for sample-batch grouped POs", async () => {
+    mocks.transactionClient.masterVendor.findFirst.mockResolvedValue(null);
+    const input = {
+      organizationId: "org-1",
+      vendorId: "vendor-1",
+      lines: [{ bomItemId: "bom-1", groupedQty: 1 }],
+    };
+
+    await expect(createGroupedPurchaseOrder({ ...input, sampleBatchId: "batch-1", sampleGroupOrdinal: 1 }))
+      .rejects.toThrow("The selected vendor was not found in this organization.");
+    await expect(createGroupedPurchaseOrder(input))
+      .rejects.toThrow("The selected vendor was not found in this organization.");
+
+    expect(mocks.transaction).toHaveBeenNthCalledWith(1, expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 15_000,
+      timeout: 30_000,
+    });
+    expect(mocks.transaction).toHaveBeenNthCalledWith(2, expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    });
   });
 
   it("releases and unlinks stock reservations before deleting an approved price record", async () => {
@@ -111,6 +136,50 @@ describe("stock-origin grouped price approval", () => {
     expect(mocks.transactionClient.rawMaterialStockBooking.deleteMany).not.toHaveBeenCalled();
     expect(mocks.transactionClient.groupedPurchaseOrder.deleteMany).not.toHaveBeenCalled();
     expect(mocks.createAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("allows the submitting actor to approve grouped-PO pricing", async () => {
+    mocks.groupedPurchaseOrderFindFirst.mockResolvedValue({
+      id: "group-1",
+      submitted_by: "Requester",
+      submitted_by_user_id: "requester-id",
+      lines: [{ id: "line-1", vendor_price: new Prisma.Decimal("12") }],
+    });
+    mocks.groupedPurchaseOrderUpdate.mockResolvedValue({
+      id: "group-1",
+      entity_id: null,
+      entity: null,
+      source_type: "PURCHASE",
+      grouped_po_no: "GPO-1",
+      display_no: null,
+      status: "PRICE_APPROVED",
+      submitted_at: new Date(),
+      approved_by: "Requester",
+      approved_at: new Date(),
+      rejection_reason: null,
+      vendor: {
+        id: "vendor-1",
+        vendor: "Vendor",
+        gst_number: null,
+        registered_state: null,
+        registeredState: null,
+      },
+      lines: [],
+    });
+
+    await expect(approveGroupedPurchaseOrder("org-1", "group-1", "Requester", "requester-id"))
+      .resolves.toMatchObject({ status: "PRICE_APPROVED" });
+    expect(mocks.groupedPurchaseOrderFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "group-1", organization_id: "org-1", status: "PENDING_PRICE_APPROVAL" },
+    }));
+    expect(mocks.groupedPurchaseOrderUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "group-1" },
+      data: expect.objectContaining({
+        status: "PRICE_APPROVED",
+        approved_by: "Requester",
+        approved_by_user_id: "requester-id",
+      }),
+    }));
   });
 
   it("blocks deletion after stock is master grouped", async () => {

@@ -59,7 +59,10 @@ export async function getRmGrnOrderAllocationLines(organizationId: string, alloc
       groupedPurchaseOrder: {
         select: {
           organization_id: true,
-          lines: { select: { id: true, order_no: true, style_name: true, grouped_qty: true } },
+          lines: {
+            orderBy: [{ created_at: "asc" }, { id: "asc" }],
+            select: { id: true, order_no: true, style_name: true, grouped_qty: true },
+          },
         },
       },
       orderAllocations: {
@@ -140,7 +143,10 @@ export async function saveRmGrnOrderAllocations(
         groupedPurchaseOrder: {
           select: {
             organization_id: true,
-            lines: { select: { id: true, grouped_qty: true } },
+            lines: {
+              orderBy: [{ created_at: "asc" }, { id: "asc" }],
+              select: { id: true, grouped_qty: true },
+            },
           },
         },
         orderAllocations: {

@@ -23,6 +23,8 @@ import {
   X,
   ChevronDown,
   ChevronRight,
+  CheckCircle2,
+  LoaderCircle,
 } from "lucide-react";
 
 import { ERP_MODULES, getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
@@ -68,9 +70,35 @@ type MasterModuleWrapperProps = {
   trialEnabled: boolean;
   trialStartedAt: string | null;
   trialEndsAt: string | null;
-  createDummyData: () => Promise<{ created: boolean; orderNo: string | null; orderCount: number; error?: string }>;
+  startDummyDataWizardStep: (step: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) => Promise<{ status?: string; stage?: string; error?: string }>;
   deleteDummyData: () => Promise<{ deleted: boolean; error?: string }>;
-  dummyDataStatus: { status: string; orderNo: string | null; orderCount?: number; masterCount: number };
+  dummyDataStatus: {
+    status: string;
+    stage?: string;
+    orderNo: string | null;
+    orderCount?: number;
+    masterCount: number;
+    currentStep?: number | null;
+    completedSteps?: number[];
+    groupedPurchaseOrders?: Array<{
+      id: string;
+      grouped_po_no: string;
+      status: string;
+      vendor_price: number | string | null;
+      gst: number | string | null;
+      hsn_code: string | null;
+      buying_uom: string | null;
+    }>;
+    sampleTermsPrepared?: boolean;
+    masterGroupCount?: number;
+    purchaseOrderCount?: number;
+    gateEntryCount?: number;
+    grnCount?: number;
+    verificationLineCount?: number;
+    verifiedLineCount?: number;
+    verificationAllocationCount?: number;
+    completedOrderAllocationCount?: number;
+  };
   value?: string;
   moduleLabel?: string;
   title?: string;
@@ -89,7 +117,7 @@ export function MasterModuleWrapper({
   trialEnabled,
   trialStartedAt,
   trialEndsAt,
-  createDummyData,
+  startDummyDataWizardStep,
   deleteDummyData,
   dummyDataStatus = { status: "UNAVAILABLE", orderNo: null, masterCount: 0 },
   children,
@@ -201,26 +229,27 @@ export function MasterModuleWrapper({
   const [moduleSettingsOpen, setModuleSettingsOpen] = useState(false);
   const [pricingDialogOpen, setPricingDialogOpen] = useState(false);
   const [dummyDataHelpOpen, setDummyDataHelpOpen] = useState(false);
+  const [dummyDataTab, setDummyDataTab] = useState<"create" | "delete">("create");
   const [dummyDataStateOverride, setDummyDataStateOverride] = useState<boolean | null>(null);
   const [dummyDataDeleteError, setDummyDataDeleteError] = useState("");
   const [dummyDataDeleteNotice, setDummyDataDeleteNotice] = useState("");
   const [isUpdatingDummyData, startUpdatingDummyData] = useTransition();
-  const dummyDataActive = dummyDataStateOverride ?? dummyDataStatus.status === "ACTIVE";
+  const dummyDataActive = dummyDataStateOverride ?? !["EMPTY", "SCHEMA_NOT_READY", "UNAVAILABLE"].includes(dummyDataStatus.status);
   const dummyDataAvailable = !["SCHEMA_NOT_READY", "UNAVAILABLE"].includes(dummyDataStatus.status);
+  const completedSteps = new Set(dummyDataStatus.completedSteps ?? []);
+  const currentStep = dummyDataStatus.currentStep ?? (dummyDataStatus.status === "EMPTY" ? 1 : null);
+  const sampleGroups = dummyDataStatus.groupedPurchaseOrders ?? [];
 
-  function handleCreateDummyData() {
+  function handleStartDummyDataStep(step: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) {
     setDummyDataDeleteError("");
     setDummyDataDeleteNotice("");
     startUpdatingDummyData(async () => {
-      const result = await createDummyData();
+      const result = await startDummyDataWizardStep(step);
       if (result.error) {
         setDummyDataDeleteError(result.error);
         return;
       }
-      setDummyDataStateOverride(true);
-      setDummyDataDeleteNotice(result.created
-        ? `Created ${result.orderCount} sample orders${result.orderNo ? `, starting with ${result.orderNo}` : ""}.`
-        : "Sample data already exists for this organization.");
+      setDummyDataDeleteNotice(`Step ${step} completed.`);
       router.refresh();
     });
   }
@@ -483,10 +512,13 @@ export function MasterModuleWrapper({
               aria-label="Manage sample data"
               aria-haspopup="dialog"
               title="Manage sample data"
-              onClick={() => setDummyDataHelpOpen(true)}
-              className="h-9 w-9 rounded-md border border-red-200 bg-red-50 p-0 text-red-700 hover:border-red-300 hover:bg-red-100 hover:text-red-800 focus-visible:ring-red-500"
+              onClick={() => {
+                setDummyDataTab("create");
+                setDummyDataHelpOpen(true);
+              }}
+              className="h-9 w-9 rounded-md border border-emerald-200 bg-emerald-50 p-0 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-800 focus-visible:ring-emerald-500"
             >
-              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              <Sparkles className="h-4 w-4" aria-hidden="true" />
             </Button>
             <SupportTicketTrigger organizationId={organizationId} />
             <Button
@@ -649,17 +681,18 @@ export function MasterModuleWrapper({
         }}
         ariaLabelledBy="dummy-data-help-title"
         ariaDescribedBy="dummy-data-help-description"
-        size="md"
+        size="lg"
+        className="max-h-[88vh]"
       >
-        <div className="border-b border-emerald-100 bg-emerald-50/70 px-5 py-4">
+        <div className="border-b border-slate-200 bg-white px-5 py-4">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-emerald-200 bg-white text-emerald-700">
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700">
                 <Sparkles className="h-5 w-5" aria-hidden="true" />
               </span>
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">Sample data</p>
-                <h2 id="dummy-data-help-title" className="mt-1 text-base font-semibold text-slate-950">Sample data actions</h2>
+                <p className="text-xs font-semibold text-emerald-700">Organization setup</p>
+                <h2 id="dummy-data-help-title" className="mt-0.5 text-lg font-semibold text-slate-950">Sample data</h2>
               </div>
             </div>
             <Button
@@ -674,60 +707,179 @@ export function MasterModuleWrapper({
             </Button>
           </div>
         </div>
-        <div className="space-y-5 p-5">
-          <p id="dummy-data-help-description" className="text-sm leading-6 text-slate-600">
-            Create sample orders and masters or remove the existing sample dataset. Organization-owned values are preserved.
-          </p>
-          <div className="flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">
+        <div className="max-h-[calc(88vh-5rem)] space-y-5 overflow-y-auto p-5">
+          <div role="tablist" aria-label="Sample data actions" className="grid grid-cols-2 rounded-md border border-slate-200 bg-slate-50 p-1">
             <Button
               type="button"
-              variant="secondary"
-              onClick={() => setDummyDataHelpOpen(false)}
+              variant="ghost"
+              size="md"
+              role="tab"
+              id="dummy-data-create-tab"
+              aria-selected={dummyDataTab === "create"}
+              aria-controls="dummy-data-create-panel"
+              tabIndex={dummyDataTab === "create" ? 0 : -1}
+              onClick={() => setDummyDataTab("create")}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+                event.preventDefault();
+                setDummyDataTab("delete");
+                document.getElementById("dummy-data-delete-tab")?.focus();
+              }}
+              className={`w-full rounded px-3 py-2.5 text-sm font-semibold shadow-none ${dummyDataTab === "create" ? "bg-white text-emerald-800 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
             >
-              Not now
-            </Button>
-            <Button
-              type="button"
-              variant="primary"
-              onClick={handleCreateDummyData}
-              disabled={isUpdatingDummyData || !dummyDataAvailable}
-            >
-              <Sparkles className="h-4 w-4" aria-hidden="true" />
               Create sample data
             </Button>
-            {dummyDataActive ? (
-              <Button
-                type="button"
-                variant="danger"
-                onClick={handleDeleteDummyData}
-                disabled={isUpdatingDummyData}
-              >
-                <Trash2 className="h-4 w-4" aria-hidden="true" />
-                {isUpdatingDummyData ? "Deleting..." : "Delete sample data"}
-              </Button>
-            ) : (
-              <p className="text-sm text-slate-500" role="status">There is no sample data to delete.</p>
-            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="md"
+              role="tab"
+              id="dummy-data-delete-tab"
+              aria-selected={dummyDataTab === "delete"}
+              aria-controls="dummy-data-delete-panel"
+              tabIndex={dummyDataTab === "delete" ? 0 : -1}
+              onClick={() => setDummyDataTab("delete")}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+                event.preventDefault();
+                setDummyDataTab("create");
+                document.getElementById("dummy-data-create-tab")?.focus();
+              }}
+              className={`w-full rounded px-3 py-2.5 text-sm font-semibold shadow-none ${dummyDataTab === "delete" ? "bg-white text-rose-700 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+            >
+              Remove sample data
+            </Button>
           </div>
           {dummyDataStatus.status === "SCHEMA_NOT_READY" ? (
-            <p className="mt-3 text-sm text-amber-800" role="status">
+            <p className="text-sm text-amber-800" role="status">
               Dummy-data tracking must be deployed before sample data can be managed.
             </p>
           ) : null}
           {dummyDataStatus.status === "UNAVAILABLE" ? (
-            <p className="mt-3 text-sm text-red-700" role="alert">
+            <p className="text-sm text-red-700" role="alert">
               Organization settings permission is required to manage dummy data.
             </p>
           ) : null}
-          {dummyDataActive ? (
-            <p className="mt-3 text-sm text-slate-600" role="status">
-              {dummyDataStatus.orderNo
-                ? `${dummyDataStatus.orderCount ?? 1} sample orders · first ${dummyDataStatus.orderNo} · ${dummyDataStatus.masterCount} master records.`
-                : "A dummy-data batch already exists for this organization."}
-            </p>
-          ) : null}
-          {dummyDataDeleteNotice ? <p className="mt-3 text-sm text-emerald-700" role="status">{dummyDataDeleteNotice}</p> : null}
-          {dummyDataDeleteError ? <p className="mt-3 text-sm text-red-700" role="alert">{dummyDataDeleteError}</p> : null}
+
+            <section
+            id="dummy-data-create-panel"
+            role="tabpanel"
+            aria-labelledby="dummy-data-create-tab"
+            hidden={dummyDataTab !== "create"}
+            className="space-y-5"
+          >
+              <div className="space-y-1">
+                <h3 className="text-base font-semibold text-slate-900">Build a sample workflow</h3>
+                <p id="dummy-data-help-description" className="text-sm leading-5 text-slate-600">
+                  Complete each step in order. Your progress is saved for this organization.
+                </p>
+              </div>
+              {dummyDataStatus.status === "EMPTY" ? (
+                <div className="flex items-start gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3.5" role="status">
+                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden="true" />
+                  <p className="text-sm leading-5 text-emerald-900">
+                    No sample data exists yet. Start with Step 1 to create the sample masters, orders, and BOM.
+                  </p>
+                </div>
+              ) : null}
+              <ol className="divide-y divide-slate-200 rounded-md border border-slate-200 bg-white">
+                {[
+                  { number: 1 as const, title: "Create Master, Orders, and BOM", detail: "Add sample masters, ten draft orders, finished goods, and BOM rows." },
+                  { number: 2 as const, title: "Create Grouping", detail: "Build ten sample grouped purchase orders from the shared BOM requirements." },
+                  { number: 3 as const, title: "Add Price, GST, HSN, Buying UOM, and Approve", detail: "Assign varied sample terms and approve every grouped purchase order in this step." },
+                  { number: 4 as const, title: "Create Master Grouping", detail: "Create a master group for every approved grouped purchase order." },
+                  { number: 5 as const, title: "Create and Approve Purchase Orders", detail: "Generate at least ten vendor Purchase Orders, submit each for approval, and approve every PO." },
+                  { number: 6 as const, title: "Create RM Gate Entries", detail: "Create five inward gate entries and five pending GRNs, each linked to a different approved Purchase Order." },
+                  { number: 7 as const, title: "Verify Sample GRNs", detail: "Verify every GRN material line with varied physical quantities using the standard verification workflow." },
+                  { number: 8 as const, title: "Allocate Verified GRNs", detail: "Allocate each verified quantity from the first grouped order line downward, then submit every allocation." },
+                ].map((step) => {
+                  const isComplete = completedSteps.has(step.number);
+                  const isCurrent = currentStep === step.number;
+                  const termsAlreadyPrepared = step.number === 3 && dummyDataStatus.sampleTermsPrepared;
+                  const canStart = dummyDataAvailable && isCurrent && !isComplete && !termsAlreadyPrepared && !isUpdatingDummyData;
+                  return (
+                    <li key={step.number} className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 px-3 py-3">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-700" aria-hidden="true">
+                        {isComplete ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> : isCurrent && isUpdatingDummyData ? <LoaderCircle className="h-5 w-5 animate-spin text-emerald-700" /> : step.number}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-semibold text-slate-900">Step {step.number}: {step.title}</span>
+                          {isComplete ? <span className="text-xs font-medium text-emerald-700">Complete</span> : null}
+                          {!isComplete && isCurrent && termsAlreadyPrepared ? <span className="text-xs font-medium text-amber-700">Approval needed</span> : null}
+                          {!isComplete && isCurrent && !termsAlreadyPrepared && !isUpdatingDummyData ? <span className="text-xs font-medium text-sky-700">Up next</span> : null}
+                        </span>
+                        <span className="mt-1 block text-xs leading-5 text-slate-600">{step.detail}</span>
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={step.number === 3 ? "secondary" : "primary"}
+                        disabled={!canStart}
+                        onClick={() => handleStartDummyDataStep(step.number)}
+                      >
+                        {isComplete ? "Done" : termsAlreadyPrepared ? "Terms ready" : isUpdatingDummyData && isCurrent ? "Working..." : dummyDataStatus.status === "EMPTY" && step.number === 1 ? "Create" : "Start"}
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ol>
+              {dummyDataStatus.status === "EMPTY" ? null : (
+                <p className="text-xs text-slate-500" role="status">
+                  {dummyDataStatus.orderCount ?? 0} orders · {sampleGroups.length} grouped POs · {dummyDataStatus.masterGroupCount ?? 0} master groups · {dummyDataStatus.purchaseOrderCount ?? 0} purchase orders · {dummyDataStatus.gateEntryCount ?? 0} gate entries · {dummyDataStatus.grnCount ?? 0} GRNs · {dummyDataStatus.verifiedLineCount ?? 0}/{dummyDataStatus.verificationLineCount ?? 0} verified lines · {dummyDataStatus.completedOrderAllocationCount ?? 0}/{dummyDataStatus.verificationAllocationCount ?? 0} allocated
+                </p>
+              )}
+              <div className="flex justify-end border-t border-slate-100 pt-4">
+                <Button type="button" variant="secondary" onClick={() => setDummyDataHelpOpen(false)}>
+                  Close
+                </Button>
+              </div>
+          </section>
+          <section
+            id="dummy-data-delete-panel"
+            role="tabpanel"
+            aria-labelledby="dummy-data-delete-tab"
+            hidden={dummyDataTab !== "delete"}
+            className="space-y-4"
+          >
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">Remove sample data</h3>
+                <p className="mt-1 text-sm leading-5 text-slate-600">
+                  Remove the generated sample records. Organization setup and baseline master values will be kept.
+                </p>
+              </div>
+              {dummyDataActive ? (
+                <p className="text-sm text-slate-600" role="status">
+                  {dummyDataStatus.orderNo
+                    ? `${dummyDataStatus.orderCount ?? 1} sample orders · first ${dummyDataStatus.orderNo} · ${dummyDataStatus.masterCount} master records.`
+                    : "A dummy-data batch exists for this organization."}
+                </p>
+              ) : (
+                <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-4" role="status">
+                  <p className="text-sm text-slate-700">There is no sample data to remove. Start creating it from Step 1.</p>
+                  <Button type="button" size="sm" variant="primary" onClick={() => setDummyDataTab("create")}>
+                    <Sparkles className="h-4 w-4" aria-hidden="true" />
+                    Go to Step 1
+                  </Button>
+                </div>
+              )}
+              <div className="flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">
+                <Button type="button" variant="secondary" onClick={() => setDummyDataHelpOpen(false)}>
+                  Close
+                </Button>
+                <Button
+                  type="button"
+                  variant="danger"
+                  onClick={handleDeleteDummyData}
+                  disabled={isUpdatingDummyData || !dummyDataActive}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  {isUpdatingDummyData ? "Deleting..." : "Delete Dummy Data"}
+                </Button>
+              </div>
+          </section>
+          {dummyDataDeleteNotice ? <p className="text-sm text-emerald-700" role="status">{dummyDataDeleteNotice}</p> : null}
+          {dummyDataDeleteError ? <p className="text-sm text-red-700" role="alert">{dummyDataDeleteError}</p> : null}
         </div>
       </Modal>
 

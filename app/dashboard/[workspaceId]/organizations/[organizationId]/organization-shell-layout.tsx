@@ -8,9 +8,10 @@ import { MasterModuleWrapper } from "@/components/master-data/master-module-wrap
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
 import { getOrganizationShellContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
-  createOrganizationDummyData,
   deleteOrganizationDummyData,
   getOrganizationDummyDataStatus,
+  startDummyDataWizardStep,
+  type DummyDataWizardStep,
 } from "@/lib/services/organizations/organization-dummy-data-service";
 import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
 import { requireSessionUser } from "@/lib/auth/session-manager"; // Fixed typo (removed trailing 's')
@@ -88,27 +89,6 @@ export default async function OrganizationShellLayout({
     !currentPath.startsWith(`${organizationPath}/settings/master-data`);
 
   // 3. Fetch and authorize the real organization before checking plan rules.
-  async function createDummyDataAction() {
-    "use server";
-    const actionUser = await requireSessionUser();
-    if (actionUser.workspace_id !== workspaceId) {
-      return { created: false, orderNo: null, orderCount: 0, error: "Workspace access denied." };
-    }
-
-    try {
-      const result = await createOrganizationDummyData(actionUser.id, organizationId, actionUser.full_name || actionUser.email);
-      revalidatePath(organizationPath);
-      return result;
-    } catch (error) {
-      return {
-        created: false,
-        orderNo: null,
-        orderCount: 0,
-        error: error instanceof Error ? error.message : "Unable to create sample data.",
-      };
-    }
-  }
-
   async function deleteDummyDataAction() {
     "use server";
     const actionUser = await requireSessionUser();
@@ -125,6 +105,27 @@ export default async function OrganizationShellLayout({
         deleted: false,
         error: error instanceof Error ? error.message : "Unable to delete dummy data.",
       };
+    }
+  }
+
+  async function startDummyDataWizardStepAction(step: DummyDataWizardStep) {
+    "use server";
+    const actionUser = await requireSessionUser();
+    if (actionUser.workspace_id !== workspaceId) {
+      return { error: "Workspace access denied." };
+    }
+
+    try {
+      const result = await startDummyDataWizardStep(
+        actionUser.id,
+        organizationId,
+        step,
+        actionUser.full_name || actionUser.email,
+      );
+      revalidatePath(organizationPath);
+      return { status: "status" in result ? result.status : "IN_PROGRESS", stage: "stage" in result ? result.stage : "" };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Unable to start this sample-data step." };
     }
   }
 
@@ -172,7 +173,7 @@ export default async function OrganizationShellLayout({
       trialEnabled={trialOrganization.trial_enabled}
       trialStartedAt={trialOrganization.trial_started_at?.toISOString() ?? null}
       trialEndsAt={trialOrganization.trial_ends_at?.toISOString() ?? null}
-      createDummyData={createDummyDataAction}
+      startDummyDataWizardStep={startDummyDataWizardStepAction}
       deleteDummyData={deleteDummyDataAction}
       dummyDataStatus={dummyDataStatus}
       businessTypes={businessTypes}

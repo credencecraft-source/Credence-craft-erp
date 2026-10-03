@@ -79,6 +79,7 @@ export async function POST(request: Request) {
       organizationId: organization.id,
       vendorId: String(body.vendorId ?? ""),
       submittedBy: user.full_name || user.email,
+      submittedByUserId: user.id,
       lines: Array.isArray(body.lines)
         ? body.lines.map((line: { bomItemId?: unknown; groupedQty?: unknown }) => ({ bomItemId: String(line.bomItemId ?? ""), groupedQty: line.groupedQty as number | string }))
         : [],

@@ -42,7 +42,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pur
     const organization = await requireOrganizationContext(user.id, String(body.organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
     const purchaseOrderId = (await params).purchaseOrderId;
     if (body.action === "submit-approval") {
-      await submitPurchaseOrderForApproval(organization.id, purchaseOrderId, user.full_name || user.email);
+      await submitPurchaseOrderForApproval(organization.id, purchaseOrderId, user.full_name || user.email, user.id);
       return NextResponse.json({ ok: true });
     }
     if (body.action === "share-email") {

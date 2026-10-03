@@ -186,20 +186,20 @@ export const ERP_MODULES: ErpModule[] = [
         ],
       },
       {
-        key: "outward",
-        label: "Outward",
-        pathSegment: "outward",
-        children: [
-          { key: "raw-material-dc", label: "Raw Material DC", pathSegment: "raw-material-dc" },
-        ],
-      },
-      {
         key: "stock",
         label: "Stock",
         pathSegment: "stock",
         children: [
           { key: "rm-stock", label: "RM Stock", pathSegment: "rm-stock" },
           { key: "fg-stock", label: "FG Stock", pathSegment: "fg-stock" },
+        ],
+      },
+      {
+        key: "outward",
+        label: "Outward",
+        pathSegment: "outward",
+        children: [
+          { key: "raw-material-dc", label: "Raw Material DC", pathSegment: "raw-material-dc" },
         ],
       },
     ],

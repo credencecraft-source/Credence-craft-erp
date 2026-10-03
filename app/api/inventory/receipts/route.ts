@@ -17,7 +17,7 @@ type ReceiptLineInput = {
   approvedQuantity?: string | number;
   allocations?: Array<{ groupedPurchaseOrderId: string; verificationAllocated: string | number }>;
 };
-type ReceiptRequestBody = { organizationId?: string; purchaseOrderId?: string; locationId?: string; receivedDate?: string; notes?: string; lines?: ReceiptLineInput[] };
+type ReceiptRequestBody = { organizationId?: string; purchaseOrderId?: string; locationId?: string; receivedDate?: string; notes?: string; createOnly?: boolean; lines?: ReceiptLineInput[] };
 
 class GrnDeletionConflictError extends Error {}
 
@@ -76,7 +76,10 @@ export async function POST(request: Request) {
     const purchaseOrderId = String(body.purchaseOrderId ?? "");
     const locationId = String(body.locationId ?? "");
     const lines = Array.isArray(body.lines) ? body.lines : [];
-    if (!purchaseOrderId || !locationId || lines.length === 0) throw new Error("Purchase Order, Location, and at least one receipt line are required.");
+    const createOnly = body.createOnly === true;
+    if (!purchaseOrderId || !locationId || (!createOnly && lines.length === 0)) {
+      throw new Error("Purchase Order and Location are required.");
+    }
     const verificationMode = lines.some((line) => line.verifiedQuantity !== undefined || line.approvedQuantity !== undefined || line.allocations !== undefined);
     if (verificationMode && lines.some((line) => line.verifiedQuantity === undefined || line.approvedQuantity === undefined || !Array.isArray(line.allocations))) {
       throw new Error("Every GRN line must include Verified Qty, Approved Qty, and its grouping allocations.");
@@ -98,9 +101,18 @@ export async function POST(request: Request) {
       });
       if (!location) throw new Error("Select an active Location belonging to the Purchase Order Entity.");
       const orderLines = new Map(purchaseOrder.lines.map((line) => [line.id, line]));
+      const linesToCreate: ReceiptLineInput[] = createOnly
+        ? purchaseOrder.lines.map((orderLine) => ({
+            purchaseOrderLineId: orderLine.id,
+            receivedQuantity: 0,
+            acceptedQuantity: 0,
+            rejectedQuantity: 0,
+          }))
+        : lines;
+      if (linesToCreate.length === 0) throw new Error("The Purchase Order has no lines to attach to this GRN.");
       const existingLines = await transaction.inventoryReceiptLine.findMany({
         where: {
-          purchase_order_line_id: { in: lines.map((line) => String(line.purchaseOrderLineId)) },
+          purchase_order_line_id: { in: linesToCreate.map((line) => String(line.purchaseOrderLineId)) },
           receipt: { organization_id: organization.id },
         },
         select: { purchase_order_line_id: true, received_quantity: true },
@@ -112,8 +124,18 @@ export async function POST(request: Request) {
           (alreadyReceived.get(line.purchase_order_line_id) ?? new Prisma.Decimal(0)).plus(line.received_quantity),
         );
       }
-      const normalized = lines.map((line) => {
+      const normalized = linesToCreate.map((line) => {
         const orderLine = orderLines.get(String(line.purchaseOrderLineId));
+        if (createOnly) {
+          if (!orderLine) throw new Error("One or more Purchase Order lines are unavailable.");
+          return {
+            orderLine,
+            received: new Prisma.Decimal(0),
+            accepted: new Prisma.Decimal(0),
+            rejected: new Prisma.Decimal(0),
+            verification: null,
+          };
+        }
         let received: Prisma.Decimal;
         let accepted: Prisma.Decimal;
         let rejected: Prisma.Decimal;

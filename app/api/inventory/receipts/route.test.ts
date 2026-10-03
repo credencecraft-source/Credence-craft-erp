@@ -144,6 +144,37 @@ describe("inventory receipt verification posting", () => {
     });
   });
 
+  it("saves an RM GRN and PO subform from only its PO and Location without inserting stock", async () => {
+    const response = await POST(new Request("http://localhost/api/inventory/receipts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        purchaseOrderId: "po-1",
+        locationId: "location-1",
+        createOnly: true,
+      }),
+    }));
+
+    expect(response.status).toBe(201);
+    const receiptCreate = mocks.transaction.inventoryReceipt.create.mock.calls[0][0];
+    expect(receiptCreate.data).toMatchObject({
+      organization_id: "internal-org-1",
+      purchase_order_id: "po-1",
+      location_id: "location-1",
+    });
+    expect(receiptCreate.data.lines.create).toEqual([{
+      purchase_order_line_id: "po-line-1",
+      raw_material: "Cotton",
+      ordered_quantity: new Prisma.Decimal("8"),
+      received_quantity: new Prisma.Decimal("0"),
+      accepted_quantity: new Prisma.Decimal("0"),
+      rejected_quantity: new Prisma.Decimal("0"),
+    }]);
+    expect(mocks.transaction.rawMaterialStock.create).not.toHaveBeenCalled();
+    expect(mocks.saveRmGrnVerificationInTransaction).not.toHaveBeenCalled();
+  });
+
   it("keeps the pending PO quantity ceiling before creating any GRN", async () => {
     mocks.transaction.purchaseOrder.findFirst.mockResolvedValue({
       id: "po-1",

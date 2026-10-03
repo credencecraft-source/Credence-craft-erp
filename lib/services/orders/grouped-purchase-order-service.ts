@@ -20,6 +20,9 @@ export type CreateGroupedPurchaseOrderInput = {
   organizationId: string;
   vendorId: string;
   submittedBy?: string | null;
+  submittedByUserId?: string;
+  sampleBatchId?: string;
+  sampleGroupOrdinal?: number;
   lines: GroupedPurchaseOrderLineInput[];
 };
 
@@ -528,10 +531,13 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
         organization_id: input.organizationId,
         entity_id: entityId,
         vendor_id: vendor.id,
-        grouped_po_no: `GPO-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`,
+        grouped_po_no: input.sampleBatchId && input.sampleGroupOrdinal
+          ? `GPO-${input.sampleBatchId}-${String(input.sampleGroupOrdinal).padStart(2, "0")}`
+          : `GPO-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`,
         display_no: displayNo,
         status: PRICE_APPROVAL_STATUS,
         submitted_by: input.submittedBy ?? null,
+        submitted_by_user_id: input.submittedByUserId ?? null,
         raw_material: rawMaterials.join(", ") || null,
         category: categories.join(", ") || null,
         sub_category: subCategories.join(", ") || null,
@@ -546,7 +552,10 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
     });
 
     return serializePurchaseOrder(order);
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    ...(input.sampleBatchId ? { maxWait: 15_000, timeout: 30_000 } : {}),
+  });
 
   return created;
 }
@@ -707,7 +716,12 @@ export async function updateGroupedPurchaseOrderPrices(
   }).then(serializePurchaseOrder);
 }
 
-export async function approveGroupedPurchaseOrder(organizationId: string, groupedPurchaseOrderId: string, reviewer: string) {
+export async function approveGroupedPurchaseOrder(
+  organizationId: string,
+  groupedPurchaseOrderId: string,
+  reviewer: string,
+  reviewerUserId?: string,
+) {
   const order = await prisma.groupedPurchaseOrder.findFirst({
     where: { id: groupedPurchaseOrderId, organization_id: organizationId, status: PRICE_APPROVAL_STATUS },
     include: { lines: true },
@@ -715,10 +729,15 @@ export async function approveGroupedPurchaseOrder(organizationId: string, groupe
   if (!order || order.lines.some((line) => line.vendor_price === null)) {
     throw new Error("Save a valid price for every line before approval.");
   }
-
   const updated = await prisma.groupedPurchaseOrder.update({
     where: { id: order.id },
-    data: { status: APPROVED_STATUS, approved_by: reviewer, approved_at: new Date(), rejection_reason: null },
+    data: {
+      status: APPROVED_STATUS,
+      approved_by: reviewer,
+      approved_by_user_id: reviewerUserId ?? null,
+      approved_at: new Date(),
+      rejection_reason: null,
+    },
     include: groupedPurchaseOrderInclude,
   });
   return serializePurchaseOrder(updated);

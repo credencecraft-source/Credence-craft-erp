@@ -189,8 +189,10 @@ model GroupedPurchaseOrder {
   display_no         Int?
   status             String                     @default("PENDING_PRICE_APPROVAL") @db.VarChar(50)
   submitted_by       String?                    @db.VarChar(255)
+  submitted_by_user_id String?
   submitted_at       DateTime                   @default(now())
   approved_by        String?                    @db.VarChar(255)
+  approved_by_user_id String?
   approved_at        DateTime?
   rejection_reason   String?                    @db.VarChar(500)
   note               String?                    @db.VarChar(1000)

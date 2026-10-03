@@ -47,6 +47,7 @@ model Organization {
   pin_code                      String?                        @db.VarChar(20)
   is_active                     Boolean                        @default(true)
   approval_status               String                         @default("PENDING_APPROVAL") @db.VarChar(40)
+  archived_at                   DateTime?
   trial_started_at              DateTime?
   trial_ends_at                 DateTime?
   trial_enabled                 Boolean                        @default(true)
@@ -1340,9 +1341,11 @@ model ApprovalRequest {
   entity_label    String       @db.VarChar(255)
   entity_ref_id   String?
   requested_by    String?
+  requested_by_user_id String?
   status          String       @default("pending") @db.VarChar(50)
   notes           String?
   reviewed_by     String?
+  reviewed_by_user_id String?
   reviewed_at     DateTime?
   created_at      DateTime     @default(now())
   updated_at      DateTime     @updatedAt
@@ -1418,7 +1421,10 @@ model OrganizationOrderCounter {
 model OrganizationDummyDataBatch {
   id                 String       @id @default(cuid())
   organization_id    String       @unique
-  status             String       @default("EMPTY") @db.VarChar(20)
+  status             String       @default("EMPTY") @db.VarChar(40)
+  stage              String       @default("IDLE") @db.VarChar(40)
+  checkpoint         Json         @default("{}")
+  last_error         String?      @db.VarChar(1000)
   sample_order_id    String?      @unique
   master_record_ids  Json         @default("{}")
   created_at         DateTime     @default(now())

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
+import FormSubmitButton from "@/components/ui/FormSubmitButton";
 import Page from "@/components/ui/Page";
 import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
@@ -12,7 +13,7 @@ import { assignOrganizationPlatformVersion, listOrganizationClientsPage, listPla
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { updateOrganizationApprovalStatus } from "@/lib/services/organizations/organization-service";
 
-export default async function PlatformClientsPage({ searchParams }: { searchParams?: Promise<{ cursor?: string; error?: string }> }) {
+export default async function PlatformClientsPage({ searchParams }: { searchParams?: Promise<{ cursor?: string; error?: string; success?: string }> }) {
   await ensurePlatformDefaults();
   const query = (await searchParams) ?? {};
   const [page, platformVersions] = await Promise.all([
@@ -32,7 +33,7 @@ export default async function PlatformClientsPage({ searchParams }: { searchPara
     } catch (error) {
       redirect(`/platform/organisations?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to assign version.")}`);
     }
-    redirect("/platform/organisations");
+    redirect(`/platform/organisations?success=${encodeURIComponent("Platform version assigned and pricing snapshot refreshed.")}`);
   }
 
   async function approveClient(formData: FormData) {
@@ -57,6 +58,7 @@ export default async function PlatformClientsPage({ searchParams }: { searchPara
           </p>
         </div>
         {query.error && <p className="rounded-lg bg-red-50 p-3 text-xs text-red-700">{query.error}</p>}
+        {query.success && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">{query.success}</p>}
 
         <Table>
           <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -120,7 +122,7 @@ export default async function PlatformClientsPage({ searchParams }: { searchPara
                         <option key={version.id} value={version.id}>{version.version_name}</option>
                       ))}
                     </Select>
-                    <Button type="submit" variant="secondary" size="sm" className="shrink-0">Save</Button>
+                    <FormSubmitButton variant="secondary" size="sm" pendingLabel="Saving..." className="shrink-0">Save</FormSubmitButton>
                   </form>
                 </td>
                 <td className="px-2 py-2">

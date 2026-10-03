@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { requireSameOrganizationEntity } from "@/lib/services/organizations/organization-entity-service";
 import { reserveProcurementDocumentNumber } from "./procurement-document-number-service";
 import { calculateTax } from "./gst-calculation-service";
@@ -308,13 +309,92 @@ export async function deletePurchaseOrder(organizationId: string, id: string) {
   await prisma.purchaseOrder.delete({ where: { id: order.id } });
 }
 
-export async function submitPurchaseOrderForApproval(organizationId: string, id: string, requestedBy: string) {
-  const order = await prisma.purchaseOrder.findFirst({ where: { id, organization_id: organizationId, status: { in: ["DRAFT", "OPEN", "REJECTED"] } }, select: { id: true, purchase_order_no: true } });
-  if (!order) throw new Error("Only draft or rejected Purchase Orders can be submitted for approval.");
+export async function submitPurchaseOrderForApproval(
+  organizationId: string,
+  id: string,
+  requestedBy: string,
+  requestedByUserId?: string,
+) {
   await prisma.$transaction(async (transaction) => {
-    await transaction.purchaseOrder.update({ where: { id: order.id }, data: { status: "PENDING_APPROVAL", rejection_reason: null } });
-    await transaction.approvalRequest.deleteMany({ where: { organization_id: organizationId, entity_type: "purchase-order", entity_ref_id: order.id, status: "pending" } });
-    await transaction.approvalRequest.create({ data: { organization_id: organizationId, module_key: "purchase-order", module_name: "Purchase Order Approval", entity_type: "purchase-order", entity_key: order.purchase_order_no, entity_label: order.purchase_order_no, entity_ref_id: order.id, requested_by: requestedBy, status: "pending", notes: `Purchase Order ${order.purchase_order_no} is waiting for approval.` } });
+    const order = await transaction.purchaseOrder.findFirst({
+      where: { id, organization_id: organizationId, status: { in: ["DRAFT", "OPEN", "REJECTED"] } },
+      select: { id: true, display_no: true, purchase_order_no: true },
+    });
+    if (!order) throw new Error("Only draft or rejected Purchase Orders can be submitted for approval.");
+
+    const transitioned = await transaction.purchaseOrder.updateMany({
+      where: { id: order.id, organization_id: organizationId, status: { in: ["DRAFT", "OPEN", "REJECTED"] } },
+      data: { status: "PENDING_APPROVAL", rejection_reason: null },
+    });
+    if (transitioned.count !== 1) throw new Error("Purchase Order changed before it could be submitted.");
+
+    await transaction.approvalRequest.deleteMany({
+      where: { organization_id: organizationId, entity_type: "purchase-order", entity_ref_id: order.id, status: "pending" },
+    });
+    await transaction.approvalRequest.create({
+      data: {
+        organization_id: organizationId,
+        module_key: "purchase-order",
+        module_name: "Purchase Order Approval",
+        entity_type: "purchase-order",
+        entity_key: order.purchase_order_no,
+        entity_label: order.display_no ? `PO-${order.display_no}` : order.purchase_order_no,
+        entity_ref_id: order.id,
+        requested_by: requestedBy,
+        requested_by_user_id: requestedByUserId ?? null,
+        status: "pending",
+        notes: `Purchase Order ${order.purchase_order_no} is waiting for approval.`,
+      },
+    });
+  });
+}
+
+export async function reviewPurchaseOrderApprovalRequest(
+  organizationId: string,
+  requestId: string,
+  status: "approved" | "rejected",
+  reviewer: string,
+  reviewerUserId: string,
+) {
+  return prisma.$transaction(async (transaction) => {
+    const request = await transaction.approvalRequest.findFirst({
+      where: {
+        organization_id: organizationId,
+        entity_type: "purchase-order",
+        status: "pending",
+        OR: [{ id: requestId }, { request_id: requestId }],
+      },
+    });
+    if (!request || !request.entity_ref_id) throw new Error("Pending Purchase Order approval request not found.");
+
+    const reviewedAt = new Date();
+    const requestUpdate = await transaction.approvalRequest.updateMany({
+      where: { id: request.id, organization_id: organizationId, status: "pending" },
+      data: { status, reviewed_by: reviewer, reviewed_by_user_id: reviewerUserId, reviewed_at: reviewedAt },
+    });
+    if (requestUpdate.count !== 1) throw new Error("Purchase Order approval request was already reviewed.");
+
+    const purchaseOrderUpdate = await transaction.purchaseOrder.updateMany({
+      where: { id: request.entity_ref_id, organization_id: organizationId, status: "PENDING_APPROVAL" },
+      data: {
+        status: status === "approved" ? "APPROVED" : "REJECTED",
+        approved_by: reviewer,
+        approved_at: reviewedAt,
+        rejection_reason: status === "rejected" ? "Purchase Order approval was rejected." : null,
+      },
+    });
+    if (purchaseOrderUpdate.count !== 1) throw new Error("Purchase Order is no longer pending approval.");
+
+    await createAuditEvent({
+      organizationId,
+      userId: reviewerUserId,
+      module: "Procurement",
+      action: status === "approved" ? "APPROVE_PURCHASE_ORDER" : "REJECT_PURCHASE_ORDER",
+      entityType: "PurchaseOrder",
+      entityId: request.entity_ref_id,
+      details: { approval_request_id: request.id, reviewer },
+    }, transaction);
+    return { status, purchaseOrderId: request.entity_ref_id };
   });
 }
 

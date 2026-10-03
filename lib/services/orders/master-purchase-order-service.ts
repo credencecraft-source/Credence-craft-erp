@@ -145,7 +145,7 @@ export async function createMasterPurchaseOrder(
     });
     await transaction.groupedPurchaseOrder.updateMany({ where: { id: { in: uniqueIds }, organization_id: organizationId }, data: { status: MASTER_GROUPED_STATUS } });
     return master;
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
 
   return serializeMaster(created);
 }

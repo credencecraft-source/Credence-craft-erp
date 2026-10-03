@@ -5,9 +5,26 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   masterFindMany: vi.fn(),
   purchaseOrderFindMany: vi.fn(),
+  purchaseOrderFindFirst: vi.fn(),
+  purchaseOrderUpdateMany: vi.fn(),
+  approvalRequestCreate: vi.fn(),
+  approvalRequestDeleteMany: vi.fn(),
+  approvalRequestFindFirst: vi.fn(),
+  approvalRequestUpdateMany: vi.fn(),
+  auditEventCreate: vi.fn(),
 }));
 
-const transaction = { masterPurchaseOrder: { findMany: mocks.masterFindMany } };
+const transaction = {
+  masterPurchaseOrder: { findMany: mocks.masterFindMany },
+  purchaseOrder: { findFirst: mocks.purchaseOrderFindFirst, updateMany: mocks.purchaseOrderUpdateMany },
+  approvalRequest: {
+    create: mocks.approvalRequestCreate,
+    deleteMany: mocks.approvalRequestDeleteMany,
+    findFirst: mocks.approvalRequestFindFirst,
+    updateMany: mocks.approvalRequestUpdateMany,
+  },
+  auditEvent: { create: mocks.auditEventCreate },
+};
 
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
@@ -16,7 +33,12 @@ vi.mock("@/lib/database/prisma-client", () => ({
   },
 }));
 
-import { generatePurchaseOrders, listPurchaseOrderReportPage } from "./purchase-order-service";
+import {
+  generatePurchaseOrders,
+  listPurchaseOrderReportPage,
+  reviewPurchaseOrderApprovalRequest,
+  submitPurchaseOrderForApproval,
+} from "./purchase-order-service";
 
 describe("vendor Purchase Order generation", () => {
   beforeEach(() => {
@@ -26,11 +48,70 @@ describe("vendor Purchase Order generation", () => {
       id: "stock-master-1",
       sourceRecords: [{ groupedPurchaseOrder: { source_type: "STOCK" } }],
     }]);
+    mocks.purchaseOrderFindFirst.mockResolvedValue({ id: "po-1", display_no: 42, purchase_order_no: "PO-1" });
+    mocks.purchaseOrderUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.approvalRequestCreate.mockResolvedValue({ id: "request-1" });
+    mocks.approvalRequestDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.approvalRequestFindFirst.mockResolvedValue({
+      id: "request-1",
+      organization_id: "org-1",
+      entity_type: "purchase-order",
+      entity_ref_id: "po-1",
+      requested_by: "Requester",
+      requested_by_user_id: "requester-id",
+      status: "pending",
+    });
+    mocks.approvalRequestUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.auditEventCreate.mockResolvedValue({});
   });
 
   it("rejects stock Master Groups so they must complete store verification instead", async () => {
     await expect(generatePurchaseOrders("org-1", ["stock-master-1"]))
       .rejects.toThrow("Stock Master Groups must be completed through store verification");
+  });
+
+  it("submits a tenant-scoped PO and stores requester identity in its pending approval", async () => {
+    await submitPurchaseOrderForApproval("org-1", "po-1", "Requester", "requester-id");
+
+    expect(mocks.purchaseOrderUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "po-1", organization_id: "org-1", status: { in: ["DRAFT", "OPEN", "REJECTED"] } },
+      data: { status: "PENDING_APPROVAL", rejection_reason: null },
+    }));
+    expect(mocks.approvalRequestCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        entity_label: "PO-42",
+        requested_by_user_id: "requester-id",
+        status: "pending",
+      }),
+    }));
+  });
+
+  it("allows the requester to approve their own pending PO", async () => {
+    await expect(reviewPurchaseOrderApprovalRequest("org-1", "request-1", "approved", "Requester", "requester-id"))
+      .resolves.toEqual({ status: "approved", purchaseOrderId: "po-1" });
+    expect(mocks.approvalRequestUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "request-1", organization_id: "org-1", status: "pending" },
+      data: expect.objectContaining({ status: "approved", reviewed_by_user_id: "requester-id" }),
+    }));
+    expect(mocks.purchaseOrderUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "po-1", organization_id: "org-1", status: "PENDING_APPROVAL" },
+      data: expect.objectContaining({ status: "APPROVED", approved_by: "Requester" }),
+    }));
+    expect(mocks.auditEventCreate).toHaveBeenCalledOnce();
+  });
+
+  it("updates the approval request and PO together for a different authorized reviewer", async () => {
+    await expect(reviewPurchaseOrderApprovalRequest("org-1", "request-1", "approved", "Reviewer", "reviewer-id"))
+      .resolves.toEqual({ status: "approved", purchaseOrderId: "po-1" });
+    expect(mocks.approvalRequestUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "request-1", organization_id: "org-1", status: "pending" },
+      data: expect.objectContaining({ status: "approved", reviewed_by_user_id: "reviewer-id" }),
+    }));
+    expect(mocks.purchaseOrderUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "po-1", organization_id: "org-1", status: "PENDING_APPROVAL" },
+      data: expect.objectContaining({ status: "APPROVED", approved_by: "Reviewer" }),
+    }));
+    expect(mocks.auditEventCreate).toHaveBeenCalledOnce();
   });
 
   it("returns a tenant-scoped compact Purchase Order report page", async () => {

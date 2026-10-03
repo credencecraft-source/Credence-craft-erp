@@ -66,7 +66,10 @@ export async function startOrganizationTrialOnApproval(
 }
 
 export async function startOrganizationTrialOnFirstOpen(organizationId: string, workspaceUserId: string) {
-  await prisma.$transaction((transaction) => startOrganizationTrial(transaction, organizationId, { workspaceUserId }));
+  await prisma.$transaction(
+    (transaction) => startOrganizationTrial(transaction, organizationId, { workspaceUserId }),
+    { maxWait: 10000, timeout: 20000 },
+  );
 }
 
 export async function isOrganizationTrialActive(organizationId: string, now = new Date()) {

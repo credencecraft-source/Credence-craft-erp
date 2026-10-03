@@ -3,7 +3,8 @@ import { notFound, redirect } from "next/navigation";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
-import { listApprovalRequestsForOrganization, updateApprovalRequestStatus } from "@/lib/master-data/master-data-constants";
+import { listApprovalRequestsForOrganization } from "@/lib/master-data/master-data-constants";
+import { reviewPurchaseOrderApprovalRequest } from "@/lib/services/orders/purchase-order-service";
 
 async function handlePurchaseOrderApproval(formData: FormData) {
   "use server";
@@ -20,7 +21,13 @@ async function handlePurchaseOrderApproval(formData: FormData) {
   await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "APPROVER"]);
   const request = (await listApprovalRequestsForOrganization(organization.id)).find((entry) => entry.id === requestId || entry.request_id === requestId);
   if (!request || request.entity_type !== "purchase-order") return;
-  await updateApprovalRequestStatus(organization.id, request.request_id || request.id, action === "approve" ? "approved" : "rejected", user.full_name || user.email);
+  await reviewPurchaseOrderApprovalRequest(
+    organization.id,
+    request.request_id || request.id,
+    action === "approve" ? "approved" : "rejected",
+    user.full_name || user.email,
+    user.id,
+  );
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/approvals/approval-settings/purchase-order-review`);
 }
 

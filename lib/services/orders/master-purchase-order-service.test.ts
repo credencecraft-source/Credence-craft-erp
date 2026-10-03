@@ -270,6 +270,11 @@ describe("stock-origin grouped records", () => {
 
     await expect(createMasterPurchaseOrder("org-1", ["stock-group-1"], "Planner"))
       .resolves.toMatchObject({ sourceType: "STOCK", masterPoNo: "MGP-1", totalGroupedQty: 10 });
+    expect(mocks.transaction).toHaveBeenLastCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 10000,
+      timeout: 30000,
+    });
     expect(mocks.transactionClient.masterPurchaseOrder.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         vendor_id: "store-vendor-1",

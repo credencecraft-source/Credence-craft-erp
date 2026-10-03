@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 
-const { prismaMock, transactionMock, permissionMock, orderNumbersMock, monthlyFormLimitsMock, orderLimitLockMock } = vi.hoisted(() => {
+const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPurchaseOrderMock, masterPurchaseOrderMock, generatePurchaseOrdersMock, submitPurchaseOrderMock, createSampleGateEntriesMock, createSampleGrnsMock, verifySampleGrnsMock, allocateSampleGrnsMock, monthlyFormLimitsMock, orderLimitLockMock } = vi.hoisted(() => {
   const delegate = () => ({
     count: vi.fn().mockResolvedValue(0),
     create: vi.fn().mockResolvedValue({ id: "created-id" }),
@@ -45,24 +45,46 @@ const { prismaMock, transactionMock, permissionMock, orderNumbersMock, monthlyFo
     finishedGoodsSizeWise: delegate(),
     billOfMaterialItem: delegate(),
     groupedPurchaseOrder: delegate(),
+    groupedPurchaseOrderLine: delegate(),
     masterPurchaseOrder: delegate(),
     merchandisingOrder: delegate(),
     masterPurchaseOrderLine: delegate(),
     masterPurchaseOrderSource: delegate(),
     purchaseOrder: delegate(),
+    gateEntry: delegate(),
+    inventoryReceipt: delegate(),
+    masterLocation: delegate(),
     procurementDocumentCounter: delegate(),
     organizationDummyDataBatch: delegate(),
   };
   const prismaMock = {
     $transaction: vi.fn(),
     organization: { findFirst: vi.fn() },
-    organizationDummyDataBatch: { findUnique: vi.fn() },
+    organizationDummyDataBatch: { findUnique: vi.fn(), update: vi.fn().mockResolvedValue({}) },
+    groupedPurchaseOrder: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
+    merchandisingOrder: { findFirst: vi.fn(), findMany: vi.fn() },
+    masterVendor: { findMany: vi.fn() },
+    masterStockUomConvert: { findMany: vi.fn().mockResolvedValue([]) },
+    billOfMaterialItem: { findMany: vi.fn() },
+    masterPurchaseOrder: { findFirst: vi.fn() },
+    purchaseOrder: { findFirst: vi.fn(), findMany: vi.fn() },
+    gateEntry: { findMany: vi.fn() },
+    inventoryReceipt: { findMany: vi.fn() },
+    masterLocation: { findFirst: vi.fn(), count: vi.fn(), create: vi.fn() },
   };
   return {
     prismaMock,
     transactionMock,
     permissionMock: vi.fn(),
     orderNumbersMock: vi.fn(),
+    groupedPurchaseOrderMock: vi.fn(),
+    masterPurchaseOrderMock: vi.fn(),
+    generatePurchaseOrdersMock: vi.fn(),
+    submitPurchaseOrderMock: vi.fn(),
+    createSampleGateEntriesMock: vi.fn(),
+    createSampleGrnsMock: vi.fn(),
+    verifySampleGrnsMock: vi.fn(),
+    allocateSampleGrnsMock: vi.fn(),
     monthlyFormLimitsMock: vi.fn().mockResolvedValue(undefined),
     orderLimitLockMock: vi.fn().mockResolvedValue(undefined),
   };
@@ -75,6 +97,28 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 vi.mock("@/lib/services/orders/order-service", () => ({
   reserveNextOrderNumbers: orderNumbersMock,
 }));
+vi.mock("@/lib/services/orders/grouped-purchase-order-service", () => ({
+  createGroupedPurchaseOrder: groupedPurchaseOrderMock,
+}));
+vi.mock("@/lib/services/orders/master-purchase-order-service", () => ({
+  createMasterPurchaseOrder: masterPurchaseOrderMock,
+}));
+vi.mock("@/lib/services/orders/purchase-order-service", () => ({
+  generatePurchaseOrders: generatePurchaseOrdersMock,
+  submitPurchaseOrderForApproval: submitPurchaseOrderMock,
+}));
+vi.mock("@/lib/services/inventory/dummy-sample-gate-entry-service", () => ({
+  createDummySampleGateEntries: createSampleGateEntriesMock,
+}));
+vi.mock("@/lib/services/inventory/dummy-sample-grn-service", () => ({
+  createDummySampleGrns: createSampleGrnsMock,
+}));
+vi.mock("@/lib/services/inventory/dummy-sample-verification-service", () => ({
+  verifyDummySampleGrns: verifySampleGrnsMock,
+}));
+vi.mock("@/lib/services/inventory/dummy-sample-allocation-service", () => ({
+  allocateDummySampleGrnsTopDown: allocateSampleGrnsMock,
+}));
 vi.mock("@/lib/services/platform/segment-form-restriction-service", () => ({
   getEffectiveSegmentFormRestriction: vi.fn().mockResolvedValue(null),
   validateMonthlyFormLimits: monthlyFormLimitsMock,
@@ -85,10 +129,14 @@ vi.mock("@/lib/services/platform/order-quantity-limit-service", () => ({
 }));
 
 import {
+  approveSampleGroupedPurchaseOrder,
+  advanceOrganizationDummyData,
   createOrganizationDummyData,
   createOrganizationDummyDataForNewOrganization,
   deleteOrganizationDummyData,
+  getDummyDataWorkflowSummary,
   getOrganizationDummyDataStatus,
+  startDummyDataWizardStep,
 } from "./organization-dummy-data-service";
 
 const organization = {
@@ -98,13 +146,50 @@ const organization = {
 };
 
 beforeEach(() => {
+  vi.unstubAllEnvs();
   vi.clearAllMocks();
   prismaMock.$transaction.mockImplementation(
     (callback: (transaction: typeof transactionMock) => Promise<unknown>) => callback(transactionMock),
   );
   prismaMock.organization.findFirst.mockResolvedValue(organization);
+  prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue(null);
+  prismaMock.groupedPurchaseOrder.findMany.mockResolvedValue([]);
+  prismaMock.merchandisingOrder.findFirst.mockResolvedValue(null);
+  prismaMock.merchandisingOrder.findMany.mockResolvedValue([]);
+  prismaMock.masterVendor.findMany.mockResolvedValue([]);
+  prismaMock.masterStockUomConvert.findMany.mockResolvedValue([]);
+  prismaMock.billOfMaterialItem.findMany.mockResolvedValue([]);
+  prismaMock.masterPurchaseOrder.findFirst.mockResolvedValue(null);
+  prismaMock.purchaseOrder.findFirst.mockResolvedValue(null);
+  prismaMock.purchaseOrder.findMany.mockResolvedValue([]);
+  prismaMock.gateEntry.findMany.mockResolvedValue([]);
+  prismaMock.inventoryReceipt.findMany.mockResolvedValue([]);
+  prismaMock.masterLocation.findFirst.mockResolvedValue({ id: "location-demo" });
+  prismaMock.masterLocation.count.mockResolvedValue(0);
+  prismaMock.masterLocation.create.mockResolvedValue({ id: "location-demo-created" });
   permissionMock.mockResolvedValue({ organization_id: organization.id, role: "OWNER" });
   orderNumbersMock.mockResolvedValue(Array.from({ length: 10 }, (_, index) => `ORD-${String(index + 1).padStart(4, "0")}`));
+  groupedPurchaseOrderMock.mockImplementation(async () => ({ id: `grouped-demo-${groupedPurchaseOrderMock.mock.calls.length}` }));
+  masterPurchaseOrderMock.mockImplementation(async () => ({ id: `master-demo-${masterPurchaseOrderMock.mock.calls.length}` }));
+  generatePurchaseOrdersMock.mockImplementation(async () => ({
+    id: `purchase-order-demo-${generatePurchaseOrdersMock.mock.calls.length}`,
+    status: "DRAFT",
+  }));
+  submitPurchaseOrderMock.mockResolvedValue(undefined);
+  createSampleGateEntriesMock.mockResolvedValue(
+    Array.from({ length: 5 }, (_, index) => ({ id: `gate-entry-${index + 1}`, purchaseOrderId: `po-${index + 1}` })),
+  );
+  createSampleGrnsMock.mockResolvedValue(
+    Array.from({ length: 5 }, (_, index) => ({ id: `receipt-${index + 1}`, purchaseOrderId: `po-${index + 1}` })),
+  );
+  verifySampleGrnsMock.mockResolvedValue({
+    completedLineCount: 12,
+    totalLineCount: 12,
+    receiptIds: Array.from({ length: 5 }, (_, index) => `receipt-${index + 1}`),
+  });
+  allocateSampleGrnsMock.mockResolvedValue({ completedCount: 15, totalCount: 15 });
+  prismaMock.groupedPurchaseOrder.findFirst.mockResolvedValue(null);
+  transactionMock.organizationDummyDataBatch.update.mockResolvedValue({});
   transactionMock.organizationDummyDataBatch.upsert.mockResolvedValue({ id: "batch-id", status: "EMPTY" });
   transactionMock.masterEntity.findFirst.mockResolvedValue({ id: "org-entity-id" });
   transactionMock.masterProduct.findFirst.mockResolvedValue({ id: "finished-goods-id" });
@@ -122,6 +207,7 @@ beforeEach(() => {
   ].map((brand, index) => ({ id: `brand-demo-${index}`, brand })));
   transactionMock.masterVendor.createManyAndReturn.mockResolvedValue([
     "ARAVIND FABRICS", "VARDHAMAN", "RAYMONDS", "UNITED PLASTIC", "GIRIRAG PACKAGING", "CORD THREAD",
+    "DEMO VENDOR NORTH", "DEMO VENDOR SOUTH", "DEMO VENDOR EAST", "DEMO VENDOR WEST",
   ].map((vendor, index) => ({ id: `vendor-demo-${index}`, vendor })));
   transactionMock.masterCurrencyType.createManyAndReturn.mockResolvedValue([
     { id: "currency-inr-id", currency_type: "INR" },
@@ -191,7 +277,24 @@ beforeEach(() => {
 });
 
 describe("organization dummy data service", () => {
-  it("creates sample purchase orders with pending approval requests and reuses baseline masters", async () => {
+  it("maps staged workflow states to the approval lifecycle", () => {
+    expect(getDummyDataWorkflowSummary("AWAITING_GROUPED_APPROVAL", "GROUPED_APPROVAL")).toMatchObject({
+      title: "Grouped approval pending",
+      isPaused: true,
+      detail: "Waiting for every sample grouped purchase order to receive price approval before creating master groups.",
+    });
+    expect(getDummyDataWorkflowSummary("AWAITING_PO_APPROVAL", "PO_APPROVAL")).toMatchObject({
+      title: "Purchase order approval pending",
+      isPaused: true,
+      detail: "Waiting for all sample purchase orders to be approved before receipts can be generated.",
+    });
+    expect(getDummyDataWorkflowSummary("ACTIVE", "COMPLETE")).toMatchObject({
+      title: "Setup complete",
+      isPaused: false,
+    });
+  });
+
+  it("creates sample master data, orders, and BOM before procurement starts", async () => {
     transactionMock.masterPurchaseOrder.findMany.mockResolvedValue([{
       id: "master-po-demo-id",
       vendor_id: "vendor-demo-0",
@@ -205,7 +308,13 @@ describe("organization dummy data service", () => {
     transactionMock.purchaseOrder.create.mockResolvedValue({ id: "created-id", purchase_order_no: "PO-DEMO-0001" });
 
     await expect(createOrganizationDummyData("user-id", "public-org-id", "Sample Operator"))
-      .resolves.toEqual({ created: true, orderNo: "ORD-0001", orderCount: 10 });
+      .resolves.toMatchObject({
+        created: true,
+        orderNo: "ORD-0001",
+        orderCount: 10,
+        status: "IN_PROGRESS",
+        stage: "CREATE_GROUPS",
+      });
 
     expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 20000, timeout: 150000 });
     expect(permissionMock).toHaveBeenCalledWith("user-id", "public-org-id", "ORGANIZATION_SETTINGS");
@@ -217,6 +326,8 @@ describe("organization dummy data service", () => {
     }));
     expect(transactionMock.masterEntity.create).not.toHaveBeenCalled();
     expect(transactionMock.masterProduct.create).not.toHaveBeenCalled();
+    expect(groupedPurchaseOrderMock).not.toHaveBeenCalled();
+    expect(transactionMock.purchaseOrder.create).not.toHaveBeenCalled();
     expect(transactionMock.masterCategory.createManyAndReturn.mock.calls[0][0].data.map((item: { category_name: string }) => item.category_name))
       .toEqual(["Shirt", "Pant", "Shorts", "Jacket"]);
     expect(transactionMock.masterSubCategory.createManyAndReturn.mock.calls[0][0].data).toEqual(expect.arrayContaining([
@@ -369,43 +480,11 @@ describe("organization dummy data service", () => {
       sharedMaterialOrderCount.set(row.rawMaterialName, orderIds);
     }
     expect([...sharedMaterialOrderCount.values()].some((orderIds) => orderIds.size > 1)).toBe(true);
-    expect(transactionMock.groupedPurchaseOrder.create).toHaveBeenCalled();
-    const groupedPurchaseOrderCalls = transactionMock.groupedPurchaseOrder.create.mock.calls as Array<[{ data: { status: string; vendor_id: string; vendor_price: number; gst: number; hsn_code: string; buying_uom: string; lines: { create: unknown[] } } }] >;
-    expect(groupedPurchaseOrderCalls.length).toBeGreaterThan(0);
-    expect(groupedPurchaseOrderCalls.every((call) =>
-      call[0].data.status === "PRICE_APPROVED"
-      && Boolean(call[0].data.vendor_id)
-      && Number(call[0].data.vendor_price) > 0
-      && Number(call[0].data.gst) > 0
-      && Boolean(call[0].data.hsn_code)
-      && Boolean(call[0].data.buying_uom)
-    )).toBe(true);
-    expect(groupedPurchaseOrderCalls.some((call) => call[0].data.lines.create.length > 1)).toBe(true);
-    const masterPurchaseOrderCalls = transactionMock.masterPurchaseOrder.create.mock.calls as Array<[{ data: { status: string; vendor_id: string; sourceRecords: { create: { grouped_purchase_order_id: string } }; lines: { create: unknown[] } } }] >;
-    expect(masterPurchaseOrderCalls.length).toBe(groupedPurchaseOrderCalls.length);
-    expect(masterPurchaseOrderCalls.every((call) =>
-      call[0].data.status === "MASTER_GROUPED"
-      && Boolean(call[0].data.vendor_id)
-      && Boolean(call[0].data.sourceRecords.create.grouped_purchase_order_id)
-      && call[0].data.lines.create.length > 0,
-    )).toBe(true);
-    const purchaseOrderCalls = transactionMock.purchaseOrder.create.mock.calls as Array<[{ data: { status: string }; select: { id: boolean; purchase_order_no: boolean } }] >;
-    expect(purchaseOrderCalls.length).toBeGreaterThan(0);
-    expect(purchaseOrderCalls.every((call) => call[0].data.status === "PENDING_APPROVAL")).toBe(true);
-    expect(transactionMock.approvalRequest.create).toHaveBeenCalledTimes(purchaseOrderCalls.length);
-    expect(transactionMock.approvalRequest.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        organization_id: organization.id,
-        module_key: "purchase-order",
-        entity_type: "purchase-order",
-        entity_key: "PO-DEMO-0001",
-        entity_label: "PO-DEMO-0001",
-        requested_by: "Sample Operator",
-        status: "pending",
-        entity_ref_id: "created-id",
-        notes: "Purchase Order PO-DEMO-0001 is waiting for approval.",
-      }),
-    });
+    expect(groupedPurchaseOrderMock).not.toHaveBeenCalled();
+    expect(transactionMock.groupedPurchaseOrder.create).not.toHaveBeenCalled();
+    expect(transactionMock.masterPurchaseOrder.create).not.toHaveBeenCalled();
+    expect(transactionMock.purchaseOrder.create).not.toHaveBeenCalled();
+    expect(transactionMock.approvalRequest.create).not.toHaveBeenCalled();
     expect(bomRows[0]).toEqual(expect.objectContaining({
       categoryType: "Item",
       requiredQty: "360",
@@ -413,7 +492,8 @@ describe("organization dummy data service", () => {
     }));
     expect(transactionMock.organizationDummyDataBatch.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
-        status: "ACTIVE",
+        status: "IN_PROGRESS",
+        stage: "CREATE_GROUPS",
         sample_order_id: "demo-order-ORD-0001",
         master_record_ids: expect.arrayContaining([
           { moduleKey: "category", id: "category-shirt-id" },
@@ -423,12 +503,524 @@ describe("organization dummy data service", () => {
         ]),
       }),
     }));
-    expect(transactionMock.organizationDummyDataBatch.update.mock.calls[0][0].data.master_record_ids).toHaveLength(229);
     expect(transactionMock.organizationDummyDataBatch.update.mock.calls[0][0].data.master_record_ids)
       .toContainEqual({ datasetVersion: "apparel-10-orders-2026-09" });
     expect(transactionMock.organizationDummyDataBatch.update.mock.calls[0][0].data.master_record_ids
       .filter((record: { moduleKey?: string }) => record.moduleKey === "sample-order"))
       .toHaveLength(10);
+  });
+
+  it("waits for every grouped PO price approval before creating master groups", async () => {
+    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "AWAITING_GROUPED_APPROVAL",
+      stage: "GROUPED_APPROVAL",
+      master_record_ids: groupedIds.map((id) => ({ moduleKey: "grouped-purchase-order", id })),
+      checkpoint: {},
+    });
+    prismaMock.groupedPurchaseOrder.findMany.mockResolvedValue([
+      ...groupedIds.slice(0, 9).map((id) => ({ id, status: "PRICE_APPROVED" })),
+      { id: groupedIds[9], status: "PENDING_PRICE_APPROVAL" },
+    ]);
+
+    await expect(advanceOrganizationDummyData("user-id", "public-org-id"))
+      .resolves.toEqual({
+        advanced: false,
+        status: "AWAITING_GROUPED_APPROVAL",
+        stage: "GROUPED_APPROVAL",
+        completedCount: 9,
+        totalCount: 10,
+      });
+    expect(masterPurchaseOrderMock).not.toHaveBeenCalled();
+    expect(generatePurchaseOrdersMock).not.toHaveBeenCalled();
+  });
+
+  it("creates and checkpoints ten distinct sample groups in Step 2", async () => {
+    const orderIds = Array.from({ length: 10 }, (_, index) => `order-${index + 1}`);
+    const vendorNames = [
+      "ARAVIND FABRICS", "VARDHAMAN", "RAYMONDS", "UNITED PLASTIC", "GIRIRAG PACKAGING",
+      "CORD THREAD", "DEMO VENDOR NORTH", "DEMO VENDOR SOUTH", "DEMO VENDOR EAST", "DEMO VENDOR WEST",
+    ];
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "IN_PROGRESS",
+      stage: "CREATE_GROUPS",
+      master_record_ids: [
+        ...orderIds.map((id) => ({ moduleKey: "sample-order", id })),
+        ...vendorNames.map((_, index) => ({ moduleKey: "vendor", id: `vendor-${index + 1}` })),
+      ],
+      checkpoint: {},
+    });
+    prismaMock.merchandisingOrder.findMany.mockResolvedValue(orderIds.map((id, index) => ({ id, orderNo: `ORD-${index + 1}` })));
+    prismaMock.masterVendor.findMany.mockResolvedValue(vendorNames.map((vendor, index) => ({ id: `vendor-${index + 1}`, vendor })));
+    prismaMock.billOfMaterialItem.findMany.mockResolvedValue(Array.from({ length: 10 }, (_, index) => [
+      { id: `bom-${index + 1}-a`, order_id: orderIds[index], rawMaterialName: `material-${index + 1}`, category: "FABRIC", categoryType: "Item", subCategory: `SUB-${index + 1}`, stockUom: "MTR", requiredQty: "10", totalRequiredQty: "10" },
+      { id: `bom-${index + 1}-b`, order_id: orderIds[(index + 1) % 10], rawMaterialName: `material-${index + 1}`, category: "FABRIC", categoryType: "Item", subCategory: `SUB-${index + 1}`, stockUom: "MTR", requiredQty: "10", totalRequiredQty: "10" },
+    ]).flat());
+
+    await expect(startDummyDataWizardStep("user-id", "public-org-id", 2))
+      .resolves.toMatchObject({ created: true, status: "AWAITING_GROUPED_APPROVAL", stage: "GROUPED_APPROVAL", groupedPurchaseOrderCount: 10 });
+
+    expect(groupedPurchaseOrderMock).toHaveBeenCalledTimes(10);
+    const assignedVendorIds = groupedPurchaseOrderMock.mock.calls.map(([input]) => input.vendorId);
+    expect(new Set(assignedVendorIds).size).toBe(10);
+    expect(assignedVendorIds).not.toEqual(vendorNames.map((_, index) => `vendor-${index + 1}`));
+    for (const [input] of groupedPurchaseOrderMock.mock.calls) {
+      expect(input.lines).toHaveLength(2);
+      expect(input.lines[0].bomItemId.replace(/-[ab]$/, "")).toBe(input.lines[1].bomItemId.replace(/-[ab]$/, ""));
+    }
+    expect(prismaMock.organizationDummyDataBatch.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "AWAITING_GROUPED_APPROVAL", stage: "GROUPED_APPROVAL" }),
+    }));
+
+    groupedPurchaseOrderMock.mock.calls.forEach(([input], index) => {
+      prismaMock.groupedPurchaseOrder.findFirst.mockResolvedValueOnce({
+        id: `grouped-demo-${index + 1}`,
+        vendor_id: input.vendorId,
+        lines: input.lines.map((line: { bomItemId: string }) => ({ source_bom_item_id: line.bomItemId })),
+      });
+    });
+    groupedPurchaseOrderMock.mockClear();
+    await expect(startDummyDataWizardStep("user-id", "public-org-id", 2))
+      .resolves.toMatchObject({ status: "AWAITING_GROUPED_APPROVAL", groupedPurchaseOrderCount: 10 });
+    expect(groupedPurchaseOrderMock).not.toHaveBeenCalled();
+  });
+
+  it("assigns sample terms and approves every grouped PO in Step 3", async () => {
+    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "AWAITING_GROUPED_APPROVAL",
+      stage: "GROUPED_APPROVAL",
+      master_record_ids: groupedIds.map((id) => ({ moduleKey: "grouped-purchase-order", id })),
+      checkpoint: {},
+    });
+    prismaMock.groupedPurchaseOrder.findMany
+      .mockResolvedValueOnce(groupedIds.map((id, index) => ({
+        id,
+        grouped_po_no: `GPO-batch-id-${String(index + 1).padStart(2, "0")}`,
+        status: "PENDING_PRICE_APPROVAL",
+        stock_uom: "MTR",
+        total_grouped_qty: new Prisma.Decimal("2"),
+        lines: [{ id: `line-${index + 1}`, grouped_qty: new Prisma.Decimal("2"), vendor_price: null }],
+      })))
+      .mockResolvedValueOnce(groupedIds.map((id) => ({ id, status: "PRICE_APPROVED" })));
+    prismaMock.masterStockUomConvert.findMany.mockResolvedValue([
+      { name: "MTR", how_many: new Prisma.Decimal("1"), stock_uom: { uom: "MTR" } },
+      { name: "CONE", how_many: new Prisma.Decimal("1000"), stock_uom: { uom: "MTR" } },
+    ]);
+    await expect(startDummyDataWizardStep("user-id", "public-org-id", 3, "Sample Operator"))
+      .resolves.toEqual({
+        prepared: true,
+        approved: true,
+        status: "IN_PROGRESS",
+        stage: "CREATE_MASTER_GROUPS",
+        approvedCount: 10,
+        totalCount: 10,
+      });
+
+    expect(transactionMock.groupedPurchaseOrderLine.updateMany).toHaveBeenCalledTimes(10);
+    expect(transactionMock.groupedPurchaseOrder.updateMany).toHaveBeenCalledTimes(10);
+    for (const [callIndex, [call]] of transactionMock.groupedPurchaseOrder.updateMany.mock.calls.entries()) {
+      expect(call.where.status).toBe("PENDING_PRICE_APPROVAL");
+      expect(call.data.vendor_price).toBeGreaterThanOrEqual(60);
+      expect(call.data.vendor_price).toBeLessThanOrEqual(200);
+      expect([5, 12, 18]).toContain(call.data.gst);
+      expect(["5208", "5515", "6006", "9606"]).toContain(call.data.hsn_code);
+      expect(["MTR", "CONE"]).toContain(call.data.buying_uom);
+      expect(call.data.convert_value.toNumber()).toBe(call.data.buying_uom === "MTR" ? 1 : 1000);
+      expect(call.data.status).toBe("PRICE_APPROVED");
+      expect(call.data.approved_by).toBe("Sample Data Automation");
+      expect(transactionMock.groupedPurchaseOrderLine.updateMany.mock.calls[callIndex][0].data.vendor_price)
+        .toBe(call.data.vendor_price);
+    }
+    expect(transactionMock.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: "SET_DUMMY_GROUPED_PURCHASE_ORDER_SAMPLE_TERMS" }),
+    }));
+    expect(transactionMock.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: "APPROVE_DUMMY_GROUPED_PURCHASE_ORDER" }),
+    }));
+    expect(prismaMock.organizationDummyDataBatch.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: "IN_PROGRESS",
+        stage: "CREATE_MASTER_GROUPS",
+        checkpoint: expect.objectContaining({ sampleTermsPrepared: true }),
+      }),
+    }));
+  });
+
+  it("approves one tracked sample grouped PO through an audited record-level action", async () => {
+    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "AWAITING_GROUPED_APPROVAL",
+      stage: "GROUPED_APPROVAL",
+      master_record_ids: groupedIds.map((id) => ({ moduleKey: "grouped-purchase-order", id })),
+    });
+    transactionMock.groupedPurchaseOrder.findFirst.mockResolvedValue({
+      id: "group-1",
+      grouped_po_no: "GPO-batch-id-01",
+      status: "PENDING_PRICE_APPROVAL",
+      lines: [{ vendor_price: new Prisma.Decimal("85") }],
+    });
+
+    await expect(approveSampleGroupedPurchaseOrder("user-id", "public-org-id", "group-1"))
+      .resolves.toEqual({ approved: true, id: "group-1" });
+
+    expect(transactionMock.groupedPurchaseOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "group-1", organization_id: organization.id, status: "PENDING_PRICE_APPROVAL" },
+      data: expect.objectContaining({ status: "PRICE_APPROVED", approved_by: "Sample Data Automation" }),
+    }));
+    expect(transactionMock.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: "APPROVE_DUMMY_GROUPED_PURCHASE_ORDER", entity_id: "group-1" }),
+    }));
+  });
+
+  it("disables sample record approval in a production deployment", async () => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "AWAITING_GROUPED_APPROVAL",
+      stage: "GROUPED_APPROVAL",
+      master_record_ids: Array.from({ length: 10 }, (_, index) => ({ moduleKey: "grouped-purchase-order", id: `group-${index + 1}` })),
+    });
+
+    await expect(approveSampleGroupedPurchaseOrder("user-id", "public-org-id", "group-1"))
+      .rejects.toThrow("Automatic approvals for sample data are disabled in production.");
+    expect(transactionMock.groupedPurchaseOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("creates one master group per approved sample group and stops before PO creation", async () => {
+    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "AWAITING_GROUPED_APPROVAL",
+      stage: "GROUPED_APPROVAL",
+      master_record_ids: groupedIds.map((id) => ({ moduleKey: "grouped-purchase-order", id })),
+      checkpoint: {},
+    });
+    prismaMock.groupedPurchaseOrder.findMany.mockResolvedValue(groupedIds.map((id) => ({ id, status: "PRICE_APPROVED" })));
+    prismaMock.masterPurchaseOrder.findFirst.mockResolvedValue(null);
+    prismaMock.purchaseOrder.findFirst.mockResolvedValue(null);
+
+    await expect(advanceOrganizationDummyData("user-id", "public-org-id", "Sample Operator"))
+      .resolves.toEqual({ advanced: true, status: "IN_PROGRESS", stage: "CREATE_MASTER_GROUPS", completedCount: 10, totalCount: 10 });
+    expect(masterPurchaseOrderMock).toHaveBeenCalledTimes(10);
+    expect(generatePurchaseOrdersMock).not.toHaveBeenCalled();
+    expect(submitPurchaseOrderMock).not.toHaveBeenCalled();
+    expect(prismaMock.organizationDummyDataBatch.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: "batch-id", organization_id: organization.id },
+      data: expect.objectContaining({ status: "IN_PROGRESS", stage: "CREATE_MASTER_GROUPS" }),
+    }));
+  });
+
+  it("creates, submits, and approves at least ten purchase orders in Step 5", async () => {
+    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
+    const masterIds = Array.from({ length: 10 }, (_, index) => `master-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "IN_PROGRESS",
+      stage: "CREATE_MASTER_GROUPS",
+      master_record_ids: [
+        ...groupedIds.map((id) => ({ moduleKey: "grouped-purchase-order", id })),
+        ...masterIds.map((id) => ({ moduleKey: "master-purchase-order", id })),
+      ],
+      checkpoint: {},
+    });
+    prismaMock.groupedPurchaseOrder.findMany.mockResolvedValue(groupedIds.map((id) => ({ id, status: "MASTER_GROUPED" })));
+    const sampleSources = [{ masterPurchaseOrder: { sourceRecords: [{
+      groupedPurchaseOrder: { grouped_po_no: "GPO-batch-id-01" },
+    }] } }];
+    prismaMock.purchaseOrder.findMany
+      .mockResolvedValueOnce(Array.from({ length: 10 }, (_, index) => ({
+        id: `purchase-order-demo-${index + 1}`,
+        status: "PENDING_APPROVAL",
+        sources: sampleSources,
+      })))
+      .mockResolvedValueOnce(Array.from({ length: 10 }, (_, index) => ({
+        id: `purchase-order-demo-${index + 1}`,
+        status: "APPROVED",
+      })));
+    transactionMock.approvalRequest.findFirst.mockResolvedValue({ id: "approval-request-id" });
+
+    await expect(startDummyDataWizardStep("user-id", "public-org-id", 5, "Sample Operator"))
+      .resolves.toEqual({ advanced: true, status: "IN_PROGRESS", stage: "CREATE_GATE_ENTRIES", completedCount: 10, totalCount: 10 });
+
+    expect(generatePurchaseOrdersMock).toHaveBeenCalledTimes(10);
+    expect(submitPurchaseOrderMock).toHaveBeenCalledTimes(10);
+    expect(transactionMock.approvalRequest.updateMany).toHaveBeenCalledTimes(10);
+    expect(transactionMock.purchaseOrder.updateMany).toHaveBeenCalledTimes(10);
+    expect(prismaMock.organizationDummyDataBatch.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: "batch-id", organization_id: organization.id },
+      data: expect.objectContaining({ status: "IN_PROGRESS", stage: "CREATE_GATE_ENTRIES" }),
+    }));
+  });
+
+  it("does not finish Step 5 while any sample PO is still awaiting approval", async () => {
+    const purchaseOrderIds = Array.from({ length: 10 }, (_, index) => `po-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "AWAITING_PO_APPROVAL",
+      stage: "PO_APPROVAL",
+      master_record_ids: purchaseOrderIds.map((id) => ({ moduleKey: "purchase-order", id })),
+      checkpoint: { purchaseOrderIds },
+    });
+    prismaMock.purchaseOrder.findMany.mockResolvedValue([
+      ...purchaseOrderIds.slice(0, 9).map((id) => ({ id, status: "APPROVED", entity_id: "entity-1" })),
+      { id: purchaseOrderIds[9], status: "PENDING_APPROVAL", entity_id: "entity-1" },
+    ]);
+
+    await expect(advanceOrganizationDummyData("user-id", "public-org-id"))
+      .resolves.toEqual({ advanced: false, status: "AWAITING_PO_APPROVAL", stage: "PO_APPROVAL", completedCount: 9, totalCount: 10 });
+    expect(prismaMock.organizationDummyDataBatch.update).not.toHaveBeenCalled();
+  });
+
+  it("marks Step 5 complete and waits at Step 6 without creating gate entries", async () => {
+    const purchaseOrderIds = Array.from({ length: 10 }, (_, index) => `po-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "AWAITING_PO_APPROVAL",
+      stage: "PO_APPROVAL",
+      sample_order_id: "sample-order-1",
+      master_record_ids: [
+        { moduleKey: "sample-order", id: "sample-order-1" },
+        ...purchaseOrderIds.map((id) => ({ moduleKey: "purchase-order", id })),
+      ],
+      checkpoint: { purchaseOrderIds, grnPurchaseOrderIds: [] },
+    });
+    prismaMock.purchaseOrder.findMany.mockResolvedValue(purchaseOrderIds.map((id) => ({
+      id,
+      status: "APPROVED",
+      entity_id: "entity-1",
+    })));
+
+    await expect(advanceOrganizationDummyData("user-id", "public-org-id"))
+      .resolves.toEqual({ advanced: true, status: "IN_PROGRESS", stage: "CREATE_GATE_ENTRIES", completedCount: 10, totalCount: 10 });
+    expect(prismaMock.organizationDummyDataBatch.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: "batch-id", organization_id: organization.id },
+      data: expect.objectContaining({ status: "IN_PROGRESS", stage: "CREATE_GATE_ENTRIES" }),
+    }));
+  });
+
+  it("auto-approves batch-linked POs for Step 5 and does not create gate entries", async () => {
+    const purchaseOrderIds = Array.from({ length: 10 }, (_, index) => `po-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "AWAITING_PO_APPROVAL",
+      stage: "PO_APPROVAL",
+      sample_order_id: "sample-order-1",
+      master_record_ids: [
+        { moduleKey: "sample-order", id: "sample-order-1" },
+        ...purchaseOrderIds.map((id) => ({ moduleKey: "purchase-order", id })),
+      ],
+      checkpoint: { purchaseOrderIds, grnPurchaseOrderIds: [] },
+    });
+    const sampleSources = [{ masterPurchaseOrder: { sourceRecords: [{
+      groupedPurchaseOrder: { grouped_po_no: "GPO-batch-id-01" },
+    }] } }];
+    prismaMock.purchaseOrder.findMany
+      .mockResolvedValueOnce(purchaseOrderIds.map((id) => ({ id, status: "PENDING_APPROVAL", sources: sampleSources })))
+      .mockResolvedValueOnce(purchaseOrderIds.map((id) => ({ id, status: "APPROVED", entity_id: "entity-1" })));
+    transactionMock.approvalRequest.findFirst.mockResolvedValue({ id: "approval-request-id" });
+
+    await expect(advanceOrganizationDummyData("user-id", "public-org-id"))
+      .resolves.toEqual({ advanced: true, status: "IN_PROGRESS", stage: "CREATE_GATE_ENTRIES", completedCount: 10, totalCount: 10 });
+
+    expect(transactionMock.approvalRequest.updateMany).toHaveBeenCalledTimes(10);
+    expect(transactionMock.purchaseOrder.updateMany).toHaveBeenCalledTimes(10);
+    expect(transactionMock.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: "AUTO_APPROVE_DUMMY_PURCHASE_ORDER" }),
+    }));
+    expect(prismaMock.organizationDummyDataBatch.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "IN_PROGRESS", stage: "CREATE_GATE_ENTRIES" }),
+    }));
+  });
+
+  it("creates five one-to-one sample RM Gate Entries in Step 6 and checkpoints progress", async () => {
+    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
+    const masterIds = Array.from({ length: 10 }, (_, index) => `master-${index + 1}`);
+    const purchaseOrderIds = Array.from({ length: 10 }, (_, index) => `po-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "IN_PROGRESS",
+      stage: "CREATE_GATE_ENTRIES",
+      master_record_ids: [
+        ...groupedIds.map((id) => ({ moduleKey: "grouped-purchase-order", id })),
+        ...masterIds.map((id) => ({ moduleKey: "master-purchase-order", id })),
+        ...purchaseOrderIds.map((id) => ({ moduleKey: "purchase-order", id })),
+      ],
+      checkpoint: {},
+    });
+    prismaMock.groupedPurchaseOrder.findMany.mockResolvedValue(groupedIds.map((id) => ({
+      id,
+      status: "MASTER_GROUPED",
+    })));
+    prismaMock.purchaseOrder.findMany.mockResolvedValue(purchaseOrderIds.map((id) => ({
+      id,
+      status: "APPROVED",
+    })));
+
+    await expect(startDummyDataWizardStep("user-id", "public-org-id", 6))
+      .resolves.toEqual({
+        advanced: true,
+        status: "IN_PROGRESS",
+        stage: "CREATE_VERIFICATION",
+        completedCount: 5,
+        totalCount: 5,
+      });
+
+    expect(createSampleGateEntriesMock).toHaveBeenCalledWith(
+      organization.id,
+      "batch-id",
+      purchaseOrderIds,
+      "user-id",
+    );
+    expect(createSampleGrnsMock).toHaveBeenCalledWith(
+      organization.id,
+      purchaseOrderIds,
+      "batch-id",
+      "user-id",
+    );
+    expect(prismaMock.organizationDummyDataBatch.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: "batch-id", organization_id: organization.id },
+      data: expect.objectContaining({
+        status: "IN_PROGRESS",
+        stage: "CREATE_VERIFICATION",
+        master_record_ids: expect.arrayContaining(
+          Array.from({ length: 5 }, (_, index) => ({ moduleKey: "gate-entry", id: `gate-entry-${index + 1}` })),
+        ),
+        checkpoint: expect.objectContaining({
+          gateEntryIds: Array.from({ length: 5 }, (_, index) => `gate-entry-${index + 1}`),
+          completedGateEntries: 5,
+          totalGateEntries: 5,
+          grnIds: Array.from({ length: 5 }, (_, index) => `receipt-${index + 1}`),
+          completedGrns: 5,
+          totalGrns: 5,
+        }),
+      }),
+    }));
+  });
+
+  it("verifies all sample GRN lines in Step 7 and advances to the allocation boundary", async () => {
+    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
+    const masterIds = Array.from({ length: 10 }, (_, index) => `master-${index + 1}`);
+    const purchaseOrderIds = Array.from({ length: 10 }, (_, index) => `po-${index + 1}`);
+    const receiptIds = Array.from({ length: 5 }, (_, index) => `receipt-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "IN_PROGRESS",
+      stage: "CREATE_VERIFICATION",
+      master_record_ids: [
+        ...groupedIds.map((id) => ({ moduleKey: "grouped-purchase-order", id })),
+        ...masterIds.map((id) => ({ moduleKey: "master-purchase-order", id })),
+        ...purchaseOrderIds.map((id) => ({ moduleKey: "purchase-order", id })),
+        ...receiptIds.map((id) => ({ moduleKey: "inventory-receipt", id })),
+        ...Array.from({ length: 5 }, (_, index) => ({ moduleKey: "gate-entry", id: `gate-entry-${index + 1}` })),
+      ],
+      checkpoint: {},
+    });
+    prismaMock.groupedPurchaseOrder.findMany.mockResolvedValue(groupedIds.map((id) => ({
+      id,
+      status: "MASTER_GROUPED",
+    })));
+    prismaMock.purchaseOrder.findMany.mockResolvedValue(purchaseOrderIds.map((id) => ({
+      id,
+      status: "APPROVED",
+    })));
+
+    await expect(startDummyDataWizardStep("user-id", "public-org-id", 7))
+      .resolves.toEqual({
+        advanced: true,
+        status: "IN_PROGRESS",
+        stage: "CREATE_ALLOCATION",
+        completedCount: 12,
+        totalCount: 12,
+      });
+    expect(verifySampleGrnsMock).toHaveBeenCalledWith(
+      organization.id,
+      "batch-id",
+      purchaseOrderIds,
+      receiptIds,
+      "user-id",
+    );
+    expect(prismaMock.organizationDummyDataBatch.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: "batch-id", organization_id: organization.id },
+      data: expect.objectContaining({
+        stage: "CREATE_ALLOCATION",
+        checkpoint: expect.objectContaining({
+          completedVerificationLines: 12,
+          totalVerificationLines: 12,
+        }),
+      }),
+    }));
+  });
+
+  it("allocates every verified sample GRN in Step 8 and completes the batch", async () => {
+    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
+    const masterIds = Array.from({ length: 10 }, (_, index) => `master-${index + 1}`);
+    const purchaseOrderIds = Array.from({ length: 10 }, (_, index) => `po-${index + 1}`);
+    const receiptIds = Array.from({ length: 5 }, (_, index) => `receipt-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "IN_PROGRESS",
+      stage: "CREATE_ALLOCATION",
+      master_record_ids: [
+        ...groupedIds.map((id) => ({ moduleKey: "grouped-purchase-order", id })),
+        ...masterIds.map((id) => ({ moduleKey: "master-purchase-order", id })),
+        ...purchaseOrderIds.map((id) => ({ moduleKey: "purchase-order", id })),
+        ...receiptIds.map((id) => ({ moduleKey: "inventory-receipt", id })),
+      ],
+      checkpoint: {},
+    });
+    prismaMock.groupedPurchaseOrder.findMany.mockResolvedValue(groupedIds.map((id) => ({
+      id,
+      status: "MASTER_GROUPED",
+    })));
+    prismaMock.purchaseOrder.findMany.mockResolvedValue(purchaseOrderIds.map((id) => ({
+      id,
+      status: "APPROVED",
+    })));
+
+    await expect(startDummyDataWizardStep("user-id", "public-org-id", 8))
+      .resolves.toEqual({
+        advanced: true,
+        status: "ACTIVE",
+        stage: "COMPLETE",
+        completedCount: 15,
+        totalCount: 15,
+      });
+    expect(allocateSampleGrnsMock).toHaveBeenCalledWith(
+      organization.id,
+      "batch-id",
+      receiptIds,
+      "user-id",
+    );
+    expect(prismaMock.organizationDummyDataBatch.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: "batch-id", organization_id: organization.id },
+      data: expect.objectContaining({
+        status: "ACTIVE",
+        stage: "COMPLETE",
+        checkpoint: expect.objectContaining({
+          completedOrderAllocations: 15,
+          totalOrderAllocations: 15,
+        }),
+      }),
+    }));
+  });
+
+  it("does not start Step 8 before Step 7 has advanced the batch to allocation", async () => {
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "IN_PROGRESS",
+      stage: "CREATE_VERIFICATION",
+      master_record_ids: [],
+      checkpoint: {},
+    });
+
+    await expect(startDummyDataWizardStep("user-id", "public-org-id", 8))
+      .rejects.toThrow("Complete Step 7 verification before allocating the verified sample GRNs.");
+    expect(allocateSampleGrnsMock).not.toHaveBeenCalled();
   });
 
   it("allows only the pending organization's owner to seed during onboarding", async () => {
@@ -495,7 +1087,7 @@ describe("organization dummy data service", () => {
     }).mockResolvedValueOnce(null);
 
     await expect(createOrganizationDummyData("user-id", "public-org-id"))
-      .resolves.toEqual({ created: true, orderNo: "ORD-0001", orderCount: 10 });
+      .resolves.toMatchObject({ created: true, orderNo: "ORD-0001", orderCount: 10, status: "IN_PROGRESS", stage: "CREATE_GROUPS" });
 
     expect(transactionMock.merchandisingOrder.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: ["old-demo-order-id"] }, organization_id: organization.id },
@@ -578,7 +1170,14 @@ describe("organization dummy data service", () => {
     expect(transactionMock.masterEntity.deleteMany).not.toHaveBeenCalled();
     expect(transactionMock.masterProduct.deleteMany).not.toHaveBeenCalled();
     expect(transactionMock.organizationDummyDataBatch.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: { status: "EMPTY", sample_order_id: null, master_record_ids: Prisma.JsonNull },
+      data: {
+        status: "EMPTY",
+        stage: "IDLE",
+        checkpoint: {},
+        last_error: null,
+        sample_order_id: null,
+        master_record_ids: Prisma.JsonNull,
+      },
     }));
   });
 
@@ -613,7 +1212,12 @@ describe("organization dummy data service", () => {
       id: "batch-id",
       status: "ACTIVE",
       sample_order_id: "demo-order-id",
-      master_record_ids: [{ moduleKey: "vendor", id: "vendor-demo-id" }],
+      master_record_ids: [
+        { moduleKey: "vendor", id: "vendor-demo-id" },
+        { moduleKey: "purchase-order", id: "purchase-order-demo-id" },
+        { moduleKey: "gate-entry", id: "gate-entry-demo-id" },
+        { moduleKey: "inventory-receipt", id: "receipt-demo-id" },
+      ],
     });
     transactionMock.groupedPurchaseOrder.findMany.mockResolvedValue([{ id: "grouped-po-demo-id" }]);
     transactionMock.masterPurchaseOrder.findMany.mockResolvedValue([{ id: "master-po-demo-id" }]);
@@ -635,9 +1239,54 @@ describe("organization dummy data service", () => {
         ]),
       }),
     }));
+    expect(transactionMock.gateEntry.deleteMany).toHaveBeenCalledWith({
+      where: { organization_id: organization.id, id: { in: ["gate-entry-demo-id"] } },
+    });
+    expect(transactionMock.inventoryReceipt.deleteMany).toHaveBeenCalledWith({
+      where: { organization_id: organization.id, id: { in: ["receipt-demo-id"] } },
+    });
     expect(transactionMock.masterVendor.deleteMany).toHaveBeenCalledWith({
       where: { organization_id: organization.id, id: { in: ["vendor-demo-id"] } },
     });
+  });
+
+  it("deletes a resumable batch waiting for grouped price approvals", async () => {
+    transactionMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "AWAITING_GROUPED_APPROVAL",
+      stage: "GROUPED_APPROVAL",
+      sample_order_id: null,
+      master_record_ids: [],
+    });
+
+    await expect(deleteOrganizationDummyData("user-id", "public-org-id"))
+      .resolves.toEqual({ deleted: true });
+
+    expect(transactionMock.organizationDummyDataBatch.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "batch-id",
+        organization_id: organization.id,
+        status: "AWAITING_GROUPED_APPROVAL",
+      },
+      data: { status: "DELETING" },
+    });
+    expect(transactionMock.organizationDummyDataBatch.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "EMPTY" }),
+    }));
+  });
+
+  it("does not start a second deletion while cleanup is actually in progress", async () => {
+    transactionMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "DELETING",
+      stage: "DELETING",
+      master_record_ids: [],
+    });
+
+    await expect(deleteOrganizationDummyData("user-id", "public-org-id"))
+      .rejects.toThrow("Dummy-data cleanup is already in progress.");
+    expect(transactionMock.organizationDummyDataBatch.updateMany).not.toHaveBeenCalled();
+    expect(transactionMock.purchaseOrder.deleteMany).not.toHaveBeenCalled();
   });
 
   it("shows migration-not-ready status when the batch table has not been deployed", async () => {
@@ -648,5 +1297,234 @@ describe("organization dummy data service", () => {
 
     await expect(getOrganizationDummyDataStatus("user-id", "public-org-id"))
       .resolves.toEqual({ status: "SCHEMA_NOT_READY", createdAt: null, orderNo: null, masterCount: 0 });
+  });
+
+  it("keeps Step 1 available when an empty batch has a stale non-idle stage", async () => {
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "EMPTY",
+      stage: "CREATE_GROUPS",
+      checkpoint: {},
+      last_error: null,
+      sample_order_id: null,
+      master_record_ids: null,
+      created_at: new Date("2026-10-02T00:00:00Z"),
+    });
+
+    await expect(getOrganizationDummyDataStatus("user-id", "public-org-id"))
+      .resolves.toMatchObject({ status: "EMPTY", completedSteps: [], currentStep: 1 });
+  });
+
+  it("returns the wizard to Step 1 after the batch has been deleted", async () => {
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "EMPTY",
+      stage: "IDLE",
+      checkpoint: {},
+      last_error: null,
+      sample_order_id: null,
+      master_record_ids: null,
+      created_at: new Date("2026-10-02T00:00:00Z"),
+    });
+
+    await expect(getOrganizationDummyDataStatus("user-id", "public-org-id"))
+      .resolves.toMatchObject({ status: "EMPTY", stage: "IDLE", completedSteps: [], currentStep: 1 });
+  });
+
+  it("reconstructs step and per-record approval progress from the persisted batch", async () => {
+    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "AWAITING_GROUPED_APPROVAL",
+      stage: "GROUPED_APPROVAL",
+      sample_order_id: "sample-order-1",
+      master_record_ids: [
+        ...Array.from({ length: 10 }, (_, index) => ({ moduleKey: "sample-order", id: `sample-order-${index + 1}` })),
+        ...groupedIds.map((id) => ({ moduleKey: "grouped-purchase-order", id })),
+      ],
+      checkpoint: { sampleTermsPrepared: true },
+      last_error: null,
+      created_at: new Date("2026-10-02T00:00:00Z"),
+    });
+    prismaMock.merchandisingOrder.findFirst.mockResolvedValue({ orderNo: "ORD-0001" });
+    prismaMock.groupedPurchaseOrder.findMany.mockResolvedValue(groupedIds.map((id, index) => ({
+      id,
+      grouped_po_no: `GPO-batch-id-${String(index + 1).padStart(2, "0")}`,
+      status: index === 9 ? "PENDING_PRICE_APPROVAL" : "PRICE_APPROVED",
+      vendor_price: new Prisma.Decimal("85"),
+      gst: new Prisma.Decimal("5"),
+      hsn_code: "5208",
+      buying_uom: "MTR",
+    })));
+
+    const status = await getOrganizationDummyDataStatus("user-id", "public-org-id");
+    expect(status).toMatchObject({
+      status: "AWAITING_GROUPED_APPROVAL",
+      orderNo: "ORD-0001",
+      completedSteps: [1, 2],
+      currentStep: 3,
+      sampleTermsPrepared: true,
+    });
+    expect(status.groupedPurchaseOrders).toEqual(expect.arrayContaining([
+      { id: "group-1", grouped_po_no: "GPO-batch-id-01", status: "PRICE_APPROVED", vendor_price: "85", gst: "5", hsn_code: "5208", buying_uom: "MTR" },
+      { id: "group-10", grouped_po_no: "GPO-batch-id-10", status: "PENDING_PRICE_APPROVAL", vendor_price: "85", gst: "5", hsn_code: "5208", buying_uom: "MTR" },
+    ]));
+  });
+
+  it("keeps Step 5 active until all ten sample Purchase Orders are approved", async () => {
+    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
+    const masterIds = Array.from({ length: 10 }, (_, index) => `master-${index + 1}`);
+    const purchaseOrderIds = Array.from({ length: 10 }, (_, index) => `po-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "IN_PROGRESS",
+      stage: "PO_APPROVAL",
+      sample_order_id: "sample-order-1",
+      master_record_ids: [
+        ...Array.from({ length: 10 }, (_, index) => ({ moduleKey: "sample-order", id: `sample-order-${index + 1}` })),
+        ...groupedIds.map((id) => ({ moduleKey: "grouped-purchase-order", id })),
+        ...masterIds.map((id) => ({ moduleKey: "master-purchase-order", id })),
+        ...purchaseOrderIds.map((id) => ({ moduleKey: "purchase-order", id })),
+      ],
+      checkpoint: {},
+      last_error: null,
+      created_at: new Date("2026-10-02T00:00:00Z"),
+    });
+    prismaMock.merchandisingOrder.findFirst.mockResolvedValue({ orderNo: "ORD-0001" });
+    prismaMock.groupedPurchaseOrder.findMany.mockResolvedValue(groupedIds.map((id) => ({
+      id,
+      grouped_po_no: `GPO-batch-id-${id}`,
+      status: "PRICE_APPROVED",
+      vendor_price: new Prisma.Decimal("85"),
+      gst: new Prisma.Decimal("5"),
+      hsn_code: "5208",
+      buying_uom: "MTR",
+    })));
+    prismaMock.purchaseOrder.findMany.mockResolvedValueOnce([
+      ...purchaseOrderIds.slice(0, 9).map((id) => ({ id, status: "APPROVED" })),
+      { id: purchaseOrderIds[9], status: "PENDING_APPROVAL" },
+    ]);
+
+    const pendingStatus = await getOrganizationDummyDataStatus("user-id", "public-org-id");
+    expect(pendingStatus).toMatchObject({
+      purchaseOrderCount: 10,
+      purchaseOrdersApproved: false,
+      completedSteps: [1, 2, 3, 4],
+      currentStep: 5,
+    });
+
+    prismaMock.purchaseOrder.findMany.mockResolvedValue(
+      purchaseOrderIds.map((id) => ({ id, status: "APPROVED" })),
+    );
+    const approvedStatus = await getOrganizationDummyDataStatus("user-id", "public-org-id");
+    expect(approvedStatus).toMatchObject({
+      purchaseOrderCount: 10,
+      purchaseOrdersApproved: true,
+      completedSteps: [1, 2, 3, 4, 5],
+      currentStep: 6,
+    });
+  });
+
+  it("keeps Step 6 active until five PO-linked GRNs are persisted and restores completion", async () => {
+    const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
+    const masterIds = Array.from({ length: 10 }, (_, index) => `master-${index + 1}`);
+    const purchaseOrderIds = Array.from({ length: 10 }, (_, index) => `po-${index + 1}`);
+    const gateEntryIds = Array.from({ length: 5 }, (_, index) => `gate-entry-${index + 1}`);
+    const receiptIds = Array.from({ length: 5 }, (_, index) => `receipt-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "IN_PROGRESS",
+      stage: "CREATE_VERIFICATION",
+      sample_order_id: "sample-order-1",
+      master_record_ids: [
+        ...Array.from({ length: 10 }, (_, index) => ({ moduleKey: "sample-order", id: `sample-order-${index + 1}` })),
+        ...groupedIds.map((id) => ({ moduleKey: "grouped-purchase-order", id })),
+        ...masterIds.map((id) => ({ moduleKey: "master-purchase-order", id })),
+        ...purchaseOrderIds.map((id) => ({ moduleKey: "purchase-order", id })),
+        ...gateEntryIds.map((id) => ({ moduleKey: "gate-entry", id })),
+        ...receiptIds.map((id) => ({ moduleKey: "inventory-receipt", id })),
+      ],
+      checkpoint: {},
+      last_error: null,
+      created_at: new Date("2026-10-02T00:00:00Z"),
+    });
+    prismaMock.merchandisingOrder.findFirst.mockResolvedValue({ orderNo: "ORD-0001" });
+    prismaMock.groupedPurchaseOrder.findMany.mockResolvedValue(groupedIds.map((id) => ({
+      id,
+      grouped_po_no: id,
+      status: "MASTER_GROUPED",
+      vendor_price: new Prisma.Decimal("85"),
+      gst: new Prisma.Decimal("5"),
+      hsn_code: "5208",
+      buying_uom: "MTR",
+    })));
+    prismaMock.purchaseOrder.findMany.mockResolvedValue(purchaseOrderIds.map((id) => ({ id, status: "APPROVED" })));
+    prismaMock.gateEntry.findMany.mockResolvedValue(gateEntryIds.map((id, index) => ({
+      id,
+      purchase_order_id: purchaseOrderIds[index],
+    })));
+    const pendingStatus = await getOrganizationDummyDataStatus("user-id", "public-org-id");
+    expect(pendingStatus).toMatchObject({
+      gateEntryCount: 5,
+      grnCount: 0,
+      completedSteps: [1, 2, 3, 4, 5],
+      currentStep: 6,
+    });
+
+    prismaMock.inventoryReceipt.findMany.mockResolvedValue(receiptIds.map((id, index) => ({
+      id,
+      purchase_order_id: purchaseOrderIds[index],
+      lines: index === 0
+        ? [
+          { id: "line-1-verified", rmGrnVerification: { id: "verification-1", allocations: [{ verification_allocated: new Prisma.Decimal("1"), orderAllocations: [] }] } },
+          { id: "line-1-pending", rmGrnVerification: { id: "verification-zero", allocations: [] } },
+        ]
+        : [{ id: `line-${index + 1}`, rmGrnVerification: { id: `verification-${index + 1}`, allocations: [{ verification_allocated: new Prisma.Decimal("1"), orderAllocations: [] }] } }],
+    })));
+    const grnStatus = await getOrganizationDummyDataStatus("user-id", "public-org-id");
+    expect(grnStatus).toMatchObject({
+      gateEntryCount: 5,
+      grnCount: 5,
+      verificationLineCount: 6,
+      verifiedLineCount: 5,
+      completedSteps: [1, 2, 3, 4, 5, 6],
+      currentStep: 7,
+    });
+    prismaMock.inventoryReceipt.findMany.mockResolvedValue(receiptIds.map((id, index) => ({
+      id,
+      purchase_order_id: purchaseOrderIds[index],
+      lines: index === 0
+        ? [
+          { id: "line-1-verified", rmGrnVerification: { id: "verification-1", allocations: [{ verification_allocated: new Prisma.Decimal("1"), orderAllocations: [] }] } },
+          { id: "line-1-pending", rmGrnVerification: { id: "verification-2", allocations: [{ verification_allocated: new Prisma.Decimal("1"), orderAllocations: [] }] } },
+        ]
+        : [{ id: `line-${index + 1}`, rmGrnVerification: { id: `verification-${index + 1}`, allocations: [{ verification_allocated: new Prisma.Decimal("1"), orderAllocations: [] }] } }],
+    })));
+    await expect(getOrganizationDummyDataStatus("user-id", "public-org-id"))
+      .resolves.toMatchObject({
+        gateEntryCount: 5,
+        grnCount: 5,
+        verificationLineCount: 6,
+        verifiedLineCount: 6,
+        completedSteps: [1, 2, 3, 4, 5, 6, 7],
+        currentStep: 8,
+      });
+    prismaMock.inventoryReceipt.findMany.mockResolvedValue(receiptIds.map((id, index) => ({
+      id,
+      purchase_order_id: purchaseOrderIds[index],
+      lines: index === 0
+        ? [
+          { id: "line-1-verified", rmGrnVerification: { id: "verification-1", allocations: [{ verification_allocated: new Prisma.Decimal("1"), orderAllocations: [{ allocated_quantity: new Prisma.Decimal("1") }] }] } },
+          { id: "line-1-pending", rmGrnVerification: { id: "verification-2", allocations: [{ verification_allocated: new Prisma.Decimal("1"), orderAllocations: [{ allocated_quantity: new Prisma.Decimal("1") }] }] } },
+        ]
+        : [{ id: `line-${index + 1}`, rmGrnVerification: { id: `verification-${index + 1}`, allocations: [{ verification_allocated: new Prisma.Decimal("1"), orderAllocations: [{ allocated_quantity: new Prisma.Decimal("1") }] }] } }],
+    })));
+    await expect(getOrganizationDummyDataStatus("user-id", "public-org-id"))
+      .resolves.toMatchObject({
+        completedSteps: [1, 2, 3, 4, 5, 6, 7, 8],
+        currentStep: 8,
+        verificationAllocationCount: 6,
+        completedOrderAllocationCount: 6,
+      });
   });
 });

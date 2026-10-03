@@ -88,6 +88,33 @@ describe("organization trial lifecycle", () => {
     await expect(isOrganizationTrialActive("internal-org-id", new Date("2026-10-03T10:00:00.000Z"))).resolves.toBe(false);
   });
 
+  it("starts and audits the first-open trial within a bounded transaction timeout", async () => {
+    mocks.transaction.organization.findUnique.mockResolvedValue({
+      approval_status: "APPROVED",
+      trial_started_at: null,
+      trial_enabled: true,
+      trial_extension_hours: 0,
+    });
+    mocks.transaction.organization.updateMany.mockResolvedValue({ count: 1 });
+
+    await startOrganizationTrialOnFirstOpen("internal-org-id", "workspace-user-id");
+
+    expect(mocks.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      maxWait: 10000,
+      timeout: 20000,
+    });
+    expect(mocks.transaction.organization.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "internal-org-id", approval_status: "APPROVED", trial_started_at: null, trial_enabled: true },
+    }));
+    expect(mocks.transaction.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        organization_id: "internal-org-id",
+        user_id: "workspace-user-id",
+        action: "ORGANIZATION_TRIAL_STARTED",
+      }),
+    }));
+  });
+
   it("adds an extension to an active trial and audits the platform admin", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-02T10:00:00.000Z"));

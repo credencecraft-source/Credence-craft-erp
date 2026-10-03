@@ -56,6 +56,8 @@ export default function PurchaseOrderReportPage() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [error, setError] = useState<{ message: string; linkedReceipts?: Array<{ id: string; receiptNo: string }>; linkedGateEntries?: Array<{ id: string; entryNo: string }> } | null>(null);
+  const [actionError, setActionError] = useState("");
+  const [submittingPurchaseOrderId, setSubmittingPurchaseOrderId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [visibleFields, setVisibleFields] = useState<PurchaseOrderField[]>(reportFields.map((field) => field.key));
 
@@ -142,6 +144,32 @@ export default function PurchaseOrderReportPage() {
     }
   };
 
+  const submitOrderForApproval = async (purchaseOrderId: string) => {
+    const purchaseOrder = orders.find((order) => order.id === purchaseOrderId);
+    if (!purchaseOrder || !["DRAFT", "OPEN", "REJECTED"].includes(purchaseOrder.status)) return;
+
+    setSubmittingPurchaseOrderId(purchaseOrderId);
+    setActionError("");
+    try {
+      const response = await fetch(`/api/orders/purchase-orders/${encodeURIComponent(purchaseOrderId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId, action: "submit-approval" }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Unable to submit Purchase Order for approval.");
+
+      setOrders((current) => current.map((order) => order.id === purchaseOrderId
+        ? { ...order, status: "PENDING_APPROVAL" }
+        : order));
+      setSelectedIds((current) => current.filter((id) => id !== purchaseOrderId));
+    } catch (submitError) {
+      setActionError(submitError instanceof Error ? submitError.message : "Unable to submit Purchase Order for approval.");
+    } finally {
+      setSubmittingPurchaseOrderId(null);
+    }
+  };
+
   const reportRows = useMemo(
     () => orders.map((order) => ({
       ...order,
@@ -193,6 +221,11 @@ export default function PurchaseOrderReportPage() {
         </div>
       ) : (
         <div className="erp-surface overflow-hidden">
+          {actionError ? (
+            <p role="alert" className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+              {actionError}
+            </p>
+          ) : null}
           <ReportGrid
             title="Purchase Orders"
             records={reportRows}
@@ -215,6 +248,18 @@ export default function PurchaseOrderReportPage() {
               setSelectedIds((current) => (checked ? [...new Set([...current, recordId])] : current.filter((id) => id !== recordId)))
             }
             onDeleteSelected={deleteSelectedOrders}
+            onRowAction={(recordId) => void submitOrderForApproval(recordId)}
+            rowActionLabel="Submit for approval"
+            rowActionLabelSelector={(row) => {
+              if (submittingPurchaseOrderId === row.id) return "Submitting...";
+              if (row.status === "PENDING_APPROVAL") return "Pending approval";
+              if (row.status === "APPROVED") return "Approved";
+              if (row.status === "REJECTED") return "Resubmit for approval";
+              return "Submit for approval";
+            }}
+            rowActionDisabledSelector={(row) =>
+              submittingPurchaseOrderId === row.id || !["DRAFT", "OPEN", "REJECTED"].includes(row.status)
+            }
             renderCell={(fieldKey, row) => {
               switch (fieldKey as PurchaseOrderField) {
                 case "purchaseOrderNo":

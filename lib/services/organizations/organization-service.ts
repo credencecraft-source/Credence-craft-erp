@@ -441,7 +441,7 @@ export async function archiveOrganization(
     await transaction.$executeRaw`SELECT set_config('app.user_id', ${workspaceUserId}, true)`;
     const updated = await transaction.organization.updateMany({
       where: { id: organization.id, approval_status: organization.approval_status },
-      data: { approval_status: "ARCHIVED", is_active: false },
+      data: { approval_status: "ARCHIVED", archived_at: new Date(), is_active: false },
     });
     if (updated.count !== 1) throw new Error("Organization changed during archival. Refresh and try again.");
 
@@ -467,7 +467,7 @@ export async function restoreOrganization(organizationId: string, workspaceUserI
     await transaction.$executeRaw`SELECT set_config('app.user_id', ${workspaceUserId}, true)`;
     const updated = await transaction.organization.updateMany({
       where: { id: organization.id, approval_status: "ARCHIVED" },
-      data: { approval_status: "PENDING_APPROVAL", is_active: false },
+      data: { approval_status: "PENDING_APPROVAL", archived_at: null, is_active: false },
     });
     if (updated.count !== 1) throw new Error("Organization changed during restoration. Refresh and try again.");
 
@@ -751,17 +751,40 @@ export async function updateOrganizationApprovalStatus(organizationId: string, a
   });
 }
 
-export async function deleteOrganizationFromPlatform(organizationId: string) {
-  const organization = await prisma.organization.findUnique({
-    where: { id: organizationId },
-    select: { id: true },
-  });
+export const ORGANIZATION_DELETE_RETENTION_DAYS = 90;
 
-  if (!organization) throw new Error("Organization not found.");
+export function getOrganizationDeletionEligibility(archivedAt: Date | null, now = new Date()) {
+  const eligibleAt = archivedAt
+    ? new Date(archivedAt.getTime() + ORGANIZATION_DELETE_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+    : null;
+
+  return { eligibleAt, isEligible: eligibleAt !== null && now >= eligibleAt };
+}
+
+export async function deleteOrganizationFromPlatform(organizationId: string) {
+  await requirePlatformSessionAdmin();
 
   await prisma.$transaction(async (transaction) => {
+    const organization = await transaction.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, approval_status: true, archived_at: true },
+    });
+
+    if (!organization) throw new Error("Organization not found.");
+    if (organization.approval_status !== "ARCHIVED") {
+      throw new Error("Only archived organizations can be deleted.");
+    }
+
+    const eligibility = getOrganizationDeletionEligibility(organization.archived_at);
+    if (!eligibility.isEligible) {
+      if (!organization.archived_at) {
+        throw new Error("The archive date is unavailable. Restore and re-archive the organization to start the 90-day retention period.");
+      }
+      throw new Error("Organizations can only be deleted 90 days after archiving.");
+    }
+
     await transaction.$executeRaw`SELECT set_config('app.skip_organization_audit', 'true', true)`;
     await deleteOrganizationDependencies(transaction, organization.id);
     await transaction.organization.delete({ where: { id: organization.id } });
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }

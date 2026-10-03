@@ -6,10 +6,19 @@ const { prismaMock, transactionMock, requirePlatformSessionAdmin } = vi.hoisted(
     platformAuditEvent: { create: vi.fn() },
     organization: {
       create: vi.fn(),
+      delete: vi.fn(),
       findFirst: vi.fn(),
       findUnique: vi.fn(),
       updateMany: vi.fn(),
     },
+    factoryDailyProductionReportLine: { deleteMany: vi.fn() },
+    factoryGrn: { deleteMany: vi.fn() },
+    factoryBundleTransfer: { deleteMany: vi.fn() },
+    workOrderProcessControllerProcess: { deleteMany: vi.fn() },
+    workOrderProcessController: { deleteMany: vi.fn() },
+    orderProcessControllerProcess: { deleteMany: vi.fn() },
+    orderProcessController: { deleteMany: vi.fn() },
+    merchandisingOrderProcessStep: { deleteMany: vi.fn() },
     eRPSoftware: { create: vi.fn() },
     organizationRoleDefinition: { createMany: vi.fn() },
     organizationRolePermission: { createMany: vi.fn() },
@@ -48,6 +57,8 @@ import {
   archiveOrganization,
   countOrganizationsForUser,
   createOrganization,
+  deleteOrganizationFromPlatform,
+  getOrganizationDeletionEligibility,
   listWorkspaceOrganizationPage,
   restoreOrganization,
   updateOrganizationApprovalStatus,
@@ -218,7 +229,7 @@ describe("organization archive lifecycle", () => {
     expect(transactionMock.$executeRaw).toHaveBeenCalled();
     expect(transactionMock.organization.updateMany).toHaveBeenCalledWith({
       where: { id: "org-internal-id", approval_status: "APPROVED" },
-      data: { approval_status: "ARCHIVED", is_active: false },
+      data: { approval_status: "ARCHIVED", archived_at: expect.any(Date), is_active: false },
     });
   });
 
@@ -234,7 +245,56 @@ describe("organization archive lifecycle", () => {
 
     expect(transactionMock.organization.updateMany).toHaveBeenCalledWith({
       where: { id: "org-internal-id", approval_status: "ARCHIVED" },
-      data: { approval_status: "PENDING_APPROVAL", is_active: false },
+      data: { approval_status: "PENDING_APPROVAL", archived_at: null, is_active: false },
+    });
+  });
+
+  it("makes deletion available exactly 90 days after archival", () => {
+    const archivedAt = new Date("2026-01-01T12:00:00.000Z");
+    const eligibleAt = new Date("2026-04-01T12:00:00.000Z");
+
+    expect(getOrganizationDeletionEligibility(archivedAt, new Date(eligibleAt.getTime() - 1)).isEligible).toBe(false);
+    expect(getOrganizationDeletionEligibility(archivedAt, eligibleAt)).toEqual({ eligibleAt, isEligible: true });
+    expect(getOrganizationDeletionEligibility(null, eligibleAt)).toEqual({ eligibleAt: null, isEligible: false });
+  });
+
+  it("blocks platform deletion unless the organization is archived for 90 days", async () => {
+    transactionMock.organization.findUnique.mockResolvedValue({
+      id: "org-internal-id",
+      approval_status: "ARCHIVED",
+      archived_at: new Date(Date.now() - 89 * 24 * 60 * 60 * 1000),
+    });
+
+    await expect(deleteOrganizationFromPlatform("org-internal-id"))
+      .rejects.toThrow("Organizations can only be deleted 90 days after archiving.");
+    expect(requirePlatformSessionAdmin).toHaveBeenCalled();
+    expect(transactionMock.organization.delete).not.toHaveBeenCalled();
+  });
+
+  it("blocks platform deletion for an organization that is not archived", async () => {
+    transactionMock.organization.findUnique.mockResolvedValue({
+      id: "org-internal-id",
+      approval_status: "APPROVED",
+      archived_at: null,
+    });
+
+    await expect(deleteOrganizationFromPlatform("org-internal-id"))
+      .rejects.toThrow("Only archived organizations can be deleted.");
+    expect(transactionMock.organization.delete).not.toHaveBeenCalled();
+  });
+
+  it("deletes an organization once its archived retention period has elapsed", async () => {
+    transactionMock.organization.findUnique.mockResolvedValue({
+      id: "org-internal-id",
+      approval_status: "ARCHIVED",
+      archived_at: new Date(Date.now() - 91 * 24 * 60 * 60 * 1000),
+    });
+
+    await deleteOrganizationFromPlatform("org-internal-id");
+
+    expect(transactionMock.organization.delete).toHaveBeenCalledWith({ where: { id: "org-internal-id" } });
+    expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: expect.any(String),
     });
   });
 

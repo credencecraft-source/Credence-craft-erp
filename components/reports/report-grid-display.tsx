@@ -39,6 +39,7 @@ interface ReportGridProps<T> {
   deleteSelectedLabel?: string;
   onRowAction?: (recordId: string) => void;
   rowActionLabel?: string;
+  rowActionLabelSelector?: (record: T) => string;
   rowActionDisabledSelector?: (record: T) => boolean;
   onSearchQueryChange?: (query: string) => void;
   renderCell: (fieldKey: string, record: T) => React.ReactNode;
@@ -68,6 +69,7 @@ export function ReportGrid<T>({
   deleteSelectedLabel = "Delete Selected",
   onRowAction,
   rowActionLabel = "Action",
+  rowActionLabelSelector,
   rowActionDisabledSelector,
   onSearchQueryChange,
   renderCell,
@@ -323,7 +325,7 @@ export function ReportGrid<T>({
                         disabled={rowActionDisabledSelector?.(record)}
                         className="text-[10px]"
                       >
-                        {rowActionLabel}
+                        {rowActionLabelSelector?.(record) ?? rowActionLabel}
                       </Button>
                     </td>
                   )}

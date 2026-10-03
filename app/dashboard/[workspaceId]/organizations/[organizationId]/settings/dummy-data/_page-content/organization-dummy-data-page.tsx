@@ -3,14 +3,17 @@ import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, Sparkles } from "lucide-react";
 import Badge from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
 import {
+  advanceOrganizationDummyData,
   createOrganizationDummyData,
   deleteOrganizationDummyData,
+  getDummyDataWorkflowSummary,
   getOrganizationDummyDataStatus,
 } from "@/lib/services/organizations/organization-dummy-data-service";
 import OrganizationDummyDataActions from "./organization-dummy-data-actions";
@@ -33,6 +36,7 @@ export default async function OrganizationDummyDataPage({
   const settingsPath = `/dashboard/${workspaceId}/organizations/${organizationId}/settings`;
   const pagePath = `${settingsPath}/dummy-data`;
   const dataset = await getOrganizationDummyDataStatus(user.id, organizationId);
+  const workflowSummary = getDummyDataWorkflowSummary(dataset.status, dataset.stage);
 
   async function createDummyDataAction() {
     "use server";
@@ -44,13 +48,28 @@ export default async function OrganizationDummyDataPage({
     } catch (error) {
       redirect(`${pagePath}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to create dummy data.")}`);
     }
-    const orderCreatePath = `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/create`;
     revalidatePath(pagePath);
-    if (result.created) {
-      revalidatePath(orderCreatePath);
-      redirect(orderCreatePath);
+    const nextSummary = getDummyDataWorkflowSummary("status" in result ? result.status : dataset.status, "stage" in result ? result.stage : dataset.stage);
+    redirect(`${pagePath}?notice=${encodeURIComponent(result.created
+      ? `Sample data setup started and is currently ${nextSummary.title.toLowerCase()}.`
+      : "Dummy data already exists for this organization.")}`);
+  }
+
+  async function advanceDummyDataAction() {
+    "use server";
+    const actionUser = await requireSessionUser();
+    if (actionUser.workspace_id !== workspaceId) notFound();
+    let result;
+    try {
+      result = await advanceOrganizationDummyData(actionUser.id, organizationId, actionUser.full_name || actionUser.email);
+    } catch (error) {
+      redirect(`${pagePath}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to continue dummy-data setup.")}`);
     }
-    redirect(`${pagePath}?notice=${encodeURIComponent(result.created ? `Demo order ${result.orderNo} and its master values were created.` : "Dummy data already exists for this organization.")}`);
+    revalidatePath(pagePath);
+    const nextSummary = getDummyDataWorkflowSummary(result.status, result.stage);
+    redirect(`${pagePath}?notice=${encodeURIComponent("advanced" in result && result.advanced
+      ? `Sample setup advanced to ${nextSummary.title.toLowerCase()}.`
+      : `Sample data is still waiting on the ${nextSummary.title.toLowerCase()} step.`)}`);
   }
 
   async function deleteDummyDataAction() {
@@ -122,6 +141,18 @@ export default async function OrganizationDummyDataPage({
             </p>
           ) : null}
           {dataset.orderNo ? <p className="text-sm text-slate-700">Sample order: <strong>{dataset.orderNo}</strong> · {dataset.masterCount} demo master records</p> : null}
+          {(dataset.status !== "EMPTY" && dataset.status !== "SCHEMA_NOT_READY") ? (
+            <div className="rounded border border-emerald-200 bg-emerald-50 p-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">Workflow status</p>
+              <h3 className="mt-2 text-base font-semibold text-slate-900">{workflowSummary.title}</h3>
+              <p className="mt-1 text-sm text-slate-600">{workflowSummary.detail}</p>
+              {dataset.status !== "ACTIVE" && dataset.stage !== "COMPLETE" ? (
+                <form action={advanceDummyDataAction} className="mt-3">
+                  <Button type="submit" variant="secondary" size="sm">Continue setup</Button>
+                </form>
+              ) : null}
+            </div>
+          ) : null}
           {query.error ? <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{query.error}</p> : null}
           {query.notice ? <p className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700" role="status">{query.notice}</p> : null}
           <OrganizationDummyDataActions

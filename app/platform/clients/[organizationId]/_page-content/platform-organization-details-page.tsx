@@ -8,7 +8,7 @@ import Section from "@/components/ui/Section";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { assignOrganizationPlatformVersion, getOrganizationClient, listPlatformVersions } from "@/lib/services/platform/client-service";
 import { listOrganizationSegmentPricing, resetOrganizationSegmentPrice, setOrganizationSegmentCustomPrice } from "@/lib/services/platform/organization-segment-pricing-service";
-import { deleteOrganizationFromPlatform, updateOrganizationApprovalStatus } from "@/lib/services/organizations/organization-service";
+import { deleteOrganizationFromPlatform, getOrganizationDeletionEligibility, ORGANIZATION_DELETE_RETENTION_DAYS, updateOrganizationApprovalStatus } from "@/lib/services/organizations/organization-service";
 import { extendOrganizationTrial, removeOrganizationTrial } from "@/lib/services/platform/organization-trial-service";
 import OrganizationDetailTabs from "./organization-detail-tabs";
 import OrganizationSubscriptionPricing from "./organization-subscription-pricing";
@@ -130,6 +130,8 @@ export default async function PlatformOrganizationDetailsPage({
     organization.country,
     organization.pin_code,
   ].filter(Boolean).join(", ");
+  const deletionEligibility = getOrganizationDeletionEligibility(organization.archived_at);
+  const isArchived = organization.approval_status === "ARCHIVED";
 
   return (
     <Page className="max-w-7xl">
@@ -350,10 +352,19 @@ export default async function PlatformOrganizationDetailsPage({
         <section className="flex flex-col justify-between gap-4 rounded-xl border border-red-200 bg-red-50 p-5 sm:flex-row sm:items-center">
           <div>
             <h2 className="text-sm font-bold text-red-900">Delete organisation</h2>
-            <p className="mt-1 text-xs text-red-700">This permanently deletes the organisation and all related business records.</p>
+            <p id="organization-delete-retention" className="mt-1 text-xs text-red-700">
+              {!isArchived
+                ? `Archive this organisation first. Permanent deletion is available ${ORGANIZATION_DELETE_RETENTION_DAYS} days after archiving.`
+                : !organization.archived_at
+                  ? "The archive date is unavailable. Restore and re-archive this organisation to start the 90-day retention period."
+                  : deletionEligibility.isEligible
+                    ? `Archived on ${organization.archived_at.toLocaleString()}. The 90-day retention period has elapsed; deletion is now available.`
+                    : `Archived on ${organization.archived_at.toLocaleString()}. Deletion becomes available on ${deletionEligibility.eligibleAt?.toLocaleString()}.`}
+              {" "}Deletion permanently removes the organisation and related business records.
+            </p>
           </div>
           <form action={deleteOrganization}>
-            <Button type="submit" variant="danger" size="sm" className="rounded-md">
+            <Button type="submit" variant="danger" size="sm" className="rounded-md" disabled={!isArchived || !deletionEligibility.isEligible} aria-describedby="organization-delete-retention">
               Delete Organisation
             </Button>
           </form>

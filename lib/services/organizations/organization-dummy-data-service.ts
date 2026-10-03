@@ -1,9 +1,16 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import { requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { reserveNextOrderNumbers } from "@/lib/services/orders/order-service";
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
+import { createGroupedPurchaseOrder } from "@/lib/services/orders/grouped-purchase-order-service";
+import { createMasterPurchaseOrder } from "@/lib/services/orders/master-purchase-order-service";
+import { generatePurchaseOrders, submitPurchaseOrderForApproval } from "@/lib/services/orders/purchase-order-service";
+import { createDummySampleGateEntries } from "@/lib/services/inventory/dummy-sample-gate-entry-service";
+import { createDummySampleGrns } from "@/lib/services/inventory/dummy-sample-grn-service";
+import { verifyDummySampleGrns } from "@/lib/services/inventory/dummy-sample-verification-service";
+import { allocateDummySampleGrnsTopDown } from "@/lib/services/inventory/dummy-sample-allocation-service";
 import { lockOrganizationOrderQuantityLimit } from "@/lib/services/platform/order-quantity-limit-service";
 import {
   getEffectiveSegmentFormRestriction,
@@ -17,6 +24,17 @@ const MAX_DUMMY_ORDER_QTY = 4000;
 
 function normalizeDummyOrderQty(orderQty: number) {
   return Math.min(Math.max(orderQty, 0), MAX_DUMMY_ORDER_QTY);
+}
+
+function shuffleSampleVendorIds(vendorIds: string[], batchId: string) {
+  const shuffled = [...vendorIds];
+  let seed = createHash("sha256").update(batchId).digest().readUInt32BE(0);
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const swapIndex = seed % (index + 1);
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled;
 }
 
 const SAMPLE_VALUES = {
@@ -44,6 +62,10 @@ const SAMPLE_VALUES = {
     "UNITED PLASTIC",
     "GIRIRAG PACKAGING",
     "CORD THREAD",
+    "DEMO VENDOR NORTH",
+    "DEMO VENDOR SOUTH",
+    "DEMO VENDOR EAST",
+    "DEMO VENDOR WEST",
   ],
   buyers: [
     { name: "Impulse", currency: "INR" },
@@ -190,6 +212,65 @@ function readMasterRecordIds(value: Prisma.JsonValue): DemoMasterRecord[] {
   });
 }
 
+export function getDummyDataWorkflowSummary(status?: string | null, stage?: string | null) {
+  const normalizedStatus = String(status ?? "").toUpperCase();
+  const normalizedStage = String(stage ?? "").toUpperCase();
+
+  if (normalizedStatus === "AWAITING_GROUPED_APPROVAL" || normalizedStage === "GROUPED_APPROVAL") {
+    return {
+      title: "Grouped approval pending",
+      detail: "Waiting for every sample grouped purchase order to receive price approval before creating master groups.",
+      isPaused: true,
+    };
+  }
+
+  if (normalizedStatus === "AWAITING_PO_APPROVAL" || normalizedStage === "PO_APPROVAL") {
+    return {
+      title: "Purchase order approval pending",
+      detail: "Waiting for all sample purchase orders to be approved before receipts can be generated.",
+      isPaused: true,
+    };
+  }
+
+  if (normalizedStatus === "ACTIVE" || normalizedStage === "COMPLETE") {
+    return {
+      title: "Setup complete",
+      detail: "The sample dataset is active and all staged approvals and receipts have been completed.",
+      isPaused: false,
+    };
+  }
+
+  if (normalizedStatus === "EMPTY") {
+    return {
+      title: "Not created",
+      detail: "No sample dataset exists for this organization yet.",
+      isPaused: false,
+    };
+  }
+
+  if (normalizedStatus === "SCHEMA_NOT_READY") {
+    return {
+      title: "Database update required",
+      detail: "The dummy-data tracking tables are not available yet. Deploy the schema migration before creating sample records.",
+      isPaused: false,
+    };
+  }
+
+  if (normalizedStatus === "DELETING") {
+    return {
+      title: "Removing sample data",
+      detail: "The sample dataset is being cleaned up and cannot be resumed until deletion completes.",
+      isPaused: true,
+    };
+  }
+
+  return {
+    title: normalizedStatus ? normalizedStatus.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Sample data setup",
+    detail: "The sample dataset is currently in progress. Refresh the page after the staged approval gate advances.",
+    isPaused: normalizedStatus !== "ACTIVE",
+  };
+}
+
 function isDummyBatchTableMissing(error: unknown) {
   if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "P2021") return false;
   const metadata = "meta" in error && typeof error.meta === "object" && error.meta !== null ? error.meta : null;
@@ -222,7 +303,7 @@ export async function getOrganizationDummyDataStatus(userId: string, routeOrgani
   try {
     batch = await prisma.organizationDummyDataBatch.findUnique({
       where: { organization_id: organization.id },
-      select: { id: true, status: true, sample_order_id: true, master_record_ids: true, created_at: true },
+      select: { id: true, status: true, stage: true, checkpoint: true, last_error: true, sample_order_id: true, master_record_ids: true, created_at: true },
     });
   } catch (error) {
     if (isDummyBatchTableMissing(error)) {
@@ -243,25 +324,169 @@ export async function getOrganizationDummyDataStatus(userId: string, routeOrgani
   const batchRecords = batch ? readMasterRecordIds(batch.master_record_ids) : [];
   const orderCount = batchRecords.filter((record) => record.moduleKey === "sample-order").length
     || (batch?.sample_order_id ? 1 : 0);
+  const groupedPurchaseOrderIds = batchRecords
+    .filter((record) => record.moduleKey === "grouped-purchase-order")
+    .map((record) => record.id);
+  const groupedPurchaseOrderRows = groupedPurchaseOrderIds.length === 0 ? [] : await prisma.groupedPurchaseOrder.findMany({
+    where: { organization_id: organization.id, id: { in: groupedPurchaseOrderIds } },
+    select: {
+      id: true,
+      grouped_po_no: true,
+      status: true,
+      vendor_price: true,
+      gst: true,
+      hsn_code: true,
+      buying_uom: true,
+    },
+    orderBy: { grouped_po_no: "asc" },
+  });
+  const groupedPurchaseOrders = groupedPurchaseOrderRows.map((order) => ({
+    ...order,
+    vendor_price: order.vendor_price?.toString() ?? null,
+    gst: order.gst?.toString() ?? null,
+  }));
+  const masterGroupCount = batchRecords.filter((record) => record.moduleKey === "master-purchase-order").length;
+  const purchaseOrderIds = batchRecords
+    .filter((record) => record.moduleKey === "purchase-order")
+    .map((record) => record.id);
+  const purchaseOrders = purchaseOrderIds.length === 0 ? [] : await prisma.purchaseOrder.findMany({
+    where: { organization_id: organization.id, id: { in: purchaseOrderIds } },
+    select: { id: true, status: true },
+  });
+  const purchaseOrderCount = purchaseOrders.length;
+  const purchaseOrdersApproved = purchaseOrderCount === 10
+    && purchaseOrders.every((order) => ["APPROVED", "SHARED"].includes(order.status));
+  const gateEntryIds = batchRecords
+    .filter((record) => record.moduleKey === "gate-entry")
+    .map((record) => record.id);
+  const gateEntries = gateEntryIds.length === 0 ? [] : await prisma.gateEntry.findMany({
+    where: { organization_id: organization.id, id: { in: gateEntryIds } },
+    select: { id: true, purchase_order_id: true },
+  });
+  const requiredGatePurchaseOrderIds = new Set(purchaseOrderIds.slice(0, 5));
+  const gateEntriesComplete = gateEntries.length === 5
+    && new Set(gateEntries.map((entry) => entry.purchase_order_id)).size === 5
+    && gateEntries.every((entry) => requiredGatePurchaseOrderIds.has(entry.purchase_order_id ?? ""));
+  const sampleGrnIds = batchRecords
+    .filter((record) => record.moduleKey === "inventory-receipt")
+    .map((record) => record.id);
+  const sampleGrns = sampleGrnIds.length === 0 ? [] : await prisma.inventoryReceipt.findMany({
+    where: { organization_id: organization.id, id: { in: sampleGrnIds } },
+    select: {
+      id: true,
+      purchase_order_id: true,
+      lines: {
+        select: {
+          id: true,
+          rmGrnVerification: {
+            select: {
+              id: true,
+              allocations: {
+                select: {
+                  id: true,
+                  verification_allocated: true,
+                  orderAllocations: { select: { allocated_quantity: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  const sampleGrnsComplete = sampleGrns.length === 5
+    && new Set(sampleGrns.map((receipt) => receipt.purchase_order_id)).size === 5
+    && sampleGrns.every((receipt) => requiredGatePurchaseOrderIds.has(receipt.purchase_order_id));
+  const verificationLineCount = sampleGrns.reduce((total, receipt) => total + receipt.lines.length, 0);
+  const verifiedLineCount = sampleGrns.reduce(
+    (total, receipt) => total + receipt.lines.filter((line) =>
+      line.rmGrnVerification?.allocations.some((allocation) => allocation.verification_allocated.greaterThan(0)),
+    ).length,
+    0,
+  );
+  const verificationAllocations = sampleGrns.flatMap((receipt) =>
+    receipt.lines.flatMap((line) => line.rmGrnVerification?.allocations ?? []),
+  ).filter((allocation) => allocation.verification_allocated.greaterThan(0));
+  const completedOrderAllocations = verificationAllocations.filter((allocation) => {
+    const totalAllocated = allocation.orderAllocations.reduce(
+      (total, orderAllocation) => total.plus(orderAllocation.allocated_quantity),
+      new Prisma.Decimal(0),
+    );
+    return totalAllocated.greaterThanOrEqualTo(allocation.verification_allocated);
+  }).length;
+  const sampleAllocationsComplete = verificationAllocations.length > 0
+    && completedOrderAllocations === verificationAllocations.length;
+  const sampleGrnsVerified = sampleGrnsComplete
+    && verificationLineCount > 0
+    && sampleGrns.every((receipt) => receipt.lines.length > 0)
+    && verifiedLineCount === verificationLineCount;
+  const stepOneComplete = batch?.status !== "EMPTY"
+    && Boolean(batch?.sample_order_id)
+    && orderCount === 10;
+  const completedSteps = [
+    ...(stepOneComplete ? [1] : []),
+    ...(groupedPurchaseOrders.length === 10 ? [2] : []),
+    ...(groupedPurchaseOrders.length === 10 && groupedPurchaseOrders.every((order) => ["PRICE_APPROVED", "MASTER_GROUPED"].includes(order.status)) ? [3] : []),
+    ...(masterGroupCount === 10 ? [4] : []),
+    ...(purchaseOrdersApproved ? [5] : []),
+    ...(gateEntriesComplete && sampleGrnsComplete ? [6] : []),
+    ...(gateEntriesComplete && sampleGrnsComplete && sampleGrnsVerified ? [7] : []),
+    ...(gateEntriesComplete && sampleGrnsComplete && sampleGrnsVerified && sampleAllocationsComplete ? [8] : []),
+  ];
+  const currentStep = completedSteps.includes(8) ? 8
+    : completedSteps.includes(7) ? 8
+      : completedSteps.includes(6) ? 7
+        : completedSteps.includes(5) ? 6
+          : completedSteps.includes(4) ? 5
+            : completedSteps.includes(3) ? 4
+              : completedSteps.includes(2) ? 3
+                : completedSteps.includes(1) ? 2
+                  : 1;
 
   return {
     status: batch?.status ?? "EMPTY",
+    stage: batch?.stage ?? "IDLE",
+    checkpoint: batch?.checkpoint ?? {},
+    error: batch?.last_error ?? null,
     createdAt: batch?.created_at ?? null,
     orderNo,
     orderCount,
     masterCount: batchRecords.filter((record) => record.moduleKey !== "sample-order").length,
+    groupedPurchaseOrders,
+    completedSteps,
+    currentStep,
+    masterGroupCount,
+    purchaseOrderCount,
+    purchaseOrdersApproved,
+    gateEntryCount: gateEntries.length,
+    grnCount: sampleGrns.length,
+    verificationLineCount,
+    verifiedLineCount,
+    verificationAllocationCount: verificationAllocations.length,
+    completedOrderAllocationCount: completedOrderAllocations,
+    sampleTermsPrepared: isCheckpointFlag(batch?.checkpoint, "sampleTermsPrepared"),
   };
 }
 
+function isCheckpointFlag(value: Prisma.JsonValue | undefined, key: string) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && value[key] === true;
+}
+
 export async function createOrganizationDummyData(userId: string, routeOrganizationId: string, requestedBy = userId) {
-  return createOrganizationDummyDataForUser(userId, routeOrganizationId, false, requestedBy);
+  return createOrganizationDummyDataForUser(userId, routeOrganizationId, false, requestedBy, true);
 }
 
 export async function createOrganizationDummyDataForNewOrganization(userId: string, routeOrganizationId: string, requestedBy = userId) {
-  return createOrganizationDummyDataForUser(userId, routeOrganizationId, true, requestedBy);
+  return createOrganizationDummyDataForUser(userId, routeOrganizationId, true, requestedBy, true);
 }
 
-async function createOrganizationDummyDataForUser(userId: string, routeOrganizationId: string, allowPendingOwner: boolean, requestedBy: string) {
+async function createOrganizationDummyDataForUser(
+  userId: string,
+  routeOrganizationId: string,
+  allowPendingOwner: boolean,
+  requestedBy: string,
+  startStagedWorkflow = false,
+) {
   const organization = await authorizeOrganization(userId, routeOrganizationId, allowPendingOwner);
   const formRestriction = await getEffectiveSegmentFormRestriction(organization.id, "merchandising_orders");
   await Promise.all(SAMPLE_VALUES.sampleOrders.map((sampleOrder) => validateRestrictedFormFields(
@@ -286,13 +511,22 @@ async function createOrganizationDummyDataForUser(userId: string, routeOrganizat
 
   const existingBatch = await prisma.organizationDummyDataBatch.findUnique({
     where: { organization_id: organization.id },
-    select: { status: true, master_record_ids: true },
+    select: { status: true, stage: true, master_record_ids: true },
   });
   if (existingBatch?.status === "ACTIVE" && !hasCurrentSampleDatasetVersion(existingBatch.master_record_ids)) {
     await deleteOrganizationDummyData(userId, routeOrganizationId);
   }
+  if (existingBatch && existingBatch.status !== "EMPTY" && existingBatch.status !== "ACTIVE") {
+    return getOrganizationDummyDataStatus(userId, routeOrganizationId).then((status) => ({
+      created: false,
+      orderNo: status.orderNo,
+      orderCount: status.orderCount ?? 0,
+      status: status.status,
+      stage: status.stage,
+    }));
+  }
 
-  return prisma.$transaction(async (transaction) => {
+  const result = await prisma.$transaction(async (transaction) => {
     const batch = await transaction.organizationDummyDataBatch.upsert({
       where: { organization_id: organization.id },
       create: { organization_id: organization.id },
@@ -719,6 +953,54 @@ async function createOrganizationDummyDataForUser(userId: string, routeOrganizat
         totalRequiredQty: true,
       },
     });
+
+    if (startStagedWorkflow) {
+      const sampleOrder = ordersByNumber.get(orderNumbers[0]);
+      if (!sampleOrder) throw new Error("The first sample order was not created.");
+      const trackedRecords = [
+        ...createdRecords.map((item) => ({ ...item })),
+        { datasetVersion: SAMPLE_DATASET_VERSION },
+      ] as Prisma.InputJsonArray;
+      await transaction.organizationDummyDataBatch.update({
+        where: { id: batch.id, organization_id: organization.id },
+        data: {
+          status: "IN_PROGRESS",
+          stage: "CREATE_GROUPS",
+          last_error: null,
+          sample_order_id: sampleOrder.id,
+          master_record_ids: trackedRecords,
+          checkpoint: {
+            orderIds: createdSampleOrders.map((order) => order.id),
+            vendorIds: vendors.map((vendor) => vendor.id),
+            requestedBy,
+          },
+        },
+      });
+      await transaction.auditEvent.create({
+        data: {
+          organization_id: organization.id,
+          user_id: userId,
+          module: "Organization Settings",
+          action: "CREATE_DUMMY_DATA_STAGE",
+          entity_type: "OrganizationDummyDataBatch",
+          entity_id: batch.id,
+          details: { stage: "CREATE_GROUPS", order_count: createdSampleOrders.length },
+        },
+      });
+      return {
+        created: true,
+        orderNo: sampleOrder.orderNo,
+        orderCount: createdSampleOrders.length,
+        status: "IN_PROGRESS",
+        stage: "CREATE_GROUPS",
+        batchId: batch.id,
+        createdRecords,
+        createdSampleOrders,
+        vendors,
+        createdBomRows,
+      };
+    }
+
     const procurementGroups = new Map<string, typeof createdBomRows>();
     for (const bomRow of createdBomRows) {
       const key = [bomRow.rawMaterialName, bomRow.category, bomRow.subCategory, bomRow.stockUom]
@@ -936,6 +1218,981 @@ async function createOrganizationDummyDataForUser(userId: string, routeOrganizat
 
     return { created: true, orderNo: sampleOrder.orderNo, orderCount: createdSampleOrders.length };
   }, { maxWait: 20000, timeout: 150000 });
+
+  return result;
+}
+
+async function createSampleGroupedPurchaseOrders(
+  organizationId: string,
+  batchId: string,
+  userId: string,
+  orderNo?: string,
+  orderCount?: number,
+  initialRecords?: DemoMasterRecord[],
+  sampleOrders?: Array<{ id: string; orderNo: string }>,
+  vendors?: Array<{ id: string; vendor: string }>,
+  bomRows?: Array<{
+    id: string;
+    order_id: string;
+    category: string | null;
+    categoryType: string | null;
+    subCategory: string | null;
+    rawMaterialName: string | null;
+    stockUom: string | null;
+    requiredQty: Prisma.Decimal | string | null;
+    totalRequiredQty: Prisma.Decimal | string | null;
+  }>,
+) {
+  const needsReload = !initialRecords || !sampleOrders || !vendors || !bomRows;
+  const batch = needsReload ? await prisma.organizationDummyDataBatch.findUnique({
+    where: { id: batchId, organization_id: organizationId },
+    select: { sample_order_id: true, master_record_ids: true },
+  }) : null;
+  if (needsReload && !batch) throw new Error("Sample-data checkpoint was not found.");
+  const records = initialRecords ?? readMasterRecordIds(batch!.master_record_ids);
+  const sampleOrderRecords = sampleOrders ?? await prisma.merchandisingOrder.findMany({
+    where: { organization_id: organizationId, id: { in: records.filter((record) => record.moduleKey === "sample-order").map((record) => record.id) } },
+    select: { id: true, orderNo: true },
+  });
+  if (sampleOrderRecords.length !== 10) throw new Error("Ten sample orders are required to resume grouped-PO creation.");
+  const vendorRecords = vendors ?? await prisma.masterVendor.findMany({
+    where: { organization_id: organizationId, id: { in: records.filter((record) => record.moduleKey === "vendor").map((record) => record.id) } },
+    select: { id: true, vendor: true },
+  });
+  const bomRecords = bomRows ?? await prisma.billOfMaterialItem.findMany({
+    where: { order_id: { in: sampleOrderRecords.map((order) => order.id) }, order: { organization_id: organizationId } },
+    select: {
+      id: true,
+      order_id: true,
+      category: true,
+      categoryType: true,
+      subCategory: true,
+      rawMaterialName: true,
+      stockUom: true,
+      requiredQty: true,
+      totalRequiredQty: true,
+    },
+  });
+  const firstOrderNo = orderNo ?? sampleOrderRecords[0]?.orderNo;
+  if (!firstOrderNo) throw new Error("The first sample order number could not be loaded.");
+  const rowsByMaterial = new Map<string, typeof bomRecords>();
+  for (const row of bomRecords) {
+    const key = [row.rawMaterialName, row.category, row.subCategory, row.stockUom]
+      .map((value) => String(value ?? "").trim().toLowerCase())
+      .join("|");
+    const rows = rowsByMaterial.get(key) ?? [];
+    rows.push(row);
+    rowsByMaterial.set(key, rows);
+  }
+
+  const eligibleGroups = [...rowsByMaterial.entries()]
+    .filter(([, rows]) => new Set(rows.map((row) => row.order_id)).size > 1)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .slice(0, 10);
+  if (eligibleGroups.length !== 10) {
+    throw new Error("The sample BOM does not contain ten multi-order procurement groups.");
+  }
+
+  const vendorByName = new Map(vendorRecords.map((vendor) => [vendor.vendor, vendor.id]));
+  const sampleVendorIds = SAMPLE_VALUES.vendors.map((vendorName) => vendorByName.get(vendorName));
+  const orderedVendorIds = sampleVendorIds.every((vendorId): vendorId is string => Boolean(vendorId))
+    ? shuffleSampleVendorIds(sampleVendorIds, batchId)
+    : sampleVendorIds;
+  if (orderedVendorIds.some((vendorId) => !vendorId) || new Set(orderedVendorIds).size !== 10) {
+    throw new Error("Ten distinct sample vendors are required before procurement can be created.");
+  }
+
+  const trackedRecords = [...records];
+  const groupedPurchaseOrderIds: string[] = [];
+  for (const [groupIndex, [groupKey, rows]] of eligibleGroups.entries()) {
+    const groupedPoNo = `GPO-${batchId}-${String(groupIndex + 1).padStart(2, "0")}`;
+    const vendorId = orderedVendorIds[groupIndex]!;
+    const existing = await prisma.groupedPurchaseOrder.findFirst({
+      where: { organization_id: organizationId, grouped_po_no: groupedPoNo },
+      select: { id: true, vendor_id: true, lines: { select: { source_bom_item_id: true } } },
+    });
+
+    let groupedPurchaseOrderId: string;
+    if (existing) {
+      const expectedBomIds = new Set(rows.map((row) => row.id));
+      if (
+        existing.vendor_id !== vendorId
+        || existing.lines.length !== expectedBomIds.size
+        || existing.lines.some((line) => !expectedBomIds.has(line.source_bom_item_id))
+      ) {
+        throw new Error("A sample procurement checkpoint conflicts with an existing grouped purchase order.");
+      }
+      groupedPurchaseOrderId = existing.id;
+    } else {
+      const groupedPurchaseOrder = await createGroupedPurchaseOrder({
+        organizationId,
+        vendorId,
+        submittedBy: userId,
+        submittedByUserId: userId,
+        sampleBatchId: batchId,
+        sampleGroupOrdinal: groupIndex + 1,
+        lines: rows.map((row) => ({
+          bomItemId: row.id,
+          groupedQty: String(row.totalRequiredQty ?? row.requiredQty ?? 0),
+        })),
+      });
+      groupedPurchaseOrderId = groupedPurchaseOrder.id;
+    }
+
+    groupedPurchaseOrderIds.push(groupedPurchaseOrderId);
+    if (!trackedRecords.some((record) => record.moduleKey === "grouped-purchase-order" && record.id === groupedPurchaseOrderId)) {
+      trackedRecords.push({ moduleKey: "grouped-purchase-order", id: groupedPurchaseOrderId });
+    }
+    const checkpointRecords = [
+      ...trackedRecords.map((record) => ({ ...record })),
+      { datasetVersion: SAMPLE_DATASET_VERSION },
+    ] as Prisma.InputJsonArray;
+    await prisma.organizationDummyDataBatch.update({
+      where: { id: batchId, organization_id: organizationId },
+      data: {
+        status: "IN_PROGRESS",
+        stage: "CREATE_GROUPS",
+        last_error: null,
+        master_record_ids: checkpointRecords,
+        checkpoint: {
+          orderIds: sampleOrderRecords.map((order) => order.id),
+          groupedPurchaseOrderIds,
+          completedGroupedPurchaseOrders: groupedPurchaseOrderIds.length,
+          totalGroupedPurchaseOrders: 10,
+          nextGroupKey: groupKey,
+        },
+      },
+    });
+  }
+
+  await prisma.organizationDummyDataBatch.update({
+    where: { id: batchId, organization_id: organizationId },
+    data: {
+      status: "AWAITING_GROUPED_APPROVAL",
+      stage: "GROUPED_APPROVAL",
+      checkpoint: {
+        orderIds: sampleOrderRecords.map((order) => order.id),
+        groupedPurchaseOrderIds,
+        completedGroupedPurchaseOrders: groupedPurchaseOrderIds.length,
+        totalGroupedPurchaseOrders: 10,
+      },
+      last_error: null,
+    },
+  });
+
+  await prisma.$transaction(async (transaction) => {
+    await transaction.auditEvent.create({
+      data: {
+        organization_id: organizationId,
+        user_id: userId,
+        module: "Organization Settings",
+        action: "CREATE_DUMMY_DATA_STAGE",
+        entity_type: "OrganizationDummyDataBatch",
+        entity_id: batchId,
+        details: { stage: "GROUPED_APPROVAL", grouped_purchase_order_count: groupedPurchaseOrderIds.length },
+      },
+    });
+  });
+
+  return {
+    created: true,
+    orderNo: firstOrderNo,
+    orderCount: orderCount ?? sampleOrderRecords.length,
+    status: "AWAITING_GROUPED_APPROVAL",
+    stage: "GROUPED_APPROVAL",
+    groupedPurchaseOrderCount: groupedPurchaseOrderIds.length,
+  };
+}
+
+function assertDummyApprovalAutomationAllowed() {
+  if (process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production") {
+    throw new Error("Automatic approvals for sample data are disabled in production.");
+  }
+}
+
+async function autoApproveSamplePurchaseOrders(
+  organizationId: string,
+  batchId: string,
+  userId: string,
+  purchaseOrderIds: string[],
+) {
+  if (purchaseOrderIds.length !== 10) return;
+  const groupedNoPrefix = `GPO-${batchId}-`;
+  const orders = await prisma.purchaseOrder.findMany({
+    where: { organization_id: organizationId, id: { in: purchaseOrderIds } },
+    select: {
+      id: true,
+      status: true,
+      sources: {
+        select: {
+          masterPurchaseOrder: {
+            select: {
+              sourceRecords: {
+                select: { groupedPurchaseOrder: { select: { grouped_po_no: true } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  for (const order of orders) {
+    if (!Array.isArray(order.sources)) continue;
+    const sourceNumbers = order.sources.flatMap((source) =>
+      source.masterPurchaseOrder.sourceRecords.map((record) => record.groupedPurchaseOrder.grouped_po_no),
+    );
+    if (sourceNumbers.length === 0 || sourceNumbers.some((number) => !number.startsWith(groupedNoPrefix))) continue;
+    if (order.status !== "PENDING_APPROVAL") continue;
+    assertDummyApprovalAutomationAllowed();
+    await prisma.$transaction(async (transaction) => {
+      const request = await transaction.approvalRequest.findFirst({
+        where: {
+          organization_id: organizationId,
+          entity_type: "purchase-order",
+          entity_ref_id: order.id,
+          status: "pending",
+        },
+        select: { id: true },
+      });
+      if (!request) throw new Error("A pending approval request is missing for a sample Purchase Order.");
+      const requestUpdate = await transaction.approvalRequest.updateMany({
+        where: { id: request.id, organization_id: organizationId, status: "pending" },
+        data: {
+          status: "approved",
+          reviewed_by: "Sample Data Automation",
+          reviewed_by_user_id: null,
+          reviewed_at: new Date(),
+        },
+      });
+      if (requestUpdate.count !== 1) throw new Error("A sample Purchase Order approval request was already reviewed.");
+      const orderUpdate = await transaction.purchaseOrder.updateMany({
+        where: { id: order.id, organization_id: organizationId, status: "PENDING_APPROVAL" },
+        data: {
+          status: "APPROVED",
+          approved_by: "Sample Data Automation",
+          approved_at: new Date(),
+          rejection_reason: null,
+        },
+      });
+      if (orderUpdate.count !== 1) throw new Error("A sample Purchase Order changed before automatic approval.");
+      await transaction.auditEvent.create({
+        data: {
+          organization_id: organizationId,
+          user_id: userId,
+          module: "Procurement",
+          action: "AUTO_APPROVE_DUMMY_PURCHASE_ORDER",
+          entity_type: "PurchaseOrder",
+          entity_id: order.id,
+          details: { batch_id: batchId, approval_request_id: request.id, reviewer: "Sample Data Automation" },
+        },
+      });
+    });
+  }
+}
+
+export type DummyDataWizardStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+export async function startDummyDataWizardStep(
+  userId: string,
+  routeOrganizationId: string,
+  step: DummyDataWizardStep,
+  requestedBy = userId,
+) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8].includes(step)) throw new Error("Select a valid sample-data step.");
+  if (step === 1) {
+    return createOrganizationDummyData(userId, routeOrganizationId, requestedBy);
+  }
+
+  const organization = await authorizeOrganization(userId, routeOrganizationId);
+  const batch = await prisma.organizationDummyDataBatch.findUnique({
+    where: { organization_id: organization.id },
+    select: { id: true, status: true, stage: true, master_record_ids: true, checkpoint: true },
+  });
+  if (!batch) throw new Error("Sample data has not been started for this organization.");
+  const records = readMasterRecordIds(batch.master_record_ids);
+
+  if (step === 8 && (batch.status !== "IN_PROGRESS" || batch.stage !== "CREATE_ALLOCATION")) {
+    throw new Error("Complete Step 7 verification before allocating the verified sample GRNs.");
+  }
+
+  if (step === 2) {
+    if (batch.stage !== "CREATE_GROUPS" || batch.status !== "IN_PROGRESS") {
+      throw new Error("Create master data, orders, and BOM before creating grouped purchase orders.");
+    }
+    return createSampleGroupedPurchaseOrders(organization.id, batch.id, userId);
+  }
+
+  const groupedPurchaseOrderIds = records
+    .filter((record) => record.moduleKey === "grouped-purchase-order")
+    .map((record) => record.id);
+  if (groupedPurchaseOrderIds.length !== 10) throw new Error("Ten batch-owned grouped purchase orders are required.");
+
+  if (step === 3) {
+    if (batch.stage !== "GROUPED_APPROVAL" || batch.status !== "AWAITING_GROUPED_APPROVAL") {
+      throw new Error("Create the grouped purchase orders before preparing their sample prices.");
+    }
+    return prepareSampleGroupedPurchaseOrderPrices(organization.id, batch.id, userId, groupedPurchaseOrderIds);
+  }
+
+  const groups = await prisma.groupedPurchaseOrder.findMany({
+    where: { id: { in: groupedPurchaseOrderIds }, organization_id: organization.id },
+    select: { id: true, status: true },
+  });
+  if (groups.length !== 10 || groups.some((group) => !["PRICE_APPROVED", "MASTER_GROUPED"].includes(group.status))) {
+    throw new Error("Approve the sample grouped purchase orders before continuing.");
+  }
+
+  if (step === 4) {
+    return createSampleMasterGroups(organization.id, batch.id, userId, requestedBy, records, groupedPurchaseOrderIds);
+  }
+
+  const masterPurchaseOrderIds = records
+    .filter((record) => record.moduleKey === "master-purchase-order")
+    .map((record) => record.id);
+  if (masterPurchaseOrderIds.length !== 10) throw new Error("Create all ten sample master groups before generating purchase orders.");
+  if (step === 5) {
+    return createSamplePurchaseOrders(
+      organization.id,
+      batch.id,
+      userId,
+      requestedBy,
+      records,
+      groupedPurchaseOrderIds,
+      masterPurchaseOrderIds,
+    );
+  }
+  if (
+    batch.status !== "IN_PROGRESS"
+    || !["CREATE_GATE_ENTRIES", "CREATE_GRNS", "CREATE_VERIFICATION", "CREATE_ALLOCATION"].includes(batch.stage)
+  ) {
+    throw new Error("Complete Step 5 and approve all sample Purchase Orders before creating RM Gate Entries and GRNs.");
+  }
+  const purchaseOrderIds = records
+    .filter((record) => record.moduleKey === "purchase-order")
+    .map((record) => record.id);
+  const purchaseOrders = purchaseOrderIds.length === 0 ? [] : await prisma.purchaseOrder.findMany({
+    where: {
+      organization_id: organization.id,
+      id: { in: purchaseOrderIds },
+    },
+    select: { id: true, status: true },
+  });
+  if (
+    purchaseOrders.length < 10
+    || purchaseOrders.some((order) => !["APPROVED", "SHARED"].includes(order.status))
+  ) {
+    throw new Error("Approve at least ten sample Purchase Orders before creating RM Gate Entries and GRNs.");
+  }
+  if (step === 8) {
+    const receiptIds = records
+      .filter((record) => record.moduleKey === "inventory-receipt")
+      .map((record) => record.id);
+    const progress = await allocateDummySampleGrnsTopDown(
+      organization.id,
+      batch.id,
+      receiptIds,
+      userId,
+    );
+    await checkpointDummyDataRecords(organization.id, batch.id, records, "COMPLETE", {
+      purchaseOrderIds,
+      grnIds: receiptIds,
+      completedOrderAllocations: progress.completedCount,
+      totalOrderAllocations: progress.totalCount,
+    }, "ACTIVE");
+    await prisma.$transaction((transaction) => transaction.auditEvent.create({
+      data: {
+        organization_id: organization.id,
+        user_id: userId,
+        module: "Organization Settings",
+        action: "CREATE_DUMMY_DATA_STAGE",
+        entity_type: "OrganizationDummyDataBatch",
+        entity_id: batch.id,
+        details: {
+          stage: "COMPLETE",
+          grn_count: receiptIds.length,
+          completed_order_allocations: progress.completedCount,
+          total_order_allocations: progress.totalCount,
+        },
+      },
+    }).then(() => undefined));
+    return {
+      advanced: true,
+      status: "ACTIVE",
+      stage: "COMPLETE",
+      completedCount: progress.completedCount,
+      totalCount: progress.totalCount,
+    };
+  }
+  if (step === 7) {
+    if (
+      batch.status !== "IN_PROGRESS"
+      || !["CREATE_VERIFICATION", "CREATE_ALLOCATION"].includes(batch.stage)
+    ) {
+      throw new Error("Complete Step 6 and create all five sample GRNs before starting verification.");
+    }
+    const receiptIds = records
+      .filter((record) => record.moduleKey === "inventory-receipt")
+      .map((record) => record.id);
+    const progress = await verifyDummySampleGrns(
+      organization.id,
+      batch.id,
+      purchaseOrderIds,
+      receiptIds,
+      userId,
+    );
+    await checkpointDummyDataRecords(organization.id, batch.id, records, "CREATE_ALLOCATION", {
+      purchaseOrderIds,
+      gateEntryIds: records.filter((record) => record.moduleKey === "gate-entry").map((record) => record.id),
+      grnIds: receiptIds,
+      completedVerificationLines: progress.completedLineCount,
+      totalVerificationLines: progress.totalLineCount,
+    });
+    await prisma.$transaction((transaction) => transaction.auditEvent.create({
+      data: {
+        organization_id: organization.id,
+        user_id: userId,
+        module: "Organization Settings",
+        action: "CREATE_DUMMY_DATA_STAGE",
+        entity_type: "OrganizationDummyDataBatch",
+        entity_id: batch.id,
+        details: {
+          stage: "CREATE_ALLOCATION",
+          grn_count: receiptIds.length,
+          verified_line_count: progress.completedLineCount,
+          total_line_count: progress.totalLineCount,
+        },
+      },
+    }).then(() => undefined));
+    return {
+      advanced: true,
+      status: "IN_PROGRESS",
+      stage: "CREATE_ALLOCATION",
+      completedCount: progress.completedLineCount,
+      totalCount: progress.totalLineCount,
+    };
+  }
+  const entries = await createDummySampleGateEntries(
+    organization.id,
+    batch.id,
+    purchaseOrderIds,
+    userId,
+  );
+  const grns = await createDummySampleGrns(
+    organization.id,
+    purchaseOrderIds,
+    batch.id,
+    userId,
+  );
+  for (const entry of entries) {
+    if (!records.some((record) => record.moduleKey === "gate-entry" && record.id === entry.id)) {
+      records.push({ moduleKey: "gate-entry", id: entry.id });
+    }
+  }
+  for (const receipt of grns) {
+    if (!records.some((record) => record.moduleKey === "inventory-receipt" && record.id === receipt.id)) {
+      records.push({ moduleKey: "inventory-receipt", id: receipt.id });
+    }
+  }
+  await checkpointDummyDataRecords(organization.id, batch.id, records, "CREATE_VERIFICATION", {
+    purchaseOrderIds,
+    gateEntryIds: entries.map((entry) => entry.id),
+    completedGateEntries: entries.length,
+    totalGateEntries: 5,
+    grnIds: grns.map((receipt) => receipt.id),
+    completedGrns: grns.length,
+    totalGrns: 5,
+  });
+  await prisma.$transaction((transaction) => transaction.auditEvent.create({
+    data: {
+      organization_id: organization.id,
+      user_id: userId,
+      module: "Organization Settings",
+      action: "CREATE_DUMMY_DATA_STAGE",
+      entity_type: "OrganizationDummyDataBatch",
+      entity_id: batch.id,
+      details: { stage: "CREATE_VERIFICATION", gate_entry_count: entries.length, grn_count: grns.length },
+    },
+  }).then(() => undefined));
+  return {
+    advanced: true,
+    status: "IN_PROGRESS",
+    stage: "CREATE_VERIFICATION",
+    completedCount: grns.length,
+    totalCount: 5,
+  };
+}
+
+async function prepareSampleGroupedPurchaseOrderPrices(
+  organizationId: string,
+  batchId: string,
+  userId: string,
+  groupedPurchaseOrderIds: string[],
+) {
+  const groupedNoPrefix = `GPO-${batchId}-`;
+  const orders = await prisma.groupedPurchaseOrder.findMany({
+    where: { organization_id: organizationId, id: { in: groupedPurchaseOrderIds } },
+    select: {
+      id: true,
+      grouped_po_no: true,
+      status: true,
+      stock_uom: true,
+      total_grouped_qty: true,
+      lines: { select: { id: true, grouped_qty: true } },
+    },
+  });
+  if (orders.length !== 10) throw new Error("The sample grouped purchase order records could not be loaded.");
+  assertDummyApprovalAutomationAllowed();
+  const stockUomConversions = await prisma.masterStockUomConvert.findMany({
+    where: {
+      organization_id: organizationId,
+      is_active: true,
+      stock_uom: { organization_id: organizationId, is_active: true },
+    },
+    orderBy: [{ stock_uom_id: "asc" }, { sort_order: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      stock_uom_id: true,
+      sort_order: true,
+      name: true,
+      how_many: true,
+      stock_uom: { select: { uom: true } },
+    },
+  });
+
+  for (const order of orders) {
+    if (!order.grouped_po_no.startsWith(groupedNoPrefix)) throw new Error("A grouped purchase order is not owned by this sample batch.");
+    if (!["PENDING_PRICE_APPROVAL", "PRICE_APPROVED"].includes(order.status)) {
+      throw new Error("A sample grouped purchase order is no longer available for pricing.");
+    }
+    if (order.status === "PRICE_APPROVED") continue;
+    if (order.lines.length === 0) throw new Error("A sample grouped purchase order has no lines to price.");
+    const ordinal = Number(order.grouped_po_no.slice(groupedNoPrefix.length));
+    if (!Number.isInteger(ordinal) || ordinal < 1 || ordinal > 10) throw new Error("A sample grouped purchase order has an invalid batch number.");
+    const sampleSeed = createHash("sha256").update(`${batchId}:${order.id}`).digest();
+    const vendorPrice = 60 + (sampleSeed.readUInt16BE(0) % 141);
+    const gst = [5, 12, 18][sampleSeed.readUInt16BE(2) % 3];
+    const hsnCode = ["5208", "5515", "6006", "9606"][sampleSeed.readUInt16BE(4) % 4];
+    const availableConversions = stockUomConversions.filter(
+      (conversion) =>
+        conversion.stock_uom.uom.trim().toLowerCase() ===
+        String(order.stock_uom ?? "").trim().toLowerCase(),
+    );
+    if (availableConversions.length === 0) {
+      throw new Error(`An active buying-UOM conversion is required for sample stock UOM ${order.stock_uom ?? "unknown"}.`);
+    }
+    const conversion = availableConversions[
+      sampleSeed.readUInt16BE(6) % availableConversions.length
+    ];
+    const convertValue = new Prisma.Decimal(conversion.how_many);
+    if (!convertValue.isFinite() || !convertValue.greaterThan(0)) {
+      throw new Error(`Sample buying-UOM conversion ${conversion.name} must be greater than zero.`);
+    }
+    const groupedQty = order.total_grouped_qty ?? order.lines.reduce(
+      (total, line) => total.plus(line.grouped_qty),
+      new Prisma.Decimal(0),
+    );
+    const buyingQty = groupedQty.div(convertValue);
+
+    await prisma.$transaction(async (transaction) => {
+      for (const line of order.lines) {
+        await transaction.groupedPurchaseOrderLine.updateMany({
+          where: { id: line.id, grouped_purchase_order_id: order.id },
+          data: { vendor_price: vendorPrice, total_spend: line.grouped_qty.mul(vendorPrice) },
+        });
+      }
+      const updated = await transaction.groupedPurchaseOrder.updateMany({
+        where: { id: order.id, organization_id: organizationId, status: "PENDING_PRICE_APPROVAL" },
+        data: {
+          vendor_price: vendorPrice,
+          vendor_price_inr: vendorPrice,
+          gst,
+          hsn_code: hsnCode,
+          buying_uom: conversion.name,
+          convert_value: convertValue,
+          buying_qty: buyingQty,
+          buying_qty_round: buyingQty,
+          difference_round: new Prisma.Decimal(0),
+          moq_buying: new Prisma.Decimal(0),
+          extra_buying_uom: new Prisma.Decimal(0),
+          buying_qty_total: buyingQty,
+          status: "PRICE_APPROVED",
+          approved_by: "Sample Data Automation",
+          approved_by_user_id: null,
+          approved_at: new Date(),
+          rejection_reason: null,
+        },
+      });
+      if (updated.count !== 1) throw new Error("A sample grouped purchase order changed while its price was being prepared.");
+      await transaction.auditEvent.create({
+        data: {
+          organization_id: organizationId,
+          user_id: userId,
+          module: "Procurement",
+          action: "SET_DUMMY_GROUPED_PURCHASE_ORDER_SAMPLE_TERMS",
+          entity_type: "GroupedPurchaseOrder",
+          entity_id: order.id,
+          details: {
+            batch_id: batchId,
+            vendor_price: vendorPrice,
+            gst,
+            hsn_code: hsnCode,
+            buying_uom: conversion.name,
+            convert_value: convertValue.toString(),
+          },
+        },
+      });
+      await transaction.auditEvent.create({
+        data: {
+          organization_id: organizationId,
+          user_id: userId,
+          module: "Procurement",
+          action: "APPROVE_DUMMY_GROUPED_PURCHASE_ORDER",
+          entity_type: "GroupedPurchaseOrder",
+          entity_id: order.id,
+          details: { batch_id: batchId, reviewer: "Sample Data Automation" },
+        },
+      });
+    });
+  }
+
+  await prisma.organizationDummyDataBatch.update({
+    where: { id: batchId, organization_id: organizationId },
+    data: {
+      status: "IN_PROGRESS",
+      stage: "CREATE_MASTER_GROUPS",
+      checkpoint: {
+        groupedPurchaseOrderIds,
+        sampleTermsPrepared: true,
+        sampleTermsPreparedAt: new Date().toISOString(),
+      },
+    },
+  });
+
+  return {
+    prepared: true,
+    approved: true,
+    status: "IN_PROGRESS",
+    stage: "CREATE_MASTER_GROUPS",
+    approvedCount: 10,
+    totalCount: 10,
+  };
+}
+
+export async function approveSampleGroupedPurchaseOrder(
+  userId: string,
+  routeOrganizationId: string,
+  groupedPurchaseOrderId: string,
+) {
+  assertDummyApprovalAutomationAllowed();
+  const organization = await authorizeOrganization(userId, routeOrganizationId);
+  const batch = await prisma.organizationDummyDataBatch.findUnique({
+    where: { organization_id: organization.id },
+    select: { id: true, status: true, stage: true, master_record_ids: true },
+  });
+  if (!batch || batch.stage !== "GROUPED_APPROVAL" || batch.status !== "AWAITING_GROUPED_APPROVAL") {
+    throw new Error("Sample grouped-PO price approval is not currently available.");
+  }
+  const trackedIds = readMasterRecordIds(batch.master_record_ids)
+    .filter((record) => record.moduleKey === "grouped-purchase-order")
+    .map((record) => record.id);
+  if (!trackedIds.includes(groupedPurchaseOrderId)) throw new Error("This grouped purchase order is not part of the active sample batch.");
+
+  return prisma.$transaction(async (transaction) => {
+    const order = await transaction.groupedPurchaseOrder.findFirst({
+      where: { id: groupedPurchaseOrderId, organization_id: organization.id },
+      select: { id: true, grouped_po_no: true, status: true, lines: { select: { vendor_price: true } } },
+    });
+    if (!order || !order.grouped_po_no.startsWith(`GPO-${batch.id}-`)) {
+      throw new Error("The grouped purchase order is not owned by this sample batch.");
+    }
+    if (order.status === "PRICE_APPROVED") return { approved: true, id: order.id };
+    if (order.status !== "PENDING_PRICE_APPROVAL" || order.lines.length === 0 || order.lines.some((line) => line.vendor_price === null)) {
+      throw new Error("Prepare sample price, GST, and HSN before approving this grouped purchase order.");
+    }
+    const updated = await transaction.groupedPurchaseOrder.updateMany({
+      where: { id: order.id, organization_id: organization.id, status: "PENDING_PRICE_APPROVAL" },
+      data: {
+        status: "PRICE_APPROVED",
+        approved_by: "Sample Data Automation",
+        approved_by_user_id: null,
+        approved_at: new Date(),
+        rejection_reason: null,
+      },
+    });
+    if (updated.count !== 1) throw new Error("The grouped purchase order changed before sample price approval.");
+    await transaction.auditEvent.create({
+      data: {
+        organization_id: organization.id,
+        user_id: userId,
+        module: "Procurement",
+        action: "APPROVE_DUMMY_GROUPED_PURCHASE_ORDER",
+        entity_type: "GroupedPurchaseOrder",
+        entity_id: order.id,
+        details: { batch_id: batch.id, reviewer: "Sample Data Automation" },
+      },
+    });
+    return { approved: true, id: order.id };
+  });
+}
+
+async function createSampleMasterGroups(
+  organizationId: string,
+  batchId: string,
+  userId: string,
+  requestedBy: string,
+  records: DemoMasterRecord[],
+  groupedPurchaseOrderIds: string[],
+) {
+  const masterPurchaseOrderIds: string[] = [];
+  for (const groupedPurchaseOrderId of groupedPurchaseOrderIds) {
+    const existingMaster = await prisma.masterPurchaseOrder.findFirst({
+      where: {
+        organization_id: organizationId,
+        sourceRecords: { some: { grouped_purchase_order_id: groupedPurchaseOrderId } },
+      },
+      select: { id: true },
+    });
+    const master = existingMaster
+      ? existingMaster
+      : await createMasterPurchaseOrder(organizationId, [groupedPurchaseOrderId], requestedBy);
+    masterPurchaseOrderIds.push(master.id);
+    if (!records.some((record) => record.moduleKey === "master-purchase-order" && record.id === master.id)) {
+      records.push({ moduleKey: "master-purchase-order", id: master.id });
+    }
+    await checkpointDummyDataRecords(organizationId, batchId, records, "CREATE_MASTER_GROUPS", {
+      groupedPurchaseOrderIds,
+      masterPurchaseOrderIds,
+      completedMasterGroups: masterPurchaseOrderIds.length,
+      totalMasterGroups: 10,
+    });
+  }
+  await prisma.organizationDummyDataBatch.update({
+    where: { id: batchId, organization_id: organizationId },
+    data: { status: "IN_PROGRESS", stage: "CREATE_MASTER_GROUPS", checkpoint: { groupedPurchaseOrderIds, masterPurchaseOrderIds } },
+  });
+  await prisma.$transaction((transaction) => transaction.auditEvent.create({
+    data: {
+      organization_id: organizationId,
+      user_id: userId,
+      module: "Organization Settings",
+      action: "CREATE_DUMMY_DATA_STAGE",
+      entity_type: "OrganizationDummyDataBatch",
+      entity_id: batchId,
+      details: { stage: "CREATE_MASTER_GROUPS", master_purchase_order_count: masterPurchaseOrderIds.length },
+    },
+  }).then(() => undefined));
+  return { advanced: true, status: "IN_PROGRESS", stage: "CREATE_MASTER_GROUPS", completedCount: 10, totalCount: 10 };
+}
+
+async function createSamplePurchaseOrders(
+  organizationId: string,
+  batchId: string,
+  userId: string,
+  requestedBy: string,
+  records: DemoMasterRecord[],
+  groupedPurchaseOrderIds: string[],
+  masterPurchaseOrderIds: string[],
+) {
+  if (masterPurchaseOrderIds.length < 10) {
+    throw new Error("At least ten sample master groups are required to create Purchase Orders.");
+  }
+  const purchaseOrderIds: string[] = [];
+  for (const masterPurchaseOrderId of masterPurchaseOrderIds) {
+    let purchaseOrder = await prisma.purchaseOrder.findFirst({
+      where: { organization_id: organizationId, sources: { some: { master_purchase_order_id: masterPurchaseOrderId } } },
+      select: { id: true, status: true },
+    });
+    if (!purchaseOrder) purchaseOrder = await generatePurchaseOrders(organizationId, [masterPurchaseOrderId], requestedBy);
+    purchaseOrderIds.push(purchaseOrder.id);
+    if (!records.some((record) => record.moduleKey === "purchase-order" && record.id === purchaseOrder.id)) {
+      records.push({ moduleKey: "purchase-order", id: purchaseOrder.id });
+    }
+    if (["DRAFT", "OPEN", "REJECTED"].includes(purchaseOrder.status)) {
+      await submitPurchaseOrderForApproval(organizationId, purchaseOrder.id, requestedBy, userId);
+    }
+    await checkpointDummyDataRecords(organizationId, batchId, records, "SUBMIT_PURCHASE_ORDERS", {
+      groupedPurchaseOrderIds,
+      masterPurchaseOrderIds,
+      purchaseOrderIds,
+      completedPurchaseOrders: purchaseOrderIds.length,
+      totalPurchaseOrders: 10,
+    });
+  }
+  if (purchaseOrderIds.length < 10) {
+    throw new Error("At least ten sample Purchase Orders are required before Step 5 can complete.");
+  }
+  await autoApproveSamplePurchaseOrders(organizationId, batchId, userId, purchaseOrderIds);
+  const purchaseOrders = await prisma.purchaseOrder.findMany({
+    where: { organization_id: organizationId, id: { in: purchaseOrderIds } },
+    select: { id: true, status: true },
+  });
+  const approvedCount = purchaseOrders.filter((order) =>
+    ["APPROVED", "SHARED"].includes(order.status),
+  ).length;
+  if (purchaseOrders.length < 10 || approvedCount < 10) {
+    throw new Error(`Step 5 approved ${approvedCount} of 10 sample Purchase Orders. Resume Step 5 to continue.`);
+  }
+  await prisma.organizationDummyDataBatch.update({
+    where: { id: batchId, organization_id: organizationId },
+    data: {
+      status: "IN_PROGRESS",
+      stage: "CREATE_GATE_ENTRIES",
+      checkpoint: { groupedPurchaseOrderIds, masterPurchaseOrderIds, purchaseOrderIds, approvedPurchaseOrderCount: approvedCount },
+    },
+  });
+  await prisma.$transaction((transaction) => transaction.auditEvent.create({
+    data: {
+      organization_id: organizationId,
+      user_id: userId,
+      module: "Organization Settings",
+      action: "CREATE_DUMMY_DATA_STAGE",
+      entity_type: "OrganizationDummyDataBatch",
+      entity_id: batchId,
+      details: { stage: "CREATE_GATE_ENTRIES", purchase_order_count: purchaseOrders.length, approved_purchase_order_count: approvedCount },
+    },
+  }).then(() => undefined));
+  return {
+    advanced: true,
+    status: "IN_PROGRESS",
+    stage: "CREATE_GATE_ENTRIES",
+    completedCount: approvedCount,
+    totalCount: 10,
+  };
+}
+
+export async function advanceOrganizationDummyData(
+  userId: string,
+  routeOrganizationId: string,
+  requestedBy = userId,
+  allowPendingOwner = false,
+) {
+  const organization = await authorizeOrganization(userId, routeOrganizationId, allowPendingOwner);
+  const batch = await prisma.organizationDummyDataBatch.findUnique({
+    where: { organization_id: organization.id },
+    select: { id: true, status: true, stage: true, master_record_ids: true, checkpoint: true },
+  });
+  if (!batch) throw new Error("Sample data has not been started for this organization.");
+
+  const records = readMasterRecordIds(batch.master_record_ids);
+  if (batch.stage === "CREATE_GROUPS" && batch.status === "IN_PROGRESS") {
+    return startDummyDataWizardStep(userId, routeOrganizationId, 2, requestedBy);
+  }
+
+  if (batch.stage === "GROUPED_APPROVAL" && batch.status === "AWAITING_GROUPED_APPROVAL") {
+    const groupedPurchaseOrderIds = records
+      .filter((record) => record.moduleKey === "grouped-purchase-order")
+      .map((record) => record.id);
+    const groups = groupedPurchaseOrderIds.length === 0 ? [] : await prisma.groupedPurchaseOrder.findMany({
+      where: { id: { in: groupedPurchaseOrderIds }, organization_id: organization.id },
+      select: { id: true, status: true },
+    });
+    const approvedCount = groups.filter((group) => group.status === "PRICE_APPROVED" || group.status === "MASTER_GROUPED").length;
+    if (groups.length !== 10 || approvedCount !== 10) {
+      return {
+        advanced: false,
+        status: batch.status,
+        stage: batch.stage,
+        completedCount: approvedCount,
+        totalCount: 10,
+      };
+    }
+    return startDummyDataWizardStep(userId, routeOrganizationId, 4, requestedBy);
+  }
+
+  if (batch.stage === "CREATE_MASTER_GROUPS" && batch.status === "IN_PROGRESS") {
+    const masterGroupCount = records.filter((record) => record.moduleKey === "master-purchase-order").length;
+    return startDummyDataWizardStep(userId, routeOrganizationId, masterGroupCount === 10 ? 5 : 4, requestedBy);
+  }
+
+  if (batch.stage === "SUBMIT_PURCHASE_ORDERS" && batch.status === "IN_PROGRESS") {
+    return startDummyDataWizardStep(userId, routeOrganizationId, 5, requestedBy);
+  }
+
+  if (batch.stage === "PO_APPROVAL" && batch.status === "AWAITING_PO_APPROVAL") {
+    const purchaseOrderIds = records.filter((record) => record.moduleKey === "purchase-order").map((record) => record.id);
+    await autoApproveSamplePurchaseOrders(organization.id, batch.id, userId, purchaseOrderIds);
+    const purchaseOrders = purchaseOrderIds.length === 0 ? [] : await prisma.purchaseOrder.findMany({
+      where: { id: { in: purchaseOrderIds }, organization_id: organization.id },
+      select: { id: true, status: true, entity_id: true },
+    });
+    const approvedCount = purchaseOrders.filter((order) => ["APPROVED", "SHARED"].includes(order.status)).length;
+    if (purchaseOrders.length !== 10 || approvedCount !== 10) {
+      return {
+        advanced: false,
+        status: "AWAITING_PO_APPROVAL",
+        stage: "PO_APPROVAL",
+        completedCount: approvedCount,
+        totalCount: 10,
+      };
+    }
+    const firstSampleOrder = records.find((record) => record.moduleKey === "sample-order");
+    await prisma.organizationDummyDataBatch.update({
+      where: { id: batch.id, organization_id: organization.id },
+      data: {
+        status: "IN_PROGRESS",
+        stage: "CREATE_GATE_ENTRIES",
+        sample_order_id: firstSampleOrder?.id,
+        last_error: null,
+        checkpoint: {
+          purchaseOrderIds,
+          approvedPurchaseOrderCount: approvedCount,
+        },
+      },
+    });
+    await prisma.$transaction((transaction) => transaction.auditEvent.create({
+      data: {
+        organization_id: organization.id,
+        user_id: userId,
+        module: "Organization Settings",
+        action: "CREATE_DUMMY_DATA_STAGE",
+        entity_type: "OrganizationDummyDataBatch",
+        entity_id: batch.id,
+        details: { stage: "CREATE_GATE_ENTRIES", purchase_order_count: purchaseOrders.length, approved_purchase_order_count: approvedCount },
+      },
+    }).then(() => undefined));
+    return {
+      advanced: true,
+      status: "IN_PROGRESS",
+      stage: "CREATE_GATE_ENTRIES",
+      completedCount: approvedCount,
+      totalCount: 10,
+    };
+  }
+
+  return { advanced: false, status: batch.status, stage: batch.stage, completedCount: 0, totalCount: 0 };
+}
+
+async function checkpointDummyDataRecords(
+  organizationId: string,
+  batchId: string,
+  baseRecords: DemoMasterRecord[],
+  stage: string,
+  checkpoint: Prisma.InputJsonObject,
+  status = "IN_PROGRESS",
+) {
+  const current = await prisma.organizationDummyDataBatch.findUnique({
+    where: { id: batchId, organization_id: organizationId },
+    select: { master_record_ids: true },
+  });
+  const currentRecords = readMasterRecordIds(current?.master_record_ids ?? []);
+  const records = [...baseRecords];
+  for (const record of currentRecords) {
+    if (!records.some((existing) => existing.moduleKey === record.moduleKey && existing.id === record.id)) records.push(record);
+  }
+  await prisma.organizationDummyDataBatch.update({
+    where: { id: batchId, organization_id: organizationId },
+    data: {
+      status,
+      stage,
+      master_record_ids: [
+        ...records.map((record) => ({ ...record })),
+        { datasetVersion: SAMPLE_DATASET_VERSION },
+      ] as Prisma.InputJsonArray,
+      checkpoint,
+      last_error: null,
+    },
+  });
 }
 
 export async function deleteOrganizationDummyData(userId: string, routeOrganizationId: string) {
@@ -947,8 +2204,12 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
       where: { organization_id: organization.id },
     });
     if (!batch || batch.status === "EMPTY") return { deleted: false };
-    if (batch.status !== "ACTIVE") {
+    const deletableStatuses = ["ACTIVE", "IN_PROGRESS", "AWAITING_GROUPED_APPROVAL", "AWAITING_PO_APPROVAL"];
+    if (batch.status === "DELETING") {
       throw new Error("Dummy-data cleanup is already in progress. Refresh the page and try again.");
+    }
+    if (!deletableStatuses.includes(batch.status)) {
+      throw new Error("Dummy data cannot be deleted while the batch is in an unsupported state.");
     }
 
     const createdRecords = readMasterRecordIds(batch.master_record_ids);
@@ -957,7 +2218,7 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
     const sizeGroupIds = ids("size-group");
 
     const claimed = await transaction.organizationDummyDataBatch.updateMany({
-      where: { id: batch.id, organization_id: organization.id, status: "ACTIVE" },
+      where: { id: batch.id, organization_id: organization.id, status: batch.status },
       data: { status: "DELETING" },
     });
     if (claimed.count !== 1) {
@@ -1001,6 +2262,18 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
       ...sampleGroupedPurchaseOrderIds,
       ...linkedGroupedPurchaseOrders.map((order) => order.id),
     ])];
+    await transaction.gateEntry.deleteMany({
+      where: {
+        organization_id: organization.id,
+        id: { in: ids("gate-entry") },
+      },
+    });
+    await transaction.inventoryReceipt.deleteMany({
+      where: {
+        organization_id: organization.id,
+        id: { in: ids("inventory-receipt") },
+      },
+    });
     const linkedMasterPurchaseOrders = await transaction.masterPurchaseOrder.findMany({
       where: {
         organization_id: organization.id,
@@ -1095,7 +2368,14 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
     });
     await transaction.organizationDummyDataBatch.update({
       where: { id: batch.id, organization_id: organization.id },
-      data: { status: "EMPTY", sample_order_id: null, master_record_ids: Prisma.JsonNull },
+      data: {
+        status: "EMPTY",
+        stage: "IDLE",
+        checkpoint: {},
+        last_error: null,
+        sample_order_id: null,
+        master_record_ids: Prisma.JsonNull,
+      },
     });
 
     return { deleted: true };
