@@ -31,7 +31,8 @@ export default function OrganizationTrialStatus({
   const router = useRouter();
   const trialEnd = trialEndsAt ? Date.parse(trialEndsAt) : Number.NaN;
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
-  const [requestState, setRequestState] = useState<"idle" | "pending" | "sent" | "error">("idle");
+  const [requestState, setRequestState] = useState<"idle" | "pending" | "extended" | "awaitingReview" | "error">("idle");
+  const [successMessage, setSuccessMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
@@ -59,6 +60,7 @@ export default function OrganizationTrialStatus({
 
   async function requestExtension() {
     setRequestState("pending");
+    setSuccessMessage("");
     setErrorMessage("");
     try {
       const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/trial-extension-requests`, {
@@ -66,7 +68,18 @@ export default function OrganizationTrialStatus({
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to request a trial extension.");
-      setRequestState("sent");
+      if (result.autoExtended && result.trialEndsAt) {
+        setRequestState("extended");
+        setSuccessMessage(`Your trial has been extended by 24 hours and now ends ${new Date(result.trialEndsAt).toLocaleString()}.`);
+        router.refresh();
+      } else {
+        setRequestState("awaitingReview");
+        setSuccessMessage(
+          result.alreadyRequested
+            ? "Your trial extension request is already with the platform administrator."
+            : "Your request has been sent to the platform administrator for review.",
+        );
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unable to request a trial extension.");
       setRequestState("error");
@@ -87,7 +100,7 @@ export default function OrganizationTrialStatus({
         {expired ? "Trial expired" : remainingMs === null ? "Trial active" : `Trial expires in ${formatRemainingTime(remainingMs)}`}
       </span>
 
-      {expired && requestState !== "sent" && (
+      {expired && requestState !== "extended" && requestState !== "awaitingReview" && (
         <Button
           type="button"
           variant="secondary"
@@ -101,10 +114,10 @@ export default function OrganizationTrialStatus({
         </Button>
       )}
 
-      {expired && requestState === "sent" && (
-        <span className="inline-flex h-9 items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-semibold text-emerald-800" role="status">
+      {successMessage && (
+        <span className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800" role="status" aria-live="polite">
           <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-          Request sent
+          {successMessage}
         </span>
       )}
 

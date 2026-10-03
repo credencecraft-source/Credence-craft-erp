@@ -9,10 +9,11 @@ import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager
 import { assignOrganizationPlatformVersion, getOrganizationClient, listPlatformVersions } from "@/lib/services/platform/client-service";
 import { listOrganizationSegmentPricing, resetOrganizationSegmentPrice, setOrganizationSegmentCustomPrice } from "@/lib/services/platform/organization-segment-pricing-service";
 import { deleteOrganizationFromPlatform, getOrganizationDeletionEligibility, ORGANIZATION_DELETE_RETENTION_DAYS, updateOrganizationApprovalStatus } from "@/lib/services/organizations/organization-service";
-import { extendOrganizationTrial, removeOrganizationTrial } from "@/lib/services/platform/organization-trial-service";
+import { extendOrganizationTrial, listOrganizationTrialHistory, removeOrganizationTrial } from "@/lib/services/platform/organization-trial-service";
 import OrganizationDetailTabs from "./organization-detail-tabs";
 import OrganizationSubscriptionPricing from "./organization-subscription-pricing";
 import OrganizationTrialControls from "../../_page-content/organization-trial-controls";
+import OrganizationDeleteControl from "./organization-delete-control";
 
 function Detail({ label, value }: { label: string; value: string }) {
   return (
@@ -32,6 +33,7 @@ export default async function PlatformOrganizationDetailsPage({
 }) {
   const { organizationId } = await params;
   const query = (await searchParams) ?? {};
+  await requirePlatformSessionAdmin();
   const [organization, platformVersions] = await Promise.all([
     getOrganizationClient(organizationId),
     listPlatformVersions(),
@@ -40,7 +42,11 @@ export default async function PlatformOrganizationDetailsPage({
   if (!organization) {
     notFound();
   }
-  const pricing = await listOrganizationSegmentPricing(organizationId);
+  const [pricing, trialHistory] = await Promise.all([
+    listOrganizationSegmentPricing(organizationId),
+    listOrganizationTrialHistory(organizationId),
+  ]);
+  const trialExtensionRequests = trialHistory.requests;
 
   async function saveCustomSegmentPrice(formData: FormData) {
     "use server";
@@ -74,8 +80,12 @@ export default async function PlatformOrganizationDetailsPage({
   async function updateApprovalStatus(formData: FormData) {
     "use server";
     await requirePlatformSessionAdmin();
-    await updateOrganizationApprovalStatus(organizationId, String(formData.get("approvalStatus")));
-    redirect(`/platform/organisations/${organizationId}`);
+    try {
+      await updateOrganizationApprovalStatus(organizationId, String(formData.get("approvalStatus")));
+    } catch (error) {
+      redirect(`/platform/organisations/${organizationId}?tab=pricing&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to update approval status.")}`);
+    }
+    redirect(`/platform/organisations/${organizationId}?tab=pricing&success=${encodeURIComponent("Approval status updated.")}`);
   }
 
   async function deleteOrganization() {
@@ -84,7 +94,7 @@ export default async function PlatformOrganizationDetailsPage({
     try {
       await deleteOrganizationFromPlatform(organizationId);
     } catch (error) {
-      redirect(`/platform/organisations/${organizationId}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to delete organisation.")}`);
+      redirect(`/platform/organisations/${organizationId}?tab=delete&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to delete organisation.")}`);
     }
     redirect("/platform/organisations");
   }
@@ -95,9 +105,9 @@ export default async function PlatformOrganizationDetailsPage({
     try {
       await assignOrganizationPlatformVersion(organizationId, String(formData.get("platformVersionId") || ""));
     } catch (error) {
-      redirect(`/platform/organisations/${organizationId}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to assign version.")}`);
+      redirect(`/platform/organisations/${organizationId}?tab=pricing&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to assign version.")}`);
     }
-    redirect(`/platform/organisations/${organizationId}`);
+    redirect(`/platform/organisations/${organizationId}?tab=pricing&success=${encodeURIComponent("Platform version assigned.")}`);
   }
 
   async function extendTrial(formData: FormData) {
@@ -136,9 +146,9 @@ export default async function PlatformOrganizationDetailsPage({
   return (
     <Page className="max-w-7xl">
       <Section className="space-y-6">
-        {query.error && <p className="rounded-lg bg-red-50 p-3 text-xs text-red-700">{query.error}</p>}
-        {query.success && <p className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">{query.success}</p>}
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(26rem,0.85fr)] xl:items-center">
+        {query.error && <p className="rounded-lg bg-red-50 p-3 text-xs text-red-700" role="alert">{query.error}</p>}
+        {query.success && <p className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700" role="status" aria-live="polite">{query.success}</p>}
+        <div>
           <header>
             <Link href="/platform/organisations" className="text-sm font-semibold text-emerald-700 hover:text-emerald-800">
               Back to Organisations
@@ -147,47 +157,9 @@ export default async function PlatformOrganizationDetailsPage({
             <h1 className="mt-1 break-words text-2xl font-bold text-slate-900">{organization.organization_name}</h1>
             <p className="mt-2 text-sm text-slate-500">Created {new Date(organization.created_at).toLocaleString()}</p>
           </header>
-          <section className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-sm font-bold text-slate-900">Approval &amp; version</h2>
-              <Badge>{organization.approval_status.replaceAll("_", " ")}</Badge>
-            </div>
-            <form action={assignPlatformVersion} className="mt-3 flex flex-col gap-2 sm:flex-row">
-              <label className="sr-only" htmlFor="platform-version">Required platform version</label>
-              <Select id="platform-version" name="platformVersionId" defaultValue={organization.platform_version_id ?? ""} required className="min-w-0 flex-1 rounded-md border-slate-300 bg-white px-3 py-2 text-sm text-slate-800">
-                <option value="">Select a required version...</option>
-                {platformVersions.map((version) => <option key={version.id} value={version.id}>{version.version_name}{version.description ? ` - ${version.description}` : ""}</option>)}
-              </Select>
-              <Button type="submit" size="sm" className="rounded-md bg-emerald-700 px-4 text-white hover:bg-emerald-800">Save version</Button>
-            </form>
-            <p className="mt-2 text-xs text-slate-500">A version must be assigned before this organisation can be approved.</p>
-            <form action={updateApprovalStatus} className="mt-3 flex flex-wrap gap-2" aria-label="Organisation approval status">
-              {[
-                { value: "PENDING_APPROVAL", label: "Pending", className: "border-amber-200 text-amber-700 hover:bg-amber-50" },
-                { value: "APPROVED", label: "Approved", className: "border-emerald-200 text-emerald-700 hover:bg-emerald-50" },
-                { value: "REJECTED", label: "Rejected", className: "border-red-200 text-red-700 hover:bg-red-50" },
-              ].map((status) => (
-                <Button
-                  key={status.value}
-                  type="submit"
-                  name="approvalStatus"
-                  value={status.value}
-                  aria-pressed={organization.approval_status === status.value}
-                  disabled={status.value === "APPROVED" && !organization.platformVersion?.is_active}
-                  variant="secondary"
-                  size="sm"
-                  className={`${status.className} ${
-                    organization.approval_status === status.value ? "bg-slate-100 ring-1 ring-slate-300" : "bg-white"
-                  }`}
-                >
-                  {status.label}
-                </Button>
-              ))}
-            </form>
-          </section>
         </div>
 
-        <OrganizationDetailTabs initialValue={query.tab === "subscriptions" || query.tab === "trial" ? query.tab : undefined} panels={[
+        <OrganizationDetailTabs initialValue={["overview", "database", "pricing", "subscriptions", "trial", "users", "activity", "delete"].includes(query.tab ?? "") ? query.tab : undefined} panels={[
           {
             label: "Overview",
             value: "overview",
@@ -231,17 +203,57 @@ export default async function PlatformOrganizationDetailsPage({
             label: "Pricing",
             value: "pricing",
             content: (
-              <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-                <div className="border-b border-slate-200 px-4 py-3"><h2 className="text-sm font-bold text-slate-900">Plan and version</h2></div>
-                <dl className="grid gap-x-8 gap-y-4 p-4 sm:grid-cols-2 xl:grid-cols-3">
-                  <Detail label="Plan" value={organization.plan?.plan_name ?? "Unassigned"} />
-                  <Detail label="Plan status" value={organization.plan ? (organization.plan.is_active ? "Active" : "Inactive") : "Not assigned"} />
-                  <Detail label="Price" value={organization.plan?.price == null ? "Not set" : `₹${Number(organization.plan.price).toLocaleString("en-IN")}`} />
-                  <Detail label="Billing cycle" value={organization.plan?.billing_cycle ?? "Not set"} />
-                  <Detail label="Plan description" value={organization.plan?.description ?? "Not provided"} />
-                  <Detail label="Platform version" value={organization.platformVersion?.version_name ?? "Not assigned"} />
-                </dl>
-              </section>
+              <div className="space-y-4">
+                <section className="overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h2 className="text-sm font-bold text-slate-900">Approval &amp; version</h2>
+                    <Badge>{organization.approval_status.replaceAll("_", " ")}</Badge>
+                  </div>
+                  <form action={assignPlatformVersion} className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    <label className="sr-only" htmlFor="platform-version">Required platform version</label>
+                    <Select id="platform-version" name="platformVersionId" defaultValue={organization.platform_version_id ?? ""} required className="min-w-0 flex-1 rounded-md border-slate-300 bg-white px-3 py-2 text-sm text-slate-800">
+                      <option value="">Select a required version...</option>
+                      {platformVersions.map((version) => <option key={version.id} value={version.id}>{version.version_name}{version.description ? ` - ${version.description}` : ""}</option>)}
+                    </Select>
+                    <Button type="submit" size="sm" className="rounded-md bg-emerald-700 px-4 text-white hover:bg-emerald-800">Save version</Button>
+                  </form>
+                  <p className="mt-2 text-xs text-slate-500">A version must be assigned before this organisation can be approved.</p>
+                  <form action={updateApprovalStatus} className="mt-3 flex flex-wrap gap-2" aria-label="Organisation approval status">
+                    {[
+                      { value: "PENDING_APPROVAL", label: "Pending", className: "border-amber-200 text-amber-700 hover:bg-amber-50" },
+                      { value: "APPROVED", label: "Approved", className: "border-emerald-200 text-emerald-700 hover:bg-emerald-50" },
+                      { value: "REJECTED", label: "Rejected", className: "border-red-200 text-red-700 hover:bg-red-50" },
+                    ].map((status) => (
+                      <Button
+                        key={status.value}
+                        type="submit"
+                        name="approvalStatus"
+                        value={status.value}
+                        aria-pressed={organization.approval_status === status.value}
+                        disabled={organization.approval_status === status.value || (status.value === "APPROVED" && !organization.platformVersion?.is_active)}
+                        variant="secondary"
+                        size="sm"
+                        className={`${status.className} ${
+                          organization.approval_status === status.value ? "bg-slate-100 ring-1 ring-slate-300" : "bg-white"
+                        }`}
+                      >
+                        {status.label}
+                      </Button>
+                    ))}
+                  </form>
+                </section>
+                <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                  <div className="border-b border-slate-200 px-4 py-3"><h2 className="text-sm font-bold text-slate-900">Plan and version</h2></div>
+                  <dl className="grid gap-x-8 gap-y-4 p-4 sm:grid-cols-2 xl:grid-cols-3">
+                    <Detail label="Plan" value={organization.plan?.plan_name ?? "Unassigned"} />
+                    <Detail label="Plan status" value={organization.plan ? (organization.plan.is_active ? "Active" : "Inactive") : "Not assigned"} />
+                    <Detail label="Price" value={organization.plan?.price == null ? "Not set" : `₹${Number(organization.plan.price).toLocaleString("en-IN")}`} />
+                    <Detail label="Billing cycle" value={organization.plan?.billing_cycle ?? "Not set"} />
+                    <Detail label="Plan description" value={organization.plan?.description ?? "Not provided"} />
+                    <Detail label="Platform version" value={organization.platformVersion?.version_name ?? "Not assigned"} />
+                  </dl>
+                </section>
+              </div>
             ),
           },
           {
@@ -290,9 +302,67 @@ export default async function PlatformOrganizationDetailsPage({
                   />
                   <Detail label="Started" value={organization.trial_started_at ? new Date(organization.trial_started_at).toLocaleString() : "Not started"} />
                   <Detail label="Ends" value={organization.trial_ends_at ? new Date(organization.trial_ends_at).toLocaleString() : "Not set"} />
-                  <Detail label="Configured extension" value={`${organization.trial_extension_hours} hours`} />
+                  <Detail label="Pre-start extension" value={`${organization.trial_extension_hours} hours`} />
                 </dl>
                 <div className="border-t border-slate-200 p-4">
+                  <h3 className="text-sm font-semibold text-slate-800">Trial extension requests</h3>
+                  {trialExtensionRequests.length > 0 ? (
+                    <ul className="mt-3 divide-y divide-slate-100 rounded-md border border-slate-200">
+                      {trialExtensionRequests.map((request) => {
+                        const isPending = ["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS"].includes(request.status);
+                        return (
+                          <li key={request.id} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-slate-800">
+                                {request.submittedBy.full_name || request.submittedBy.email}
+                                <span className="ml-2 text-xs font-normal text-slate-500">{new Date(request.created_at).toLocaleString()}</span>
+                              </p>
+                              <p className="mt-1 text-xs text-slate-600">{request.description}</p>
+                            </div>
+                            <Badge>{isPending ? "Awaiting admin review" : request.status.replaceAll("_", " ")}</Badge>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-sm text-slate-500">No trial extension requests have been submitted.</p>
+                  )}
+                </div>
+                <div className="border-t border-slate-200 p-4">
+                  <h3 className="text-sm font-semibold text-slate-800">Trial history</h3>
+                  <p className="mt-1 text-xs text-slate-500">Chronological record of organisation creation, trial starts, expirations, requests, extensions, and removals.</p>
+                  <div className="mt-3 overflow-x-auto rounded-md border border-slate-200">
+                    <table className="w-full min-w-[48rem] text-left text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                        <tr>
+                          <th scope="col" className="px-3 py-2 font-semibold">Date &amp; time</th>
+                          <th scope="col" className="px-3 py-2 font-semibold">Event</th>
+                          <th scope="col" className="px-3 py-2 font-semibold">Details</th>
+                          <th scope="col" className="px-3 py-2 font-semibold">Actor / status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {trialHistory.events.map((event) => (
+                          <tr key={event.id}>
+                            <td className="whitespace-nowrap px-3 py-2 text-xs text-slate-600">{new Date(event.occurredAt).toLocaleString()}</td>
+                            <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-800">{event.title}</td>
+                            <td className="min-w-[16rem] px-3 py-2 text-xs text-slate-600">{event.description}</td>
+                            <td className="px-3 py-2 text-xs text-slate-600">
+                              {event.actor ?? "System"}
+                              {event.status && <span className="mt-1 block font-semibold text-slate-700">{event.status}</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div className="border-t border-slate-200 p-4">
+                  <p className="mb-3 text-xs text-slate-600">
+                    {trialExtensionRequests.some((request) => ["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS"].includes(request.status))
+                      ? "Review the pending request above, set the approved hours, then extend the trial below. The request will be marked resolved."
+                      : "The first three expired-trial requests are extended automatically for 24 hours. Later requests appear above for platform review."}
+                  </p>
                   <OrganizationTrialControls
                     organizationId={organization.id}
                     organizationName={organization.organization_name}
@@ -347,28 +417,33 @@ export default async function PlatformOrganizationDetailsPage({
               </section>
             ),
           },
+          {
+            label: "Delete",
+            value: "delete",
+            content: (
+              <section className="flex flex-col justify-between gap-4 rounded-xl border border-red-200 bg-red-50 p-5 sm:flex-row sm:items-center">
+                <div>
+                  <h2 className="text-sm font-bold text-red-900">Delete organisation</h2>
+                  <p id="organization-delete-retention" className="mt-1 text-xs text-red-700">
+                    {!isArchived
+                      ? `Archive this organisation first. Permanent deletion is available ${ORGANIZATION_DELETE_RETENTION_DAYS} days after archiving.`
+                      : !organization.archived_at
+                        ? "The archive date is unavailable. Restore and re-archive this organisation to start the 90-day retention period."
+                        : deletionEligibility.isEligible
+                          ? `Archived on ${organization.archived_at.toLocaleString()}. The 90-day retention period has elapsed; deletion is now available.`
+                          : `Archived on ${organization.archived_at.toLocaleString()}. Deletion becomes available on ${deletionEligibility.eligibleAt?.toLocaleString()}.`}
+                    {" "}Deletion permanently removes the organisation and related business records.
+                  </p>
+                </div>
+                <OrganizationDeleteControl
+                  organizationName={organization.organization_name}
+                  deleteAction={deleteOrganization}
+                  disabled={!isArchived || !deletionEligibility.isEligible}
+                />
+              </section>
+            ),
+          },
         ]} />
-
-        <section className="flex flex-col justify-between gap-4 rounded-xl border border-red-200 bg-red-50 p-5 sm:flex-row sm:items-center">
-          <div>
-            <h2 className="text-sm font-bold text-red-900">Delete organisation</h2>
-            <p id="organization-delete-retention" className="mt-1 text-xs text-red-700">
-              {!isArchived
-                ? `Archive this organisation first. Permanent deletion is available ${ORGANIZATION_DELETE_RETENTION_DAYS} days after archiving.`
-                : !organization.archived_at
-                  ? "The archive date is unavailable. Restore and re-archive this organisation to start the 90-day retention period."
-                  : deletionEligibility.isEligible
-                    ? `Archived on ${organization.archived_at.toLocaleString()}. The 90-day retention period has elapsed; deletion is now available.`
-                    : `Archived on ${organization.archived_at.toLocaleString()}. Deletion becomes available on ${deletionEligibility.eligibleAt?.toLocaleString()}.`}
-              {" "}Deletion permanently removes the organisation and related business records.
-            </p>
-          </div>
-          <form action={deleteOrganization}>
-            <Button type="submit" variant="danger" size="sm" className="rounded-md" disabled={!isArchived || !deletionEligibility.isEligible} aria-describedby="organization-delete-retention">
-              Delete Organisation
-            </Button>
-          </form>
-        </section>
       </Section>
     </Page>
   );

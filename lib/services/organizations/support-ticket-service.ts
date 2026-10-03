@@ -3,9 +3,18 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/database/prisma-client";
 import { normalizeSystemStatusKey } from "@/lib/auth/validation-rules";
 import { requireOrganizationAccess } from "./organization-service";
+import {
+  AUTOMATIC_TRIAL_EXTENSION_DESCRIPTION_PREFIX,
+  LEGACY_TRIAL_EXTENSION_REQUEST_DESCRIPTION,
+  PLATFORM_REVIEW_TRIAL_EXTENSION_DESCRIPTION_PREFIX,
+  TRIAL_EXTENSION_REQUEST_SUBJECT,
+} from "./trial-extension-request-constants";
 
 const TICKET_PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"] as const;
 const TICKET_STATUSES = ["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS", "RESOLVED", "CLOSED"] as const;
+const AUTOMATIC_TRIAL_EXTENSION_LIMIT = 3;
+const AUTOMATIC_TRIAL_EXTENSION_HOURS = 24;
+const HOUR_IN_MS = 60 * 60 * 1000;
 
 export type SupportTicketStatus = (typeof TICKET_STATUSES)[number];
 
@@ -53,52 +62,108 @@ export async function requestExpiredTrialExtension(
   now = new Date(),
 ) {
   const membership = await requireOrganizationAccess(submittedByUserId, organizationId);
-  const organization = await prisma.organization.findUnique({
-    where: { id: membership.organization_id },
-    select: {
-      approval_status: true,
-      trial_enabled: true,
-      trial_started_at: true,
-      trial_ends_at: true,
-    },
+  return prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "organizations" WHERE "id" = ${membership.organization_id} FOR UPDATE
+    `;
+
+    const organization = await transaction.organization.findUnique({
+      where: { id: membership.organization_id },
+      select: {
+        approval_status: true,
+        trial_enabled: true,
+        trial_started_at: true,
+        trial_ends_at: true,
+      },
+    });
+
+    if (
+      !organization
+      || organization.approval_status !== "APPROVED"
+      || !organization.trial_enabled
+      || !organization.trial_started_at
+      || !organization.trial_ends_at
+      || organization.trial_ends_at > now
+    ) {
+      throw new Error("A trial extension can only be requested after the trial expires.");
+    }
+
+    const existingRequest = await transaction.supportTicket.findFirst({
+      where: {
+        organization_id: membership.organization_id,
+        subject: TRIAL_EXTENSION_REQUEST_SUBJECT,
+        request_type: "TICKET",
+        status: { in: ["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS"] },
+        OR: [
+          { description: { startsWith: PLATFORM_REVIEW_TRIAL_EXTENSION_DESCRIPTION_PREFIX } },
+          { description: LEGACY_TRIAL_EXTENSION_REQUEST_DESCRIPTION },
+        ],
+      },
+    });
+    if (existingRequest) {
+      return { ticket: existingRequest, alreadyRequested: true, autoExtended: false, trialEndsAt: null };
+    }
+
+    const requestCount = await transaction.supportTicket.count({
+      where: {
+        organization_id: membership.organization_id,
+        subject: TRIAL_EXTENSION_REQUEST_SUBJECT,
+        request_type: "TICKET",
+        description: { startsWith: AUTOMATIC_TRIAL_EXTENSION_DESCRIPTION_PREFIX },
+      },
+    });
+    const autoExtended = requestCount < AUTOMATIC_TRIAL_EXTENSION_LIMIT;
+    const trialEndsAt = autoExtended ? new Date(now.getTime() + AUTOMATIC_TRIAL_EXTENSION_HOURS * HOUR_IN_MS) : null;
+
+    if (trialEndsAt) {
+      const updated = await transaction.organization.updateMany({
+        where: {
+          id: membership.organization_id,
+          trial_enabled: true,
+          trial_ends_at: organization.trial_ends_at,
+        },
+        data: { trial_ends_at: trialEndsAt },
+      });
+      if (updated.count !== 1) throw new Error("The trial changed while the request was being processed. Please try again.");
+    }
+
+    const ticket = await transaction.supportTicket.create({
+      data: {
+        id: randomUUID(),
+        ticket_number: randomUUID(),
+        organization_id: membership.organization_id,
+        submitted_by_user_id: submittedByUserId,
+        request_type: "TICKET",
+        subject: TRIAL_EXTENSION_REQUEST_SUBJECT,
+        description: autoExtended
+          ? `${AUTOMATIC_TRIAL_EXTENSION_DESCRIPTION_PREFIX}${requestCount + 1} of ${AUTOMATIC_TRIAL_EXTENSION_LIMIT} granted for 24 hours.`
+          : `${PLATFORM_REVIEW_TRIAL_EXTENSION_DESCRIPTION_PREFIX} were used. Please review this request for a trial extension.`,
+        priority: "NORMAL",
+        ...(autoExtended ? { status: "RESOLVED" } : {}),
+      },
+    });
+
+    if (trialEndsAt) {
+      await transaction.auditEvent.create({
+        data: {
+          organization_id: membership.organization_id,
+          user_id: submittedByUserId,
+          module: "subscription",
+          action: "ORGANIZATION_TRIAL_AUTO_EXTENDED",
+          entity_type: "Organization",
+          entity_id: membership.organization_id,
+          details: {
+            requestNumber: requestCount + 1,
+            extensionHours: AUTOMATIC_TRIAL_EXTENSION_HOURS,
+            previousTrialEnd: organization.trial_ends_at.toISOString(),
+            trialEnd: trialEndsAt.toISOString(),
+          },
+        },
+      });
+    }
+
+    return { ticket, alreadyRequested: false, autoExtended, trialEndsAt };
   });
-
-  if (
-    !organization
-    || organization.approval_status !== "APPROVED"
-    || !organization.trial_enabled
-    || !organization.trial_started_at
-    || !organization.trial_ends_at
-    || organization.trial_ends_at > now
-  ) {
-    throw new Error("A trial extension can only be requested after the trial expires.");
-  }
-
-  const subject = "Trial extension request";
-  const existingTicket = await prisma.supportTicket.findFirst({
-    where: {
-      organization_id: membership.organization_id,
-      submitted_by_user_id: submittedByUserId,
-      subject,
-      status: { in: ["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS"] },
-    },
-  });
-  if (existingTicket) return { ticket: existingTicket, alreadyRequested: true };
-
-  const ticket = await prisma.supportTicket.create({
-    data: {
-      id: randomUUID(),
-      ticket_number: randomUUID(),
-      organization_id: membership.organization_id,
-      submitted_by_user_id: submittedByUserId,
-      request_type: "TICKET",
-      subject,
-      description: "The organization trial has expired. Please review this request for a trial extension.",
-      priority: "NORMAL",
-    },
-  });
-
-  return { ticket, alreadyRequested: false };
 }
 
 export async function listSupportTickets() {

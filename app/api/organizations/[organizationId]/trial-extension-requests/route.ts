@@ -14,7 +14,8 @@ export async function POST(
     return NextResponse.json({
       ok: true,
       alreadyRequested: result.alreadyRequested,
-      ticketId: result.ticket.id,
+      autoExtended: result.autoExtended,
+      trialEndsAt: result.trialEndsAt?.toISOString() ?? null,
     }, { status: result.alreadyRequested ? 200 : 201 });
   } catch (error) {
     return NextResponse.json({

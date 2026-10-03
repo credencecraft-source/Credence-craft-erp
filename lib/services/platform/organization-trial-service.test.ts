@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const transaction = {
     organization: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    supportTicket: { updateMany: vi.fn() },
     platformAuditEvent: { create: vi.fn() },
     auditEvent: { create: vi.fn() },
   };
@@ -10,6 +11,9 @@ const mocks = vi.hoisted(() => {
     transaction,
     prisma: {
       organization: { findUnique: vi.fn() },
+      auditEvent: { findMany: vi.fn() },
+      platformAuditEvent: { findMany: vi.fn() },
+      supportTicket: { findMany: vi.fn() },
       $transaction: vi.fn(),
     },
     requirePlatformSessionAdmin: vi.fn(),
@@ -25,6 +29,7 @@ import {
   extendOrganizationTrial,
   hasOrganizationTrialAccess,
   isOrganizationTrialActive,
+  listOrganizationTrialHistory,
   removeOrganizationTrial,
   startOrganizationTrialOnApproval,
   startOrganizationTrialOnFirstOpen,
@@ -131,12 +136,21 @@ describe("organization trial lifecycle", () => {
       trial_enabled: true,
       trial_extension_hours: 0,
     });
+    mocks.transaction.supportTicket.updateMany.mockResolvedValue({ count: 1 });
 
     await extendOrganizationTrial("internal-org-id", 24);
 
     expect(mocks.transaction.organization.update).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "internal-org-id" },
       data: { trial_enabled: true, trial_ends_at: new Date("2026-10-04T10:00:00.000Z") },
+    }));
+    expect(mocks.transaction.supportTicket.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "internal-org-id",
+        subject: "Trial extension request",
+        status: { in: ["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS"] },
+      }),
+      data: { status: "RESOLVED" },
     }));
     expect(mocks.transaction.platformAuditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -184,5 +198,72 @@ describe("organization trial lifecycle", () => {
     expect(mocks.transaction.platformAuditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: "ORGANIZATION_TRIAL_REMOVED", entity_id: "internal-org-id" }),
     }));
+  });
+
+  it("returns a chronological history of creation, trial starts, expiry, requests, and extensions", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-04T12:00:00.000Z"));
+    mocks.prisma.organization.findUnique.mockResolvedValue({
+      id: "internal-org-id",
+      created_at: new Date("2026-10-01T08:00:00.000Z"),
+    });
+    mocks.prisma.auditEvent.findMany.mockResolvedValue([{
+      id: "workspace-trial-start",
+      action: "ORGANIZATION_TRIAL_STARTED",
+      details: {
+        startedAt: "2026-10-01T09:00:00.000Z",
+        trialEnd: "2026-10-02T09:00:00.000Z",
+      },
+      created_at: new Date("2026-10-01T09:00:00.000Z"),
+      user: { full_name: "Workspace Owner", email: "owner@example.com" },
+    }]);
+    mocks.prisma.platformAuditEvent.findMany.mockResolvedValue([{
+      id: "auto-extension",
+      action: "ORGANIZATION_TRIAL_AUTO_EXTENDED",
+      details: {
+        requestNumber: 1,
+        extensionHours: 24,
+        previousTrialEnd: "2026-10-02T09:00:00.000Z",
+        trialEnd: "2026-10-03T09:00:00.000Z",
+      },
+      created_at: new Date("2026-10-02T10:00:00.000Z"),
+      platformAdmin: null,
+    }]);
+    mocks.prisma.supportTicket.findMany.mockResolvedValue([{
+      id: "extension-request",
+      ticket_number: "request-number",
+      description: "Automatic trial extension 1 of 3 granted for 24 hours.",
+      status: "RESOLVED",
+      created_at: new Date("2026-10-02T10:00:00.000Z"),
+      updated_at: new Date("2026-10-02T10:00:00.000Z"),
+      submittedBy: { full_name: "Workspace Owner", email: "owner@example.com" },
+    }]);
+
+    const history = await listOrganizationTrialHistory("internal-org-id");
+
+    expect(history.events.map((event) => event.title)).toEqual([
+      "Organisation created",
+      "Trial started on first organisation open",
+      "Trial expired",
+      "Automatic trial extension granted",
+      "Automatic extension request recorded",
+      "Trial expired",
+    ]);
+    expect(history.events[1]).toMatchObject({
+      occurredAt: new Date("2026-10-01T09:00:00.000Z"),
+      actor: "Workspace Owner",
+    });
+    expect(history.events[2].occurredAt).toEqual(new Date("2026-10-02T09:00:00.000Z"));
+    expect(history.events[4]).toMatchObject({
+      actor: "Workspace Owner",
+      status: "Automatically granted",
+    });
+    expect(mocks.prisma.auditEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ organization_id: "internal-org-id", entity_id: "internal-org-id" }),
+    }));
+    expect(mocks.prisma.platformAuditEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ entity_type: "Organization", entity_id: "internal-org-id" }),
+    }));
+    vi.useRealTimers();
   });
 });
