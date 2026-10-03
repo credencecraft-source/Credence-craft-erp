@@ -587,7 +587,8 @@ describe("organization dummy data service", () => {
     expect(groupedPurchaseOrderMock).not.toHaveBeenCalled();
   });
 
-  it("assigns sample terms and approves every grouped PO in Step 3", async () => {
+  it("assigns sample terms and approves every grouped PO in Step 3 in production", async () => {
+    vi.stubEnv("VERCEL_ENV", "production");
     const groupedIds = Array.from({ length: 10 }, (_, index) => `group-${index + 1}`);
     prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
       id: "batch-id",
@@ -677,7 +678,7 @@ describe("organization dummy data service", () => {
     }));
   });
 
-  it("disables sample record approval in a production deployment", async () => {
+  it("approves a tracked sample grouped PO in a production deployment", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
     prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
       id: "batch-id",
@@ -687,8 +688,11 @@ describe("organization dummy data service", () => {
     });
 
     await expect(approveSampleGroupedPurchaseOrder("user-id", "public-org-id", "group-1"))
-      .rejects.toThrow("Automatic approvals for sample data are disabled in production.");
-    expect(transactionMock.groupedPurchaseOrder.updateMany).not.toHaveBeenCalled();
+      .resolves.toEqual({ approved: true, id: "group-1" });
+    expect(transactionMock.groupedPurchaseOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "group-1", organization_id: organization.id, status: "PENDING_PRICE_APPROVAL" },
+      data: expect.objectContaining({ status: "PRICE_APPROVED", approved_by: "Sample Data Automation" }),
+    }));
   });
 
   it("creates one master group per approved sample group and stops before PO creation", async () => {
@@ -803,7 +807,8 @@ describe("organization dummy data service", () => {
     }));
   });
 
-  it("auto-approves batch-linked POs for Step 5 and does not create gate entries", async () => {
+  it("auto-approves batch-linked POs in production for Step 5 and does not create gate entries", async () => {
+    vi.stubEnv("NODE_ENV", "production");
     const purchaseOrderIds = Array.from({ length: 10 }, (_, index) => `po-${index + 1}`);
     prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
       id: "batch-id",

@@ -1404,12 +1404,6 @@ async function createSampleGroupedPurchaseOrders(
   };
 }
 
-function assertDummyApprovalAutomationAllowed() {
-  if (process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production") {
-    throw new Error("Automatic approvals for sample data are disabled in production.");
-  }
-}
-
 async function autoApproveSamplePurchaseOrders(
   organizationId: string,
   batchId: string,
@@ -1444,7 +1438,6 @@ async function autoApproveSamplePurchaseOrders(
     );
     if (sourceNumbers.length === 0 || sourceNumbers.some((number) => !number.startsWith(groupedNoPrefix))) continue;
     if (order.status !== "PENDING_APPROVAL") continue;
-    assertDummyApprovalAutomationAllowed();
     await prisma.$transaction(async (transaction) => {
       const request = await transaction.approvalRequest.findFirst({
         where: {
@@ -1742,7 +1735,6 @@ async function prepareSampleGroupedPurchaseOrderPrices(
     },
   });
   if (orders.length !== 10) throw new Error("The sample grouped purchase order records could not be loaded.");
-  assertDummyApprovalAutomationAllowed();
   const stockUomConversions = await prisma.masterStockUomConvert.findMany({
     where: {
       organization_id: organizationId,
@@ -1884,7 +1876,6 @@ export async function approveSampleGroupedPurchaseOrder(
   routeOrganizationId: string,
   groupedPurchaseOrderId: string,
 ) {
-  assertDummyApprovalAutomationAllowed();
   const organization = await authorizeOrganization(userId, routeOrganizationId);
   const batch = await prisma.organizationDummyDataBatch.findUnique({
     where: { organization_id: organization.id },

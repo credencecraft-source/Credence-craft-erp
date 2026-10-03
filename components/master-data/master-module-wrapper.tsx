@@ -89,7 +89,6 @@ type MasterModuleWrapperProps = {
       hsn_code: string | null;
       buying_uom: string | null;
     }>;
-    sampleTermsPrepared?: boolean;
     masterGroupCount?: number;
     purchaseOrderCount?: number;
     gateEntryCount?: number;
@@ -795,8 +794,7 @@ export function MasterModuleWrapper({
                 ].map((step) => {
                   const isComplete = completedSteps.has(step.number);
                   const isCurrent = currentStep === step.number;
-                  const termsAlreadyPrepared = step.number === 3 && dummyDataStatus.sampleTermsPrepared;
-                  const canStart = dummyDataAvailable && isCurrent && !isComplete && !termsAlreadyPrepared && !isUpdatingDummyData;
+                  const canStart = dummyDataAvailable && isCurrent && !isComplete && !isUpdatingDummyData;
                   return (
                     <li key={step.number} className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 px-3 py-3">
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-700" aria-hidden="true">
@@ -806,19 +804,18 @@ export function MasterModuleWrapper({
                         <span className="flex flex-wrap items-center gap-2">
                           <span className="text-sm font-semibold text-slate-900">Step {step.number}: {step.title}</span>
                           {isComplete ? <span className="text-xs font-medium text-emerald-700">Complete</span> : null}
-                          {!isComplete && isCurrent && termsAlreadyPrepared ? <span className="text-xs font-medium text-amber-700">Approval needed</span> : null}
-                          {!isComplete && isCurrent && !termsAlreadyPrepared && !isUpdatingDummyData ? <span className="text-xs font-medium text-sky-700">Up next</span> : null}
+                          {!isComplete && isCurrent && !isUpdatingDummyData ? <span className="text-xs font-medium text-sky-700">Up next</span> : null}
                         </span>
                         <span className="mt-1 block text-xs leading-5 text-slate-600">{step.detail}</span>
                       </span>
                       <Button
                         type="button"
                         size="sm"
-                        variant={step.number === 3 ? "secondary" : "primary"}
+                        variant="primary"
                         disabled={!canStart}
                         onClick={() => handleStartDummyDataStep(step.number)}
                       >
-                        {isComplete ? "Done" : termsAlreadyPrepared ? "Terms ready" : isUpdatingDummyData && isCurrent ? "Working..." : dummyDataStatus.status === "EMPTY" && step.number === 1 ? "Create" : "Start"}
+                        {isComplete ? "Done" : isUpdatingDummyData && isCurrent ? "Working..." : dummyDataStatus.status === "EMPTY" && step.number === 1 ? "Create" : "Start"}
                       </Button>
                     </li>
                   );
