@@ -333,8 +333,15 @@ export default function MerchandisingOrdersPage() {
         throw new Error(data?.error || "Unable to prepare the source order for a variant.");
       }
 
-      const mappedSizes = Array.isArray(data?.sizes) ? data.sizes : [];
-      const mappedSizeRows = toVariantSizeRows(mappedSizes.map((size: unknown) => ({ size })));
+      const mappedSizes: unknown[] = Array.isArray(data?.sizes) ? data.sizes : [];
+      const seenSizes = new Set<string>();
+      const mappedSizeRows = mappedSizes.flatMap((size) => {
+        if (typeof size !== "string") return [];
+        const normalizedSize = size.trim();
+        if (!normalizedSize || seenSizes.has(normalizedSize)) return [];
+        seenSizes.add(normalizedSize);
+        return [{ size: normalizedSize, qty: "" }];
+      });
       if (mappedSizeRows.length === 0) {
         throw new Error("The source order has no finished-goods sizes or mapped Size Group sizes to create a variant from.");
       }

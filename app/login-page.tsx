@@ -132,7 +132,7 @@ export default function LoginPage() {
       <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
         <PublicHeader active={view === "impact" ? "impact" : undefined} onImpactClick={() => setView("impact")} />
         <section className="grid min-h-[calc(100vh-73px)] items-center gap-8 py-6 sm:gap-10 sm:py-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-20 lg:py-12">
-          <div className="max-w-xl text-center lg:text-left">
+          <div className="hidden max-w-xl text-center lg:block lg:text-left">
             <div className="flex items-center justify-center gap-2 text-[9px] font-semibold uppercase tracking-[0.2em] text-[#6d8c46] lg:justify-start"><span className="h-1.5 w-1.5 rounded-full bg-[#a7c65a]" /> Apparel, with intention</div>
             <h1 className="mt-4 text-4xl font-semibold leading-[0.96] tracking-[-0.065em] sm:text-5xl lg:mt-5 lg:text-7xl">Make better clothes. <span className="text-[#6d8c46]">Leave less behind.</span></h1>
             <p className="mx-auto mt-4 max-w-md text-sm leading-6 text-[#587066] lg:mx-0 lg:mt-6 lg:text-[14px] lg:leading-7">One thoughtful workspace for the people, materials and decisions that move fashion forward.</p>
@@ -145,7 +145,7 @@ export default function LoginPage() {
             <div className="mt-5 flex gap-3 border-b border-[#e7eee8] text-[12px] font-semibold sm:mt-7">
               <Button variant="ghost" size="sm" aria-pressed={authMethod === "email" && mode !== "support"} onClick={() => { switchAuthMethod("email"); switchMode("login"); }} className={`hidden min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[12px] hover:bg-transparent ${authMethod === "email" && mode !== "support" ? "border-[#183b2c] text-[#183b2c]" : "border-transparent text-[#93a39a]"}`}>Email</Button>
               <Button variant="ghost" size="sm" aria-pressed={authMethod === "mobile"} onClick={() => switchAuthMethod("mobile")} className={`min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[12px] hover:bg-transparent ${authMethod === "mobile" ? "border-[#183b2c] text-[#183b2c]" : "border-transparent text-[#93a39a]"}`}>Mobile</Button>
-              <Button variant="ghost" size="sm" aria-pressed={mode === "support"} onClick={() => { switchAuthMethod("email"); switchMode("support"); }} className={`min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[12px] hover:bg-transparent ${mode === "support" && authMethod === "email" ? "border-[#183b2c] text-[#183b2c]" : "border-transparent text-[#93a39a]"}`}>Support</Button>
+              <Button variant="ghost" size="sm" aria-pressed={mode === "support"} onClick={() => { switchAuthMethod("email"); switchMode("support"); }} className={`hidden min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[12px] hover:bg-transparent sm:inline-flex ${mode === "support" && authMethod === "email" ? "border-[#183b2c] text-[#183b2c]" : "border-transparent text-[#93a39a]"}`}>Support</Button>
             </div>
             {authMethod === "mobile" ? (
               <div className="mt-5 sm:mt-6">
