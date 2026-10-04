@@ -53,7 +53,7 @@ describe("reserveNextOrderNumbers", () => {
       organizationOrderCounter: {
         upsert: vi.fn().mockResolvedValue({ current_value: 14 }),
       },
-    } as any;
+    } as unknown as Prisma.TransactionClient;
 
     await expect(reserveNextOrderNumbers("org-123", 10, database)).resolves.toEqual([
       "OD-5", "OD-6", "OD-7", "OD-8", "OD-9", "OD-10", "OD-11", "OD-12", "OD-13", "OD-14",
@@ -86,6 +86,20 @@ describe("reserveNextOrderNumbers", () => {
       }));
       expect(page.orders).toHaveLength(1);
       expect(page.nextCursor).toBeTruthy();
+    });
+
+    it("loads a lean order page without fetching finished goods for the list", async () => {
+      prismaCounterMock.orderFindMany.mockResolvedValue([
+        { id: "order-1", created_at: new Date("2026-10-01T00:00:00.000Z"), deliveryDate: null },
+      ]);
+
+      await listOrdersPage("org-1", { limit: 25 });
+
+      expect(prismaCounterMock.orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { organization_id: "org-1" },
+        take: 26,
+        select: expect.not.objectContaining({ finishedGoods: expect.anything() }),
+      }));
     });
 
     it("adds organization-scoped article codes to order rows", async () => {

@@ -227,12 +227,6 @@ export async function listOrdersPage(
       processStatus: true,
       sourceStatus: true,
       created_at: true,
-      finishedGoods: {
-        select: {
-          size: true,
-          buyerSize: true,
-        },
-      },
     },
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
     take: take + 1,

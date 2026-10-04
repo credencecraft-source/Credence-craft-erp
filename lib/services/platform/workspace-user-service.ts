@@ -26,8 +26,8 @@ const workspaceUserReportSelect = {
   created_at: true,
   last_login_at: true,
   organizationMemberships: {
-    where: { is_active: true },
     select: {
+      is_active: true,
       organization: {
         select: {
           id: true,
@@ -71,11 +71,12 @@ function addWorkspaceUsage(
 ) {
   const { organizationMemberships, ...account } = user;
   const organisations = organizationMemberships
-    .map(({ organization }) => organization)
-    .filter((organization) => organization.is_active);
+    .filter(({ is_active, organization }) => is_active && organization.is_active)
+    .map(({ organization }) => organization);
   return {
     ...account,
     organisations,
+    canDelete: organizationMemberships.length === 0,
     totalRecords: organisations.reduce(
       (total, organization) =>
         total + (totalRecordsByOrganizationId.get(organization.id) ?? 0),
@@ -95,7 +96,9 @@ export async function listWorkspaceUsers() {
   const organizationIds = [
     ...new Set(
       users.flatMap((user) =>
-        user.organizationMemberships.map(({ organization }) => organization.id),
+        user.organizationMemberships
+          .filter(({ is_active }) => is_active)
+          .map(({ organization }) => organization.id),
       ),
     ),
   ];
@@ -118,12 +121,68 @@ export async function getWorkspaceUser(userId: string) {
     select: workspaceUserReportSelect,
   });
   if (!user) return null;
-  const organizationIds = user.organizationMemberships.map(
-    ({ organization }) => organization.id,
-  );
+  const organizationIds = user.organizationMemberships
+    .filter(({ is_active }) => is_active)
+    .map(({ organization }) => organization.id);
   const totalRecordsByOrganizationId =
     await getOrganizationRecordTotals(organizationIds);
   return addWorkspaceUsage(user, totalRecordsByOrganizationId);
+}
+
+export async function deleteWorkspaceUser(userId: string) {
+  const admin = await requirePlatformSessionAdmin();
+  const normalizedUserId = typeof userId === "string" ? userId.trim() : "";
+  if (!normalizedUserId) {
+    throw new WorkspaceUserServiceError("Workspace user ID is required.");
+  }
+
+  await prisma.$transaction(async (transaction) => {
+    const user = await transaction.workspaceUser.findUnique({
+      where: { id: normalizedUserId },
+      select: {
+        id: true,
+        full_name: true,
+        email: true,
+        profile_name: true,
+        organizationMemberships: {
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
+    if (!user) throw new WorkspaceUserServiceError("Workspace user not found.");
+    if (user.organizationMemberships.length > 0) {
+      throw new WorkspaceUserServiceError(
+        "Workspace users can only be deleted when they have no organisation memberships.",
+      );
+    }
+
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: admin.id,
+        action: "WORKSPACE_USER_DELETED",
+        entity_type: "WorkspaceUser",
+        entity_id: user.id,
+        details: {
+          fullName: user.full_name,
+          email: user.email,
+          profileName: user.profile_name,
+        },
+      },
+    });
+
+    const deleted = await transaction.workspaceUser.deleteMany({
+      where: {
+        id: user.id,
+        organizationMemberships: { none: {} },
+      },
+    });
+    if (deleted.count !== 1) {
+      throw new WorkspaceUserServiceError(
+        "Workspace user membership changed during deletion. Refresh and try again.",
+      );
+    }
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export type UpdateWorkspaceUserInput = {

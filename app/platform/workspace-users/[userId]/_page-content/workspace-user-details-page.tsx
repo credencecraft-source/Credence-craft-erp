@@ -1,10 +1,11 @@
 import { revalidatePath } from "next/cache";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import {
   getWorkspaceUser,
+  deleteWorkspaceUser,
   updateWorkspaceUser,
   WorkspaceUserServiceError,
   type UpdateWorkspaceUserInput,
@@ -13,13 +14,32 @@ import WorkspaceUserDetails from "./workspace-user-details";
 
 export default async function WorkspaceUserDetailsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ userId: string }>;
+  searchParams?: Promise<{ error?: string }>;
 }) {
   const { userId } = await params;
+  const query = (await searchParams) ?? {};
   const user = await getWorkspaceUser(userId);
   if (!user) notFound();
   const workspaceUserId = user.id;
+
+  async function removeWorkspaceUser() {
+    "use server";
+
+    try {
+      await deleteWorkspaceUser(workspaceUserId);
+    } catch (error) {
+      if (error instanceof WorkspaceUserServiceError) {
+        redirect(`/platform/workspace-users/${encodeURIComponent(workspaceUserId)}?error=${encodeURIComponent(error.message)}`);
+      }
+      throw error;
+    }
+
+    revalidatePath("/platform/workspace-users");
+    redirect("/platform/workspace-users");
+  }
 
   async function saveWorkspaceUser(input: UpdateWorkspaceUserInput) {
     "use server";
@@ -47,6 +67,7 @@ export default async function WorkspaceUserDetailsPage({
           user={{
             id: user.id,
             fullName: user.full_name,
+            canDelete: user.canDelete,
             profileName: user.profile_name,
             email: user.email,
             emailVerified: user.email ? user.email_verified : false,
@@ -61,6 +82,8 @@ export default async function WorkspaceUserDetailsPage({
             totalRecords: user.totalRecords,
             status: user.status,
           }}
+          deleteWorkspaceUser={removeWorkspaceUser}
+          deleteError={query.error}
           saveWorkspaceUser={saveWorkspaceUser}
         />
       </Section>

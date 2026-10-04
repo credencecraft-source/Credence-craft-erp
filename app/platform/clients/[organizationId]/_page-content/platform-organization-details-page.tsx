@@ -8,7 +8,7 @@ import Section from "@/components/ui/Section";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { assignOrganizationPlatformVersion, getOrganizationClient, listPlatformVersions } from "@/lib/services/platform/client-service";
 import { listOrganizationSegmentPricing, resetOrganizationSegmentPrice, setOrganizationSegmentCustomPrice } from "@/lib/services/platform/organization-segment-pricing-service";
-import { deleteOrganizationFromPlatform, getOrganizationDeletionEligibility, ORGANIZATION_DELETE_RETENTION_DAYS, updateOrganizationApprovalStatus } from "@/lib/services/organizations/organization-service";
+import { deleteOrganizationFromPlatform, forceDeleteOrganizationFromPlatform, getOrganizationDeletionEligibility, ORGANIZATION_DELETE_RETENTION_DAYS, updateOrganizationApprovalStatus } from "@/lib/services/organizations/organization-service";
 import { extendOrganizationTrial, listOrganizationTrialHistory, removeOrganizationTrial } from "@/lib/services/platform/organization-trial-service";
 import OrganizationDetailTabs from "./organization-detail-tabs";
 import OrganizationSubscriptionPricing from "./organization-subscription-pricing";
@@ -95,6 +95,21 @@ export default async function PlatformOrganizationDetailsPage({
       await deleteOrganizationFromPlatform(organizationId);
     } catch (error) {
       redirect(`/platform/organisations/${organizationId}?tab=delete&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to delete organisation.")}`);
+    }
+    redirect("/platform/organisations");
+  }
+
+  async function forceDeleteOrganization(formData: FormData) {
+    "use server";
+    await requirePlatformSessionAdmin();
+    try {
+      const confirmationName = formData.get("confirmationName");
+      await forceDeleteOrganizationFromPlatform(
+        organizationId,
+        typeof confirmationName === "string" ? confirmationName : "",
+      );
+    } catch (error) {
+      redirect(`/platform/organisations/${organizationId}?tab=delete&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to force delete organisation.")}`);
     }
     redirect("/platform/organisations");
   }
@@ -434,10 +449,14 @@ export default async function PlatformOrganizationDetailsPage({
                           : `Archived on ${organization.archived_at.toLocaleString()}. Deletion becomes available on ${deletionEligibility.eligibleAt?.toLocaleString()}.`}
                     {" "}Deletion permanently removes the organisation and related business records.
                   </p>
+                  <p id="organization-force-delete-warning" className="mt-2 text-xs font-semibold text-red-800">
+                    Force delete bypasses the archive and 90-day retention requirements. This cannot be undone.
+                  </p>
                 </div>
                 <OrganizationDeleteControl
                   organizationName={organization.organization_name}
                   deleteAction={deleteOrganization}
+                  forceDeleteAction={forceDeleteOrganization}
                   disabled={!isArchived || !deletionEligibility.isEligible}
                 />
               </section>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { ArrowRight, Leaf, Recycle, Scissors, Waves, Zap } from "lucide-react";
 
@@ -13,10 +13,23 @@ type View = "login" | "impact";
 type Mode = "login" | "register" | "support";
 type AuthMethod = "email" | "mobile";
 
+function subscribeToLocationHash(onStoreChange: () => void) {
+  window.addEventListener("hashchange", onStoreChange);
+  return () => window.removeEventListener("hashchange", onStoreChange);
+}
+
+function getViewFromLocationHash(): View {
+  return window.location.hash === "#impact" ? "impact" : "login";
+}
+
+function getServerView(): View {
+  return "login";
+}
+
 export default function LoginPage() {
   const [mode, setMode] = useState<Mode>("login");
   const [authMethod, setAuthMethod] = useState<AuthMethod>("mobile");
-  const [view, setView] = useState<View>("login");
+  const view = useSyncExternalStore(subscribeToLocationHash, getViewFromLocationHash, getServerView);
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [mobileEmailOtp, setMobileEmailOtp] = useState("");
@@ -33,9 +46,10 @@ export default function LoginPage() {
   const recoveryRate = fabricWaste > 0 ? Math.min((recycledWaste / fabricWaste) * 100, 100) : 0;
   const carbonImpact = Math.max(fabricWaste * 2.1, 0);
 
-  useEffect(() => {
-    if (window.location.hash === "#impact") setView("impact");
-  }, []);
+  function setView(nextView: View) {
+    const nextHash = nextView === "impact" ? "#impact" : "#sign-in";
+    if (window.location.hash !== nextHash) window.location.hash = nextHash;
+  }
 
   function updateNumber(setter: (value: number) => void, value: string) { setter(Math.max(Number(value) || 0, 0)); }
   function switchMode(nextMode: Mode) { setMode(nextMode); setOtp(""); setOtpSent(false); setMessage(""); }
@@ -128,19 +142,19 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f3f6f1] text-[#183b2c]">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+    <main className="flex min-h-dvh flex-col bg-[#f3f6f1] text-[#183b2c]">
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 sm:px-6 lg:px-8">
         <PublicHeader active={view === "impact" ? "impact" : undefined} onImpactClick={() => setView("impact")} />
-        <section className="grid min-h-[calc(100vh-73px)] items-center gap-8 py-6 sm:gap-10 sm:py-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-20 lg:py-12">
+        <section className="grid flex-1 content-center items-center gap-6 py-4 sm:gap-10 sm:py-8 lg:min-h-[calc(100dvh-73px)] lg:grid-cols-[1.05fr_0.95fr] lg:gap-20 lg:py-12">
           <div className="hidden max-w-xl text-center lg:block lg:text-left">
             <div className="flex items-center justify-center gap-2 text-[9px] font-semibold uppercase tracking-[0.2em] text-[#6d8c46] lg:justify-start"><span className="h-1.5 w-1.5 rounded-full bg-[#a7c65a]" /> Apparel, with intention</div>
             <h1 className="mt-4 text-4xl font-semibold leading-[0.96] tracking-[-0.065em] sm:text-5xl lg:mt-5 lg:text-7xl">Make better clothes. <span className="text-[#6d8c46]">Leave less behind.</span></h1>
             <p className="mx-auto mt-4 max-w-md text-sm leading-6 text-[#587066] lg:mx-0 lg:mt-6 lg:text-[14px] lg:leading-7">One thoughtful workspace for the people, materials and decisions that move fashion forward.</p>
             <div className="mt-7 grid max-w-md grid-cols-3 gap-3 border-t border-[#d9e3dc] pt-5 text-left lg:mt-10">{[{ icon: Leaf, label: "Trace materials" }, { icon: Scissors, label: "Respect craft" }, { icon: Recycle, label: "Reduce waste" }].map(({ icon: Icon, label }) => <div key={label} className="space-y-2"><Icon size={16} className="text-[#6d8c46]" /><p className="text-[11px] leading-4 text-[#587066]">{label}</p></div>)}</div>
-            <button type="button" onClick={() => setView(view === "impact" ? "login" : "impact")} className="mt-7 inline-flex items-center gap-2 text-[12px] font-semibold text-[#183b2c] underline decoration-[#a7c65a] decoration-2 underline-offset-4 lg:mt-10">{view === "impact" ? "Return to sign in" : "See the impact of one production cycle"}<ArrowRight size={14} /></button>
+            <Button variant="ghost" size="sm" onClick={() => setView(view === "impact" ? "login" : "impact")} className="mt-7 min-h-0 rounded-none border-0 px-0 py-0 text-[12px] font-semibold text-[#183b2c] underline decoration-[#a7c65a] decoration-2 underline-offset-4 hover:bg-transparent lg:mt-10">{view === "impact" ? "Return to sign in" : "See the impact of one production cycle"}<ArrowRight size={14} /></Button>
           </div>
 
-          {view === "login" ? <section id="sign-in" className="mx-auto w-full max-w-lg rounded-[1.5rem] border border-[#d9e3dc] bg-white p-4 shadow-[0_22px_70px_rgba(24,59,44,0.08)] sm:p-6 lg:rounded-[1.75rem] lg:p-8">
+          {view === "login" ? <section id="sign-in" className="mx-auto flex min-h-[calc(100dvh-7rem)] w-full max-w-lg flex-col justify-center rounded-[1.5rem] border border-[#d9e3dc] bg-white p-5 shadow-[0_22px_70px_rgba(24,59,44,0.08)] sm:min-h-0 sm:p-6 lg:rounded-[1.75rem] lg:p-8">
             <div className="flex items-start justify-between gap-3"><div><p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-[#6d8c46] sm:text-[10px]">Your workspace</p><h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] sm:text-2xl">Welcome back.</h2></div><span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#edf5e7] text-[#6d8c46] sm:h-9 sm:w-9"><Leaf size={17} /></span></div>
             <div className="mt-5 flex gap-3 border-b border-[#e7eee8] text-[12px] font-semibold sm:mt-7">
               <Button variant="ghost" size="sm" aria-pressed={authMethod === "email" && mode !== "support"} onClick={() => { switchAuthMethod("email"); switchMode("login"); }} className={`hidden min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[12px] hover:bg-transparent ${authMethod === "email" && mode !== "support" ? "border-[#183b2c] text-[#183b2c]" : "border-transparent text-[#93a39a]"}`}>Email</Button>

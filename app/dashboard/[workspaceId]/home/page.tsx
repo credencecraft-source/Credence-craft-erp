@@ -81,6 +81,13 @@ export default async function WorkspaceHomePage({
   return (
     <Page className="max-w-[1500px] px-3 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
       <Section className="space-y-6 lg:space-y-8">
+        <div className="flex justify-end sm:hidden">
+          <form action={logoutAction}>
+            <Button type="submit" variant="ghost" className="border border-slate-200 bg-white text-slate-700 hover:bg-slate-50">
+              <LogOut className="h-4 w-4" /> Log out
+            </Button>
+          </form>
+        </div>
         {successMessage && (
           <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-emerald-950 shadow-sm" role="status">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-bold text-white"><Check className="h-4 w-4" /></div>
@@ -96,7 +103,7 @@ export default async function WorkspaceHomePage({
           </div>
         )}
 
-        <div className="relative overflow-hidden rounded-[2rem] bg-[#102a24] px-6 py-7 text-white shadow-[0_24px_70px_rgba(15,64,48,0.18)] sm:px-9 sm:py-9 lg:px-12 lg:py-11">
+        <div className="relative hidden overflow-hidden rounded-[2rem] bg-[#102a24] px-6 py-7 text-white shadow-[0_24px_70px_rgba(15,64,48,0.18)] sm:block sm:px-9 sm:py-9 lg:px-12 lg:py-11">
           <div className="pointer-events-none absolute -right-24 -top-32 h-80 w-80 rounded-full border-[36px] border-emerald-300/10" />
           <div className="pointer-events-none absolute -bottom-32 right-24 h-64 w-64 rounded-full bg-emerald-400/10 blur-3xl" />
           <div className="relative flex flex-col gap-9 lg:flex-row lg:items-end lg:justify-between">
@@ -181,6 +188,7 @@ export default async function WorkspaceHomePage({
               key={organizationSnapshotKey}
               organizations={organizations}
               workspaceId={workspaceId}
+              userMobileNumber={user.mobile_number ?? ""}
               initialCursor={nextCursor}
               archiveOrgAction={archiveOrgAction}
               restoreOrgAction={restoreOrgAction}

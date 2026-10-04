@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type MouseEvent } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
 import { Archive, RotateCcw, Settings, TriangleAlert } from "lucide-react";
@@ -22,15 +22,46 @@ type WorkspaceOrganization = {
   can_manage_settings: boolean;
 };
 
+export function formatIndianMobileNumber(rawMobileNumber?: string | null) {
+  const digits = String(rawMobileNumber ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+
+  const withoutCountryCode = digits.startsWith("91") ? digits.slice(2) : digits;
+  if (withoutCountryCode.length !== 10) {
+    return digits;
+  }
+
+  return `91-${withoutCountryCode}`;
+}
+
+export function getApprovalContactDetails(userMobileNumber?: string | null) {
+  const workspaceNumber = formatIndianMobileNumber(userMobileNumber) || "your registered mobile number";
+
+  return {
+    workspaceNumber,
+    supportNumber: "91-9567048809",
+  };
+}
+
+function preventMobileOrganizationNavigation(event: MouseEvent<HTMLAnchorElement>) {
+  if (!window.matchMedia("(max-width: 639px)").matches) return false;
+
+  event.preventDefault();
+  window.alert("Please use the web version to explore the application.");
+  return true;
+}
+
 export function OrganizationsGrid({
   organizations,
   workspaceId,
+  userMobileNumber,
   initialCursor = null,
   archiveOrgAction,
   restoreOrgAction,
 }: {
   organizations: WorkspaceOrganization[];
   workspaceId: string;
+  userMobileNumber?: string | null;
   initialCursor?: string | null;
   archiveOrgAction: (formData: FormData) => Promise<void>;
   restoreOrgAction: (formData: FormData) => Promise<void>;
@@ -90,6 +121,7 @@ export function OrganizationsGrid({
                 href={`/dashboard/${workspaceId}/organizations/${organization.organization_id}/order-management/merchandising/order`}
                 aria-label={`Open ${organization.organization_name}`}
                 onClick={(event) => {
+                  if (preventMobileOrganizationNavigation(event)) return;
                   if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
                     setOpeningOrganizationId(organization.organization_id);
                   }
@@ -143,6 +175,7 @@ export function OrganizationsGrid({
                       href={`/dashboard/${workspaceId}/organizations/${organization.organization_id}/settings`}
                       aria-label="Organization Settings"
                       title="Organization Settings"
+                      onClick={preventMobileOrganizationNavigation}
                       className="flex h-7 w-7 items-center justify-center rounded-md text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 transition-colors"
                     >
                       <Settings className="h-4 w-4" aria-hidden="true" />
@@ -201,24 +234,33 @@ export function OrganizationsGrid({
         variant="info"
         size="sm"
       >
-        {pendingApprovalOrg && (
-          <div className="space-y-4 p-6">
-            <div>
-              <h2 id="pending-organization-approval-title" className="text-lg font-bold text-slate-900">
-                Waiting for organization approval
-              </h2>
-              <p className="mt-1 text-sm font-medium text-slate-700">{pendingApprovalOrg.organization_name}</p>
+        {pendingApprovalOrg && (() => {
+          const approvalContact = getApprovalContactDetails(userMobileNumber);
+          return (
+            <div className="space-y-4 p-6">
+              <div>
+                <h2 id="pending-organization-approval-title" className="text-lg font-bold text-slate-900">
+                  Waiting for organization approval
+                </h2>
+                <p className="mt-1 text-sm font-medium text-slate-700">{pendingApprovalOrg.organization_name}</p>
+              </div>
+              <div id="pending-organization-approval-description" className="space-y-3 text-sm leading-6 text-slate-600">
+                <p>This organization is under review.</p>
+                <p>
+                  Our team will connect you on <span className="font-semibold text-slate-900">{approvalContact.workspaceNumber}</span> shortly.
+                </p>
+                <p>
+                  For quick approval, you can also contact <a href={`tel:+${approvalContact.supportNumber.replace(/[^\d]/g, "")}`} className="font-semibold text-emerald-700 underline-offset-2 hover:underline">{approvalContact.supportNumber}</a>.
+                </p>
+              </div>
+              <div className="flex justify-end">
+                <Button type="button" onClick={() => setPendingApprovalOrg(null)}>
+                  Close
+                </Button>
+              </div>
             </div>
-            <p id="pending-organization-approval-description" className="text-sm leading-6 text-slate-600">
-              This organization is under review.
-            </p>
-            <div className="flex justify-end">
-              <Button type="button" onClick={() => setPendingApprovalOrg(null)}>
-                Close
-              </Button>
-            </div>
-          </div>
-        )}
+          );
+        })()}
       </Modal>
 
       <Modal

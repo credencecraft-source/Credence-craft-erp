@@ -2,39 +2,20 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import FormSubmitButton from "@/components/ui/FormSubmitButton";
 import Page from "@/components/ui/Page";
-import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
 import { BadgePercent } from "lucide-react";
 import { ensurePlatformDefaults } from "@/lib/services/platform/platform-bootstrap-service";
-import { assignOrganizationPlatformVersion, listOrganizationClientsPage, listPlatformVersions } from "@/lib/services/platform/client-service";
+import { listOrganizationClientsPage } from "@/lib/services/platform/client-service";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { updateOrganizationApprovalStatus } from "@/lib/services/organizations/organization-service";
 
 export default async function PlatformClientsPage({ searchParams }: { searchParams?: Promise<{ cursor?: string; error?: string; success?: string }> }) {
   await ensurePlatformDefaults();
   const query = (await searchParams) ?? {};
-  const [page, platformVersions] = await Promise.all([
-    listOrganizationClientsPage({ cursor: query.cursor }),
-    listPlatformVersions(),
-  ]);
+  const page = await listOrganizationClientsPage({ cursor: query.cursor });
   const clients = page.clients;
-
-  async function assignClientPlatformVersion(formData: FormData) {
-    "use server";
-    await requirePlatformSessionAdmin();
-    try {
-      await assignOrganizationPlatformVersion(
-        String(formData.get("organizationId") || ""),
-        String(formData.get("platformVersionId") || ""),
-      );
-    } catch (error) {
-      redirect(`/platform/organisations?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to assign version.")}`);
-    }
-    redirect(`/platform/organisations?success=${encodeURIComponent("Platform version assigned and pricing snapshot refreshed.")}`);
-  }
 
   async function approveClient(formData: FormData) {
     "use server";
@@ -54,7 +35,7 @@ export default async function PlatformClientsPage({ searchParams }: { searchPara
           <p className="erp-eyebrow">Platform</p>
           <h1 className="text-2xl font-bold text-slate-900">Organisations</h1>
           <p className="text-sm text-slate-600">
-            {page.total} registered organization{page.total === 1 ? "" : "s"}, with plans, databases, and approval status.
+            {page.total} registered organization{page.total === 1 ? "" : "s"}, with account owners, contact details, and approval status.
           </p>
         </div>
         {query.error && <p className="rounded-lg bg-red-50 p-3 text-xs text-red-700">{query.error}</p>}
@@ -66,10 +47,7 @@ export default async function PlatformClientsPage({ searchParams }: { searchPara
               <th className="px-2 py-2">Organization</th>
               <th className="px-2 py-2">Organisation number</th>
               <th className="px-2 py-2">Account owner</th>
-              <th className="px-2 py-2">GST No.</th>
               <th className="px-2 py-2">Mobile number</th>
-              <th className="px-2 py-2">Plan</th>
-              <th className="px-2 py-2">Platform version</th>
               <th className="px-2 py-2">Status</th>
               <th className="px-2 py-2">Created</th>
               <th className="px-2 py-2">Actions</th>
@@ -92,39 +70,7 @@ export default async function PlatformClientsPage({ searchParams }: { searchPara
                   {client.organization_number}
                 </td>
                 <td className="px-2 py-2 text-slate-600">{client.memberships[0]?.workspaceUser.email ?? "Unassigned"}</td>
-                <td className="px-2 py-2 text-slate-600">{client.gst_number || "Not provided"}</td>
                 <td className="px-2 py-2 text-slate-600">{client.mobile_number || "Not provided"}</td>
-                <td className="px-2 py-2">
-                  {client.plan ? (
-                    <Badge>{client.plan.plan_name}</Badge>
-                  ) : (
-                    <span className="text-xs text-slate-400">Unassigned</span>
-                  )}
-                </td>
-                <td className="px-2 py-2">
-                  <form action={assignClientPlatformVersion} className="flex min-w-56 items-center gap-1.5">
-                    <input type="hidden" name="organizationId" value={client.id} />
-                    <label className="sr-only" htmlFor={`platform-version-${client.id}`}>Platform version for {client.organization_name}</label>
-                    <Select
-                      id={`platform-version-${client.id}`}
-                      name="platformVersionId"
-                      defaultValue={client.platform_version_id ?? ""}
-                      required
-                      className="min-w-0 rounded-md border-slate-300 bg-white px-2 py-1.5 text-xs"
-                    >
-                      <option value="">Select version...</option>
-                      {client.platformVersion && !client.platformVersion.is_active && (
-                        <option value={client.platformVersion.id} disabled>
-                          {client.platformVersion.version_name} (inactive)
-                        </option>
-                      )}
-                      {platformVersions.map((version) => (
-                        <option key={version.id} value={version.id}>{version.version_name}</option>
-                      ))}
-                    </Select>
-                    <FormSubmitButton variant="secondary" size="sm" pendingLabel="Saving..." className="shrink-0">Save</FormSubmitButton>
-                  </form>
-                </td>
                 <td className="px-2 py-2">
                   <Badge>{client.approval_status.replaceAll("_", " ")}</Badge>
                 </td>
@@ -149,7 +95,7 @@ export default async function PlatformClientsPage({ searchParams }: { searchPara
 
             {clients.length === 0 && (
               <tr>
-                <td className="px-2 py-4 text-center text-sm text-slate-500" colSpan={10}>
+                <td className="px-2 py-4 text-center text-sm text-slate-500" colSpan={7}>
                   No organizations yet.
                 </td>
               </tr>

@@ -33,6 +33,7 @@
   --erp-text: #18232b;
   --erp-muted: #587066;
   --erp-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
+  --erp-ui-scale: 0.67;
 }
 
 @layer base {
@@ -53,6 +54,7 @@
     min-height: 100vh;
     width: 100%;
     max-width: 100%;
+    zoom: var(--erp-ui-scale);
     overflow-x: hidden;
     background:
       radial-gradient(circle at top right, rgba(29, 127, 92, 0.12), transparent 25rem),
@@ -156,4 +158,3 @@
     border: 2px solid #16a34a;
   }
 }
-

@@ -18,6 +18,7 @@ import type { UpdateWorkspaceUserInput } from "@/lib/services/platform/workspace
 type WorkspaceUserDetailsData = {
   id: string;
   fullName: string;
+  canDelete: boolean;
   profileName: string;
   email: string | null;
   emailVerified: boolean;
@@ -34,9 +35,13 @@ type SaveResult = { ok: true } | { ok: false; error: string };
 
 export default function WorkspaceUserDetails({
   user,
+  deleteWorkspaceUser,
+  deleteError,
   saveWorkspaceUser,
 }: {
   user: WorkspaceUserDetailsData;
+  deleteWorkspaceUser: () => Promise<void>;
+  deleteError?: string;
   saveWorkspaceUser: (
     input: UpdateWorkspaceUserInput,
   ) => Promise<SaveResult>;
@@ -144,11 +149,41 @@ export default function WorkspaceUserDetails({
           </p>
         </div>
         {!editing && (
-          <Button onClick={beginEditing}>Edit details</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={beginEditing}>Edit details</Button>
+            {user.canDelete && (
+              <form
+                action={deleteWorkspaceUser}
+                onSubmit={(event) => {
+                  if (!window.confirm(`Permanently delete the workspace user "${user.fullName}" and associated account records, including submitted support tickets? This cannot be undone.`)) {
+                    event.preventDefault();
+                  }
+                }}
+              >
+                <Button
+                  type="submit"
+                  variant="danger"
+                  aria-describedby="workspace-user-delete-warning"
+                >
+                  Delete user
+                </Button>
+              </form>
+            )}
+          </div>
         )}
       </div>
+      {user.canDelete && (
+        <p id="workspace-user-delete-warning" className="text-xs text-red-700">
+          Deleting this user also removes associated account records, including submitted support tickets.
+        </p>
+      )}
 
       <Card className="p-5 sm:p-6">
+        {deleteError && (
+          <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+            {deleteError}
+          </p>
+        )}
         {editing ? (
           <form onSubmit={saveChanges} className="space-y-5">
             <div className="grid gap-4 sm:grid-cols-2">

@@ -156,7 +156,7 @@ export default function CreateOrganizationForm({
           <div>
             <p className="erp-eyebrow">Business Verification</p>
             <h1 className="erp-page-heading mt-1">Create Organization</h1>
-            <p className="mt-2 max-w-xl text-sm text-slate-600">
+            <p className="mt-2 hidden max-w-xl text-sm text-slate-600 sm:block">
               Verify your GST registration to create your organization and prepare its sample data.
             </p>
           </div>

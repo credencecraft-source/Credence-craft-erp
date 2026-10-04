@@ -186,6 +186,7 @@ export default async function WorkspaceHomePage({
             <OrganizationsGrid
               organizations={organizations}
               workspaceId={workspaceId}
+              userMobileNumber={user.mobile_number ?? ""}
               archiveOrgAction={archiveOrgAction}
               restoreOrgAction={restoreOrgAction}
             />

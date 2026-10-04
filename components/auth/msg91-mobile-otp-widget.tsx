@@ -192,8 +192,8 @@ export default function Msg91MobileOtpWidget({
   async function sendOtp() {
     const dialCode = normalizeMobileNumber(countryCode);
     const nationalNumber = normalizeMobileNumber(mobileNumber);
-    if (!/^\d{1,4}$/.test(dialCode) || !/^\d{6,14}$/.test(nationalNumber)) {
-      setMessage("Enter a valid country code and mobile number.");
+    if (!/^\d{1,4}$/.test(dialCode) || !/^\d{10}$/.test(nationalNumber)) {
+      setMessage("Enter a valid country code and 10-digit mobile number.");
       return;
     }
 
@@ -318,7 +318,7 @@ export default function Msg91MobileOtpWidget({
 
   return (
     <div className="space-y-3">
-      <div className="grid w-full max-w-sm grid-cols-[5.25rem_minmax(0,1fr)] gap-2 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-2.5">
+      <div className="grid w-full max-w-full grid-cols-[4.5rem_minmax(0,1fr)] gap-2 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-2">
         <Input
           label="Dial code"
           type="tel"
@@ -330,7 +330,7 @@ export default function Msg91MobileOtpWidget({
           placeholder="+91"
           maxLength={5}
           disabled={otpSent || busy}
-          className="min-h-9 bg-white px-2.5 py-2 text-sm font-semibold"
+          className="min-h-9 bg-white px-2 py-1.5 text-sm font-semibold"
         />
         <Input
           label="Mobile number"
@@ -338,10 +338,11 @@ export default function Msg91MobileOtpWidget({
           inputMode="tel"
           autoComplete="tel-national"
           value={mobileNumber}
-          onChange={(event) => setMobileNumber(event.target.value)}
+          onChange={(event) =>
+            setMobileNumber(event.target.value.replace(/\D/g, "").slice(0, 10))
+          }
           placeholder="98765 43210"
-          hint="Enter your number without the country code."
-          maxLength={20}
+          maxLength={10}
           disabled={otpSent || busy}
           className="min-h-9 bg-white px-2.5 py-2 text-sm"
         />

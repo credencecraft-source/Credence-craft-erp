@@ -58,6 +58,7 @@ import {
   countOrganizationsForUser,
   createOrganization,
   deleteOrganizationFromPlatform,
+  forceDeleteOrganizationFromPlatform,
   getOrganizationDeletionEligibility,
   listWorkspaceOrganizationPage,
   restoreOrganization,
@@ -296,6 +297,62 @@ describe("organization archive lifecycle", () => {
     expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: expect.any(String),
     });
+  });
+
+  it("force deletes an organization without archive or retention eligibility and records the platform admin", async () => {
+    transactionMock.organization.findUnique.mockResolvedValue({
+      id: "org-internal-id",
+      organization_name: "Northwind Apparel",
+      approval_status: "APPROVED",
+      archived_at: null,
+    });
+
+    await forceDeleteOrganizationFromPlatform("org-internal-id", "Northwind Apparel");
+
+    expect(requirePlatformSessionAdmin).toHaveBeenCalled();
+    expect(transactionMock.platformAuditEvent.create).toHaveBeenCalledWith({
+      data: {
+        platform_admin_id: "platform-admin-id",
+        action: "ORGANIZATION_FORCE_DELETED",
+        entity_type: "Organization",
+        entity_id: "org-internal-id",
+        details: {
+          organizationName: "Northwind Apparel",
+          approvalStatus: "APPROVED",
+          archivedAt: null,
+          bypassedRetention: true,
+        },
+      },
+    });
+    expect(transactionMock.organization.delete).toHaveBeenCalledWith({ where: { id: "org-internal-id" } });
+    expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: expect.any(String),
+    });
+  });
+
+  it("requires an exact organization name before force deletion", async () => {
+    transactionMock.organization.findUnique.mockResolvedValue({
+      id: "org-internal-id",
+      organization_name: "Northwind Apparel",
+      approval_status: "APPROVED",
+      archived_at: null,
+    });
+
+    await expect(forceDeleteOrganizationFromPlatform("org-internal-id", "Northwind"))
+      .rejects.toThrow("Organization name confirmation did not match.");
+
+    expect(transactionMock.platformAuditEvent.create).not.toHaveBeenCalled();
+    expect(transactionMock.organization.delete).not.toHaveBeenCalled();
+  });
+
+  it("does not audit or delete when force-delete cannot find the organization", async () => {
+    transactionMock.organization.findUnique.mockResolvedValue(null);
+
+    await expect(forceDeleteOrganizationFromPlatform("missing-organization", "Northwind Apparel"))
+      .rejects.toThrow("Organization not found.");
+
+    expect(transactionMock.platformAuditEvent.create).not.toHaveBeenCalled();
+    expect(transactionMock.organization.delete).not.toHaveBeenCalled();
   });
 
   it("does not let approval changes reactivate an archived organization", async () => {

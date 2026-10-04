@@ -415,6 +415,12 @@ async function deleteOrganizationDependencies(transaction: Prisma.TransactionCli
   });
 }
 
+async function permanentlyDeleteOrganization(transaction: Prisma.TransactionClient, organizationId: string) {
+  await transaction.$executeRaw`SELECT set_config('app.skip_organization_audit', 'true', true)`;
+  await deleteOrganizationDependencies(transaction, organizationId);
+  await transaction.organization.delete({ where: { id: organizationId } });
+}
+
 export async function archiveOrganization(
   organizationId: string,
   workspaceUserId: string,
@@ -789,8 +795,39 @@ export async function deleteOrganizationFromPlatform(organizationId: string) {
       throw new Error("Organizations can only be deleted 90 days after archiving.");
     }
 
-    await transaction.$executeRaw`SELECT set_config('app.skip_organization_audit', 'true', true)`;
-    await deleteOrganizationDependencies(transaction, organization.id);
-    await transaction.organization.delete({ where: { id: organization.id } });
+    await permanentlyDeleteOrganization(transaction, organization.id);
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function forceDeleteOrganizationFromPlatform(organizationId: string, confirmationName: string) {
+  const platformAdmin = await requirePlatformSessionAdmin();
+
+  await prisma.$transaction(async (transaction) => {
+    const organization = await transaction.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, organization_name: true, approval_status: true, archived_at: true },
+    });
+
+    if (!organization) throw new Error("Organization not found.");
+    if (organization.organization_name !== confirmationName) {
+      throw new Error("Organization name confirmation did not match.");
+    }
+
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: platformAdmin.id,
+        action: "ORGANIZATION_FORCE_DELETED",
+        entity_type: "Organization",
+        entity_id: organization.id,
+        details: {
+          organizationName: organization.organization_name,
+          approvalStatus: organization.approval_status,
+          archivedAt: organization.archived_at?.toISOString() ?? null,
+          bypassedRetention: true,
+        },
+      },
+    });
+
+    await permanentlyDeleteOrganization(transaction, organization.id);
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }

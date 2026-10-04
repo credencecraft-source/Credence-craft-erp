@@ -12,7 +12,6 @@ import { ReportGrid } from "@/components/reports/report-grid-display";
 type OrderRecord = {
   id: string;
   orderNo: string;
-  finishedGoods?: SourceFinishedGoodsRow[] | null;
   entityName?: string | null;
   category?: string | null;
   subCategory?: string | null;
@@ -30,28 +29,6 @@ type OrderRecord = {
   processStatus?: string | null;
   sourceStatus?: string | null;
 };
-
-type SourceFinishedGoodsRow = {
-  size?: unknown;
-  buyerSize?: unknown;
-  buyer_size?: unknown;
-  label?: unknown;
-  name?: unknown;
-};
-
-function toVariantSizeRows(rows: SourceFinishedGoodsRow[]) {
-  const seenSizes = new Set<string>();
-
-  return rows.flatMap((row) => {
-    const size = [row.size, row.buyerSize, row.buyer_size, row.label, row.name]
-      .map((value) => String(value ?? "").trim())
-      .find(Boolean);
-
-    if (!size || seenSizes.has(size)) return [];
-    seenSizes.add(size);
-    return [{ size, qty: "" }];
-  });
-}
 
 type FilterableOrderField =
   | "orderNo"
@@ -102,6 +79,8 @@ const dsStatusOptions = [
   "Shipped",
   "Closed",
 ] as const;
+
+const ORDERS_PAGE_SIZE = 25;
 
 export default function MerchandisingOrdersPage() {
   const params = useParams<{
@@ -167,7 +146,7 @@ export default function MerchandisingOrdersPage() {
     try {
       const query = new URLSearchParams({
         organizationId,
-        limit: "100",
+        limit: String(ORDERS_PAGE_SIZE),
         status: selectedStatus,
       });
       if (cursor) query.set("cursor", cursor);
@@ -308,12 +287,11 @@ export default function MerchandisingOrdersPage() {
     const loadSequence = ++variantLoadSequence.current;
     const sourceOrder = orders.find((order) => order.id === orderId);
     const sourceSizeGroup = String(sourceOrder?.sizeGroup ?? "").trim();
-    const cachedSizeRows = toVariantSizeRows(sourceOrder?.finishedGoods ?? []);
     setVariantTargetOrderId(orderId);
     setVariantPreparedToken("");
     setVariantSourceOrderNo(sourceOrder?.orderNo ?? "");
     setVariantSizeGroup(sourceSizeGroup);
-    setVariantRows(cachedSizeRows);
+    setVariantRows([]);
     setVariantDraft({ styleName: "", colors: "" });
     setVariantLoadError("");
     setVariantCreateError("");
@@ -455,13 +433,14 @@ export default function MerchandisingOrdersPage() {
         {loadError && (
           <div role="alert" className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
             Unable to load orders: {loadError}
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               className="ml-2 font-semibold underline"
               onClick={() => void loadOrders(undefined, true, retryCursor ?? undefined, Boolean(retryCursor))}
             >
               Retry
-            </button>
+            </Button>
           </div>
         )}
         {isLoadingOrders && orders.length === 0 && (

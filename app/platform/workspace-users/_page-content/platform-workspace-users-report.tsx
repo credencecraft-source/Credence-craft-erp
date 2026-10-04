@@ -36,7 +36,6 @@ const fields = [
 
 const hiddenFieldKeys = new Set([
   "profile_name",
-  "email",
   "emailVerified",
   "organisations",
 ]);
@@ -74,7 +73,7 @@ export default function PlatformWorkspaceUsersReport({
       fields={fields}
       visibleFields={visibleFields}
       onVisibleFieldsChange={changeVisibleFields}
-      storageKey="platform-workspace-users-report-columns-v2"
+      storageKey="platform-workspace-users-report-columns-v3"
       rowIdSelector={(user) => user.id}
       selectedIds={[]}
       selectable={false}

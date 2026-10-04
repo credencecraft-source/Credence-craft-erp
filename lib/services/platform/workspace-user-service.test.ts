@@ -6,6 +6,7 @@ const {
   findUniqueUserMock,
   findFirstUserMock,
   updateUserMock,
+  deleteUserMock,
   platformAuditCreateMock,
   transactionMock,
   requireAdminMock,
@@ -13,12 +14,14 @@ const {
   const findUniqueUser = vi.fn();
   const findFirstUser = vi.fn();
   const updateUser = vi.fn();
+  const deleteUser = vi.fn();
   const platformAuditCreate = vi.fn();
   const transaction = {
     workspaceUser: {
       findUnique: findUniqueUser,
       findFirst: findFirstUser,
       update: updateUser,
+      deleteMany: deleteUser,
     },
     platformAuditEvent: { create: platformAuditCreate },
   };
@@ -28,6 +31,7 @@ const {
     findUniqueUserMock: findUniqueUser,
     findFirstUserMock: findFirstUser,
     updateUserMock: updateUser,
+    deleteUserMock: deleteUser,
     platformAuditCreateMock: platformAuditCreate,
     transactionMock: vi.fn((callback: (value: typeof transaction) => unknown) =>
       callback(transaction),
@@ -56,6 +60,7 @@ vi.mock("@/lib/services/organizations/organization-usage-statistics-service", ()
 }));
 
 import {
+  deleteWorkspaceUser,
   listWorkspaceUsers,
   updateWorkspaceUser,
 } from "./workspace-user-service";
@@ -77,6 +82,7 @@ describe("platform workspace-user report service", () => {
         last_login_at: null,
         organizationMemberships: [
           {
+            is_active: true,
             organization: {
               id: "organization-1",
               organization_name: "Active Organization",
@@ -84,10 +90,19 @@ describe("platform workspace-user report service", () => {
             },
           },
           {
+            is_active: true,
             organization: {
               id: "organization-2",
               organization_name: "Inactive Organization",
               is_active: false,
+            },
+          },
+          {
+            is_active: false,
+            organization: {
+              id: "organization-3",
+              organization_name: "Inactive Membership",
+              is_active: true,
             },
           },
         ],
@@ -141,6 +156,7 @@ describe("platform workspace-user report service", () => {
         ],
         totalRecords: 3,
         status: "Active",
+        canDelete: false,
       }),
       expect.objectContaining({
         id: "user-2",
@@ -148,8 +164,71 @@ describe("platform workspace-user report service", () => {
         organisations: [],
         totalRecords: 0,
         status: "No organisation",
+        canDelete: true,
       }),
     ]);
+  });
+
+  it("deletes a workspace user only when there are no organization memberships", async () => {
+    deleteUserMock.mockResolvedValue({ count: 1 });
+    findUniqueUserMock.mockResolvedValue({
+      id: "user-2",
+      full_name: "New User",
+      email: "new@example.com",
+      profile_name: "new-user",
+      organizationMemberships: [],
+    });
+
+    await deleteWorkspaceUser("user-2");
+
+    expect(requireAdminMock).toHaveBeenCalledOnce();
+    expect(deleteUserMock).toHaveBeenCalledWith({
+      where: {
+        id: "user-2",
+        organizationMemberships: { none: {} },
+      },
+    });
+    expect(platformAuditCreateMock).toHaveBeenCalledWith({
+      data: {
+        platform_admin_id: "platform-admin-1",
+        action: "WORKSPACE_USER_DELETED",
+        entity_type: "WorkspaceUser",
+        entity_id: "user-2",
+        details: {
+          fullName: "New User",
+          email: "new@example.com",
+          profileName: "new-user",
+        },
+      },
+    });
+  });
+
+  it("blocks deletion when any organization membership exists", async () => {
+    findUniqueUserMock.mockResolvedValue({
+      id: "user-1",
+      full_name: "Workspace Member",
+      email: "member@example.com",
+      profile_name: "member",
+      organizationMemberships: [{ id: "membership-1" }],
+    });
+
+    await expect(deleteWorkspaceUser("user-1")).rejects.toThrow(
+      "Workspace users can only be deleted when they have no organisation memberships.",
+    );
+
+    expect(platformAuditCreateMock).not.toHaveBeenCalled();
+    expect(deleteUserMock).not.toHaveBeenCalled();
+  });
+
+  it("does not delete when the workspace user no longer exists", async () => {
+    findUniqueUserMock.mockResolvedValue(null);
+
+    await expect(deleteWorkspaceUser("missing-user")).rejects.toThrow(
+      "Workspace user not found.",
+    );
+
+    expect(platformAuditCreateMock).not.toHaveBeenCalled();
+    expect(deleteUserMock).not.toHaveBeenCalled();
   });
 
   it("updates account fields, resets affected verification, and records a platform audit event", async () => {
