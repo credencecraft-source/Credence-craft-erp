@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { normalizeSystemStatusKey } from "@/lib/auth/validation-rules";
 import { requireOrganizationAccess } from "./organization-service";
 import {
@@ -168,6 +169,81 @@ export async function createPlatformSupportTicket(input: {
   });
 }
 
+export async function createPlatformLeadSupportTicket(input: {
+  leadId: string;
+  subject: string;
+  description: string;
+  requestType?: string;
+  callbackDate?: string;
+  callbackTime?: string;
+}) {
+  const admin = await requirePlatformSessionAdmin();
+  const normalized = normalizeTicketInput(input);
+  const leadId = input.leadId.trim();
+  if (!leadId || leadId.length > 255) throw new Error("Select a valid lead.");
+
+  const lead = await prisma.platformLead.findUnique({
+    where: { id: leadId },
+    select: { id: true },
+  });
+  if (!lead) throw new Error("Lead not found.");
+
+  const ticketId = randomUUID();
+  const ticket = prisma.supportTicket.create({
+    data: {
+      id: ticketId,
+      ticket_number: randomUUID(),
+      organization_id: null,
+      submitted_by_user_id: null,
+      platform_lead_id: lead.id,
+      created_by_platform_admin_id: admin.id,
+      ...normalized,
+    },
+  });
+  const auditEvent = prisma.platformAuditEvent.create({
+    data: {
+      platform_admin_id: admin.id,
+      action: "PLATFORM_LEAD_SUPPORT_TICKET_CREATED",
+      entity_type: "SupportTicket",
+      entity_id: ticketId,
+      details: {
+        requestType: normalized.request_type,
+        callbackDate: normalized.callback_date,
+        callbackTime: normalized.callback_time,
+      },
+    },
+  });
+  const [createdTicket] = await prisma.$transaction([ticket, auditEvent]);
+  return createdTicket;
+}
+
+export async function listPlatformLeadSupportTickets(leadId: string) {
+  await requirePlatformSessionAdmin();
+  const id = leadId.trim();
+  if (!id || id.length > 255) throw new Error("Select a valid lead.");
+  const lead = await prisma.platformLead.findUnique({
+    where: { id },
+    select: { id: true },
+  });
+  if (!lead) throw new Error("Lead not found.");
+  return prisma.supportTicket.findMany({
+    where: { platform_lead_id: lead.id },
+    orderBy: [{ updated_at: "desc" }, { created_at: "desc" }],
+    select: {
+      id: true,
+      ticket_number: true,
+      subject: true,
+      description: true,
+      status: true,
+      request_type: true,
+      callback_date: true,
+      callback_time: true,
+      created_at: true,
+      updated_at: true,
+    },
+  });
+}
+
 export async function requestExpiredTrialExtension(
   organizationId: string,
   submittedByUserId: string,
@@ -283,6 +359,7 @@ export async function listSupportTickets() {
     include: {
       organization: { select: { organization_name: true, organization_id: true } },
       submittedBy: { select: { full_name: true, email: true } },
+      platformLead: { select: { id: true, name: true, email: true, mobile: true, company_name: true } },
       createdByPlatformAdmin: { select: { full_name: true, email: true } },
     },
     orderBy: { created_at: "desc" },
@@ -295,6 +372,7 @@ export async function getSupportTicket(id: string) {
     include: {
       organization: { select: { organization_name: true, organization_id: true } },
       submittedBy: { select: { id: true, full_name: true, email: true } },
+      platformLead: { select: { id: true, name: true, email: true, mobile: true, company_name: true } },
       messages: {
         orderBy: { created_at: "asc" },
         include: {
@@ -419,8 +497,14 @@ export async function addWorkspaceTicketMessage(organizationId: string, ticketId
 }
 
 export async function addPlatformTicketMessage(ticketId: string, platformAdminId: string, body: string, internal = false) {
-  const ticket = await prisma.supportTicket.findUnique({ where: { id: ticketId }, select: { id: true, organization_id: true } });
+  const ticket = await prisma.supportTicket.findUnique({
+    where: { id: ticketId },
+    select: { id: true, organization_id: true, platform_lead_id: true },
+  });
   if (!ticket) throw new Error("Support ticket not found.");
+  if (ticket.platform_lead_id && !internal) {
+    throw new Error("Lead follow-up tickets only support private platform notes.");
+  }
   const cleanBody = body.trim();
   if (cleanBody.length < 1 || cleanBody.length > 5000) throw new Error("Message must be between 1 and 5000 characters.");
   return prisma.$transaction(async (transaction) => {

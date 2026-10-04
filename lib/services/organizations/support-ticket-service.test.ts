@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   const transaction = {
+    platformLead: { findUnique: vi.fn() },
     supportTicket: {
       create: vi.fn(),
       findUnique: vi.fn(),
@@ -16,7 +17,10 @@ const mocks = vi.hoisted(() => {
     transaction,
     prisma: {
       $transaction: vi.fn(),
+      platformLead: { findUnique: vi.fn() },
+      platformAuditEvent: { create: vi.fn() },
       supportTicket: {
+        create: vi.fn(),
         findFirst: vi.fn(),
         findUnique: vi.fn(),
         findMany: vi.fn(),
@@ -27,15 +31,20 @@ const mocks = vi.hoisted(() => {
       subscription: { count: vi.fn() },
     },
     requireOrganizationAccess: vi.fn(),
+    requirePlatformSessionAdmin: vi.fn(),
   };
 });
 
 vi.mock("@/lib/database/prisma-client", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/auth/platform-session-manager", () => ({
+  requirePlatformSessionAdmin: mocks.requirePlatformSessionAdmin,
+}));
 vi.mock("./organization-service", () => ({ requireOrganizationAccess: mocks.requireOrganizationAccess }));
 
 import {
   addPlatformTicketMessage,
   addWorkspaceTicketMessage,
+  createPlatformLeadSupportTicket,
   createPlatformSupportTicket,
   getSupportTicketForOrganization,
   getSupportTicketForUser,
@@ -45,14 +54,21 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.prisma.$transaction.mockImplementation((callback) => callback(mocks.transaction));
+  mocks.prisma.$transaction.mockImplementation((operation) =>
+    Array.isArray(operation) ? Promise.all(operation) : operation(mocks.transaction),
+  );
   mocks.requireOrganizationAccess.mockResolvedValue({ organization_id: "internal-org-id" });
+  mocks.requirePlatformSessionAdmin.mockResolvedValue({ id: "admin-id" });
   mocks.transaction.supportTicket.create.mockResolvedValue({ id: "ticket-id" });
   mocks.transaction.ticketMessage.create.mockResolvedValue({ id: "message-id" });
   mocks.transaction.supportTicket.update.mockResolvedValue({ id: "ticket-id", status: "CLOSED" });
   mocks.prisma.supportTicket.findFirst.mockResolvedValue({ id: "ticket-id" });
   mocks.prisma.supportTicket.findUnique.mockResolvedValue({ id: "ticket-id", organization_id: "internal-org-id" });
   mocks.prisma.organization.findFirst.mockResolvedValue({ id: "internal-org-id" });
+  mocks.transaction.platformLead.findUnique.mockResolvedValue({ id: "lead-id", name: "Taylor Reed" });
+  mocks.prisma.platformLead.findUnique.mockResolvedValue({ id: "lead-id", name: "Taylor Reed" });
+  mocks.prisma.supportTicket.create.mockResolvedValue({ id: "ticket-id" });
+  mocks.prisma.platformAuditEvent.create.mockResolvedValue({ id: "audit-id" });
 });
 
 describe("support ticket access and internal notes", () => {
@@ -170,6 +186,57 @@ describe("support ticket access and internal notes", () => {
     expect(mocks.transaction.platformAuditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: "SUPPORT_TICKET_CREATED_FOR_ORGANIZATION" }),
     }));
+  });
+
+  it("creates an audited callback support ticket linked to a platform lead", async () => {
+    await createPlatformLeadSupportTicket({
+      leadId: "lead-id",
+      subject: "Callback for Taylor Reed",
+      description: "Discuss the product demonstration and answer the lead's questions.",
+      requestType: "CALLBACK",
+      callbackDate: "2026-10-06",
+      callbackTime: "14:30",
+    });
+
+    expect(mocks.requirePlatformSessionAdmin).toHaveBeenCalledOnce();
+    expect(mocks.prisma.platformLead.findUnique).toHaveBeenCalledWith({
+      where: { id: "lead-id" },
+      select: { id: true },
+    });
+    expect(mocks.prisma.supportTicket.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organization_id: null,
+        submitted_by_user_id: null,
+        platform_lead_id: "lead-id",
+        created_by_platform_admin_id: "admin-id",
+        request_type: "CALLBACK",
+        callback_date: "2026-10-06",
+        callback_time: "14:30",
+      }),
+    });
+    expect(mocks.prisma.platformAuditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "PLATFORM_LEAD_SUPPORT_TICKET_CREATED",
+        entity_type: "SupportTicket",
+        details: expect.objectContaining({ requestType: "CALLBACK" }),
+      }),
+    });
+    expect(mocks.prisma.$transaction).toHaveBeenCalledWith([
+      expect.anything(),
+      expect.anything(),
+    ]);
+  });
+
+  it("requires a valid callback date and time before creating a lead callback", async () => {
+    await expect(createPlatformLeadSupportTicket({
+      leadId: "lead-id",
+      subject: "Callback for Taylor Reed",
+      description: "Discuss the product demonstration and answer the lead's questions.",
+      requestType: "CALLBACK",
+      callbackDate: "",
+      callbackTime: "",
+    })).rejects.toThrow("Callback date and time are required.");
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it("records status changes in the platform audit trail", async () => {

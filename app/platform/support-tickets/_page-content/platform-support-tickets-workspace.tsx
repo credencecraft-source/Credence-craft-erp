@@ -24,8 +24,9 @@ type PlatformTicket = {
   callback_time: string | null;
   created_at: string;
   updated_at: string;
-  organization: { organization_name: string; organization_id: string };
-  submittedBy: { full_name: string; email: string | null };
+  organization: { organization_name: string; organization_id: string } | null;
+  submittedBy: { full_name: string; email: string | null } | null;
+  platformLead: { id: string; name: string; email: string | null; mobile: string | null; company_name: string | null } | null;
   createdByPlatformAdmin: { full_name: string; email: string } | null;
 };
 
@@ -221,8 +222,21 @@ export default function PlatformSupportTicketsWorkspace({
               if (fieldKey === "ticket_number") {
                 return <span className="font-mono font-semibold">#{ticket.ticket_number.slice(0, 8)}</span>;
               }
-              if (fieldKey === "organization") return ticket.organization.organization_name;
-              if (fieldKey === "submittedBy") return ticket.submittedBy.full_name;
+              if (fieldKey === "organization") {
+                if (ticket.platformLead) {
+                  return (
+                    <a
+                      className="font-medium text-emerald-700 hover:underline"
+                      href={`/platform/leads?leadId=${encodeURIComponent(ticket.platformLead.id)}`}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      {ticket.platformLead.company_name ?? ticket.platformLead.name}
+                    </a>
+                  );
+                }
+                return ticket.organization?.organization_name ?? "—";
+              }
+              if (fieldKey === "submittedBy") return ticket.submittedBy?.full_name ?? ticket.platformLead?.name ?? "—";
               if (fieldKey === "status") {
                 return (
                   <Badge className={OPEN_STATUSES.includes(ticket.status) ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}>
@@ -281,7 +295,7 @@ export default function PlatformSupportTicketsWorkspace({
           ) : selectedTicket ? (
             <div className="space-y-5">
               <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-4">
-                <div><p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Ticket #{selectedTicket.ticket_number.slice(0, 8)} · {selectedTicket.request_type}</p><h2 className="mt-2 text-xl font-bold text-slate-900">{selectedTicket.subject}</h2><p className="mt-1 text-sm text-slate-500">{selectedTicket.organization.organization_name} · {selectedTicket.submittedBy.full_name} · {selectedTicket.submittedBy.email}</p><p className="mt-1 text-xs text-slate-500">{selectedTicket.createdByPlatformAdmin ? `Created by platform: ${selectedTicket.createdByPlatformAdmin.full_name}` : `Submitted by organization · ${new Date(selectedTicket.created_at).toLocaleString()}`}</p></div>
+                <div><p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Ticket #{selectedTicket.ticket_number.slice(0, 8)} · {selectedTicket.request_type}</p><h2 className="mt-2 text-xl font-bold text-slate-900">{selectedTicket.subject}</h2><p className="mt-1 text-sm text-slate-500">{selectedTicket.platformLead ? <><a className="font-medium text-emerald-700 hover:underline" href={`/platform/leads?leadId=${encodeURIComponent(selectedTicket.platformLead.id)}`}>{selectedTicket.platformLead.name}</a> · {selectedTicket.platformLead.company_name ?? "Prospect"} · {selectedTicket.platformLead.email ?? selectedTicket.platformLead.mobile ?? "No contact details"}</> : <>{selectedTicket.organization?.organization_name ?? "Organisation"} · {selectedTicket.submittedBy?.full_name ?? "Contact"} · {selectedTicket.submittedBy?.email ?? ""}</>}</p><p className="mt-1 text-xs text-slate-500">{selectedTicket.createdByPlatformAdmin ? `Created by platform: ${selectedTicket.createdByPlatformAdmin.full_name}` : `Submitted by organization · ${new Date(selectedTicket.created_at).toLocaleString()}`}</p></div>
                 <form onSubmit={updateStatus} className="flex items-center gap-2"><Select aria-label="Ticket status" value={status} onChange={(event) => setStatusOverride({ ticketId: selectedTicket.id, value: event.target.value })} className="py-2 text-xs">{TICKET_STATUSES.map((value) => <option key={value} value={value}>{value.replace("_", " ")}</option>)}</Select><Button disabled={saving || status === selectedTicket.status} type="submit" size="sm" className="bg-slate-900 text-white hover:bg-slate-800">Save status</Button></form>
               </div>
               <div className="grid gap-3 sm:grid-cols-3"><Info label="Priority" value={selectedTicket.priority} /><Info label="Created" value={new Date(selectedTicket.created_at).toLocaleString()} /><Info label="Last updated" value={new Date(selectedTicket.updated_at).toLocaleString()} /></div>
@@ -290,7 +304,7 @@ export default function PlatformSupportTicketsWorkspace({
               {selectedTicket.subject === "Trial extension request" && OPEN_STATUSES.includes(selectedTicket.status) && <div className="flex flex-wrap items-end gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4"><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-amber-900">Trial extension review</p><p className="mt-1 text-xs text-amber-800">Grant an extension to this organization. The related open request is resolved automatically.</p></div><Select aria-label="Trial extension hours" value={extensionHours} onChange={(event) => setExtensionHours(event.target.value)} className="py-1.5"><option value="24">24 hours</option><option value="48">48 hours</option><option value="72">72 hours</option><option value="168">168 hours</option></Select><Button type="button" onClick={() => void extendTrial()} disabled={saving} size="sm" className="bg-amber-700 text-white hover:bg-amber-800">Extend and resolve</Button></div>}
               {message && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{message}</p>}
               {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-              <PlatformTicketChat ticketId={selectedTicket.id} initialMessages={selectedTicket.messages} />
+              <PlatformTicketChat ticketId={selectedTicket.id} initialMessages={selectedTicket.messages} leadTicket={Boolean(selectedTicket.platformLead)} />
             </div>
           ) : null}
             </div>

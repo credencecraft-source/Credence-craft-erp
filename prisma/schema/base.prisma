@@ -330,16 +330,18 @@ model PlatformAuditEvent {
 }
 
 model PlatformLead {
-  id           String   @id @default(cuid())
-  name         String   @db.VarChar(255)
-  email        String?  @db.VarChar(255)
-  mobile       String?  @db.VarChar(20)
-  company_name String?  @db.VarChar(255)
-  city         String?  @db.VarChar(120)
-  source       String?  @db.VarChar(120)
-  stage        String   @default("1-new") @db.VarChar(80)
-  created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
+  id                  String          @id @default(cuid())
+  name                String          @db.VarChar(255)
+  email               String?         @db.VarChar(255)
+  mobile              String?         @db.VarChar(20)
+  company_name        String?         @db.VarChar(255)
+  city                String?         @db.VarChar(120)
+  source              String?         @db.VarChar(120)
+  stage               String          @default("1-new") @db.VarChar(80)
+  nature_of_business  String?         @db.VarChar(2000)
+  created_at          DateTime        @default(now())
+  updated_at          DateTime        @updatedAt
+  supportTickets      SupportTicket[]
 
   @@index([updated_at])
   @@map("platform_leads")
@@ -400,8 +402,9 @@ model OtpChallenge {
 model SupportTicket {
   id                   String          @id @default(cuid())
   ticket_number        String          @unique @default(uuid())
-  organization_id      String
-  submitted_by_user_id String
+  organization_id      String?
+  submitted_by_user_id String?
+  platform_lead_id     String?
   created_by_platform_admin_id String?
   request_type         String          @default("TICKET") @db.VarChar(30)
   subject              String          @db.VarChar(255)
@@ -412,14 +415,16 @@ model SupportTicket {
   status               String          @default("OPEN") @db.VarChar(30)
   created_at           DateTime        @default(now())
   updated_at           DateTime        @updatedAt
-  organization         Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  submittedBy          WorkspaceUser   @relation("SupportTicketSubmitter", fields: [submitted_by_user_id], references: [id], onDelete: Cascade)
+  organization         Organization?   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  submittedBy          WorkspaceUser?  @relation("SupportTicketSubmitter", fields: [submitted_by_user_id], references: [id], onDelete: Cascade)
+  platformLead         PlatformLead?   @relation(fields: [platform_lead_id], references: [id], onDelete: Restrict)
   createdByPlatformAdmin PlatformAdmin? @relation("SupportTicketPlatformCreator", fields: [created_by_platform_admin_id], references: [id], onDelete: SetNull)
   messages             TicketMessage[]
 
   @@index([organization_id, status, created_at])
   @@index([status, created_at])
   @@index([created_by_platform_admin_id])
+  @@index([platform_lead_id, status, created_at])
   @@map("support_tickets")
 }
 

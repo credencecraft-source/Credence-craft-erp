@@ -12,6 +12,7 @@ describe("createPlatformLeadsWorkbook", () => {
       email: "taylor@example.com",
       mobile: "+919876543210",
       company_name: "Acme Apparel",
+      nature_of_business: "Garment manufacturing",
       city: "Bengaluru",
       source: "Referral",
       stage: "2-Potential",
@@ -21,11 +22,11 @@ describe("createPlatformLeadsWorkbook", () => {
     const parsed = XLSX.read(buffer, { type: "buffer" });
 
     expect(parsed.SheetNames).toEqual(["Leads", "Stages"]);
-    expect(leadsSheet.range("A1:G2").value()).toEqual([
-      ["Name", "Email", "Mobile", "Company name", "City", "Source", "Stage"],
-      ["Taylor Reed", "taylor@example.com", "+919876543210", "Acme Apparel", "Bengaluru", "Referral", "2-Potential"],
+    expect(leadsSheet.range("A1:H2").value()).toEqual([
+      ["Name", "Email", "Mobile", "Company name", "Nature of business", "City", "Source", "Stage"],
+      ["Taylor Reed", "taylor@example.com", "+919876543210", "Acme Apparel", "Garment manufacturing", "Bengaluru", "Referral", "2-Potential"],
     ]);
-    expect(leadsSheet.range("G2:G501").dataValidation()).toMatchObject({
+    expect(leadsSheet.range("H2:H501").dataValidation()).toMatchObject({
       type: "list",
       allowBlank: "false",
       showErrorMessage: "true",

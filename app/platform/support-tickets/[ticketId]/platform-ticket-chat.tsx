@@ -9,13 +9,13 @@ import Textarea from "@/components/ui/Textarea";
 type Message = { id: string; body: string; senderType: string; senderName: string; createdAt: string };
 type Tab = "chat" | "notes";
 
-export default function PlatformTicketChat(props: { ticketId: string; initialMessages: Message[] }) {
+export default function PlatformTicketChat(props: { ticketId: string; initialMessages: Message[]; leadTicket?: boolean }) {
   return <TicketChat key={props.ticketId} {...props} />;
 }
 
-function TicketChat({ ticketId, initialMessages }: { ticketId: string; initialMessages: Message[] }) {
+function TicketChat({ ticketId, initialMessages, leadTicket = false }: { ticketId: string; initialMessages: Message[]; leadTicket?: boolean }) {
   const [messages, setMessages] = useState(initialMessages);
-  const [activeTab, setActiveTab] = useState<Tab>("chat");
+  const [activeTab, setActiveTab] = useState<Tab>(leadTicket ? "notes" : "chat");
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
@@ -56,7 +56,7 @@ function TicketChat({ ticketId, initialMessages }: { ticketId: string; initialMe
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
       <div className="flex border-b border-slate-200">
-        <Button type="button" variant="ghost" onClick={() => { setActiveTab("chat"); setError(""); }} aria-pressed={!internal} className={`min-h-0 rounded-none border-b-2 px-4 py-3 text-sm ${!internal ? "border-emerald-600 text-emerald-800" : "border-transparent text-slate-500 hover:text-slate-800"}`}><MessageSquareText className="h-4 w-4" /> Customer chat</Button>
+        {!leadTicket && <Button type="button" variant="ghost" onClick={() => { setActiveTab("chat"); setError(""); }} aria-pressed={!internal} className={`min-h-0 rounded-none border-b-2 px-4 py-3 text-sm ${!internal ? "border-emerald-600 text-emerald-800" : "border-transparent text-slate-500 hover:text-slate-800"}`}><MessageSquareText className="h-4 w-4" /> Customer chat</Button>}
         <Button type="button" variant="ghost" onClick={() => { setActiveTab("notes"); setError(""); }} aria-pressed={internal} className={`min-h-0 rounded-none border-b-2 px-4 py-3 text-sm ${internal ? "border-amber-500 text-amber-800" : "border-transparent text-slate-500 hover:text-slate-800"}`}><StickyNote className="h-4 w-4" /> Private notes <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px]">{messages.filter((message) => message.senderType === "INTERNAL").length}</span></Button>
       </div>
       <div className="p-4 sm:p-5">

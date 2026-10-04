@@ -20,7 +20,7 @@ type SupportTicket = {
   request_type: string;
   created_at: Date;
   updated_at: Date;
-  submittedBy: { full_name: string };
+  submittedBy: { full_name: string } | null;
 };
 
 type SelectedTicket = {

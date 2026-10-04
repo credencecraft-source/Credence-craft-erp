@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, type ReactNode } from "react";
 import Button from "@/components/ui/Button";
 import Checkbox from "@/components/ui/Checkbox";
 import Modal from "@/components/ui/Modal";
@@ -44,6 +44,8 @@ interface ReportGridProps<T> {
   rowActionLabel?: string;
   rowActionLabelSelector?: (record: T) => string;
   rowActionDisabledSelector?: (record: T) => boolean;
+  wrapCells?: boolean;
+  toolbarActions?: ReactNode;
   onSearchQueryChange?: (query: string) => void;
   renderCell: (fieldKey: string, record: T) => React.ReactNode;
   emptyMessage?: string;
@@ -77,6 +79,8 @@ export function ReportGrid<T>({
   rowActionLabel = "Action",
   rowActionLabelSelector,
   rowActionDisabledSelector,
+  wrapCells = false,
+  toolbarActions,
   onSearchQueryChange,
   renderCell,
   emptyMessage = "No records found.",
@@ -253,6 +257,8 @@ export function ReportGrid<T>({
             👁
           </Button>
 
+          {toolbarActions}
+
           {onDeleteSelected && selectedIds.length > 0 && (
             <Button variant="danger" size="sm" onClick={onDeleteSelected} className="h-7 px-2.5 text-[11px]">
               {deleteSelectedLabel} ({selectedIds.length})
@@ -330,7 +336,14 @@ export function ReportGrid<T>({
                     </td>
                   )}
                   {visibleFieldDefinitions.map((field) => (
-                    <td key={`${recordId}-${String(field.key)}`} className="p-2 whitespace-nowrap">
+                    <td
+                      key={`${recordId}-${String(field.key)}`}
+                      className={`p-2 ${
+                        wrapCells
+                          ? "max-w-[16rem] whitespace-normal break-words [overflow-wrap:anywhere]"
+                          : "whitespace-nowrap"
+                      }`}
+                    >
                       {renderCell(String(field.key), record)}
                     </td>
                   ))}

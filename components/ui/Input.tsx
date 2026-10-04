@@ -1,4 +1,4 @@
-import { useId, type InputHTMLAttributes } from "react";
+import { forwardRef, useId, type InputHTMLAttributes } from "react";
 
 import { cn } from "@/lib/utilities/utility-helpers";
 
@@ -8,14 +8,14 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   error?: string;
 }
 
-export default function Input({
+const Input = forwardRef<HTMLInputElement, InputProps>(function Input({
   label,
   hint,
   error,
   className = "",
   id,
   ...props
-}: InputProps) {
+}, ref) {
   const generatedId = useId();
   const inputId = id ?? generatedId;
 
@@ -28,6 +28,7 @@ export default function Input({
       )}
 
       <input
+        ref={ref}
         id={inputId}
         {...props}
         suppressHydrationWarning
@@ -42,4 +43,6 @@ export default function Input({
       {error && <p id={`${inputId}-error`} className="text-xs font-medium text-red-700">{error}</p>}
     </div>
   );
-}
+});
+
+export default Input;

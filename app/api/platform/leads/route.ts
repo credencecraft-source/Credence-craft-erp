@@ -14,6 +14,7 @@ function readLeadInput(payload: unknown) {
     city: typeof body.city === "string" ? body.city : "",
     source: typeof body.source === "string" ? body.source : "",
     stage: typeof body.stage === "string" ? body.stage : "",
+    natureOfBusiness: typeof body.natureOfBusiness === "string" ? body.natureOfBusiness : "",
   };
 }
 

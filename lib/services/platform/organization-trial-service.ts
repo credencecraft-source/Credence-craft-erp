@@ -181,7 +181,7 @@ export async function listOrganizationTrialHistory(organizationId: string) {
       occurredAt: request.created_at,
       title: automaticGrant ? "Automatic extension request recorded" : "Platform extension requested",
       description: request.description,
-      actor: request.submittedBy.full_name || request.submittedBy.email,
+      actor: request.submittedBy?.full_name || request.submittedBy?.email || "Workspace User",
       status: automaticGrant
         ? "Automatically granted"
         : ["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS"].includes(request.status)

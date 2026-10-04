@@ -47,12 +47,17 @@ function parseLeadWorkbook(buffer: ArrayBuffer): PlatformLeadInput[] {
 
   const get = (row: unknown[], header: (typeof REQUIRED_HEADERS)[number]) =>
     cellText(row[headerIndexes.get(header)!]);
+  const getOptional = (row: unknown[], header: string) => {
+    const index = headerIndexes.get(header);
+    return index === undefined ? "" : cellText(row[index]);
+  };
 
   return dataRows.map((row) => ({
     name: get(row, "name"),
     email: get(row, "email"),
     mobile: get(row, "mobile"),
     companyName: get(row, "company name"),
+    natureOfBusiness: getOptional(row, "nature of business"),
     city: get(row, "city"),
     source: get(row, "source"),
     stage: get(row, "stage"),

@@ -329,7 +329,7 @@ export default async function PlatformOrganizationDetailsPage({
                           <li key={request.id} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-start sm:justify-between">
                             <div className="min-w-0">
                               <p className="text-sm font-medium text-slate-800">
-                                {request.submittedBy.full_name || request.submittedBy.email || "Workspace User"}
+                                {request.submittedBy?.full_name || request.submittedBy?.email || "Workspace User"}
                                 <span className="ml-2 text-xs font-normal text-slate-500">{new Date(request.created_at).toLocaleString()}</span>
                               </p>
                               <p className="mt-1 text-xs text-slate-600">{request.description}</p>

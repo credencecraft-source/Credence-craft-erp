@@ -38,7 +38,7 @@ export default async function OrganizationSupportTicketsRoute({
         status: selected.status,
         request_type: selected.request_type,
         created_at: selected.created_at.toISOString(),
-        submittedBy: selected.submittedBy.full_name,
+        submittedBy: selected.submittedBy?.full_name ?? "Workspace User",
         messages: selected.messages.map((message) => ({
           id: message.id,
           body: message.body,

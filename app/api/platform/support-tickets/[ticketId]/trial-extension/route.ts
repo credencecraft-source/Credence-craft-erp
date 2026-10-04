@@ -15,7 +15,7 @@ export async function POST(request: Request, context: { params: Promise<{ ticket
     const ticket = await getSupportTicket(ticketId);
     const isReviewRequest = ticket?.description.startsWith(PLATFORM_REVIEW_TRIAL_EXTENSION_DESCRIPTION_PREFIX)
       || ticket?.description === LEGACY_TRIAL_EXTENSION_REQUEST_DESCRIPTION;
-    if (!ticket || !isReviewRequest || ticket.subject !== "Trial extension request" || !["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS"].includes(ticket.status)) {
+    if (!ticket?.organization_id || !isReviewRequest || ticket.subject !== "Trial extension request" || !["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS"].includes(ticket.status)) {
       return NextResponse.json({ error: "This ticket is not an open trial extension request." }, { status: 400 });
     }
     const payload: unknown = await request.json();
