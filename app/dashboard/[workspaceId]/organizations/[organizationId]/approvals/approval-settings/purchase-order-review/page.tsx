@@ -25,7 +25,7 @@ async function handlePurchaseOrderApproval(formData: FormData) {
     organization.id,
     request.request_id || request.id,
     action === "approve" ? "approved" : "rejected",
-    user.full_name || user.email,
+    user.full_name,
     user.id,
   );
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/approvals/approval-settings/purchase-order-review`);

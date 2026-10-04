@@ -70,7 +70,7 @@ export async function POST(request: Request) {
             from_process_id: transfer.from_process_id,
             to_process_id: transfer.to_process_id,
             received_qty: acceptedQty,
-            received_by: user.full_name || user.email,
+            received_by: user.full_name,
             remarks: body.remarks?.trim() || null,
             lines: { create: operationLines.map((line) => ({ operation_id: line.operationId, operation_name: line.operationName, actual_made_qty: line.actualMadeQty, received_qty: line.actualMadeQty, billable: line.billable, vendor_name: line.vendorName, employee_name: line.employeeName, actual_price: line.actualPrice, remarks: line.remarks })) },
           },

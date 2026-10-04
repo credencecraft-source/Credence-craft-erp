@@ -33,6 +33,7 @@ const purchaseOrderReportSelect = {
       price: true,
       gst: true,
       hsn_code: true,
+      stock_uom: true,
       masterPurchaseOrder: {
         select: {
           lines: { take: 1, select: { stock_uom: true } },
@@ -73,7 +74,7 @@ function serializePurchaseOrder(order: Prisma.PurchaseOrderGetPayload<{ include:
       subCategory: line.sub_category,
       sourceOrderNo: line.source_order_no,
       styleName: line.style_name,
-      stockUom: line.masterPurchaseOrder?.lines[0]?.stock_uom ?? null,
+      stockUom: line.stock_uom ?? line.masterPurchaseOrder?.lines[0]?.stock_uom ?? null,
       buyingUom: line.masterPurchaseOrder?.sourceRecords[0]?.groupedPurchaseOrder.buying_uom ?? null,
       quantity: numberValue(line.quantity),
       price: numberValue(line.price),
@@ -265,7 +266,7 @@ export async function listPurchaseOrderReportPage(
       gst: numberValue(line.gst),
       hsnCode: line.hsn_code,
       buyingUom: line.masterPurchaseOrder?.sourceRecords[0]?.groupedPurchaseOrder.buying_uom ?? null,
-      stockUom: line.masterPurchaseOrder?.lines[0]?.stock_uom ?? null,
+      stockUom: line.stock_uom ?? line.masterPurchaseOrder?.lines[0]?.stock_uom ?? null,
     })),
   }));
 
@@ -281,16 +282,25 @@ export async function getPurchaseOrder(organizationId: string, id: string) {
   return serializePurchaseOrder(order);
 }
 
-export async function deletePurchaseOrder(organizationId: string, id: string) {
+export async function deletePurchaseOrder(organizationId: string, id: string, actorUserId?: string) {
   const order = await prisma.purchaseOrder.findFirst({
     where: { id, organization_id: organizationId },
     select: {
       id: true,
+      status: true,
+      generalPurchaseOrderRequests: {
+        where: { organization_id: organizationId },
+        select: { id: true, status: true },
+      },
       inventoryReceipts: { select: { id: true, receipt_no: true } },
       gateEntries: { select: { id: true, entry_no: true } },
     },
   });
   if (!order) throw new Error("Purchase Order not found.");
+  if (order.generalPurchaseOrderRequests.length > 0
+    && !["DRAFT", "OPEN", "REJECTED"].includes(order.status)) {
+    throw new Error("A General Purchase Order cannot be deleted after it has been submitted for approval.");
+  }
   if (order.inventoryReceipts.length > 0) {
     const linkedReceipts = order.inventoryReceipts.map((receipt) => ({ id: receipt.id, receiptNo: receipt.receipt_no }));
     const detail = linkedReceipts.map((receipt) => receipt.receiptNo).join(", ");
@@ -306,7 +316,35 @@ export async function deletePurchaseOrder(organizationId: string, id: string) {
     });
   }
 
-  await prisma.purchaseOrder.delete({ where: { id: order.id } });
+  await prisma.$transaction(async (transaction) => {
+    if (order.generalPurchaseOrderRequests.length > 0) {
+      const requestIds = order.generalPurchaseOrderRequests.map((request) => request.id);
+      const restored = await transaction.generalPurchaseOrderRequest.updateMany({
+        where: {
+          id: { in: requestIds },
+          organization_id: organizationId,
+          purchase_order_id: order.id,
+          status: "PO_CREATED",
+        },
+        data: { status: "PRICE_APPROVED", purchase_order_id: null },
+      });
+      if (restored.count !== requestIds.length) {
+        throw new Error("General PO requests changed before the Purchase Order could be deleted.");
+      }
+      await createAuditEvent({
+        organizationId,
+        userId: actorUserId,
+        module: "Procurement",
+        action: "RESTORE_GENERAL_PO_REQUESTS",
+        entityType: "PurchaseOrder",
+        entityId: order.id,
+        details: { request_count: restored.count },
+      }, transaction);
+    }
+    await transaction.purchaseOrder.delete({
+      where: { id: order.id, organization_id: organizationId },
+    });
+  });
 }
 
 export async function submitPurchaseOrderForApproval(

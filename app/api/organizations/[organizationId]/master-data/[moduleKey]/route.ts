@@ -18,7 +18,8 @@ export async function GET(
     const search = searchParams.get("search") || undefined;
     const exactSearch = searchParams.get("exact") === "true";
     const requestedLimit = Number(searchParams.get("limit") || 100);
-    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 200) : 100;
+    const maximumLimit = moduleKey === "order-lookups" ? 500 : 200;
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), maximumLimit) : 100;
 
     if (!organizationId) {
       return NextResponse.json({ error: "Organization ID is required" }, { status: 400 });
@@ -199,6 +200,7 @@ export async function POST(
       description: description ? String(description).trim() : null,
       parentValueId: parentId || null,
       fields,
+      createOnly: body.createOnly === true,
     });
 
     const multiLookupField = definition.fields.find((field) => field.type === "lookup" && field.multiple && field.lookupModuleKey);

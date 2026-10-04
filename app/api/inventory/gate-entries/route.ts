@@ -84,7 +84,7 @@ export async function POST(request: Request) {
         from_to: text(body.fromTo) || null,
         entry_at: text(body.entryAt) ? new Date(text(body.entryAt)) : new Date(),
         notes: text(body.notes) || null,
-        created_by: user.full_name || user.email,
+        created_by: user.full_name,
       },
       include: { purchaseOrder: { select: { purchase_order_no: true } } },
     }));

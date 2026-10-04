@@ -182,7 +182,7 @@ export async function POST(request: Request) {
           purchase_order_id: purchaseOrder.id,
           receipt_no: await reserveChallanNumber(organization.id, "RM_GRN", transaction),
           received_date: body.receivedDate ? new Date(body.receivedDate) : new Date(),
-          received_by: user.full_name || user.email,
+          received_by: user.full_name,
           notes: body.notes?.trim() || null,
           lines: { create: normalized.map(({ orderLine, received, accepted, rejected }) => ({ purchase_order_line_id: orderLine.id, raw_material: orderLine.raw_material, ordered_quantity: orderLine.quantity, received_quantity: received, accepted_quantity: accepted, rejected_quantity: rejected })) },
         },

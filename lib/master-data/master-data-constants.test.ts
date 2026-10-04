@@ -55,6 +55,21 @@ beforeEach(() => {
   );
 });
 
+describe("create-only master insertion", () => {
+  it("does not overwrite an organization master value that appeared after upload validation", async () => {
+    models.masterColor.findFirst.mockResolvedValueOnce({ id: "existing-color", colors: "Navy" } as never);
+
+    await expect(createMasterValueForOrganization("org-id", "color", {
+      label: "Navy",
+      fields: { Colors: "Navy" },
+      createOnly: true,
+    })).rejects.toThrow('Color "Navy" already exists.');
+
+    expect(models.masterColor.update).not.toHaveBeenCalled();
+    expect(models.masterColor.create).not.toHaveBeenCalled();
+  });
+});
+
 describe("raw material creation", () => {
   it("maps lookup IDs to Prisma relation columns", async () => {
     const lookups = [
@@ -84,6 +99,32 @@ describe("raw material creation", () => {
         Brand1: "brand-id",
         Colour: "colour-id",
       },
+    });
+
+    describe("article creation", () => {
+      it("assigns the next organization article code in the requested format", async () => {
+        models.masterArticle.findMany.mockResolvedValue([
+          { article_code: "AR-1" },
+          { article_code: "AR-6" },
+          { article_code: "AR-DEMO-17" },
+        ] as never);
+
+        await createMasterValueForOrganization("org-id", "article", {
+          label: "Winter Jacket",
+        });
+
+        expect(models.masterArticle.findMany).toHaveBeenCalledWith(expect.objectContaining({
+          where: { organization_id: "org-id" },
+          select: { article_code: true },
+        }));
+        expect(models.masterArticle.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            organization_id: "org-id",
+            article: "Winter Jacket",
+            article_code: "Ar-7",
+          }),
+        });
+      });
     });
 
     expect(models.masterRawMaterial.create).toHaveBeenCalledWith({

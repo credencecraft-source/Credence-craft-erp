@@ -9,7 +9,6 @@ import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
-import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
 
 type CreateOrganizationResult =
@@ -18,8 +17,8 @@ type CreateOrganizationResult =
 
 interface CreateOrgFormProps {
   workspaceId: string;
-  userName: string;
   userEmail: string;
+  userMobileNumber: string;
   isOnboardingRequired: boolean;
   error?: string;
   message?: string;
@@ -35,48 +34,86 @@ const loadingLabels: Record<Exclude<LoadingStage, null>, string> = {
 
 export default function CreateOrganizationForm({
   workspaceId,
-  userName,
   userEmail,
+  userMobileNumber,
   isOnboardingRequired,
   error,
   message,
   action,
 }: CreateOrgFormProps) {
   const router = useRouter();
-  const [ownerName, setOwnerName] = useState(userName);
-  const [email, setEmail] = useState(userEmail);
-  const [mobile, setMobile] = useState("");
-  const [linkedIn, setLinkedIn] = useState("");
-  const [companyWebsite, setCompanyWebsite] = useState("");
-  const [websiteError, setWebsiteError] = useState("");
-  const [priorErp, setPriorErp] = useState("TALLY");
-  const [otherErpName, setOtherErpName] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [organizationEmail, setOrganizationEmail] = useState(
+    userEmail.endsWith("@mobile.credencecraft.invalid") ? "" : userEmail,
+  );
+  const [mobile, setMobile] = useState(userMobileNumber);
+  const [emailOtp, setEmailOtp] = useState("");
+  const [emailOtpSent, setEmailOtpSent] = useState(false);
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [emailOtpBusy, setEmailOtpBusy] = useState(false);
+  const [emailOtpMessage, setEmailOtpMessage] = useState("");
+  const [emailOtpError, setEmailOtpError] = useState(false);
   const [gstNumber, setGstNumber] = useState("");
   const [loadingStage, setLoadingStage] = useState<LoadingStage>(null);
   const [gstError, setGstError] = useState(message || (error ? "Unable to complete verification. Please verify details." : ""));
 
   const isBusy = loadingStage !== null;
 
-  function validateWebsiteFormat(value: string) {
-    if (!value.trim() || /^(https?:\/\/)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(\/.*)?$/.test(value.trim())) {
-      setWebsiteError("");
-      return true;
+  async function handleEmailVerification(mode: "send" | "verify") {
+    if (emailOtpBusy || !organizationEmail.trim()) return;
+    setEmailOtpBusy(true);
+    setEmailOtpMessage("");
+    setEmailOtpError(false);
+
+    try {
+      const response = await fetch("/api/organizations/create/email-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode,
+          email: organizationEmail.trim(),
+          ...(mode === "verify" ? { otp: emailOtp.trim() } : {}),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result?.ok) {
+        throw new Error(result?.error || "Unable to verify this email address.");
+      }
+
+      if (mode === "send") {
+        setEmailOtpSent(true);
+        setEmailOtp("");
+        setEmailOtpMessage("Verification code sent to your email.");
+      } else {
+        setEmailVerified(true);
+        setEmailOtpMessage("Email verified.");
+      }
+    } catch (caughtError) {
+      setEmailOtpMessage(
+        caughtError instanceof Error ? caughtError.message : "Unable to verify this email address.",
+      );
+      setEmailOtpError(true);
+    } finally {
+      setEmailOtpBusy(false);
     }
-    setWebsiteError("Enter a valid website address.");
-    return false;
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isBusy) return;
 
+    if (!emailVerified) {
+      setGstError("Verify your organization email before creating the organization.");
+      return;
+    }
+
     const normalizedGstNumber = gstNumber.trim().toUpperCase();
     if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(normalizedGstNumber)) {
       setGstError("Enter a valid 15-character GST number.");
       return;
     }
-    if (!email.trim() || !mobile.trim()) {
-      setGstError("Email and mobile number are required.");
+    if (!organizationEmail.trim() || !mobile.trim()) {
+      setGstError("Organization email and mobile number are required.");
       return;
     }
 
@@ -96,13 +133,9 @@ export default function CreateOrganizationForm({
 
       const formData = new FormData();
       formData.set("ownerName", ownerName.trim());
-      formData.set("organizationEmail", email.trim());
+      formData.set("organizationEmail", organizationEmail.trim());
       formData.set("mobileNo", mobile.trim());
       formData.set("gstNumber", normalizedGstNumber);
-      formData.set("linkedIn", linkedIn.trim());
-      formData.set("companyWebsite", companyWebsite.trim());
-      formData.set("priorErp", priorErp);
-      if (priorErp === "OTHERS") formData.set("otherErpName", otherErpName.trim());
 
       setLoadingStage("creating");
       const creation = await action(formData);
@@ -151,25 +184,78 @@ export default function CreateOrganizationForm({
               />
               <Input
                 name="organizationEmail"
-                label="Account Email"
+                label="Organization Email"
                 required
                 type="email"
                 autoComplete="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                disabled={isBusy}
+                placeholder="name@company.com"
+                value={organizationEmail}
+                onChange={(event) => {
+                  if (emailVerified) return;
+                  setOrganizationEmail(event.target.value);
+                  setEmailVerified(false);
+                  setEmailOtpSent(false);
+                  setEmailOtp("");
+                  setEmailOtpMessage("");
+                  setEmailOtpError(false);
+                }}
+                disabled={isBusy || emailOtpBusy || emailVerified}
               />
-              <Input
-                name="mobileNo"
-                label="Mobile Number"
-                required
-                placeholder="9876543210"
-                type="tel"
-                autoComplete="tel"
-                value={mobile}
-                onChange={(event) => setMobile(event.target.value)}
-                disabled={isBusy}
-              />
+              <div className="flex items-end">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void handleEmailVerification("send")}
+                  disabled={isBusy || emailOtpBusy || emailVerified || !organizationEmail.trim()}
+                >
+                  {emailOtpBusy ? "Sending..." : emailOtpSent ? "Resend code" : "Verify email"}
+                </Button>
+              </div>
+              {emailOtpSent && !emailVerified && (
+                <div className="flex items-end gap-2 sm:col-span-2">
+                  <div className="flex-1">
+                    <Input
+                      name="organizationEmailOtp"
+                      label="Email verification code"
+                      required
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      value={emailOtp}
+                      onChange={(event) => setEmailOtp(event.target.value.replace(/\D/g, ""))}
+                      disabled={isBusy || emailOtpBusy}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() => void handleEmailVerification("verify")}
+                    disabled={isBusy || emailOtpBusy || emailOtp.length !== 6}
+                  >
+                    {emailOtpBusy ? "Verifying..." : "Verify code"}
+                  </Button>
+                </div>
+              )}
+              {emailOtpMessage && (
+                <p
+                  className={`text-sm sm:col-span-2 ${emailOtpError ? "text-red-700" : "text-emerald-700"}`}
+                  role={emailOtpError ? "alert" : "status"}
+                  aria-live="polite"
+                >
+                  {emailOtpMessage}
+                </p>
+              )}
+              <div className="hidden">
+                <Input
+                  name="mobileNo"
+                  label="Mobile Number"
+                  placeholder="9876543210"
+                  type="tel"
+                  autoComplete="tel"
+                  value={mobile}
+                  onChange={(event) => setMobile(event.target.value)}
+                  disabled
+                />
+              </div>
               <div className="sm:col-span-2">
                 <Input
                   name="gstNumber"
@@ -183,60 +269,6 @@ export default function CreateOrganizationForm({
                   disabled={isBusy}
                 />
               </div>
-              <Input
-                name="linkedIn"
-                label="LinkedIn Profile"
-                placeholder="https://linkedin.com/in/username"
-                value={linkedIn}
-                onChange={(event) => setLinkedIn(event.target.value)}
-                disabled={isBusy}
-              />
-              <div>
-                <Input
-                  name="companyWebsite"
-                  label="Company Website"
-                  placeholder="https://example.com"
-                  value={companyWebsite}
-                  onChange={(event) => {
-                    setCompanyWebsite(event.target.value);
-                    if (websiteError) validateWebsiteFormat(event.target.value);
-                  }}
-                  onBlur={() => validateWebsiteFormat(companyWebsite)}
-                  disabled={isBusy}
-                />
-                {websiteError && <p className="mt-1 text-xs text-red-600" role="alert">{websiteError}</p>}
-              </div>
-              <div className="sm:col-span-2">
-                <Select
-                  id="priorErp"
-                  name="priorErp"
-                  label="Do you use any other ERP?"
-                  required
-                  value={priorErp}
-                  onChange={(event) => setPriorErp(event.target.value)}
-                  disabled={isBusy}
-                  options={[
-                    { value: "TALLY", label: "Only Tally" },
-                    { value: "ZOHO", label: "Zoho" },
-                    { value: "BLUEKATUS", label: "Bluekatus" },
-                    { value: "TOP_APPAREL_ERP", label: "Top Apparel ERP" },
-                    { value: "OTHERS", label: "Others" },
-                  ]}
-                />
-              </div>
-              {priorErp === "OTHERS" && (
-                <div className="sm:col-span-2">
-                  <Input
-                    name="otherErpName"
-                    label="Specify Other ERP Name"
-                    required
-                    placeholder="Enter ERP name"
-                    value={otherErpName}
-                    onChange={(event) => setOtherErpName(event.target.value)}
-                    disabled={isBusy}
-                  />
-                </div>
-              )}
             </div>
 
             {gstError && <p className="text-sm text-red-700" role="alert">{gstError}</p>}
@@ -249,7 +281,7 @@ export default function CreateOrganizationForm({
             )}
 
             <div className="flex justify-end">
-              <Button type="submit" disabled={isBusy}>
+              <Button type="submit" disabled={isBusy || !emailVerified}>
                 {isBusy ? "Please wait..." : "Create Organization"}
               </Button>
             </div>

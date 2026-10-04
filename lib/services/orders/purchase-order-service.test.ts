@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   purchaseOrderFindMany: vi.fn(),
   purchaseOrderFindFirst: vi.fn(),
   purchaseOrderUpdateMany: vi.fn(),
+  purchaseOrderDelete: vi.fn(),
+  generalPurchaseOrderRequestUpdateMany: vi.fn(),
   approvalRequestCreate: vi.fn(),
   approvalRequestDeleteMany: vi.fn(),
   approvalRequestFindFirst: vi.fn(),
@@ -16,7 +18,8 @@ const mocks = vi.hoisted(() => ({
 
 const transaction = {
   masterPurchaseOrder: { findMany: mocks.masterFindMany },
-  purchaseOrder: { findFirst: mocks.purchaseOrderFindFirst, updateMany: mocks.purchaseOrderUpdateMany },
+  purchaseOrder: { findFirst: mocks.purchaseOrderFindFirst, updateMany: mocks.purchaseOrderUpdateMany, delete: mocks.purchaseOrderDelete },
+  generalPurchaseOrderRequest: { updateMany: mocks.generalPurchaseOrderRequestUpdateMany },
   approvalRequest: {
     create: mocks.approvalRequestCreate,
     deleteMany: mocks.approvalRequestDeleteMany,
@@ -29,7 +32,7 @@ const transaction = {
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
     $transaction: mocks.transaction,
-    purchaseOrder: { findMany: mocks.purchaseOrderFindMany },
+    purchaseOrder: { findMany: mocks.purchaseOrderFindMany, findFirst: mocks.purchaseOrderFindFirst },
   },
 }));
 
@@ -37,6 +40,7 @@ import {
   generatePurchaseOrders,
   listPurchaseOrderReportPage,
   reviewPurchaseOrderApprovalRequest,
+  deletePurchaseOrder,
   submitPurchaseOrderForApproval,
 } from "./purchase-order-service";
 
@@ -50,6 +54,8 @@ describe("vendor Purchase Order generation", () => {
     }]);
     mocks.purchaseOrderFindFirst.mockResolvedValue({ id: "po-1", display_no: 42, purchase_order_no: "PO-1" });
     mocks.purchaseOrderUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.purchaseOrderDelete.mockResolvedValue({});
+    mocks.generalPurchaseOrderRequestUpdateMany.mockResolvedValue({ count: 1 });
     mocks.approvalRequestCreate.mockResolvedValue({ id: "request-1" });
     mocks.approvalRequestDeleteMany.mockResolvedValue({ count: 0 });
     mocks.approvalRequestFindFirst.mockResolvedValue({
@@ -84,6 +90,45 @@ describe("vendor Purchase Order generation", () => {
         status: "pending",
       }),
     }));
+  });
+
+  it("restores General PO requests when a deletable draft PO is removed", async () => {
+    mocks.purchaseOrderFindFirst.mockResolvedValue({
+      id: "po-1",
+      status: "DRAFT",
+      generalPurchaseOrderRequests: [{ id: "request-1", status: "PO_CREATED" }],
+      inventoryReceipts: [],
+      gateEntries: [],
+    });
+
+    await deletePurchaseOrder("org-1", "po-1", "user-1");
+
+    expect(mocks.generalPurchaseOrderRequestUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["request-1"] },
+        organization_id: "org-1",
+        purchase_order_id: "po-1",
+        status: "PO_CREATED",
+      },
+      data: { status: "PRICE_APPROVED", purchase_order_id: null },
+    });
+    expect(mocks.purchaseOrderDelete).toHaveBeenCalledWith({
+      where: { id: "po-1", organization_id: "org-1" },
+    });
+  });
+
+  it("does not delete a General PO while it is awaiting approval", async () => {
+    mocks.purchaseOrderFindFirst.mockResolvedValue({
+      id: "po-1",
+      status: "PENDING_APPROVAL",
+      generalPurchaseOrderRequests: [{ id: "request-1", status: "PO_CREATED" }],
+      inventoryReceipts: [],
+      gateEntries: [],
+    });
+
+    await expect(deletePurchaseOrder("org-1", "po-1", "user-1"))
+      .rejects.toThrow("cannot be deleted after it has been submitted for approval");
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
   it("allows the requester to approve their own pending PO", async () => {
@@ -132,6 +177,7 @@ describe("vendor Purchase Order generation", () => {
         price: new Prisma.Decimal("2"),
         gst: new Prisma.Decimal("5"),
         hsn_code: "5208",
+        stock_uom: "PCS",
         masterPurchaseOrder: { lines: [{ stock_uom: "MTR" }], sourceRecords: [{ groupedPurchaseOrder: { buying_uom: "ROLL" } }] },
       }],
     });
@@ -143,7 +189,7 @@ describe("vendor Purchase Order generation", () => {
 
     await expect(listPurchaseOrderReportPage("org-1", { cursor: "previous-page", limit: 2, search: "Factory" }))
       .resolves.toMatchObject({
-        purchaseOrders: [{ id: "po-1", total: 6, lines: [{ buyingUom: "ROLL", hsnCode: "5208" }] }, { id: "po-2", total: 6 }],
+        purchaseOrders: [{ id: "po-1", total: 6, lines: [{ buyingUom: "ROLL", hsnCode: "5208", stockUom: "PCS" }] }, { id: "po-2", total: 6 }],
         nextCursor: "po-2",
       });
     expect(mocks.purchaseOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({

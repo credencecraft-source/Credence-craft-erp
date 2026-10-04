@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     const purchaseOrder = await generatePurchaseOrders(
       organization.id,
       Array.isArray(body.masterPurchaseOrderIds) ? body.masterPurchaseOrderIds.map(String) : [],
-      user.full_name || user.email,
+      user.full_name,
       body.poDate ? String(body.poDate) : null,
       body.deliveryDate ? String(body.deliveryDate) : null,
     );

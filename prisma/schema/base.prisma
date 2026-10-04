@@ -94,6 +94,7 @@ model Organization {
   masterRawMaterialTypes        MasterRawMaterialType[]
   masterRawMaterialCategories   MasterRawMaterialCategory[]
   masterRawMaterialSubCats      MasterRawMaterialSubCategory[]
+  generalPurchaseOrderRequests  GeneralPurchaseOrderRequest[]
   masterVendors                 MasterVendor[]
   masterStates                  MasterState[]
   masterGstTypes                MasterGstType[]
@@ -985,6 +986,7 @@ model MasterVendor {
   masterPurchaseOrders  MasterPurchaseOrder[]
   purchaseOrders        PurchaseOrder[]
   rawMaterialStockBookings RawMaterialStockBooking[]
+  generalPurchaseOrderRequests GeneralPurchaseOrderRequest[]
 
   @@unique([organization_id, id])
   @@index([organization_id, is_active])
@@ -1347,6 +1349,7 @@ model MasterRawMaterial {
   brand                        MasterBrand?                 @relation(fields: [brand_id], references: [id])
   colour                       MasterColor?                 @relation(fields: [colour_id], references: [id])
   size_wise_consumption_ref    MasterSizeWiseConsumption?   @relation(fields: [size_wise_consumption_id], references: [id])
+  generalPurchaseOrderRequests GeneralPurchaseOrderRequest[]
 
   @@unique([organization_id, raw_material_name])
   @@index([organization_id, is_active])
@@ -1377,6 +1380,35 @@ model ApprovalRequest {
   @@index([organization_id, status])
   @@index([organization_id, entity_ref_id])
   @@map("approval_requests")
+}
+
+model GeneralPurchaseOrderRequest {
+  id                   String        @id @default(cuid())
+  organization_id      String
+  raw_material_id      String
+  quantity             Decimal       @db.Decimal(12, 2)
+  status               String        @default("PENDING_PRICE_APPROVAL") @db.VarChar(50)
+  vendor_id            String?
+  vendor_price         Decimal?      @db.Decimal(12, 4)
+  gst                  Decimal?      @db.Decimal(10, 2)
+  hsn_code             String?       @db.VarChar(100)
+  created_by           String?       @db.VarChar(255)
+  created_by_user_id   String?
+  approved_by          String?       @db.VarChar(255)
+  approved_by_user_id  String?
+  approved_at          DateTime?
+  purchase_order_id    String?
+  created_at           DateTime      @default(now())
+  updated_at           DateTime      @updatedAt
+  organization         Organization  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  rawMaterial          MasterRawMaterial @relation(fields: [raw_material_id], references: [id], onDelete: Restrict)
+  vendor               MasterVendor? @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
+  purchaseOrder        PurchaseOrder? @relation(fields: [purchase_order_id], references: [id], onDelete: SetNull)
+
+  @@index([organization_id, status, created_at])
+  @@index([organization_id, vendor_id])
+  @@index([purchase_order_id])
+  @@map("general_purchase_order_requests")
 }
 
 enum OrderShareStatus {

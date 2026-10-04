@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session-manager";
 import { getArticleOrderSummaries } from "@/lib/services/orders/order-service";
+import { getArticleOrderSummaryIndex } from "@/lib/services/orders/order-summary-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request) {
@@ -34,12 +35,15 @@ export async function GET(request: Request) {
     }
 
     const organization = await requireOrganizationContext(user.id, organizationId);
-    const summaries = await getArticleOrderSummaries(organization.id);
 
     if (hasArticle && hasSeason) {
       const normalizeLabel = (value: string | null) => value?.trim() || null;
       const requestedArticle = normalizeLabel(articleParam);
       const requestedSeason = normalizeLabel(seasonParam);
+      const summaries = await getArticleOrderSummaries(organization.id, {
+        article: requestedArticle,
+        season: requestedSeason,
+      });
       const found = summaries.find((item) =>
         item.article === requestedArticle && item.season === requestedSeason,
       );
@@ -63,7 +67,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ summary: enrichedSummary });
     }
 
-    // Otherwise return all summaries
+    const summaries = await getArticleOrderSummaryIndex(organization.id);
     return NextResponse.json({ summaries });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";

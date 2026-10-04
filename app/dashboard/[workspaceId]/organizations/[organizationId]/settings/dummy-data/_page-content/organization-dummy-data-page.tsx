@@ -44,7 +44,7 @@ export default async function OrganizationDummyDataPage({
     if (actionUser.workspace_id !== workspaceId) notFound();
     let result;
     try {
-      result = await createOrganizationDummyData(actionUser.id, organizationId, actionUser.full_name || actionUser.email);
+      result = await createOrganizationDummyData(actionUser.id, organizationId, actionUser.full_name);
     } catch (error) {
       redirect(`${pagePath}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to create dummy data.")}`);
     }
@@ -61,7 +61,7 @@ export default async function OrganizationDummyDataPage({
     if (actionUser.workspace_id !== workspaceId) notFound();
     let result;
     try {
-      result = await advanceOrganizationDummyData(actionUser.id, organizationId, actionUser.full_name || actionUser.email);
+      result = await advanceOrganizationDummyData(actionUser.id, organizationId, actionUser.full_name);
     } catch (error) {
       redirect(`${pagePath}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to continue dummy-data setup.")}`);
     }
@@ -94,7 +94,7 @@ export default async function OrganizationDummyDataPage({
     try {
       const deleted = await deleteOrganizationDummyData(actionUser.id, organizationId);
       if (!deleted.deleted) throw new Error("There is no active demo dataset to recreate.");
-      result = await createOrganizationDummyData(actionUser.id, organizationId, actionUser.full_name || actionUser.email);
+      result = await createOrganizationDummyData(actionUser.id, organizationId, actionUser.full_name);
     } catch (error) {
       redirect(`${pagePath}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to recreate dummy data.")}`);
     }

@@ -67,6 +67,7 @@ type MasterModuleWrapperProps = {
   workspaceId: string;
   organizationId: string;
   organizationName: string;
+  hasAssignedPlatformVersion: boolean;
   trialEnabled: boolean;
   trialStartedAt: string | null;
   trialEndsAt: string | null;
@@ -113,6 +114,7 @@ export function MasterModuleWrapper({
   workspaceId,
   organizationId,
   organizationName,
+  hasAssignedPlatformVersion,
   trialEnabled,
   trialStartedAt,
   trialEndsAt,
@@ -483,7 +485,7 @@ export function MasterModuleWrapper({
           </div>
 
           <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2 sm:gap-3">
-            {trialExpired && (
+            {trialExpired && hasAssignedPlatformVersion && (
               <Button
                 type="button"
                 variant="ghost"

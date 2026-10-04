@@ -398,6 +398,7 @@ model PurchaseOrder {
   lines             PurchaseOrderLine[]
   inventoryReceipts InventoryReceipt[]
   gateEntries       GateEntry[]
+  generalPurchaseOrderRequests GeneralPurchaseOrderRequest[]
 
   @@unique([organization_id, purchase_order_no])
   @@unique([organization_id, display_no])
@@ -438,6 +439,7 @@ model PurchaseOrderLine {
     sgst_amount              Decimal?               @db.Decimal(12, 4)
     igst_amount              Decimal?               @db.Decimal(12, 4)
   hsn_code                 String?                @db.VarChar(100)
+  stock_uom                String?                @db.VarChar(100)
   total                    Decimal?               @db.Decimal(12, 4)
   purchaseOrder            PurchaseOrder          @relation(fields: [purchase_order_id], references: [id], onDelete: Cascade)
   masterPurchaseOrder      MasterPurchaseOrder?   @relation(fields: [master_purchase_order_id], references: [id], onDelete: Cascade)

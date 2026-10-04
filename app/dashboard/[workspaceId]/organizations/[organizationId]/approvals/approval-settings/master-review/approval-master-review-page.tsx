@@ -43,7 +43,7 @@ async function handleApprovalAction(formData: FormData) {
   }
 
   const nextStatus = action === "approve" ? "approved" : "rejected";
-  await updateApprovalRequestStatus(organization.id, request.request_id || request.id, nextStatus, user.full_name || user.email);
+  await updateApprovalRequestStatus(organization.id, request.request_id || request.id, nextStatus, user.full_name);
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/approvals/approval-settings/master-review`);
 }

@@ -140,7 +140,7 @@ export default async function WorkspaceHomePage({
 
           <Card className="erp-card-p4">
             <p className="erp-card-label">Email</p>
-            <h2 className="erp-card-value">{user.email}</h2>
+            <h2 className="erp-card-value">{user.email ?? "Not provided"}</h2>
           </Card>
 
           <Card className="erp-card-p4">

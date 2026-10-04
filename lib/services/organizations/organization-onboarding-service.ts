@@ -1,8 +1,11 @@
+import { prisma } from "@/lib/database/prisma-client";
+
 import { createOrganization } from "./organization-service";
 import { fetchGstRegistration } from "./gst-verification-service";
 
 export type CreateOrganizationFromGstInput = {
   workspaceUserId: string;
+  ownerName?: string;
   gstNumber: string;
   organizationEmail: string;
   mobileNo: string;
@@ -11,6 +14,7 @@ export type CreateOrganizationFromGstInput = {
 export async function createOrganizationFromGst(input: CreateOrganizationFromGstInput) {
   const organizationEmail = input.organizationEmail.trim();
   const mobileNo = input.mobileNo.trim();
+  const ownerName = input.ownerName?.trim() || "";
   if (!organizationEmail) throw new Error("Email is required.");
   if (!mobileNo) throw new Error("Mobile number is required.");
 
@@ -28,6 +32,15 @@ export async function createOrganizationFromGst(input: CreateOrganizationFromGst
     country: gstDetails.country,
     pinCode: gstDetails.pinCode,
   });
+
+  if (ownerName) {
+    await prisma.workspaceUser.update({
+      where: { id: input.workspaceUserId },
+      data: {
+        full_name: ownerName,
+      },
+    });
+  }
 
   return { organizationId: organization.organization_id, gstDetails };
 }

@@ -370,6 +370,7 @@ export async function getOrganizationShellContext(workspaceUserId: string, organ
       organization_id: true,
       organization_name: true,
       approval_status: true,
+      platform_version_id: true,
       trial_enabled: true,
       trial_started_at: true,
       trial_ends_at: true,
@@ -716,7 +717,12 @@ export async function updateOrganizationApprovalStatus(organizationId: string, a
       where: {
         id: organizationId,
         approval_status: { not: "ARCHIVED" },
-        ...(normalizedStatus === "APPROVED" ? { platformVersion: { is: { is_active: true } } } : {}),
+        ...(normalizedStatus === "APPROVED" ? {
+          OR: [
+            { platform_version_id: null },
+            { platformVersion: { is: { is_active: true } } },
+          ],
+        } : {}),
       },
       data: {
         approval_status: normalizedStatus,
@@ -737,7 +743,7 @@ export async function updateOrganizationApprovalStatus(organizationId: string, a
       if (existing.approval_status === "ARCHIVED") {
         throw new Error("Restore the organization from its workspace before changing its approval status.");
       }
-      if (normalizedStatus === "APPROVED" && (!existing.platform_version_id || !existing.platformVersion?.is_active)) {
+      if (normalizedStatus === "APPROVED" && existing.platform_version_id && !existing.platformVersion?.is_active) {
         throw new Error("Assign an active platform version before approving this organization.");
       }
       throw new Error("Restore the organization from its workspace before changing its approval status.");

@@ -12,9 +12,14 @@ export async function GET(request: Request) {
   }
   const organization = await requireOrganizationContext(user.id, organizationId);
   const searchParams = new URL(request.url).searchParams;
+  const status = searchParams.get("status")?.trim();
+  if (status && status.length > 100) {
+    return NextResponse.json({ error: "Order status is too long." }, { status: 400 });
+  }
   const page = await listOrdersPage(organization.id, {
     cursor: searchParams.get("cursor") || undefined,
     limit: Number(searchParams.get("limit") || 100),
+    status: status || undefined,
   });
   return NextResponse.json(page);
 }

@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     }) : [];
     const result = await createRawMaterialStockBookings({
       organizationId: organization.id,
-      bookedBy: user.full_name || user.email,
+      bookedBy: user.full_name,
       currentStoreVendorId: String(body.currentStoreVendorId ?? ""),
       lines,
     });

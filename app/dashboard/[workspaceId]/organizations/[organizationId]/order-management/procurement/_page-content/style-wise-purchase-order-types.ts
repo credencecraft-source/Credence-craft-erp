@@ -1,0 +1,161 @@
+export type BomRow = {
+  id: string;
+  entityId?: string | null;
+  entityName?: string | null;
+  orderId: string;
+  orderNo: string | null;
+  styleName: string | null;
+  brand: string | null;
+  category: string | null;
+  subCategory: string | null;
+  itemName: string | null;
+  stockUom: string | null;
+  internalConsumption: number | null;
+  requiredQty: number | null;
+  remainingQty: number | null;
+};
+
+export type VendorOption = { id: string; label: string; isCurrentStore: boolean };
+export type RawMaterialStockOption = {
+  id: string;
+  entity_id: string;
+  raw_material: string;
+  location: { location_name: string };
+  quantity_on_hand: number | string;
+  quantity_reserved: number | string;
+};
+export type GstOption = {
+  id: string;
+  label: string;
+  fields?: Record<string, unknown>;
+};
+export type UomConvertOption = {
+  id: string;
+  value_id?: string;
+  label: string;
+  parent_id?: string | null;
+  fields?: Record<string, unknown>;
+};
+export type MaterialGroup = {
+  key: string;
+  entityId: string | null;
+  entityName: string;
+  rawMaterialName: string;
+  stockUom: string | null;
+  category: string;
+  subCategory: string;
+  groupedQty: number;
+  rows: BomRow[];
+};
+export type MaterialCategory = {
+  key: string;
+  label: string;
+  groupCount: number;
+  lineCount: number;
+};
+export type GroupedLine = Omit<BomRow, "orderId" | "remainingQty"> & {
+  groupedQty: string;
+  vendorPrice: string;
+};
+export type GroupedPurchaseOrder = {
+  id: string;
+  sourceType?: string;
+  entityId: string | null;
+  entityName: string;
+  groupedPoNo: string;
+  status: string;
+  submittedAt: string;
+  rejectionReason: string | null;
+  note?: string | null;
+  rawMaterial?: string | null;
+  categoryType?: string | null;
+  category?: string | null;
+  subCategory?: string | null;
+  brand?: string | null;
+  totalRequiredQty?: number | null;
+  totalGroupedQty?: number | null;
+  stockUom?: string | null;
+  noOfStyles?: number | null;
+  buyingUom?: string | null;
+  convertValue?: number | null;
+  roundOf?: boolean;
+  buyingQty?: number | null;
+  buyingQtyRound?: number | null;
+  differenceRound?: number | null;
+  moqStockUom?: number | null;
+  moqBuying?: number | null;
+  extraBuyingUom?: number | null;
+  buyingQtyTotal?: number | null;
+  vendorPrice?: number | null;
+  vendorPriceInr?: number | null;
+  gst?: number | null;
+  hsnCode?: string | null;
+  otherChargesInr?: number | null;
+  organizationState?: string | null;
+  organizationGstin?: string | null;
+  vendor: {
+    id: string;
+    name: string;
+    gstin?: string | null;
+    registeredState?: string | null;
+  };
+  lines: Array<{
+    id: string;
+    bomItemId: string;
+    orderNo: string | null;
+    styleName: string | null;
+    brand: string | null;
+    category: string | null;
+    subCategory: string | null;
+    itemName: string | null;
+    stockUom: string | null;
+    internalConsumption: number | null;
+    requiredQty: number | null;
+    groupedQty: number | null;
+    vendorPrice: number | null;
+    categoryType?: string | null;
+    internalPriceBom?: number | null;
+    otherChargesPerItem?: number | null;
+    totalExtra?: number | null;
+    totalSpend?: number | null;
+    total?: number | null;
+    gst?: number | string | null;
+    hsnCode?: string | null;
+  }>;
+};
+
+export type MasterPurchaseOrder = {
+  id: string;
+  entityId: string | null;
+  entityName: string;
+  masterPoNo: string;
+  status: string;
+  sourceType: string;
+  rawMaterial: string | null;
+  category: string | null;
+  subCategory: string | null;
+  totalRequiredQty: number | null;
+  totalGroupedQty: number | null;
+  noOfStyles: number | null;
+  price: string;
+  gst: string;
+  hsnCode: string;
+  buyingUom: string;
+  total: number;
+  vendor: { id: string; name: string };
+  sourceGroupedPoIds: string[];
+  purchaseOrderCreated?: boolean;
+  lines: Array<{
+    id: string;
+    sourceGroupedPoNo: string | null;
+    sourceOrderNo: string | null;
+    styleName: string | null;
+    rawMaterial?: string | null;
+    stockUom?: string | null;
+    groupedQty: number | null;
+    vendorPrice: number | null;
+    totalSpend: number | null;
+  }>;
+};
+
+export type StyleWiseStage = "allocate" | "price" | "create";

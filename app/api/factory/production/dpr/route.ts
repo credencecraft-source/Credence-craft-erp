@@ -81,9 +81,9 @@ export async function POST(request: Request) {
       if (action === "APPROVE" && existing.status !== "SUBMITTED") throw new Error("Only a submitted DPR can be approved.");
       const status = action === "APPROVE" ? "APPROVED" : action === "REJECT" ? "REJECTED" : "SUBMITTED";
       const report = await prisma.$transaction(async (transaction) => {
-        const updated = await transaction.factoryDailyProductionReport.update({ where: { id: existing.id }, data: { status, submitted_at: status === "SUBMITTED" ? new Date() : existing.submitted_at, approved_at: status === "APPROVED" ? new Date() : null, approved_by: status === "APPROVED" ? (user.full_name || user.email) : null, rejection_reason: status === "REJECTED" ? String(body.rejectionReason ?? "").trim() || "Rejected by management." : null } });
+        const updated = await transaction.factoryDailyProductionReport.update({ where: { id: existing.id }, data: { status, submitted_at: status === "SUBMITTED" ? new Date() : existing.submitted_at, approved_at: status === "APPROVED" ? new Date() : null,         approved_by: status === "APPROVED" ? user.full_name : null, rejection_reason: status === "REJECTED" ? String(body.rejectionReason ?? "").trim() || "Rejected by management." : null } });
         if (action === "APPROVE" || action === "REJECT") {
-          await transaction.factoryGrn.updateMany({ where: { organization_id: organization.id, grn_date: { gte: start, lt: new Date(start.getTime() + 86400000) } }, data: { status: action === "APPROVE" ? "APPROVED" : "REJECTED", approved_by: action === "APPROVE" ? (user.full_name || user.email) : null, approved_at: action === "APPROVE" ? new Date() : null } });
+          await transaction.factoryGrn.updateMany({ where: { organization_id: organization.id, grn_date: { gte: start, lt: new Date(start.getTime() + 86400000) } }, data: { status: action === "APPROVE" ? "APPROVED" : "REJECTED",           approved_by: action === "APPROVE" ? user.full_name : null, approved_at: action === "APPROVE" ? new Date() : null } });
         }
         return updated;
       }, { maxWait: 10000, timeout: 30000 });

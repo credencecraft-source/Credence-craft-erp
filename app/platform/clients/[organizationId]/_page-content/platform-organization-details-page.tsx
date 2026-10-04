@@ -210,14 +210,14 @@ export default async function PlatformOrganizationDetailsPage({
                     <Badge>{organization.approval_status.replaceAll("_", " ")}</Badge>
                   </div>
                   <form action={assignPlatformVersion} className="mt-3 flex flex-col gap-2 sm:flex-row">
-                    <label className="sr-only" htmlFor="platform-version">Required platform version</label>
+                    <label className="sr-only" htmlFor="platform-version">Platform version</label>
                     <Select id="platform-version" name="platformVersionId" defaultValue={organization.platform_version_id ?? ""} required className="min-w-0 flex-1 rounded-md border-slate-300 bg-white px-3 py-2 text-sm text-slate-800">
                       <option value="">Select a required version...</option>
                       {platformVersions.map((version) => <option key={version.id} value={version.id}>{version.version_name}{version.description ? ` - ${version.description}` : ""}</option>)}
                     </Select>
                     <Button type="submit" size="sm" className="rounded-md bg-emerald-700 px-4 text-white hover:bg-emerald-800">Save version</Button>
                   </form>
-                  <p className="mt-2 text-xs text-slate-500">A version must be assigned before this organisation can be approved.</p>
+                  <p className="mt-2 text-xs text-slate-500">A version is optional for approval. The pricing shortcut inside the organisation appears after a version is assigned.</p>
                   <form action={updateApprovalStatus} className="mt-3 flex flex-wrap gap-2" aria-label="Organisation approval status">
                     {[
                       { value: "PENDING_APPROVAL", label: "Pending", className: "border-amber-200 text-amber-700 hover:bg-amber-50" },
@@ -230,7 +230,7 @@ export default async function PlatformOrganizationDetailsPage({
                         name="approvalStatus"
                         value={status.value}
                         aria-pressed={organization.approval_status === status.value}
-                        disabled={organization.approval_status === status.value || (status.value === "APPROVED" && !organization.platformVersion?.is_active)}
+                        disabled={organization.approval_status === status.value || (status.value === "APPROVED" && Boolean(organization.platform_version_id) && !organization.platformVersion?.is_active)}
                         variant="secondary"
                         size="sm"
                         className={`${status.className} ${
@@ -314,7 +314,7 @@ export default async function PlatformOrganizationDetailsPage({
                           <li key={request.id} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-start sm:justify-between">
                             <div className="min-w-0">
                               <p className="text-sm font-medium text-slate-800">
-                                {request.submittedBy.full_name || request.submittedBy.email}
+                                {request.submittedBy.full_name || request.submittedBy.email || "Workspace User"}
                                 <span className="ml-2 text-xs font-normal text-slate-500">{new Date(request.created_at).toLocaleString()}</span>
                               </p>
                               <p className="mt-1 text-xs text-slate-600">{request.description}</p>
@@ -387,7 +387,7 @@ export default async function PlatformOrganizationDetailsPage({
                       <tbody className="divide-y divide-slate-100">
                         {organization.memberships.map((membership) => (
                           <tr key={membership.id}>
-                            <td className="px-4 py-3"><p className="font-medium text-slate-800">{membership.workspaceUser.full_name}</p><p className="text-xs text-slate-500">{membership.workspaceUser.email}</p></td>
+                            <td className="px-4 py-3"><p className="font-medium text-slate-800">{membership.workspaceUser.full_name}</p><p className="text-xs text-slate-500">{membership.workspaceUser.email ?? "Not provided"}</p></td>
                             <td className="px-4 py-3 text-slate-700">{membership.role}</td>
                             <td className="px-4 py-3 text-slate-700">{membership.is_active ? "Active" : "Inactive"}</td>
                             <td className="whitespace-nowrap px-4 py-3 text-slate-500">{new Date(membership.created_at).toLocaleString()}</td>

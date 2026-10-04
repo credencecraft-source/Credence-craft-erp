@@ -136,17 +136,19 @@ export default async function WorkspaceHomePage({
               <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50"><UserRound className="h-3.5 w-3.5" /> Profile</p>
               <p className="mt-1 truncate text-sm font-medium text-white">{user.profile_name}</p>
             </div>
-            <div className="min-w-0">
-              <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50"><Mail className="h-3.5 w-3.5" /> Email</p>
-              <p className="mt-1 truncate text-sm font-medium text-white" title={user.email}>{user.email}</p>
-            </div>
+            {user.email && !user.email.endsWith("@mobile.credencecraft.invalid") && (
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50"><Mail className="h-3.5 w-3.5" /> Email</p>
+                <p className="mt-1 truncate text-sm font-medium text-white" title={user.email}>{user.email}</p>
+              </div>
+            )}
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Access level</p>
               <p className="mt-1 text-sm font-medium text-white">Workspace owner</p>
             </div>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200/50">Security</p>
-              <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-white">{user.email_verified ? "Verified account" : "Pending verification"} <ShieldCheck className="h-4 w-4 text-amber-300" /></p>
+              <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-white">{user.mobile_verified_at ? "Verified mobile" : user.email ? user.email_verified ? "Verified account" : "Pending verification" : "No email provided"} <ShieldCheck className="h-4 w-4 text-amber-300" /></p>
             </div>
           </div>
         </div>

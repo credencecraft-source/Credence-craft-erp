@@ -13,6 +13,7 @@ import {
   ChevronDown,
   LifeBuoy,
   Mail,
+  Smartphone,
 } from "lucide-react";
 import Sidebar from "@/components/ui/Sidebar";
 
@@ -60,6 +61,11 @@ const NAV_SECTIONS = [
     icon: Mail,
     items: [
       { label: "Email and OTP", href: "/platform/settings/email", icon: Mail },
+      {
+        label: "Mobile OTP (MSG91)",
+        href: "/platform/settings/mobile-otp",
+        icon: Smartphone,
+      },
     ],
   },
 ] as const;

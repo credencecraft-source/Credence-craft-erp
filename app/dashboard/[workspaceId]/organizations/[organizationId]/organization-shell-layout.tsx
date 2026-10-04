@@ -120,7 +120,7 @@ export default async function OrganizationShellLayout({
         actionUser.id,
         organizationId,
         step,
-        actionUser.full_name || actionUser.email,
+        actionUser.full_name,
       );
       revalidatePath(organizationPath);
       return { status: "status" in result ? result.status : "IN_PROGRESS", stage: "stage" in result ? result.stage : "" };
@@ -170,6 +170,7 @@ export default async function OrganizationShellLayout({
       workspaceId={workspaceId}
       organizationId={organizationId}
       organizationName={organization.organization_name}
+      hasAssignedPlatformVersion={Boolean(trialOrganization.platform_version_id)}
       trialEnabled={trialOrganization.trial_enabled}
       trialStartedAt={trialOrganization.trial_started_at?.toISOString() ?? null}
       trialEndsAt={trialOrganization.trial_ends_at?.toISOString() ?? null}

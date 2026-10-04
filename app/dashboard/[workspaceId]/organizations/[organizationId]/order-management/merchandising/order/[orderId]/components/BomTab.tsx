@@ -1,36 +1,18 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { calculateBomRows, calculateFinishedGoodsRows, splitBomSizes } from "@/lib/services/orders/order-quantity-calculations";
 import { findDuplicateBomMaterialNames, getBomMaterialIdentity } from "@/lib/services/orders/bom-row-validation";
+import type { OrderFormState, BomEditorRow } from "./order-form-types";
 import Button from "@/components/ui/Button";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 
-type BomRow = {
-  id?: string;
-  categoryType?: string | null;
-  category?: string | null;
-  subCategory?: string | null;
-  rawMaterialName?: string | null;
-  image?: string | null;
-  stockUom?: string | null;
-  size?: string | null;
-  buyerConsumption?: number | string | null;
-  buyerPrice?: number | string | null;
-  internalConsumption?: number | string | null;
-  internalPrice?: number | string | null;
-  valuePerGarmentRm?: number | string | null;
-  consumption?: number | string | null;
-  requiredQty?: number | string | null;
-  itemWiseExcessPercentage?: number | string | null;
-  itemWiseExcessQty?: number | string | null;
-  totalRequiredQty?: number | string | null;
-};
+type BomRow = BomEditorRow;
 
 const defaultBomRow = (categoryOverride?: string): BomRow => ({
   categoryType: "",
@@ -46,6 +28,8 @@ const defaultBomRow = (categoryOverride?: string): BomRow => ({
   itemWiseExcessQty: "",
   totalRequiredQty: "",
 });
+
+const DEFAULT_BOM_ROWS = [defaultBomRow()];
 
 const BOMB_CATEGORY_TEXT_MAP: Record<string, string> = {
   fabric: "Fabric",
@@ -78,8 +62,8 @@ export default function BomTab({
   onOpenCreateMaster,
   masterOptions,
 }: {
-  form: any;
-  setForm: any;
+  form: OrderFormState;
+  setForm: React.Dispatch<React.SetStateAction<OrderFormState>>;
   renderMasterSelect?: (
     value: string,
     onChange: (value: string) => void,
@@ -90,10 +74,13 @@ export default function BomTab({
   onOpenCreateMaster?: (masterKey: string) => void;
   masterOptions?: Record<string, Array<{ id?: string; label?: string; value_id?: string; name?: string; parent_id?: string | null; parentValueId?: string | null; is_active?: boolean; fields?: Record<string, unknown> }>>;
 }) {
-  const bomRows = form?.bomRows?.length > 0 ? form.bomRows : [defaultBomRow()];
-  const duplicateMaterials = findDuplicateBomMaterialNames(form?.bomRows ?? []);
-  const finishedGoods = calculateFinishedGoodsRows(form?.rows ?? []);
-  const calculatedBomRows = calculateBomRows(bomRows, finishedGoods.rows, finishedGoods.orderQty);
+  const bomRows = form.bomRows?.length ? form.bomRows : DEFAULT_BOM_ROWS;
+  const duplicateMaterials = useMemo(() => findDuplicateBomMaterialNames(form.bomRows ?? []), [form.bomRows]);
+  const finishedGoods = useMemo(() => calculateFinishedGoodsRows(form.rows), [form.rows]);
+  const calculatedBomRows = useMemo(
+    () => calculateBomRows(bomRows, finishedGoods.rows, finishedGoods.orderQty),
+    [bomRows, finishedGoods],
+  );
   const [selectedBomCategory, setSelectedBomCategory] = useState<string>("All");
   const [selectedBomSubCategory, setSelectedBomSubCategory] = useState<string>("All");
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);

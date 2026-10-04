@@ -362,14 +362,41 @@ export async function listAllocatableBomRowsPage(
 }
 
 async function countAllocatableBomRows(organizationId: string) {
-  const [rows, totals] = await Promise.all([
-    prisma.billOfMaterialItem.findMany({
-      where: { order: { organization_id: organizationId } },
-      select: { id: true, requiredQty: true, totalRequiredQty: true },
-    }),
-    loadAllocationQuantityTotals(organizationId),
-  ]);
-  return rows.reduce((count, row) => count + (remainingBomQuantity(row, totals).gt(0) ? 1 : 0), 0);
+  const [result] = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    WITH grouped_allocations AS (
+      SELECT line.source_bom_item_id, SUM(line.grouped_qty) AS quantity
+      FROM grouped_purchase_order_lines AS line
+      INNER JOIN grouped_purchase_orders AS grouped
+        ON grouped.id = line.grouped_purchase_order_id
+      WHERE grouped.organization_id = ${organizationId}
+        AND grouped.source_type = 'VENDOR'
+      GROUP BY line.source_bom_item_id
+    ),
+    stock_allocations AS (
+      SELECT booking.source_bom_item_id,
+        SUM(CASE WHEN booking.status = 'BOOKED' THEN booking.booked_quantity ELSE 0 END) AS booked_quantity,
+        SUM(CASE WHEN booking.status = 'FULFILLED' THEN booking.fulfilled_quantity ELSE 0 END) AS fulfilled_quantity
+      FROM raw_material_stock_bookings AS booking
+      WHERE booking.organization_id = ${organizationId}
+        AND booking.status IN ('BOOKED', 'FULFILLED')
+      GROUP BY booking.source_bom_item_id
+    )
+    SELECT COUNT(*)::bigint AS count
+    FROM bill_of_material_items AS bom
+    INNER JOIN merchandising_orders AS orders
+      ON orders.id = bom."orderId"
+    LEFT JOIN grouped_allocations
+      ON grouped_allocations.source_bom_item_id = bom.id
+    LEFT JOIN stock_allocations
+      ON stock_allocations.source_bom_item_id = bom.id
+    WHERE orders.organization_id = ${organizationId}
+      AND COALESCE(bom."totalRequiredQty", bom."requiredQty", 0)
+        > COALESCE(grouped_allocations.quantity, 0)
+          + COALESCE(stock_allocations.booked_quantity, 0)
+          + COALESCE(stock_allocations.fulfilled_quantity, 0)
+  `;
+
+  return Number(result?.count ?? 0);
 }
 
 export async function getProcurementSummary(organizationId: string) {

@@ -313,28 +313,10 @@ describe("organization archive lifecycle", () => {
       where: {
         id: "org-internal-id",
         approval_status: { not: "ARCHIVED" },
-        platformVersion: { is: { is_active: true } },
-      },
-      data: { approval_status: "APPROVED", is_active: true },
-    });
-  });
-
-  it("requires an assigned platform version before approving an organization", async () => {
-    transactionMock.organization.updateMany.mockResolvedValue({ count: 0 });
-    transactionMock.organization.findUnique.mockResolvedValue({
-      id: "org-internal-id",
-      approval_status: "PENDING_APPROVAL",
-      platform_version_id: null,
-      platformVersion: null,
-    });
-
-    await expect(updateOrganizationApprovalStatus("org-internal-id", "APPROVED"))
-      .rejects.toThrow("Assign an active platform version before approving this organization.");
-    expect(transactionMock.organization.updateMany).toHaveBeenCalledWith({
-      where: {
-        id: "org-internal-id",
-        approval_status: { not: "ARCHIVED" },
-        platformVersion: { is: { is_active: true } },
+        OR: [
+          { platform_version_id: null },
+          { platformVersion: { is: { is_active: true } } },
+        ],
       },
       data: { approval_status: "APPROVED", is_active: true },
     });
@@ -361,7 +343,10 @@ describe("organization archive lifecycle", () => {
       where: {
         id: "org-internal-id",
         approval_status: { not: "ARCHIVED" },
-        platformVersion: { is: { is_active: true } },
+        OR: [
+          { platform_version_id: null },
+          { platformVersion: { is: { is_active: true } } },
+        ],
       },
       data: { approval_status: "APPROVED", is_active: true },
     });
@@ -371,6 +356,39 @@ describe("organization archive lifecycle", () => {
         trial_started_at: expect.any(Date),
         trial_ends_at: expect.any(Date),
       },
+    });
+    expect(transactionMock.platformAuditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ platform_admin_id: "platform-admin-id", action: "ORGANIZATION_TRIAL_STARTED" }),
+    }));
+  });
+
+  it("allows approval when no platform version is assigned", async () => {
+    transactionMock.organization.updateMany.mockResolvedValue({ count: 1 });
+    transactionMock.organization.findUnique
+      .mockResolvedValueOnce({
+        approval_status: "APPROVED",
+        trial_started_at: null,
+        trial_enabled: true,
+        trial_extension_hours: 0,
+      })
+      .mockResolvedValueOnce({
+        ...organization,
+        platform_version_id: null,
+        platformVersion: null,
+      });
+
+    await expect(updateOrganizationApprovalStatus("org-internal-id", "APPROVED"))
+      .resolves.toEqual({ ...organization, platform_version_id: null, platformVersion: null });
+    expect(transactionMock.organization.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "org-internal-id",
+        approval_status: { not: "ARCHIVED" },
+        OR: [
+          { platform_version_id: null },
+          { platformVersion: { is: { is_active: true } } },
+        ],
+      },
+      data: { approval_status: "APPROVED", is_active: true },
     });
     expect(transactionMock.platformAuditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ platform_admin_id: "platform-admin-id", action: "ORGANIZATION_TRIAL_STARTED" }),
@@ -392,7 +410,10 @@ describe("organization archive lifecycle", () => {
       where: {
         id: "org-internal-id",
         approval_status: { not: "ARCHIVED" },
-        platformVersion: { is: { is_active: true } },
+        OR: [
+          { platform_version_id: null },
+          { platformVersion: { is: { is_active: true } } },
+        ],
       },
       data: { approval_status: "APPROVED", is_active: true },
     });

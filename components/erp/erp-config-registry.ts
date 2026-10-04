@@ -64,6 +64,7 @@ export const ERP_MODULES: ErpModule[] = [
         pathSegment: "merchandising",
         children: [
           { key: "order", label: "Order", pathSegment: "order" },
+          { key: "bulk-order-creation", label: "Bulk Order", pathSegment: "bulk-order-creation" },
           { key: "bom", label: "BOM", pathSegment: "bom" },
           { key: "order-summary", label: "Order Summary", pathSegment: "order-summary" },
         ],

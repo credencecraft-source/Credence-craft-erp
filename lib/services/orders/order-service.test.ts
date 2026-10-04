@@ -3,6 +3,8 @@ import { Prisma } from "@prisma/client";
 
 const prismaCounterMock = vi.hoisted(() => ({
   upsert: vi.fn(),
+  orderFindMany: vi.fn(),
+  articleFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -10,10 +12,16 @@ vi.mock("@/lib/database/prisma-client", () => ({
     organizationOrderCounter: {
       upsert: prismaCounterMock.upsert,
     },
+    merchandisingOrder: {
+      findMany: prismaCounterMock.orderFindMany,
+    },
+    masterArticle: {
+      findMany: prismaCounterMock.articleFindMany,
+    },
   },
 }));
 
-import { reserveNextOrderNumber, reserveNextOrderNumbers } from "./order-service";
+import { getArticleOrderSummaries, listOrdersPage, reserveNextOrderNumber, reserveNextOrderNumbers } from "./order-service";
 
 describe("reserveNextOrderNumber", () => {
   beforeEach(() => {
@@ -56,6 +64,67 @@ describe("reserveNextOrderNumbers", () => {
       create: { organization_id: "org-123", current_value: 10 },
       update: { current_value: { increment: 10 } },
       select: { current_value: true },
+    });
+  });
+
+  describe("listOrdersPage", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("scopes the query by organization and status and returns a cursor when another page exists", async () => {
+      prismaCounterMock.orderFindMany.mockResolvedValue([
+        { id: "order-2", created_at: new Date("2026-10-02T00:00:00.000Z"), deliveryDate: null },
+        { id: "order-1", created_at: new Date("2026-10-01T00:00:00.000Z"), deliveryDate: null },
+      ]);
+
+      const page = await listOrdersPage("org-1", { limit: 1, status: "Approved" });
+
+      expect(prismaCounterMock.orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { organization_id: "org-1", finalStatus: "Approved" },
+        take: 2,
+      }));
+      expect(page.orders).toHaveLength(1);
+      expect(page.nextCursor).toBeTruthy();
+    });
+
+    it("adds organization-scoped article codes to order rows", async () => {
+      prismaCounterMock.orderFindMany.mockResolvedValue([
+        {
+          id: "order-1",
+          article: "Jacket",
+          created_at: new Date("2026-10-01T00:00:00.000Z"),
+          deliveryDate: null,
+        },
+      ]);
+      prismaCounterMock.articleFindMany.mockResolvedValue([
+        { article: "Jacket", article_code: "Ar-1" },
+      ]);
+
+      const page = await listOrdersPage("org-1");
+
+      expect(prismaCounterMock.articleFindMany).toHaveBeenCalledWith({
+        where: { organization_id: "org-1", article: { in: ["Jacket"] } },
+        select: { article: true, article_code: true },
+      });
+      expect(page.orders[0]).toMatchObject({ article: "Jacket", articleCode: "Ar-1" });
+    });
+  });
+
+  describe("getArticleOrderSummaries", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("filters article detail reads by organization, season, and article", async () => {
+      prismaCounterMock.orderFindMany.mockResolvedValue([]);
+
+      await expect(getArticleOrderSummaries("org-1", { season: "Winter", article: "Jacket" }))
+        .resolves.toEqual([]);
+
+      expect(prismaCounterMock.orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { organization_id: "org-1", season: "Winter", article: "Jacket" },
+      }));
     });
   });
 

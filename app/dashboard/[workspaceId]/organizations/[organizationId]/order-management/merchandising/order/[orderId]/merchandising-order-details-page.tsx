@@ -8,6 +8,7 @@ import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
 import Tabs from "@/components/ui/Tabs";
 import OrderDetailsTab from "./components/OrderDetailsTab";
+import type { OrderFormState } from "./components/order-form-types";
 
 const FinishedGoodsTab = React.lazy(() => import("./components/FinishedGoodsTab"));
 const BomTab = React.lazy(() => import("./components/BomTab"));
@@ -74,15 +75,15 @@ export default function MerchandisingOrderDetailsPage() {
   const lastMasterFetchRef = useRef(0);
   const hasLoadedLookupsRef = useRef(false);
 
-  const [form, setForm] = useState({
-    rows: [] as any[],
-    bomRows: [] as any[],
-    costingRows: [] as any[],
-    techPackRows: [] as any[],
-    measurementRows: [] as any[],
-    processRows: [] as any[],
+  const [form, setForm] = useState<OrderFormState>({
+    rows: [],
+    bomRows: [],
+    costingRows: [],
+    techPackRows: [],
+    measurementRows: [],
+    processRows: [],
     processTemplateId: "",
-    attachmentRows: [] as any[],
+    attachmentRows: [],
     orderQty: 1,
     sellingPricePerPcs: 0,
     orderNo: "",

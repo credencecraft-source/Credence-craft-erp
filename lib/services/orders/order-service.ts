@@ -189,7 +189,7 @@ export async function listOrders(organizationId: string, limit = 100) {
 
 export async function listOrdersPage(
   organizationId: string,
-  options: { cursor?: string; limit?: number } = {},
+  options: { cursor?: string; limit?: number; status?: string } = {},
 ) {
   const cursor = decodeOrderCursor(options.cursor);
   const take = Math.min(Math.max(options.limit ?? 100, 1), 100);
@@ -197,6 +197,7 @@ export async function listOrdersPage(
   const orders = await prisma.merchandisingOrder.findMany({
     where: {
       organization_id: organizationId,
+      ...(options.status ? { finalStatus: options.status } : {}),
       ...(cursor
         ? {
             OR: [
@@ -240,10 +241,21 @@ export async function listOrdersPage(
   const hasNextPage = orders.length > take;
   const pageOrders = hasNextPage ? orders.slice(0, take) : orders;
   const lastOrder = pageOrders.at(-1);
+  const articleNames = [...new Set(pageOrders
+    .map((order) => order.article?.trim())
+    .filter((article): article is string => Boolean(article)))];
+  const articleRows = articleNames.length > 0
+    ? await prisma.masterArticle.findMany({
+        where: { organization_id: organizationId, article: { in: articleNames } },
+        select: { article: true, article_code: true },
+      })
+    : [];
+  const articleCodes = new Map(articleRows.map((article) => [article.article, article.article_code]));
 
   return {
     orders: pageOrders.map((order) => ({
       ...order,
+      articleCode: articleCodes.get(order.article?.trim() ?? "") ?? null,
       deliveryDate: toDateOnly(order.deliveryDate),
     })),
     nextCursor: hasNextPage && lastOrder
@@ -1449,9 +1461,15 @@ export async function updateOrderWithDetails(
   return updatedOrder;
 }
 
-export async function getArticleOrderSummaries(organizationId: string) {
+export async function getArticleOrderSummaries(
+  organizationId: string,
+  filter?: { season: string | null; article: string | null },
+) {
   const orders = await prisma.merchandisingOrder.findMany({
-    where: { organization_id: organizationId },
+    where: {
+      organization_id: organizationId,
+      ...(filter ? { season: filter.season, article: filter.article } : {}),
+    },
     select: {
       id: true,
       orderNo: true,

@@ -5,6 +5,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { SESSION_COOKIE_NAME, requireSessionUser } from "@/lib/auth/session-manager";
 import { prisma } from "@/lib/database/prisma-client";
+import WorkspaceMobileNumberSettings from "./workspace-mobile-number-settings";
 
 const isDevBypass = process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL;
 
@@ -117,10 +118,12 @@ export default async function WorkspaceConfigurationPage({
           </button>
         </form>
 
+        <WorkspaceMobileNumberSettings />
+
         <div >
           <div >
             <p >Email</p>
-            <p >{user.email}</p>
+            <p >{user.email ?? "Not provided"}</p>
           </div>
           <div >
             <p >Last login</p>

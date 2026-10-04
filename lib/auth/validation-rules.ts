@@ -78,6 +78,26 @@ export function isValidProfileName(value: string) {
   return Boolean(normalized) && normalized.length >= 2 && normalized.length <= 100;
 }
 
+export function deriveFallbackProfileName(value: string) {
+  const normalized = normalizeEmail(value);
+  const domainLocal = normalized.split("@")[0] || "user";
+  const cleanBase = domainLocal.replace(/[^a-zA-Z0-9]+/g, "").slice(0, 18) || "user";
+  const hash = Array.from(normalized).reduce((total, char) => total + char.charCodeAt(0), 0) % 900000 + 100000;
+  return `${cleanBase}-${hash}`.slice(0, 100);
+}
+
+export function deriveFallbackFullName(value: string) {
+  const normalized = normalizeEmail(value);
+  const localPart = normalized.split("@")[0] || "workspace";
+  const parts = localPart
+    .replace(/[._-]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase());
+
+  return parts.length > 0 ? parts.join(" ") : "Workspace User";
+}
+
 export function isValidFullName(value: string) {
   const normalized = normalizeFullName(value);
   return Boolean(normalized) && normalized.length >= 2 && normalized.length <= 255;

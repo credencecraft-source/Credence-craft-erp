@@ -37,6 +37,9 @@ interface ReportGridProps<T> {
   newActionLabel?: string;
   onDeleteSelected?: () => void;
   deleteSelectedLabel?: string;
+  onBulkUpload?: () => void;
+  bulkUploadLabel?: string;
+  bulkUploadDisabled?: boolean;
   onRowAction?: (recordId: string) => void;
   rowActionLabel?: string;
   rowActionLabelSelector?: (record: T) => string;
@@ -67,6 +70,9 @@ export function ReportGrid<T>({
   newActionLabel = "+ New Order",
   onDeleteSelected,
   deleteSelectedLabel = "Delete Selected",
+  onBulkUpload,
+  bulkUploadLabel = "Bulk Upload",
+  bulkUploadDisabled = false,
   onRowAction,
   rowActionLabel = "Action",
   rowActionLabelSelector,
@@ -250,6 +256,18 @@ export function ReportGrid<T>({
           {onDeleteSelected && selectedIds.length > 0 && (
             <Button variant="danger" size="sm" onClick={onDeleteSelected} className="h-7 px-2.5 text-[11px]">
               {deleteSelectedLabel} ({selectedIds.length})
+            </Button>
+          )}
+
+          {onBulkUpload && selectedIds.length > 0 && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onBulkUpload}
+              disabled={bulkUploadDisabled}
+              className="h-7 px-2.5 text-[11px]"
+            >
+              {bulkUploadDisabled ? "Preparing..." : `${bulkUploadLabel} (${selectedIds.length})`}
             </Button>
           )}
 

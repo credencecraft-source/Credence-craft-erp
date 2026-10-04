@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   groupedPurchaseOrderFindFirst: vi.fn(),
   groupedPurchaseOrderUpdate: vi.fn(),
   groupedPurchaseOrderCount: vi.fn(),
+  queryRaw: vi.fn(),
   groupedLineGroupBy: vi.fn(),
   bookingGroupBy: vi.fn(),
   createAuditEvent: vi.fn(),
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
     $transaction: mocks.transaction,
+    $queryRaw: mocks.queryRaw,
     billOfMaterialItem: { findMany: mocks.bomFindMany },
     groupedPurchaseOrder: { findFirst: mocks.groupedPurchaseOrderFindFirst, count: mocks.groupedPurchaseOrderCount, update: mocks.groupedPurchaseOrderUpdate },
     groupedPurchaseOrderLine: { groupBy: mocks.groupedLineGroupBy },
@@ -280,19 +282,8 @@ describe("stock-origin grouped price approval", () => {
     }));
   });
 
-  it("counts allocatable rows from a minimal BOM projection", async () => {
-    mocks.bomFindMany.mockResolvedValue([
-      { id: "bom-1", requiredQty: new Prisma.Decimal("10"), totalRequiredQty: null },
-      { id: "bom-2", requiredQty: new Prisma.Decimal("4"), totalRequiredQty: null },
-    ]);
-    mocks.groupedLineGroupBy.mockResolvedValue([
-      { source_bom_item_id: "bom-1", _sum: { grouped_qty: new Prisma.Decimal("3") } },
-    ]);
-    mocks.bookingGroupBy.mockResolvedValue([
-      { source_bom_item_id: "bom-1", status: "BOOKED", _sum: { booked_quantity: new Prisma.Decimal("2"), fulfilled_quantity: new Prisma.Decimal("0") } },
-      { source_bom_item_id: "bom-1", status: "FULFILLED", _sum: { booked_quantity: new Prisma.Decimal("0"), fulfilled_quantity: new Prisma.Decimal("3") } },
-      { source_bom_item_id: "bom-2", status: "BOOKED", _sum: { booked_quantity: new Prisma.Decimal("4"), fulfilled_quantity: new Prisma.Decimal("0") } },
-    ]);
+  it("counts allocatable rows in the database without loading BOM rows", async () => {
+    mocks.queryRaw.mockResolvedValue([{ count: BigInt(1) }]);
     mocks.groupedPurchaseOrderCount.mockResolvedValueOnce(2).mockResolvedValueOnce(3);
 
     await expect(getProcurementSummary("org-1")).resolves.toEqual({
@@ -301,10 +292,8 @@ describe("stock-origin grouped price approval", () => {
       readyForPo: 3,
       totalOpen: 6,
     });
-    expect(mocks.bomFindMany).toHaveBeenCalledWith({
-      where: { order: { organization_id: "org-1" } },
-      select: { id: true, requiredQty: true, totalRequiredQty: true },
-    });
+    expect(mocks.queryRaw).toHaveBeenCalledTimes(1);
+    expect(mocks.bomFindMany).not.toHaveBeenCalled();
   });
 
   it("returns a bounded allocation page and scopes aggregates to its BOM IDs", async () => {

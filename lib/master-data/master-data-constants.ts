@@ -107,10 +107,11 @@ function typedValue(field: MasterFieldDefinition, value: unknown) {
 async function nextArticleCode(organizationId: string, database: MasterDelegate = delegates.article) {
   const existing = await database.findMany({ where: { organization_id: organizationId }, select: { article_code: true }, orderBy: { sort_order: "asc" } });
   const numbers = existing
-    .map((item) => Number(String(item.article_code ?? "").replace(/\D+/g, "")))
-    .filter((value) => Number.isFinite(value));
+    .map((item) => /^AR-(\d+)$/i.exec(String(item.article_code ?? "")))
+    .map((match) => Number(match?.[1]))
+    .filter((value) => Number.isSafeInteger(value));
   const nextNumber = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
-  return `AR-${nextNumber}`;
+  return `Ar-${nextNumber}`;
 }
 
 async function nextGoldSealCode(organizationId: string, database: MasterDelegate = delegates["gold-seal"]) {
@@ -461,7 +462,7 @@ export async function syncSizeGroupSizes(organizationId: string, sizeGroupId: st
   });
 }
 
-export async function createMasterValueForOrganization(organizationId: string, moduleKey: string, input: { label: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; parentValueId?: string | null }) {
+export async function createMasterValueForOrganization(organizationId: string, moduleKey: string, input: { label: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; parentValueId?: string | null; createOnly?: boolean }) {
   const definition = getMasterDefinition(moduleKey);
   const delegate = delegates[moduleKey];
   if (!definition || !delegate) throw new Error("Master module is not available.");
@@ -526,6 +527,10 @@ export async function createMasterValueForOrganization(organizationId: string, m
           },
         })
       : null;
+
+    if (existing && input.createOnly) {
+      throw new Error(`${definition.label} "${input.label.trim()}" already exists. Refresh the uploaded file and try again.`);
+    }
 
     if (existing) {
       created = await transactionDelegate.update({

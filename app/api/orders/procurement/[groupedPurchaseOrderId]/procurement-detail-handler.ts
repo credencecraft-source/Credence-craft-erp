@@ -65,7 +65,7 @@ export async function PUT(
             })),
           );
         }
-        const groupedPurchaseOrder = await approveGroupedPurchaseOrder(organization.id, groupedPurchaseOrderId, user.full_name || user.email, user.id);
+        const groupedPurchaseOrder = await approveGroupedPurchaseOrder(organization.id, groupedPurchaseOrderId, user.full_name, user.id);
         return NextResponse.json({ ok: true, groupedPurchaseOrder });
       }
       return NextResponse.json(await rejectGroupedPurchaseOrder(organization.id, groupedPurchaseOrderId, String(body.reason ?? "")));
