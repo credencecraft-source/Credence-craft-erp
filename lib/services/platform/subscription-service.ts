@@ -780,6 +780,25 @@ export async function approveSubscription(id: string) {
     if (subscription.payment_status.toLowerCase() !== "pending") {
       throw new Error("Only pending subscriptions can be approved.");
     }
+    const organization = await transaction.organization.findFirst({
+      where: {
+        OR: [
+          { id: subscription.organization_id },
+          { organization_id: subscription.organization_id },
+        ],
+      },
+      select: { id: true },
+    });
+    if (!organization) {
+      throw new Error("Cannot approve this subscription because its organization no longer exists. Remove the orphaned subscription first.");
+    }
+    if (subscription.organization_id !== organization.id) {
+      await transaction.subscription.update({
+        where: { id: subscription.id },
+        data: { organization_id: organization.id },
+      });
+      subscription.organization_id = organization.id;
+    }
     if (!subscription.business_type_id) {
       throw new Error("Assign a business type before approving this subscription.");
     }

@@ -1,8 +1,10 @@
+import { requirePlatformConfigurationAccess } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 
 const DEFAULT_SEGMENTS = ["Free", "Standard", "Professional", "Premium", "Elite", "Ultimate"];
 
 export async function ensureDefaultSegments() {
+  await requirePlatformConfigurationAccess();
   let lastOrder = (await prisma.segment.findFirst({ orderBy: { sort_order: "desc" }, select: { sort_order: true } }))?.sort_order ?? 0;
   for (const name of DEFAULT_SEGMENTS) {
     const existing = await prisma.segment.findUnique({ where: { name }, select: { id: true } });
@@ -13,11 +15,13 @@ export async function ensureDefaultSegments() {
 }
 
 export async function listSegments() {
+  await requirePlatformConfigurationAccess();
   await ensureDefaultSegments();
   return prisma.segment.findMany({ orderBy: [{ sort_order: "asc" }, { name: "asc" }] });
 }
 
 export async function createSegment(input: { name: string; description?: string }) {
+  await requirePlatformConfigurationAccess();
   const name = input.name.trim();
   if (!name) throw new Error("Segment name is required.");
 
@@ -36,6 +40,7 @@ export async function createSegment(input: { name: string; description?: string 
 }
 
 export async function updateSegmentSortOrder(id: string, requestedOrder: number) {
+  await requirePlatformConfigurationAccess();
   if (!Number.isInteger(requestedOrder) || requestedOrder < 1) {
     throw new Error("Rank must be a positive whole number.");
   }
@@ -60,5 +65,6 @@ export async function updateSegmentSortOrder(id: string, requestedOrder: number)
 }
 
 export async function deleteSegment(id: string) {
+  await requirePlatformConfigurationAccess();
   return prisma.segment.delete({ where: { id } });
 }

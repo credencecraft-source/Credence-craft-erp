@@ -10,6 +10,7 @@ const {
   platformAuditCreateMock,
   transactionMock,
   requireAdminMock,
+  requireSuperAdminMock,
 } = vi.hoisted(() => {
   const findUniqueUser = vi.fn();
   const findFirstUser = vi.fn();
@@ -37,11 +38,13 @@ const {
       callback(transaction),
     ),
     requireAdminMock: vi.fn().mockResolvedValue({ id: "platform-admin-1" }),
+    requireSuperAdminMock: vi.fn().mockResolvedValue({ id: "platform-admin-1" }),
   };
 });
 
 vi.mock("@/lib/auth/platform-session-manager", () => ({
   requirePlatformSessionAdmin: requireAdminMock,
+  requirePlatformSessionSuperAdmin: requireSuperAdminMock,
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -68,6 +71,8 @@ import {
 describe("platform workspace-user report service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    requireAdminMock.mockResolvedValue({ id: "platform-admin-1" });
+    requireSuperAdminMock.mockResolvedValue({ id: "platform-admin-1" });
     findManyUsersMock.mockResolvedValue([
       {
         id: "user-1",
@@ -181,7 +186,7 @@ describe("platform workspace-user report service", () => {
 
     await deleteWorkspaceUser("user-2");
 
-    expect(requireAdminMock).toHaveBeenCalledOnce();
+    expect(requireSuperAdminMock).toHaveBeenCalledOnce();
     expect(deleteUserMock).toHaveBeenCalledWith({
       where: {
         id: "user-2",
@@ -201,6 +206,18 @@ describe("platform workspace-user report service", () => {
         },
       },
     });
+  });
+
+  it("blocks Admin-view accounts from deleting workspace users", async () => {
+    requireSuperAdminMock.mockRejectedValue(
+      new Error("This action requires Super Admin access."),
+    );
+
+    await expect(deleteWorkspaceUser("user-2"))
+      .rejects.toThrow("This action requires Super Admin access.");
+
+    expect(transactionMock).not.toHaveBeenCalled();
+    expect(deleteUserMock).not.toHaveBeenCalled();
   });
 
   it("blocks deletion when any organization membership exists", async () => {

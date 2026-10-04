@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { prismaMock, transactionMock, requirePlatformSessionAdmin } = vi.hoisted(() => {
+const { prismaMock, transactionMock, requirePlatformSessionAdmin, requirePlatformSessionSuperAdmin } = vi.hoisted(() => {
   const transactionMock = {
     $executeRaw: vi.fn(),
     platformAuditEvent: { create: vi.fn() },
@@ -40,11 +40,15 @@ const { prismaMock, transactionMock, requirePlatformSessionAdmin } = vi.hoisted(
     },
   };
   const requirePlatformSessionAdmin = vi.fn();
-  return { prismaMock, transactionMock, requirePlatformSessionAdmin };
+  const requirePlatformSessionSuperAdmin = vi.fn();
+  return { prismaMock, transactionMock, requirePlatformSessionAdmin, requirePlatformSessionSuperAdmin };
 });
 
 vi.mock("@/lib/database/prisma-client", () => ({ prisma: prismaMock }));
-vi.mock("@/lib/auth/platform-session-manager", () => ({ requirePlatformSessionAdmin }));
+vi.mock("@/lib/auth/platform-session-manager", () => ({
+  requirePlatformSessionAdmin,
+  requirePlatformSessionSuperAdmin,
+}));
 
 import {
   normalizeDisplayText,
@@ -76,6 +80,7 @@ const organization = {
 beforeEach(() => {
   vi.clearAllMocks();
   requirePlatformSessionAdmin.mockResolvedValue({ id: "platform-admin-id" });
+  requirePlatformSessionSuperAdmin.mockResolvedValue({ id: "platform-admin-id" });
   prismaMock.$transaction.mockImplementation(
     (callback: (transaction: typeof transactionMock) => Promise<unknown>) => callback(transactionMock),
   );
@@ -268,7 +273,21 @@ describe("organization archive lifecycle", () => {
 
     await expect(deleteOrganizationFromPlatform("org-internal-id"))
       .rejects.toThrow("Organizations can only be deleted 90 days after archiving.");
-    expect(requirePlatformSessionAdmin).toHaveBeenCalled();
+    expect(requirePlatformSessionSuperAdmin).toHaveBeenCalled();
+    expect(transactionMock.organization.delete).not.toHaveBeenCalled();
+  });
+
+  it("blocks Admin-view accounts from deleting organizations", async () => {
+    requirePlatformSessionSuperAdmin.mockRejectedValue(
+      new Error("This action requires Super Admin access."),
+    );
+
+    await expect(deleteOrganizationFromPlatform("org-internal-id"))
+      .rejects.toThrow("This action requires Super Admin access.");
+    await expect(forceDeleteOrganizationFromPlatform("org-internal-id", "Northwind"))
+      .rejects.toThrow("This action requires Super Admin access.");
+
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
     expect(transactionMock.organization.delete).not.toHaveBeenCalled();
   });
 
@@ -309,7 +328,7 @@ describe("organization archive lifecycle", () => {
 
     await forceDeleteOrganizationFromPlatform("org-internal-id", "Northwind Apparel");
 
-    expect(requirePlatformSessionAdmin).toHaveBeenCalled();
+    expect(requirePlatformSessionSuperAdmin).toHaveBeenCalled();
     expect(transactionMock.platformAuditEvent.create).toHaveBeenCalledWith({
       data: {
         platform_admin_id: "platform-admin-id",

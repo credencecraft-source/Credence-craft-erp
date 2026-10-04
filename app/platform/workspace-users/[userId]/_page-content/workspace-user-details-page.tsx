@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import {
   getWorkspaceUser,
   deleteWorkspaceUser,
@@ -21,7 +22,10 @@ export default async function WorkspaceUserDetailsPage({
 }) {
   const { userId } = await params;
   const query = (await searchParams) ?? {};
-  const user = await getWorkspaceUser(userId);
+  const [user, platformAdmin] = await Promise.all([
+    getWorkspaceUser(userId),
+    requirePlatformSessionAdmin(),
+  ]);
   if (!user) notFound();
   const workspaceUserId = user.id;
 
@@ -67,7 +71,7 @@ export default async function WorkspaceUserDetailsPage({
           user={{
             id: user.id,
             fullName: user.full_name,
-            canDelete: user.canDelete,
+            canDelete: user.canDelete && platformAdmin.role === "SUPER_ADMIN",
             profileName: user.profile_name,
             email: user.email,
             emailVerified: user.email ? user.email_verified : false,

@@ -1,1 +1,1 @@
-export { POST } from "./support-ticket-handler";
+export { GET, POST } from "./support-ticket-handler";

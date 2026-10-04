@@ -17,8 +17,6 @@ import {
 } from "@/lib/database/database-errors";
 import { ensurePlatformDefaults } from "@/lib/services/platform/platform-bootstrap-service";
 
-const SUPPORT_EMAIL = "jassimtkd@gmail.com";
-
 const USE_DEV_USER_STORE = process.env.USE_DEV_USER_STORE === "true";
 const isDevBypass =
   USE_DEV_USER_STORE ||
@@ -60,14 +58,10 @@ export async function POST(request: Request) {
     }
 
     if (mode === "support") {
-      if (email !== SUPPORT_EMAIL) {
-        return NextResponse.json({ error: "That email address is not registered for support login." }, { status: 403 });
-      }
-
       await ensurePlatformDefaults();
-      const admin = await prisma.platformAdmin.findUnique({ where: { email: SUPPORT_EMAIL } });
+      const admin = await prisma.platformAdmin.findUnique({ where: { email } });
       if (!admin || !admin.is_active) {
-        return NextResponse.json({ error: "Support login is not available for this email address." }, { status: 403 });
+        return NextResponse.json({ error: "That email address is not registered for platform access." }, { status: 403 });
       }
 
       await issueEmailOtp(email, "SUPPORT");

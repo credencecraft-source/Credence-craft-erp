@@ -29,6 +29,41 @@ export async function createSupportTicket(input: {
   callbackTime?: string;
 }) {
   const membership = await requireOrganizationAccess(input.submittedByUserId, input.organizationId);
+  const normalized = normalizeTicketInput(input);
+  const ticket = await prisma.$transaction(async (transaction) => {
+    const createdTicket = await transaction.supportTicket.create({
+      data: {
+        id: randomUUID(),
+        ticket_number: randomUUID(),
+        organization_id: membership.organization_id,
+        submitted_by_user_id: input.submittedByUserId,
+        ...normalized,
+      },
+    });
+    await transaction.auditEvent.create({
+      data: {
+        organization_id: membership.organization_id,
+        user_id: input.submittedByUserId,
+        module: "support",
+        action: "SUPPORT_TICKET_CREATED",
+        entity_type: "SupportTicket",
+        entity_id: createdTicket.id,
+        details: { subject: normalized.subject, requestType: normalized.request_type, priority: normalized.priority },
+      },
+    });
+    return createdTicket;
+  });
+  return ticket;
+}
+
+function normalizeTicketInput(input: {
+  subject: string;
+  description: string;
+  priority?: string;
+  requestType?: string;
+  callbackDate?: string;
+  callbackTime?: string;
+}) {
   const subject = input.subject.trim();
   const description = input.description.trim();
   const priority = (input.priority || "NORMAL").toUpperCase();
@@ -38,21 +73,98 @@ export async function createSupportTicket(input: {
   if (description.length < 10 || description.length > 5000) throw new Error("Description must be between 10 and 5000 characters.");
   if (!TICKET_PRIORITIES.includes(priority as (typeof TICKET_PRIORITIES)[number])) throw new Error("Select a valid priority.");
   if (requestType !== "TICKET" && requestType !== "CALLBACK") throw new Error("Select a valid support request type.");
-  if (requestType === "CALLBACK" && (!input.callbackDate || !input.callbackTime)) throw new Error("Callback date and time are required.");
+  if (requestType === "CALLBACK") {
+    if (!input.callbackDate || !input.callbackTime) throw new Error("Callback date and time are required.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.callbackDate) || Number.isNaN(Date.parse(`${input.callbackDate}T00:00:00Z`))) {
+      throw new Error("Select a valid callback date.");
+    }
+    const date = new Date(`${input.callbackDate}T00:00:00Z`);
+    if (date.toISOString().slice(0, 10) !== input.callbackDate) throw new Error("Select a valid callback date.");
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.callbackTime)) throw new Error("Select a valid callback time.");
+  }
 
-  return prisma.supportTicket.create({
-    data: {
-      id: randomUUID(),
-      ticket_number: randomUUID(),
-      organization_id: membership.organization_id,
-      submitted_by_user_id: input.submittedByUserId,
-      request_type: requestType,
-      subject,
-      description,
-      priority,
-      callback_date: requestType === "CALLBACK" ? input.callbackDate : null,
-      callback_time: requestType === "CALLBACK" ? input.callbackTime : null,
+  return {
+    subject,
+    description,
+    priority,
+    request_type: requestType,
+    callback_date: requestType === "CALLBACK" ? input.callbackDate : null,
+    callback_time: requestType === "CALLBACK" ? input.callbackTime : null,
+  };
+}
+
+export async function listSupportTicketOrganizations() {
+  const organizations = await prisma.organization.findMany({
+    where: { is_active: true },
+    orderBy: { organization_name: "asc" },
+    select: {
+      organization_id: true,
+      organization_name: true,
+      memberships: {
+        where: { is_active: true },
+        orderBy: { created_at: "asc" },
+        select: {
+          workspaceUser: { select: { id: true, full_name: true, email: true } },
+        },
+      },
     },
+  });
+  return organizations.map((organization) => ({
+    organizationId: organization.organization_id,
+    organizationName: organization.organization_name,
+    contacts: organization.memberships.map((membership) => membership.workspaceUser),
+  }));
+}
+
+export async function createPlatformSupportTicket(input: {
+  organizationId: string;
+  submittedByUserId: string;
+  platformAdminId: string;
+  subject: string;
+  description: string;
+  priority?: string;
+  requestType?: string;
+  callbackDate?: string;
+  callbackTime?: string;
+}) {
+  const normalized = normalizeTicketInput(input);
+  const organization = await prisma.organization.findFirst({
+    where: {
+      organization_id: input.organizationId,
+      is_active: true,
+      memberships: { some: { workspace_user_id: input.submittedByUserId, is_active: true } },
+    },
+    select: { id: true },
+  });
+  if (!organization) throw new Error("Select an active organization contact.");
+
+  return prisma.$transaction(async (transaction) => {
+    const ticket = await transaction.supportTicket.create({
+      data: {
+        id: randomUUID(),
+        ticket_number: randomUUID(),
+        organization_id: organization.id,
+        submitted_by_user_id: input.submittedByUserId,
+        created_by_platform_admin_id: input.platformAdminId,
+        ...normalized,
+      },
+    });
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: input.platformAdminId,
+        action: "SUPPORT_TICKET_CREATED_FOR_ORGANIZATION",
+        entity_type: "SupportTicket",
+        entity_id: ticket.id,
+        details: {
+          organizationId: organization.id,
+          contactUserId: input.submittedByUserId,
+          subject: normalized.subject,
+          requestType: normalized.request_type,
+          priority: normalized.priority,
+        },
+      },
+    });
+    return ticket;
   });
 }
 
@@ -171,6 +283,7 @@ export async function listSupportTickets() {
     include: {
       organization: { select: { organization_name: true, organization_id: true } },
       submittedBy: { select: { full_name: true, email: true } },
+      createdByPlatformAdmin: { select: { full_name: true, email: true } },
     },
     orderBy: { created_at: "desc" },
   });
@@ -189,40 +302,184 @@ export async function getSupportTicket(id: string) {
           platformAdmin: { select: { full_name: true, email: true } },
         },
       },
+      createdByPlatformAdmin: { select: { full_name: true, email: true } },
     },
   });
 }
 
 export async function listSupportTicketsForUser(workspaceUserId: string) {
   return prisma.supportTicket.findMany({
-    where: { submitted_by_user_id: workspaceUserId },
+    where: {
+      organization: {
+        is_active: true,
+        memberships: { some: { workspace_user_id: workspaceUserId, is_active: true } },
+      },
+    },
     orderBy: { updated_at: "desc" },
-    select: { id: true, ticket_number: true, subject: true, status: true, request_type: true, created_at: true, updated_at: true },
+    select: {
+      id: true,
+      ticket_number: true,
+      subject: true,
+      status: true,
+      request_type: true,
+      created_at: true,
+      updated_at: true,
+      organization: { select: { organization_id: true, organization_name: true } },
+    },
   });
 }
 
-export async function addWorkspaceTicketMessage(ticketId: string, workspaceUserId: string, body: string) {
-  const ticket = await prisma.supportTicket.findFirst({ where: { id: ticketId, submitted_by_user_id: workspaceUserId } });
+export async function listSupportTicketsForOrganization(organizationId: string, workspaceUserId: string) {
+  const membership = await requireOrganizationAccess(workspaceUserId, organizationId);
+  return prisma.supportTicket.findMany({
+    where: { organization_id: membership.organization_id },
+    orderBy: [{ updated_at: "desc" }, { created_at: "desc" }],
+    select: {
+      id: true,
+      ticket_number: true,
+      subject: true,
+      description: true,
+      priority: true,
+      status: true,
+      request_type: true,
+      created_at: true,
+      updated_at: true,
+      submittedBy: { select: { full_name: true } },
+    },
+  });
+}
+
+export async function getSupportTicketForOrganization(organizationId: string, ticketId: string, workspaceUserId: string) {
+  const membership = await requireOrganizationAccess(workspaceUserId, organizationId);
+  return prisma.supportTicket.findFirst({
+    where: { id: ticketId, organization_id: membership.organization_id },
+    include: {
+      organization: { select: { organization_name: true, organization_id: true } },
+      submittedBy: { select: { id: true, full_name: true, email: true } },
+      messages: {
+        where: { sender_type: { not: "INTERNAL" } },
+        orderBy: { created_at: "asc" },
+        include: {
+          workspaceUser: { select: { full_name: true, email: true } },
+          platformAdmin: { select: { full_name: true, email: true } },
+        },
+      },
+    },
+  });
+}
+
+export async function getSupportTicketForUser(ticketId: string, workspaceUserId: string) {
+  return prisma.supportTicket.findFirst({
+    where: {
+      id: ticketId,
+      organization: {
+        is_active: true,
+        memberships: { some: { workspace_user_id: workspaceUserId, is_active: true } },
+      },
+    },
+    include: {
+      organization: { select: { organization_name: true, organization_id: true } },
+      submittedBy: { select: { id: true, full_name: true, email: true } },
+      messages: {
+        where: { sender_type: { not: "INTERNAL" } },
+        orderBy: { created_at: "asc" },
+        include: {
+          workspaceUser: { select: { full_name: true, email: true } },
+          platformAdmin: { select: { full_name: true, email: true } },
+        },
+      },
+    },
+  });
+}
+
+export async function addWorkspaceTicketMessage(organizationId: string, ticketId: string, workspaceUserId: string, body: string) {
+  const membership = await requireOrganizationAccess(workspaceUserId, organizationId);
+  const ticket = await prisma.supportTicket.findFirst({ where: { id: ticketId, organization_id: membership.organization_id } });
   if (!ticket) throw new Error("Support ticket not found.");
   const cleanBody = body.trim();
   if (cleanBody.length < 1 || cleanBody.length > 5000) throw new Error("Message must be between 1 and 5000 characters.");
-  return prisma.ticketMessage.create({ data: { support_ticket_id: ticketId, body: cleanBody, sender_type: "CUSTOMER", workspace_user_id: workspaceUserId } });
+  return prisma.$transaction(async (transaction) => {
+    const message = await transaction.ticketMessage.create({
+      data: { support_ticket_id: ticketId, body: cleanBody, sender_type: "CUSTOMER", workspace_user_id: workspaceUserId },
+    });
+    await transaction.supportTicket.update({ where: { id: ticketId }, data: { updated_at: new Date() } });
+    await transaction.auditEvent.create({
+      data: {
+        organization_id: membership.organization_id,
+        user_id: workspaceUserId,
+        module: "support",
+        action: "SUPPORT_TICKET_MESSAGE_ADDED",
+        entity_type: "SupportTicket",
+        entity_id: ticketId,
+        details: { senderType: "CUSTOMER" },
+      },
+    });
+    return message;
+  });
 }
 
-export async function addPlatformTicketMessage(ticketId: string, platformAdminId: string, body: string) {
-  const ticket = await prisma.supportTicket.findUnique({ where: { id: ticketId }, select: { id: true } });
+export async function addPlatformTicketMessage(ticketId: string, platformAdminId: string, body: string, internal = false) {
+  const ticket = await prisma.supportTicket.findUnique({ where: { id: ticketId }, select: { id: true, organization_id: true } });
   if (!ticket) throw new Error("Support ticket not found.");
   const cleanBody = body.trim();
   if (cleanBody.length < 1 || cleanBody.length > 5000) throw new Error("Message must be between 1 and 5000 characters.");
-  return prisma.ticketMessage.create({ data: { support_ticket_id: ticketId, body: cleanBody, sender_type: "PLATFORM", platform_admin_id: platformAdminId } });
+  return prisma.$transaction(async (transaction) => {
+    const message = await transaction.ticketMessage.create({
+      data: {
+        support_ticket_id: ticketId,
+        body: cleanBody,
+        sender_type: internal ? "INTERNAL" : "PLATFORM",
+        platform_admin_id: platformAdminId,
+      },
+    });
+    await transaction.supportTicket.update({ where: { id: ticketId }, data: { updated_at: new Date() } });
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: platformAdminId,
+        action: internal ? "SUPPORT_TICKET_PRIVATE_NOTE_ADDED" : "SUPPORT_TICKET_REPLY_SENT",
+        entity_type: "SupportTicket",
+        entity_id: ticketId,
+        details: { organizationId: ticket.organization_id },
+      },
+    });
+    return message;
+  });
 }
 
-export async function updateSupportTicketStatus(id: string, status: string) {
+export async function updateSupportTicketStatus(id: string, status: string, platformAdminId: string) {
   const normalizedStatus = normalizeSystemStatusKey(status) as SupportTicketStatus;
   if (!TICKET_STATUSES.includes(normalizedStatus)) throw new Error("Select a valid ticket status.");
 
-  return prisma.supportTicket.update({
-    where: { id },
-    data: { status: normalizedStatus },
+  return prisma.$transaction(async (transaction) => {
+    const ticket = await transaction.supportTicket.findUnique({ where: { id }, select: { id: true, status: true } });
+    if (!ticket) throw new Error("Support ticket not found.");
+    const updated = await transaction.supportTicket.update({
+      where: { id },
+      data: { status: normalizedStatus },
+    });
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: platformAdminId,
+        action: "SUPPORT_TICKET_STATUS_UPDATED",
+        entity_type: "SupportTicket",
+        entity_id: id,
+        details: { previousStatus: ticket.status, status: normalizedStatus },
+      },
+    });
+    return updated;
   });
+}
+
+export async function getPlatformSupportAttentionCounts() {
+  const [openTickets, pendingOrganizations, pendingSubscriptions] = await Promise.all([
+    prisma.supportTicket.count({ where: { status: { in: ["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS"] } } }),
+    prisma.organization.count({ where: { is_active: true, approval_status: "PENDING_APPROVAL" } }),
+    prisma.subscription.count({ where: { payment_status: { in: ["pending", "PENDING"] } } }),
+  ]);
+  return {
+    openTickets,
+    pendingOrganizations,
+    pendingSubscriptions,
+    total: openTickets + pendingOrganizations + pendingSubscriptions,
+  };
 }

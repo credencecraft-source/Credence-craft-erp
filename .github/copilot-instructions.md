@@ -73,3 +73,8 @@ These rules govern every feature, bug fix, refactor, migration, route, API, serv
 - Stop development servers before Windows production builds when Prisma engine replacement requires it. Report any unavailable test, warning, vulnerability, migration risk, or unverified workflow honestly.
 - Use the configured test branch and remote only when explicitly asked to push. Never push directly to production, force-push, rewrite history, or include unrelated work; ask for the target when branch or remote is unclear.
 - Run relevant regression tests with the configured Vitest runner (`npm test`); distinguish automated test coverage from lint, typecheck, build, and manual smoke checks.
+
+## Response Summary Format
+
+- For completed task summaries, use exactly two bullet points.
+- Keep each bullet point to 50 words or fewer.

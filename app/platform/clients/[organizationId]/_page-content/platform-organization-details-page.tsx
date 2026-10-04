@@ -33,7 +33,7 @@ export default async function PlatformOrganizationDetailsPage({
 }) {
   const { organizationId } = await params;
   const query = (await searchParams) ?? {};
-  await requirePlatformSessionAdmin();
+  const platformAdmin = await requirePlatformSessionAdmin();
   const [organization, platformVersions] = await Promise.all([
     getOrganizationClient(organizationId),
     listPlatformVersions(),
@@ -453,12 +453,18 @@ export default async function PlatformOrganizationDetailsPage({
                     Force delete bypasses the archive and 90-day retention requirements. This cannot be undone.
                   </p>
                 </div>
-                <OrganizationDeleteControl
-                  organizationName={organization.organization_name}
-                  deleteAction={deleteOrganization}
-                  forceDeleteAction={forceDeleteOrganization}
-                  disabled={!isArchived || !deletionEligibility.isEligible}
-                />
+                {platformAdmin.role === "SUPER_ADMIN" ? (
+                  <OrganizationDeleteControl
+                    organizationName={organization.organization_name}
+                    deleteAction={deleteOrganization}
+                    forceDeleteAction={forceDeleteOrganization}
+                    disabled={!isArchived || !deletionEligibility.isEligible}
+                  />
+                ) : (
+                  <p className="max-w-xs text-xs font-semibold text-red-800">
+                    Permanent organisation deletion is restricted to Super Admin.
+                  </p>
+                )}
               </section>
             ),
           },

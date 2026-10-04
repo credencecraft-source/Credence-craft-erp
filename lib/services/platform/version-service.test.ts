@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { prismaMock, transactionMock, requirePlatformSessionAdminMock } = vi.hoisted(() => {
+const {
+  prismaMock,
+  transactionMock,
+  requirePlatformSessionAdminMock,
+  requirePlatformConfigurationAccessMock,
+} = vi.hoisted(() => {
   const delegate = () => ({
     create: vi.fn().mockResolvedValue({ id: "entity-id" }),
     update: vi.fn().mockResolvedValue({ id: "entity-id" }),
@@ -46,12 +51,14 @@ const { prismaMock, transactionMock, requirePlatformSessionAdminMock } = vi.hois
       versionTransactionRestriction: prismaMock.versionTransactionRestriction,
     },
     requirePlatformSessionAdminMock: vi.fn().mockResolvedValue({ id: "admin-id" }),
+    requirePlatformConfigurationAccessMock: vi.fn().mockResolvedValue({ id: "admin-id" }),
   };
 });
 
 vi.mock("@/lib/database/prisma-client", () => ({ prisma: prismaMock }));
 vi.mock("@/lib/auth/platform-session-manager", () => ({
   requirePlatformSessionAdmin: requirePlatformSessionAdminMock,
+  requirePlatformConfigurationAccess: requirePlatformConfigurationAccessMock,
 }));
 vi.mock("@/lib/services/platform/segment-service", () => ({
   ensureDefaultSegments: vi.fn().mockResolvedValue(undefined),

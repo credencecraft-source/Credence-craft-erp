@@ -5,7 +5,7 @@ import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
-import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { requirePlatformConfigurationAccess } from "@/lib/auth/platform-session-manager";
 import {
   getPlatformAlternativeMobileOtpConfiguration,
   getPlatformMobileOtpConfiguration,
@@ -18,7 +18,7 @@ export default async function PlatformMobileOtpConfigurationPage({
 }: {
   searchParams?: Promise<{ error?: string; success?: string }>;
 }) {
-  await requirePlatformSessionAdmin();
+  await requirePlatformConfigurationAccess();
   const configuration = await getPlatformMobileOtpConfiguration();
   const alternativeConfiguration =
     await getPlatformAlternativeMobileOtpConfiguration();
@@ -26,7 +26,7 @@ export default async function PlatformMobileOtpConfigurationPage({
 
   async function saveMobileOtpConfiguration(formData: FormData) {
     "use server";
-    await requirePlatformSessionAdmin();
+    await requirePlatformConfigurationAccess();
 
     try {
       await savePlatformMobileOtpConfiguration({
@@ -55,7 +55,7 @@ export default async function PlatformMobileOtpConfigurationPage({
 
   async function saveAlternativeMobileOtpConfiguration(formData: FormData) {
     "use server";
-    await requirePlatformSessionAdmin();
+    await requirePlatformConfigurationAccess();
 
     try {
       await savePlatformAlternativeMobileOtpConfiguration({

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { encryptSecret } from "@/lib/auth/secret-cryptography";
+import { requirePlatformConfigurationAccess } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 
 async function migrateLegacyCredentials() {
@@ -25,6 +26,7 @@ async function migrateLegacyCredentials() {
 }
 
 export async function listDatabaseConnections() {
+  await requirePlatformConfigurationAccess();
   await migrateLegacyCredentials();
 
   return prisma.databaseConnection.findMany({
@@ -62,6 +64,7 @@ export async function createDatabaseConnection(input: {
   status?: string;
   notes?: string;
 }) {
+  await requirePlatformConfigurationAccess();
   const provider = input.provider.trim();
   const connectionName = input.connectionName.trim();
 

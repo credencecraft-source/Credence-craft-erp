@@ -20,8 +20,6 @@ import {
 } from "@/lib/database/database-errors";
 import { setPlatformSessionCookie } from "@/lib/auth/platform-session-manager";
 
-const SUPPORT_EMAIL = "jassimtkd@gmail.com";
-
 const USE_DEV_USER_STORE = process.env.USE_DEV_USER_STORE === "true";
 const isDevBypass =
   USE_DEV_USER_STORE ||
@@ -87,17 +85,13 @@ export async function POST(request: Request) {
     }
 
     if (mode === "support") {
-      if (email !== SUPPORT_EMAIL) {
-        return NextResponse.json({ error: "That email address is not registered for support login." }, { status: 403 });
-      }
-
       if (!(await verifyEmailOtp(email, otp, "SUPPORT"))) {
         return NextResponse.json({ error: "Invalid OTP." }, { status: 401 });
       }
 
-      const admin = await prisma.platformAdmin.findUnique({ where: { email: SUPPORT_EMAIL } });
+      const admin = await prisma.platformAdmin.findUnique({ where: { email } });
       if (!admin || !admin.is_active) {
-        return NextResponse.json({ error: "Support login is not available for this email address." }, { status: 403 });
+        return NextResponse.json({ error: "Platform access is not available for this email address." }, { status: 403 });
       }
 
       await prisma.platformAdmin.update({ where: { id: admin.id }, data: { last_login_at: new Date() } });

@@ -255,6 +255,7 @@ describe("subscription lifecycle eligibility", () => {
     const existingEndDate = new Date("2027-01-31T09:30:00.000Z");
     const latestExistingEndDate = new Date("2027-03-31T09:30:00.000Z");
     mocks.requirePlatformSessionAdmin.mockResolvedValue({ id: "platform-admin-id" });
+    mocks.transaction.organization.findFirst.mockResolvedValue({ id: "organization-id" });
     mocks.transaction.subscription.findUnique.mockResolvedValue({
       id: "pending-subscription-id",
       organization_id: "organization-id",
@@ -298,5 +299,57 @@ describe("subscription lifecycle eligibility", () => {
         entity_id: "pending-subscription-id",
       }),
     }));
+  });
+
+  it("repairs a public organization reference before approving a legacy subscription", async () => {
+    mocks.requirePlatformSessionAdmin.mockResolvedValue({ id: "platform-admin-id" });
+    mocks.transaction.organization.findFirst.mockResolvedValue({ id: "internal-organization-id" });
+    mocks.transaction.subscription.findUnique.mockResolvedValue({
+      id: "pending-subscription-id",
+      organization_id: "public-organization-id",
+      business_type_id: "business-type-id",
+      payment_status: "pending",
+      service_status: "inactive",
+      billing_months: 12,
+    });
+    mocks.transaction.subscription.findMany.mockResolvedValue([]);
+    mocks.transaction.subscription.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.subscription.findUniqueOrThrow.mockResolvedValue({
+      id: "pending-subscription-id",
+      organization_id: "internal-organization-id",
+      business_type_id: "business-type-id",
+      plan_id: "plan-id",
+      payment_status: "paid",
+      service_status: "active",
+      start_date: new Date("2026-10-04T00:00:00.000Z"),
+      end_date: new Date("2027-10-04T00:00:00.000Z"),
+    });
+
+    await approveSubscription("pending-subscription-id");
+
+    expect(mocks.transaction.subscription.update).toHaveBeenCalledWith({
+      where: { id: "pending-subscription-id" },
+      data: { organization_id: "internal-organization-id" },
+    });
+    expect(mocks.transaction.subscription.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "pending-subscription-id", payment_status: { in: ["pending", "PENDING"] } },
+    }));
+  });
+
+  it("rejects approval of a subscription with no matching organization", async () => {
+    mocks.requirePlatformSessionAdmin.mockResolvedValue({ id: "platform-admin-id" });
+    mocks.transaction.organization.findFirst.mockResolvedValue(null);
+    mocks.transaction.subscription.findUnique.mockResolvedValue({
+      id: "orphan-subscription-id",
+      organization_id: "missing-organization-id",
+      business_type_id: "business-type-id",
+      payment_status: "pending",
+      service_status: "inactive",
+      billing_months: 12,
+    });
+
+    await expect(approveSubscription("orphan-subscription-id"))
+      .rejects.toThrow(/organization no longer exists/);
+    expect(mocks.transaction.subscription.updateMany).not.toHaveBeenCalled();
   });
 });

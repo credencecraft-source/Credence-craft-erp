@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import { CalendarDays, CheckCircle2, Clock3, Headset, X } from "lucide-react";
 
 type SupportTicketTriggerProps = { organizationId: string; callbackOnly?: boolean };
@@ -21,6 +23,7 @@ function createTimeSlots() {
 }
 
 export function SupportTicketTrigger({ organizationId, callbackOnly = false }: SupportTicketTriggerProps) {
+  const { workspaceId } = useParams<{ workspaceId: string }>();
   const [open, setOpen] = useState(false);
   const [requestType] = useState<"TICKET" | "CALLBACK">(callbackOnly ? "CALLBACK" : "TICKET");
   const [subject] = useState(callbackOnly ? "Book a demo request" : "Support request");
@@ -61,6 +64,19 @@ export function SupportTicketTrigger({ organizationId, callbackOnly = false }: S
     } finally {
       setSaving(false);
     }
+  }
+
+  if (!callbackOnly) {
+    return (
+      <Link
+        href={`/dashboard/${workspaceId}/organizations/${encodeURIComponent(organizationId)}/support-tickets`}
+        className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
+        title="Support tickets"
+        aria-label="Support tickets"
+      >
+        <Headset className="h-4 w-4" aria-hidden="true" />
+      </Link>
+    );
   }
 
   return (

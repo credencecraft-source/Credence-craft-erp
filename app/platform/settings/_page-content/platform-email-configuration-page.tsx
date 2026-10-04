@@ -5,7 +5,7 @@ import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
-import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { requirePlatformConfigurationAccess } from "@/lib/auth/platform-session-manager";
 import {
   getPlatformEmailConfiguration,
   savePlatformEmailConfiguration,
@@ -17,13 +17,13 @@ export default async function PlatformEmailConfigurationPage({
 }: {
   searchParams?: Promise<{ error?: string; success?: string }>;
 }) {
-  await requirePlatformSessionAdmin();
+  await requirePlatformConfigurationAccess();
   const configuration = await getPlatformEmailConfiguration();
   const params = (await searchParams) ?? {};
 
   async function saveEmailConfiguration(formData: FormData) {
     "use server";
-    await requirePlatformSessionAdmin();
+    await requirePlatformConfigurationAccess();
     try {
       await savePlatformEmailConfiguration({
         smtpHost: String(formData.get("smtpHost") || ""),
@@ -43,7 +43,7 @@ export default async function PlatformEmailConfigurationPage({
 
   async function sendTestEmailAction(formData: FormData) {
     "use server";
-    await requirePlatformSessionAdmin();
+    await requirePlatformConfigurationAccess();
     try {
       const recipient = String(formData.get("recipient") || "").trim();
       if (!recipient) throw new Error("Enter a test recipient email address.");

@@ -1,9 +1,10 @@
 import { prisma } from "@/lib/database/prisma-client";
 import { Prisma } from "@prisma/client";
-import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { requirePlatformConfigurationAccess } from "@/lib/auth/platform-session-manager";
 import { ensureDefaultSegments } from "@/lib/services/platform/segment-service";
 
 export async function listVersions() {
+  await requirePlatformConfigurationAccess();
   return prisma.platformVersion.findMany({
     orderBy: { version_name: "desc" },
     include: {
@@ -13,7 +14,7 @@ export async function listVersions() {
 }
 
 export async function createVersion(input: { versionName: string; description?: string }) {
-  await requirePlatformSessionAdmin();
+  await requirePlatformConfigurationAccess();
   const versionName = input.versionName.trim();
   if (!versionName) throw new Error("Version name is required.");
 
@@ -81,7 +82,7 @@ async function syncVersionCatalog(versionId: string) {
 }
 
 export async function duplicateVersion(id: string, input?: { versionName?: string; description?: string }) {
-  await requirePlatformSessionAdmin();
+  await requirePlatformConfigurationAccess();
 
   const sourceVersion = await prisma.platformVersion.findUnique({
     where: { id },
@@ -224,7 +225,7 @@ export async function duplicateVersion(id: string, input?: { versionName?: strin
 }
 
 export async function deleteVersion(id: string) {
-  await requirePlatformSessionAdmin();
+  await requirePlatformConfigurationAccess();
 
   const assignedOrganizationCount = await prisma.organization.count({
     where: { platform_version_id: id },
@@ -238,7 +239,7 @@ export async function deleteVersion(id: string) {
 }
 
 export async function renameVersion(id: string, versionName: string) {
-  await requirePlatformSessionAdmin();
+  await requirePlatformConfigurationAccess();
   const normalizedName = versionName.trim();
   if (!normalizedName) throw new Error("Version name is required.");
 
@@ -255,6 +256,7 @@ export async function renameVersion(id: string, versionName: string) {
 }
 
 export async function getVersionDetails(id: string) {
+  await requirePlatformConfigurationAccess();
   await syncVersionCatalog(id);
 
   return prisma.platformVersion.findUnique({
@@ -273,6 +275,7 @@ export async function getVersionDetails(id: string) {
 }
 
 export async function addSegmentToVersionBusinessType(versionBusinessTypeId: string, segmentId: string) {
+  await requirePlatformConfigurationAccess();
   const [versionBusinessType, segment] = await Promise.all([
     prisma.versionBusinessType.findUnique({ where: { id: versionBusinessTypeId }, select: { id: true } }),
     prisma.segment.findUnique({ where: { id: segmentId }, select: { id: true } }),
@@ -285,6 +288,7 @@ export async function addSegmentToVersionBusinessType(versionBusinessTypeId: str
 }
 
 export async function removeSegmentFromVersionBusinessType(id: string) {
+  await requirePlatformConfigurationAccess();
   const assignment = await prisma.versionBusinessTypeSegment.findUnique({ where: { id }, select: { id: true } });
   if (!assignment) throw new Error("The selected segment assignment does not exist.");
 
@@ -292,6 +296,7 @@ export async function removeSegmentFromVersionBusinessType(id: string) {
 }
 
 export async function setVersionBusinessTypeSegmentActive(id: string, isActive: boolean) {
+  await requirePlatformConfigurationAccess();
   return prisma.versionBusinessTypeSegment.update({
     where: { id },
     data: { is_active: isActive },
@@ -299,6 +304,7 @@ export async function setVersionBusinessTypeSegmentActive(id: string, isActive: 
 }
 
 export async function setVersionBusinessTypeSegmentPrice(id: string, value: string) {
+  await requirePlatformConfigurationAccess();
   const normalized = value.trim();
   if (!normalized) {
     return prisma.versionBusinessTypeSegment.update({ where: { id }, data: { price: null } });
@@ -315,6 +321,7 @@ export async function setVersionBusinessTypeSegmentPrice(id: string, value: stri
 }
 
 export async function setVersionBusinessTypeSegmentLabel(id: string, label: string) {
+  await requirePlatformConfigurationAccess();
   return prisma.versionBusinessTypeSegment.update({
     where: { id },
     data: { label: label.trim() || null },
@@ -322,6 +329,7 @@ export async function setVersionBusinessTypeSegmentLabel(id: string, label: stri
 }
 
 export async function setVersionBusinessTypeFree(id: string, isFree: boolean) {
+  await requirePlatformConfigurationAccess();
   return prisma.versionBusinessType.update({
     where: { id },
     data: { is_free: isFree },

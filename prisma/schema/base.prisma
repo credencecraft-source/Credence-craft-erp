@@ -240,6 +240,16 @@ enum OrganizationInvitationStatus {
   REVOKED
 }
 
+enum PlatformAdminRole {
+  SUPER_ADMIN
+  ADMIN
+}
+
+enum PlatformTeamRole {
+  CMO
+  CTO
+}
+
 model OrganizationInvitation {
   id                 String                       @id @default(cuid())
   token              String                       @unique @db.VarChar(128)
@@ -280,18 +290,27 @@ model WorkspaceNotification {
 }
 
 model PlatformAdmin {
-  id             String          @id @default(cuid())
-  admin_id       String          @unique @default(uuid())
-  full_name      String          @db.VarChar(255)
-  email          String          @unique @db.VarChar(255)
-  password_hash  String          @db.VarChar(255)
-  is_active      Boolean         @default(true)
-  created_at     DateTime        @default(now())
-  updated_at     DateTime        @updatedAt
+  id             String             @id @default(cuid())
+  admin_id       String             @unique @default(uuid())
+  full_name      String             @db.VarChar(255)
+  email          String             @unique @db.VarChar(255)
+  mobile_number  String?            @db.VarChar(20)
+  password_hash  String             @db.VarChar(255)
+  role           PlatformAdminRole  @default(SUPER_ADMIN)
+  team_role      PlatformTeamRole?
+  manager_id     String?
+  is_active      Boolean            @default(true)
+  created_at     DateTime           @default(now())
+  updated_at     DateTime           @updatedAt
   last_login_at  DateTime?
+  manager        PlatformAdmin?     @relation("PlatformAdminTeam", fields: [manager_id], references: [id], onDelete: SetNull)
+  teamMembers    PlatformAdmin[]    @relation("PlatformAdminTeam")
   ticketMessages TicketMessage[]
+  createdSupportTickets SupportTicket[] @relation("SupportTicketPlatformCreator")
   auditEvents    PlatformAuditEvent[]
 
+  @@unique([manager_id, team_role])
+  @@index([manager_id, role, is_active])
   @@map("platform_admins")
 }
 
@@ -367,6 +386,7 @@ model SupportTicket {
   ticket_number        String          @unique @default(uuid())
   organization_id      String
   submitted_by_user_id String
+  created_by_platform_admin_id String?
   request_type         String          @default("TICKET") @db.VarChar(30)
   subject              String          @db.VarChar(255)
   description          String          @db.VarChar(5000)
@@ -378,10 +398,12 @@ model SupportTicket {
   updated_at           DateTime        @updatedAt
   organization         Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   submittedBy          WorkspaceUser   @relation("SupportTicketSubmitter", fields: [submitted_by_user_id], references: [id], onDelete: Cascade)
+  createdByPlatformAdmin PlatformAdmin? @relation("SupportTicketPlatformCreator", fields: [created_by_platform_admin_id], references: [id], onDelete: SetNull)
   messages             TicketMessage[]
 
   @@index([organization_id, status, created_at])
   @@index([status, created_at])
+  @@index([created_by_platform_admin_id])
   @@map("support_tickets")
 }
 

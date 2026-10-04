@@ -4,7 +4,10 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 
 import { normalizeOrganizationInput, validateOrganizationInput } from "./organization-validators";
-import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import {
+  requirePlatformSessionAdmin,
+  requirePlatformSessionSuperAdmin,
+} from "@/lib/auth/platform-session-manager";
 import { hasOrganizationTrialAccess, startOrganizationTrialOnApproval, startOrganizationTrialOnFirstOpen } from "@/lib/services/platform/organization-trial-service";
 
 export type OrganizationCreateInput = {
@@ -774,7 +777,7 @@ export function getOrganizationDeletionEligibility(archivedAt: Date | null, now 
 }
 
 export async function deleteOrganizationFromPlatform(organizationId: string) {
-  await requirePlatformSessionAdmin();
+  await requirePlatformSessionSuperAdmin();
 
   await prisma.$transaction(async (transaction) => {
     const organization = await transaction.organization.findUnique({
@@ -800,7 +803,7 @@ export async function deleteOrganizationFromPlatform(organizationId: string) {
 }
 
 export async function forceDeleteOrganizationFromPlatform(organizationId: string, confirmationName: string) {
-  const platformAdmin = await requirePlatformSessionAdmin();
+  const platformAdmin = await requirePlatformSessionSuperAdmin();
 
   await prisma.$transaction(async (transaction) => {
     const organization = await transaction.organization.findUnique({

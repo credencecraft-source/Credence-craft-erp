@@ -14,6 +14,7 @@ import {
   LifeBuoy,
   Mail,
   Smartphone,
+  ShieldCheck,
 } from "lucide-react";
 import Sidebar from "@/components/ui/Sidebar";
 
@@ -66,11 +67,27 @@ const NAV_SECTIONS = [
         href: "/platform/settings/mobile-otp",
         icon: Smartphone,
       },
+      { label: "Platform access", href: "/platform/settings/access", icon: ShieldCheck },
     ],
   },
 ] as const;
 
-export default function PlatformRootLayoutClient() {
+export default function PlatformRootLayoutClient({
+  accessLabel,
+  canManageAccounts,
+  canAccessConfiguration,
+  attentionCounts,
+}: {
+  accessLabel: string;
+  canManageAccounts: boolean;
+  canAccessConfiguration: boolean;
+  attentionCounts: {
+    openTickets: number;
+    pendingOrganizations: number;
+    pendingSubscriptions: number;
+    total: number;
+  };
+}) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
 
   const toggleSection = (title: string) => {
@@ -79,6 +96,12 @@ export default function PlatformRootLayoutClient() {
       [title]: !prev[title],
     }));
   };
+
+  const visibleSections = NAV_SECTIONS.filter(
+    (section) =>
+      canAccessConfiguration ||
+      !["Databases", "Plans", "Settings"].includes(section.title),
+  );
 
   return (
     <Sidebar className="group">
@@ -89,12 +112,12 @@ export default function PlatformRootLayoutClient() {
 
         <div className="hidden group-data-[expanded=true]:block">
           <h2 className="text-sm font-bold text-slate-800">Platform</h2>
-          <p className="text-xs text-slate-500">Administration</p>
+          <p className="text-xs text-slate-500">{accessLabel}</p>
         </div>
       </div>
 
       <nav className="space-y-2">
-        {NAV_SECTIONS.map((section) => {
+        {visibleSections.map((section) => {
           const SectionIcon = section.icon;
           const isOpen = !!openSections[section.title];
 
@@ -120,8 +143,15 @@ export default function PlatformRootLayoutClient() {
 
               {isOpen && (
                 <div className="space-y-1 pl-2 group-data-[expanded=true]:pl-4">
-                  {section.items.map((item) => {
+                  {section.items.filter((item) => item.href !== "/platform/settings/access" || canManageAccounts).map((item) => {
                     const ItemIcon = item.icon;
+                    const attentionCount = item.href === "/platform/support-tickets"
+                      ? attentionCounts.openTickets
+                      : item.href === "/platform/organisations"
+                        ? attentionCounts.pendingOrganizations
+                        : item.href === "/platform/subscriptions"
+                          ? attentionCounts.pendingSubscriptions
+                          : 0;
 
                     return (
                       <Link
@@ -133,6 +163,7 @@ export default function PlatformRootLayoutClient() {
                         <span className="hidden whitespace-nowrap group-data-[expanded=true]:block">
                           {item.label}
                         </span>
+                        {attentionCount > 0 && <span aria-label={`${attentionCount} items need attention`} className="ml-auto rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold leading-none text-amber-800">{attentionCount}</span>}
                       </Link>
                     );
                   })}

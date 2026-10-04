@@ -1,6 +1,9 @@
 import { Prisma } from "@prisma/client";
 
-import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import {
+  requirePlatformSessionAdmin,
+  requirePlatformSessionSuperAdmin,
+} from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 import {
   isValidEmail,
@@ -130,7 +133,7 @@ export async function getWorkspaceUser(userId: string) {
 }
 
 export async function deleteWorkspaceUser(userId: string) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformSessionSuperAdmin();
   const normalizedUserId = typeof userId === "string" ? userId.trim() : "";
   if (!normalizedUserId) {
     throw new WorkspaceUserServiceError("Workspace user ID is required.");
