@@ -329,6 +329,22 @@ model PlatformAuditEvent {
   @@map("platform_audit_events")
 }
 
+model PlatformLead {
+  id           String   @id @default(cuid())
+  name         String   @db.VarChar(255)
+  email        String?  @db.VarChar(255)
+  mobile       String?  @db.VarChar(20)
+  company_name String?  @db.VarChar(255)
+  city         String?  @db.VarChar(120)
+  source       String?  @db.VarChar(120)
+  stage        String   @default("1-new") @db.VarChar(80)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@index([updated_at])
+  @@map("platform_leads")
+}
+
 model PlatformEmailConfiguration {
   id                      String   @id @default(cuid())
   provider                String   @default("smtp") @db.VarChar(40)

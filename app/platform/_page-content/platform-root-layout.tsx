@@ -6,6 +6,7 @@ import {
   Building2,
   Database,
   Users,
+  UserRoundPlus,
   CreditCard,
   Layers3,
   Tags,
@@ -25,6 +26,13 @@ const NAV_SECTIONS = [
     items: [
       { label: "Organisations", href: "/platform/organisations", icon: Building2 },
       { label: "Subscriptions", href: "/platform/subscriptions", icon: CreditCard },
+    ],
+  },
+  {
+    title: "Leads",
+    icon: UserRoundPlus,
+    items: [
+      { label: "Leads", href: "/platform/leads", icon: UserRoundPlus },
     ],
   },
   {
@@ -74,11 +82,13 @@ const NAV_SECTIONS = [
 
 export default function PlatformRootLayoutClient({
   accessLabel,
+  isSuperAdminView,
   canManageAccounts,
   canAccessConfiguration,
   attentionCounts,
 }: {
   accessLabel: string;
+  isSuperAdminView: boolean;
   canManageAccounts: boolean;
   canAccessConfiguration: boolean;
   attentionCounts: {
@@ -99,8 +109,11 @@ export default function PlatformRootLayoutClient({
 
   const visibleSections = NAV_SECTIONS.filter(
     (section) =>
-      canAccessConfiguration ||
-      !["Databases", "Plans", "Settings"].includes(section.title),
+      (!isSuperAdminView || !["Databases", "Plans", "Support"].includes(section.title)) &&
+      (isSuperAdminView && section.title === "Settings"
+        ? true
+        : canAccessConfiguration ||
+          !["Databases", "Plans", "Settings"].includes(section.title)),
   );
 
   return (
@@ -143,7 +156,10 @@ export default function PlatformRootLayoutClient({
 
               {isOpen && (
                 <div className="space-y-1 pl-2 group-data-[expanded=true]:pl-4">
-                  {section.items.filter((item) => item.href !== "/platform/settings/access" || canManageAccounts).map((item) => {
+                  {section.items
+                    .filter((item) => item.href !== "/platform/settings/access" || canManageAccounts)
+                    .filter((item) => !isSuperAdminView || section.title !== "Settings" || item.href === "/platform/settings/access")
+                    .map((item) => {
                     const ItemIcon = item.icon;
                     const attentionCount = item.href === "/platform/support-tickets"
                       ? attentionCounts.openTickets
@@ -166,7 +182,7 @@ export default function PlatformRootLayoutClient({
                         {attentionCount > 0 && <span aria-label={`${attentionCount} items need attention`} className="ml-auto rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold leading-none text-amber-800">{attentionCount}</span>}
                       </Link>
                     );
-                  })}
+                    })}
                 </div>
               )}
             </div>

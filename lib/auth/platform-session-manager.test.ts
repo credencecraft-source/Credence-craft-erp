@@ -4,6 +4,7 @@ import {
   assertPlatformConfigurationAccess,
   assertPlatformSuperAdmin,
   getEffectivePlatformRole,
+  getEffectivePlatformTeamRole,
   type PlatformSessionAdmin,
 } from "@/lib/auth/platform-session-manager";
 
@@ -22,10 +23,20 @@ function makeAdmin(role: PlatformSessionAdmin["role"]): PlatformSessionAdmin {
 }
 
 describe("platform view permissions", () => {
-  it("allows Super Admin to switch only down to Admin view", () => {
+  it("allows Super Admin to switch down to Admin, CMO, or CTO views", () => {
     expect(getEffectivePlatformRole("SUPER_ADMIN", "ADMIN")).toBe("ADMIN");
+    expect(getEffectivePlatformRole("SUPER_ADMIN", "CMO")).toBe("ADMIN");
+    expect(getEffectivePlatformRole("SUPER_ADMIN", "CTO")).toBe("ADMIN");
     expect(getEffectivePlatformRole("SUPER_ADMIN", undefined)).toBe("SUPER_ADMIN");
     expect(getEffectivePlatformRole("ADMIN", "SUPER_ADMIN")).toBe("ADMIN");
+  });
+
+  it("applies team-role restrictions only to Super Admin previews", () => {
+    expect(getEffectivePlatformTeamRole("SUPER_ADMIN", "CMO", null)).toBe("CMO");
+    expect(getEffectivePlatformTeamRole("SUPER_ADMIN", "CTO", null)).toBe("CTO");
+    expect(getEffectivePlatformTeamRole("SUPER_ADMIN", "ADMIN", null)).toBeNull();
+    expect(getEffectivePlatformTeamRole("ADMIN", "CMO", null)).toBeNull();
+    expect(getEffectivePlatformTeamRole("ADMIN", undefined, "CTO")).toBe("CTO");
   });
 
   it("does not grant delete-level authority while Super Admin is in Admin view", () => {

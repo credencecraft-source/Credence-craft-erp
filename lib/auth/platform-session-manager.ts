@@ -16,6 +16,8 @@ export type PlatformSessionAdmin = {
   mobile_number: string | null;
 };
 
+export type PlatformViewMode = "SUPER_ADMIN" | "ADMIN" | "CMO" | "CTO";
+
 export const PLATFORM_SESSION_COOKIE_NAME = "cc_platform_session";
 export const PLATFORM_VIEW_COOKIE_NAME = "cc_platform_view";
 const PLATFORM_SESSION_TTL_SECONDS = 60 * 60 * 24;
@@ -24,7 +26,22 @@ export function getEffectivePlatformRole(
   actualRole: "SUPER_ADMIN" | "ADMIN",
   requestedView: string | undefined,
 ): "SUPER_ADMIN" | "ADMIN" {
-  return actualRole === "SUPER_ADMIN" && requestedView === "ADMIN" ? "ADMIN" : actualRole;
+  return actualRole === "SUPER_ADMIN" &&
+    (requestedView === "ADMIN" || requestedView === "CMO" || requestedView === "CTO")
+    ? "ADMIN"
+    : actualRole;
+}
+
+export function getEffectivePlatformTeamRole(
+  actualRole: "SUPER_ADMIN" | "ADMIN",
+  requestedView: string | undefined,
+  actualTeamRole: "CMO" | "CTO" | null,
+): "CMO" | "CTO" | null {
+  if (actualRole !== "SUPER_ADMIN") {
+    return actualTeamRole;
+  }
+
+  return requestedView === "CMO" || requestedView === "CTO" ? requestedView : null;
 }
 
 export function assertPlatformSuperAdmin(admin: PlatformSessionAdmin) {
@@ -107,7 +124,7 @@ export async function getPlatformSessionAdmin(): Promise<PlatformSessionAdmin | 
     is_active: admin.is_active,
     role: getEffectivePlatformRole(admin.role, requestedView),
     actualRole: admin.role,
-    team_role: admin.team_role,
+    team_role: getEffectivePlatformTeamRole(admin.role, requestedView, admin.team_role),
     mobile_number: admin.mobile_number,
   };
 }
@@ -134,15 +151,18 @@ export async function requirePlatformConfigurationAccess(): Promise<PlatformSess
   return admin;
 }
 
-export async function setPlatformViewMode(mode: "SUPER_ADMIN" | "ADMIN") {
+export async function setPlatformViewMode(mode: PlatformViewMode) {
   const admin = await requirePlatformSessionAdmin();
   if (admin.actualRole !== "SUPER_ADMIN") {
     throw new Error("Only a Super Admin can switch platform views.");
   }
+  if (mode !== "SUPER_ADMIN" && mode !== "ADMIN" && mode !== "CMO" && mode !== "CTO") {
+    throw new Error("Select a valid platform view.");
+  }
 
   const cookieStore = await cookies();
-  if (mode === "ADMIN") {
-    cookieStore.set(PLATFORM_VIEW_COOKIE_NAME, "ADMIN", {
+  if (mode !== "SUPER_ADMIN") {
+    cookieStore.set(PLATFORM_VIEW_COOKIE_NAME, mode, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",

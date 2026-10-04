@@ -1,16 +1,16 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Bell, Home } from "lucide-react";
+import { ArrowUpRight, Bell, Home } from "lucide-react";
 import Navbar from "@/components/ui/Navbar";
 import Button from "@/components/ui/Button";
-import Select from "@/components/ui/Select";
 import {
   logoutPlatformSession,
   requirePlatformSessionAdmin,
   setPlatformViewMode,
 } from "@/lib/auth/platform-session-manager";
 import PlatformRootLayoutClient from "./_page-content/platform-root-layout";
+import PlatformViewSelector from "./_page-content/platform-view-selector";
 import { getPlatformSupportAttentionCounts } from "@/lib/services/organizations/support-ticket-service";
 
 export default async function PlatformRootLayout({
@@ -39,7 +39,7 @@ export default async function PlatformRootLayout({
   async function switchPlatformView(formData: FormData) {
     "use server";
     const mode = String(formData.get("mode") ?? "");
-    if (mode !== "ADMIN" && mode !== "SUPER_ADMIN") {
+    if (mode !== "ADMIN" && mode !== "SUPER_ADMIN" && mode !== "CMO" && mode !== "CTO") {
       throw new Error("Select a valid platform view.");
     }
     await setPlatformViewMode(mode);
@@ -72,6 +72,17 @@ export default async function PlatformRootLayout({
             <span>Home</span>
           </Link>
           <Link
+            href="/dashboard"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+            aria-label="Go to app"
+            title="Go to app"
+          >
+            <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
+            <span>Go to app</span>
+          </Link>
+          <Link
             href="/platform/support-tickets"
             className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100"
             aria-label={`${attentionCounts.total} platform items need attention`}
@@ -86,19 +97,7 @@ export default async function PlatformRootLayout({
           </span>
 
           {admin.actualRole === "SUPER_ADMIN" && (
-            <form action={switchPlatformView} className="flex items-center gap-2">
-              <Select
-                aria-label="Platform role view"
-                name="mode"
-                defaultValue={admin.role}
-                options={[
-                  { label: "Super Admin", value: "SUPER_ADMIN" },
-                  { label: "Admin", value: "ADMIN" },
-                ]}
-                className="w-auto py-2"
-              />
-              <Button type="submit" variant="secondary" size="sm">Switch</Button>
-            </form>
+            <PlatformViewSelector action={switchPlatformView} value={admin.team_role ?? admin.role} />
           )}
 
           <form action={logoutAction}>
@@ -111,6 +110,7 @@ export default async function PlatformRootLayout({
         <div className="flex min-h-0 flex-1">
           <PlatformRootLayoutClient
             accessLabel={admin.role === "SUPER_ADMIN" ? "Super Admin" : admin.team_role ?? "Admin"}
+            isSuperAdminView={admin.role === "SUPER_ADMIN"}
             canManageAccounts={admin.role === "SUPER_ADMIN" || (admin.role === "ADMIN" && admin.team_role === null)}
             canAccessConfiguration={admin.team_role === null}
             attentionCounts={attentionCounts}
