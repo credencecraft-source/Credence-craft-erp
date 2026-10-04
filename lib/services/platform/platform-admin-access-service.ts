@@ -14,6 +14,11 @@ export type CreatePlatformAccountInput = {
   kind: PlatformAccountKind;
 };
 
+export type UpdatePlatformAccountInput = {
+  kind: PlatformAccountKind;
+  managerId?: string;
+};
+
 function normalizePlatformAccountInput(input: CreatePlatformAccountInput) {
   const fullName = input.fullName.trim();
   const email = input.email.trim().toLowerCase();
@@ -218,4 +223,199 @@ export async function setPlatformAccessAccountActive(accountId: string, isActive
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   return updated;
+}
+
+export async function updatePlatformAccessAccount(
+  accountId: string,
+  input: UpdatePlatformAccountInput,
+) {
+  const actor = await requirePlatformSessionAdmin();
+  if (actor.team_role) {
+    throw new Error("CMO and CTO team accounts cannot manage platform accounts.");
+  }
+  if (!accountId.trim()) throw new Error("Select a platform account.");
+
+  if (input.kind !== "ADMIN" && input.kind !== "CMO" && input.kind !== "CTO") {
+    throw new Error("Select a valid platform account type.");
+  }
+  const teamRole = input.kind === "ADMIN" ? null : input.kind;
+  if (actor.role !== "SUPER_ADMIN" && !teamRole) {
+    throw new Error("Only a Super Admin can assign Platform Admin access.");
+  }
+
+  return prisma.$transaction(async (transaction) => {
+    const [actorRecord, account] = await Promise.all([
+      transaction.platformAdmin.findUnique({
+        where: { id: actor.id },
+        select: { is_active: true },
+      }),
+      transaction.platformAdmin.findUnique({
+        where: { id: accountId },
+        select: {
+          id: true,
+          role: true,
+          team_role: true,
+          manager_id: true,
+        },
+      }),
+    ]);
+    if (!actorRecord?.is_active) {
+      throw new Error("An active platform account is required to manage access.");
+    }
+    if (!account || account.role !== "ADMIN") {
+      throw new Error("Platform account not found.");
+    }
+    if (actor.role === "ADMIN" && (!account.team_role || account.manager_id !== actor.id)) {
+      throw new Error("You can only manage your own CMO and CTO team seats.");
+    }
+    if (actor.id === account.id) {
+      throw new Error("You cannot edit your own platform access.");
+    }
+
+    let managerId: string | null = null;
+    if (teamRole) {
+      managerId = actor.role === "SUPER_ADMIN" ? input.managerId?.trim() || actor.id : actor.id;
+      if (!managerId) throw new Error("Select the Admin responsible for this team seat.");
+      const manager = await transaction.platformAdmin.findUnique({
+        where: { id: managerId },
+        select: { id: true, role: true, team_role: true, is_active: true },
+      });
+      const isSuperAdminFallback = manager?.id === actor.id && manager.role === "SUPER_ADMIN";
+      if (!manager || (manager.role !== "ADMIN" && !isSuperAdminFallback) || manager.team_role !== null) {
+        throw new Error("Select a valid Admin account to manage this team seat.");
+      }
+      if (!manager.is_active && manager.id !== account.manager_id) {
+        throw new Error("Select an active Admin account to manage this team seat.");
+      }
+      if (manager.id === account.id) {
+        throw new Error("An account cannot manage its own platform team seat.");
+      }
+      if (actor.role === "ADMIN" && manager.id !== actor.id) {
+        throw new Error("You can only assign team seats to your own Admin account.");
+      }
+
+      const existingSeat = await transaction.platformAdmin.findUnique({
+        where: { manager_id_team_role: { manager_id: managerId, team_role: teamRole } },
+        select: { id: true },
+      });
+      if (existingSeat && existingSeat.id !== account.id) {
+        throw new Error(`This Admin already has a ${teamRole} team seat.`);
+      }
+    } else if (account.team_role === null) {
+      const teamMembers = await transaction.platformAdmin.findMany({
+        where: { manager_id: account.id },
+        select: { id: true },
+      });
+      if (teamMembers.length > 0) {
+        throw new Error("Move or remove this Admin's team seats before changing its access type.");
+      }
+    }
+
+    const updated = await transaction.platformAdmin.update({
+      where: { id: account.id },
+      data: {
+        team_role: teamRole,
+        manager_id: managerId,
+      },
+    });
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: actor.id,
+        action: "PLATFORM_ACCOUNT_UPDATED",
+        entity_type: "PlatformAdmin",
+        entity_id: account.id,
+        details: {
+          before: { role: account.role, teamRole: account.team_role, managerId: account.manager_id },
+          after: { role: updated.role, teamRole: updated.team_role, managerId: updated.manager_id },
+        },
+      },
+    });
+    return updated;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function deletePlatformAccessAccount(accountId: string) {
+  const actor = await requirePlatformSessionAdmin();
+  if (actor.team_role) {
+    throw new Error("CMO and CTO team accounts cannot manage platform accounts.");
+  }
+  if (!accountId.trim()) throw new Error("Select a platform account.");
+
+  return prisma.$transaction(async (transaction) => {
+    const [actorRecord, account] = await Promise.all([
+      transaction.platformAdmin.findUnique({
+        where: { id: actor.id },
+        select: { is_active: true },
+      }),
+      transaction.platformAdmin.findUnique({
+        where: { id: accountId },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          team_role: true,
+          manager_id: true,
+        },
+      }),
+    ]);
+    if (!actorRecord?.is_active) {
+      throw new Error("An active platform account is required to manage access.");
+    }
+    if (!account || account.role !== "ADMIN") {
+      throw new Error("Platform account not found.");
+    }
+    if (actor.id === account.id) {
+      throw new Error("You cannot delete your own platform access.");
+    }
+    if (actor.role === "ADMIN" && (!account.team_role || account.manager_id !== actor.id)) {
+      throw new Error("You can only manage your own CMO and CTO team seats.");
+    }
+    if (account.team_role === null) {
+      const teamMembers = await transaction.platformAdmin.findMany({
+        where: { manager_id: account.id },
+        select: { id: true, team_role: true, manager_id: true },
+      });
+      for (const teamMember of teamMembers) {
+        const existingSeat = teamMember.team_role
+          ? await transaction.platformAdmin.findUnique({
+              where: { manager_id_team_role: { manager_id: actor.id, team_role: teamMember.team_role } },
+              select: { id: true },
+            })
+          : null;
+        const managerId = existingSeat && existingSeat.id !== teamMember.id ? null : actor.id;
+        const updatedTeamMember = await transaction.platformAdmin.update({
+          where: { id: teamMember.id },
+          data: { manager_id: managerId },
+          select: { team_role: true },
+        });
+        await transaction.platformAuditEvent.create({
+          data: {
+            platform_admin_id: actor.id,
+            action: "PLATFORM_ACCOUNT_UPDATED",
+            entity_type: "PlatformAdmin",
+            entity_id: teamMember.id,
+            details: {
+              teamRole: updatedTeamMember.team_role,
+              before: { managerId: account.id },
+              after: { managerId },
+              reason: "The managing Admin account was deleted.",
+            },
+          },
+        });
+      }
+    }
+
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: actor.id,
+        action: "PLATFORM_ACCOUNT_DELETED",
+        entity_type: "PlatformAdmin",
+        entity_id: account.id,
+        details: { role: account.role, teamRole: account.team_role, email: account.email },
+      },
+    });
+    await transaction.platformAdmin.delete({ where: { id: account.id } });
+
+    return { id: account.id };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
