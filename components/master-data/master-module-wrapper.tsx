@@ -428,18 +428,18 @@ export function MasterModuleWrapper({
 
   return (
     <div
-      className="flex h-screen min-w-0 overflow-hidden bg-slate-100"
-      style={{ "--organization-sidebar-width": sidebarOpen ? "240px" : "60px" } as React.CSSProperties}
+      className="erp-organization-shell flex h-dvh min-h-0 min-w-0 overflow-hidden bg-slate-100"
+      style={{ "--organization-sidebar-width": sidebarOpen ? "15rem" : "3.75rem" } as React.CSSProperties}
     >
       <motion.aside
         initial={false}
-        animate={{ width: sidebarOpen ? 240 : 60 }}
+        animate={{ width: sidebarOpen ? "15rem" : "3.75rem" }}
         transition={{ duration: 0.18 }}
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
-        className="flex flex-col border-r border-slate-800 bg-slate-950 text-slate-200"
+        className="flex shrink-0 flex-col border-r border-slate-800 bg-slate-950 text-slate-200"
       >
-        <div className="border-b border-slate-800 p-3">
+        <div className="shrink-0 border-b border-slate-800 p-3">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-600">
               <Sparkles className="h-5 w-5 text-white" />
@@ -460,13 +460,13 @@ export function MasterModuleWrapper({
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-2">
+        <div className="min-h-0 flex-1 overflow-y-auto p-2">
           <nav className="space-y-1">
             {navigation.map((item) => renderTreeItem(item))}
           </nav>
         </div>
 
-        <div className="border-t border-slate-800 p-2">
+        <div className="shrink-0 border-t border-slate-800 p-2">
           <Link
             href={`/dashboard/${workspaceId}/home`}
             className="flex items-center gap-3 rounded-md px-3 py-2 hover:bg-slate-800"
@@ -477,8 +477,8 @@ export function MasterModuleWrapper({
         </div>
       </motion.aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex min-h-14 min-w-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:px-6">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="flex min-h-14 min-w-0 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:px-6">
           <div className="flex min-w-0 items-center gap-2">
             <Layers className="h-5 w-5 text-emerald-600" />
             <span className="truncate font-semibold capitalize">{activeModule?.label ?? "Modules"}</span>
@@ -541,7 +541,7 @@ export function MasterModuleWrapper({
           </div>
         </header>
 
-        <main className="min-w-0 flex-1 overflow-auto bg-slate-100 p-2 sm:p-4">
+        <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-slate-100 p-2 sm:p-4">
           {currentBlockInfo ? (
             <div className="flex flex-col items-center justify-center h-[60vh] rounded-xl border border-red-200 bg-white p-8 text-center shadow-sm">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600 mb-4">
