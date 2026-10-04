@@ -13,8 +13,10 @@ export type SessionUser = {
   workspace_id: string;
   profile_name: string;
   full_name: string;
-  email: string;
+  email: string | null;
   email_verified: boolean;
+  mobile_number: string | null;
+  mobile_verified_at: Date | null;
   created_at: Date;
   updated_at: Date;
   last_login_at: Date | null;
@@ -59,6 +61,8 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
       full_name: devUser.full_name,
       email: devUser.email,
       email_verified: devUser.email_verified,
+      mobile_number: devUser.mobile_number ?? null,
+      mobile_verified_at: devUser.mobile_verified_at ?? null,
       created_at: devUser.created_at,
       updated_at: devUser.updated_at,
       last_login_at: devUser.last_login_at,
@@ -81,6 +85,8 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
       full_name: user.full_name,
       email: user.email,
       email_verified: user.email_verified,
+      mobile_number: user.mobile_number,
+      mobile_verified_at: user.mobile_verified_at,
       created_at: user.created_at,
       updated_at: user.updated_at,
       last_login_at: user.last_login_at,
@@ -104,4 +110,3 @@ export async function logoutSession() {
   const cookieStore = await cookies();
   cookieStore.delete(SESSION_COOKIE_NAME);
 }
-

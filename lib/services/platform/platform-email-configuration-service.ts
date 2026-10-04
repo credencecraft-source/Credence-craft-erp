@@ -7,7 +7,7 @@ import { prisma } from "@/lib/database/prisma-client";
 const CONFIGURATION_ID = "default";
 const OTP_TTL_MINUTES = 10;
 const MAX_OTP_ATTEMPTS = 5;
-export type OtpPurpose = "AUTH" | "SUPPORT";
+export type OtpPurpose = "AUTH" | "SUPPORT" | "ORGANIZATION_EMAIL" | "MOBILE_LOGIN";
 
 type EmailConfigurationInput = {
   smtpHost: string;

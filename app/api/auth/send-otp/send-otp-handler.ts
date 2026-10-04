@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 
 import {
+  deriveFallbackFullName,
+  deriveFallbackProfileName,
   isValidEmail,
-  isValidFullName,
-  isValidProfileName,
   normalizeEmail,
   normalizeFullName,
   normalizeProfileName,
@@ -87,13 +87,6 @@ export async function POST(request: Request) {
     const existingUser = await getUserByEmail(email);
 
     if (mode === "register") {
-      if (!isValidFullName(fullName) || !isValidProfileName(profileName)) {
-        return NextResponse.json(
-          { error: "Full name and profile name are required and must be valid." },
-          { status: 400 }
-        );
-      }
-
       if (existingUser) {
         return NextResponse.json(
           { error: "An account with this email already exists." },
@@ -101,7 +94,9 @@ export async function POST(request: Request) {
         );
       }
 
-      const existingProfile = await getUserByProfileName(profileName);
+      const fallbackProfileName = normalizeProfileName(profileName) || deriveFallbackProfileName(email);
+      const fallbackFullName = normalizeFullName(fullName) || deriveFallbackFullName(email);
+      const existingProfile = await getUserByProfileName(fallbackProfileName);
       if (existingProfile) {
         return NextResponse.json(
           { error: "Profile name already exists." },

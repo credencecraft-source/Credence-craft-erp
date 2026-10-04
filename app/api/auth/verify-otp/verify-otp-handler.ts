@@ -4,9 +4,9 @@ import { NextResponse } from "next/server";
 
 import { createSessionToken, SESSION_COOKIE_NAME } from "@/lib/auth/session-manager";
 import {
+  deriveFallbackFullName,
+  deriveFallbackProfileName,
   isValidEmail,
-  isValidFullName,
-  isValidProfileName,
   normalizeEmail,
   normalizeFullName,
   normalizeProfileName,
@@ -147,13 +147,6 @@ export async function POST(request: Request) {
         });
       }
     } else if (mode === "register") {
-      if (!isValidFullName(fullName) || !isValidProfileName(profileName)) {
-        return NextResponse.json(
-          { error: "Full name and profile name are required and must be valid." },
-          { status: 400 }
-        );
-      }
-
       if (user) {
         return NextResponse.json(
           { error: "An account with this email already exists." },
@@ -161,7 +154,9 @@ export async function POST(request: Request) {
         );
       }
 
-      const existingProfile = await findUserByProfileName(profileName);
+      const fallbackProfileName = normalizeProfileName(profileName) || deriveFallbackProfileName(email);
+      const fallbackFullName = normalizeFullName(fullName) || deriveFallbackFullName(email);
+      const existingProfile = await findUserByProfileName(fallbackProfileName);
       if (existingProfile) {
         return NextResponse.json(
           { error: "Profile name already exists." },
@@ -173,8 +168,8 @@ export async function POST(request: Request) {
         ? setDevUser({
             id: `dev-user-${Date.now()}`,
             workspace_id: randomUUID(),
-            profile_name: profileName,
-            full_name: fullName,
+            profile_name: fallbackProfileName,
+            full_name: fallbackFullName,
             email,
             email_verified: true,
             created_at: new Date(),
@@ -184,8 +179,8 @@ export async function POST(request: Request) {
         : await prisma.workspaceUser.create({
             data: {
               workspace_id: randomUUID(),
-              profile_name: profileName,
-              full_name: fullName,
+              profile_name: fallbackProfileName,
+              full_name: fallbackFullName,
               email,
               email_verified: true,
               last_login_at: new Date(),
