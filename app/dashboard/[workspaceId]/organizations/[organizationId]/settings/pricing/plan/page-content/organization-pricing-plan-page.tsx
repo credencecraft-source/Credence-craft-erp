@@ -77,7 +77,6 @@ export default function OrganizationPricingPlanPage({
   monthlyOrderQuantityLimits = {},
   workspaceId,
   organizationId,
-  platformVersionName = null,
 }: OrganizationPricingPlanPageProps) {
   const router = useRouter();
   const [isCheckoutPending, startCheckoutTransition] = useTransition();
@@ -126,10 +125,6 @@ export default function OrganizationPricingPlanPage({
   const currentSelectedPlanId = activeModule ? selections[activeModule] : undefined;
 
   const matchedBusinessType = activeModule ? safeBusinessTypes.find((bt) => bt.name === activeModule) : undefined;
-  const firstPaidPlan = currentPlans.find(
-    (p) => (p.segment_price ?? p.price) && Number(p.segment_price ?? p.price) > 0
-  );
-
   const handleSelectPlan = (planId: string, planPrice: number | null) => {
     if (!activeModule) return;
     const isFree = !planPrice || Number(planPrice) === 0;
@@ -148,15 +143,6 @@ export default function OrganizationPricingPlanPage({
       ...prev,
       [activeModule]: planId,
     }));
-  };
-
-  const handleDeselectModule = () => {
-    if (!activeModule) return;
-    setSelections((prev) => {
-      const copy = { ...prev };
-      delete copy[activeModule];
-      return copy;
-    });
   };
 
   const handleClearCart = () => {
@@ -223,19 +209,19 @@ export default function OrganizationPricingPlanPage({
               </Button>
             )}
           </div>
-            <button type="button" onClick={() => router.back()} className="rounded-lg border border-[var(--erp-border)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-[var(--erp-surface-soft)]">
+            <Button type="button" onClick={() => router.back()} className="rounded-lg border border-[var(--erp-border)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-[var(--erp-surface-soft)]">
               Back
-            </button>
-            <button type="button" onClick={() => router.push(`/dashboard/${workspaceId}/home`)} className="rounded-lg border border-[var(--erp-border)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-[var(--erp-surface-soft)]">
+            </Button>
+            <Button type="button" onClick={() => router.push(`/dashboard/${workspaceId}/home`)} className="rounded-lg border border-[var(--erp-border)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-[var(--erp-surface-soft)]">
               Dashboard
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={() => router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan`)}
               className="rounded-lg bg-[var(--erp-brand)] px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-sm transition-colors hover:bg-[var(--erp-brand-hover)]"
             >
               View Active Plan
-            </button>
+            </Button>
         </div>
       </div>
 
@@ -246,7 +232,7 @@ export default function OrganizationPricingPlanPage({
             const hasSelection = tag.businessTypes.some((businessType) => Boolean(selections[businessType.name]));
 
             return (
-              <button
+              <Button
                 key={tag.label}
                 type="button"
                 onClick={() => {
@@ -257,7 +243,7 @@ export default function OrganizationPricingPlanPage({
               >
                 {tag.label}
                 {hasSelection && <span className={`ml-2 inline-block h-2 w-2 rounded-full ${active ? "bg-white" : "bg-emerald-500"}`} />}
-              </button>
+              </Button>
             );
           })}
           {audienceTags.length === 0 && <p className="text-sm text-slate-500">No audience tags have been configured for this pricing version yet.</p>}
@@ -269,14 +255,14 @@ export default function OrganizationPricingPlanPage({
                 const active = activeModule === businessType.name;
 
                 return (
-                  <button
+                  <Button
                     key={businessType.id}
                     type="button"
                     onClick={() => setActiveModule(businessType.name)}
                     className={`rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${active ? "bg-slate-800 text-white shadow-sm" : "border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] text-slate-700 hover:bg-white"}`}
                   >
                     {businessType.name}
-                  </button>
+                  </Button>
                 );
               })}
             </div>
@@ -358,7 +344,7 @@ export default function OrganizationPricingPlanPage({
                   <div className={`-mx-3 -mt-3 mb-0 rounded-t-[11px] px-3 py-2.5 text-white ${planHeaderColor}`}>
                     {isPricingConfigured && !isModuleUnavailable && !isFreePlan && (
                       <div className="mb-1.5 flex justify-end">
-                        <button
+                        <Button
                           type="button"
                           onClick={() =>
                             !isCurrentPlan &&
@@ -383,7 +369,7 @@ export default function OrganizationPricingPlanPage({
                             : isChosen
                             ? "Added to Cart"
                             : "Add to Cart"}
-                        </button>
+                        </Button>
                       </div>
                     )}
                     <div className="flex items-start justify-between gap-2">

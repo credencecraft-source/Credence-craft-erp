@@ -37,9 +37,9 @@ function createPrismaClient(): PrismaClient {
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   }).$extends({
     query: {
-      $allOperations(context: any) {
+      $allOperations(context) {
         const { args, query } = context;
-        const runInTransaction = Boolean((context as { runInTransaction?: boolean }).runInTransaction);
+        const runInTransaction = "runInTransaction" in context && context.runInTransaction === true;
         return withConnectionRetry(() => query(args), { runInTransaction });
       },
     },

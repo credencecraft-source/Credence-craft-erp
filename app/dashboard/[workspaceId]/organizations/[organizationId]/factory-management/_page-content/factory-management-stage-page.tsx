@@ -1,4 +1,3 @@
-import Link from "next/link";
 import type { ReactNode } from "react";
 
 import Card from "@/components/ui/Card";
@@ -20,8 +19,7 @@ export default async function FactoryManagementStagePage({
   description,
   content,
 }: FactoryManagementStagePageProps) {
-  const { workspaceId, organizationId } = await params;
-  const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/factory-management`;
+  await params;
 
   return (
     <Page as="div">

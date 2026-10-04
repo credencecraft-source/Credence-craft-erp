@@ -232,11 +232,6 @@ async function rowFields(moduleKey: string, row: MasterRow, definition: NonNulla
   return fields;
 }
 
-async function getMasterValueById(organizationId: string, moduleKey: string, value: string) {
-  const row = await delegates[moduleKey].findFirst({ where: { organization_id: organizationId, OR: [{ id: value }, { value_id: value }] } });
-  return row ? { id: row.id, label: String(row[labelFields[moduleKey]] ?? "") } : null;
-}
-
 export async function getMasterValuesForOrganization(
   organizationId: string,
   moduleKey: string,

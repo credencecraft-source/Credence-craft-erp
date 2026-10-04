@@ -20,7 +20,43 @@ export type WorkOrderCreateInput = {
   lines: WorkOrderQuantityInput[];
 };
 
-function positiveDecimal(value: unknown) {
+type WorkOrderCreationOrder = Prisma.MerchandisingOrderGetPayload<{
+  include: {
+    finishedGoods: true;
+    processTemplate: { select: { id: true; value_id: true; process_name: true } };
+    processSteps: {
+      include: {
+        process: { select: { id: true; value_id: true; process_name: true } };
+        operations: true;
+      };
+    };
+    bomItems: true;
+    workOrders: { include: { sizeLines: true } };
+  };
+}>;
+
+type OrderProcessStep = Omit<Prisma.MerchandisingOrderProcessStepGetPayload<{
+  include: {
+    process: { select: { id: true; value_id: true; process_name: true } };
+    operations: true;
+  };
+}>, "operations"> & {
+  operation_template_name?: string | null;
+  operationTemplateName?: string | null;
+  operations: Array<Prisma.MerchandisingOrderProcessOperationGetPayload<object> & {
+    sourceOperationId?: string | null;
+  }>;
+};
+
+type OrderProcessControllerWithProcesses = Prisma.OrderProcessControllerGetPayload<{
+  include: { processes: { include: { operations: true }; orderBy: { sl_no: "asc" } } };
+}>;
+
+type WorkOrderProcessControllerWithProcesses = Prisma.WorkOrderProcessControllerGetPayload<{
+  include: { processes: { include: { operations: true }; orderBy: { sl_no: "asc" } } };
+}>;
+
+function positiveDecimal(value: Prisma.Decimal | null) {
   const parsed = new Prisma.Decimal(String(value ?? 0));
   return parsed.isFinite() && parsed.greaterThan(0) ? parsed : new Prisma.Decimal(0);
 }
@@ -41,8 +77,8 @@ type WorkOrderBomLineData = {
   total_required_qty: string;
 };
 
-function buildWorkOrderBomLines(bomItems: any[], sizeLines: Array<{ size: string | null; quantity: number }>, workOrderQty: number): WorkOrderBomLineData[] {
-  return bomItems.map((item: any) => {
+function buildWorkOrderBomLines(bomItems: Prisma.BillOfMaterialItemGetPayload<object>[], sizeLines: Array<{ size: string | null; quantity: number }>, workOrderQty: number): WorkOrderBomLineData[] {
+  return bomItems.map((item) => {
       const selectedSizes = splitBomSizes(item.size);
       const itemWorkOrderQty = selectedSizes.length > 0
         ? sizeLines.filter((line) => selectedSizes.includes(String(line.size ?? "").trim())).reduce((sum, line) => sum + line.quantity, 0)
@@ -149,14 +185,14 @@ function mapProcessTemplate(template: { id?: string; value_id?: string | null; p
   };
 }
 
-function mapProcessSteps(steps: Array<any> = []) {
+function mapProcessSteps(steps: OrderProcessStep[] = []) {
   return steps.map((step) => ({
     id: step.id,
     process_id: step.process_id ?? step.process?.id ?? null,
     process_name: step.process_name ?? step.process?.process_name ?? null,
     sl_no: step.sl_no,
     operation_template_name: step.operation_template_name ?? step.operationTemplateName ?? null,
-    operations: Array.isArray(step.operations) ? step.operations.map((operation: any) => ({
+    operations: Array.isArray(step.operations) ? step.operations.map((operation) => ({
       id: operation.id,
       source_operation_template_step_id: operation.source_operation_template_step_id ?? operation.sourceOperationId ?? null,
       operation: operation.operation,
@@ -166,12 +202,12 @@ function mapProcessSteps(steps: Array<any> = []) {
   }));
 }
 
-function mapWorkOrderProcessController(controller: any) {
+function mapWorkOrderProcessController(controller: WorkOrderProcessControllerWithProcesses | null) {
   if (!controller) return null;
   return {
     id: controller.id,
     orderControllerId: controller.order_controller_id,
-    processes: (controller.processes ?? []).map((process: any) => ({
+    processes: controller.processes.map((process) => ({
       id: process.id,
       processId: process.process_id,
       processName: process.process_name,
@@ -180,7 +216,7 @@ function mapWorkOrderProcessController(controller: any) {
       createdQty: process.created_qty,
       completedQty: process.completed_qty,
       status: process.status,
-      operations: (process.operations ?? []).map((operation: any) => ({
+      operations: process.operations.map((operation) => ({
         id: operation.id,
         sourceOperationId: operation.source_operation_id,
         operation: operation.operation,
@@ -196,7 +232,10 @@ function mapWorkOrderProcessController(controller: any) {
   };
 }
 
-async function ensureOrderProcessController(transaction: any, order: any) {
+async function ensureOrderProcessController(
+  transaction: Prisma.TransactionClient,
+  order: WorkOrderCreationOrder,
+): Promise<OrderProcessControllerWithProcesses | null> {
   if (!order.processTemplate || order.processSteps.length === 0) return null;
 
   const existing = await transaction.orderProcessController.findUnique({
@@ -217,7 +256,7 @@ async function ensureOrderProcessController(transaction: any, order: any) {
         sl_no: step.sl_no,
         order_qty: Number(order.orderQty ?? 0),
         operations: {
-          create: step.operations.map((operation: any) => ({
+          create: step.operations.map((operation) => ({
             source_operation_id: operation.source_operation_template_step_id,
             operation: operation.operation,
             sl_no: operation.sl_no,
@@ -233,21 +272,26 @@ async function ensureOrderProcessController(transaction: any, order: any) {
   });
 }
 
-async function createWorkOrderProcessController(transaction: any, workOrderId: string, controller: any, workOrderQty: number) {
+async function createWorkOrderProcessController(
+  transaction: Prisma.TransactionClient,
+  workOrderId: string,
+  controller: OrderProcessControllerWithProcesses | null,
+  workOrderQty: number,
+) {
   if (!controller) return null;
   return transaction.workOrderProcessController.create({
     data: {
       work_order_id: workOrderId,
       order_controller_id: controller.id,
       processes: {
-        create: controller.processes.map((process: any) => ({
+        create: controller.processes.map((process) => ({
           source_process_id: process.id,
           process_id: process.process_id,
           process_name: process.process_name,
           sl_no: process.sl_no,
           order_qty: workOrderQty,
           operations: {
-            create: process.operations.map((operation: any) => ({
+            create: process.operations.map((operation) => ({
               source_operation_id: operation.id,
               operation: operation.operation,
               sl_no: operation.sl_no,
@@ -342,7 +386,7 @@ export async function getWorkOrderAllocation(organizationId: string, orderNo: st
       processTemplateId: order.processTemplate?.id ?? order.process_template_id ?? null,
       processTemplate: mapProcessTemplate(order.processTemplate),
       processSteps: mapProcessSteps(order.processSteps),
-      processController: mapWorkOrderProcessController((workOrder as any).processController),
+      processController: mapWorkOrderProcessController(workOrder.processController),
     })),
   };
 }

@@ -1,5 +1,3 @@
-import Link from "next/link";
-
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
@@ -17,8 +15,7 @@ export default async function QualityManagementSystemStagePage({
   title,
   description,
 }: QualityManagementSystemStagePageProps) {
-  const { workspaceId, organizationId } = await params;
-  const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/quality-management-system`;
+  await params;
 
   return (
     <Page as="div">

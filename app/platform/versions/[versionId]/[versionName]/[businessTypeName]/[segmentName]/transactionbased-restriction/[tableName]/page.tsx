@@ -10,6 +10,10 @@ import Table from "@/components/ui/Table";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { getVersionDetails } from "@/lib/services/platform/version-service";
 import { getSegmentFormRestriction, upsertSegmentFormRestriction } from "@/lib/services/platform/segment-form-restriction-service";
+import Input from "@/components/ui/Input";
+import Checkbox from "@/components/ui/Checkbox";
+import Button from "@/components/ui/Button";
+
 
 type TableField = { name: string; type: string; attributes: string };
 type TableMetadata = {
@@ -168,7 +172,7 @@ export default async function TransactionBasedRestrictionTablePage({
                       <td className="px-3 py-2 text-slate-700">{field.type}</td>
                       <td className="px-3 py-2 text-slate-600">{field.attributes || "-"}</td>
                       <td className="px-3 py-2">
-                        <input
+                        <Input
                           type="number"
                           min="0"
                           step="1"
@@ -180,7 +184,7 @@ export default async function TransactionBasedRestrictionTablePage({
                         />
                       </td>
                       <td className="px-3 py-2 text-center">
-                        <input
+                        <Checkbox
                           type="checkbox"
                           name="restrictedFields"
                           value={field.name}
@@ -193,7 +197,7 @@ export default async function TransactionBasedRestrictionTablePage({
                 </tbody>
               </Table>
             </div>
-            <button type="submit" className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800">Save restrictions</button>
+            <Button type="submit" className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800">Save restrictions</Button>
           </form>
         </Card>
       </Section>

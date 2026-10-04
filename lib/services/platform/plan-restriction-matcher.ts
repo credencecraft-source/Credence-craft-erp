@@ -78,10 +78,10 @@ export function getSidebarFeatureKeysForRoute(routeSegments: string[]) {
     }
   };
 
-  for (const module of ERP_MODULES) {
-    if (startsWith(routeSegments, [module.pathSegment])) {
-      keys.push(module.key);
-      visit(module.children, [module.key], [module.pathSegment]);
+  for (const moduleEntry of ERP_MODULES) {
+    if (startsWith(routeSegments, [moduleEntry.pathSegment])) {
+      keys.push(moduleEntry.key);
+      visit(moduleEntry.children, [moduleEntry.key], [moduleEntry.pathSegment]);
     }
   }
   return keys;

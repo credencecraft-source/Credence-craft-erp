@@ -1,12 +1,9 @@
-import Link from "next/link";
-
 import EmptyReportGrid from "@/components/reports/empty-report-grid";
 import UiPage from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 
 export default async function Page({ params }: { params: Promise<{ workspaceId: string; organizationId: string }> }) {
-  const { workspaceId, organizationId } = await params;
-  const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/wo-grn`;
+  const { organizationId } = await params;
 
   return (
     <UiPage as="div">

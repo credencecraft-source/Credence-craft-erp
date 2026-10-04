@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
+import Image from "next/image";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { calculateBomRows, calculateFinishedGoodsRows, splitBomSizes } from "@/lib/services/orders/order-quantity-calculations";
@@ -13,6 +14,25 @@ import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 
 type BomRow = BomEditorRow;
+type MasterDataOption = {
+  id?: string;
+  label?: string;
+  value_id?: string;
+  name?: string;
+  parent_id?: string | null;
+  parentValueId?: string | null;
+  parent_label?: string;
+  parentName?: string;
+  parent?: string;
+  category?: string;
+  categoryName?: string;
+  sub_category_id?: string;
+  subCategoryId?: string;
+  subCategory?: string;
+  sub_category?: string;
+  is_active?: boolean;
+  fields?: Record<string, unknown>;
+};
 
 const defaultBomRow = (categoryOverride?: string): BomRow => ({
   categoryType: "",
@@ -72,7 +92,7 @@ export default function BomTab({
     parentCategoryValue?: string
   ) => React.ReactNode;
   onOpenCreateMaster?: (masterKey: string) => void;
-  masterOptions?: Record<string, Array<{ id?: string; label?: string; value_id?: string; name?: string; parent_id?: string | null; parentValueId?: string | null; is_active?: boolean; fields?: Record<string, unknown> }>>;
+  masterOptions?: Record<string, MasterDataOption[]>;
 }) {
   const bomRows = form.bomRows?.length ? form.bomRows : DEFAULT_BOM_ROWS;
   const duplicateMaterials = useMemo(() => findDuplicateBomMaterialNames(form.bomRows ?? []), [form.bomRows]);
@@ -111,21 +131,21 @@ export default function BomTab({
     const nextCategory = selectedBomCategory !== "All" ? selectedBomCategory : "";
     const nextRow = defaultBomRow(nextCategory);
     nextRow.subCategory = selectedBomSubCategory !== "All" ? selectedBomSubCategory : "";
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
       bomRows: [...(current.bomRows || []), nextRow],
     }));
   };
 
   const removeBomRow = (index: number) => {
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
-      bomRows: (current.bomRows || []).filter((_: any, i: number) => i !== index),
+      bomRows: (current.bomRows || []).filter((_, i) => i !== index),
     }));
   };
 
   const updateBomRow = (index: number, field: keyof BomRow, value: string) => {
-    setForm((current: any) => {
+    setForm((current) => {
       const updatedRows = [...(current.bomRows || [])];
       const currentRow = updatedRows[index] ?? {};
       updatedRows[index] = { ...currentRow, [field]: value };
@@ -135,7 +155,7 @@ export default function BomTab({
         const validSubCategories = getFilteredSubCategoryOptions(nextCategory);
         const currentSubCategory = String(currentRow.subCategory ?? "").trim();
 
-        const hasValidSubCategory = validSubCategories.some((option: any) => {
+        const hasValidSubCategory = validSubCategories.some((option) => {
           const label = String(option.label ?? option.name ?? "").trim();
           return label === currentSubCategory;
         });
@@ -158,7 +178,7 @@ export default function BomTab({
       return [];
     }
 
-    const selectedCategory = categoryOptions.find((option: any) => {
+    const selectedCategory = categoryOptions.find((option) => {
       const optionText = normalizeOptionText(option.label ?? option.name ?? "");
       const normalizedCategory = normalizeBomCategory(String(option.label ?? option.name ?? ""));
       return optionText === targetCategoryText || normalizedCategory === normalizeBomCategory(categoryValue);
@@ -181,7 +201,7 @@ export default function BomTab({
 
     const subCategoryOptions = masterOptions["raw-material-sub-category"] ?? [];
 
-    return subCategoryOptions.filter((option: any) => {
+    return subCategoryOptions.filter((option) => {
       const optionFields = option.fields ?? {};
       const optionParentIds = [
         option.parent_id,
@@ -214,7 +234,7 @@ export default function BomTab({
     const rawMaterialOptions = masterOptions["raw-material"] ?? [];
     const subCategoryOptions = masterOptions["raw-material-sub-category"] ?? [];
 
-    const selectedSubCategory = subCategoryOptions.find((option: any) => {
+    const selectedSubCategory = subCategoryOptions.find((option) => {
       const optionLabel = String(option.label ?? option.name ?? "").trim();
       return normalizeOptionText(optionLabel) === normalizeOptionText(subCategoryValue);
     });
@@ -240,7 +260,7 @@ export default function BomTab({
         .map((value) => normalizeOptionText(value)),
     );
 
-    return rawMaterialOptions.filter((option: any) => {
+    return rawMaterialOptions.filter((option) => {
       const optionFields = option.fields ?? {};
       const optionParentIds = [
         option.parent_id,
@@ -266,14 +286,14 @@ export default function BomTab({
   };
 
   const getRawMaterialStockUom = (rawMaterialName: string) => {
-    const option = (masterOptions?.["raw-material"] ?? []).find((item: any) =>
+    const option = (masterOptions?.["raw-material"] ?? []).find((item) =>
       String(item.label ?? item.name ?? "").trim() === rawMaterialName.trim(),
     );
     return String(option?.fields?.Stock_Uom1 ?? option?.fields?.stock_uom_id ?? "").trim();
   };
 
   const getRawMaterialImage = (rawMaterialName: string) => {
-    const option = (masterOptions?.["raw-material"] ?? []).find((item: any) =>
+    const option = (masterOptions?.["raw-material"] ?? []).find((item) =>
       String(item.label ?? item.name ?? "").trim() === rawMaterialName.trim(),
     );
     return String(option?.fields?.Image_Url ?? option?.fields?.image_url ?? "").trim();
@@ -284,12 +304,12 @@ export default function BomTab({
     if (subcategory === "All") return;
 
     const rawMaterials = getFilteredRawMaterialOptions(selectedBomCategory, subcategory);
-    setForm((current: any) => {
+    setForm((current) => {
       const rows = [...(current.bomRows || [])];
-      const existingIndex = rows.findIndex((row: BomRow) => String(row.subCategory ?? "").trim() === subcategory);
+      const existingIndex = rows.findIndex((row) => String(row.subCategory ?? "").trim() === subcategory);
       if (existingIndex >= 0) return current;
 
-      const availableRawMaterials = rawMaterials.filter((option: any) => {
+      const availableRawMaterials = rawMaterials.filter((option) => {
         const candidate = {
           category: selectedBomCategory,
           subCategory: subcategory,
@@ -318,7 +338,7 @@ export default function BomTab({
   const renderSizePicker = (row: BomRow, index: number) => {
     const selectedSizes = splitBomSizes(row.size);
     const availableSizes = (masterOptions?.size ?? [])
-      .map((option: any) => String(option.label ?? option.name ?? "").trim())
+      .map((option) => String(option.label ?? option.name ?? "").trim())
       .filter((size) => size && !selectedSizes.includes(size));
     const filteredSizes = availableSizes.filter((size) => size.toLowerCase().includes(sizeSearch.trim().toLowerCase()));
     const addSize = (size: string) => {
@@ -533,7 +553,7 @@ export default function BomTab({
       {selectedBomCategory !== "All" && getFilteredSubCategoryOptions(selectedBomCategory).length > 0 ? (
         <div className="space-y-1 rounded-xl border border-emerald-100 bg-emerald-50/50 p-2">
           <div className="flex flex-wrap items-center gap-1.5">
-            {["All", ...getFilteredSubCategoryOptions(selectedBomCategory).map((option: any) => String(option.label ?? option.name ?? "").trim()).filter(Boolean)]
+            {["All", ...getFilteredSubCategoryOptions(selectedBomCategory).map((option) => String(option.label ?? option.name ?? "").trim()).filter(Boolean)]
               .filter((subcategory, index, values) => values.indexOf(subcategory) === index)
               .map((subcategory) => (
                 <Button
@@ -648,11 +668,11 @@ export default function BomTab({
               <tr key={`${index}-${row.rawMaterialName || "row"}`} className="bg-white">
                 <td className="p-2.5 align-top">
                   <div
-                    className="flex h-18 w-18 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-center text-[10px] font-semibold uppercase leading-3 text-slate-400 shadow-sm"
+                    className="relative flex h-18 w-18 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-center text-[10px] font-semibold uppercase leading-3 text-slate-400 shadow-sm"
                     title="Image from Raw Material master"
                   >
                     {row.image || getRawMaterialImage(String(row.rawMaterialName ?? "")) ? (
-                      <img src={row.image || getRawMaterialImage(String(row.rawMaterialName ?? ""))} alt="" className="h-full w-full object-cover" />
+                      <Image src={row.image || getRawMaterialImage(String(row.rawMaterialName ?? ""))} alt="" fill sizes="72px" className="object-cover" />
                     ) : (
                       "No image"
                     )}
@@ -661,7 +681,7 @@ export default function BomTab({
                 <td className="p-2.5 align-top">
                   {renderMasterSelect ? (() => {
                     const filteredSubCategories = getFilteredSubCategoryOptions(String(row.category ?? ""));
-                    const safeOptions = filteredSubCategories.filter((option: any) => option.label || option.name);
+                    const safeOptions = filteredSubCategories.filter((option) => option.label || option.name);
                     const value = String(row.subCategory ?? "");
 
                     return (
@@ -669,7 +689,7 @@ export default function BomTab({
                         aria-label="Sub category"
                         value={value}
                         onChange={(event) => updateBomRow(index, "subCategory", event.target.value)}
-                        options={[{ value: "", label: "Select sub category" }, ...safeOptions.map((option: any) => ({ value: option.label ?? option.name ?? "", label: option.label ?? option.name ?? "" }))]}
+                        options={[{ value: "", label: "Select sub category" }, ...safeOptions.map((option) => ({ value: option.label ?? option.name ?? "", label: option.label ?? option.name ?? "" }))]}
                         className="min-h-[48px] rounded-xl border-slate-300 bg-white px-3 py-2.5 text-[15px] shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                       />
                     );
@@ -686,7 +706,7 @@ export default function BomTab({
                   {renderMasterSelect ? (() => {
                     const filteredRawMaterials = getFilteredRawMaterialOptions(String(row.category ?? ""), String(row.subCategory ?? ""));
                     const value = String(row.rawMaterialName ?? "");
-                    const safeOptions = filteredRawMaterials.filter((option: any) => {
+                    const safeOptions = filteredRawMaterials.filter((option) => {
                       const rawMaterialName = String(option.label ?? option.name ?? "").trim();
                       if (rawMaterialName.toLocaleLowerCase() === value.trim().toLocaleLowerCase()) return true;
                       const identity = getBomMaterialIdentity({ ...row, rawMaterialName });
@@ -705,7 +725,7 @@ export default function BomTab({
                           updateBomRow(index, "stockUom", getRawMaterialStockUom(rawMaterialName));
                           updateBomRow(index, "image", getRawMaterialImage(rawMaterialName));
                         }}
-                        options={[{ value: "", label: row.subCategory ? "Select raw material" : "Select sub category first" }, ...safeOptions.map((option: any) => ({ value: option.label ?? option.name ?? "", label: option.label ?? option.name ?? "" }))]}
+                        options={[{ value: "", label: row.subCategory ? "Select raw material" : "Select sub category first" }, ...safeOptions.map((option) => ({ value: option.label ?? option.name ?? "", label: option.label ?? option.name ?? "" }))]}
                         className="min-h-[48px] rounded-xl border-slate-300 bg-white px-3 py-2.5 text-[15px] shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                       />
                     );
@@ -793,7 +813,7 @@ export default function BomTab({
                   />
                 </td>}
                 <td className="p-2.5 align-top">
-                  <input
+                  <Input
                     type="number"
                     value={row.totalRequiredQty || ""}
                     readOnly
@@ -857,7 +877,7 @@ export default function BomTab({
           <thead><tr className="border-y border-slate-300 text-left font-bold uppercase text-slate-600">
             <th className="px-2 py-2">Buyer Size</th><th className="px-2 py-2">Size</th><th className="px-2 py-2 text-right">Before Qty</th><th className="px-2 py-2 text-right">Excess %</th><th className="px-2 py-2 text-right">Excess Qty</th><th className="px-2 py-2 text-right">Total Qty</th>
           </tr></thead>
-          <tbody>{finishedGoods.rows.map((row: any, index: number) => <tr key={`${row.size || "size"}-${index}`} className="border-b border-slate-200">
+          <tbody>{finishedGoods.rows.map((row, index) => <tr key={`${row.size || "size"}-${index}`} className="border-b border-slate-200">
             <td className="px-2 py-2">{row.buyerSize || "-"}</td><td className="px-2 py-2">{row.size || "-"}</td><td className="px-2 py-2 text-right">{row.beforeExcessQty || 0}</td><td className="px-2 py-2 text-right">{row.excess || 0}</td><td className="px-2 py-2 text-right">{row.excessQty || 0}</td><td className="px-2 py-2 text-right font-semibold">{row.totalQty || 0}</td>
           </tr>)}</tbody>
         </table>
@@ -869,7 +889,7 @@ export default function BomTab({
           <thead><tr className="border-y border-slate-300 text-left font-bold uppercase text-slate-600">
             <th className="px-2 py-2">Category</th><th className="px-2 py-2">Sub Category</th><th className="px-2 py-2">Raw Material</th><th className="px-2 py-2">Stock UOM</th><th className="px-2 py-2">Size(s)</th><th className="px-2 py-2 text-right">Consumption</th><th className="px-2 py-2 text-right">Required Qty</th><th className="px-2 py-2 text-right">Excess %</th><th className="px-2 py-2 text-right">Total Required</th>
           </tr></thead>
-          <tbody>{calculatedBomRows.map((row: any, index: number) => <tr key={`${row.id || "bom"}-${index}`} className="border-b border-slate-200">
+          <tbody>{calculatedBomRows.map((row, index) => <tr key={`${row.id || "bom"}-${index}`} className="border-b border-slate-200">
             <td className="px-2 py-2">{row.category || "-"}</td><td className="px-2 py-2">{row.subCategory || "-"}</td><td className="px-2 py-2 font-semibold">{row.rawMaterialName || "-"}</td><td className="px-2 py-2">{row.stockUom || "-"}</td><td className="px-2 py-2">{row.size || "All"}</td><td className="px-2 py-2 text-right">{row.internalConsumption || row.consumption || 0}</td><td className="px-2 py-2 text-right">{row.requiredQty || 0}</td><td className="px-2 py-2 text-right">{row.itemWiseExcessPercentage || 0}</td><td className="px-2 py-2 text-right font-semibold">{row.totalRequiredQty || 0}</td>
           </tr>)}</tbody>
         </table>

@@ -6,15 +6,6 @@ const {
   requirePlatformSessionAdminMock,
   requirePlatformConfigurationAccessMock,
 } = vi.hoisted(() => {
-  const delegate = () => ({
-    create: vi.fn().mockResolvedValue({ id: "entity-id" }),
-    update: vi.fn().mockResolvedValue({ id: "entity-id" }),
-    delete: vi.fn().mockResolvedValue({ id: "entity-id" }),
-    findUnique: vi.fn().mockResolvedValue(null),
-    findMany: vi.fn().mockResolvedValue([]),
-    createMany: vi.fn().mockResolvedValue({ count: 0 }),
-  });
-
   const prismaMock = {
     $transaction: vi.fn(),
     platformVersion: {

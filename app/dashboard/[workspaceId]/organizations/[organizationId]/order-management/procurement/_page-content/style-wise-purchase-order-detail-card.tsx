@@ -1,11 +1,13 @@
 "use client";
 
-import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import Input from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
 import { formatNumber, text, registrationStateCode } from "./style-wise-purchase-order-format";
-import type { GstOption, UomConvertOption, GroupedLine, GroupedPurchaseOrder } from "./style-wise-purchase-order-types";
+import type { GstOption, UomConvertOption, GroupedPurchaseOrder } from "./style-wise-purchase-order-types";
+import Select from "@/components/ui/Select";
+import Checkbox from "@/components/ui/Checkbox";
+import Button from "@/components/ui/Button";
+
 export function DetailedPriceApprovalCard({
   order,
   gstOptions,
@@ -43,20 +45,14 @@ export function DetailedPriceApprovalCard({
   const [actionError, setActionError] = useState("");
   const [showTax, setShowTax] = useState(false);
 
-  useEffect(() => {
-    if (
-      gstMasterId ||
-      !gstOptions.length ||
-      order.gst === null ||
-      order.gst === undefined
-    )
-      return;
-    const matchingOption = gstOptions.find(
-      (option) =>
-        Number(option.fields?.Gst ?? option.fields?.gst) === Number(order.gst),
-    );
-    if (matchingOption) setGstMasterId(matchingOption.id);
-  }, [gstMasterId, gstOptions, order.gst]);
+  const selectedGstMasterId = gstMasterId || (
+    order.gst === null || order.gst === undefined
+      ? ""
+      : gstOptions.find(
+          (option) =>
+            Number(option.fields?.Gst ?? option.fields?.gst) === Number(order.gst),
+        )?.id ?? ""
+  );
 
   useEffect(() => {
     const loadUomConversions = async () => {
@@ -122,7 +118,7 @@ export function DetailedPriceApprovalCard({
             vendorPriceInr,
             vendorPrice: vendorPriceInr,
             gst,
-            gstMasterId,
+            gstMasterId: selectedGstMasterId,
             hsnCode,
             buyingUom,
             convertValue,
@@ -170,7 +166,7 @@ export function DetailedPriceApprovalCard({
   return <div className="erp-surface overflow-hidden"><div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3"><div><p className="text-xs font-bold text-slate-950">{order.groupedPoNo}</p><p className="text-[10px] text-slate-500">{order.vendor.name} · {order.lines.length} raw-material lines · {new Date(order.submittedAt).toLocaleDateString()}</p></div><span className="text-xs font-bold text-emerald-700">{formatNumber(order.totalGroupedQty ?? order.lines.reduce((total, line) => total + Number(line.groupedQty ?? 0), 0))} qty</span></div><div className="space-y-4 p-4"><div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-4"><Field label="Vendor" value={order.vendor.name} readOnly /><Field label="Raw material" value={text(order.rawMaterial)} readOnly /><Field label="Category / subcategory" value={`${text(order.category)} / ${text(order.subCategory)}`} readOnly /><Field label="No. of styles" value={String(order.noOfStyles ?? order.lines.length)} readOnly /><Field label="Vendor Price INR" value={vendorPriceInr} onChange={setVendorPriceInr} /><ReadOnlyValue label="GST" value={headerGst} /><ReadOnlyValue label="HSN Code" value={headerHsn} /><ReadOnlyValue label="Total" value={formatNumber(headerTotal)} /></div>{actionError && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{actionError}</div>}
 
   */
-  const selectedGst = gstOptions.find((option) => option.id === gstMasterId);
+  const selectedGst = gstOptions.find((option) => option.id === selectedGstMasterId);
   const gstRate = Number(
     selectedGst?.fields?.Gst ?? selectedGst?.fields?.gst ?? gst ?? 0,
   );
@@ -219,7 +215,7 @@ export function DetailedPriceApprovalCard({
           <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">
             Buying UOM lookup
           </span>
-          <select
+          <Select
             value={buyingUom}
             onChange={(event) => {
               const option = uomConvertOptions.find(
@@ -240,12 +236,12 @@ export function DetailedPriceApprovalCard({
                 {option.label}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <Field label="Convert Value" value={convertValue} disabled />
         <Field label="Buying Qty" value={formatNumber(buyingQty)} disabled />
         <label className="flex items-center gap-2 rounded border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700">
-          <input
+          <Checkbox
             type="checkbox"
             checked={showTax}
             onChange={(event) => setShowTax(event.target.checked)}
@@ -256,8 +252,8 @@ export function DetailedPriceApprovalCard({
           <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">
             GST lookup
           </span>
-          <select
-            value={gstMasterId}
+          <Select
+            value={selectedGstMasterId}
             onChange={(event) => {
               const option = gstOptions.find(
                 (item) => item.id === event.target.value,
@@ -274,7 +270,7 @@ export function DetailedPriceApprovalCard({
                 {String(option.fields?.Gst ?? option.fields?.gst ?? "-")}%)
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         {showTax && (
           <>
@@ -356,14 +352,14 @@ export function DetailedPriceApprovalCard({
         </table>
       </div>
       <div className="mt-4 flex justify-end">
-        <button
+        <Button
           type="button"
           disabled={saving}
           onClick={savePrice}
           className="rounded-md bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:opacity-60"
         >
           {saving ? "Saving..." : "Save price"}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -403,202 +399,6 @@ function ReadOnlyValue({ label, value }: { label: string; value: string }) {
       <div className="rounded border border-slate-300 bg-slate-100 px-2 py-1.5 text-xs text-slate-600">
         {value}
       </div>
-    </div>
-  );
-}
-
-function SummaryField({
-  label,
-  value,
-}: {
-  label: string;
-  value?: number | null;
-}) {
-  return (
-    <div className="rounded border border-slate-200 bg-white px-3 py-2">
-      <p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
-        {label}
-      </p>
-      <p className="mt-1 text-sm font-bold text-slate-900">
-        {formatNumber(value)}
-      </p>
-    </div>
-  );
-}
-
-function PriceApprovalCard({
-  order,
-  expanded,
-  onToggle,
-  organizationId,
-  onUpdated,
-  onError,
-}: {
-  order: GroupedPurchaseOrder;
-  expanded: boolean;
-  onToggle: () => void;
-  organizationId: string;
-  onUpdated: () => Promise<void>;
-  onError: (message: string) => void;
-}) {
-  const [lines, setLines] = useState<GroupedLine[]>(() =>
-    order.lines.map((line) => ({
-      ...line,
-      groupedQty: String(line.groupedQty ?? ""),
-      vendorPrice: String(line.vendorPrice ?? ""),
-    })),
-  );
-  const [saving, setSaving] = useState(false);
-  const updatePrice = (id: string, value: string) =>
-    setLines((current) =>
-      current.map((line) =>
-        line.id === id ? { ...line, vendorPrice: value } : line,
-      ),
-    );
-  const action = async (type: "save-prices" | "approve" | "reject") => {
-    setSaving(true);
-    try {
-      const response = await fetch(
-        `/api/orders/procurement/${encodeURIComponent(order.id)}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            organizationId,
-            action: type,
-            prices: lines.map((line) => ({
-              lineId: line.id,
-              vendorPrice: line.vendorPrice,
-            })),
-            reason:
-              type === "reject" ? "Price requires correction." : undefined,
-          }),
-        },
-      );
-      const data = await response.json();
-      if (!response.ok)
-        throw new Error(data?.error || "Unable to update price approval.");
-      await onUpdated();
-    } catch (error) {
-      onError(
-        error instanceof Error
-          ? error.message
-          : "Unable to update price approval.",
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <div className="erp-surface overflow-hidden">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50"
-      >
-        <span className="flex min-w-0 items-center gap-2">
-          {expanded ? (
-            <ChevronDown className="h-4 w-4 text-slate-400" />
-          ) : (
-            <ChevronRight className="h-4 w-4 text-slate-400" />
-          )}
-          <span className="min-w-0">
-            <span className="block text-xs font-bold text-slate-950">
-              {order.groupedPoNo}
-            </span>
-            <span className="block text-[10px] text-slate-500">
-              {order.vendor.name} · {order.lines.length} lines · submitted{" "}
-              {new Date(order.submittedAt).toLocaleDateString()}
-            </span>
-          </span>
-        </span>
-        <span className="text-xs font-bold text-emerald-700">
-          {formatNumber(
-            order.lines.reduce(
-              (total, line) => total + Number(line.groupedQty ?? 0),
-              0,
-            ),
-          )}{" "}
-          qty
-        </span>
-      </button>
-      {expanded && (
-        <div className="border-t border-slate-200 p-4">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[950px] text-left text-[10px]">
-              <thead className="border-b border-slate-200 bg-slate-50 text-[9px] font-bold uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-2 py-2">Order / Style</th>
-                  <th className="px-2 py-2">Brand</th>
-                  <th className="px-2 py-2">Category</th>
-                  <th className="px-2 py-2">Item</th>
-                  <th className="px-2 py-2 text-right">Grouped Qty</th>
-                  <th className="px-2 py-2 text-right">Vendor Price</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {lines.map((line) => (
-                  <tr key={line.id}>
-                    <td className="px-2 py-2 font-semibold text-slate-800">
-                      {text(line.orderNo)} / {text(line.styleName)}
-                    </td>
-                    <td className="px-2 py-2">{text(line.brand)}</td>
-                    <td className="px-2 py-2">
-                      {text(line.category)} / {text(line.subCategory)}
-                    </td>
-                    <td className="px-2 py-2 font-semibold text-slate-900">
-                      {text(line.itemName)}
-                    </td>
-                    <td className="px-2 py-2 text-right">
-                      {formatNumber(
-                        line.groupedQty ? Number(line.groupedQty) : 0,
-                      )}
-                    </td>
-                    <td className="px-2 py-2 text-right">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={line.vendorPrice}
-                        onChange={(event) =>
-                          updatePrice(line.id, event.target.value)
-                        }
-                        className="w-28 rounded border border-slate-300 px-2 py-1 text-right outline-none focus:border-blue-500"
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="mt-3 flex justify-end gap-2">
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => action("save-prices")}
-              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-            >
-              Save prices
-            </button>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => action("approve")}
-              className="rounded-md bg-emerald-700 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:opacity-60"
-            >
-              Approve price
-            </button>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => action("reject")}
-              className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-60"
-            >
-              Reject
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

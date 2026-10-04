@@ -4,15 +4,45 @@ import React from "react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
+import type { OrderFormState } from "./order-form-types";
+
+type AsnRow = {
+  id: string;
+  asnNumber?: string;
+  shipmentDate?: string;
+  carrier?: string;
+  totalCartons?: number | string | null;
+  status?: string;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isAsnRow = (value: unknown): value is AsnRow =>
+  isRecord(value)
+  && typeof value.id === "string"
+  && (value.asnNumber === undefined || typeof value.asnNumber === "string")
+  && (value.shipmentDate === undefined || typeof value.shipmentDate === "string")
+  && (value.carrier === undefined || typeof value.carrier === "string")
+  && (value.totalCartons === undefined || value.totalCartons === null || typeof value.totalCartons === "number" || typeof value.totalCartons === "string")
+  && (value.status === undefined || typeof value.status === "string");
+
+const getRows = (form: unknown): unknown[] => {
+  if (!isRecord(form)) return [];
+  const rows = form.asnRows;
+  return Array.isArray(rows) ? rows : [];
+};
+
+const getAsnRows = (form: unknown): AsnRow[] => getRows(form).filter(isAsnRow);
 
 export default function AsnTab({
   form,
   setForm,
 }: {
-  form: any;
-  setForm: any;
+  form: OrderFormState;
+  setForm: React.Dispatch<React.SetStateAction<OrderFormState>>;
 }) {
-  const asnRows = form?.asnRows || [];
+  const asnRows = getAsnRows(form);
 
   const addAsnRow = () => {
     const newItem = {
@@ -23,25 +53,25 @@ export default function AsnTab({
       totalCartons: 1,
       status: "Dispatched",
     };
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
-      asnRows: [...(current.asnRows || []), newItem],
+      asnRows: [...getAsnRows(current), newItem],
     }));
   };
 
-  const updateAsnRow = (id: string, field: string, value: any) => {
-    setForm((current: any) => ({
+  const updateAsnRow = <Field extends keyof AsnRow>(id: string, field: Field, value: AsnRow[Field]) => {
+    setForm((current) => ({
       ...current,
-      asnRows: (current.asnRows || []).map((row: any) =>
+      asnRows: getAsnRows(current).map((row) =>
         row.id === id ? { ...row, [field]: value } : row
       ),
     }));
   };
 
   const removeAsnRow = (id: string) => {
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
-      asnRows: (current.asnRows || []).filter((row: any) => row.id !== id),
+      asnRows: getAsnRows(current).filter((row) => row.id !== id),
     }));
   };
 
@@ -78,7 +108,7 @@ export default function AsnTab({
             </thead>
             <tbody className="divide-y divide-slate-100 align-middle">
               {asnRows.length > 0 ? (
-                asnRows.map((row: any, index: number) => (
+                asnRows.map((row, index) => (
                   <tr key={row.id} className="hover:bg-slate-50/50">
                     <td className="p-3 text-center font-mono font-bold text-slate-600">{index + 1}</td>
                     <td className="p-3 font-mono font-bold text-slate-800">{row.asnNumber}</td>
@@ -105,7 +135,7 @@ export default function AsnTab({
                       <Input
                         aria-label="Total cartons"
                         type="number"
-                        value={row.totalCartons}
+                        value={row.totalCartons ?? ""}
                         onChange={(e) => updateAsnRow(row.id, "totalCartons", parseInt(e.target.value) || 0)}
                         className="w-20 text-center rounded-lg border border-slate-200 px-2 py-1.5 text-xs bg-white"
                       />
@@ -126,7 +156,7 @@ export default function AsnTab({
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-slate-400 italic">No ASNs created yet. Click "+ Create ASN".</td>
+                  <td colSpan={7} className="p-8 text-center text-slate-400 italic">No ASNs created yet. Click &quot;+ Create ASN&quot;.</td>
                 </tr>
               )}
             </tbody>

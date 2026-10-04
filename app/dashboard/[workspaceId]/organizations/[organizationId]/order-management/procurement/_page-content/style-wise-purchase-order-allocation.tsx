@@ -17,7 +17,7 @@ export function MaterialCategoryCard({
   onClick: () => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
       onClick={onClick}
       className="group w-full rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-emerald-300 hover:shadow-md"
@@ -49,7 +49,7 @@ export function MaterialCategoryCard({
           </p>
         </div>
       </div>
-    </button>
+    </Button>
   );
 }
 export function MaterialGroupCard({
@@ -61,7 +61,7 @@ export function MaterialGroupCard({
 }) {
   const orderCount = new Set(group.rows.map((row) => row.orderNo)).size;
   return (
-    <button
+    <Button
       type="button"
       onClick={onClick}
       className="group w-full rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
@@ -108,7 +108,7 @@ export function MaterialGroupCard({
         {group.rows.length} BOM line{group.rows.length === 1 ? "" : "s"} · Click
         to view details
       </p>
-    </button>
+    </Button>
   );
 }
 
@@ -131,14 +131,14 @@ export function MaterialDetail({
     <section className="erp-surface overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
         <div className="flex items-center gap-2">
-          <button
+          <Button
             type="button"
             onClick={onBack}
             aria-label="Back to raw-material groups"
             className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-500 hover:bg-slate-100"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
-          </button>
+          </Button>
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700">
               Selected raw material
@@ -166,7 +166,7 @@ export function MaterialDetail({
           <thead className="border-b border-slate-200 bg-white text-[9px] font-bold uppercase tracking-wide text-slate-500">
             <tr>
               <th className="px-2.5 py-2">
-                <input
+                <Checkbox
                   type="checkbox"
                   aria-label="Select all related BOM records"
                   checked={allSelected}
@@ -194,7 +194,7 @@ export function MaterialDetail({
                 }
               >
                 <td className="px-2.5 py-2">
-                  <input
+                  <Checkbox
                     type="checkbox"
                     aria-label={`Select ${text(row.orderNo)} BOM record`}
                     checked={selectedIds.has(row.id)}
@@ -254,7 +254,7 @@ export function StageButton({
   icon: typeof Check;
 }) {
   return (
-    <button
+    <Button
       type="button"
       disabled={disabled}
       onClick={onClick}
@@ -271,7 +271,7 @@ export function StageButton({
       <span className="truncate text-[10px] font-semibold text-slate-700">
         {label}
       </span>
-    </button>
+    </Button>
   );
 }
 

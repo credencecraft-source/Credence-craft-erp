@@ -4,6 +4,8 @@ import { notFound, redirect } from "next/navigation";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { listApprovalRequestsForOrganization, updateApprovalRequestStatus } from "@/lib/master-data/master-data-constants";
+import Button from "@/components/ui/Button";
+
 
 async function handleApprovalAction(formData: FormData) {
   "use server";
@@ -113,22 +115,22 @@ export default async function ApprovalMasterReviewPage({
                       <input type="hidden" name="workspaceId" value={workspaceId} />
                       <input type="hidden" name="organizationId" value={organizationId} />
                       <input type="hidden" name="requestId" value={request.id} />
-                      <button
+                      <Button
                         type="submit"
                         name="action"
                         value="approve"
                         className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700 transition"
                       >
                         Approve
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="submit"
                         name="action"
                         value="reject"
                         className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition"
                       >
                         Reject
-                      </button>
+                      </Button>
                     </form>
                   </td>
                 </tr>

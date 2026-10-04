@@ -1,11 +1,9 @@
 import { NextResponse } from "next/server";
 
 import {
-  deriveFallbackFullName,
   deriveFallbackProfileName,
   isValidEmail,
   normalizeEmail,
-  normalizeFullName,
   normalizeProfileName,
 } from "@/lib/auth/validation-rules";
 import { issueEmailOtp } from "@/lib/services/platform/platform-email-configuration-service";
@@ -46,7 +44,6 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const email = normalizeEmail(body.email);
-    const fullName = normalizeFullName(body.fullName);
     const profileName = normalizeProfileName(body.profileName);
     const mode = String(body.mode || "login").trim();
 
@@ -89,7 +86,6 @@ export async function POST(request: Request) {
       }
 
       const fallbackProfileName = normalizeProfileName(profileName) || deriveFallbackProfileName(email);
-      const fallbackFullName = normalizeFullName(fullName) || deriveFallbackFullName(email);
       const existingProfile = await getUserByProfileName(fallbackProfileName);
       if (existingProfile) {
         return NextResponse.json(

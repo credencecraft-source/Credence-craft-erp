@@ -50,7 +50,6 @@ const reportFields: Array<{ key: FinanceReportField; label: string }> = [
 ];
 
 export default function FinanceTransactionsPage({
-  workspaceId,
   organizationId,
 }: {
   workspaceId: string;
@@ -60,53 +59,52 @@ export default function FinanceTransactionsPage({
   const [visibleFields, setVisibleFields] = useState<FinanceReportField[]>(reportFields.map((field) => field.key));
 
   useEffect(() => {
-    const nextRecords: FinanceRecord[] = [];
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (!active) return;
+      const nextRecords: FinanceRecord[] = [];
 
-    try {
-      const financeRecords = localStorage.getItem(
-        `finance-documents-${organizationId}`,
-      );
-      if (financeRecords) {
-        const parsed = JSON.parse(financeRecords) as FinanceRecord[];
-        if (Array.isArray(parsed)) nextRecords.push(...parsed);
-      }
-
-      const posInvoices = localStorage.getItem(
-        `pos-sales-invoices-${organizationId}`,
-      );
-      if (posInvoices) {
-        const parsed = JSON.parse(posInvoices) as SavedPosInvoice[];
-        if (Array.isArray(parsed)) {
-          parsed.forEach((invoice) => {
-            nextRecords.push({
-              id: `pos-${invoice.invoiceNumber}`,
-              documentType: "Sales Invoice",
-              documentNumber: invoice.invoiceNumber,
-              sourceModule: "POS",
-              sourceRecordId: invoice.invoiceNumber,
-              date: invoice.invoiceDate,
-              party: invoice.customer || "Walk-in customer",
-              amount: invoice.subtotal,
-              tax: invoice.taxAmount ?? 0,
-              net: invoice.grandTotal ?? invoice.subtotal + (invoice.taxAmount ?? 0),
-              status: "Posted",
-              paymentStatus: "Pending",
-              archivedYear: new Date(invoice.invoiceDate).getFullYear(),
-            });
-          });
+      try {
+        const financeRecords = localStorage.getItem(`finance-documents-${organizationId}`);
+        if (financeRecords) {
+          const parsed = JSON.parse(financeRecords) as FinanceRecord[];
+          if (Array.isArray(parsed)) nextRecords.push(...parsed);
         }
-      }
-    } catch {
-      // Ignore malformed local data and keep the list empty.
-    }
 
-    setRecords(
-      nextRecords.sort(
+        const posInvoices = localStorage.getItem(`pos-sales-invoices-${organizationId}`);
+        if (posInvoices) {
+          const parsed = JSON.parse(posInvoices) as SavedPosInvoice[];
+          if (Array.isArray(parsed)) {
+            parsed.forEach((invoice) => {
+              nextRecords.push({
+                id: `pos-${invoice.invoiceNumber}`,
+                documentType: "Sales Invoice",
+                documentNumber: invoice.invoiceNumber,
+                sourceModule: "POS",
+                sourceRecordId: invoice.invoiceNumber,
+                date: invoice.invoiceDate,
+                party: invoice.customer || "Walk-in customer",
+                amount: invoice.subtotal,
+                tax: invoice.taxAmount ?? 0,
+                net: invoice.grandTotal ?? invoice.subtotal + (invoice.taxAmount ?? 0),
+                status: "Posted",
+                paymentStatus: "Pending",
+                archivedYear: new Date(invoice.invoiceDate).getFullYear(),
+              });
+            });
+          }
+        }
+      } catch {
+        // Ignore malformed local data and keep the list empty.
+      }
+
+      setRecords(nextRecords.sort(
         (left, right) =>
           new Date(right.date || "1970-01-01").getTime() -
           new Date(left.date || "1970-01-01").getTime(),
-      ),
-    );
+      ));
+    });
+    return () => { active = false; };
   }, [organizationId]);
 
   const totals = useMemo(() => {

@@ -113,7 +113,10 @@ export default function MerchandisingBomReportPage() {
   }, [organizationId]);
 
   useEffect(() => {
-    loadBomItems();
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (active) void loadBomItems();
+    });
 
     const handleFocus = () => {
       loadBomItems();
@@ -121,6 +124,7 @@ export default function MerchandisingBomReportPage() {
 
     window.addEventListener("focus", handleFocus);
     return () => {
+      active = false;
       window.removeEventListener("focus", handleFocus);
     };
   }, [loadBomItems]);

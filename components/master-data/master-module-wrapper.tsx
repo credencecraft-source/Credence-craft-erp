@@ -1,5 +1,6 @@
 "use client";
 
+import type { SegmentRestriction } from "@prisma/client";
 import { useState, useMemo, useEffect, useTransition, useCallback, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -27,7 +28,12 @@ import {
   LoaderCircle,
 } from "lucide-react";
 
-import { ERP_MODULES, getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
+import {
+  ERP_MODULES,
+  getErpModuleForBusinessTypeName,
+  type ErpModule,
+  type SubModuleOption,
+} from "@/components/erp/erp-config-registry";
 import { MasterModuleSwitcher } from "@/components/master-data/master-module-switcher";
 import { SupportTicketTrigger } from "@/components/organizations/support-ticket-trigger";
 import OrganizationTrialStatus from "@/components/organizations/organization-trial-status";
@@ -46,6 +52,19 @@ type SubItem = {
 type BusinessTypeItem = {
   id: string;
   name: string;
+};
+
+type ModuleRestriction = Pick<
+  SegmentRestriction,
+  "restriction_type" | "master_module" | "main_module" | "sub_module" | "action_level" | "custom_message"
+> & {
+  type?: string;
+  customAlertMessage?: string | null;
+  plan_module_path?: string | null;
+};
+
+type NavigationModuleOption = Pick<ErpModule, "key" | "label" | "pathSegment" | "children"> & {
+  moduleKey?: string;
 };
 
 const moduleIcons = {
@@ -106,7 +125,7 @@ type MasterModuleWrapperProps = {
   children: ReactNode;
   modules?: SubItem[];
   businessTypes?: BusinessTypeItem[];
-  restrictions?: any[]; 
+  restrictions?: ModuleRestriction[];
   onLogout?: () => void | Promise<void>;
 };
 
@@ -171,7 +190,7 @@ export function MasterModuleWrapper({
     const featureKeys = getSidebarFeatureKeysForRoute(segments);
     const targetModule = normalizeRestrictionPart(segments[0] || "");
 
-    return restrictions.some((rule: any) => {
+    return restrictions.some((rule) => {
       const owningModule = normalizeRestrictionPart(rule.plan_module_path || "");
       if (owningModule && owningModule !== targetModule) return false;
       return restrictionMatchesHiddenRoute(rule, segments, featureKeys);
@@ -189,7 +208,7 @@ export function MasterModuleWrapper({
     }
   }, [currentBlockInfo, organizationPath, pathname, router]);
 
-  const allModuleOptions = useMemo(() => {
+  const allModuleOptions = useMemo<NavigationModuleOption[]>(() => {
     if (businessTypes.length > 0) {
       return businessTypes.flatMap((businessType) => {
         const linkedModule = getErpModuleForBusinessTypeName(businessType.name);
@@ -313,7 +332,7 @@ export function MasterModuleWrapper({
   const dynamicNavigation = useMemo<SubItem[]>(() => {
     if (!activeModule) return [];
 
-    const normalizedActiveKey = ((activeModule as any).moduleKey || activeModule.key)
+    const normalizedActiveKey = (activeModule.moduleKey || activeModule.key)
       .toLowerCase()
       .replace(/[\s_]+/g, "-");
     
@@ -331,7 +350,7 @@ export function MasterModuleWrapper({
       ];
     }
 
-    const mapChild = (child: any, basePath: string): SubItem => {
+    const mapChild = (child: SubModuleOption, basePath: string): SubItem => {
       const segment = child.pathSegment || child.key;
       const currentHref = child.href
         ? `${organizationPath}${child.href}`
@@ -340,7 +359,7 @@ export function MasterModuleWrapper({
         key: child.key,
         label: child.label,
         href: currentHref,
-        children: child.children?.map((nested: any) =>
+        children: child.children?.map((nested) =>
           mapChild(nested, currentHref)
         ),
       };

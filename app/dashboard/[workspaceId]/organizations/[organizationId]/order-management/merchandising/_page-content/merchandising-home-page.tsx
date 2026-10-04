@@ -2,6 +2,37 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
+import Button from "@/components/ui/Button";
+
+
+type MerchandisingOrderSummary = {
+  id: string;
+  finalStatus?: string;
+  orderQty?: string | number | null;
+  deliveryDate?: string;
+  orderNo?: string;
+  styleName?: string;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+function parseMerchandisingOrder(value: unknown): MerchandisingOrderSummary | null {
+  if (!isRecord(value) || typeof value.id !== "string") return null;
+  const optionalString = (key: string) =>
+    typeof value[key] === "string" ? value[key] : undefined;
+  return {
+    id: value.id,
+    finalStatus: optionalString("finalStatus"),
+    orderQty:
+      typeof value.orderQty === "string" || typeof value.orderQty === "number"
+        ? value.orderQty
+        : null,
+    deliveryDate: optionalString("deliveryDate"),
+    orderNo: optionalString("orderNo"),
+    styleName: optionalString("styleName"),
+  };
+}
 
 export default function GMMerchandiserDashboardPage() {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
@@ -19,8 +50,8 @@ export default function GMMerchandiserDashboardPage() {
     shippedCount: 0,
     totalGarmentQty: 0,
   });
-  const [orders, setOrders] = useState<any[]>([]);
-  const [monthlyData, setMonthlyData] = useState<{ [key: string]: { bookedQty: number; orderCount: number; orders: any[] } }>({});
+  const [orders, setOrders] = useState<MerchandisingOrderSummary[]>([]);
+  const [monthlyData, setMonthlyData] = useState<Record<string, { bookedQty: number; orderCount: number; orders: MerchandisingOrderSummary[] }>>({});
   const [loading, setLoading] = useState(true);
 
   const MONTHLY_CAPACITY = 50000;
@@ -34,24 +65,32 @@ export default function GMMerchandiserDashboardPage() {
       });
       const contentType = res.headers.get("content-type") ?? "";
       if (res.ok && contentType.includes("application/json")) {
-        const data = await res.json();
-        const list = data.orders ?? data ?? [];
+        const data: unknown = await res.json();
+        const records = Array.isArray(data)
+          ? data
+          : isRecord(data) && Array.isArray(data.orders)
+            ? data.orders
+            : [];
+        const list = records.flatMap((record) => {
+          const order = parseMerchandisingOrder(record);
+          return order ? [order] : [];
+        });
 
         const totalOrders = list.length;
-        const draftCount = list.filter((o: any) => (o.finalStatus || "Draft").toUpperCase() === "DRAFT").length;
-        const approvalCount = list.filter((o: any) => (o.finalStatus || "").toUpperCase() === "WAITING FOR APPROVAL").length;
+        const draftCount = list.filter((o) => (o.finalStatus || "Draft").toUpperCase() === "DRAFT").length;
+        const approvalCount = list.filter((o) => (o.finalStatus || "").toUpperCase() === "WAITING FOR APPROVAL").length;
         const productionCount = list.filter(
-          (o: any) =>
+          (o) =>
             (o.finalStatus || "").toUpperCase() === "WORK ORDER" ||
             (o.finalStatus || "").toUpperCase() === "WAITING FOR PRODUCTION SCHEDULE" ||
             (o.finalStatus || "").toUpperCase() === "APPROVED"
         ).length;
         const shippedCount = list.filter(
-          (o: any) =>
+          (o) =>
             (o.finalStatus || "").toUpperCase() === "SHIPPED" ||
             (o.finalStatus || "").toUpperCase() === "CLOSED"
         ).length;
-        const totalGarmentQty = list.reduce((acc: number, curr: any) => acc + (Number(curr.orderQty) || 0), 0);
+        const totalGarmentQty = list.reduce((acc, curr) => acc + (Number(curr.orderQty) || 0), 0);
 
         setMetrics({
           totalOrders,
@@ -63,8 +102,8 @@ export default function GMMerchandiserDashboardPage() {
         });
         setOrders(list);
 
-        const aggregation: { [key: string]: { bookedQty: number; orderCount: number; orders: any[] } } = {};
-        list.forEach((order: any) => {
+        const aggregation: Record<string, { bookedQty: number; orderCount: number; orders: MerchandisingOrderSummary[] }> = {};
+        list.forEach((order) => {
           const dateStr = order.deliveryDate ? order.deliveryDate.slice(0, 7) : "";
           if (!dateStr) return;
           if (!aggregation[dateStr]) {
@@ -92,7 +131,10 @@ export default function GMMerchandiserDashboardPage() {
   }, [organizationId, selectedYear, selectedMonth]);
 
   useEffect(() => {
-    fetchData();
+    const timeoutId = window.setTimeout(() => {
+      fetchData();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [fetchData]);
 
   const maxQty = Math.max(...orders.map((o) => Number(o.orderQty) || 0), 1);
@@ -127,7 +169,7 @@ export default function GMMerchandiserDashboardPage() {
 
       {/* Tabs */}
       <div className="flex gap-2 border-b border-slate-200 pb-3 text-xs font-semibold">
-        <button
+        <Button
           type="button"
           onClick={() => setActiveTab("pipeline")}
           className={`border-b-2 pb-2 transition cursor-pointer ${
@@ -135,8 +177,8 @@ export default function GMMerchandiserDashboardPage() {
           }`}
         >
           Order In Hand & Pipeline
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={() => setActiveTab("delivery")}
           className={`border-b-2 pb-2 transition cursor-pointer ${
@@ -144,8 +186,8 @@ export default function GMMerchandiserDashboardPage() {
           }`}
         >
           Delivery Month-wise Capacity
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={() => setActiveTab("summary")}
           className={`border-b-2 pb-2 transition cursor-pointer ${
@@ -153,7 +195,7 @@ export default function GMMerchandiserDashboardPage() {
           }`}
         >
           Order Booking Summary
-        </button>
+        </Button>
       </div>
 
       {/* TAB 1: ORDER IN HAND & PIPELINE */}
@@ -249,23 +291,23 @@ export default function GMMerchandiserDashboardPage() {
 
               {/* Year Selector */}
               <div className="flex items-center gap-2">
-                <button
+                <Button
                   type="button"
                   onClick={() => setSelectedYear((y) => y - 1)}
                   className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
                 >
                   &larr; Prev
-                </button>
+                </Button>
                 <span className="px-4 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold">
                   {selectedYear}
                 </span>
-                <button
+                <Button
                   type="button"
                   onClick={() => setSelectedYear((y) => y + 1)}
                   className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
                 >
                   Next &rarr;
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -280,7 +322,7 @@ export default function GMMerchandiserDashboardPage() {
                 const isSelected = selectedMonth === mKey;
 
                 return (
-                  <button
+                  <Button
                     key={mKey}
                     type="button"
                     onClick={() => setSelectedMonth(mKey)}
@@ -305,7 +347,7 @@ export default function GMMerchandiserDashboardPage() {
                         {count} orders ({pct}%)
                       </div>
                     </div>
-                  </button>
+                  </Button>
                 );
               })}
             </div>
@@ -351,7 +393,7 @@ export default function GMMerchandiserDashboardPage() {
                           {data.orders.length === 0 ? (
                             <p className="text-xs text-slate-400 py-3">No orders scheduled for {formatMonthName(selectedMonth)}.</p>
                           ) : (
-                            data.orders.map((ord: any) => (
+                            data.orders.map((ord) => (
                               <div key={ord.id} className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg text-xs">
                                 <div>
                                   <span className="font-bold text-slate-900">{ord.orderNo}</span>

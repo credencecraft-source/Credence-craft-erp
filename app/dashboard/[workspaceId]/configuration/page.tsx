@@ -9,6 +9,8 @@ import Section from "@/components/ui/Section";
 import { logoutSession, requireSessionUser } from "@/lib/auth/session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 import { listOrganizationsForUser } from "@/lib/services/organizations/organization-service";
+import Input from "@/components/ui/Input";
+
 
 const isDevBypass = process.env.NODE_ENV !== "production" && (process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL);
 
@@ -92,7 +94,7 @@ export default async function WorkspaceConfigurationPage({
 
       await logoutSession();
       redirect("/");
-    } catch (err) {
+    } catch {
       redirect(`/dashboard/${workspaceId}/configuration?error=deletion-failed`);
     }
   }
@@ -171,7 +173,7 @@ export default async function WorkspaceConfigurationPage({
                 <label className="text-xs font-medium text-slate-700" htmlFor="fullName">
                   Full Name
                 </label>
-                <input
+                <Input
                   id="fullName"
                   name="fullName"
                   defaultValue={user.full_name}
@@ -184,7 +186,7 @@ export default async function WorkspaceConfigurationPage({
                 <label className="text-xs font-medium text-slate-700" htmlFor="profileName">
                   Profile Name
                 </label>
-                <input
+                <Input
                   id="profileName"
                   name="profileName"
                   defaultValue={user.profile_name}

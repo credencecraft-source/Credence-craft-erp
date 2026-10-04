@@ -4,10 +4,11 @@ import { ChevronDown, Loader2, Store, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import Button from "@/components/ui/Button";
-import Select from "@/components/ui/Select";
 import Tabs from "@/components/ui/Tabs";
 import { formatNumber, text } from "./style-wise-purchase-order-format";
 import type { GroupedPurchaseOrder, MasterPurchaseOrder } from "./style-wise-purchase-order-types";
+import Checkbox from "@/components/ui/Checkbox";
+
 export function MasterPurchaseOrderReport({
   masterPurchaseOrders,
   onUpdated,
@@ -158,7 +159,7 @@ export function MasterPurchaseOrderReport({
           </p>
         </div>
         {activeTab === "po-creation" && (
-          <button
+          <Button
             type="button"
             onClick={generatePurchaseOrders}
             disabled={generating || selectedIds.size === 0}
@@ -167,7 +168,7 @@ export function MasterPurchaseOrderReport({
             {generating
               ? "Generating..."
               : `Generate Purchase Order${selectedIds.size ? ` (${selectedIds.size})` : ""}`}
-          </button>
+          </Button>
         )}
       </div>
       <Tabs
@@ -239,7 +240,7 @@ export function MasterPurchaseOrderReport({
                       onClick={(event) => event.stopPropagation()}
                     >
                       {master.sourceType === "VENDOR" && (
-                        <input
+                        <Checkbox
                           type="checkbox"
                           aria-label={`Select ${master.masterPoNo}`}
                           checked={selectedIds.has(master.id)}
@@ -295,7 +296,7 @@ export function MasterPurchaseOrderReport({
                         ) : (
                           <span className="text-slate-500">{master.status === "STORE_NOTIFIED" ? "Store notified" : "Completed"}</span>
                         ))}
-                        <button
+                        <Button
                           type="button"
                           disabled={deletingId === master.id || notifyingId === master.id}
                           onClick={() => void deleteMaster(master)}
@@ -304,7 +305,7 @@ export function MasterPurchaseOrderReport({
                           className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {deletingId === master.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                        </button>
+                        </Button>
                       </div>
                     </td>
                   </tr>

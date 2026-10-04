@@ -135,7 +135,7 @@ export async function GET(
       })));
     }
     return NextResponse.json(values);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error fetching master data:", error);
     if (isDatabaseUnavailableError(error)) {
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
@@ -218,8 +218,8 @@ export async function POST(
     }
 
     return NextResponse.json(newMasterValue, { status: 201 });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error creating master value:", error);
-    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Internal Server Error" }, { status: 500 });
   }
 }

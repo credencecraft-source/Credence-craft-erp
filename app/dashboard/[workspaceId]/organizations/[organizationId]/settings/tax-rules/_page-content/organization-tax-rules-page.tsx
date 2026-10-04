@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import Select from "@/components/ui/Select";
+import Input from "@/components/ui/Input";
+import Checkbox from "@/components/ui/Checkbox";
+import Button from "@/components/ui/Button";
+
 
 const defaultProfile = {
   country: "IN",
@@ -102,7 +106,7 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
         <div className="grid gap-5 md:grid-cols-2">
           <label className="space-y-2 text-sm font-medium text-slate-700">
             Country
-            <select
+            <Select
               value={profile.country}
               onChange={(event) => setProfile((current) => ({ ...current, country: event.target.value }))}
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
@@ -111,12 +115,12 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
               <option value="US">United States</option>
               <option value="AE">United Arab Emirates</option>
               <option value="GB">United Kingdom</option>
-            </select>
+            </Select>
           </label>
 
           <label className="space-y-2 text-sm font-medium text-slate-700">
             Tax regime
-            <select
+            <Select
               value={profile.taxRegime}
               onChange={(event) => setProfile((current) => ({ ...current, taxRegime: event.target.value }))}
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
@@ -124,12 +128,12 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
               {regimeOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
-            </select>
+            </Select>
           </label>
 
           <label className="space-y-2 text-sm font-medium text-slate-700 md:col-span-2">
             GSTIN / Tax registration number
-            <input
+            <Input
               value={profile.gstin}
               onChange={(event) => setProfile((current) => ({ ...current, gstin: event.target.value }))}
               placeholder="Enter GSTIN or tax registration number"
@@ -139,7 +143,7 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
 
           <label className="space-y-2 text-sm font-medium text-slate-700">
             State / Region
-            <input
+            <Input
               value={profile.state}
               onChange={(event) => setProfile((current) => ({ ...current, state: event.target.value }))}
               placeholder="Kerala"
@@ -150,7 +154,7 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
           <label className="space-y-2 text-sm font-medium text-slate-700">
             Default profile
             <div className="flex h-[42px] items-center rounded-lg border border-slate-300 bg-white px-3">
-              <input
+              <Checkbox
                 type="checkbox"
                 checked={profile.isDefault}
                 onChange={(event) => setProfile((current) => ({ ...current, isDefault: event.target.checked }))}
@@ -164,7 +168,7 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
             <>
               <label className="space-y-2 text-sm font-medium text-slate-700">
                 CGST %
-                <input
+                <Input
                   type="number"
                   value={profile.cgstRate}
                   onChange={(event) => setProfile((current) => ({ ...current, cgstRate: event.target.value }))}
@@ -175,7 +179,7 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
 
               <label className="space-y-2 text-sm font-medium text-slate-700">
                 SGST %
-                <input
+                <Input
                   type="number"
                   value={profile.sgstRate}
                   onChange={(event) => setProfile((current) => ({ ...current, sgstRate: event.target.value }))}
@@ -186,7 +190,7 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
 
               <label className="space-y-2 text-sm font-medium text-slate-700">
                 IGST %
-                <input
+                <Input
                   type="number"
                   value={profile.igstRate}
                   onChange={(event) => setProfile((current) => ({ ...current, igstRate: event.target.value }))}
@@ -200,7 +204,7 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
           {profile.taxRegime === "VAT" && (
             <label className="space-y-2 text-sm font-medium text-slate-700 md:col-span-2">
               VAT %
-              <input
+              <Input
                 type="number"
                 value={profile.vatRate}
                 onChange={(event) => setProfile((current) => ({ ...current, vatRate: event.target.value }))}
@@ -213,7 +217,7 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
           {profile.taxRegime === "SALES_TAX" && (
             <label className="space-y-2 text-sm font-medium text-slate-700 md:col-span-2">
               Sales Tax %
-              <input
+              <Input
                 type="number"
                 value={profile.salesTaxRate}
                 onChange={(event) => setProfile((current) => ({ ...current, salesTaxRate: event.target.value }))}
@@ -225,13 +229,13 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
         </div>
 
         <div className="mt-6 flex justify-end">
-          <button
+          <Button
             type="button"
             onClick={() => void saveProfile()}
             className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
           >
             Save tax rules
-          </button>
+          </Button>
         </div>
       </section>
     </main>

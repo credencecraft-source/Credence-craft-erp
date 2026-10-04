@@ -2,6 +2,8 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import Button from "@/components/ui/Button";
+
 
 type ArticleRecord = {
   id: string;
@@ -120,7 +122,6 @@ export default function ArticleDetailPage() {
   ];
 
   const orderNumbers = Array.isArray(summary?.orderNumbers) ? summary.orderNumbers : [];
-  const sizesRows = Array.isArray(summary?.sizes) ? summary.sizes : [];
   const bomRows = Array.isArray(summary?.bomItems) ? summary.bomItems : [];
 
   return (
@@ -136,7 +137,7 @@ export default function ArticleDetailPage() {
 
       <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3 text-xs font-semibold text-slate-600">
         {tabs.map((tab) => (
-          <button
+          <Button
             key={tab.id}
             type="button"
             onClick={() => setActiveTab(tab.id)}
@@ -145,7 +146,7 @@ export default function ArticleDetailPage() {
             }`}
           >
             {tab.label}
-          </button>
+          </Button>
         ))}
       </div>
 

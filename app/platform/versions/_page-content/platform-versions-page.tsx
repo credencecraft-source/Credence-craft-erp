@@ -92,17 +92,17 @@ export default async function PlatformVersionsPage({
                 <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
                   <Link href={`/platform/versions/${version.id}`} className="text-sm font-semibold text-emerald-700 hover:text-emerald-900">Open configuration</Link>
                   <div className="flex items-center gap-3">
-                    <form action={duplicateAction}><input type="hidden" name="id" value={version.id} /><button type="submit" className="text-xs font-semibold text-sky-600 hover:underline">Duplicate</button></form>
+                    <form action={duplicateAction}><input type="hidden" name="id" value={version.id} /><Button type="submit" className="text-xs font-semibold text-sky-600 hover:underline">Duplicate</Button></form>
                     <form action={deleteAction}>
                       <input type="hidden" name="id" value={version.id} />
-                      <button
+                      <Button
                         type="submit"
                         disabled={inUse}
                         title={inUse ? "This version is already assigned to at least one organization and cannot be deleted." : "Delete version"}
                         className={`text-xs font-semibold ${inUse ? "cursor-not-allowed text-slate-400" : "text-rose-600 hover:underline"}`}
                       >
                         {inUse ? "In use" : "Delete"}
-                      </button>
+                      </Button>
                     </form>
                   </div>
                 </div>

@@ -4,7 +4,6 @@ import { requireSessionUser } from "@/lib/auth/session-manager";
 import { createMasterValueForOrganization, getMasterValuesForOrganization, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-constants";
 import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-registry";
-import { prisma } from "@/lib/database/prisma-client";
 
 export async function GET(request: Request) {
   try {
@@ -64,12 +63,7 @@ export async function POST(request: Request) {
 
     const definitionExists = MASTER_DEFINITIONS.some((definition) => definition.key === moduleKey);
     if (!definitionExists) {
-      const dbDefinition = await (prisma as any).masterDefinition?.findFirst?.({
-        where: { organizationId, moduleKey }
-      });
-      if (!dbDefinition) {
-        return NextResponse.json({ error: "Master module not found." }, { status: 404 });
-      }
+      return NextResponse.json({ error: "Master module not found." }, { status: 404 });
     }
 
     const value = await createMasterValueForOrganization(organization.id, moduleKey, {

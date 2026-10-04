@@ -1,4 +1,6 @@
 "use client";
+import Checkbox from "@/components/ui/Checkbox";
+
 
 type RestrictionAssignmentCheckboxProps = {
   action: (formData: FormData) => void | Promise<void>;
@@ -20,7 +22,7 @@ export default function RestrictionAssignmentCheckbox({
       <input type="hidden" name="restrictionId" value={restrictionId} />
       <input type="hidden" name="segmentId" value={segmentId} />
       <input type="hidden" name="enabled" value={String(!checked)} />
-      <input
+      <Checkbox
         type="checkbox"
         defaultChecked={checked}
         onChange={(event) => event.currentTarget.form?.requestSubmit()}

@@ -11,6 +11,8 @@ import {
   savePlatformEmailConfiguration,
   sendTestEmail,
 } from "@/lib/services/platform/platform-email-configuration-service";
+import Checkbox from "@/components/ui/Checkbox";
+
 
 export default async function PlatformEmailConfigurationPage({
   searchParams,
@@ -79,7 +81,7 @@ export default async function PlatformEmailConfigurationPage({
                 <Input label="SMTP port" name="smtpPort" required type="number" min={1} max={65535} defaultValue={String(configuration?.smtpPort || 587)} />
               </div>
               <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-700">
-                <input type="checkbox" name="smtpSecure" defaultChecked={configuration?.smtpSecure || false} className="h-4 w-4 accent-emerald-600" />
+                <Checkbox type="checkbox" name="smtpSecure" defaultChecked={configuration?.smtpSecure || false} className="h-4 w-4 accent-emerald-600" />
                 Use secure TLS connection
               </label>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -96,7 +98,7 @@ export default async function PlatformEmailConfigurationPage({
                 <Input label="From name" name="fromName" required defaultValue={configuration?.fromName || "Credence Craft"} placeholder="Credence Craft" />
               </div>
               <label className="flex items-center gap-3 text-xs font-semibold text-slate-700">
-                <input type="checkbox" name="isActive" defaultChecked={configuration?.isActive ?? true} className="h-4 w-4 accent-emerald-600" />
+                <Checkbox type="checkbox" name="isActive" defaultChecked={configuration?.isActive ?? true} className="h-4 w-4 accent-emerald-600" />
                 Enable email delivery for authentication
               </label>
 

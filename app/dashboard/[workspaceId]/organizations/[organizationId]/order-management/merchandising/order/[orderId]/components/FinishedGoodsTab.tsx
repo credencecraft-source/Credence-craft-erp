@@ -2,21 +2,22 @@
 
 import React, { useEffect, useRef } from "react";
 import { calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
+import type { FinishedGoodsQuantityInput } from "@/lib/services/orders/order-quantity-calculations";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
+import type { OrderFormState } from "./order-form-types";
 
-type FinishedGoodsRow = {
+type FinishedGoodsRow = FinishedGoodsQuantityInput;
+
+type MasterDataOption = {
   id?: string;
-  buyerSize?: string | null;
-  size?: string | null;
-  beforeExcessQty?: number | string | null;
-  excess?: number | string | null;
-  excessQty?: number | string | null;
-  totalQty?: number | string | null;
-  buyerPoPrice?: number | string | null;
-  exchangePrice?: number | string | null;
-  priceInInr?: number | string | null;
+  label?: string;
+  code?: string | null;
+  value_id?: string;
+  name?: string;
+  is_active?: boolean;
+  sizes?: unknown[];
 };
 
 const defaultSizeRow = (): FinishedGoodsRow => ({
@@ -31,17 +32,22 @@ const defaultSizeRow = (): FinishedGoodsRow => ({
   priceInInr: "",
 });
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const getSizeLabel = (size: unknown): string =>
+  String(isRecord(size) ? size.label ?? size.name ?? size : size ?? "");
+
 export default function FinishedGoodsTab({
   form,
   setForm,
   masterOptions = {},
-  orderLookups = [],
   onOpenCreateMaster,
   isVariantMode = false,
 }: {
-  form: any;
-  setForm: any;
-  masterOptions?: Record<string, any[]>;
+  form: OrderFormState;
+  setForm: React.Dispatch<React.SetStateAction<OrderFormState>>;
+  masterOptions?: Record<string, MasterDataOption[]>;
   orderLookups?: Array<{ key: string; lookupModuleKey?: string; dependsOn?: string }>;
   onOpenCreateMaster?: (masterKey: string) => void;
   isVariantMode?: boolean;
@@ -56,21 +62,21 @@ export default function FinishedGoodsTab({
     const sizeGroup = String(form?.sizeGroup ?? "");
     if (!sizeGroup) {
       previousSizeGroup.current = "";
-      setForm((current: any) => Array.isArray(current.rows) && current.rows.length > 0
+      setForm((current) => Array.isArray(current.rows) && current.rows.length > 0
         ? { ...current, rows: [], orderQty: 0 }
         : current.orderQty === 0 ? current : { ...current, orderQty: 0 });
       return;
     }
 
-    const selectedGroup = (masterOptions["size-group"] ?? []).find((group: any) => group.label === sizeGroup || group.id === sizeGroup || group.value_id === sizeGroup);
+    const selectedGroup = (masterOptions["size-group"] ?? []).find((group) => group.label === sizeGroup || group.id === sizeGroup || group.value_id === sizeGroup);
     const mappedSizes = Array.isArray(selectedGroup?.sizes) ? selectedGroup.sizes : [];
 
-    setForm((current: any) => {
-      const currentRows = Array.isArray(current.rows) ? current.rows : [];
-      const existingMap = new Map(currentRows.map((row: any) => [String(row.size ?? "").trim(), row]));
+    setForm((current) => {
+      const currentRows = current.rows;
+      const existingMap = new Map(currentRows.map((row) => [String(row.size ?? "").trim(), row]));
 
-      const nextRows = mappedSizes.map((size: any) => {
-        const sizeLabel = String(size.label ?? size.name ?? size ?? "").trim();
+      const nextRows = mappedSizes.map((size) => {
+        const sizeLabel = getSizeLabel(size).trim();
         const existingRow = sizeLabel ? existingMap.get(sizeLabel) : null;
         return {
           ...defaultSizeRow(),
@@ -79,7 +85,7 @@ export default function FinishedGoodsTab({
         };
       });
 
-      if (nextRows.length === currentRows.length && currentRows.every((row: any, index: number) => String(row.size ?? "").trim() === String(nextRows[index]?.size ?? "").trim())) {
+      if (nextRows.length === currentRows.length && currentRows.every((row, index) => String(row.size ?? "").trim() === String(nextRows[index]?.size ?? "").trim())) {
         return current;
       }
 
@@ -94,8 +100,8 @@ export default function FinishedGoodsTab({
   }, [form?.sizeGroup, isVariantMode, masterOptions, setForm]);
 
   const updateSizeRow = (index: number, field: keyof FinishedGoodsRow, value: string) => {
-    setForm((current: any) => {
-      const updatedRows = [...(current.rows || [])];
+    setForm((current) => {
+      const updatedRows = [...current.rows];
       updatedRows[index] = { ...updatedRows[index], [field]: value };
       const calculated = calculateFinishedGoodsRows(updatedRows);
       return { ...current, rows: calculated.rows, orderQty: calculated.orderQty };
@@ -111,7 +117,7 @@ export default function FinishedGoodsTab({
   ) => {
     let options = masterOptions[masterKey] ?? [];
 
-    if (value && !options.some((opt: any) => opt.label === value)) {
+    if (value && !options.some((opt) => opt.label === value)) {
       options = [{ id: "current-legacy-fg", label: value, code: null, is_active: true }, ...options];
     }
     const canCreate = onOpenCreateMaster && masterKey !== "size";
@@ -153,7 +159,7 @@ export default function FinishedGoodsTab({
           value={value ?? ""}
           onChange={(event) => onChange(event.target.value)}
           className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none w-full"
-          options={[{ value: "", label: placeholder }, ...options.map((option: any) => ({ value: option.label, label: option.is_active ? option.label : `${option.label} (Not approved)` }))]}
+          options={[{ value: "", label: placeholder }, ...options.map((option) => ({ value: option.label ?? "", label: option.is_active ? option.label ?? "" : `${option.label ?? ""} (Not approved)` }))]}
         />
       </label>
     );
@@ -182,7 +188,7 @@ export default function FinishedGoodsTab({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 align-top">
-            {calculatedFinishedGoods.rows.map((row: FinishedGoodsRow, index: number) => (
+            {calculatedFinishedGoods.rows.map((row, index) => (
               <tr key={`${index}-${row.size || "row"}`}>
                 <td className="p-2">
                   <div className="flex flex-col gap-1.5 pt-5">

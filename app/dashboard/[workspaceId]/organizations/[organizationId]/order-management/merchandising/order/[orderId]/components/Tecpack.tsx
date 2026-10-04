@@ -1,12 +1,17 @@
 "use client";
 
 import React from "react";
+import Button from "@/components/ui/Button";
+
+import type { OrderFormState } from "./order-form-types";
 
 export default function TecPackTab({
   form,
 }: {
-  form: any;
-  setForm: any;
+  form: Pick<OrderFormState, "styleName" | "season" | "bomRows"> & {
+    constructionDetails?: string;
+  };
+  setForm: React.Dispatch<React.SetStateAction<OrderFormState>>;
 }) {
   const handlePrint = () => {
     window.print();
@@ -20,13 +25,13 @@ export default function TecPackTab({
           <h3 className="text-sm font-bold text-slate-900">Technical Package Document</h3>
           <p className="text-[11px] text-slate-500">Continuous multi-page PDF document layout</p>
         </div>
-        <button
+        <Button
           type="button"
           onClick={handlePrint}
           className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 transition-all flex items-center gap-2"
         >
           <span>🖨️</span> Print / Download PDF
-        </button>
+        </Button>
       </div>
 
       {/* CONTINUOUS PDF VIEWER CONTAINER */}

@@ -6,7 +6,7 @@ import { INVENTORY_MASTER_DEFINITIONS } from "@/lib/master-data/inventory-manage
 import { QUALITY_MANAGEMENT_MASTER_DEFINITIONS } from "@/lib/master-data/quality-management-system/quality-management-masters";
 import { FINANCE_MANAGEMENT_MASTER_DEFINITIONS } from "@/lib/master-data/finance-management/finance-management-masters";
 import { GOLD_SEAL_MASTER_DEFINITIONS } from "@/lib/master-data/design-development/gold-seal-masters";
-import { createMaster, lookup, text, type MasterDefinition, type MasterFieldDefinition, type MasterFieldType } from "@/lib/master-data/master-data-models";
+import { createMaster, lookup, text, type MasterDefinition } from "@/lib/master-data/master-data-models";
 
 export type { MasterFieldType, MasterFieldDefinition, MasterDefinition } from "@/lib/master-data/master-data-models";
 export { createMaster, lookup, text } from "@/lib/master-data/master-data-models";

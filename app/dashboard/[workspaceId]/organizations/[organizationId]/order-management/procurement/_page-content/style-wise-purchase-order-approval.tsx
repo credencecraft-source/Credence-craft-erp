@@ -242,7 +242,7 @@ export function PriceApprovalStage({
             Review grouped material prices
           </h2>
         </div>
-        <button
+        <Button
           type="button"
           disabled={approving || selectedCount < 1}
           onClick={approveSelectedRecords}
@@ -251,7 +251,7 @@ export function PriceApprovalStage({
           {approving
             ? "Creating master group..."
             : `Master Group${selectedCount ? ` (${selectedCount})` : ""}`}
-        </button>
+        </Button>
       </div>
       {groupedPurchaseOrders.length === 0 ? (
         <div className="erp-surface flex min-h-40 items-center justify-center text-xs text-slate-500">

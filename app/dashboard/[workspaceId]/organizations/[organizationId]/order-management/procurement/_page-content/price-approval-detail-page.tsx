@@ -1,16 +1,13 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import Button from "@/components/ui/Button";
 
 import { DetailedPriceApprovalCard, type GroupedPurchaseOrder } from "./style-wise-purchase-order-page";
 
 export default function PriceApprovalDetailPage() {
   const params = useParams<{ workspaceId: string; organizationId: string; groupedPurchaseOrderId: string }>();
-  const router = useRouter();
-  const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
   const groupedPurchaseOrderId = params?.groupedPurchaseOrderId ?? "";
   const [order, setOrder] = useState<GroupedPurchaseOrder | null>(null);
@@ -26,7 +23,9 @@ export default function PriceApprovalDetailPage() {
   }, [groupedPurchaseOrderId, organizationId]);
 
   useEffect(() => {
-    loadOrder().catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load grouped PO details.")).finally(() => setLoading(false));
+    void Promise.resolve().then(() => loadOrder())
+      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load grouped PO details."))
+      .finally(() => setLoading(false));
   }, [loadOrder]);
 
   useEffect(() => {

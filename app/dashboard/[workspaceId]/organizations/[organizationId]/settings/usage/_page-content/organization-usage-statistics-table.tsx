@@ -3,6 +3,9 @@
 import { useMemo, useState } from "react";
 
 import type { OrganizationUsageStatistic } from "@/lib/services/organizations/organization-usage-statistics-service";
+import Checkbox from "@/components/ui/Checkbox";
+import Button from "@/components/ui/Button";
+
 
 type OrganizationUsageStatisticsTableProps = {
   statistics: OrganizationUsageStatistic[];
@@ -39,7 +42,7 @@ export default function OrganizationUsageStatisticsTable({
     <>
       <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
         <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
-          <input
+          <Checkbox
             type="checkbox"
             checked={hideZeroCountTables}
             onChange={(event) => setHideZeroCountTables(event.target.checked)}
@@ -51,22 +54,22 @@ export default function OrganizationUsageStatisticsTable({
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Show</span>
           {(["all", 10, 20, 50] as const).map((limit) => (
-            <button
+            <Button
               key={limit}
               type="button"
               onClick={() => setTableLimit(limit)}
               className={controlClassName(tableLimit === limit)}
             >
               {limit === "all" ? "All" : `Top ${limit}`}
-            </button>
+            </Button>
           ))}
-          <button
+          <Button
             type="button"
             onClick={() => setSortHighToLow((current) => !current)}
             className={controlClassName(sortHighToLow)}
           >
             {sortHighToLow ? "High to low" : "Sort high to low"}
-          </button>
+          </Button>
         </div>
       </div>
 

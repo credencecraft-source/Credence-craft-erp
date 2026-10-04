@@ -1,5 +1,6 @@
 "use client";
 
+import type { SegmentRestriction } from "@prisma/client";
 import {
   ComponentPropsWithoutRef,
   ReactNode,
@@ -9,22 +10,23 @@ import { cn } from "@/lib/utilities/utility-helpers";
 
 interface SidebarProps extends ComponentPropsWithoutRef<"aside"> {
   children: ReactNode;
-  restrictions?: any[];
+  restrictions?: SegmentRestriction[];
   organizationId?: string;
 }
 
 export default function Sidebar({
   children,
   className,
-  restrictions = [],
-  organizationId = "",
   ...props
 }: SidebarProps) {
+  const asideProps = { ...props };
+  delete asideProps.restrictions;
+  delete asideProps.organizationId;
   const [expanded, setExpanded] = useState(false);
 
   return (
     <aside
-      {...props}
+      {...asideProps}
       onMouseEnter={() => setExpanded(true)}
       onMouseLeave={() => setExpanded(false)}
       data-expanded={expanded}

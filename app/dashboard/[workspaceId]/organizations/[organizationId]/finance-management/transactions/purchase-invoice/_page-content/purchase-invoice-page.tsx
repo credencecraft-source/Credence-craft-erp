@@ -47,22 +47,21 @@ export default function PurchaseInvoicePage({
   );
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(`finance-documents-${organizationId}`);
-    if (!stored) {
-      setRecords([]);
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(stored) as FinanceRecord[];
-      setRecords(
-        (Array.isArray(parsed) ? parsed : []).filter(
-          (record) => record.documentType === "Purchase Invoice",
-        ),
-      );
-    } catch {
-      setRecords([]);
-    }
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (!active) return;
+      const stored = window.localStorage.getItem(`finance-documents-${organizationId}`);
+      try {
+        const parsed: unknown = stored ? JSON.parse(stored) : [];
+        const nextRecords = Array.isArray(parsed)
+          ? (parsed as FinanceRecord[]).filter((record) => record.documentType === "Purchase Invoice")
+          : [];
+        setRecords(nextRecords);
+      } catch {
+        setRecords([]);
+      }
+    });
+    return () => { active = false; };
   }, [organizationId]);
 
   const renderCell = (fieldKey: string, record: FinanceRecord) => {

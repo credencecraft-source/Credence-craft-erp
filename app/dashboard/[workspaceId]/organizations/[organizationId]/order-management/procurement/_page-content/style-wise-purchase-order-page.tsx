@@ -2,13 +2,15 @@
 
 import { ArrowLeft, Check, ChevronDown, ClipboardCheck, Loader2, PackageSearch, Search, Store, X } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import { text } from "./style-wise-purchase-order-format";
 import type { BomRow, VendorOption, GstOption, MaterialGroup, MaterialCategory, GroupedPurchaseOrder, MasterPurchaseOrder, StyleWiseStage } from "./style-wise-purchase-order-types";
 import { MaterialCategoryCard, MaterialGroupCard, MaterialDetail, StageButton, GroupedPurchaseOrderForm } from "./style-wise-purchase-order-allocation";
 import { PriceApprovalStage } from "./style-wise-purchase-order-approval";
-import { MasterPurchaseOrderReport, CreatePoStage } from "./style-wise-purchase-order-create";
+import { MasterPurchaseOrderReport } from "./style-wise-purchase-order-create";
+import Input from "@/components/ui/Input";
+
 
 export type { GroupedPurchaseOrder, MasterPurchaseOrder, StyleWiseStage } from "./style-wise-purchase-order-types";
 export { DetailedPriceApprovalCard } from "./style-wise-purchase-order-detail-card";
@@ -50,7 +52,7 @@ export default function StyleWisePurchaseOrderPage({
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
-  const loadAllocatableRows = async (append = false) => {
+  const loadAllocatableRows = useCallback(async (append = false) => {
     const query = new URLSearchParams({ organizationId, view: "allocatable", limit: "100" });
     if (append && allocationNextCursor) query.set("cursor", allocationNextCursor);
     const response = await fetch(`/api/orders/procurement?${query.toString()}`, { cache: "no-store" });
@@ -61,9 +63,9 @@ export default function StyleWisePurchaseOrderPage({
     setBomRows((current) => append ? [...current, ...page] : page);
     setAllocationNextCursor(data.nextCursor ?? null);
     if (!append) loadedStageData.current.add(`${organizationId}:allocation`);
-  };
+  }, [allocationNextCursor, organizationId]);
 
-  const loadMoreAllocatableRows = async () => {
+  const loadMoreAllocatableRows = useCallback(async () => {
     if (!allocationNextCursor || loadingMoreAllocation) return;
     setLoadingMoreAllocation(true);
     try {
@@ -73,9 +75,9 @@ export default function StyleWisePurchaseOrderPage({
     } finally {
       setLoadingMoreAllocation(false);
     }
-  };
+  }, [allocationNextCursor, loadAllocatableRows, loadingMoreAllocation]);
 
-  const loadVendors = async () => {
+  const loadVendors = useCallback(async () => {
     const response = await fetch(
       `/api/organizations/${encodeURIComponent(organizationId)}/master-data/vendor?includeInactive=false&includeDummyData=true`,
       { cache: "no-store" },
@@ -92,9 +94,9 @@ export default function StyleWisePurchaseOrderPage({
       ),
     );
     loadedStageData.current.add(`${organizationId}:vendors`);
-  };
+  }, [organizationId]);
 
-  const loadGstOptions = async () => {
+  const loadGstOptions = useCallback(async () => {
     const response = await fetch(
       `/api/organizations/${encodeURIComponent(organizationId)}/master-data/gst?includeInactive=false`,
       { cache: "no-store" },
@@ -104,9 +106,9 @@ export default function StyleWisePurchaseOrderPage({
       throw new Error(data?.error || "Unable to load GST master.");
     setGstOptions(Array.isArray(data) ? data : []);
     loadedStageData.current.add(`${organizationId}:gst`);
-  };
+  }, [organizationId]);
 
-  const loadPriceApprovals = async (appendDataset?: "grouped" | "master", requestedView?: "price-approval" | "create") => {
+  const loadPriceApprovals = useCallback(async (appendDataset?: "grouped" | "master", requestedView?: "price-approval" | "create") => {
     if (!appendDataset) {
       loadedStageData.current.delete(`${organizationId}:price`);
       loadedStageData.current.delete(`${organizationId}:create`);
@@ -141,9 +143,9 @@ export default function StyleWisePurchaseOrderPage({
     } finally {
       if (appendDataset) setLoadingMoreDataset(null);
     }
-  };
+  }, [groupedNextCursor, masterNextCursor, organizationId, stage]);
 
-  const loadOnce = (key: string, loader: () => Promise<void>) => {
+  const loadOnce = useCallback((key: string, loader: () => Promise<void>) => {
     const cacheKey = `${organizationId}:${key}`;
     if (loadedStageData.current.has(cacheKey)) return Promise.resolve();
     const existing = stageDataRequests.current.get(cacheKey);
@@ -153,9 +155,9 @@ export default function StyleWisePurchaseOrderPage({
       .finally(() => stageDataRequests.current.delete(cacheKey));
     stageDataRequests.current.set(cacheKey, request);
     return request;
-  };
+  }, [organizationId]);
 
-  const loadStageData = (targetStage: StyleWiseStage) => {
+  const loadStageData = useCallback((targetStage: StyleWiseStage) => {
     const requests: Promise<void>[] = [];
     if (targetStage === "allocate") {
       const needsAllocation = !loadedStageData.current.has(`${organizationId}:allocation`);
@@ -174,7 +176,7 @@ export default function StyleWisePurchaseOrderPage({
       requests.push(loadOnce("create", () => loadPriceApprovals(undefined, "create")));
     }
     return Promise.all(requests).then(() => undefined);
-  };
+  }, [loadAllocatableRows, loadGstOptions, loadOnce, loadPriceApprovals, loadVendors, organizationId]);
 
   const selectStage = (nextStage: StyleWiseStage) => {
     const nextPath = nextStage === "allocate"
@@ -216,7 +218,7 @@ export default function StyleWisePurchaseOrderPage({
     return () => {
       mounted = false;
     };
-  }, [organizationId, stage]);
+  }, [loadStageData, organizationId, stage]);
 
   useEffect(() => {
     if (stage !== "price" && stage !== "create") return;
@@ -227,7 +229,7 @@ export default function StyleWisePurchaseOrderPage({
         if (mounted) setPriceLoading(false);
       });
     return () => { mounted = false; };
-  }, [stage, organizationId]);
+  }, [loadStageData, stage, organizationId]);
 
   useEffect(() => {
     const syncStageFromHistory = () => {
@@ -238,25 +240,6 @@ export default function StyleWisePurchaseOrderPage({
     window.addEventListener("popstate", syncStageFromHistory);
     return () => window.removeEventListener("popstate", syncStageFromHistory);
   }, [styleWisePath]);
-
-  const filteredRows = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    if (!needle) return bomRows;
-    return bomRows.filter((row) =>
-      [
-        row.orderNo,
-        row.styleName,
-        row.brand,
-        row.category,
-        row.subCategory,
-        row.itemName,
-      ].some((value) =>
-        String(value ?? "")
-          .toLowerCase()
-          .includes(needle),
-      ),
-    );
-  }, [bomRows, search]);
 
   const materialGroups = useMemo<MaterialGroup[]>(() => {
     const grouped = new Map<string, MaterialGroup>();
@@ -328,12 +311,6 @@ export default function StyleWisePurchaseOrderPage({
     materialGroups.find((group) => group.key === selectedMaterialKey) ?? null;
 
   const selectedRows = bomRows.filter((row) => selectedIds.has(row.id));
-  const toggleAll = () =>
-    setSelectedIds((current) =>
-      current.size === filteredRows.length
-        ? new Set()
-        : new Set(filteredRows.map((row) => row.id)),
-    );
   const toggleRow = (id: string) =>
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -341,12 +318,6 @@ export default function StyleWisePurchaseOrderPage({
       else next.add(id);
       return next;
     });
-
-  const openPriceStage = () => {
-    setError("");
-    setNotice("");
-    selectStage("price");
-  };
 
   return (
     <div className="mx-auto max-w-[1500px] space-y-3">
@@ -389,13 +360,13 @@ export default function StyleWisePurchaseOrderPage({
       {error && (
         <div className="flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
           <span>{error}</span>
-          <button
+          <Button
             type="button"
             onClick={() => setError("")}
             aria-label="Dismiss error"
           >
             <X className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
       )}
 
@@ -413,7 +384,7 @@ export default function StyleWisePurchaseOrderPage({
             <div className="flex items-center gap-2">
               <div className="relative w-60">
                 <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
-                <input
+                <Input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Search material or subcategory"
@@ -421,7 +392,7 @@ export default function StyleWisePurchaseOrderPage({
                 />
               </div>
               {selectedMaterial && (
-                <button
+                <Button
                   type="button"
                   onClick={() => setShowGroupedForm(true)}
                   disabled={selectedRows.length === 0}
@@ -431,7 +402,7 @@ export default function StyleWisePurchaseOrderPage({
                   <span className="rounded bg-white/20 px-1.5">
                     {selectedRows.length}
                   </span>
-                </button>
+                </Button>
               )}
             </div>
           </div>
@@ -460,7 +431,7 @@ export default function StyleWisePurchaseOrderPage({
           ) : selectedCategory ? (
             <div className="space-y-3">
               <div className="flex items-center gap-2">
-                <button
+                <Button
                   type="button"
                   onClick={() => {
                     setSelectedCategoryKey(null);
@@ -469,7 +440,7 @@ export default function StyleWisePurchaseOrderPage({
                   className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-emerald-700"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" /> Categories
-                </button>
+                </Button>
                 <span className="text-slate-300">/</span>
                 <h3 className="text-sm font-bold text-slate-950">
                   {selectedCategory.label}

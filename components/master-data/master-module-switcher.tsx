@@ -10,16 +10,7 @@ type Option = {
   label: string;
   pathSegment?: string;
   moduleKey?: string;
-  children?: ReadonlyArray<{
-    key: string;
-    label: string;
-    pathSegment?: string;
-    children?: ReadonlyArray<{
-      key: string;
-      label: string;
-      pathSegment?: string;
-    }>;
-  }>;
+  children?: ReadonlyArray<Option>;
 };
 
 export function MasterModuleSwitcher({
@@ -48,9 +39,9 @@ export function MasterModuleSwitcher({
     const orgIndex = segments.indexOf("organizations");
 
     const pathSegments = [option.pathSegment || option.key];
-    let currentOption: any = option;
-    while (currentOption.children?.[0]) {
-      const firstChild = currentOption.children[0];
+    let currentOption: Option | undefined = option;
+    while (currentOption?.children?.[0]) {
+      const firstChild: Option = currentOption.children[0];
       pathSegments.push(firstChild.pathSegment || firstChild.key);
       currentOption = firstChild;
     }

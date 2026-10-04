@@ -2,6 +2,59 @@
 
 import { startTransition, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Checkbox from "@/components/ui/Checkbox";
+
+type MerchandisingOrderListItem = {
+  id: string;
+  finalStatus?: string;
+  orderNo?: string;
+  entityName?: string;
+  category?: string;
+  subCategory?: string;
+  season?: string;
+  article?: string;
+  styleName?: string;
+  colors?: string;
+  buyer?: string;
+  brand?: string;
+  sizeGroup?: string;
+  orderQty?: string | number | null;
+  deliveryDate?: string;
+  processStatus?: string;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+function parseOrderListItem(value: unknown): MerchandisingOrderListItem | null {
+  if (!isRecord(value) || typeof value.id !== "string") return null;
+  const optionalString = (key: string) =>
+    typeof value[key] === "string" ? value[key] : undefined;
+
+  return {
+    id: value.id,
+    finalStatus: optionalString("finalStatus"),
+    orderNo: optionalString("orderNo"),
+    entityName: optionalString("entityName"),
+    category: optionalString("category"),
+    subCategory: optionalString("subCategory"),
+    season: optionalString("season"),
+    article: optionalString("article"),
+    styleName: optionalString("styleName"),
+    colors: optionalString("colors"),
+    buyer: optionalString("buyer"),
+    brand: optionalString("brand"),
+    sizeGroup: optionalString("sizeGroup"),
+    orderQty:
+      typeof value.orderQty === "string" || typeof value.orderQty === "number"
+        ? value.orderQty
+        : null,
+    deliveryDate: optionalString("deliveryDate"),
+    processStatus: optionalString("processStatus"),
+  };
+}
 
 export default function CreateMerchandisingOrderPage() {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
@@ -9,7 +62,7 @@ export default function CreateMerchandisingOrderPage() {
   const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
 
-  const [orders, setOrders] = useState<any[]>([]);
+  const [orders, setOrders] = useState<MerchandisingOrderListItem[]>([]);
   const [activeTab, setActiveTab] = useState("DRAFT");
 
   useEffect(() => {
@@ -22,9 +75,17 @@ export default function CreateMerchandisingOrderPage() {
         });
         const contentType = res.headers.get("content-type") ?? "";
         if (res.ok && contentType.includes("application/json")) {
-          const data = await res.json();
+          const data: unknown = await res.json();
           if (isMounted) {
-            setOrders(Array.isArray(data.orders) ? data.orders : Array.isArray(data) ? data : []);
+            const records = Array.isArray(data)
+              ? data
+              : isRecord(data) && Array.isArray(data.orders)
+                ? data.orders
+                : [];
+            setOrders(records.flatMap((record) => {
+              const parsed = parseOrderListItem(record);
+              return parsed ? [parsed] : [];
+            }));
           }
         } else if (isMounted) {
           setOrders([]);
@@ -78,7 +139,7 @@ export default function CreateMerchandisingOrderPage() {
       {/* Tabs */}
       <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3 text-xs font-semibold text-slate-600">
         {tabs.map((tab) => (
-          <button
+          <Button
             key={tab}
             type="button"
             onClick={() => setActiveTab(tab)}
@@ -89,7 +150,7 @@ export default function CreateMerchandisingOrderPage() {
             }`}
           >
             {tab}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -99,17 +160,17 @@ export default function CreateMerchandisingOrderPage() {
           <p className="text-xs text-slate-500">{filteredOrders.length} records available</p>
         </div>
         <div className="flex items-center gap-2">
-          <input
+          <Input
             placeholder="Search report..."
             className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-800 focus:border-emerald-500 focus:outline-none"
           />
-          <button
+          <Button
             type="button"
             onClick={handleCreateNew}
             className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700"
           >
             + New Order
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -117,7 +178,7 @@ export default function CreateMerchandisingOrderPage() {
         <table className="w-full text-left text-xs">
           <thead className="border-b border-slate-200 bg-slate-50 text-slate-500">
             <tr>
-              <th className="p-3 w-10"><input type="checkbox" className="rounded border-slate-300" /></th>
+              <th className="p-3 w-10"><Checkbox type="checkbox" className="rounded border-slate-300" /></th>
               <th className="p-3">ORDER NO</th>
               <th className="p-3">ENTITY NAME</th>
               <th className="p-3">PRODUCT CATEGORY</th>
@@ -148,7 +209,7 @@ export default function CreateMerchandisingOrderPage() {
                   onClick={() => handleRowClick(order.id)}
                   className="cursor-pointer hover:bg-slate-50 transition"
                 >
-                  <td className="p-3" onClick={(e) => e.stopPropagation()}><input type="checkbox" className="rounded border-slate-300" /></td>
+                  <td className="p-3" onClick={(e) => e.stopPropagation()}><Checkbox type="checkbox" className="rounded border-slate-300" /></td>
                   <td className="p-3 font-medium text-emerald-700">{order.orderNo}</td>
                   <td className="p-3">{order.entityName || "-"}</td>
                   <td className="p-3">{order.category || "-"}</td>

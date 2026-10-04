@@ -42,7 +42,7 @@ export default function GateEntryReportsPage() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [direction, setDirection] = useState("ALL");
   const [movementType, setMovementType] = useState("ALL");
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [visibleFields, setVisibleFields] = useState<GateEntryField[]>(reportFields.map((field) => field.key));

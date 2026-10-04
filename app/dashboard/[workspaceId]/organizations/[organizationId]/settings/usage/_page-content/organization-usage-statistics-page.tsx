@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import Card from "@/components/ui/Card";
@@ -14,7 +13,7 @@ export default async function OrganizationUsageStatisticsPage({
 }: {
   params: Promise<{ workspaceId: string; organizationId: string }>;
 }) {
-  const { workspaceId, organizationId } = await params;
+  const { organizationId } = await params;
   const user = await requireSessionUser();
   const organization = await getOrganizationForUser(user.id, organizationId);
 
@@ -27,8 +26,6 @@ export default async function OrganizationUsageStatisticsPage({
     (total, statistic) => total + statistic.recordCount,
     0,
   );
-  const settingsPath = `/dashboard/${workspaceId}/organizations/${organizationId}/settings`;
-
   return (
     <Page>
       <Section className="space-y-6">

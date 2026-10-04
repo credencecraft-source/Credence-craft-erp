@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { Leaf } from "lucide-react";
+import Button from "@/components/ui/Button";
+
 
 export default function PublicHeader({
   active,
@@ -18,7 +20,7 @@ export default function PublicHeader({
       </Link>
       <nav className="flex items-center gap-2 text-[11px] font-medium text-[#587066] sm:gap-3 lg:gap-5" aria-label="Public navigation">
         {onImpactClick ? (
-          <button type="button" onClick={onImpactClick} className={active === "impact" ? "hidden font-semibold text-[#183b2c] sm:inline-flex" : "hidden transition-colors hover:text-[#183b2c] sm:inline-flex"}>Impact</button>
+          <Button type="button" onClick={onImpactClick} className={active === "impact" ? "hidden font-semibold text-[#183b2c] sm:inline-flex" : "hidden transition-colors hover:text-[#183b2c] sm:inline-flex"}>Impact</Button>
         ) : (
           <Link href="/#impact" className={active === "impact" ? "hidden text-[#183b2c] sm:inline-flex" : "hidden transition-colors hover:text-[#183b2c] sm:inline-flex"}>Impact</Link>
         )}

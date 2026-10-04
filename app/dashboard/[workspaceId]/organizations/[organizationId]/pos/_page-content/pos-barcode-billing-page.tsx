@@ -4,8 +4,11 @@ import { Printer, ScanLine, Search, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
+import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
 
 type StockRecord = {
@@ -49,6 +52,52 @@ type MasterLookupOption = {
   value_id?: string;
   label: string;
 };
+type MasterStateOption = {
+  id?: string;
+  value_id?: string;
+  label?: string | null;
+};
+type MasterVendorOption = {
+  label?: string | null;
+};
+type StoredPosInvoice = {
+  invoiceNumber: string;
+  invoiceDate: string;
+  customer: string;
+  lines: Array<{
+    record: StockRecord;
+    quantity: number;
+    rate: number;
+    gstRate: number;
+    discountPercent: number;
+    amount: number;
+  }>;
+  subtotal: number;
+  taxRate: number;
+  taxAmount: number;
+  taxMode: "LOCAL" | "INTERSTATE";
+  cgstAmount: number;
+  sgstAmount: number;
+  igstAmount: number;
+  otherCharges: number;
+  grandTotal: number;
+  savedAt: string;
+};
+type StoredFinanceDocument = {
+  id: string;
+  documentType: string;
+  documentNumber: string;
+  sourceModule: string;
+  sourceRecordId: string;
+  date: string;
+  party: string;
+  amount: number;
+  tax: number;
+  net: number;
+  status: string;
+  paymentStatus: string;
+  archivedYear: number;
+};
 
 export default function PosBarcodeBillingPage({
   workspaceId,
@@ -69,8 +118,8 @@ export default function PosBarcodeBillingPage({
   const [invoiceDate, setInvoiceDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
-  const [taxMode, setTaxMode] = useState<"LOCAL" | "INTERSTATE">("LOCAL");
-  const [otherCharges, setOtherCharges] = useState("0");
+  const [taxMode] = useState<"LOCAL" | "INTERSTATE">("LOCAL");
+  const otherCharges = "0";
   const [gstOptions, setGstOptions] = useState<GstOption[]>([]);
   const [vendorOptions, setVendorOptions] = useState<string[]>([]);
   const [vendorQuickCreate, setVendorQuickCreate] = useState("");
@@ -110,36 +159,54 @@ export default function PosBarcodeBillingPage({
         { cache: "no-store" },
       ).then((response) => response.json()),
     ])
-      .then(([stockData, gstData, taxData, vendorData, stateData]) => {
-        setRecords(Array.isArray(stockData.records) ? stockData.records : []);
-        setGstOptions(Array.isArray(gstData) ? gstData : []);
-        setTaxProfile(taxData.profile ?? null);
-        setVendorOptions(
-          Array.isArray(vendorData)
-            ? Array.from(
-                new Set(
-                  vendorData
-                    .map((item: { label?: string | null }) =>
-                      String(item.label ?? "").trim(),
-                    )
-                    .filter(Boolean),
-                ),
-              ).sort((left, right) => left.localeCompare(right))
-            : [],
-        );
-        setStateOptions(
-          Array.isArray(stateData)
-            ? stateData
-                .map((item: { id?: string; value_id?: string; label?: string | null }) => ({
-                  id: String(item.id ?? item.value_id ?? ""),
-                  value_id: item.value_id,
-                  label: String(item.label ?? "").trim(),
-                }))
-                .filter((item) => item.id && item.label)
-                .sort((left, right) => left.label.localeCompare(right.label))
-            : [],
-        );
-      })
+      .then(
+        ([
+          stockData,
+          gstData,
+          taxData,
+          vendorData,
+          stateData,
+        ]: [
+          { records?: StockRecord[] },
+          GstOption[],
+          {
+            profile?: {
+              cgstRate?: number | null;
+              sgstRate?: number | null;
+              igstRate?: number | null;
+            } | null;
+          },
+          MasterVendorOption[],
+          MasterStateOption[],
+        ]) => {
+          setRecords(Array.isArray(stockData.records) ? stockData.records : []);
+          setGstOptions(Array.isArray(gstData) ? gstData : []);
+          setTaxProfile(taxData.profile ?? null);
+          setVendorOptions(
+            Array.isArray(vendorData)
+              ? Array.from(
+                  new Set(
+                    vendorData
+                      .map((item) => String(item.label ?? "").trim())
+                      .filter(Boolean),
+                  ),
+                ).sort((left, right) => left.localeCompare(right))
+              : [],
+          );
+          setStateOptions(
+            Array.isArray(stateData)
+              ? stateData
+                  .map((item) => ({
+                    id: String(item.id ?? item.value_id ?? ""),
+                    value_id: item.value_id,
+                    label: String(item.label ?? "").trim(),
+                  }))
+                  .filter((item) => item.id && item.label)
+                  .sort((left, right) => left.label.localeCompare(right.label))
+              : [],
+          );
+        },
+      )
       .catch(() => setError("Unable to load finished goods stock records."));
   }, [organizationId]);
 
@@ -159,7 +226,10 @@ export default function PosBarcodeBillingPage({
           fields: { vendor: name, Registered_State: vendorState },
         }),
       });
-      const data = await response.json();
+      const data = (await response.json()) as {
+        error?: string;
+        value?: { label?: string | null };
+      };
       if (!response.ok) {
         throw new Error(data?.error || "Unable to create vendor.");
       }
@@ -194,9 +264,13 @@ export default function PosBarcodeBillingPage({
         `/api/inventory/stock/fg-sku?organizationId=${encodeURIComponent(organizationId)}&barcode=${encodeURIComponent(barcode)}`,
         { cache: "no-store" },
       );
-      const data = await response.json();
+      const data = (await response.json()) as {
+        error?: string;
+        record?: StockRecord;
+      };
       if (!response.ok)
         throw new Error(data?.error || "Unable to find this stock barcode.");
+      if (!data.record) throw new Error("Unable to find this stock barcode.");
       setSelectedRecord(data.record);
       setScanValue("");
     } catch (lookupError) {
@@ -352,8 +426,8 @@ export default function PosBarcodeBillingPage({
     const savedInvoices = JSON.parse(
       window.localStorage.getItem(`pos-sales-invoices-${organizationId}`) ??
         "[]",
-    ) as Array<Record<string, unknown>>;
-    const invoice = {
+    ) as StoredPosInvoice[];
+    const invoice: StoredPosInvoice = {
       invoiceNumber: number,
       invoiceDate,
       customer,
@@ -385,8 +459,8 @@ export default function PosBarcodeBillingPage({
     );
     const financeRecords = JSON.parse(
       window.localStorage.getItem(`finance-documents-${organizationId}`) ?? "[]",
-    ) as Array<Record<string, unknown>>;
-    const financeRecord = {
+    ) as StoredFinanceDocument[];
+    const financeRecord: StoredFinanceDocument = {
       id: `pos-${number}`,
       documentType: "Sales Invoice",
       documentNumber: number,
@@ -433,14 +507,14 @@ export default function PosBarcodeBillingPage({
                   compact
                 />
               </div>
-              <button
+              <Button
                 type="button"
                 onClick={saveInvoice}
                 disabled={billLines.length === 0}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:bg-slate-300"
               >
                 Save Invoice
-              </button>
+              </Button>
             </div>
           </div>
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(24rem,1fr)]">
@@ -457,24 +531,24 @@ export default function PosBarcodeBillingPage({
               <div className="mt-2 flex gap-2">
                 <div className="relative min-w-0 flex-1">
                   <ScanLine className="pointer-events-none absolute left-3 top-3 h-5 w-5 text-emerald-600" />
-                  <input
+                  <Input
                     ref={scannerRef}
                     id="barcode-input"
                     value={scanValue}
                     onChange={(event) => setScanValue(event.target.value)}
-                    className="w-full rounded-lg border border-emerald-300 bg-white py-3 pl-10 pr-3 text-base outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-200"
+                    className="rounded-lg border-emerald-300 bg-white py-3 pl-10 pr-3 text-base outline-none focus:border-emerald-600 focus:ring-emerald-200"
                     placeholder="Scan record ID or enter it manually"
                     autoComplete="off"
                   />
                 </div>
-                <button
+                <Button
                   type="submit"
                   disabled={loading || !scanValue.trim()}
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  className="rounded-lg bg-emerald-700 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-800 disabled:bg-slate-300"
                 >
                   <Search className="h-4 w-4" />
                   {loading ? "Finding..." : "Find"}
-                </button>
+                </Button>
               </div>
               {error && (
                 <p className="mt-2 text-sm font-medium text-red-700">{error}</p>
@@ -487,11 +561,12 @@ export default function PosBarcodeBillingPage({
               >
                 Select stock record manually
               </label>
-              <select
+              <Select
                 id="stock-record-select"
+                aria-label="Select stock record manually"
                 value=""
                 onChange={(event) => chooseRecord(event.target.value)}
-                className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                className="mt-2 rounded-lg px-3 py-2 text-sm text-slate-800"
               >
                 <option value="">Select style, order, or stock record</option>
                 {records.map((record) => (
@@ -500,18 +575,19 @@ export default function PosBarcodeBillingPage({
                     | ID: {record.id}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </div>
           <div className="flex min-h-[32rem] flex-1">
             <Card className="flex h-full w-full flex-col border-slate-200 p-5">
               <div className="grid gap-4 md:grid-cols-2">
-                <label className="text-sm font-medium text-slate-700">
-                  Customer
-                  <select
+                <div className="text-sm font-medium text-slate-700">
+                  <label htmlFor="customer-select">Customer</label>
+                  <Select
+                    id="customer-select"
                     value={customer}
                     onChange={(event) => setCustomer(event.target.value)}
-                    className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                    className="mt-2 rounded-md px-3 py-2 text-sm"
                   >
                     <option value="">Walk-in customer</option>
                     {vendorOptions.map((vendor) => (
@@ -519,9 +595,9 @@ export default function PosBarcodeBillingPage({
                         {vendor}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_12rem_auto]">
-                    <input
+                    <Input
                       value={vendorQuickCreate}
                       onChange={(event) => setVendorQuickCreate(event.target.value)}
                       onKeyDown={(event) => {
@@ -530,13 +606,14 @@ export default function PosBarcodeBillingPage({
                           void createVendor();
                         }
                       }}
-                      className="min-w-0 flex-1 rounded-md border border-dashed border-slate-300 px-3 py-2 text-xs"
+                      className="min-w-0 flex-1 rounded-md border-dashed border-slate-300 px-3 py-2 text-xs"
                       placeholder="New vendor name"
+                      aria-label="New vendor name"
                     />
-                    <select
+                    <Select
                       value={vendorState}
                       onChange={(event) => setVendorState(event.target.value)}
-                      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700"
+                      className="rounded-md px-3 py-2 text-xs text-slate-700"
                       aria-label="Registered state"
                     >
                       <option value="">Registered state *</option>
@@ -545,26 +622,28 @@ export default function PosBarcodeBillingPage({
                           {state.label}
                         </option>
                       ))}
-                    </select>
-                    <button
+                    </Select>
+                    <Button
                       type="button"
+                      variant="secondary"
+                      size="sm"
                       onClick={() => void createVendor()}
                       disabled={
                         !vendorQuickCreate.trim() || !vendorState || vendorSubmitting
                       }
-                      className="rounded-md border border-emerald-300 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                      className="min-h-0 rounded-md border-emerald-300 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:border-slate-200 disabled:text-slate-400"
                     >
                       {vendorSubmitting ? "Adding..." : "Add vendor"}
-                    </button>
+                    </Button>
                   </div>
-                </label>
+                </div>
                 <label className="text-sm font-medium text-slate-700">
                   Invoice date
-                  <input
+                  <Input
                     type="date"
                     value={invoiceDate}
                     onChange={(event) => setInvoiceDate(event.target.value)}
-                    className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    className="mt-2 rounded-md px-3 py-2 text-sm"
                   />
                 </label>
               </div>
@@ -601,8 +680,9 @@ export default function PosBarcodeBillingPage({
                         </div>
                         <label className="block text-[11px] font-medium text-slate-500">
                           Qty
-                          <input
+                          <Input
                             type="number"
+                            aria-label={`${line.record.style_name} quantity`}
                             min="0"
                             value={line.quantity}
                             onChange={(event) =>
@@ -612,13 +692,14 @@ export default function PosBarcodeBillingPage({
                                 event.target.value,
                               )
                             }
-                            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-right text-sm"
+                            className="mt-1 rounded border-slate-300 px-2 py-1 text-right text-sm"
                           />
                         </label>
                         <label className="block text-[11px] font-medium text-slate-500">
                           Price
-                          <input
+                          <Input
                             type="number"
+                            aria-label={`${line.record.style_name} price`}
                             min="0"
                             step="0.01"
                             value={line.rate}
@@ -629,12 +710,13 @@ export default function PosBarcodeBillingPage({
                                 event.target.value,
                               )
                             }
-                            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-right text-sm"
+                            className="mt-1 rounded border-slate-300 px-2 py-1 text-right text-sm"
                           />
                         </label>
                         <label className="block text-[11px] font-medium text-slate-500">
                           GST %
-                          <select
+                          <Select
+                            aria-label={`${line.record.style_name} GST rate`}
                             value={String(line.gstRate)}
                             onChange={(event) =>
                               updateLine(
@@ -643,7 +725,7 @@ export default function PosBarcodeBillingPage({
                                 event.target.value,
                               )
                             }
-                            className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1 text-right text-sm"
+                            className="mt-1 rounded border-slate-300 px-2 py-1 text-right text-sm"
                           >
                             {gstOptions.length === 0 ? (
                               <option value="0">0</option>
@@ -659,12 +741,13 @@ export default function PosBarcodeBillingPage({
                                 );
                               })
                             )}
-                          </select>
+                          </Select>
                         </label>
                         <label className="block text-[11px] font-medium text-slate-500">
                           Disc %
-                          <input
+                          <Input
                             type="number"
+                            aria-label={`${line.record.style_name} discount percentage`}
                             min="0"
                             max="100"
                             step="0.01"
@@ -676,12 +759,13 @@ export default function PosBarcodeBillingPage({
                                 event.target.value,
                               )
                             }
-                            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-right text-sm"
+                            className="mt-1 rounded border-slate-300 px-2 py-1 text-right text-sm"
                           />
                         </label>
                         <label className="block text-[11px] font-medium text-slate-500">
                           HSN
-                          <input
+                          <Input
+                            aria-label={`${line.record.style_name} HSN code`}
                             value={line.hsnCode}
                             onChange={(event) =>
                               updateLine(
@@ -690,7 +774,7 @@ export default function PosBarcodeBillingPage({
                                 event.target.value,
                               )
                             }
-                            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-right text-sm"
+                            className="mt-1 rounded border-slate-300 px-2 py-1 text-right text-sm"
                             placeholder="HSN"
                           />
                         </label>
@@ -786,14 +870,14 @@ function SalesInvoicePrint({
             Sales invoice ready
           </h2>
         </div>
-        <button
+        <Button
           type="button"
           onClick={onPrint}
-          className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
         >
           <Printer className="h-4 w-4" />
           Print / Download PDF
-        </button>
+        </Button>
       </div>
       <article className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm print:rounded-none print:border-0 print:p-0 print:shadow-none">
         <div className="flex items-start justify-between gap-4 border-b-2 border-emerald-700 pb-6">
@@ -942,14 +1026,16 @@ function StockDetailsDialog({
               Barcode is this stock record ID: {record.id}
             </p>
           </div>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={onClose}
             aria-label="Close stock details"
-            className="rounded-md p-1 text-slate-500 hover:bg-slate-100"
+            className="min-h-0 rounded-md p-1 text-slate-500 hover:bg-slate-100"
           >
             <X className="h-5 w-5" />
-          </button>
+          </Button>
         </div>
         <div className="min-h-0 overflow-auto p-5">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -969,20 +1055,22 @@ function StockDetailsDialog({
           </div>
         </div>
         <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3">
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="sm"
             onClick={onClose}
-            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+            className="rounded-md border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
           >
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             onClick={onAdd}
             className="rounded-md bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800"
           >
             Add to bill
-          </button>
+          </Button>
         </div>
       </div>
     </div>

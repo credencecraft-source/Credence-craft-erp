@@ -113,7 +113,7 @@ export default function FactoryProductionWipPage() {
       <Section className="space-y-6">
         <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-4">
           <div>
-            <button type="button" onClick={() => router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/factory-management/production/shop-floor`)} className="text-xs font-semibold text-emerald-700 hover:text-emerald-800">&larr; Shop Floor</button>
+            <Button type="button" onClick={() => router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/factory-management/production/shop-floor`)} className="text-xs font-semibold text-emerald-700 hover:text-emerald-800">&larr; Shop Floor</Button>
             <p className="mt-4 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Work In Progress</p>
             <h1 className="mt-2 text-3xl font-bold text-slate-900">WIP</h1>
             <p className="mt-2 text-sm text-slate-600">Process-level production status across all created work orders.</p>

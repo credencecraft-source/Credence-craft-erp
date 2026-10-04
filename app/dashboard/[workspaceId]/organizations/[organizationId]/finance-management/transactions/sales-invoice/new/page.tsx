@@ -5,7 +5,7 @@ import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 
 export default async function NewSalesInvoicePage({ params }: { params: Promise<{ workspaceId: string; organizationId: string }> }) {
-  const { workspaceId, organizationId } = await params;
+  await params;
   return (
     <Page as="div">
       <Section className="space-y-6">

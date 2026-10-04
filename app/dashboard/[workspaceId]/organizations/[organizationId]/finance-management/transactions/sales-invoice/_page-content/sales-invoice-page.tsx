@@ -7,6 +7,8 @@ import Link from "next/link";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
+import Button from "@/components/ui/Button";
+
 
 type SavedPosInvoice = {
   invoiceNumber: string;
@@ -34,6 +36,41 @@ type SavedPosInvoice = {
   savedAt: string;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+function isSavedPosInvoice(value: unknown): value is SavedPosInvoice {
+  if (
+    !isRecord(value) ||
+    typeof value.invoiceNumber !== "string" ||
+    typeof value.invoiceDate !== "string" ||
+    typeof value.customer !== "string" ||
+    typeof value.subtotal !== "number" ||
+    typeof value.savedAt !== "string" ||
+    !Array.isArray(value.lines)
+  ) {
+    return false;
+  }
+
+  return value.lines.every((line) => {
+    if (
+      !isRecord(line) ||
+      !isRecord(line.record) ||
+      typeof line.quantity !== "number" ||
+      typeof line.rate !== "number" ||
+      typeof line.amount !== "number"
+    ) {
+      return false;
+    }
+    return (
+      typeof line.record.id === "string" &&
+      typeof line.record.style_name === "string" &&
+      typeof line.record.order_no === "string" &&
+      typeof line.record.article_no === "string"
+    );
+  });
+}
+
 const reportFields: Array<{ key: keyof SavedPosInvoice; label: string }> = [
   { key: "invoiceNumber", label: "Invoice No." },
   { key: "invoiceDate", label: "Date" },
@@ -57,18 +94,21 @@ export default function SalesInvoicePage({
   const createPath = `${base}/sales-invoice/new`;
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(`pos-sales-invoices-${organizationId}`);
-    if (!stored) {
-      setInvoices([]);
-      return;
-    }
+    const timeoutId = window.setTimeout(() => {
+      const stored = window.localStorage.getItem(`pos-sales-invoices-${organizationId}`);
+      if (!stored) {
+        setInvoices([]);
+        return;
+      }
 
-    try {
-      const parsed = JSON.parse(stored) as SavedPosInvoice[];
-      setInvoices(Array.isArray(parsed) ? parsed : []);
-    } catch {
-      setInvoices([]);
-    }
+      try {
+        const parsed: unknown = JSON.parse(stored);
+        setInvoices(Array.isArray(parsed) ? parsed.filter(isSavedPosInvoice) : []);
+      } catch {
+        setInvoices([]);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [organizationId]);
 
   const renderCell = (fieldKey: string, record: SavedPosInvoice) => {
@@ -137,21 +177,21 @@ function InvoicePreview({
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4">
       <div className="flex items-center justify-between print:hidden">
-        <button
+        <Button
           type="button"
           onClick={onBack}
           className="text-xs font-semibold text-sky-700"
         >
           &larr; Sales Invoice report
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={() => window.print()}
           className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
         >
           <Printer className="h-4 w-4" />
           Print
-        </button>
+        </Button>
       </div>
 
       <article className="overflow-hidden border border-slate-300 bg-white shadow-sm print:border-0 print:shadow-none">

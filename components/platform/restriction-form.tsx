@@ -22,7 +22,7 @@ export function RestrictionForm({
   const activeMaster = ERP_MODULES.find((m) => m.key === selectedMasterKey);
   const mainModules = activeMaster?.children ?? [];
 
-  const activeMain = mainModules.find((mm: any) => mm.key === selectedMainKey);
+  const activeMain = mainModules.find((main) => main.key === selectedMainKey);
   const subModules = activeMain?.children ?? [];
 
   return (
@@ -59,7 +59,7 @@ export function RestrictionForm({
             setSelectedSubKey("");
           }}
           disabled={!selectedMasterKey || mainModules.length === 0}
-          options={[{ value: "", label: mainModules.length === 0 ? "No Main Modules (Root Only)" : "Select Main Module..." }, ...mainModules.map((main: any) => ({ value: main.key, label: main.label }))]}
+          options={[{ value: "", label: mainModules.length === 0 ? "No Main Modules (Root Only)" : "Select Main Module..." }, ...mainModules.map((main) => ({ value: main.key, label: main.label }))]}
           className="rounded-lg p-2 text-xs"
         />
       </div>
@@ -73,7 +73,7 @@ export function RestrictionForm({
           value={selectedSubKey}
           onChange={(e) => setSelectedSubKey(e.target.value)}
           disabled={!selectedMainKey || subModules.length === 0}
-          options={[{ value: "", label: subModules.length === 0 ? "No restrictable submodules" : "Select Sub Module..." }, ...subModules.map((sub: any) => ({ value: sub.key, label: sub.label }))]}
+          options={[{ value: "", label: subModules.length === 0 ? "No restrictable submodules" : "Select Sub Module..." }, ...subModules.map((sub) => ({ value: sub.key, label: sub.label }))]}
           className="rounded-lg p-2 text-xs"
         />
       </div>

@@ -5,12 +5,26 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 
-export default function TnaTab({
+type TnaRow = {
+  id: string;
+  taskName?: string;
+  department?: string;
+  plannedDate?: string;
+  actualDate?: string;
+  status?: string;
+  remarks?: string;
+};
+
+type TnaFormState = {
+  tnaRows?: TnaRow[];
+};
+
+export default function TnaTab<TForm extends TnaFormState>({
   form,
   setForm,
 }: {
-  form: any;
-  setForm: any;
+  form: TForm;
+  setForm: React.Dispatch<React.SetStateAction<TForm>>;
 }) {
   const [activeSubTab, setActiveSubTab] = useState<"planned" | "actual" | "comparison">("planned");
   const tnaRows = form?.tnaRows || [];
@@ -25,19 +39,19 @@ export default function TnaTab({
       status: "Pending",
       remarks: "",
     };
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
       tnaRows: [...(current.tnaRows || []), newItem],
     }));
   };
 
-  const updateTnaRow = (id: string, field: string, value: any) => {
-    setForm((current: any) => ({
+  const updateTnaRow = (id: string, field: keyof Omit<TnaRow, "id">, value: string) => {
+    setForm((current) => ({
       ...current,
-      tnaRows: (current.tnaRows || []).map((row: any) => {
+      tnaRows: (current.tnaRows || []).map((row) => {
         if (row.id !== id) return row;
         
-        let updatedRow = { ...row, [field]: value };
+        const updatedRow = { ...row, [field]: value };
 
         // AUTO-FILL ACTUAL DATE IF STATUS BECOMES COMPLETED AND ACTUAL DATE IS EMPTY
         if (field === "status" && value === "Completed" && !row.actualDate) {
@@ -51,9 +65,9 @@ export default function TnaTab({
   };
 
   const removeTnaRow = (id: string) => {
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
-      tnaRows: (current.tnaRows || []).filter((row: any) => row.id !== id),
+      tnaRows: (current.tnaRows || []).filter((row) => row.id !== id),
     }));
   };
 
@@ -140,59 +154,66 @@ export default function TnaTab({
               </thead>
               <tbody className="divide-y divide-slate-100 align-middle">
                 {tnaRows.length > 0 ? (
-                  tnaRows.map((row: any, index: number) => (
+                  tnaRows.map((row, index) => (
                     <tr key={row.id} className="hover:bg-slate-50/50">
                       <td className="p-3 text-center font-mono font-bold text-slate-600">{index + 1}</td>
                       <td className="p-3">
-                        <input
+                        <Input
                           type="text"
-                          value={row.taskName}
+                          aria-label={`Milestone ${index + 1} task name`}
+                          value={row.taskName ?? ""}
                           onChange={(e) => updateTnaRow(row.id, "taskName", e.target.value)}
                           placeholder="e.g. Fabric Approval"
                           className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800 bg-white"
                         />
                       </td>
                       <td className="p-3">
-                        <input
+                        <Input
                           type="text"
-                          value={row.department}
+                          aria-label={`Milestone ${index + 1} department`}
+                          value={row.department ?? ""}
                           onChange={(e) => updateTnaRow(row.id, "department", e.target.value)}
                           placeholder="e.g. Merchandising"
                           className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800 bg-white"
                         />
                       </td>
                       <td className="p-3">
-                        <input
+                        <Input
                           type="date"
-                          value={row.plannedDate}
+                          aria-label={`Milestone ${index + 1} planned date`}
+                          value={row.plannedDate ?? ""}
                           onChange={(e) => updateTnaRow(row.id, "plannedDate", e.target.value)}
                           className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-800 bg-white"
                         />
                       </td>
                       <td className="p-3">
-                        <input
+                        <Input
                           type="text"
-                          value={row.remarks}
+                          aria-label={`Milestone ${index + 1} remarks`}
+                          value={row.remarks ?? ""}
                           onChange={(e) => updateTnaRow(row.id, "remarks", e.target.value)}
                           placeholder="Notes..."
                           className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800 bg-white"
                         />
                       </td>
                       <td className="p-3 text-center">
-                        <button
+                        <Button
                           type="button"
+                          variant="ghost"
+                          size="sm"
                           onClick={() => removeTnaRow(row.id)}
+                          aria-label={`Remove ${row.taskName || "milestone"}`}
                           className="text-red-500 hover:text-red-700 font-semibold text-xs"
                         >
                           ✕
-                        </button>
+                        </Button>
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
                     <td colSpan={6} className="p-8 text-center text-slate-400 italic">
-                      No milestones added. Click "+ Add Milestone" to begin.
+                      No milestones added. Click &quot;+ Add Milestone&quot; to begin.
                     </td>
                   </tr>
                 )}
@@ -218,13 +239,14 @@ export default function TnaTab({
               </thead>
               <tbody className="divide-y divide-slate-100 align-middle">
                 {tnaRows.length > 0 ? (
-                  tnaRows.map((row: any, index: number) => (
+                  tnaRows.map((row, index) => (
                     <tr key={row.id} className="hover:bg-slate-50/50">
                       <td className="p-3 text-center font-mono font-bold text-slate-600">{index + 1}</td>
                       <td className="p-3 font-semibold text-slate-800">{row.taskName || "Unnamed Milestone"}</td>
                       <td className="p-3">
-                        <select
-                          value={row.status}
+                        <Select
+                          aria-label={`Milestone ${index + 1} status`}
+                          value={row.status ?? "Pending"}
                           onChange={(e) => updateTnaRow(row.id, "status", e.target.value)}
                           className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-800 bg-white font-medium"
                         >
@@ -232,12 +254,13 @@ export default function TnaTab({
                           <option value="In Progress">In Progress</option>
                           <option value="Completed">Completed (Auto-sets date)</option>
                           <option value="Delayed">Delayed</option>
-                        </select>
+                        </Select>
                       </td>
                       <td className="p-3">
-                        <input
+                        <Input
                           type="date"
-                          value={row.actualDate}
+                          aria-label={`Milestone ${index + 1} actual date`}
+                          value={row.actualDate ?? ""}
                           onChange={(e) => updateTnaRow(row.id, "actualDate", e.target.value)}
                           className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-800 bg-slate-50 text-slate-600 font-mono"
                         />
@@ -275,7 +298,7 @@ export default function TnaTab({
               </thead>
               <tbody className="divide-y divide-slate-100 align-middle">
                 {tnaRows.length > 0 ? (
-                  tnaRows.map((row: any, index: number) => {
+                  tnaRows.map((row, index) => {
                     let varianceText = "-";
                     let varianceColor = "text-slate-600";
                     if (row.plannedDate && row.actualDate) {

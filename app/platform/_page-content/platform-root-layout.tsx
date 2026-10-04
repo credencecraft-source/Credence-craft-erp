@@ -18,6 +18,8 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import Sidebar from "@/components/ui/Sidebar";
+import Button from "@/components/ui/Button";
+
 
 const NAV_SECTIONS = [
   {
@@ -136,10 +138,10 @@ export default function PlatformRootLayoutClient({
 
           return (
             <div key={section.title} className="space-y-1">
-              <button
+              <Button
                 onClick={() => toggleSection(section.title)}
                 className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-slate-700 transition-all hover:bg-slate-100 hover:text-slate-900"
-              >
+              type="submit" >
                 <div className="flex items-center gap-2">
                   <SectionIcon size={15} className="text-slate-500" />
                   <span className="hidden text-[11px] font-semibold uppercase tracking-wider text-slate-500 group-data-[expanded=true]:block">
@@ -152,7 +154,7 @@ export default function PlatformRootLayoutClient({
                     isOpen ? "rotate-180" : ""
                   }`}
                 />
-              </button>
+              </Button>
 
               {isOpen && (
                 <div className="space-y-1 pl-2 group-data-[expanded=true]:pl-4">

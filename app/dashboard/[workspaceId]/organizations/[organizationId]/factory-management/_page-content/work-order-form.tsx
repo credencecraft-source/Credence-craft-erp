@@ -1,11 +1,13 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import Button from "@/components/ui/Button";
 import Checkbox from "@/components/ui/Checkbox";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
+
 
 type SizeAllocation = { id: string; size: string | null; buyerSize: string | null; orderedQty: number; allocatedQty: number; remainingQty: number };
 type AllocationResponse = { order: { orderNo: string; styleName: string | null; buyer: string | null; orderQty: number | null }; sizes: SizeAllocation[] };
@@ -35,13 +37,13 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
   const [loadingMoreReports, setLoadingMoreReports] = useState(false);
   const orderLookupSequence = useRef(0);
 
-  async function refreshWorkOrderReport() {
+  const refreshWorkOrderReport = useCallback(async () => {
     const response = await fetch(`/api/factory/work-orders?organizationId=${encodeURIComponent(organizationId)}&limit=100`, { cache: "no-store" });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Work orders were saved, but the report could not be refreshed.");
     setWorkOrderReports(data.workOrders || []);
     setReportNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
-  }
+  }, [organizationId]);
 
   async function loadMoreReports() {
     if (!reportNextCursor || loadingMoreReports) return;
@@ -61,10 +63,17 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
   }
 
   useEffect(() => {
-    void refreshWorkOrderReport().catch((loadError) => {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load work orders.");
-    });
-  }, [organizationId]);
+    let active = true;
+    const timeoutId = window.setTimeout(() => {
+      void refreshWorkOrderReport().catch((loadError) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load work orders.");
+      });
+    }, 0);
+    return () => {
+      active = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [refreshWorkOrderReport]);
 
   useEffect(() => {
     let active = true;
@@ -332,7 +341,7 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
         <form onSubmit={loadArticles} className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <div className="flex-1">
             <label htmlFor="article-no" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">Article No</label>
-            <select
+            <Select
               id="article-no"
               value={articleNo}
               onChange={(event) => {
@@ -353,7 +362,7 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
             >
               <option value="">Select an article</option>
               {articleOptions.map((article) => <option key={article.id} value={article.label}>{article.label}</option>)}
-            </select>
+            </Select>
           </div>
           <Button type="submit" disabled={loading || !articleNo}>{loading ? "Searching..." : "Find orders"}</Button>
         </form>
@@ -361,7 +370,7 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
           <div className="mt-4 space-y-4">
             <div className="max-w-xl">
               <label htmlFor="work-order-scope" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">Work Order Creation</label>
-              <select
+              <Select
                 id="work-order-scope"
                 value={mode}
                 onChange={(event) => {
@@ -380,12 +389,12 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
               >
                 <option value="single">Create single work order</option>
                 <option value="all">Create work orders for all</option>
-              </select>
+              </Select>
             </div>
             {mode === "single" && (
               <div className="max-w-xl">
                 <label htmlFor="related-order-no" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">Related Order No</label>
-                <select
+                <Select
                   id="related-order-no"
                   value={orderNo}
                   onChange={(event) => void loadOrder(event.target.value)}
@@ -394,7 +403,7 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
                 >
                   <option value="">Select an order</option>
                   {relatedOrders.map((order) => <option key={order.id} value={order.orderNo}>{order.orderNo}{order.styleName ? ` - ${order.styleName}` : ""}{order.orderQty ? ` (${order.orderQty.toLocaleString("en-IN")})` : ""}</option>)}
-                </select>
+                </Select>
                 {relatedOrdersNextCursor && <Button type="button" className="mt-2" onClick={() => void loadMoreRelatedOrders()} disabled={loading}>{loading ? "Loading..." : "Load more matching orders"}</Button>}
               </div>
             )}

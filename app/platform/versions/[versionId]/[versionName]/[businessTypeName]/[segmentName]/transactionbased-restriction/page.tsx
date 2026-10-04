@@ -10,6 +10,9 @@ import Table from "@/components/ui/Table";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { getVersionDetails } from "@/lib/services/platform/version-service";
 import { listSegmentFormRestrictions, upsertSegmentFormRestriction } from "@/lib/services/platform/segment-form-restriction-service";
+import Input from "@/components/ui/Input";
+import Button from "@/components/ui/Button";
+
 
 function toUrlSegment(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -272,7 +275,7 @@ export default async function TransactionBasedRestrictionPage({
                       <td className="px-3 py-3 text-slate-600">{table.purpose}</td>
                       {segments.map((segment) => {
                         const restriction = formRestrictionByCell.get(`${segment.id}:${table.tableName}`);
-                        return <td key={segment.id} className="px-3 py-3"><form action={saveEntryLimitAction} className="flex min-w-[155px] items-center gap-2"><input type="hidden" name="formKey" value={table.tableName} /><input type="hidden" name="segmentId" value={segment.id} /><input name="monthlyEntryLimit" type="number" min="0" step="1" defaultValue={restriction?.monthly_entry_limit ?? ""} placeholder="Unlimited" aria-label={`${table.tableName} limit for ${segment.name}`} className="w-24 rounded-md border border-slate-200 px-2 py-1.5 text-xs text-slate-800" /><button type="submit" className="rounded-md bg-emerald-600 px-2.5 py-1.5 font-semibold text-white hover:bg-emerald-700">Save</button></form></td>;
+                        return <td key={segment.id} className="px-3 py-3"><form action={saveEntryLimitAction} className="flex min-w-[155px] items-center gap-2"><input type="hidden" name="formKey" value={table.tableName} /><input type="hidden" name="segmentId" value={segment.id} /><Input name="monthlyEntryLimit" type="number" min="0" step="1" defaultValue={restriction?.monthly_entry_limit ?? ""} placeholder="Unlimited" aria-label={`${table.tableName} limit for ${segment.name}`} className="w-24 rounded-md border border-slate-200 px-2 py-1.5 text-xs text-slate-800" /><Button type="submit" className="rounded-md bg-emerald-600 px-2.5 py-1.5 font-semibold text-white hover:bg-emerald-700">Save</Button></form></td>;
                       })}
                     </tr>
                   ))

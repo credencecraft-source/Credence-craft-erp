@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
+import Button from "@/components/ui/Button";
+
 
 type SavedInvoice = {
   invoiceNumber: string;
@@ -26,7 +28,7 @@ const reportFields: Array<{ key: keyof SavedInvoice; label: string }> = [
   { key: "subtotal", label: "Total" },
 ];
 
-export default function PosInvoicePage({ workspaceId, organizationId }: { workspaceId: string; organizationId: string }) {
+export default function PosInvoicePage({ organizationId }: { workspaceId: string; organizationId: string }) {
   const [invoices, setInvoices] = useState<SavedInvoice[]>([]);
   const [selected, setSelected] = useState<SavedInvoice | null>(null);
   const [visibleReportFields, setVisibleReportFields] = useState<Array<string | keyof SavedInvoice>>(
@@ -67,10 +69,10 @@ function InvoicePreview({ invoice, onBack }: { invoice: SavedInvoice; onBack: ()
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4">
       <div className="flex items-center justify-between print:hidden">
-        <button type="button" onClick={onBack} className="text-xs font-semibold text-emerald-700">&larr; Invoice report</button>
-        <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+        <Button type="button" onClick={onBack} className="text-xs font-semibold text-emerald-700">&larr; Invoice report</Button>
+        <Button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
           <Printer className="h-4 w-4" /> Print Tax Invoice
-        </button>
+        </Button>
       </div>
 
       <article className="overflow-hidden border border-slate-300 bg-white shadow-sm print:border-0 print:shadow-none">

@@ -46,25 +46,22 @@ export default function WorkOrderReportTable() {
 
   useEffect(() => {
     let active = true;
-    setError("");
-    void fetch(`/api/factory/work-orders?organizationId=${encodeURIComponent(organizationId)}&limit=100`, { cache: "no-store" })
-      .then(async (response) => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Unable to load work orders.");
-        return data;
-      })
-      .then((data) => {
-        if (active) {
-          setRecords(Array.isArray(data.workOrders) ? data.workOrders : []);
-          setNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setRecords([]);
-          setError("Unable to load work orders. Please refresh and try again.");
-        }
-      });
+    void Promise.resolve().then(async () => {
+      if (!active) return;
+      setError("");
+      const response = await fetch(`/api/factory/work-orders?organizationId=${encodeURIComponent(organizationId)}&limit=100`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Unable to load work orders.");
+      if (active) {
+        setRecords(Array.isArray(data.workOrders) ? data.workOrders : []);
+        setNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
+      }
+    }).catch(() => {
+      if (active) {
+        setRecords([]);
+        setError("Unable to load work orders. Please refresh and try again.");
+      }
+    });
     return () => { active = false; };
   }, [organizationId]);
 

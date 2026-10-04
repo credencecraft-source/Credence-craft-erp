@@ -1,28 +1,47 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import type { OrderFormState } from "./order-form-types";
 
 type MeasurementItem = {
   id: string;
-  code: string;
-  pom: string;
-  tolerance: string;
-  s: string;
-  m: string;
-  l: string;
-  xl: string;
+  code?: string;
+  pom?: string;
+  tolerance?: string;
+  s?: string;
+  m?: string;
+  l?: string;
+  xl?: string;
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isMeasurementItem = (value: unknown): value is MeasurementItem =>
+  isRecord(value)
+  && typeof value.id === "string"
+  && ["code", "pom", "tolerance", "s", "m", "l", "xl"].every(
+    (field) => value[field] === undefined || typeof value[field] === "string",
+  );
+
+const getRows = (form: unknown): unknown[] => {
+  if (!isRecord(form)) return [];
+  const rows = form.measurementRows;
+  return Array.isArray(rows) ? rows : [];
+};
+
+const getMeasurementRows = (form: unknown): MeasurementItem[] => getRows(form).filter(isMeasurementItem);
 
 export default function MeasurementsTab({
   form,
   setForm,
 }: {
-  form: any;
-  setForm: any;
+  form: OrderFormState;
+  setForm: React.Dispatch<React.SetStateAction<OrderFormState>>;
 }) {
-  const measurementRows: MeasurementItem[] = form?.measurementRows || [];
+  const measurementRows = getMeasurementRows(form);
 
   const addMeasurementRow = () => {
     const newItem: MeasurementItem = {
@@ -35,25 +54,25 @@ export default function MeasurementsTab({
       l: "",
       xl: "",
     };
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
-      measurementRows: [...(current.measurementRows || []), newItem],
+      measurementRows: [...getMeasurementRows(current), newItem],
     }));
   };
 
   const updateMeasurementRow = (id: string, field: keyof MeasurementItem, value: string) => {
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
-      measurementRows: (current.measurementRows || []).map((row: MeasurementItem) =>
+      measurementRows: getMeasurementRows(current).map((row) =>
         row.id === id ? { ...row, [field]: value } : row
       ),
     }));
   };
 
   const removeMeasurementRow = (id: string) => {
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
-      measurementRows: (current.measurementRows || []).filter((row: MeasurementItem) => row.id !== id),
+      measurementRows: getMeasurementRows(current).filter((row) => row.id !== id),
     }));
   };
 
@@ -199,7 +218,7 @@ export default function MeasurementsTab({
                   ) : (
                     <tr>
                       <td colSpan={8} className="p-8 text-center text-slate-400 italic">
-                        No measurement specifications added yet. Click "+ Add POM" to begin.
+                        No measurement specifications added yet. Click &quot;+ Add POM&quot; to begin.
                       </td>
                     </tr>
                   )}

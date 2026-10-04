@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Page from "@/components/ui/Page";
+import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 
@@ -52,6 +54,38 @@ type PurchaseRecordReportRow = {
   totalQuantity: string;
   savedAt: string;
 };
+
+type PurchaseStage = 1 | 2 | 3;
+
+function isLookupOption(value: unknown): value is LookupOption {
+  if (typeof value !== "object" || value === null) return false;
+  const option = value as Record<string, unknown>;
+  const fieldsAreValid =
+    option.fields === undefined ||
+    (typeof option.fields === "object" &&
+      option.fields !== null &&
+      !Array.isArray(option.fields));
+  const sizesAreValid =
+    option.sizes === undefined ||
+    (Array.isArray(option.sizes) &&
+      option.sizes.every(
+        (size) =>
+          typeof size === "string" ||
+          (typeof size === "object" &&
+            size !== null &&
+            "label" in size &&
+            typeof size.label === "string"),
+      ));
+  return (
+    typeof option.id === "string" &&
+    typeof option.label === "string" &&
+    (option.parent_id === undefined ||
+      option.parent_id === null ||
+      typeof option.parent_id === "string") &&
+    fieldsAreValid &&
+    sizesAreValid
+  );
+}
 
 const newLine = (): BillLine => ({
   id: crypto.randomUUID(),
@@ -117,7 +151,7 @@ export default function PurchaseBillEntryPage({
   const [posting, setPosting] = useState(false);
   const [savingRecord, setSavingRecord] = useState(false);
   const [recordSuccessNumber, setRecordSuccessNumber] = useState("");
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<PurchaseStage>(1);
 
   useEffect(() => {
     const load = async (moduleKey: string) => {
@@ -126,8 +160,8 @@ export default function PurchaseBillEntryPage({
         { cache: "no-store" },
       );
       if (!response.ok) throw new Error("Unable to load master data.");
-      const data = await response.json();
-      return Array.isArray(data) ? data : [];
+      const data: unknown = await response.json();
+      return Array.isArray(data) ? data.filter(isLookupOption) : [];
     };
     Promise.all([
       load("vendor"),
@@ -511,22 +545,24 @@ export default function PurchaseBillEntryPage({
           </Button>
         </div>
         <div className="grid grid-cols-3 gap-1.5 rounded-lg border border-slate-200 bg-slate-50 p-1">
-          {[
-              "Purchase Items",
-            "Grouped Records",
-            "Bill Details",
-          ].map((label, index) => {
-            const number = index + 1;
+          {([
+            { number: 1, label: "Purchase Items" },
+            { number: 2, label: "Grouped Records" },
+            { number: 3, label: "Bill Details" },
+          ] satisfies Array<{ number: PurchaseStage; label: string }>).map(
+            ({ number, label }) => {
             return (
-              <button
+              <Button
                 key={label}
                 type="button"
-                onClick={() => setStep(number as 1 | 2 | 3)}
-                className={`rounded-md px-2 py-1.5 text-center text-[11px] font-bold ${step === number ? "bg-white text-emerald-700 shadow-sm" : step > number ? "text-emerald-600" : "text-slate-500 hover:bg-white/70"}`}
+                variant="ghost"
+                size="sm"
+                onClick={() => setStep(number)}
+                className={`h-auto min-h-0 w-full rounded-md px-2 py-1.5 text-center text-[11px] font-bold ${step === number ? "bg-white text-emerald-700 shadow-sm" : step > number ? "text-emerald-600" : "text-slate-500 hover:bg-white/70"}`}
               >
                 <span className="block text-[9px] uppercase tracking-wide">Stage {number}</span>
                 <span className="mt-0.5 block truncate font-medium">{label}</span>
-              </button>
+              </Button>
             );
           })}
         </div>
@@ -555,31 +591,35 @@ export default function PurchaseBillEntryPage({
                 role="group"
                 aria-label="Purchase type"
               >
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setItemType("FINISHED_GOODS")}
                   aria-pressed={itemType === "FINISHED_GOODS"}
-                  className={`flex-1 rounded-md px-3 py-1.5 text-xs font-semibold ${itemType === "FINISHED_GOODS" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+                  className={`min-h-0 flex-1 rounded-md px-3 py-1.5 text-xs font-semibold ${itemType === "FINISHED_GOODS" ? "bg-emerald-600 text-white hover:bg-emerald-600" : "text-slate-600 hover:bg-slate-100"}`}
                 >
                   Finished Goods
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setItemType("RAW_MATERIAL")}
                   aria-pressed={itemType === "RAW_MATERIAL"}
-                  className={`flex-1 rounded-md px-3 py-1.5 text-xs font-semibold ${itemType === "RAW_MATERIAL" ? "bg-amber-500 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+                  className={`min-h-0 flex-1 rounded-md px-3 py-1.5 text-xs font-semibold ${itemType === "RAW_MATERIAL" ? "bg-amber-500 text-white hover:bg-amber-500" : "text-slate-600 hover:bg-slate-100"}`}
                 >
                   Raw Material
-                </button>
+                </Button>
               </div>
               {itemType === "FINISHED_GOODS" ? (
                 <div className="grid gap-2 md:grid-cols-3">
                   <label className="text-xs font-semibold text-slate-700">
                     Brand lookup
-                    <select
+                    <Select
                       value={brandId}
                       onChange={(event) => setBrandId(event.target.value)}
-                      className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-normal"
+                      className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
                     >
                       <option value="">Select brand</option>
                       {brands.map((brand) => (
@@ -587,23 +627,23 @@ export default function PurchaseBillEntryPage({
                           {brand.label}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                   <label className="text-xs font-semibold text-slate-700">
                     Style name
-                    <input
+                    <Input
                       value={styleName}
                       onChange={(event) => setStyleName(event.target.value)}
-                      className="mt-1 w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm font-normal"
+                      className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
                       placeholder="Enter style name"
                     />
                   </label>
                   <label className="text-xs font-semibold text-slate-700">
                     Size group lookup
-                    <select
+                    <Select
                       value={sizeGroupId}
                       onChange={(event) => selectSizeGroup(event.target.value)}
-                      className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-normal"
+                      className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
                     >
                       <option value="">Select size group</option>
                       {sizeGroups.map((group) => (
@@ -611,13 +651,13 @@ export default function PurchaseBillEntryPage({
                           {group.label}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                 </div>
               ) : (
                 <label className="block max-w-md text-xs font-semibold text-slate-700">
                   Raw material
-                  <input
+                  <Input
                     value={lines[0]?.itemName ?? ""}
                     onChange={(event) =>
                       updateLine(
@@ -626,7 +666,7 @@ export default function PurchaseBillEntryPage({
                         event.target.value,
                       )
                     }
-                    className="mt-1 w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm font-normal"
+                    className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
                     placeholder="Enter raw material"
                   />
                 </label>
@@ -635,10 +675,10 @@ export default function PurchaseBillEntryPage({
                 <div className="grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-2.5 md:grid-cols-3">
                   <label className="text-xs font-semibold text-slate-700">
                     Color lookup
-                    <select
+                    <Select
                       value={colorId}
                       onChange={(event) => setColorId(event.target.value)}
-                      className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-normal"
+                      className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
                     >
                       <option value="">Select color</option>
                       {colors.map((color) => (
@@ -646,17 +686,17 @@ export default function PurchaseBillEntryPage({
                           {color.label}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                   <label className="text-xs font-semibold text-slate-700">
                     Product category
-                    <select
+                    <Select
                       value={categoryId}
                       onChange={(event) => {
                         setCategoryId(event.target.value);
                         setSubCategoryId("");
                       }}
-                      className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-normal"
+                      className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
                     >
                       <option value="">Select category</option>
                       {categories.map((category) => (
@@ -664,15 +704,15 @@ export default function PurchaseBillEntryPage({
                           {category.label}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                   <label className="text-xs font-semibold text-slate-700">
                     Product subcategory
-                    <select
+                    <Select
                       value={subCategoryId}
                       onChange={(event) => setSubCategoryId(event.target.value)}
                       disabled={!categoryId}
-                      className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-normal"
+                      className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
                     >
                       <option value="">Select subcategory</option>
                       {availableSubCategories.map((subCategory) => (
@@ -680,7 +720,7 @@ export default function PurchaseBillEntryPage({
                           {subCategory.label}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                 </div>
               )}
@@ -710,8 +750,9 @@ export default function PurchaseBillEntryPage({
                             : line.itemName}
                         </td>
                         <td className="px-3 py-2">
-                          <input
+                          <Input
                             type="number"
+                            aria-label={`${itemType === "FINISHED_GOODS" ? line.size : line.itemName} quantity`}
                             min="0"
                             value={line.quantity}
                             onChange={(event) =>
@@ -721,12 +762,13 @@ export default function PurchaseBillEntryPage({
                                 event.target.value,
                               )
                             }
-                            className="w-24 rounded border border-slate-300 px-2 py-1"
+                            className="h-8 w-24 rounded border-slate-300 px-2 py-1"
                           />
                         </td>
                         <td className="px-3 py-2">
-                          <input
+                          <Input
                             type="number"
+                            aria-label={`${itemType === "FINISHED_GOODS" ? line.size : line.itemName} purchase price`}
                             min="0"
                             step="0.01"
                             value={line.purchasePrice}
@@ -737,12 +779,13 @@ export default function PurchaseBillEntryPage({
                                 event.target.value,
                               )
                             }
-                            className="w-28 rounded border border-slate-300 px-2 py-1"
+                            className="h-8 w-28 rounded border-slate-300 px-2 py-1"
                           />
                         </td>
                         <td className="px-3 py-2">
-                          <input
+                          <Input
                             type="number"
+                            aria-label={`${itemType === "FINISHED_GOODS" ? line.size : line.itemName} sales price`}
                             min="0"
                             step="0.01"
                             value={line.salesPrice}
@@ -753,16 +796,17 @@ export default function PurchaseBillEntryPage({
                                 event.target.value,
                               )
                             }
-                            className="w-28 rounded border border-slate-300 px-2 py-1"
+                            className="h-8 w-28 rounded border-slate-300 px-2 py-1"
                           />
                         </td>
                         <td className="px-3 py-2">
-                          <select
+                          <Select
+                            aria-label={`${itemType === "FINISHED_GOODS" ? line.size : line.itemName} GST`}
                             value={line.gstId}
                             onChange={(event) =>
                               updateLine(line.id, "gstId", event.target.value)
                             }
-                            className="w-24 rounded border border-slate-300 px-2 py-1"
+                            className="h-8 w-24 rounded border-slate-300 px-2 py-1"
                           >
                             <option value="">GST</option>
                             {gsts.map((gst) => (
@@ -775,15 +819,16 @@ export default function PurchaseBillEntryPage({
                                 %
                               </option>
                             ))}
-                          </select>
+                          </Select>
                         </td>
                         <td className="px-3 py-2">
-                          <select
+                          <Select
+                            aria-label={`${itemType === "FINISHED_GOODS" ? line.size : line.itemName} HSN`}
                             value={line.hsnCode}
                             onChange={(event) =>
                               updateLine(line.id, "hsnCode", event.target.value)
                             }
-                            className="w-28 rounded border border-slate-300 px-2 py-1"
+                            className="h-8 w-28 rounded border-slate-300 px-2 py-1"
                           >
                             <option value="">HSN</option>
                             {hsns.map((hsn) => (
@@ -791,7 +836,7 @@ export default function PurchaseBillEntryPage({
                                 {hsn.label}
                               </option>
                             ))}
-                          </select>
+                          </Select>
                         </td>
                         <td className="px-3 py-2 text-right font-bold text-slate-800">
                           Rs{" "}
@@ -844,16 +889,18 @@ export default function PurchaseBillEntryPage({
               onRowClick={openSavedRecord}
               renderCell={(fieldKey, row) =>
                 fieldKey === "record" ? (
-                  <button
+                  <Button
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
                       openSavedRecord(row.id);
                     }}
-                    className="font-semibold text-emerald-700 underline underline-offset-2"
+                    variant="ghost"
+                    size="sm"
+                    className="min-h-0 rounded-none px-0 py-0 font-semibold text-emerald-700 underline underline-offset-2 hover:bg-transparent"
                   >
                     Open Details
-                  </button>
+                  </Button>
                 ) : (
                   row[fieldKey as keyof PurchaseRecordReportRow]
                 )
@@ -881,10 +928,10 @@ export default function PurchaseBillEntryPage({
             <div className="grid gap-2 md:grid-cols-4">
               <label className="text-xs font-semibold text-slate-700">
                 Vendor lookup
-                <select
+                <Select
                   value={vendorId}
                   onChange={(event) => setVendorId(event.target.value)}
-                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-normal"
+                  className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
                 >
                   <option value="">Select vendor</option>
                   {vendors.map((vendor) => (
@@ -892,38 +939,38 @@ export default function PurchaseBillEntryPage({
                       {vendor.label}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label className="text-xs font-semibold text-slate-700">
                 Bill number
-                <input
+                <Input
                   value={billNumber}
                   onChange={(event) => setBillNumber(event.target.value)}
                   placeholder="Auto-generated if blank"
-                  className="mt-1 w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm font-normal"
+                  className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
                 />
               </label>
               <label className="text-xs font-semibold text-slate-700">
                 Bill date
-                <input
+                <Input
                   type="date"
                   value={billDate}
                   onChange={(event) => setBillDate(event.target.value)}
-                  className="mt-1 w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm font-normal"
+                  className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
                 />
               </label>
               <label className="text-xs font-semibold text-slate-700">
                 Tax mode
-                <select
+                <Select
                   value={taxMode}
                   onChange={(event) =>
                     setTaxMode(event.target.value as "LOCAL" | "INTERSTATE")
                   }
-                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-normal"
+                  className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
                 >
                   <option value="LOCAL">CGST + SGST</option>
                   <option value="INTERSTATE">IGST</option>
-                </select>
+                </Select>
               </label>
             </div>
             <div className="max-h-[34vh] overflow-auto rounded-lg border border-slate-200">
@@ -946,30 +993,33 @@ export default function PurchaseBillEntryPage({
                       </td>
                       <td className="px-3 py-2">{line.quantity}</td>
                       <td className="px-3 py-2">
-                        <input
+                        <Input
                           type="number"
+                          aria-label={`${line.itemName || "Purchase group"} purchase price`}
                           min="0"
                           step="0.01"
                           value={line.purchasePrice}
                           readOnly
-                          className="w-24 rounded border border-slate-300 px-2 py-1"
+                          className="h-8 w-24 rounded border-slate-300 px-2 py-1"
                         />
                       </td>
                       <td className="px-3 py-2">
-                        <input
+                        <Input
                           type="number"
+                          aria-label={`${line.itemName || "Purchase group"} sales price`}
                           min="0"
                           step="0.01"
                           value={line.salesPrice}
                           readOnly
-                          className="w-24 rounded border border-slate-300 px-2 py-1"
+                          className="h-8 w-24 rounded border-slate-300 px-2 py-1"
                         />
                       </td>
                       <td className="px-3 py-2">
-                        <select
+                        <Select
+                          aria-label={`${line.itemName || "Purchase group"} GST`}
                           value={line.gstId}
                           disabled
-                          className="w-20 rounded border border-slate-300 px-2 py-1"
+                          className="h-8 w-20 rounded border-slate-300 px-2 py-1"
                         >
                           <option value="">GST</option>
                           {gsts.map((gst) => (
@@ -980,13 +1030,14 @@ export default function PurchaseBillEntryPage({
                               %
                             </option>
                           ))}
-                        </select>
+                        </Select>
                       </td>
                       <td className="px-3 py-2">
-                        <select
+                        <Select
+                          aria-label={`${line.itemName || "Purchase group"} HSN`}
                           value={line.hsnCode}
                           disabled
-                          className="w-24 rounded border border-slate-300 px-2 py-1"
+                          className="h-8 w-24 rounded border-slate-300 px-2 py-1"
                         >
                           <option value="">HSN</option>
                           {hsns.map((hsn) => (
@@ -994,7 +1045,7 @@ export default function PurchaseBillEntryPage({
                               {hsn.label}
                             </option>
                           ))}
-                        </select>
+                        </Select>
                       </td>
                     </tr>
                   ))}

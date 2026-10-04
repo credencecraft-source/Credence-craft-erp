@@ -4,6 +4,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import Tabs from "@/components/ui/Tabs";
+import type { OrderFormState } from "./order-form-types";
+import { getProcessRows, type Operation, type OperationTemplate, type ProcessFields } from "./process-tab-state";
 
 type ProcessTemplate = {
   id: string;
@@ -20,35 +22,15 @@ type ProcessTemplate = {
   }>;
 };
 
-type OperationTemplate = {
-  id: string;
-  valueId?: string;
-  label: string;
-  operations?: Operation[];
+type ProcessTabProps = {
+  form: Pick<OrderFormState, "processTemplateId" | "processRows">;
+  setForm: (update: (current: ProcessFields) => ProcessFields) => void;
+  organizationId?: string;
+  isOrderLoading?: boolean;
 };
 
-type Operation = {
-  id: string;
-  sourceOperationId?: string;
-  valueId?: string;
-  slNo: number;
-  operation: string;
-  price: number | string;
-};
-
-type ProcessRow = {
-  id?: string;
-  processId?: string;
-  processName?: string;
-  operation?: string;
-  slNo?: number;
-  operationTemplateId?: string | null;
-  operationTemplateName?: string | null;
-  operationTemplates?: OperationTemplate[];
-  operations?: Operation[];
-};
-
-export default function ProcessTab({ form, setForm, organizationId, isOrderLoading = false }: { form: any; setForm: any; organizationId?: string; isOrderLoading?: boolean }) {
+export default function ProcessTab(props: ProcessTabProps) {
+  const { form, organizationId, isOrderLoading = false } = props;
   const [templates, setTemplates] = useState<ProcessTemplate[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
   const [templateError, setTemplateError] = useState("");
@@ -71,8 +53,8 @@ export default function ProcessTab({ form, setForm, organizationId, isOrderLoadi
   }, [organizationId]);
 
   const selectedTemplate = useMemo(() => templates.find((template) => template.id === selectedTemplateId || template.value_id === selectedTemplateId), [selectedTemplateId, templates]);
-  const formProcessRows = form?.processRows;
-  const processRows = useMemo(() => (Array.isArray(formProcessRows) ? formProcessRows : []) as ProcessRow[], [formProcessRows]);
+  const processRows = useMemo(() => getProcessRows(form.processRows), [form.processRows]);
+  const updateProcessForm = props.setForm;
   const processTabs = useMemo(() => {
     const seen = new Set<string>();
     return processRows.flatMap((row, index) => {
@@ -106,9 +88,9 @@ export default function ProcessTab({ form, setForm, organizationId, isOrderLoadi
 
   const updateOperationTemplate = (operationTemplateId: string) => {
     const operationTemplate = operationTemplateOptions.find((option) => option.id === operationTemplateId || option.valueId === operationTemplateId);
-    setForm((current: any) => ({
+    updateProcessForm((current) => ({
       ...current,
-      processRows: (Array.isArray(current.processRows) ? current.processRows : []).map((row: ProcessRow, index: number) => {
+      processRows: current.processRows.map((row, index) => {
         const key = String(row.processId ?? row.id ?? `${row.processName ?? "process"}-${index}`);
         if (key !== activeProcessKey) return row;
         return {
@@ -123,9 +105,9 @@ export default function ProcessTab({ form, setForm, organizationId, isOrderLoadi
   };
 
   const updateOperationPrice = (operationId: string, price: string) => {
-    setForm((current: any) => ({
+    updateProcessForm((current) => ({
       ...current,
-      processRows: (Array.isArray(current.processRows) ? current.processRows : []).map((row: ProcessRow, index: number) => {
+      processRows: current.processRows.map((row, index) => {
         const key = String(row.processId ?? row.id ?? `${row.processName ?? "process"}-${index}`);
         if (key !== activeProcessKey) return row;
         return {
@@ -141,7 +123,7 @@ export default function ProcessTab({ form, setForm, organizationId, isOrderLoadi
   const applyTemplate = (templateId: string) => {
     const template = templates.find((item) => item.id === templateId || item.value_id === templateId);
     setActiveProcessTab("");
-    setForm((current: any) => ({
+    updateProcessForm((current) => ({
       ...current,
       processTemplateId: template?.id ?? "",
       processRows: (template?.steps ?? []).map((step) => ({

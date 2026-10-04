@@ -1,10 +1,12 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
+import Input from "@/components/ui/Input";
+
 
 type MasterValue = { id: string; label: string; fields?: Record<string, unknown> };
 type LocationOption = { id: string; label: string };
@@ -96,7 +98,7 @@ export default function FgStockModulePage({ moduleName, addMode = false }: { mod
   const [visibleFields, setVisibleFields] = useState<string[]>([]);
 
   const currentStock = Math.max(0, Number(form.qtyIn || 0) - Number(form.qtyOut || 0));
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     const [stockResponse, masterResponse, locationsResponse] = await Promise.all([
       fetch(`/api/inventory/stock/fg-sku?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" }),
@@ -110,9 +112,12 @@ export default function FgStockModulePage({ moduleName, addMode = false }: { mod
     setLocations(Array.isArray(locationsPayload) ? locationsPayload : []);
     setMasters(Object.fromEntries((masterPayload.masters ?? []).map((master: { module_key: string; values: MasterValue[] }) => [master.module_key, master.values])));
     setLoading(false);
-  };
+  }, [organizationId]);
 
-  useEffect(() => { void loadData(); }, [organizationId]);
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => { void loadData(); }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadData]);
 
   const sortedRecords = useMemo(() => records, [records]);
   const updateForm = (key: keyof FormState, value: string) => setForm((current) => ({ ...current, [key]: value }));
@@ -158,25 +163,25 @@ export default function FgStockModulePage({ moduleName, addMode = false }: { mod
             <Button type="button" variant="secondary" size="sm" onClick={() => addMode ? router.push("..") : setShowForm(false)}>Cancel</Button>
           </div>
           <form onSubmit={submit} className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">SKU ID</span><input disabled value={lastGeneratedSkuId || "Auto generated on save"} className={`${fieldClass} cursor-not-allowed bg-slate-100 text-slate-500`} /></label>
-          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Customer Barcode</span><input className={fieldClass} value={form.barcode} onChange={(event) => updateForm("barcode", event.target.value)} placeholder="Scan or enter customer barcode" /></label>
+          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">SKU ID</span><Input disabled value={lastGeneratedSkuId || "Auto generated on save"} className={`${fieldClass} cursor-not-allowed bg-slate-100 text-slate-500`} /></label>
+          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Customer Barcode</span><Input className={fieldClass} value={form.barcode} onChange={(event) => updateForm("barcode", event.target.value)} placeholder="Scan or enter customer barcode" /></label>
           <Select label="Location" value={form.locationId} onChange={(event) => updateForm("locationId", event.target.value)} disabled={locations.length === 0} options={[{ value: "", label: locations.length === 0 ? "No active Locations" : "Select Location" }, ...locations.map((location) => ({ value: location.id, label: location.label }))]} />
-          {form.source === "DIRECT" ? <label className="block space-y-1 sm:col-span-2"><span className="text-xs font-semibold text-slate-700">General Catalogue Item Name</span><input disabled value={directItemName(form)} className={`${fieldClass} cursor-not-allowed bg-slate-100 text-slate-500`} /></label> : <><label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Style Name *</span><input required className={fieldClass} value={form.styleName} onChange={(event) => updateForm("styleName", event.target.value)} /></label><label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Order No *</span><input required className={fieldClass} value={form.orderNo} onChange={(event) => updateForm("orderNo", event.target.value)} /></label><MasterSelect label="Article No *" value={form.articleNo} options={masters.article ?? []} onChange={(value) => updateForm("articleNo", value)} /></>}
+          {form.source === "DIRECT" ? <label className="block space-y-1 sm:col-span-2"><span className="text-xs font-semibold text-slate-700">General Catalogue Item Name</span><Input disabled value={directItemName(form)} className={`${fieldClass} cursor-not-allowed bg-slate-100 text-slate-500`} /></label> : <><label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Style Name *</span><Input required className={fieldClass} value={form.styleName} onChange={(event) => updateForm("styleName", event.target.value)} /></label><label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Order No *</span><Input required className={fieldClass} value={form.orderNo} onChange={(event) => updateForm("orderNo", event.target.value)} /></label><MasterSelect label="Article No *" value={form.articleNo} options={masters.article ?? []} onChange={(value) => updateForm("articleNo", value)} /></>}
           <MasterSelect label="Brand" value={form.brand} options={masters.brand ?? []} onChange={(value) => updateForm("brand", value)} />
           <MasterSelect label="Size" value={form.size} options={masters.size ?? []} onChange={(value) => updateForm("size", value)} />
           <MasterSelect label="Colour" value={form.colour} options={masters.color ?? []} onChange={(value) => updateForm("colour", value)} />
           <MasterSelect label="Product Category" value={form.productCategory} options={masters.category ?? []} onChange={(value) => updateForm("productCategory", value)} />
           <MasterSelect label="Sub Product Category" value={form.subProductCategory} options={masters["sub-category"] ?? []} onChange={(value) => updateForm("subProductCategory", value)} />
-          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">GST %</span><select className={fieldClass} value={form.gstRate} onChange={(event) => updateForm("gstRate", event.target.value)}><option value="">Select GST rate</option>{gstOptions.map((option) => <option key={option.id} value={String(option.fields?.Gst ?? option.fields?.gst ?? option.label)}>{option.label} ({String(option.fields?.Gst ?? option.fields?.gst ?? "-")}%)</option>)}</select></label>
+          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">GST %</span><Select className={fieldClass} value={form.gstRate} onChange={(event) => updateForm("gstRate", event.target.value)}><option value="">Select GST rate</option>{gstOptions.map((option) => <option key={option.id} value={String(option.fields?.Gst ?? option.fields?.gst ?? option.label)}>{option.label} ({String(option.fields?.Gst ?? option.fields?.gst ?? "-")}%)</option>)}</Select></label>
           <MasterSelect label="HSN Code" value={form.hsnCode} options={hsnOptions} onChange={(value) => updateForm("hsnCode", value)} />
-          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Purchase Price</span><input min="0" step="0.01" type="number" className={fieldClass} value={form.purchasePrice} onChange={(event) => updateForm("purchasePrice", event.target.value)} placeholder="0.00" /></label>
-          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Sales Price</span><input min="0" step="0.01" type="number" className={fieldClass} value={form.salesPrice} onChange={(event) => updateForm("salesPrice", event.target.value)} placeholder="0.00" /></label>
-          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">MRP</span><input min="0" step="0.01" type="number" className={fieldClass} value={form.mrp} onChange={(event) => updateForm("mrp", event.target.value)} placeholder="0.00" /></label>
-          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Source *</span><select required className={fieldClass} value={form.source} onChange={(event) => updateForm("source", event.target.value)}>{sourceOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Qty In</span><input min="0" step="0.01" type="number" className={fieldClass} value={form.qtyIn} onChange={(event) => updateForm("qtyIn", event.target.value)} /></label>
-          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Qty Out</span><input min="0" step="0.01" type="number" className={fieldClass} value={form.qtyOut} onChange={(event) => updateForm("qtyOut", event.target.value)} /></label>
+          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Purchase Price</span><Input min="0" step="0.01" type="number" className={fieldClass} value={form.purchasePrice} onChange={(event) => updateForm("purchasePrice", event.target.value)} placeholder="0.00" /></label>
+          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Sales Price</span><Input min="0" step="0.01" type="number" className={fieldClass} value={form.salesPrice} onChange={(event) => updateForm("salesPrice", event.target.value)} placeholder="0.00" /></label>
+          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">MRP</span><Input min="0" step="0.01" type="number" className={fieldClass} value={form.mrp} onChange={(event) => updateForm("mrp", event.target.value)} placeholder="0.00" /></label>
+          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Source *</span><Select required className={fieldClass} value={form.source} onChange={(event) => updateForm("source", event.target.value)}>{sourceOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>
+          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Qty In</span><Input min="0" step="0.01" type="number" className={fieldClass} value={form.qtyIn} onChange={(event) => updateForm("qtyIn", event.target.value)} /></label>
+          <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Qty Out</span><Input min="0" step="0.01" type="number" className={fieldClass} value={form.qtyOut} onChange={(event) => updateForm("qtyOut", event.target.value)} /></label>
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2"><span className="block text-xs font-semibold text-emerald-800">Current Stock</span><strong className="text-lg text-emerald-950">{currentStock.toFixed(2)}</strong></div>
-          <div className="flex items-end"><button disabled={saving} className="w-full rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60">{saving ? "Adding..." : "Add Record"}</button></div>
+          <div className="flex items-end"><Button disabled={saving} className="w-full rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"type="submit" >{saving ? "Adding..." : "Add Record"}</Button></div>
           {message && <p className="sm:col-span-2 lg:col-span-4 text-sm font-medium text-slate-600">{message}</p>}
           </form>
         </div>}

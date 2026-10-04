@@ -1,12 +1,9 @@
-import Link from "next/link";
-
 import Card from "@/components/ui/Card";
 import UiPage from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 
 export default async function Page({ params }: { params: Promise<{ workspaceId: string; organizationId: string }> }) {
-  const { workspaceId, organizationId } = await params;
-  const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/returnable-dc-grn`;
+  await params;
 
   return (
     <UiPage as="div">

@@ -1,5 +1,6 @@
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import nodemailer from "nodemailer";
+import type { PlatformEmailConfiguration } from "@prisma/client";
 
 import { decryptSecret, encryptSecret } from "@/lib/auth/secret-cryptography";
 import { prisma } from "@/lib/database/prisma-client";
@@ -26,7 +27,7 @@ function otpHash(email: string, code: string) {
   return createHmac("sha256", secret).update(`${email}:${code}`).digest("hex");
 }
 
-function normalizeConfiguration(configuration: any) {
+function normalizeConfiguration(configuration: PlatformEmailConfiguration | null) {
   if (!configuration) return null;
   return {
     id: configuration.id,

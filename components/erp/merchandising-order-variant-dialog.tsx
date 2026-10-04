@@ -58,15 +58,16 @@ export default function MerchandisingOrderVariantDialog({
               <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-emerald-700">Order variant</p>
               <h3 id="order-variant-title" className="mt-0.5 text-sm font-bold text-slate-900">New finished goods order</h3>
             </div>
-            <button
+            <Button
               type="button"
               onClick={onClose}
               disabled={isCreating}
+              variant="secondary"
               className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
               aria-label="Close order variant dialog"
             >
               ×
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -77,61 +78,47 @@ export default function MerchandisingOrderVariantDialog({
             </p>
           )}
           <div className="grid gap-3 md:grid-cols-3">
-            <label className="flex flex-col gap-1 text-[10px] font-semibold text-slate-700">
-              Source Order No
-              <input
-                type="text"
-                value={sourceOrderNo}
-                readOnly
-                className="rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs text-slate-600"
-              />
-            </label>
-
-            <label className="flex flex-col gap-1 text-[10px] font-semibold text-slate-700">
-              Size Group
-              <input
-                type="text"
-                value={sizeGroup}
-                readOnly
-                className="rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs text-slate-600"
-              />
-            </label>
-
-            <label className="flex flex-col gap-1 text-[10px] font-semibold text-slate-700">
-              Order Qty
-              <input
-                type="number"
-                value={calculatedOrderQty || ""}
-                readOnly
-                disabled
-                className="rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs text-slate-600"
-                aria-label="Calculated order quantity"
-              />
-            </label>
-
-            <label className="flex flex-col gap-1 text-[10px] font-semibold text-slate-700">
-              Style name
-              <input
-                type="text"
-                value={variantDraft.styleName}
-                disabled={isCreating}
-                onChange={(event) => onDraftChange({ styleName: event.target.value })}
-                className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                placeholder="Enter style name"
-              />
-            </label>
-
-            <label className="flex flex-col gap-1 text-[10px] font-semibold text-slate-700">
-              Colour
-              <input
-                type="text"
-                value={variantDraft.colors}
-                disabled={isCreating}
-                onChange={(event) => onDraftChange({ colors: event.target.value })}
-                className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                placeholder="Enter colour"
-              />
-            </label>
+            <Input
+              label="Source Order No"
+              type="text"
+              value={sourceOrderNo}
+              readOnly
+              className="rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs text-slate-600"
+            />
+            <Input
+              label="Size Group"
+              type="text"
+              value={sizeGroup}
+              readOnly
+              className="rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs text-slate-600"
+            />
+            <Input
+              label="Order Qty"
+              type="number"
+              value={calculatedOrderQty || ""}
+              readOnly
+              disabled
+              className="rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs text-slate-600"
+              aria-label="Calculated order quantity"
+            />
+            <Input
+              label="Style name"
+              type="text"
+              value={variantDraft.styleName}
+              disabled={isCreating}
+              onChange={(event) => onDraftChange({ styleName: event.target.value })}
+              className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+              placeholder="Enter style name"
+            />
+            <Input
+              label="Colour"
+              type="text"
+              value={variantDraft.colors}
+              disabled={isCreating}
+              onChange={(event) => onDraftChange({ colors: event.target.value })}
+              className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+              placeholder="Enter colour"
+            />
 
           </div>
 

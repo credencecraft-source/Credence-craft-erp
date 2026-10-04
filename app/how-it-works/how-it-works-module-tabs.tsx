@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 
 import { ERP_MODULES, type ErpModule, type SubModuleOption } from "@/components/erp/erp-config-registry";
+import Button from "@/components/ui/Button";
+
 
 const moduleDetails: Record<string, { summary: string; outcome: string; icon: LucideIcon }> = {
   online: { summary: "Coordinate pre-order and ready-stock selling across B2B and B2C channels.", outcome: "See demand earlier and produce with more confidence.", icon: Gauge },
@@ -124,7 +126,7 @@ function OrderManagementWorkflow() {
         {orderWorkflowLanes.map((item) => {
           const isActive = item.key === lane.key;
           const Icon = item.icon;
-          return <button key={item.key} type="button" role="tab" aria-selected={isActive} onClick={() => setActiveLane(item.key)} className={`flex shrink-0 items-center gap-2 border-b-2 px-3 pb-3 text-[11px] font-semibold ${isActive ? "border-[#183b2c] text-[#183b2c]" : "border-transparent text-[#789087] hover:text-[#183b2c]"}`}><Icon size={14} />{item.label}</button>;
+          return <Button key={item.key} type="button" role="tab" aria-selected={isActive} onClick={() => setActiveLane(item.key)} className={`flex shrink-0 items-center gap-2 border-b-2 px-3 pb-3 text-[11px] font-semibold ${isActive ? "border-[#183b2c] text-[#183b2c]" : "border-transparent text-[#789087] hover:text-[#183b2c]"}`}><Icon size={14} />{item.label}</Button>;
         })}
       </div>
       <div className="pt-5" role="tabpanel" aria-label={`${lane.label} workflow`}>
