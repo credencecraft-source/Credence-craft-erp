@@ -99,7 +99,7 @@ describe("inventory receipt verification posting", () => {
     }));
   });
 
-  it("posts Verified as received, Approved as accepted/stock, and saves verification in the same transaction", async () => {
+  it("posts receipt counts and verification together without duplicating service-managed excess stock", async () => {
     const response = await POST(new Request("http://localhost/api/inventory/receipts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -129,16 +129,7 @@ describe("inventory receipt verification posting", () => {
       { verifiedQuantity: "6", approvedQuantity: "4", allocations: [{ groupedPurchaseOrderId: "group-1", verificationAllocated: "4" }] },
       "user-1",
     );
-    const stockCreate = mocks.transaction.rawMaterialStock.create.mock.calls[0][0];
-    expect(stockCreate.data).toMatchObject({
-      organization_id: "internal-org-1",
-      entity_id: "entity-1",
-      location_id: "location-1",
-      raw_material: "Cotton",
-      source_type: "GRN",
-      inventory_receipt_line_id: "receipt-line-1",
-    });
-    expect(stockCreate.data.quantity_on_hand.toString()).toBe("4");
+    expect(mocks.transaction.rawMaterialStock.create).not.toHaveBeenCalled();
     expect(mocks.prismaTransaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: "Serializable",
     });
@@ -175,7 +166,7 @@ describe("inventory receipt verification posting", () => {
     expect(mocks.saveRmGrnVerificationInTransaction).not.toHaveBeenCalled();
   });
 
-  it("keeps the pending PO quantity ceiling before creating any GRN", async () => {
+  it("keeps the pending PO quantity ceiling for receipts without verification counts", async () => {
     mocks.transaction.purchaseOrder.findFirst.mockResolvedValue({
       id: "po-1",
       status: "APPROVED",
@@ -191,13 +182,40 @@ describe("inventory receipt verification posting", () => {
         organizationId: "public-org",
         purchaseOrderId: "po-1",
         locationId: "location-1",
-        lines: [{ purchaseOrderLineId: "po-line-1", verifiedQuantity: "6", approvedQuantity: "4", allocations: [] }],
+        lines: [{ purchaseOrderLineId: "po-line-1", receivedQuantity: 6, acceptedQuantity: 4, rejectedQuantity: 2 }],
       }),
     }));
 
     expect(response.status).toBe(400);
     expect(mocks.transaction.inventoryReceipt.create).not.toHaveBeenCalled();
     expect(mocks.saveRmGrnVerificationInTransaction).not.toHaveBeenCalled();
+  });
+
+  it("allows verified receipt overage so excess and rejected quantities can be routed separately", async () => {
+    const response = await POST(new Request("http://localhost/api/inventory/receipts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        purchaseOrderId: "po-1",
+        locationId: "location-1",
+        lines: [{
+          purchaseOrderLineId: "po-line-1",
+          verifiedQuantity: "10",
+          approvedQuantity: "8",
+          allocations: [{ groupedPurchaseOrderId: "group-1", verificationAllocated: "6" }],
+        }],
+      }),
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.saveRmGrnVerificationInTransaction).toHaveBeenCalledWith(
+      mocks.transaction,
+      "internal-org-1",
+      "receipt-line-1",
+      { verifiedQuantity: "10", approvedQuantity: "8", allocations: [{ groupedPurchaseOrderId: "group-1", verificationAllocated: "6" }] },
+      "user-1",
+    );
   });
 
   it("reverses accepted stock and deletes the tenant-scoped GRN with its dependent records", async () => {
@@ -213,6 +231,7 @@ describe("inventory receipt verification posting", () => {
       id: "stock-1",
       quantity_on_hand: new Prisma.Decimal("10"),
       quantity_reserved: new Prisma.Decimal("2"),
+      quantity_issued: new Prisma.Decimal("0"),
     });
 
     const response = await DELETE(new Request("http://localhost/api/inventory/receipts?organizationId=public-org&receiptId=receipt-1", {
@@ -253,6 +272,7 @@ describe("inventory receipt verification posting", () => {
         id: "legacy-stock-1",
         quantity_on_hand: new Prisma.Decimal("10"),
         quantity_reserved: new Prisma.Decimal("2"),
+        quantity_issued: new Prisma.Decimal("0"),
       });
 
     const response = await DELETE(new Request("http://localhost/api/inventory/receipts?organizationId=public-org&receiptId=receipt-1", {
@@ -287,6 +307,7 @@ describe("inventory receipt verification posting", () => {
     mocks.transaction.rawMaterialStock.findFirst.mockResolvedValue({
       quantity_on_hand: new Prisma.Decimal("5"),
       quantity_reserved: new Prisma.Decimal("2"),
+      quantity_issued: new Prisma.Decimal("0"),
     });
 
     const response = await DELETE(new Request("http://localhost/api/inventory/receipts?organizationId=public-org&receiptId=receipt-1", {
@@ -297,5 +318,32 @@ describe("inventory receipt verification posting", () => {
     expect(mocks.transaction.rawMaterialStock.updateMany).not.toHaveBeenCalled();
     expect(mocks.inventoryReceiptDeleteMany).not.toHaveBeenCalled();
     expect(mocks.createAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("keeps a GRN after style/order allocation so allocated inventory cannot be orphaned", async () => {
+    mocks.inventoryReceiptFindFirst.mockResolvedValue({
+      id: "receipt-1",
+      receipt_no: "GRN-1",
+      purchase_order_id: "po-1",
+      entity_id: "entity-1",
+      location_id: "location-1",
+      lines: [{
+        id: "receipt-line-1",
+        raw_material: "Cotton",
+        accepted_quantity: new Prisma.Decimal("110"),
+        rmGrnVerification: {
+          fresh_excess: new Prisma.Decimal("10"),
+          allocations: [{ orderAllocations: [{ id: "order-allocation-1" }] }],
+        },
+      }],
+    });
+
+    const response = await DELETE(new Request("http://localhost/api/inventory/receipts?organizationId=public-org&receiptId=receipt-1", {
+      method: "DELETE",
+    }));
+
+    expect(response.status).toBe(409);
+    expect(mocks.transaction.rawMaterialStock.findFirst).not.toHaveBeenCalled();
+    expect(mocks.inventoryReceiptDeleteMany).not.toHaveBeenCalled();
   });
 });

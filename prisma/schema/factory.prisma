@@ -157,12 +157,15 @@ model FactoryProductionUpdate {
 model FactoryProductionUpdateSizeLine {
   id                   String                  @id @default(cuid())
   production_update_id String
+  source_finished_goods_id String?
   size                 String?                 @db.VarChar(100)
   buyer_size           String?                 @db.VarChar(100)
   quantity             Int
   productionUpdate     FactoryProductionUpdate @relation(fields: [production_update_id], references: [id], onDelete: Cascade)
+  sourceFinishedGoods  FinishedGoodsSizeWise? @relation(fields: [source_finished_goods_id], references: [id], onDelete: SetNull)
 
   @@index([production_update_id])
+  @@index([source_finished_goods_id])
   @@map("factory_production_update_size_lines")
 }
 
@@ -194,13 +197,16 @@ model FactoryBundleTransfer {
 model FactoryBundleTransferSizeLine {
   id                 String                @id @default(cuid())
   bundle_transfer_id String
+  source_finished_goods_id String?
   size               String?               @db.VarChar(100)
   buyer_size         String?               @db.VarChar(100)
   issued_qty         Int                   @default(0)
   accepted_qty       Int                   @default(0)
   bundleTransfer     FactoryBundleTransfer @relation(fields: [bundle_transfer_id], references: [id], onDelete: Cascade)
+  sourceFinishedGoods FinishedGoodsSizeWise? @relation(fields: [source_finished_goods_id], references: [id], onDelete: SetNull)
 
   @@index([bundle_transfer_id])
+  @@index([source_finished_goods_id])
   @@map("factory_bundle_transfer_size_lines")
 }
 
@@ -263,8 +269,10 @@ model FactoryDailyProductionReport {
   report_date       DateTime                           @db.Date
   status            String                             @default("DRAFT") @db.VarChar(20)
   submitted_at      DateTime?
+  submitted_by_user_id String?
   approved_at       DateTime?
   approved_by       String?                            @db.VarChar(255)
+  approved_by_user_id String?
   rejection_reason  String?                            @db.VarChar(1000)
   total_produced    Int                                @default(0)
   total_transferred Int                                @default(0)

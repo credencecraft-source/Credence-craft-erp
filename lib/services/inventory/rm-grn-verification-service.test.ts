@@ -14,6 +14,10 @@ const mocks = vi.hoisted(() => ({
   allocationFindMany: vi.fn(),
   allocationUpsert: vi.fn(),
   allocationDeleteMany: vi.fn(),
+  receiptLineUpdateMany: vi.fn(),
+  rawMaterialStockFindFirst: vi.fn(),
+  rawMaterialStockCreate: vi.fn(),
+  rawMaterialStockUpdateMany: vi.fn(),
   createAuditEvent: vi.fn(),
 }));
 
@@ -34,7 +38,15 @@ vi.mock("@/lib/services/organizations/audit-event-service", () => ({
 import { getRmGrnVerification, getRmGrnVerificationDraftsForPurchaseOrder, listRmGrnVerificationAllocations, MasterGroupRequiredError, RmGrnVerificationNotFoundError, saveRmGrnVerification } from "./rm-grn-verification-service";
 
 const transaction = {
-  inventoryReceiptLine: { findFirst: mocks.transactionLineFindFirst },
+  inventoryReceiptLine: {
+    findFirst: mocks.transactionLineFindFirst,
+    updateMany: mocks.receiptLineUpdateMany,
+  },
+  rawMaterialStock: {
+    findFirst: mocks.rawMaterialStockFindFirst,
+    create: mocks.rawMaterialStockCreate,
+    updateMany: mocks.rawMaterialStockUpdateMany,
+  },
   rmGrnVerification: {
     findFirst: mocks.transactionVerificationFindFirst,
     create: mocks.verificationCreate,
@@ -47,11 +59,13 @@ const transaction = {
   },
 };
 
-const sourceLine = (withMaster = true) => ({
+const sourceLine = (withMaster = true, groupedQuantity = "10", masterQuantity = "14") => ({
   id: "receipt-line-1",
   raw_material: "Cotton",
   received_quantity: new Prisma.Decimal("12"),
   receipt: {
+    entity_id: "entity-1",
+    location_id: "location-1",
     receipt_no: "GRN-1",
     purchaseOrder: { purchase_order_no: "po-internal", display_no: 12 },
   },
@@ -63,14 +77,14 @@ const sourceLine = (withMaster = true) => ({
       organization_id: "org-1",
       master_po_no: "master-internal",
       display_no: 3,
-      total_grouped_qty: new Prisma.Decimal("14"),
+      total_grouped_qty: new Prisma.Decimal(masterQuantity),
       sourceRecords: [{
         groupedPurchaseOrder: {
           id: "group-1",
           organization_id: "org-1",
           grouped_po_no: "group-internal",
           display_no: 8,
-          total_grouped_qty: new Prisma.Decimal("10"),
+          total_grouped_qty: new Prisma.Decimal(groupedQuantity),
         },
       }],
     } : null,
@@ -95,6 +109,10 @@ describe("RM GRN Verification", () => {
     mocks.createAuditEvent.mockResolvedValue(undefined);
     mocks.allocationGroupBy.mockResolvedValue([]);
     mocks.allocationUpsert.mockResolvedValue({});
+    mocks.receiptLineUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.rawMaterialStockFindFirst.mockResolvedValue(null);
+    mocks.rawMaterialStockCreate.mockResolvedValue({});
+    mocks.rawMaterialStockUpdateMany.mockResolvedValue({ count: 1 });
   });
 
   it("loads tenant-scoped source values, capacity, and saved calculations", async () => {
@@ -443,6 +461,23 @@ describe("RM GRN Verification", () => {
       grouped_allocated: new Prisma.Decimal("6"),
       grouped_balance_to_allocate: new Prisma.Decimal("4"),
     }) });
+    expect(mocks.receiptLineUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "receipt-line-1", receipt: { organization_id: "org-1" } },
+      data: {
+        received_quantity: new Prisma.Decimal("14"),
+        accepted_quantity: new Prisma.Decimal("12"),
+        rejected_quantity: new Prisma.Decimal("2"),
+      },
+    }));
+    expect(mocks.rawMaterialStockCreate).toHaveBeenCalledWith({ data: expect.objectContaining({
+      organization_id: "org-1",
+      entity_id: "entity-1",
+      location_id: "location-1",
+      raw_material: "Cotton",
+      quantity_on_hand: new Prisma.Decimal("2"),
+      source_type: "GRN",
+      inventory_receipt_line_id: "receipt-line-1",
+    }) });
     expect(mocks.allocationUpsert).toHaveBeenCalledWith(expect.objectContaining({
       create: expect.objectContaining({
         organization_id: "org-1",
@@ -454,6 +489,48 @@ describe("RM GRN Verification", () => {
     expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
+  });
+
+  it("sends accepted excess and rejected counts to General Inventory and caps order allocation at the PO grouping", async () => {
+    mocks.transactionLineFindFirst.mockResolvedValue(sourceLine(true, "100", "100"));
+    mocks.transactionVerificationFindFirst.mockResolvedValue(null);
+    mocks.verificationCreate.mockImplementation(({ data }) => Promise.resolve({
+      id: "verification-1",
+      verified_quantity: data.verified_quantity,
+      approved_quantity: data.approved_quantity,
+      grouped_allocated: data.grouped_allocated,
+    }));
+
+    await expect(saveRmGrnVerification("org-1", "receipt-line-1", {
+      verifiedQuantity: "120",
+      approvedQuantity: "110",
+      allocations: [{ groupedPurchaseOrderId: "group-1", verificationAllocated: "100" }],
+    }, "user-1")).resolves.toMatchObject({
+      verifiedQuantity: "120",
+      approvedQuantity: "110",
+      groupedAllocated: "100",
+    });
+
+    expect(mocks.verificationCreate).toHaveBeenCalledWith({ data: expect.objectContaining({
+      verified_quantity: new Prisma.Decimal("120"),
+      approved_quantity: new Prisma.Decimal("110"),
+      rejected_quantity: new Prisma.Decimal("10"),
+      fresh_excess: new Prisma.Decimal("10"),
+      total_excess: new Prisma.Decimal("20"),
+      available_to_allocate: new Prisma.Decimal("100"),
+      grouped_allocated: new Prisma.Decimal("100"),
+    }) });
+    expect(mocks.receiptLineUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: {
+        received_quantity: new Prisma.Decimal("120"),
+        accepted_quantity: new Prisma.Decimal("110"),
+        rejected_quantity: new Prisma.Decimal("10"),
+      },
+    }));
+    expect(mocks.rawMaterialStockCreate).toHaveBeenCalledWith({ data: expect.objectContaining({
+      quantity_on_hand: new Prisma.Decimal("10"),
+      inventory_receipt_line_id: "receipt-line-1",
+    }) });
   });
 
   it("does not insert allocation rows when submitted quantities are zero", async () => {
@@ -572,6 +649,25 @@ describe("RM GRN Verification", () => {
     expect(mocks.verificationUpdate).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "verification-1", organization_id: "org-1" },
     }));
+  });
+
+  it("prevents changing verification after quantities are allocated to order lines", async () => {
+    mocks.transactionLineFindFirst.mockResolvedValue(sourceLine());
+    mocks.transactionVerificationFindFirst.mockResolvedValue({
+      id: "verification-1",
+      verified_quantity: new Prisma.Decimal("6"),
+      approved_quantity: new Prisma.Decimal("6"),
+      fresh_excess: new Prisma.Decimal("0"),
+      allocations: [{ orderAllocations: [{ id: "order-allocation-1" }] }],
+    });
+
+    await expect(saveRmGrnVerification("org-1", "receipt-line-1", {
+      verifiedQuantity: "6",
+      approvedQuantity: "6",
+      allocations: [{ groupedPurchaseOrderId: "group-1", verificationAllocated: "6" }],
+    }, "user-1")).rejects.toThrow("This GRN verification cannot be changed after quantities have been allocated to an order.");
+    expect(mocks.receiptLineUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.verificationUpdate).not.toHaveBeenCalled();
   });
 
   it("does not save a receipt line outside the authorized organization", async () => {

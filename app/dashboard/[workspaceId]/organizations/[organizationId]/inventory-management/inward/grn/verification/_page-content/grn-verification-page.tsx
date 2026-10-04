@@ -431,6 +431,22 @@ export default function GrnVerificationPage() {
     (allocation) => Number(verification.isStockIssue ? approvedQuantity : allocationQuantities[allocation.groupedPurchaseOrderId] ?? allocation.verificationAllocated) > Number(allocation.totalGroupedQty),
   ) ?? false;
   const previewQuantity = (value: number) => Number.isFinite(value) ? quantity(value) : "-";
+  const fillMatchedAllocation = () => {
+    if (!verification || verification.isStockIssue) return;
+    let remaining = Math.max(availableToAllocatePreview - groupedAllocatedPreview, 0);
+    setAllocationQuantities((current) => {
+      const next = { ...current };
+      for (const allocation of verification.allocations) {
+        if (remaining <= 0) break;
+        const currentQuantity = Number(next[allocation.groupedPurchaseOrderId] ?? allocation.verificationAllocated);
+        const capacity = Number(allocation.totalGroupedQty);
+        const fillQuantity = Math.min(Math.max(capacity - currentQuantity, 0), remaining);
+        next[allocation.groupedPurchaseOrderId] = String(currentQuantity + fillQuantity);
+        remaining = Math.max(remaining - fillQuantity, 0);
+      }
+      return next;
+    });
+  };
 
   return (
     <UiPage as="div" className="px-1 py-1 sm:px-2 lg:px-2">
@@ -544,16 +560,26 @@ export default function GrnVerificationPage() {
                       onChange={(event) => setApprovedQuantity(event.target.value)}
                       disabled={verificationSaving}
                     />
-                    <div><p className="text-[10px] font-semibold uppercase text-slate-500">Rejected Qty</p><p className="mt-1 text-xs font-semibold text-slate-900">{previewQuantity(rejectedPreview)}</p></div>
-                    <div><p className="text-[10px] font-semibold uppercase text-slate-500">Fresh Excess</p><p className="mt-1 text-xs font-semibold text-slate-900">{previewQuantity(freshExcessPreview)}</p></div>
-                    <div><p className="text-[10px] font-semibold uppercase text-slate-500">Total Excess</p><p className="mt-1 text-xs font-semibold text-slate-900">{previewQuantity(totalExcessPreview)}</p></div>
-                    <div><p className="text-[10px] font-semibold uppercase text-slate-500">Available To Allocate</p><p className="mt-1 text-xs font-semibold text-slate-900">{previewQuantity(availableToAllocatePreview)}</p></div>
+                    <div><p className="text-[10px] font-semibold uppercase text-slate-500">Rejected · tracked separately</p><p className="mt-1 text-xs font-semibold text-amber-800">{previewQuantity(rejectedPreview)}</p></div>
+                    <div><p className="text-[10px] font-semibold uppercase text-slate-500">Approved excess · General Inventory</p><p className="mt-1 text-xs font-semibold text-emerald-800">{previewQuantity(freshExcessPreview)}</p></div>
+                    <div><p className="text-[10px] font-semibold uppercase text-slate-500">Total excess to reconcile</p><p className="mt-1 text-xs font-semibold text-slate-900">{previewQuantity(totalExcessPreview)}</p></div>
+                    <div className="rounded-md border border-blue-200 bg-blue-50 px-2.5 py-2"><p className="text-[10px] font-semibold uppercase text-blue-800">Matched qty · style/order allocation</p><p className="mt-1 text-sm font-bold tabular-nums text-blue-950">{previewQuantity(availableToAllocatePreview)}</p></div>
                     <div><p className="text-[10px] font-semibold uppercase text-slate-500">Grouped Allocated</p><p className="mt-1 text-xs font-semibold text-slate-900">{previewQuantity(groupedAllocatedPreview)}</p></div>
                     <div><p className="text-[10px] font-semibold uppercase text-slate-500">Grouped Balance to Allocate</p><p className="mt-1 text-xs font-semibold text-slate-900">{previewQuantity(groupedBalancePreview)}</p></div>
                   </div>
                 </section>
                 <section aria-label="GRN Verification allocation subform" className="space-y-2">
-                  <h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">RM GRN Verification Subform</h3>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">RM GRN Verification Subform</h3>
+                      <p className="mt-1 text-[11px] text-slate-500">Only matched approved quantity can move to style/order allocation. Excess is kept in General Inventory.</p>
+                    </div>
+                    {!verification.isStockIssue && (
+                      <Button type="button" variant="secondary" size="sm" onClick={fillMatchedAllocation} disabled={verificationSaving || availableToAllocatePreview <= groupedAllocatedPreview}>
+                        Fill matched quantity
+                      </Button>
+                    )}
+                  </div>
                   <div className="overflow-x-auto rounded-lg border border-slate-200">
                     <table className="w-full min-w-[620px] text-left text-xs">
                       <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-semibold uppercase text-slate-500">
@@ -610,6 +636,9 @@ export default function GrnVerificationPage() {
                   )}
                   {allocationExceedsCapacity && (
                     <p role="alert" className="text-xs text-red-700">A grouping allocation exceeds its available balance.</p>
+                  )}
+                  {groupedAllocatedPreview < availableToAllocatePreview && (
+                    <p className="text-[11px] text-slate-500">Unassigned matched quantity: {previewQuantity(availableToAllocatePreview - groupedAllocatedPreview)}. You can enter group amounts or fill remaining group capacity.</p>
                   )}
                 </section>
               </>

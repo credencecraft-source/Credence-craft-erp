@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 
+import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
@@ -45,12 +46,14 @@ export default function FactoryProductionWipPage() {
   const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
   const [records, setRecords] = useState<WorkInProgressRecord[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
-    void fetch(`/api/factory/production/wip?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" })
+    void fetch(`/api/factory/production/wip?organizationId=${encodeURIComponent(organizationId)}&limit=100`, { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Unable to load work in progress.");
@@ -58,6 +61,7 @@ export default function FactoryProductionWipPage() {
       })
       .then((data) => {
         if (active) setRecords(Array.isArray(data.workInProgress) ? data.workInProgress : []);
+        if (active) setNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
       })
       .catch((loadError) => {
         if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load work in progress.");
@@ -68,20 +72,41 @@ export default function FactoryProductionWipPage() {
     return () => { active = false; };
   }, [organizationId]);
 
-  const processGroups = records.reduce<ProcessGroup[]>((groups, record) => {
-    const existing = groups.find((group) => group.processName === record.processName);
-    if (existing) {
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    setError("");
+    try {
+      const query = new URLSearchParams({ organizationId, limit: "100", cursor: nextCursor });
+      const response = await fetch(`/api/factory/production/wip?${query.toString()}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Unable to load more work orders.");
+      setRecords((current) => [...current, ...(Array.isArray(data.workInProgress) ? data.workInProgress : [])]);
+      setNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load more work orders.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  const processGroups = useMemo(() => {
+    const groups = new Map<string, ProcessGroup>();
+    for (const record of records) {
+      const existing = groups.get(record.processName);
+      if (existing) {
       existing.records.push(record);
       existing.orderQty += record.orderQty;
       existing.completedQty += record.completedQty;
       existing.pendingQty += record.pendingQty;
       existing.receivedQty += record.receivedQty;
       existing.pendingReceiptQty += record.pendingReceiptQty;
-    } else {
-      groups.push({ processName: record.processName, records: [record], orderQty: record.orderQty, completedQty: record.completedQty, pendingQty: record.pendingQty, receivedQty: record.receivedQty, pendingReceiptQty: record.pendingReceiptQty });
+      } else {
+        groups.set(record.processName, { processName: record.processName, records: [record], orderQty: record.orderQty, completedQty: record.completedQty, pendingQty: record.pendingQty, receivedQty: record.receivedQty, pendingReceiptQty: record.pendingReceiptQty });
+      }
     }
-    return groups;
-  }, []);
+    return [...groups.values()];
+  }, [records]);
 
   return (
     <Page as="div">
@@ -109,6 +134,7 @@ export default function FactoryProductionWipPage() {
         )}
 
         {!loading && !error && processGroups.length > 0 && (
+          <>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {processGroups.map((group) => (
               <Link key={group.processName} href={`/dashboard/${workspaceId}/organizations/${organizationId}/factory-management/production/shop-floor/wip/${encodeURIComponent(group.processName)}`} className="group block">
@@ -134,6 +160,8 @@ export default function FactoryProductionWipPage() {
               </Link>
             ))}
           </div>
+          {nextCursor && <div className="flex justify-center"><Button type="button" variant="secondary" onClick={() => void loadMore()} disabled={loadingMore} className="border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-60">{loadingMore ? "Loading..." : "Load more work orders"}</Button></div>}
+          </>
         )}
       </Section>
     </Page>

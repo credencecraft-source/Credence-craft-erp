@@ -91,6 +91,8 @@ async function loadSourceLine(database: Pick<typeof prisma, "inventoryReceiptLin
     include: {
       receipt: {
         select: {
+          entity_id: true,
+          location_id: true,
           receipt_no: true,
           purchaseOrder: { select: { purchase_order_no: true, display_no: true } },
         },
@@ -518,8 +520,17 @@ export async function saveRmGrnVerificationInTransaction(
     const groupIds = groupings.map((grouping) => grouping.id);
     const existing = await transaction.rmGrnVerification.findFirst({
       where: { organization_id: organizationId, inventory_receipt_line_id: line.id },
-      select: { id: true, verified_quantity: true, approved_quantity: true },
+      select: {
+        id: true,
+        verified_quantity: true,
+        approved_quantity: true,
+        fresh_excess: true,
+        allocations: { select: { orderAllocations: { select: { id: true } } } },
+      },
     });
+    if (existing?.allocations?.some((allocation) => allocation.orderAllocations.length > 0)) {
+      throw new InvalidActualCountError("This GRN verification cannot be changed after quantities have been allocated to an order.");
+    }
     const otherAllocationTotals = await getPriorAllocationTotals(
       transaction,
       organizationId,
@@ -563,6 +574,58 @@ export async function saveRmGrnVerificationInTransaction(
       (total, allocation) => total.plus(allocation.totalGroupedQty.minus(allocation.verificationAllocated)),
       zero(),
     );
+
+    const receiptLineUpdate = await transaction.inventoryReceiptLine.updateMany({
+      where: { id: line.id, receipt: { organization_id: organizationId } },
+      data: {
+        received_quantity: verified,
+        accepted_quantity: approved,
+        rejected_quantity: calculated.rejected,
+      },
+    });
+    if (receiptLineUpdate.count !== 1) throw new RmGrnVerificationNotFoundError();
+
+    const generalStock = await transaction.rawMaterialStock.findFirst({
+      where: { organization_id: organizationId, inventory_receipt_line_id: line.id },
+      select: { id: true, quantity_on_hand: true, quantity_reserved: true, quantity_issued: true },
+    });
+    if (generalStock) {
+      if (
+        !generalStock.quantity_on_hand.equals(existing?.fresh_excess ?? zero())
+        || generalStock.quantity_reserved.greaterThan(0)
+        || generalStock.quantity_issued.greaterThan(0)
+      ) {
+        throw new InvalidActualCountError("This GRN's excess stock has already been used or reserved and its verification cannot be changed.");
+      }
+      const stockUpdate = await transaction.rawMaterialStock.updateMany({
+        where: {
+          id: generalStock.id,
+          organization_id: organizationId,
+          inventory_receipt_line_id: line.id,
+          quantity_on_hand: generalStock.quantity_on_hand,
+          quantity_reserved: zero(),
+          quantity_issued: zero(),
+        },
+        data: { quantity_on_hand: calculated.freshExcess },
+      });
+      if (stockUpdate.count !== 1) {
+        throw new InvalidActualCountError("General Inventory changed while this verification was being saved. Reload and try again.");
+      }
+    } else {
+      const rawMaterial = line.raw_material ?? line.purchaseOrderLine.raw_material;
+      if (!rawMaterial) throw new InvalidActualCountError("The GRN line has no raw material for General Inventory.");
+      await transaction.rawMaterialStock.create({
+        data: {
+          organization_id: organizationId,
+          entity_id: line.receipt.entity_id,
+          location_id: line.receipt.location_id,
+          raw_material: rawMaterial,
+          quantity_on_hand: calculated.freshExcess,
+          source_type: "GRN",
+          inventory_receipt_line_id: line.id,
+        },
+      });
+    }
 
     const record = existing
       ? await transaction.rmGrnVerification.update({

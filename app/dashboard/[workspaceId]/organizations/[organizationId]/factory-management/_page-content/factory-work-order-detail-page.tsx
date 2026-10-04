@@ -64,6 +64,13 @@ type OrderRecord = {
   processSteps?: Array<Record<string, unknown>>;
 };
 
+const NEXT_WORK_ORDER_STATUSES: Record<string, string[]> = {
+  OPEN: ["IN PRODUCTION"],
+  "IN PRODUCTION": ["READY FOR PACKING"],
+  "READY FOR PACKING": [],
+  CLOSED: [],
+};
+
 export default function FactoryWorkOrderDetailPage() {
   const params = useParams<{ workspaceId: string; organizationId: string; workOrderId: string }>();
   const searchParams = useSearchParams();
@@ -228,8 +235,13 @@ export default function FactoryWorkOrderDetailPage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Unable to save work order.");
-      setWorkOrder((current) => current ? { ...current, totalQty: Number(data.workOrder.total_qty), status: data.workOrder.status, sizeLines: data.workOrder.sizeLines } : current);
-        setWorkOrder((current) => current ? { ...current, totalQty: Number(data.workOrder.total_qty), status: data.workOrder.status, sizeLines: data.workOrder.sizeLines, bomLines: data.workOrder.bomLines ?? current.bomLines } : current);
+      setWorkOrder((current) => current ? {
+        ...current,
+        totalQty: Number(data.workOrder.total_qty),
+        status: data.workOrder.status,
+        sizeLines: data.workOrder.sizeLines,
+        bomLines: data.workOrder.bomLines ?? current.bomLines,
+      } : current);
       setForm((current) => ({ ...current, totalQty: Number(data.workOrder.total_qty), status: data.workOrder.status }));
       setMessage("Work order updated successfully.");
     } catch (saveError) {
@@ -304,7 +316,7 @@ export default function FactoryWorkOrderDetailPage() {
             <button
               type="button"
               onClick={() => void removeWorkOrder()}
-              disabled={saving || deleting}
+              disabled={saving || deleting || workOrder.status !== "OPEN"}
               className="rounded-lg border border-red-200 px-4 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {deleting ? "Deleting..." : "Delete Work Order"}
@@ -382,10 +394,7 @@ export default function FactoryWorkOrderDetailPage() {
                   onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}
                   className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-800 focus:border-emerald-500 focus:outline-none"
                 >
-                  <option value="OPEN">OPEN</option>
-                  <option value="IN PRODUCTION">IN PRODUCTION</option>
-                  <option value="READY FOR PACKING">READY FOR PACKING</option>
-                  <option value="CLOSED">CLOSED</option>
+                  {[workOrder.status, ...(NEXT_WORK_ORDER_STATUSES[workOrder.status] ?? [])].map((status) => <option key={status} value={status}>{status}</option>)}
                 </select>
               </label>
               <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-700">
@@ -441,6 +450,7 @@ export default function FactoryWorkOrderDetailPage() {
                             type="number"
                             min="0"
                             value={line.quantity ?? 0}
+                            disabled={workOrder.status !== "OPEN"}
                             onChange={(event) => {
                               const quantity = Math.max(Number(event.target.value || 0), 0);
                               setWorkOrder((current) => {

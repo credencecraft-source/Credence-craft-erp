@@ -9,6 +9,7 @@ export const CHALLAN_NUMBER_DEFINITIONS = [
   { documentType: "GATE_ENTRY", label: "Gate Entry", defaultPrefix: "GE", tables: "Security gate entries" },
   { documentType: "RM_GRN", label: "RM GRN", defaultPrefix: "GRN", tables: "Inventory receipts" },
   { documentType: "FACTORY_GRN", label: "Factory GRN", defaultPrefix: "FGRN", tables: "Factory GRN records" },
+  { documentType: "FACTORY_WO", label: "Factory Work Order", defaultPrefix: "WO", tables: "Factory work orders" },
   { documentType: "PURCHASE_BILL", label: "Purchase Bill", defaultPrefix: "PB", tables: "POS purchase bills" },
 ] as const;
 

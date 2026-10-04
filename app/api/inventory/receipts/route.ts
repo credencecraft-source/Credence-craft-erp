@@ -158,7 +158,7 @@ export async function POST(request: Request) {
           || accepted.isNegative()
           || rejected.isNegative()
           || !accepted.plus(rejected).equals(received)
-          || received.greaterThan(pending)
+          || (!verificationMode && received.greaterThan(pending))
         ) {
           throw new Error("Receipt quantities exceed the pending Purchase Order quantity or are invalid.");
         }
@@ -208,6 +208,7 @@ export async function POST(request: Request) {
       for (const receiptLine of created.lines) {
         const normalizedLine = normalizedByPurchaseOrderLine.get(receiptLine.purchase_order_line_id);
         if (!normalizedLine) throw new Error("GRN stock data is missing for a receipt line.");
+        if (normalizedLine.verification) continue;
         if (!receiptLine.raw_material || !normalizedLine.accepted.greaterThan(0)) continue;
         await transaction.rawMaterialStock.create({
           data: {
@@ -258,27 +259,53 @@ export async function DELETE(request: Request) {
           purchase_order_id: true,
           entity_id: true,
           location_id: true,
-          lines: { select: { id: true, raw_material: true, accepted_quantity: true } },
+          lines: {
+            select: {
+              id: true,
+              raw_material: true,
+              accepted_quantity: true,
+              rmGrnVerification: {
+                select: {
+                  fresh_excess: true,
+                  allocations: {
+                    select: { orderAllocations: { select: { id: true }, where: { organization_id: organization.id } } },
+                  },
+                },
+              },
+            },
+          },
         },
       });
       if (!receipt) return null;
 
       const legacyStockToReverse = new Map<string, Prisma.Decimal>();
-      const stockReversals: Array<{ raw_material: string; accepted_quantity: string }> = [];
+      const stockReversals: Array<{ raw_material: string; quantity_reversed: string }> = [];
       for (const line of receipt.lines) {
-        if (!line.raw_material || !line.accepted_quantity.greaterThan(0)) continue;
+        if (!line.raw_material) continue;
+        if (line.rmGrnVerification?.allocations.some((allocation) => allocation.orderAllocations.length > 0)) {
+          throw new GrnDeletionConflictError("Cannot delete this GRN because its verified quantity has been allocated to an order. Reverse the order allocation first.");
+        }
+        const quantityToReverse = line.rmGrnVerification?.fresh_excess ?? line.accepted_quantity;
+        if (!quantityToReverse.greaterThan(0) && !line.rmGrnVerification) continue;
         const stock = await transaction.rawMaterialStock.findFirst({
           where: { organization_id: organization.id, inventory_receipt_line_id: line.id },
-          select: { id: true, quantity_on_hand: true, quantity_reserved: true },
+          select: { id: true, quantity_on_hand: true, quantity_reserved: true, quantity_issued: true },
         });
         if (!stock) {
+          if (line.rmGrnVerification) continue;
           legacyStockToReverse.set(
             line.raw_material,
-            (legacyStockToReverse.get(line.raw_material) ?? new Prisma.Decimal(0)).plus(line.accepted_quantity),
+            (legacyStockToReverse.get(line.raw_material) ?? new Prisma.Decimal(0)).plus(quantityToReverse),
           );
           continue;
         }
-        if (stock.quantity_on_hand.minus(stock.quantity_reserved).lessThan(line.accepted_quantity)) {
+        const stockQuantityToReverse = line.rmGrnVerification
+          ? stock.quantity_on_hand
+          : quantityToReverse;
+        if (
+          stock.quantity_on_hand.minus(stock.quantity_reserved).lessThan(stockQuantityToReverse)
+          || stock.quantity_issued.greaterThan(0)
+        ) {
           throw new GrnDeletionConflictError("Cannot delete this GRN because accepted stock has since been used or reserved. Reverse that inventory activity first.");
         }
 
@@ -288,13 +315,14 @@ export async function DELETE(request: Request) {
             organization_id: organization.id,
             quantity_on_hand: stock.quantity_on_hand,
             quantity_reserved: stock.quantity_reserved,
+            quantity_issued: stock.quantity_issued,
           },
-          data: { quantity_on_hand: { decrement: line.accepted_quantity } },
+          data: { quantity_on_hand: { decrement: stockQuantityToReverse } },
         });
         if (updated.count !== 1) {
           throw new GrnDeletionConflictError("Stock changed while deleting this GRN. Reload the record and try again.");
         }
-        stockReversals.push({ raw_material: line.raw_material, accepted_quantity: line.accepted_quantity.toString() });
+        stockReversals.push({ raw_material: line.raw_material, quantity_reversed: stockQuantityToReverse.toString() });
       }
 
       for (const [rawMaterial, acceptedQuantity] of legacyStockToReverse) {
@@ -324,7 +352,7 @@ export async function DELETE(request: Request) {
         if (updated.count !== 1) {
           throw new GrnDeletionConflictError("Stock changed while deleting this GRN. Reload the record and try again.");
         }
-        stockReversals.push({ raw_material: rawMaterial, accepted_quantity: acceptedQuantity.toString() });
+        stockReversals.push({ raw_material: rawMaterial, quantity_reversed: acceptedQuantity.toString() });
       }
 
       await createAuditEvent({
@@ -338,7 +366,7 @@ export async function DELETE(request: Request) {
           receipt_no: receipt.receipt_no,
           purchase_order_id: receipt.purchase_order_id,
           deleted_line_count: receipt.lines.length,
-          reversed_accepted_stock: stockReversals,
+          reversed_general_inventory_stock: stockReversals,
         },
       }, transaction);
 

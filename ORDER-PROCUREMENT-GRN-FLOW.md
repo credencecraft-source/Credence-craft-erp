@@ -20,15 +20,15 @@ flowchart TD
     K --> L{PO approved or shared?}
     L -->|No| K
     L -->|Yes| M[Receive against PO at an active location for the same entity]
-    M --> N[Create GRN and receipt lines<br/>Received quantity must fit pending PO balance]
-    N --> O[GRN verification<br/>Record verified, approved, rejected, and available quantities]
-    O --> P[Allocate verified quantity to source Grouped PO buckets]
-    P --> Q[Allocate each bucket to its Grouped PO order lines]
-    O --> R[Accepted receipt quantity becomes raw-material inventory stock]
+    M --> N[Create GRN header and PO subform]
+    N --> O[Store verification<br/>Record verified, approved, rejected, and excess quantities]
+    O --> P[Post approved excess to General Inventory<br/>Record rejected quantity separately]
+    O --> Q[Allocate matched approved quantity to source Grouped PO buckets]
+    Q --> R[Allocate each bucket to its Grouped PO order lines]
 
     D -->|Existing stock| S[Create STOCK Grouped PO and reserve stock]
     S --> T[Verify store issue / stock grouping]
-    T --> P
+    T --> Q
 ```
 
 ## Application Architecture
@@ -94,9 +94,10 @@ flowchart LR
 - A Grouped PO combines BOM lines only when their material/category/subcategory/UOM and entity match. Vendor pricing is approved separately, and the submitter cannot approve their own group.
 - A Master Group cannot mix vendor and stock sources. Its source groups must match the same entity, vendor, material/category/subcategory, price, GST, and HSN.
 - Vendor POs are generated from Master Groups for the same active entity and vendor. Stock-sourced Master Groups follow the internal stock-verification path, not vendor PO generation.
-- GRNs require an approved or shared PO, an active entity-matched location, and quantities within the unreceived PO-line balance. Approved quantity plus rejected quantity must equal verified quantity.
-- GRN verification allocation cannot exceed available verified quantity or a source Grouped PO's remaining balance. Order-line allocation cannot exceed that verification allocation or the line's remaining grouped quantity.
-- Receipt posting, verification, stock creation, document numbering, and audit writes use database transactions where implemented.
+- GRNs require an approved or shared PO and an active entity-matched location. Verified receipts may exceed the PO/grouped requirement; approved excess and rejected quantities are excluded from the quantity available for order allocation.
+- Verification sets the GRN received, accepted, and rejected quantities. Approved quantity above the remaining grouped requirement is posted to General Inventory; rejected quantity is recorded there as a separate non-available amount.
+- GRN verification allocation cannot exceed the matched approved quantity or a source Grouped PO's remaining balance. Order-line allocation cannot exceed that verification allocation or the line's remaining grouped quantity.
+- Receipt posting, verification, stock creation, document numbering, and audit writes use database transactions where implemented. Deleting a GRN with order allocations or consumed/reserved excess stock is blocked.
 
 ## Implementation Map
 

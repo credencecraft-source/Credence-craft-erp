@@ -2,10 +2,11 @@
 
 import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { ArrowRight, Leaf, Recycle, Scissors, Waves, Zap } from "lucide-react";
+import { ArrowRight, Leaf, MailCheck, Recycle, Scissors, Waves, Zap } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
 import PublicHeader from "@/components/public/public-header";
 import Msg91MobileOtpWidget from "@/components/auth/msg91-mobile-otp-widget";
 
@@ -37,6 +38,7 @@ export default function LoginPage() {
   const [mobileEmailNumber, setMobileEmailNumber] = useState("");
   const [mobileEmailBusy, setMobileEmailBusy] = useState(false);
   const [mobileEmailMessage, setMobileEmailMessage] = useState("");
+  const [showMobileEmailNotice, setShowMobileEmailNotice] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -62,6 +64,7 @@ export default function LoginPage() {
     setMobileEmailHint("");
     setMobileEmailNumber("");
     setMobileEmailMessage("");
+    setShowMobileEmailNotice(false);
   }
   async function parseJsonResponse(response: Response) {
     const text = await response.text();
@@ -165,8 +168,8 @@ export default function LoginPage() {
               <div className="mt-5 sm:mt-6">
                 {mobileEmailNumber ? (
                   <div className="space-y-3">
-                    <p className="rounded-xl bg-[#f3f6f1] p-3 text-[12px] leading-5 text-[#587066]" role="status">
-                      We sent an OTP to {mobileEmailHint}. Check your email and enter the code below.
+                    <p className="rounded-xl border border-[#f4dfbb] bg-gradient-to-r from-[#fffaf0] to-[#fff3e8] px-4 py-3 text-center text-lg font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-[#b45309] via-[#ea7c16] to-[#f2b544]" role="status">
+                      {mobileEmailHint}
                     </p>
                     <Input
                       label="Email OTP"
@@ -209,6 +212,7 @@ export default function LoginPage() {
                       setMobileEmailHint(emailHint);
                       setMobileEmailOtp("");
                       setMobileEmailMessage("");
+                      setShowMobileEmailNotice(true);
                     }}
                     submitLabel="Verify and continue"
                   />
@@ -220,6 +224,31 @@ export default function LoginPage() {
             <p className="mt-5 text-[10px] leading-4 text-[#93a39a] sm:mt-6">By continuing, you agree to our <Link href="/terms" className="text-[#587066] underline underline-offset-2">terms</Link>.</p>
           </section> : <section id="impact" className="mx-auto w-full max-w-lg rounded-[1.5rem] bg-[#183b2c] p-4 text-white shadow-[0_22px_70px_rgba(24,59,44,0.12)] sm:p-6 lg:rounded-[1.75rem] lg:p-8"><div className="flex items-start justify-between gap-3"><div><p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-[#d8ef72] sm:text-[10px]">A clearer footprint</p><h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] sm:text-2xl">Impact snapshot</h2></div><Waves size={18} className="text-[#d8ef72]" /></div><div className="mt-7 grid gap-4 sm:mt-8 sm:grid-cols-2"><Input label="Fabric waste (kg)" type="number" min="0" value={fabricWaste} onChange={(event) => updateNumber(setFabricWaste, event.target.value)} className="border-white/20 bg-white/10 text-white" /><Input label="Recovered waste (kg)" type="number" min="0" value={recycledWaste} onChange={(event) => updateNumber(setRecycledWaste, event.target.value)} className="border-white/20 bg-white/10 text-white" /><Input label="Water used (litres)" type="number" min="0" value={waterUsed} onChange={(event) => updateNumber(setWaterUsed, event.target.value)} className="border-white/20 bg-white/10 text-white" /></div><div className="mt-7 grid grid-cols-2 gap-3"><div className="rounded-xl bg-white/10 p-4"><Recycle size={15} className="text-[#d8ef72]" /><p className="mt-4 text-[10px] uppercase tracking-wider text-white/50">Waste recovered</p><p className="mt-1 text-2xl font-semibold">{recoveryRate.toFixed(0)}%</p></div><div className="rounded-xl bg-white/10 p-4"><Zap size={15} className="text-[#e8c875]" /><p className="mt-4 text-[10px] uppercase tracking-wider text-white/50">Carbon estimate</p><p className="mt-1 text-2xl font-semibold">{Math.round(carbonImpact).toLocaleString()} <span className="text-[10px] text-white/50">kg CO₂e</span></p></div></div><p className="mt-6 text-[11px] leading-5 text-white/60">A directional estimate to help teams ask better questions about recovery, water and material flow.</p></section>}
         </section>
+        <Modal
+          open={showMobileEmailNotice}
+          onClose={() => setShowMobileEmailNotice(false)}
+          ariaLabelledBy="mobile-email-otp-title"
+          ariaDescribedBy="mobile-email-otp-description"
+          variant="success"
+          size="sm"
+          className="p-6 text-center"
+        >
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#edf5e7] text-[#47733b]">
+            <MailCheck size={26} aria-hidden="true" />
+          </div>
+          <h2 id="mobile-email-otp-title" className="mt-4 text-xl font-semibold tracking-tight text-[#183b2c]">
+            Check your email
+          </h2>
+          <p id="mobile-email-otp-description" className="mt-3 break-all bg-gradient-to-r from-[#b45309] via-[#ea7c16] to-[#f2b544] bg-clip-text text-2xl font-extrabold tracking-tight text-transparent">
+            {mobileEmailHint}
+          </p>
+          <Button
+            onClick={() => setShowMobileEmailNotice(false)}
+            className="mt-5 w-full bg-[#183b2c] py-2.5 text-sm font-semibold hover:bg-[#245640]"
+          >
+            Got it, enter my code
+          </Button>
+        </Modal>
       </div>
     </main>
   );

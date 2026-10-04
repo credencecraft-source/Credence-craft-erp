@@ -143,6 +143,8 @@ model FinishedGoodsSizeWise {
   created_at      DateTime                   @default(now()) @map("created_at")
   updated_at      DateTime                   @updatedAt @map("updated_at")
   workOrderLines  FactoryWorkOrderSizeLine[]
+  productionUpdateSizeLines FactoryProductionUpdateSizeLine[]
+  bundleTransferSizeLines   FactoryBundleTransferSizeLine[]
 
   @@index([order_id])
   @@map("finished_goods_size_wise")

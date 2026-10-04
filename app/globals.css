@@ -33,7 +33,7 @@
   --erp-text: #18232b;
   --erp-muted: #587066;
   --erp-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
-  --erp-ui-scale: 0.67;
+  --erp-ui-scale: 67%;
 }
 
 @layer base {
@@ -85,6 +85,12 @@
   :focus-visible {
     outline: 2px solid var(--erp-brand);
     outline-offset: 2px;
+  }
+
+  @media print {
+    body {
+      zoom: 1;
+    }
   }
 }
 
