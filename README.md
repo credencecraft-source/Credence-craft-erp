@@ -47,6 +47,8 @@ npm run build
 npm start
 ```
 
+The development server regenerates Prisma Client from the current schema before starting. Stop any existing development server before restarting after Prisma schema changes so it releases the Prisma engine file and loads the newly generated client.
+
 - Database connection strings and usernames are encrypted with `AUTH_SECRET`. Rotate `AUTH_SECRET` only with a planned credential re-encryption procedure.
 - Order numbers use a tenant-scoped atomic counter. The migration initializes counters from existing numeric `OD-*` order numbers and leaves nonconforming legacy order numbers untouched.
 - Platform administrators are never provisioned by a public login or OTP request. After migrations are applied, create the first administrator from a trusted one-time operator environment with `PLATFORM_ADMIN_EMAIL`, optional `PLATFORM_ADMIN_NAME`, and run `npm run platform:bootstrap-admin`. The command stores only a random unusable password hash and refuses to run if any administrator already exists. Platform access uses email verification codes; the legacy password-login API returns `410 Gone`.

@@ -129,6 +129,23 @@ export async function listOrdersByArticle(organizationId: string, article: strin
   return { orders: page, nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null };
 }
 
+export async function listWorkOrderArticles(organizationId: string) {
+  const rows = await prisma.merchandisingOrder.findMany({
+    where: { organization_id: organizationId, article: { not: null } },
+    select: { article: true },
+    distinct: ["article"],
+    orderBy: { article: "asc" },
+  });
+  const articles = new Map<string, string>();
+  for (const row of rows) {
+    const article = row.article?.trim();
+    if (article && !articles.has(article.toLocaleLowerCase())) {
+      articles.set(article.toLocaleLowerCase(), article);
+    }
+  }
+  return { articles: [...articles.values()] };
+}
+
 export async function listWorkOrderAllocationsByArticle(organizationId: string, article: string, options: { cursor?: string; limit?: number } = {}) {
   const normalizedArticle = article.trim();
   const take = Math.min(Math.max(options.limit ?? 50, 1), 100);
@@ -237,13 +254,70 @@ async function ensureOrderProcessController(
   transaction: Prisma.TransactionClient,
   order: WorkOrderCreationOrder,
 ): Promise<OrderProcessControllerWithProcesses | null> {
-  if (!order.processTemplate || order.processSteps.length === 0) return null;
+  if (!order.processTemplate) return null;
 
   const existing = await transaction.orderProcessController.findUnique({
     where: { order_id: order.id },
     include: { processes: { include: { operations: true }, orderBy: { sl_no: "asc" } } },
   });
   if (existing) return existing;
+
+  if (order.processSteps.length === 0) {
+    const template = await transaction.masterProcessTemplate.findFirst({
+      where: { id: order.processTemplate.id, organization_id: order.organization_id, is_active: true },
+      include: {
+        steps: {
+          where: { is_active: true },
+          orderBy: { sl_no: "asc" },
+          include: {
+            process: {
+              select: {
+                id: true,
+                process_name: true,
+                operationTemplates: {
+                  where: { organization_id: order.organization_id, is_active: true },
+                  orderBy: { sort_order: "asc" },
+                  include: { operations: { where: { is_active: true }, orderBy: { sl_no: "asc" } } },
+                },
+              },
+            },
+            operationTemplate: {
+              include: { operations: { where: { is_active: true }, orderBy: { sl_no: "asc" } } },
+            },
+          },
+        },
+      },
+    });
+    if (!template || template.steps.length === 0) return null;
+
+    return transaction.orderProcessController.create({
+      data: {
+        order_id: order.id,
+        process_template_id: template.id,
+        processes: {
+          create: template.steps.map((step) => ({
+            process_id: step.process_id,
+            process_name: step.process.process_name,
+            sl_no: step.sl_no,
+            order_qty: Number(order.orderQty ?? 0),
+            operations: {
+              create: (
+                step.operationTemplate?.organization_id === order.organization_id
+                  ? step.operationTemplate.operations
+                  : step.process.operationTemplates[0]?.operations ?? []
+              ).map((operation) => ({
+                source_operation_id: operation.id,
+                operation: operation.operation,
+                sl_no: operation.sl_no,
+                budgeted_price: operation.price,
+              })),
+            },
+          })),
+        },
+      },
+      include: { processes: { include: { operations: true }, orderBy: { sl_no: "asc" } } },
+    });
+  }
 
   const controller = await transaction.orderProcessController.create({
     data: { order_id: order.id, process_template_id: order.processTemplate.id },
@@ -520,6 +594,82 @@ export async function createWorkOrders(organizationId: string, userId: string, r
   throw new Error("Work order creation could not be serialized. Please retry.");
 }
 
+export async function createWorkOrdersForSampleOrders(
+  organizationId: string,
+  userId: string,
+  sampleOrderIds: string[],
+) {
+  const uniqueOrderIds = [...new Set(sampleOrderIds.map((id) => id.trim()).filter(Boolean))];
+  if (uniqueOrderIds.length < 5) {
+    throw new Error("At least five organization-owned sample orders are required to create sample work orders.");
+  }
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await prisma.$transaction(async (transaction) => {
+        const orders = await transaction.merchandisingOrder.findMany({
+          where: {
+            organization_id: organizationId,
+            id: { in: uniqueOrderIds },
+            sourceStatus: "DEMO",
+          },
+          select: {
+            id: true,
+            orderNo: true,
+            finishedGoods: { select: { id: true, totalQty: true } },
+          },
+          orderBy: [{ created_at: "asc" }, { orderNo: "asc" }],
+        });
+        if (orders.length < 5) {
+          throw new Error("At least five organization-owned sample orders with sample-data status are required.");
+        }
+
+        const existingWorkOrders = await transaction.factoryWorkOrder.findMany({
+          where: { organization_id: organizationId, order_id: { in: orders.map((order) => order.id) } },
+          select: { id: true, order_id: true, work_order_no: true },
+          orderBy: [{ created_at: "asc" }, { id: "asc" }],
+        });
+        const existingByOrder = new Map<string, typeof existingWorkOrders[number]>();
+        for (const workOrder of existingWorkOrders) {
+          if (!existingByOrder.has(workOrder.order_id)) existingByOrder.set(workOrder.order_id, workOrder);
+        }
+
+        const results = [];
+        for (const order of orders.slice(0, 5)) {
+          const existing = existingByOrder.get(order.id);
+          if (existing) {
+            results.push({ id: existing.id, orderId: order.id, orderNo: order.orderNo, workOrderNo: existing.work_order_no, created: false });
+            continue;
+          }
+          const lines = order.finishedGoods.map((line) => ({
+            sourceFinishedGoodsId: line.id,
+            quantity: line.totalQty ?? 0,
+          })).filter((line) => line.quantity > 0);
+          if (lines.length === 0) {
+            throw new Error(`Sample order ${order.orderNo} has no positive size quantities for work-order creation.`);
+          }
+          const workOrder = await createWorkOrderInTransaction(transaction, organizationId, userId, order.orderNo, lines);
+          results.push({
+            id: workOrder.id,
+            orderId: order.id,
+            orderNo: order.orderNo,
+            workOrderNo: workOrder.work_order_no,
+            created: true,
+          });
+        }
+        if (results.length < 5) {
+          throw new Error("Five sample work orders could not be confirmed.");
+        }
+        return results;
+      }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 60000 });
+    } catch (error) {
+      const canRetry = error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
+      if (!canRetry || attempt === 2) throw error;
+    }
+  }
+  throw new Error("Sample work-order creation could not be serialized. Please retry.");
+}
+
 export async function createWorkOrder(organizationId: string, userId: string, orderNo: string, lines: WorkOrderQuantityInput[]) {
   const [workOrder] = await createWorkOrders(organizationId, userId, [{ orderNo, lines }]);
   return workOrder;
@@ -763,6 +913,11 @@ export async function deleteWorkOrder(organizationId: string, userId: string, wo
       select: {
         id: true,
         status: true,
+        rawMaterialOutwardRequests: {
+          where: { organization_id: organizationId, status: { not: "CANCELLED" } },
+          select: { request_no: true },
+          take: 1,
+        },
         productionUpdates: { select: { id: true }, take: 1 },
         bundleTransfers: { select: { id: true }, take: 1 },
         grns: { select: { id: true }, take: 1 },
@@ -771,6 +926,12 @@ export async function deleteWorkOrder(organizationId: string, userId: string, wo
       },
     });
     if (!workOrder) throw new Error("Work order was not found in this organization.");
+    const outwardRequest = workOrder.rawMaterialOutwardRequests[0];
+    if (outwardRequest) {
+      throw new Error(
+        `This work order cannot be deleted because it has raw-material outward request ${outwardRequest.request_no}. Keep the work order to preserve its inventory history.`,
+      );
+    }
     const hasActivity = workOrder.productionUpdates.length > 0
       || workOrder.bundleTransfers.length > 0
       || workOrder.grns.length > 0
@@ -780,6 +941,55 @@ export async function deleteWorkOrder(organizationId: string, userId: string, wo
       throw new Error("Only an untouched OPEN work order can be deleted. Cancel or reverse operational activity instead.");
     }
 
+    const cancelledRequests = await transaction.rawMaterialOutwardRequest.findMany({
+      where: {
+        organization_id: organizationId,
+        work_order_id: workOrderId,
+        status: "CANCELLED",
+      },
+      select: {
+        id: true,
+        request_no: true,
+        lines: {
+          select: {
+            id: true,
+            status: true,
+            boxLines: { select: { id: true }, take: 1 },
+          },
+        },
+      },
+    });
+    if (cancelledRequests.some((request) => request.lines.some(
+      (line) => line.status !== "CANCELLED" || line.boxLines.length > 0,
+    ))) {
+      throw new Error("A cancelled raw-material request has incomplete cancellation history. Resolve it before deleting this work order.");
+    }
+    const cancelledRequestLineIds = cancelledRequests.flatMap((request) => request.lines.map((line) => line.id));
+    if (cancelledRequestLineIds.length > 0) {
+      const deletedLines = await transaction.rawMaterialOutwardRequestLine.deleteMany({
+        where: {
+          id: { in: cancelledRequestLineIds },
+          organization_id: organizationId,
+          status: "CANCELLED",
+        },
+      });
+      if (deletedLines.count !== cancelledRequestLineIds.length) {
+        throw new Error("A cancelled raw-material request changed before the work order could be deleted. Reload and try again.");
+      }
+    }
+    if (cancelledRequests.length > 0) {
+      const deletedRequests = await transaction.rawMaterialOutwardRequest.deleteMany({
+        where: {
+          id: { in: cancelledRequests.map((request) => request.id) },
+          organization_id: organizationId,
+          status: "CANCELLED",
+        },
+      });
+      if (deletedRequests.count !== cancelledRequests.length) {
+        throw new Error("A cancelled raw-material request changed before the work order could be deleted. Reload and try again.");
+      }
+    }
+
     await createAuditEvent({
       organizationId,
       userId,
@@ -787,6 +997,9 @@ export async function deleteWorkOrder(organizationId: string, userId: string, wo
       action: "DELETE_WORK_ORDER",
       entityType: "FactoryWorkOrder",
       entityId: workOrderId,
+      details: cancelledRequests.length > 0
+        ? { removedCancelledOutwardRequests: cancelledRequests.map((request) => request.request_no) }
+        : undefined,
     }, transaction);
     await transaction.factoryWorkOrder.delete({ where: { id: workOrderId } });
   }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });

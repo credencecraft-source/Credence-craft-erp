@@ -28,16 +28,23 @@ const { prismaMock, transactionMock, requirePlatformSessionAdmin, requirePlatfor
     masterProduct: { createMany: vi.fn() },
     masterEntity: { createMany: vi.fn() },
     masterState: { createMany: vi.fn() },
+    masterProcess: { findFirst: vi.fn(), create: vi.fn() },
+    masterOperationTemplate: { findFirst: vi.fn(), create: vi.fn() },
+    masterOperationTemplateStep: { findFirst: vi.fn(), create: vi.fn() },
+    masterProcessTemplate: { findFirst: vi.fn(), create: vi.fn() },
+    masterProcessTemplateStep: { createMany: vi.fn() },
   };
   const prismaMock = {
     $transaction: vi.fn(),
     organization: {
       findUnique: vi.fn(),
       findMany: vi.fn(),
+      findFirst: vi.fn(),
       groupBy: vi.fn(),
       count: vi.fn(),
       updateMany: vi.fn(),
     },
+    organizationMembership: { findFirst: vi.fn() },
   };
   const requirePlatformSessionAdmin = vi.fn();
   const requirePlatformSessionSuperAdmin = vi.fn();
@@ -60,6 +67,7 @@ import {
 import {
   archiveOrganization,
   countOrganizationsForUser,
+  hasOrganizationsForUser,
   createOrganization,
   deleteOrganizationFromPlatform,
   forceDeleteOrganizationFromPlatform,
@@ -87,6 +95,9 @@ beforeEach(() => {
   transactionMock.$executeRaw.mockResolvedValue(1);
   transactionMock.organization.create.mockResolvedValue(organization);
   transactionMock.masterGst.findMany.mockResolvedValue([]);
+  transactionMock.masterProcess.create.mockImplementation(({ data }: { data: { process_name: string } }) => Promise.resolve({ id: `process-${data.process_name}` }));
+  transactionMock.masterOperationTemplate.create.mockImplementation(({ data }: { data: { operation_template_name: string } }) => Promise.resolve({ id: `operation-template-${data.operation_template_name}` }));
+  transactionMock.masterProcessTemplate.create.mockResolvedValue({ id: "process-template-id" });
 });
 
 describe("shared display-text normalization", () => {
@@ -108,7 +119,7 @@ describe("shared display-text normalization", () => {
 });
 
 describe("organization creation defaults", () => {
-  it("creates default raw-material, product, and GST-derived entity masters transactionally", async () => {
+  it("creates default master data and the process template transactionally", async () => {
     await createOrganization({
       workspaceUserId: "workspace-user-id",
       organizationName: "Northwind Apparel",
@@ -149,6 +160,60 @@ describe("organization creation defaults", () => {
         sort_order: index,
       })),
       skipDuplicates: true,
+    });
+    expect(transactionMock.masterProcessTemplate.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organization_id: organization.id,
+        process_name: "No Embroidery Only Wash",
+        legacy_metadata: {
+          first_process_id: "process-Cutting",
+          last_process_id: "process-Iron",
+        },
+        is_active: true,
+        sort_order: 0,
+      }),
+      select: { id: true },
+    });
+    const templateData = transactionMock.masterProcessTemplate.create.mock.calls[0][0].data;
+    expect(templateData).not.toHaveProperty("first_process_id");
+    expect(templateData).not.toHaveProperty("last_process_id");
+    expect(transactionMock.masterProcessTemplateStep.createMany).toHaveBeenCalledWith({
+      data: [
+        ["Cutting", "Cutting Basic"],
+        ["Production", "Parts Basic"],
+        ["Washing", "Washing Basic"],
+        ["KajaButtoning", "KajaButtoning Basic"],
+        ["Iron", "Iron"],
+        ["Packing", "Packing"],
+      ].map(([processName, operationTemplateName], index) => ({
+        organization_id: organization.id,
+        process_template_id: "process-template-id",
+        process_id: `process-${processName}`,
+        operation_template_id: `operation-template-${operationTemplateName}`,
+        process_name: processName,
+        sl_no: index + 1,
+        is_active: true,
+        sort_order: index,
+        legacy_metadata: {
+          is_returnable_process: false,
+          block_by_process_id: null,
+        },
+      })),
+    });
+    expect(transactionMock.masterProcessTemplateStep.createMany.mock.calls[0][0].data.every(
+      (step: Record<string, unknown>) => !("is_returnable_process" in step) && !("block_by_process_id" in step),
+    )).toBe(true);
+    expect(transactionMock.masterOperationTemplateStep.create).toHaveBeenCalledTimes(6);
+    expect(transactionMock.masterOperationTemplateStep.create).toHaveBeenCalledWith({
+      data: {
+        organization_id: organization.id,
+        operation_template_id: "operation-template-Cutting Basic",
+        operation: "Cutting Basic",
+        sl_no: 1,
+        price: 0,
+        is_active: true,
+        sort_order: 0,
+      },
     });
     expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 10000, timeout: 30000 });
   });
@@ -204,6 +269,19 @@ describe("organization onboarding count", () => {
         },
       },
     });
+  });
+});
+
+describe("organization membership existence", () => {
+  it("checks the authenticated user's active membership without counting every organization", async () => {
+    prismaMock.organizationMembership.findFirst.mockResolvedValue({ id: "membership-id" });
+
+    await expect(hasOrganizationsForUser("workspace-user-id")).resolves.toBe(true);
+    expect(prismaMock.organizationMembership.findFirst).toHaveBeenCalledWith({
+      where: { workspace_user_id: "workspace-user-id", is_active: true },
+      select: { id: true },
+    });
+    expect(prismaMock.organization.count).not.toHaveBeenCalled();
   });
 });
 

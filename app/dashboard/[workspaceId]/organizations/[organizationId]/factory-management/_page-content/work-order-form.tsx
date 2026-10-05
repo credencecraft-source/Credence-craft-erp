@@ -19,6 +19,7 @@ type WorkOrderReport = { id: string; workOrderNo: string; orderNo: string; artic
 export default function WorkOrderForm({ organizationId, showReport = true }: { workspaceId: string; organizationId: string; showReport?: boolean }) {
   const [articleNo, setArticleNo] = useState("");
   const [articleOptions, setArticleOptions] = useState<ArticleOption[]>([]);
+  const [articleOptionsLoading, setArticleOptionsLoading] = useState(true);
   const [orderNo, setOrderNo] = useState("");
   const [relatedOrders, setRelatedOrders] = useState<RelatedOrder[]>([]);
   const [relatedOrdersNextCursor, setRelatedOrdersNextCursor] = useState<string | null>(null);
@@ -77,16 +78,22 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
 
   useEffect(() => {
     let active = true;
-    void fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/article?includeInactive=false&limit=200`, { cache: "no-store" })
+    void fetch(`/api/factory/work-orders?organizationId=${encodeURIComponent(organizationId)}&articles=true`, { cache: "no-store" })
       .then(async (response) => {
-        if (!response.ok) throw new Error("Unable to load Article master values.");
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || "Unable to load articles from this organization's orders.");
+        }
         return response.json();
       })
-      .then((data: Array<{ id: string; label: string }>) => {
-        if (active) setArticleOptions(data.map((option) => ({ id: option.id, label: option.label })).filter((option) => option.label));
+      .then((data: { articles?: string[] }) => {
+        if (active) setArticleOptions((data.articles ?? []).map((article) => ({ id: article, label: article })));
       })
       .catch((loadError) => {
         if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load Article master values.");
+      })
+      .finally(() => {
+        if (active) setArticleOptionsLoading(false);
       });
     return () => { active = false; };
   }, [organizationId]);
@@ -344,6 +351,7 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
             <Select
               id="article-no"
               value={articleNo}
+              disabled={articleOptionsLoading || articleOptions.length === 0}
               onChange={(event) => {
                 orderLookupSequence.current += 1;
                 setLoading(false);
@@ -361,7 +369,7 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
               className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
               required
             >
-              <option value="">Select an article</option>
+              <option value="">{articleOptionsLoading ? "Loading articles..." : articleOptions.length > 0 ? "Select an article" : "No articles found"}</option>
               {articleOptions.map((article) => <option key={article.id} value={article.label}>{article.label}</option>)}
             </Select>
           </div>

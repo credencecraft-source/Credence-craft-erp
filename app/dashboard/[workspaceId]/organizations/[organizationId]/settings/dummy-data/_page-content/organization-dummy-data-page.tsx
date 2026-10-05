@@ -36,7 +36,11 @@ export default async function OrganizationDummyDataPage({
   const settingsPath = `/dashboard/${workspaceId}/organizations/${organizationId}/settings`;
   const pagePath = `${settingsPath}/dummy-data`;
   const dataset = await getOrganizationDummyDataStatus(user.id, organizationId);
-  const workflowSummary = getDummyDataWorkflowSummary(dataset.status, dataset.stage);
+  const workflowSummary = getDummyDataWorkflowSummary(
+    dataset.status,
+    dataset.stage,
+    "completedSteps" in dataset ? dataset.completedSteps?.includes(9) ?? false : false,
+  );
 
   async function createDummyDataAction() {
     "use server";
@@ -66,7 +70,11 @@ export default async function OrganizationDummyDataPage({
       redirect(`${pagePath}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to continue dummy-data setup.")}`);
     }
     revalidatePath(pagePath);
-    const nextSummary = getDummyDataWorkflowSummary(result.status, result.stage);
+    const nextSummary = getDummyDataWorkflowSummary(
+      result.status,
+      result.stage,
+      "completedCount" in result && result.completedCount >= 5,
+    );
     redirect(`${pagePath}?notice=${encodeURIComponent("advanced" in result && result.advanced
       ? `Sample setup advanced to ${nextSummary.title.toLowerCase()}.`
       : `Sample data is still waiting on the ${nextSummary.title.toLowerCase()} step.`)}`);
@@ -120,7 +128,7 @@ export default async function OrganizationDummyDataPage({
           <p className="erp-eyebrow mt-4">Organization Setup</p>
           <h1 className="erp-page-heading">Dummy Data</h1>
           <p className="erp-page-subheading">
-            Create a separate sample dataset for {organization.organization_name}, including master data, sample orders, and procurement approvals.
+            Create a separate sample dataset for {organization.organization_name}, including master data, sample orders, procurement approvals, and at least five work orders.
           </p>
         </div>
 
@@ -141,14 +149,21 @@ export default async function OrganizationDummyDataPage({
             </p>
           ) : null}
           {dataset.orderNo ? <p className="text-sm text-slate-700">Sample order: <strong>{dataset.orderNo}</strong> · {dataset.masterCount} demo master records</p> : null}
+          {"sampleWorkOrderCount" in dataset ? (
+            <p className="text-sm text-slate-700">Sample work orders: {dataset.sampleWorkOrderCount} / 5 required</p>
+          ) : null}
           {(dataset.status !== "EMPTY" && dataset.status !== "SCHEMA_NOT_READY") ? (
             <div className="rounded border border-emerald-200 bg-emerald-50 p-3">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">Workflow status</p>
               <h3 className="mt-2 text-base font-semibold text-slate-900">{workflowSummary.title}</h3>
               <p className="mt-1 text-sm text-slate-600">{workflowSummary.detail}</p>
-              {dataset.status !== "ACTIVE" && dataset.stage !== "COMPLETE" ? (
+              {!("completedSteps" in dataset && dataset.completedSteps?.includes(9)) ? (
                 <form action={advanceDummyDataAction} className="mt-3">
-                  <Button type="submit" variant="secondary" size="sm">Continue setup</Button>
+                  <Button type="submit" variant="secondary" size="sm">
+                    {dataset.stage === "CREATE_WORK_ORDERS" || (dataset.status === "ACTIVE" && dataset.stage === "COMPLETE")
+                      ? "Create work orders"
+                      : "Continue setup"}
+                  </Button>
                 </form>
               ) : null}
             </div>

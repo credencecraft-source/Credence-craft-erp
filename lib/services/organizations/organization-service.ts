@@ -9,6 +9,7 @@ import {
   requirePlatformSessionSuperAdmin,
 } from "@/lib/auth/platform-session-manager";
 import { hasOrganizationTrialAccess, startOrganizationTrialOnApproval, startOrganizationTrialOnFirstOpen } from "@/lib/services/platform/organization-trial-service";
+import { ensureDefaultProcessTemplate } from "./organization-process-template-service";
 
 export type OrganizationCreateInput = {
   workspaceUserId: string;
@@ -33,19 +34,18 @@ export type OrganizationContext = {
 
 export const SYSTEM_ORGANIZATION_ROLES = ["OWNER", "ADMIN", "FINANCE", "MERCHANDISING", "APPROVER", "VIEWER"] as const;
 export type OrganizationRole = string;
-export const ORGANIZATION_PERMISSIONS = ["ORGANIZATION_SETTINGS", "MANAGE_USERS", "MANAGE_ROLES", "VIEW_REPORTS", "MANAGE_MASTER_DATA", "CREATE_ORDERS", "APPROVE_ORDERS", "VIEW_ORDERS"] as const;
+export const ORGANIZATION_PERMISSIONS = ["ORGANIZATION_SETTINGS", "MANAGE_USERS", "MANAGE_ROLES", "VIEW_REPORTS", "MANAGE_MASTER_DATA", "CREATE_ORDERS", "APPROVE_ORDERS", "VIEW_ORDERS", "VIEW_FACTORY_PRODUCTION", "UPDATE_FACTORY_PRODUCTION", "MANAGE_FACTORY_PRODUCTION"] as const;
 export type OrganizationPermission = (typeof ORGANIZATION_PERMISSIONS)[number];
 const INDIAN_STATES = ["Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal", "Andaman and Nicobar Islands", "Chandigarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi"] as const;
 const SYSTEM_ROLE_LABELS: Record<string, string> = { OWNER: "Owner", ADMIN: "Administrator", FINANCE: "Finance", MERCHANDISING: "Merchandising", APPROVER: "Approver", VIEWER: "Viewer" };
 const DEFAULT_ROLE_PERMISSIONS: Record<string, OrganizationPermission[]> = {
   OWNER: [...ORGANIZATION_PERMISSIONS],
-  ADMIN: ["ORGANIZATION_SETTINGS", "MANAGE_USERS", "VIEW_REPORTS", "MANAGE_MASTER_DATA", "CREATE_ORDERS", "VIEW_ORDERS"],
+  ADMIN: ["ORGANIZATION_SETTINGS", "MANAGE_USERS", "VIEW_REPORTS", "MANAGE_MASTER_DATA", "CREATE_ORDERS", "VIEW_ORDERS", "VIEW_FACTORY_PRODUCTION", "UPDATE_FACTORY_PRODUCTION", "MANAGE_FACTORY_PRODUCTION"],
   FINANCE: ["VIEW_REPORTS", "VIEW_ORDERS"],
   MERCHANDISING: ["CREATE_ORDERS", "VIEW_ORDERS", "MANAGE_MASTER_DATA"],
   APPROVER: ["APPROVE_ORDERS", "VIEW_ORDERS"],
   VIEWER: ["VIEW_ORDERS", "VIEW_REPORTS"],
 };
-
 function roleKeyFromLabel(label: string) {
   return label.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 90);
 }
@@ -180,6 +180,13 @@ export async function countOrganizationsForUser(workspaceUserId: string) {
     if (schemaError) throw schemaError;
     throw error;
   }
+}
+
+export async function hasOrganizationsForUser(workspaceUserId: string) {
+  return Boolean(await prisma.organizationMembership.findFirst({
+    where: { workspace_user_id: workspaceUserId, is_active: true },
+    select: { id: true },
+  }));
 }
 
 export async function listActiveOrganizationsForUser(workspaceUserId: string) {
@@ -318,6 +325,7 @@ export async function createOrganization(input: OrganizationCreateInput) {
         data: INDIAN_STATES.map((state, index) => ({ organization_id: organization.id, state, is_active: true, sort_order: index })),
         skipDuplicates: true,
       });
+      await ensureDefaultProcessTemplate(transaction, organization.id);
 
       return organization;
     }, { maxWait: 10000, timeout: 30000 });

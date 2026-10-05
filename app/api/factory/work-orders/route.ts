@@ -2,13 +2,16 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
-import { createWorkOrder, createWorkOrders, getWorkOrderAllocation, listOrdersByArticle, listWorkOrderAllocationsByArticle, listWorkOrders } from "@/lib/services/factory/work-order-service";
+import { createWorkOrder, createWorkOrders, getWorkOrderAllocation, listOrdersByArticle, listWorkOrderAllocationsByArticle, listWorkOrderArticles, listWorkOrders } from "@/lib/services/factory/work-order-service";
 
 export async function GET(request: Request) {
   try {
     const user = await requireSessionUser();
     const searchParams = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "");
+    if (searchParams.get("articles") === "true") {
+      return NextResponse.json(await listWorkOrderArticles(organization.id));
+    }
     const articleAllocations = searchParams.get("articleAllocations")?.trim();
     const cursor = searchParams.get("cursor")?.trim() || undefined;
     const article = searchParams.get("article")?.trim();

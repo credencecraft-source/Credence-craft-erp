@@ -143,6 +143,9 @@ model Organization {
   finishedGoodsSkuStocks        FinishedGoodsSkuStock[]
   gateEntries                   GateEntry[]
   factoryWorkOrders             FactoryWorkOrder[]
+  shopFloorBatches              BatchMaster[]
+  shopFloorProcessLogs          ShopFloorProcessLog[]
+  shopFloorTransfers            ShopFloorTransfer[]
   factoryProductionUpdates      FactoryProductionUpdate[]
   factoryBundleTransfers        FactoryBundleTransfer[]
   factoryDailyProductionReports FactoryDailyProductionReport[]
@@ -1182,10 +1185,17 @@ model MasterProcess {
   updated_at                   DateTime                            @updatedAt
   organization                 Organization                        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   templateSteps                MasterProcessTemplateStep[]
+  firstProcessTemplates        MasterProcessTemplate[]               @relation("ProcessTemplateFirstProcess")
+  lastProcessTemplates         MasterProcessTemplate[]               @relation("ProcessTemplateLastProcess")
+  blockedProcessTemplateSteps  MasterProcessTemplateStep[]           @relation("ProcessTemplateStepBlocker")
   orderSteps                   MerchandisingOrderProcessStep[]
   operationTemplates           MasterOperationTemplate[]
   orderControllerProcesses     OrderProcessControllerProcess[]
   workOrderControllerProcesses WorkOrderProcessControllerProcess[]
+  shopFloorBatches             BatchMaster[]
+  shopFloorProcessLogs         ShopFloorProcessLog[]
+  shopFloorTransfersFrom       ShopFloorTransfer[] @relation("ShopFloorTransferFromProcess")
+  shopFloorTransfersTo         ShopFloorTransfer[] @relation("ShopFloorTransferToProcess")
 
   @@unique([organization_id, process_name])
   @@index([organization_id, is_active])
@@ -1197,12 +1207,16 @@ model MasterProcessTemplate {
   value_id         String                      @unique @default(uuid())
   organization_id  String
   process_name     String                      @db.VarChar(255)
+  first_process_id String?
+  last_process_id  String?
   is_active        Boolean                     @default(false)
   sort_order       Int                         @default(0)
   legacy_metadata  Json?
   created_at       DateTime                    @default(now())
   updated_at       DateTime                    @updatedAt
   organization     Organization                @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  firstProcess     MasterProcess?              @relation("ProcessTemplateFirstProcess", fields: [first_process_id], references: [id], onDelete: SetNull)
+  lastProcess      MasterProcess?              @relation("ProcessTemplateLastProcess", fields: [last_process_id], references: [id], onDelete: SetNull)
   steps            MasterProcessTemplateStep[]
   orders           MerchandisingOrder[]
   orderControllers OrderProcessController[]
@@ -1548,6 +1562,8 @@ model MasterProcessTemplateStep {
   operation_template_id String?
   process_name          String                          @db.VarChar(255)
   sl_no                 Int
+  is_returnable_process Boolean                         @default(false)
+  block_by_process_id   String?
   is_active             Boolean                         @default(false)
   sort_order            Int                             @default(0)
   legacy_metadata       Json?
@@ -1556,6 +1572,7 @@ model MasterProcessTemplateStep {
   organization          Organization                    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   processTemplate       MasterProcessTemplate           @relation(fields: [process_template_id], references: [id], onDelete: Cascade)
   process               MasterProcess                   @relation(fields: [process_id], references: [id], onDelete: Restrict)
+  blockByProcess        MasterProcess?                  @relation("ProcessTemplateStepBlocker", fields: [block_by_process_id], references: [id], onDelete: SetNull)
   operationTemplate     MasterOperationTemplate?        @relation(fields: [operation_template_id], references: [id], onDelete: SetNull)
   orderSteps            MerchandisingOrderProcessStep[]
 

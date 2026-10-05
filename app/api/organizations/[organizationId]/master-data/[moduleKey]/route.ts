@@ -100,8 +100,8 @@ export async function GET(
             const matchingOperationTemplates = operationTemplates
               .filter((item) => String(item.fields?.Process ?? "").trim() === processName)
               .sort((left, right) => Number(left.fields?.Sort_Order ?? 0) - Number(right.fields?.Sort_Order ?? 0));
-            const operationTemplate = matchingOperationTemplates[0]
-              ?? operationTemplates.find((item) => item.label === legacyOperationTemplateName);
+            const operationTemplate = operationTemplates.find((item) => item.label === legacyOperationTemplateName)
+              ?? matchingOperationTemplates[0];
             const operationTemplateName = operationTemplate?.label ?? legacyOperationTemplateName;
             const mapOperations = (selectedOperationTemplate: typeof operationTemplate) => selectedOperationTemplate
               ? operationSteps
@@ -121,6 +121,8 @@ export async function GET(
               valueId: step.value_id,
               slNo: Number(step.fields?.Sl_No ?? 0),
               processName,
+              isReturnableProcess: step.fields?.Is_Returnable_Process === true,
+              blockByProcessName: String(step.fields?.Block_By ?? "").trim() || null,
               operationTemplateName: operationTemplateName || null,
               operationTemplateId: operationTemplate?.id ?? null,
               operationTemplates: matchingOperationTemplates.map((candidate) => ({

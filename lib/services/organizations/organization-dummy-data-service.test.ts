@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 
-const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPurchaseOrderMock, masterPurchaseOrderMock, stockBookingsMock, generatePurchaseOrdersMock, submitPurchaseOrderMock, createSampleGateEntriesMock, createSampleGrnsMock, verifySampleGrnsMock, allocateSampleGrnsMock, monthlyFormLimitsMock, orderLimitLockMock } = vi.hoisted(() => {
+const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPurchaseOrderMock, masterPurchaseOrderMock, stockBookingsMock, generatePurchaseOrdersMock, submitPurchaseOrderMock, createSampleGateEntriesMock, createSampleGrnsMock, verifySampleGrnsMock, allocateSampleGrnsMock, createSampleWorkOrdersMock, monthlyFormLimitsMock, orderLimitLockMock } = vi.hoisted(() => {
   const delegate = () => ({
     count: vi.fn().mockResolvedValue(0),
     create: vi.fn().mockResolvedValue({ id: "created-id" }),
@@ -27,7 +27,13 @@ const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPu
     masterEntity: delegate(),
     rawMaterialStock: delegate(),
     rawMaterialStockBooking: delegate(),
+    generalPurchaseOrderRequest: delegate(),
     masterProduct: delegate(),
+    masterProcess: delegate(),
+    masterProcessTemplate: delegate(),
+    masterProcessTemplateStep: delegate(),
+    masterOperationTemplate: delegate(),
+    masterOperationTemplateStep: delegate(),
     masterRawMaterial: delegate(),
     masterVendor: delegate(),
     masterRawMaterialCategory: delegate(),
@@ -75,6 +81,7 @@ const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPu
     gateEntry: { findMany: vi.fn() },
     inventoryReceipt: { findMany: vi.fn() },
     masterLocation: { findFirst: vi.fn(), count: vi.fn(), create: vi.fn() },
+    factoryWorkOrder: { findMany: vi.fn().mockResolvedValue([]) },
   };
   return {
     prismaMock,
@@ -90,6 +97,7 @@ const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPu
     createSampleGrnsMock: vi.fn(),
     verifySampleGrnsMock: vi.fn(),
     allocateSampleGrnsMock: vi.fn(),
+    createSampleWorkOrdersMock: vi.fn(),
     monthlyFormLimitsMock: vi.fn().mockResolvedValue(undefined),
     orderLimitLockMock: vi.fn().mockResolvedValue(undefined),
   };
@@ -126,6 +134,9 @@ vi.mock("@/lib/services/inventory/dummy-sample-verification-service", () => ({
 }));
 vi.mock("@/lib/services/inventory/dummy-sample-allocation-service", () => ({
   allocateDummySampleGrnsTopDown: allocateSampleGrnsMock,
+}));
+vi.mock("@/lib/services/factory/work-order-service", () => ({
+  createWorkOrdersForSampleOrders: createSampleWorkOrdersMock,
 }));
 vi.mock("@/lib/services/platform/segment-form-restriction-service", () => ({
   getEffectiveSegmentFormRestriction: vi.fn().mockResolvedValue(null),
@@ -178,6 +189,7 @@ beforeEach(() => {
   prismaMock.purchaseOrder.findMany.mockResolvedValue([]);
   prismaMock.gateEntry.findMany.mockResolvedValue([]);
   prismaMock.inventoryReceipt.findMany.mockResolvedValue([]);
+  prismaMock.factoryWorkOrder.findMany.mockResolvedValue([]);
   prismaMock.masterLocation.findFirst.mockResolvedValue({ id: "location-demo" });
   prismaMock.masterLocation.count.mockResolvedValue(0);
   prismaMock.masterLocation.create.mockResolvedValue({ id: "location-demo-created" });
@@ -207,6 +219,15 @@ beforeEach(() => {
     receiptIds: Array.from({ length: 5 }, (_, index) => `receipt-${index + 1}`),
   });
   allocateSampleGrnsMock.mockResolvedValue({ completedCount: 15, totalCount: 15 });
+  createSampleWorkOrdersMock.mockResolvedValue(
+    Array.from({ length: 5 }, (_, index) => ({
+      id: `sample-work-order-${index + 1}`,
+      orderId: `sample-order-${index + 1}`,
+      orderNo: `ORD-${index + 1}`,
+      workOrderNo: `WO-${index + 1}`,
+      created: true,
+    })),
+  );
   prismaMock.groupedPurchaseOrder.findFirst.mockResolvedValue(null);
   transactionMock.organizationDummyDataBatch.update.mockResolvedValue({});
   transactionMock.organizationDummyDataBatch.upsert.mockResolvedValue({ id: "batch-id", status: "EMPTY" });
@@ -301,6 +322,13 @@ beforeEach(() => {
   transactionMock.merchandisingOrder.createManyAndReturn.mockImplementation(
     (args: { data: Array<{ orderNo: string }> }) => Promise.resolve(args.data.map((item) => ({ id: `demo-order-${item.orderNo}`, orderNo: item.orderNo }))),
   );
+  transactionMock.masterProcess.create.mockImplementation(
+    (args: { data: { process_name: string } }) => Promise.resolve({ id: `process-${args.data.process_name}` }),
+  );
+  transactionMock.masterOperationTemplate.create.mockImplementation(
+    (args: { data: { operation_template_name: string } }) => Promise.resolve({ id: `operation-template-${args.data.operation_template_name}` }),
+  );
+  transactionMock.masterProcessTemplate.create.mockResolvedValue({ id: "sample-process-template-id" });
 });
 
 describe("organization dummy data service", () => {
@@ -316,6 +344,10 @@ describe("organization dummy data service", () => {
       detail: "Waiting for all sample purchase orders to be approved before receipts can be generated.",
     });
     expect(getDummyDataWorkflowSummary("ACTIVE", "COMPLETE")).toMatchObject({
+      title: "Create sample work orders",
+      isPaused: false,
+    });
+    expect(getDummyDataWorkflowSummary("ACTIVE", "COMPLETE", true)).toMatchObject({
       title: "Setup complete",
       isPaused: false,
     });
@@ -350,6 +382,19 @@ describe("organization dummy data service", () => {
     }));
     expect(transactionMock.masterProduct.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: organization.id, product_master_name: "Finished Goods", is_active: true },
+    }));
+    const sampleOrderRows = transactionMock.merchandisingOrder.createManyAndReturn.mock.calls[0][0].data;
+    expect(sampleOrderRows).toHaveLength(10);
+    expect(sampleOrderRows.every((order: { process_template_id: string }) => order.process_template_id === "sample-process-template-id")).toBe(true);
+    expect(transactionMock.masterProcessTemplate.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        organization_id: organization.id,
+        process_name: "No Embroidery Only Wash",
+        legacy_metadata: {
+          first_process_id: "process-Cutting",
+          last_process_id: "process-Iron",
+        },
+      }),
     }));
     expect(transactionMock.masterEntity.create).not.toHaveBeenCalled();
     expect(transactionMock.masterProduct.create).not.toHaveBeenCalled();
@@ -1160,8 +1205,8 @@ describe("organization dummy data service", () => {
     await expect(startDummyDataWizardStep("user-id", "public-org-id", 8))
       .resolves.toEqual({
         advanced: true,
-        status: "ACTIVE",
-        stage: "COMPLETE",
+        status: "IN_PROGRESS",
+        stage: "CREATE_WORK_ORDERS",
         completedCount: 15,
         totalCount: 15,
       });
@@ -1174,8 +1219,8 @@ describe("organization dummy data service", () => {
     expect(prismaMock.organizationDummyDataBatch.update).toHaveBeenLastCalledWith(expect.objectContaining({
       where: { id: "batch-id", organization_id: organization.id },
       data: expect.objectContaining({
-        status: "ACTIVE",
-        stage: "COMPLETE",
+        status: "IN_PROGRESS",
+        stage: "CREATE_WORK_ORDERS",
         checkpoint: expect.objectContaining({
           completedOrderAllocations: 15,
           totalOrderAllocations: 15,
@@ -1196,6 +1241,76 @@ describe("organization dummy data service", () => {
     await expect(startDummyDataWizardStep("user-id", "public-org-id", 8))
       .rejects.toThrow("Complete Step 7 verification before allocating the verified sample GRNs.");
     expect(allocateSampleGrnsMock).not.toHaveBeenCalled();
+  });
+
+  it("creates and tracks five batch-owned sample work orders in Step 9", async () => {
+    const sampleOrderIds = Array.from({ length: 10 }, (_, index) => `sample-order-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "IN_PROGRESS",
+      stage: "CREATE_WORK_ORDERS",
+      master_record_ids: sampleOrderIds.map((id) => ({ moduleKey: "sample-order", id })),
+      checkpoint: { completedOrderAllocations: 15, totalOrderAllocations: 15 },
+    });
+
+    await expect(startDummyDataWizardStep("user-id", "public-org-id", 9))
+      .resolves.toMatchObject({
+        advanced: true,
+        status: "ACTIVE",
+        stage: "COMPLETE",
+        completedCount: 5,
+        totalCount: 5,
+      });
+
+    expect(createSampleWorkOrdersMock).toHaveBeenCalledWith(organization.id, "user-id", sampleOrderIds);
+    expect(prismaMock.organizationDummyDataBatch.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "batch-id", organization_id: organization.id },
+      data: expect.objectContaining({
+        status: "ACTIVE",
+        stage: "COMPLETE",
+        master_record_ids: expect.arrayContaining(
+          Array.from({ length: 5 }, (_, index) => ({
+            moduleKey: "sample-work-order",
+            id: `sample-work-order-${index + 1}`,
+          })),
+        ),
+        checkpoint: expect.objectContaining({
+          workOrderIds: Array.from({ length: 5 }, (_, index) => `sample-work-order-${index + 1}`),
+        }),
+      }),
+    }));
+  });
+
+  it("rejects Step 9 if the batch tracks fewer than five sample orders", async () => {
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "ACTIVE",
+      stage: "COMPLETE",
+      master_record_ids: Array.from({ length: 4 }, (_, index) => ({
+        moduleKey: "sample-order",
+        id: `sample-order-${index + 1}`,
+      })),
+      checkpoint: {},
+    });
+
+    await expect(startDummyDataWizardStep("user-id", "public-org-id", 9))
+      .rejects.toThrow("At least five batch-owned sample orders are required for Step 9.");
+    expect(createSampleWorkOrdersMock).not.toHaveBeenCalled();
+  });
+
+  it("resumes Step 9 for legacy batches already marked active and complete", async () => {
+    const sampleOrderIds = Array.from({ length: 5 }, (_, index) => `sample-order-${index + 1}`);
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "ACTIVE",
+      stage: "COMPLETE",
+      master_record_ids: sampleOrderIds.map((id) => ({ moduleKey: "sample-order", id })),
+      checkpoint: {},
+    });
+
+    await expect(advanceOrganizationDummyData("user-id", "public-org-id"))
+      .resolves.toMatchObject({ advanced: true, status: "ACTIVE", stage: "COMPLETE", completedCount: 5 });
+    expect(createSampleWorkOrdersMock).toHaveBeenCalledWith(organization.id, "user-id", sampleOrderIds);
   });
 
   it("allows only the pending organization's owner to seed during onboarding", async () => {
@@ -1323,6 +1438,14 @@ describe("organization dummy data service", () => {
     expect(transactionMock.masterRawMaterial.deleteMany).toHaveBeenCalledWith({
       where: { organization_id: organization.id, id: { in: ["raw-material-demo-id"] } },
     });
+    expect(transactionMock.generalPurchaseOrderRequest.deleteMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: organization.id,
+        raw_material_id: { in: ["raw-material-demo-id"] },
+      },
+    });
+    expect(transactionMock.generalPurchaseOrderRequest.deleteMany.mock.invocationCallOrder[0])
+      .toBeLessThan(transactionMock.masterRawMaterial.deleteMany.mock.invocationCallOrder[0]);
     expect(transactionMock.masterRawMaterialCategory.deleteMany).toHaveBeenCalledWith({
       where: { organization_id: organization.id, id: { in: ["raw-category-demo-id"] } },
     });
@@ -1398,6 +1521,7 @@ describe("organization dummy data service", () => {
     });
     transactionMock.groupedPurchaseOrder.findMany.mockResolvedValue([{ id: "grouped-po-demo-id" }]);
     transactionMock.masterPurchaseOrder.findMany.mockResolvedValue([{ id: "master-po-demo-id" }]);
+    transactionMock.rawMaterialStock.findMany.mockResolvedValue([{ id: "sample-grn-stock-demo-id" }]);
 
     await expect(deleteOrganizationDummyData("user-id", "public-org-id"))
       .resolves.toEqual({ deleted: true });
@@ -1423,7 +1547,22 @@ describe("organization dummy data service", () => {
       where: { organization_id: organization.id, id: { in: ["receipt-demo-id"] } },
     });
     expect(transactionMock.rawMaterialStock.deleteMany).toHaveBeenCalledWith({
-      where: { organization_id: organization.id, id: { in: ["sample-stock-demo-id"] } },
+      where: {
+        organization_id: organization.id,
+        id: { in: ["sample-stock-demo-id", "sample-grn-stock-demo-id"] },
+      },
+    });
+    expect(transactionMock.rawMaterialStock.findMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: organization.id,
+        receiptLine: {
+          receipt: {
+            organization_id: organization.id,
+            id: { in: ["receipt-demo-id"] },
+          },
+        },
+      },
+      select: { id: true },
     });
     expect(transactionMock.masterLocation.deleteMany).toHaveBeenCalledWith({
       where: { organization_id: organization.id, id: { in: ["sample-location-demo-id"] } },
@@ -1690,6 +1829,7 @@ describe("organization dummy data service", () => {
         ...purchaseOrderIds.map((id) => ({ moduleKey: "purchase-order", id })),
         ...gateEntryIds.map((id) => ({ moduleKey: "gate-entry", id })),
         ...receiptIds.map((id) => ({ moduleKey: "inventory-receipt", id })),
+        ...Array.from({ length: 5 }, (_, index) => ({ moduleKey: "sample-work-order", id: `work-order-${index + 1}` })),
       ],
       checkpoint: {},
       last_error: null,
@@ -1769,9 +1909,21 @@ describe("organization dummy data service", () => {
     await expect(getOrganizationDummyDataStatus("user-id", "public-org-id"))
       .resolves.toMatchObject({
         completedSteps: [1, 2, 3, 4, 5, 6, 7, 8],
-        currentStep: 8,
+        currentStep: 9,
         verificationAllocationCount: 6,
         completedOrderAllocationCount: 6,
+      });
+    prismaMock.factoryWorkOrder.findMany.mockResolvedValue(
+      Array.from({ length: 5 }, (_, index) => ({
+        id: `work-order-${index + 1}`,
+        order_id: `sample-order-${index + 1}`,
+      })),
+    );
+    await expect(getOrganizationDummyDataStatus("user-id", "public-org-id"))
+      .resolves.toMatchObject({
+        completedSteps: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+        currentStep: 9,
+        sampleWorkOrderCount: 5,
       });
   });
 });

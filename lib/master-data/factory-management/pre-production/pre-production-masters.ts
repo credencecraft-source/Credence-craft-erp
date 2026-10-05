@@ -7,6 +7,8 @@ export const PRE_PRODUCTION_MASTER_DEFINITIONS = [
   createMaster("operation", "Operation", "Reusable operations used inside operation templates.", [text("Operation_Name", "Operation Name", { required: true, unique: true })], { labelField: "Operation_Name", moduleGroup: "factory-management", moduleSubGroup: "pre-production", moduleOrder: 3.5 }),
   createMaster("process-template", "Process Template", "Production process templates with ordered process steps.", [
     text("Process_Template_Name", "Process Template Name", { required: true, unique: true }),
+    lookup("First_Process", "First Process", "process-master", { required: true }),
+    lookup("Last_Process", "Last Process", "process-master", { required: true }),
     {
       key: "Process_Steps",
       label: "Process Steps",
@@ -15,6 +17,9 @@ export const PRE_PRODUCTION_MASTER_DEFINITIONS = [
       childFields: [
         lookup("Process", "Process", "process-master", { required: true }),
         text("Sl_No", "Sl No", { type: "number", required: true }),
+        { key: "Is_Returnable_Process", label: "Is Returnable Process", type: "checkbox" },
+        lookup("Operation_Template", "Operation Template", "operation-template"),
+        lookup("Block_By", "Block By", "process-master"),
       ],
     },
   ], { labelField: "Process_Template_Name", moduleGroup: "factory-management", moduleSubGroup: "pre-production", moduleOrder: 4 }),
@@ -36,6 +41,9 @@ export const PRE_PRODUCTION_MASTER_DEFINITIONS = [
   createMaster("process-template-step", "Process Template Step", "Internal child records for process templates.", [
     lookup("Process", "Process", "process-master", { required: true }),
     text("Sl_No", "Sl No", { type: "number", required: true }),
+    { key: "Is_Returnable_Process", label: "Is Returnable Process", type: "checkbox" },
+    lookup("Operation_Template", "Operation Template", "operation-template"),
+    lookup("Block_By", "Block By", "process-master"),
   ], { labelField: "Process", hidden: true, moduleGroup: "factory-management", moduleSubGroup: "pre-production" }),
   createMaster("operation-template-step", "Operation Template Step", "Internal child records for operation templates.", [
     text("Operation", "Operation", { required: true }),

@@ -69,7 +69,7 @@ const fieldColumns: Record<string, Record<string, string>> = {
   gst: { Name: "name", Gst: "gst", Cgst_Rate: "cgst_rate", Sgst_Rate: "sgst_rate", Igst_Rate: "igst_rate", GST_TYPELOOKUP1: "gst_type_id", Zoho_Books_Tax_ID: "zoho_books_tax_id" }, hsn: { Hsn_Code: "hsn_code" },
   "pre-order-checklist": { Pre_Order_Checklist: "pre_order_checklist" }, "currency-type": { Currency_Type: "currency_type" }, "gst-type": { GST_TYPE: "gst_type" },
   "measurement-chart": { Measurement_Chart: "measurement_chart" }, "size-wise-consumption": { Bom_Template_Name: "bom_template_name" },
-  "product-master": { Product_Master_name: "product_master_name" }, "process-master": { Process_Name: "process_name" }, "process-template": { Process_Template_Name: "process_name", Process_Name: "process_name" }, "process-template-step": { Process: "process_id", Operation_Template: "operation_template_id", Sl_No: "sl_no" }, "operation-template": { Operation_Template_Name: "operation_template_name", Process: "process_id" }, "operation-template-step": { Operation: "operation", Sl_No: "sl_no", Price: "price" }, merchandiser: { merchandiser: "merchandiser" },
+  "product-master": { Product_Master_name: "product_master_name" }, "process-master": { Process_Name: "process_name" }, "process-template": { Process_Template_Name: "process_name", First_Process: "legacy_metadata.first_process_id", Last_Process: "legacy_metadata.last_process_id" }, "process-template-step": { Process: "process_id", Operation_Template: "operation_template_id", Sl_No: "sl_no", Is_Returnable_Process: "legacy_metadata.is_returnable_process", Block_By: "legacy_metadata.block_by_process_id" }, "operation-template": { Operation_Template_Name: "operation_template_name", Process: "process_id" }, "operation-template-step": { Operation: "operation", Sl_No: "sl_no", Price: "price" }, merchandiser: { merchandiser: "merchandiser" },
   status: { status: "status" }, "order-volume": { Order_Volume: "order_volume", From: "from_value", To: "to_value" },
   "raw-material-type": { Raw_Material_Type: "raw_material_type" },
   "raw-material-category": { Raw_Material_Type1: "raw_material_type_id", Raw_Material_Category: "raw_material_category", Create_Cost_Center: "create_cost_center" },
@@ -158,10 +158,33 @@ async function resolveLookupId(organizationId: string, moduleKey: string, value:
   return result.id;
 }
 
-async function buildData(organizationId: string, moduleKey: string, fields: MasterFieldValues, label: string) {
+function valueForMasterField(row: MasterRow, column: string) {
+  if (!column.startsWith("legacy_metadata.")) return row[column];
+  const metadataKey = column.slice("legacy_metadata.".length);
+  const metadata = row.legacy_metadata;
+  if (typeof metadata === "object" && metadata !== null && !Array.isArray(metadata)) {
+    const metadataValue = (metadata as Record<string, unknown>)[metadataKey];
+    if (metadataValue !== undefined && metadataValue !== null) return metadataValue;
+  }
+  return row[metadataKey];
+}
+
+async function buildData(
+  organizationId: string,
+  moduleKey: string,
+  fields: MasterFieldValues,
+  label: string,
+  existingLegacyMetadata?: unknown,
+) {
   const definition = getMasterDefinition(moduleKey);
   if (!definition) throw new Error("Master module is not available.");
 
+  const legacyMetadata = typeof existingLegacyMetadata === "object"
+    && existingLegacyMetadata !== null
+    && !Array.isArray(existingLegacyMetadata)
+    ? { ...(existingLegacyMetadata as Record<string, unknown>) }
+    : {};
+  let hasLegacyMetadataUpdates = false;
   const data: Record<string, unknown> = {
     organization_id: organizationId,
     [labelFields[moduleKey]]: label,
@@ -170,6 +193,9 @@ async function buildData(organizationId: string, moduleKey: string, fields: Mast
   for (const field of definition.fields) {
     const relationField = fieldColumns[moduleKey]?.[field.key];
     if (!relationField || relationField === labelFields[moduleKey]) continue;
+    const legacyMetadataKey = relationField.startsWith("legacy_metadata.")
+      ? relationField.slice("legacy_metadata.".length)
+      : null;
 
     if (field.key === "running_order_qty" || field.key === "running_order_variants") {
       continue;
@@ -191,21 +217,38 @@ async function buildData(organizationId: string, moduleKey: string, fields: Mast
       if (field.type === "lookup" && hasValue) {
         const targetId = await resolveLookupId(organizationId, field.lookupModuleKey ?? "", fields[field.key]);
         if (targetId) {
-          data[relationField] = targetId;
+          if (legacyMetadataKey) {
+            legacyMetadata[legacyMetadataKey] = targetId;
+            hasLegacyMetadataUpdates = true;
+          } else {
+            data[relationField] = targetId;
+          }
           if (moduleKey === "vendor" && field.key === "Registered_State") {
             data.registered_state = String(fields[field.key]);
           }
         }
         continue;
       }
+
+      if (legacyMetadataKey) {
+        legacyMetadata[legacyMetadataKey] = null;
+        hasLegacyMetadataUpdates = true;
+        continue;
+      }
     }
 
     const val = typedValue(field, fields[field.key]);
     if (val !== null) {
-      data[relationField] = val;
+      if (legacyMetadataKey) {
+        legacyMetadata[legacyMetadataKey] = val;
+        hasLegacyMetadataUpdates = true;
+      } else {
+        data[relationField] = val;
+      }
     }
   }
 
+  if (hasLegacyMetadataUpdates) data.legacy_metadata = legacyMetadata;
   return data;
 }
 
@@ -214,7 +257,7 @@ async function rowFields(moduleKey: string, row: MasterRow, definition: NonNulla
   for (const field of definition.fields) {
     const column = fieldColumns[moduleKey]?.[field.key];
     if (!column) continue;
-    let value = row[column];
+    let value = valueForMasterField(row, column);
     if (field.key === "running_order_qty" || field.key === "running_order_variants") {
       if (moduleKey === "article") {
         const metrics = await hydrateArticleMetrics(row.organization_id as string, row);
@@ -276,7 +319,10 @@ export async function getMasterValuesForOrganization(
   const lookupCache = new Map<string, Map<string, string>>();
 
   await Promise.all([...new Set(lookupKeys)].map(async (lookupModuleKey) => {
-    const ids = [...new Set(rows.map((row) => String(row[fieldColumns[moduleKey]?.[definition.fields.find((field) => field.lookupModuleKey === lookupModuleKey)?.key ?? ""]] ?? "")).filter(Boolean))];
+    const lookupFields = definition.fields.filter((field) => field.type === "lookup" && field.lookupModuleKey === lookupModuleKey);
+    const ids = [...new Set(rows.flatMap((row) => lookupFields
+      .map((field) => String(valueForMasterField(row, fieldColumns[moduleKey]?.[field.key] ?? "") ?? ""))
+      .filter(Boolean)))];
     if (ids.length === 0) return;
     const lookupRows = await delegates[lookupModuleKey].findMany({
       where: { organization_id: organizationId, OR: [{ id: { in: ids } }, { value_id: { in: ids } }] },
@@ -564,7 +610,15 @@ export async function updateMasterValue(organizationId: string, valueId: string,
       if (await isActiveDummyMaster(organizationId, existing)) {
         throw new Error("Demo master values are managed by the Dummy Data batch and cannot be edited individually.");
       }
-      const data = input.fields ? await buildData(organizationId, moduleKey, input.fields, input.label?.trim() || String(existing[labelFields[moduleKey]])) : {};
+      const data = input.fields
+        ? await buildData(
+            organizationId,
+            moduleKey,
+            input.fields,
+            input.label?.trim() || String(existing[labelFields[moduleKey]]),
+            existing.legacy_metadata,
+          )
+        : {};
       delete data.organization_id;
       if (input.is_active !== undefined) data.is_active = input.is_active;
       return delegate.update({ where: { id: existing.id }, data });

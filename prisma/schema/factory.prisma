@@ -18,6 +18,9 @@ model FactoryWorkOrder {
   bundleTransfers            FactoryBundleTransfer[]
   grns                       FactoryGrn[]
   dailyProductionReportLines FactoryDailyProductionReportLine[]
+  shopFloorBatches           BatchMaster[]
+  shopFloorProcessLogs       ShopFloorProcessLog[]
+  shopFloorTransfers         ShopFloorTransfer[]
 
   @@unique([organization_id, work_order_no])
   @@index([organization_id, created_at])
@@ -323,4 +326,79 @@ model FactoryDailyProductionReportLine {
   @@index([grn_id])
   @@index([grn_line_id])
   @@map("factory_daily_production_report_lines")
+}
+
+model BatchMaster {
+  id              String            @id @default(cuid())
+  organization_id String
+  work_order_id   String
+  process_id      String
+  contractor_name String?           @db.VarChar(255)
+  laborer_name    String?           @db.VarChar(255)
+  assigned_quantity Int
+  piece_rate      Decimal?          @db.Decimal(12, 4)
+  status          String            @default("OPEN") @db.VarChar(20)
+  created_by      String
+  created_at      DateTime          @default(now())
+  updated_at      DateTime          @updatedAt
+  organization    Organization      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  workOrder       FactoryWorkOrder  @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
+  process         MasterProcess     @relation(fields: [process_id], references: [id], onDelete: Restrict)
+  processLogs     ShopFloorProcessLog[]
+
+  @@index([organization_id, process_id, status, created_at])
+  @@index([work_order_id, process_id, created_at])
+  @@map("batch_masters")
+}
+
+model ShopFloorProcessLog {
+  id              String             @id @default(cuid())
+  organization_id String
+  work_order_id   String
+  process_id      String
+  batch_id        String?
+  quantity        Int
+  status          String             @default("UNASSIGNED") @db.VarChar(20)
+  scanned_by      String?
+  received_at     DateTime?
+  completed_at    DateTime?
+  created_at      DateTime           @default(now())
+  updated_at      DateTime           @updatedAt
+  organization    Organization       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  workOrder       FactoryWorkOrder   @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
+  process         MasterProcess      @relation(fields: [process_id], references: [id], onDelete: Restrict)
+  batch           BatchMaster?       @relation(fields: [batch_id], references: [id], onDelete: SetNull)
+  transfer        ShopFloorTransfer?
+
+  @@index([organization_id, process_id, status, created_at])
+  @@index([work_order_id, process_id, status])
+  @@index([batch_id, status])
+  @@map("shop_floor_process_logs")
+}
+
+model ShopFloorTransfer {
+  id              String               @id @default(cuid())
+  organization_id String
+  work_order_id   String
+  source_log_id   String               @unique
+  from_process_id String
+  to_process_id   String?
+  quantity        Int
+  status          String               @default("PENDING_RECEIPT") @db.VarChar(24)
+  is_final        Boolean              @default(false)
+  sent_by         String
+  received_by     String?
+  sent_at         DateTime             @default(now())
+  received_at     DateTime?
+  created_at      DateTime             @default(now())
+  updated_at      DateTime             @updatedAt
+  organization    Organization         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  workOrder       FactoryWorkOrder     @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
+  sourceLog       ShopFloorProcessLog  @relation(fields: [source_log_id], references: [id], onDelete: Cascade)
+  fromProcess     MasterProcess        @relation("ShopFloorTransferFromProcess", fields: [from_process_id], references: [id], onDelete: Restrict)
+  toProcess       MasterProcess?       @relation("ShopFloorTransferToProcess", fields: [to_process_id], references: [id], onDelete: Restrict)
+
+  @@index([organization_id, to_process_id, status, sent_at])
+  @@index([organization_id, work_order_id, sent_at])
+  @@map("shop_floor_transfers")
 }

@@ -147,6 +147,63 @@ describe("raw material creation", () => {
   });
 });
 
+describe("process template legacy metadata compatibility", () => {
+  it("saves first and last process selections in existing JSON metadata, not new Prisma columns", async () => {
+    models.masterProcess.findFirst
+      .mockResolvedValueOnce({ id: "cutting-process-id" } as never)
+      .mockResolvedValueOnce({ id: "iron-process-id" } as never);
+
+    await createMasterValueForOrganization("org-id", "process-template", {
+      label: "No Embroidery Only Wash",
+      fields: {
+        First_Process: "cutting-process-id",
+        Last_Process: "iron-process-id",
+      },
+    });
+
+    expect(models.masterProcessTemplate.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organization_id: "org-id",
+        process_name: "No Embroidery Only Wash",
+        legacy_metadata: {
+          first_process_id: "cutting-process-id",
+          last_process_id: "iron-process-id",
+        },
+      }),
+    });
+    const createData = models.masterProcessTemplate.create.mock.calls[0][0].data;
+    expect(createData).not.toHaveProperty("first_process_id");
+    expect(createData).not.toHaveProperty("last_process_id");
+  });
+
+  it("hydrates first and last process selections from legacy metadata", async () => {
+    models.masterProcessTemplate.findMany.mockResolvedValue([{
+      id: "template-id",
+      value_id: "template-value-id",
+      organization_id: "org-id",
+      process_name: "No Embroidery Only Wash",
+      is_active: true,
+      sort_order: 0,
+      legacy_metadata: {
+        first_process_id: "cutting-process-id",
+        last_process_id: "iron-process-id",
+      },
+    }] as never);
+    models.masterProcess.findMany.mockResolvedValue([
+      { id: "cutting-process-id", process_name: "Cutting" },
+      { id: "iron-process-id", process_name: "Iron" },
+    ] as never);
+
+    const values = await getMasterValuesForOrganization("org-id", "process-template");
+
+    expect(values[0].fields).toMatchObject({
+      First_Process: "Cutting",
+      Last_Process: "Iron",
+    });
+  });
+
+});
+
 describe("dummy master isolation", () => {
   it("hides batch-tagged values while keeping baseline values selectable", async () => {
     (prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({ id: "demo-batch-id" });

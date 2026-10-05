@@ -1,9 +1,12 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
+import Link from "next/link";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import Tabs from "@/components/ui/Tabs";
+import Button from "@/components/ui/Button";
 import type { OrderFormState } from "./order-form-types";
 import { getProcessRows, type Operation, type OperationTemplate, type ProcessFields } from "./process-tab-state";
 
@@ -31,6 +34,7 @@ type ProcessTabProps = {
 
 export default function ProcessTab(props: ProcessTabProps) {
   const { form, organizationId, isOrderLoading = false } = props;
+  const params = useParams<{ workspaceId: string; organizationId: string }>();
   const [templates, setTemplates] = useState<ProcessTemplate[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
   const [templateError, setTemplateError] = useState("");
@@ -152,7 +156,20 @@ export default function ProcessTab(props: ProcessTabProps) {
             options={[{ value: "", label: "Select an approved process template" }, ...templates.map((template) => ({ value: template.id, label: template.label }))]}
             className="flex-1 rounded-lg"
           />
-          <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{selectedTemplate ? `${processRows.length} process step${processRows.length === 1 ? "" : "s"} applied` : "No process template applied"}</div>
+          <div className="flex gap-2 items-end">
+            <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{selectedTemplate ? `${processRows.length} process step${processRows.length === 1 ? "" : "s"} applied` : "No process template applied"}</div>
+            {params?.organizationId && (
+              <Link href={`/dashboard/${params.workspaceId}/organizations/${params.organizationId}/admin/master-data/process-template`}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  title="Create or manage process templates in Master Data"
+                >
+                  + Template
+                </Button>
+              </Link>
+            )}
+          </div>
         </div>
         {templateError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{templateError}</p>}
         {!isLoadingTemplates && templates.length === 0 && !templateError && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Create and approve a Process Template in Master Data before saving this order.</p>}

@@ -1,10 +1,24 @@
 const net = require("node:net");
 const fs = require("node:fs");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const path = require("node:path");
 
 const host = "127.0.0.1";
 const port = 3000;
+const prismaCli = path.join(process.cwd(), "node_modules", "prisma", "build", "index.js");
+
+function generatePrismaClient(run = spawnSync) {
+  const result = run(process.execPath, [prismaCli, "generate"], {
+    cwd: process.cwd(),
+    stdio: "inherit",
+    windowsHide: true,
+  });
+
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`Prisma Client generation failed with exit code ${result.status ?? "unknown"}.`);
+  }
+}
 
 function isPortInUse() {
   return new Promise((resolve, reject) => {
@@ -49,6 +63,9 @@ async function main() {
     return;
   }
 
+  console.log("Generating Prisma Client from the current schema...");
+  generatePrismaClient();
+
   const transientDevOutput = path.join(process.cwd(), ".next", "dev");
   fs.rmSync(transientDevOutput, { recursive: true, force: true });
 
@@ -81,7 +98,11 @@ async function main() {
   });
 }
 
-main().catch((error) => {
-  console.error("Failed to start development server", error);
-  process.exit(1);
-});
+module.exports = { generatePrismaClient };
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error("Failed to start development server", error);
+    process.exit(1);
+  });
+}

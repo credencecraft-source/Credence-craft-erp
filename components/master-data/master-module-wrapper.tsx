@@ -41,6 +41,7 @@ import OrganizationTrialStatus from "@/components/organizations/organization-tri
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
 import Tabs from "@/components/ui/Tabs";
+import NavigationLinkStatus from "@/components/ui/navigation-link-status";
 import { getSidebarFeatureKeysForRoute, normalizeRestrictionPart, restrictionMatchesHiddenRoute, restrictionMatchesRoute } from "@/lib/services/platform/plan-restriction-matcher";
 
 type SubItem = {
@@ -93,7 +94,7 @@ type MasterModuleWrapperProps = {
   trialEnabled: boolean;
   trialStartedAt: string | null;
   trialEndsAt: string | null;
-  startDummyDataWizardStep: (step: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) => Promise<{ status?: string; stage?: string; error?: string }>;
+  startDummyDataWizardStep: (step: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9) => Promise<{ status?: string; stage?: string; error?: string }>;
   deleteDummyData: () => Promise<{ deleted: boolean; error?: string }>;
   dummyDataStatus: {
     status: string;
@@ -120,6 +121,7 @@ type MasterModuleWrapperProps = {
     verifiedLineCount?: number;
     verificationAllocationCount?: number;
     completedOrderAllocationCount?: number;
+    sampleWorkOrderCount?: number;
   };
   value?: string;
   moduleLabel?: string;
@@ -264,7 +266,7 @@ export function MasterModuleWrapper({
   const currentStep = dummyDataStatus.currentStep ?? (dummyDataStatus.status === "EMPTY" ? 1 : null);
   const sampleGroups = dummyDataStatus.groupedPurchaseOrders ?? [];
 
-  function handleStartDummyDataStep(step: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) {
+  function handleStartDummyDataStep(step: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9) {
     setDummyDataDeleteError("");
     setDummyDataDeleteNotice("");
     startUpdatingDummyData(async () => {
@@ -404,6 +406,7 @@ export function MasterModuleWrapper({
               if (isBlocked) {
                 e.preventDefault();
                 setBlockedNotice({ message: blockInfo!.message, label: item.label });
+                return;
               }
             }}
             className="flex flex-1 items-center gap-3 px-3 py-2 text-sm"
@@ -414,10 +417,15 @@ export function MasterModuleWrapper({
               }`}
             />
             {sidebarOpen && (
-              <span className="flex-1 text-xs font-medium truncate">
+              <span className="flex-1 truncate text-sm font-medium">
                 {item.label}
               </span>
             )}
+            <NavigationLinkStatus
+              expanded={sidebarOpen}
+              label={item.label}
+              showOverlay
+            />
             {isBlocked && sidebarOpen && (
               <Lock className="ml-auto h-3.5 w-3.5 text-amber-300" />
             )}
@@ -794,6 +802,7 @@ export function MasterModuleWrapper({
                   { number: 6 as const, title: "Create RM Gate Entries", detail: "Create five inward gate entries and five pending GRNs, each linked to a different approved Purchase Order." },
                   { number: 7 as const, title: "Verify Sample GRNs", detail: "Verify every GRN material line with varied physical quantities using the standard verification workflow." },
                   { number: 8 as const, title: "Allocate Verified GRNs", detail: "Allocate each verified quantity from the first grouped order line downward, then submit every allocation." },
+                  { number: 9 as const, title: "Create Sample Work Orders", detail: "Create work orders for five sample orders using their assigned process template and size quantities." },
                 ].map((step) => {
                   const isComplete = completedSteps.has(step.number);
                   const isCurrent = currentStep === step.number;
@@ -818,7 +827,7 @@ export function MasterModuleWrapper({
                         disabled={!canStart}
                         onClick={() => handleStartDummyDataStep(step.number)}
                       >
-                        {isComplete ? "Done" : isUpdatingDummyData && isCurrent ? "Working..." : dummyDataStatus.status === "EMPTY" && step.number === 1 ? "Create" : "Start"}
+                        {isComplete ? "Done" : isUpdatingDummyData && isCurrent ? "Working..." : step.number === 9 ? "Create work orders" : dummyDataStatus.status === "EMPTY" && step.number === 1 ? "Create" : "Start"}
                       </Button>
                     </li>
                   );
@@ -826,7 +835,7 @@ export function MasterModuleWrapper({
               </ol>
               {dummyDataStatus.status === "EMPTY" ? null : (
                 <p className="text-xs text-slate-500" role="status">
-                  {dummyDataStatus.orderCount ?? 0} orders · {sampleGroups.length} grouped POs · {dummyDataStatus.masterGroupCount ?? 0} master groups · {dummyDataStatus.purchaseOrderCount ?? 0} purchase orders · {dummyDataStatus.gateEntryCount ?? 0} gate entries · {dummyDataStatus.grnCount ?? 0} GRNs · {dummyDataStatus.verifiedLineCount ?? 0}/{dummyDataStatus.verificationLineCount ?? 0} verified lines · {dummyDataStatus.completedOrderAllocationCount ?? 0}/{dummyDataStatus.verificationAllocationCount ?? 0} allocated
+                  {dummyDataStatus.orderCount ?? 0} orders · {sampleGroups.length} grouped POs · {dummyDataStatus.masterGroupCount ?? 0} master groups · {dummyDataStatus.purchaseOrderCount ?? 0} purchase orders · {dummyDataStatus.gateEntryCount ?? 0} gate entries · {dummyDataStatus.grnCount ?? 0} GRNs · {dummyDataStatus.verifiedLineCount ?? 0}/{dummyDataStatus.verificationLineCount ?? 0} verified lines · {dummyDataStatus.completedOrderAllocationCount ?? 0}/{dummyDataStatus.verificationAllocationCount ?? 0} allocated · {dummyDataStatus.sampleWorkOrderCount ?? 0}/5 work orders
                 </p>
               )}
               <div className="flex justify-end border-t border-slate-100 pt-4">

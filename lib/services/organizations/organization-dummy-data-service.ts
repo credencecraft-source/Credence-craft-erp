@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import { requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { ensureDefaultProcessTemplate } from "@/lib/services/organizations/organization-process-template-service";
 import { reserveNextOrderNumbers } from "@/lib/services/orders/order-service";
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
 import { createGroupedPurchaseOrder } from "@/lib/services/orders/grouped-purchase-order-service";
@@ -11,6 +12,7 @@ import { createDummySampleGateEntries } from "@/lib/services/inventory/dummy-sam
 import { createDummySampleGrns } from "@/lib/services/inventory/dummy-sample-grn-service";
 import { verifyDummySampleGrns } from "@/lib/services/inventory/dummy-sample-verification-service";
 import { allocateDummySampleGrnsTopDown } from "@/lib/services/inventory/dummy-sample-allocation-service";
+import { createWorkOrdersForSampleOrders } from "@/lib/services/factory/work-order-service";
 import { createRawMaterialStockBookings } from "@/lib/services/inventory/rm-stock-booking-service";
 import { lockOrganizationOrderQuantityLimit } from "@/lib/services/platform/order-quantity-limit-service";
 import {
@@ -219,7 +221,7 @@ function readMasterRecordIds(value: Prisma.JsonValue): DemoMasterRecord[] {
   });
 }
 
-export function getDummyDataWorkflowSummary(status?: string | null, stage?: string | null) {
+export function getDummyDataWorkflowSummary(status?: string | null, stage?: string | null, workOrdersComplete = false) {
   const normalizedStatus = String(status ?? "").toUpperCase();
   const normalizedStage = String(stage ?? "").toUpperCase();
 
@@ -239,10 +241,18 @@ export function getDummyDataWorkflowSummary(status?: string | null, stage?: stri
     };
   }
 
-  if (normalizedStatus === "ACTIVE" || normalizedStage === "COMPLETE") {
+  if ((normalizedStatus === "ACTIVE" || normalizedStage === "COMPLETE") && workOrdersComplete) {
     return {
       title: "Setup complete",
-      detail: "The sample dataset is active and all staged approvals and receipts have been completed.",
+      detail: "The sample dataset is active, its staged approvals and receipts are complete, and five sample work orders are ready.",
+      isPaused: false,
+    };
+  }
+
+  if (normalizedStatus === "ACTIVE" || normalizedStage === "COMPLETE" || normalizedStage === "CREATE_WORK_ORDERS") {
+    return {
+      title: "Create sample work orders",
+      detail: "Step 9: the sample order, procurement, receipt, verification, and allocation steps are complete. Create work orders for at least five sample orders to finish setup.",
       isPaused: false,
     };
   }
@@ -427,6 +437,22 @@ export async function getOrganizationDummyDataStatus(userId: string, routeOrgani
     && verificationLineCount > 0
     && sampleGrns.every((receipt) => receipt.lines.length > 0)
     && verifiedLineCount === verificationLineCount;
+  const sampleWorkOrderIds = batchRecords
+    .filter((record) => record.moduleKey === "sample-work-order")
+    .map((record) => record.id);
+  const sampleOrderIds = batchRecords
+    .filter((record) => record.moduleKey === "sample-order")
+    .map((record) => record.id);
+  const sampleWorkOrders = sampleWorkOrderIds.length === 0 ? [] : await prisma.factoryWorkOrder.findMany({
+    where: {
+      organization_id: organization.id,
+      id: { in: sampleWorkOrderIds },
+      order_id: { in: sampleOrderIds },
+    },
+    select: { id: true, order_id: true },
+  });
+  const sampleWorkOrderOrderCount = new Set(sampleWorkOrders.map((workOrder) => workOrder.order_id)).size;
+  const sampleWorkOrdersComplete = sampleWorkOrderOrderCount >= 5;
   const stepOneComplete = batch?.status !== "EMPTY"
     && Boolean(batch?.sample_order_id)
     && orderCount === 10;
@@ -439,8 +465,10 @@ export async function getOrganizationDummyDataStatus(userId: string, routeOrgani
     ...(gateEntriesComplete && sampleGrnsComplete ? [6] : []),
     ...(gateEntriesComplete && sampleGrnsComplete && sampleGrnsVerified ? [7] : []),
     ...(gateEntriesComplete && sampleGrnsComplete && sampleGrnsVerified && sampleAllocationsComplete ? [8] : []),
+    ...(sampleAllocationsComplete && sampleWorkOrdersComplete ? [9] : []),
   ];
-  const currentStep = completedSteps.includes(8) ? 8
+  const currentStep = completedSteps.includes(9) ? 9
+    : completedSteps.includes(8) ? 9
     : completedSteps.includes(7) ? 8
       : completedSteps.includes(6) ? 7
         : completedSteps.includes(5) ? 6
@@ -462,6 +490,7 @@ export async function getOrganizationDummyDataStatus(userId: string, routeOrgani
     groupedPurchaseOrders,
     completedSteps,
     currentStep,
+    sampleWorkOrderCount: sampleWorkOrderOrderCount,
     masterGroupCount,
     purchaseOrderCount,
     purchaseOrdersApproved,
@@ -906,8 +935,10 @@ async function createOrganizationDummyDataForUser(
     );
 
     const orderNumbers = await reserveNextOrderNumbers(organization.id, SAMPLE_VALUES.sampleOrders.length, transaction);
+    const processTemplateId = await ensureDefaultProcessTemplate(transaction, organization.id);
     const orderRows = SAMPLE_VALUES.sampleOrders.map((sampleOrder, orderIndex) => ({
       organization_id: organization.id,
+      process_template_id: processTemplateId,
       entity_id: entity.id,
       orderNo: orderNumbers[orderIndex],
       entityName: organization.organization_name,
@@ -1697,7 +1728,7 @@ async function autoApproveSamplePurchaseOrders(
   }
 }
 
-export type DummyDataWizardStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+export type DummyDataWizardStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 export async function startDummyDataWizardStep(
   userId: string,
@@ -1705,7 +1736,7 @@ export async function startDummyDataWizardStep(
   step: DummyDataWizardStep,
   requestedBy = userId,
 ) {
-  if (![1, 2, 3, 4, 5, 6, 7, 8].includes(step)) throw new Error("Select a valid sample-data step.");
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(step)) throw new Error("Select a valid sample-data step.");
   if (step === 1) {
     return createOrganizationDummyData(userId, routeOrganizationId, requestedBy);
   }
@@ -1717,6 +1748,57 @@ export async function startDummyDataWizardStep(
   });
   if (!batch) throw new Error("Sample data has not been started for this organization.");
   const records = readMasterRecordIds(batch.master_record_ids);
+
+  if (step === 9) {
+    const canCreateWorkOrders = (batch.status === "IN_PROGRESS" && batch.stage === "CREATE_WORK_ORDERS")
+      || (batch.status === "ACTIVE" && batch.stage === "COMPLETE");
+    if (!canCreateWorkOrders) {
+      throw new Error("Complete Step 8 allocation before creating the sample work orders.");
+    }
+    const sampleOrderIds = records
+      .filter((record) => record.moduleKey === "sample-order")
+      .map((record) => record.id);
+    if (sampleOrderIds.length < 5) throw new Error("At least five batch-owned sample orders are required for Step 9.");
+    const workOrders = await createWorkOrdersForSampleOrders(organization.id, userId, sampleOrderIds);
+    if (workOrders.length < 5) throw new Error("Five sample work orders could not be confirmed.");
+    const workOrderRecords = workOrders.map((workOrder) => ({
+      moduleKey: "sample-work-order",
+      id: workOrder.id,
+    }));
+    const checkpoint = batch.checkpoint && typeof batch.checkpoint === "object" && !Array.isArray(batch.checkpoint)
+      ? batch.checkpoint as Prisma.InputJsonObject
+      : {};
+    await checkpointDummyDataRecords(
+      organization.id,
+      batch.id,
+      [...records, ...workOrderRecords],
+      "COMPLETE",
+      { ...checkpoint, workOrderIds: workOrders.map((workOrder) => workOrder.id) },
+      "ACTIVE",
+    );
+    await prisma.$transaction((transaction) => transaction.auditEvent.create({
+      data: {
+        organization_id: organization.id,
+        user_id: userId,
+        module: "Organization Settings",
+        action: "CREATE_DUMMY_DATA_STAGE",
+        entity_type: "OrganizationDummyDataBatch",
+        entity_id: batch.id,
+        details: {
+          stage: "COMPLETE",
+          work_order_count: workOrders.length,
+          created_work_order_count: workOrders.filter((workOrder) => workOrder.created).length,
+        },
+      },
+    }).then(() => undefined));
+    return {
+      advanced: true,
+      status: "ACTIVE",
+      stage: "COMPLETE",
+      completedCount: workOrders.length,
+      totalCount: 5,
+    };
+  }
 
   if (step === 8 && (batch.status !== "IN_PROGRESS" || batch.stage !== "CREATE_ALLOCATION")) {
     throw new Error("Complete Step 7 verification before allocating the verified sample GRNs.");
@@ -1800,12 +1882,12 @@ export async function startDummyDataWizardStep(
       receiptIds,
       userId,
     );
-    await checkpointDummyDataRecords(organization.id, batch.id, records, "COMPLETE", {
+    await checkpointDummyDataRecords(organization.id, batch.id, records, "CREATE_WORK_ORDERS", {
       purchaseOrderIds,
       grnIds: receiptIds,
       completedOrderAllocations: progress.completedCount,
       totalOrderAllocations: progress.totalCount,
-    }, "ACTIVE");
+    });
     await prisma.$transaction((transaction) => transaction.auditEvent.create({
       data: {
         organization_id: organization.id,
@@ -1815,7 +1897,7 @@ export async function startDummyDataWizardStep(
         entity_type: "OrganizationDummyDataBatch",
         entity_id: batch.id,
         details: {
-          stage: "COMPLETE",
+          stage: "CREATE_WORK_ORDERS",
           grn_count: receiptIds.length,
           completed_order_allocations: progress.completedCount,
           total_order_allocations: progress.totalCount,
@@ -1824,8 +1906,8 @@ export async function startDummyDataWizardStep(
     }).then(() => undefined));
     return {
       advanced: true,
-      status: "ACTIVE",
-      stage: "COMPLETE",
+      status: "IN_PROGRESS",
+      stage: "CREATE_WORK_ORDERS",
       completedCount: progress.completedCount,
       totalCount: progress.totalCount,
     };
@@ -2305,6 +2387,13 @@ export async function advanceOrganizationDummyData(
     return startDummyDataWizardStep(userId, routeOrganizationId, 2, requestedBy);
   }
 
+  if (
+    (batch.stage === "CREATE_WORK_ORDERS" && batch.status === "IN_PROGRESS")
+    || (batch.stage === "COMPLETE" && batch.status === "ACTIVE")
+  ) {
+    return startDummyDataWizardStep(userId, routeOrganizationId, 9, requestedBy);
+  }
+
   if (batch.stage === "GROUPED_APPROVAL" && batch.status === "AWAITING_GROUPED_APPROVAL") {
     const groupedPurchaseOrderIds = records
       .filter((record) => record.moduleKey === "grouped-purchase-order")
@@ -2454,7 +2543,26 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
       ...ids("sample-order"),
       ...(batch.sample_order_id ? [batch.sample_order_id] : []),
     ])];
-    const sampleStockIds = ids("raw-material-stock");
+    const sampleReceiptIds = ids("inventory-receipt");
+    const trackedSampleStockIds = ids("raw-material-stock");
+    const sampleGrnStocks = sampleReceiptIds.length === 0
+      ? []
+      : await transaction.rawMaterialStock.findMany({
+        where: {
+          organization_id: organization.id,
+          receiptLine: {
+            receipt: {
+              organization_id: organization.id,
+              id: { in: sampleReceiptIds },
+            },
+          },
+        },
+        select: { id: true },
+      });
+    const sampleStockIds = [...new Set([
+      ...trackedSampleStockIds,
+      ...sampleGrnStocks.map((stock) => stock.id),
+    ])];
     const trackedSampleStockGroupIds = createdRecords
       .filter((record) => record.moduleKey === "grouped-purchase-order" && record.sourceType === "STOCK")
       .map((record) => record.id);
@@ -2636,6 +2744,12 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
     });
     await transaction.masterLocation.deleteMany({
       where: { organization_id: organization.id, id: { in: ids("location") } },
+    });
+    await transaction.generalPurchaseOrderRequest.deleteMany({
+      where: {
+        organization_id: organization.id,
+        raw_material_id: { in: ids("raw-material") },
+      },
     });
     await transaction.masterRawMaterial.deleteMany({ where: { organization_id: organization.id, id: { in: ids("raw-material") } } });
     await transaction.masterRawMaterialSubCategory.deleteMany({ where: { organization_id: organization.id, id: { in: ids("raw-material-sub-category") } } });
