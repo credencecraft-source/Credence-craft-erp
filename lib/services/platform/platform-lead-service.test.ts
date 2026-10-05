@@ -81,6 +81,7 @@ import {
   listPlatformLeads,
   updatePlatformLeadStage,
   updateNewPlatformLeadStages,
+  updatePlatformLeadStages,
   movePlatformLeadStages,
   updatePlatformLead,
 } from "@/lib/services/platform/platform-lead-service";
@@ -254,6 +255,50 @@ describe("platform lead management", () => {
     findLeadStagesMock.mockResolvedValue([{ id: "lead-1", stage: "Verification" }]);
     await expect(updateNewPlatformLeadStages(["lead-1"], "MARK AS FROUD"))
       .rejects.toThrow("Only leads currently in New can use these actions. Refresh and try again.");
+    expect(updateLeadStagesMock).not.toHaveBeenCalled();
+  });
+
+  it("bulk changes selected lead stages atomically and audits each changed lead", async () => {
+    findLeadStagesMock.mockResolvedValue([
+      { id: "lead-1", stage: "1-new" },
+      { id: "lead-2", stage: "Verification" },
+      { id: "lead-3", stage: "Interested For Demo" },
+    ]);
+    updateLeadStagesMock.mockResolvedValue({ count: 1 });
+    createAuditEventsMock.mockResolvedValue({ count: 2 });
+
+    await expect(updatePlatformLeadStages(
+      ["lead-1", "lead-2", "lead-3"],
+      " Interested For Demo ",
+    )).resolves.toEqual({ updatedCount: 2, unchangedCount: 1 });
+    expect(updateLeadStagesMock).toHaveBeenNthCalledWith(1, {
+      where: { id: { in: ["lead-1"] }, stage: "1-new" },
+      data: { stage: "Interested For Demo" },
+    });
+    expect(updateLeadStagesMock).toHaveBeenNthCalledWith(2, {
+      where: { id: { in: ["lead-2"] }, stage: "Verification" },
+      data: { stage: "Interested For Demo" },
+    });
+    expect(createAuditEventsMock).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          entity_id: "lead-1",
+          details: { previousStage: "1-new", stage: "Interested For Demo" },
+        }),
+        expect.objectContaining({
+          entity_id: "lead-2",
+          details: { previousStage: "Verification", stage: "Interested For Demo" },
+        }),
+      ],
+    });
+  });
+
+  it("rejects invalid bulk stage input before database writes", async () => {
+    await expect(updatePlatformLeadStages(["lead-1"], "Unknown stage"))
+      .rejects.toThrow("Select a valid lead stage.");
+    await expect(updatePlatformLeadStages(["lead-1", "lead-1"], "Paid"))
+      .rejects.toThrow("Select valid leads.");
+    expect(findLeadStagesMock).not.toHaveBeenCalled();
     expect(updateLeadStagesMock).not.toHaveBeenCalled();
   });
 

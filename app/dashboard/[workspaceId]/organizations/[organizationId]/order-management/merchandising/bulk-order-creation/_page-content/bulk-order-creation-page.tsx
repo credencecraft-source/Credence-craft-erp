@@ -447,7 +447,7 @@ export default function BulkOrderCreationPage() {
               </Button>
             </div>
 
-            <div className="max-h-[65vh] overflow-auto rounded-lg border border-slate-200">
+            <div className="max-h-[65vh] overflow-x-auto overflow-y-auto rounded-lg border border-slate-200">
               <table className="w-full min-w-[1500px] border-collapse text-left text-xs">
                 <thead className="sticky top-0 z-10 bg-slate-50 text-slate-600">
                   <tr>
@@ -524,7 +524,7 @@ export default function BulkOrderCreationPage() {
             </p>
           </div>
 
-          <div className="max-h-[45vh] space-y-4 overflow-auto rounded-lg border border-slate-200 p-4">
+          <div className="max-h-[45vh] space-y-4 overflow-x-hidden overflow-y-auto rounded-lg border border-slate-200 p-4">
             {missingMasters.map((master) => {
               const key = masterEntryKey(master);
               const choice = masterChoices[key];

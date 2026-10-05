@@ -7,3 +7,47 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+# Mandatory Branding And Shared UI Rule
+
+This repository must keep one unified branded UI language across the entire application. Do not introduce inconsistent local color, spacing, border, shadow, icon, button, tab, card, form element, or visual treatment that differs from the shared ERP design system.
+
+- NEVER change a color theme or UI element style just because a screen looks different unless the related shared component is missing or intentionally being extended.
+- If a screen or module uses a non-branded or ad hoc UI treatment, fix it immediately and replace it with the standard ERP component or shared pattern.
+- If the required shared UI element does not exist, create it once in the shared layer and reuse it everywhere.
+- Use the same brand token, spacing rhythm, border radius, shadows, typography, and icon style everywhere. The app should feel visually identical across modules and surfaces.
+- Treat shared UI primitives as the source of truth: button variants, tabs, cards, section wrappers, inputs, selects, badges, status pills, tables, modal shells, and layout patterns. Do not create parallel styles or one-off variants for the same purpose.
+- When patching UI, prefer the central branded component over page-local styling. Local class overrides are allowed only to adjust layout or state, never to create a second design language.
+- Every corner of the application must feel branded, consistent, and intentional; keep the same style, icon system, and design treatment across pages, platform-level UI, and organization-level screens.
+- If a feature introduces new UI, match the existing ERP brand by reusing the same element language and design semantics rather than inventing a different visual identity.
+
+## UI Architecture Laws
+
+These are persistent project governance requirements for all future human, AI, and automated code changes. Read and follow them before modifying UI, layouts, styles, design tokens, or shared components. Do not weaken or bypass these requirements as part of an unrelated feature or refactor. A deliberate design-system revision requires explicit product-owner approval and an update to this rulebook.
+
+### Window shell and navigation
+
+- Keep the root application shell flush to the viewport edges, using the repository's supported full-viewport sizing and overflow utilities (normally `h-dvh w-dvw overflow-hidden`, or the established `h-screen w-screen overflow-hidden` convention).
+- The root flex container wrapping navigation and header must have no outer margin or padding. Do not add page-content padding to this shell.
+- Keep the sidebar and top header fixed within the shell and flush to their respective window edges. Do not apply outer margins or padding that inset them.
+- Contain vertical scrolling in the designated inner `<main>` or page-content region. That region must be allowed to shrink (`min-h-0 min-w-0`) and scroll vertically (`overflow-y-auto`) without making the shell, header, or sidebar scroll.
+- Prevent page-level horizontal overflow. Use horizontal scrolling only inside an explicitly bounded responsive data-table region, not on the root shell or general module/page wrappers.
+
+### Content spacing and fit
+
+- Apply outer content breathing room only inside the scrollable main content, page views, form wrappers, and report sections: `p-4` on mobile and `p-8` at desktop sizes, unless a shared layout component already provides the equivalent responsive spacing.
+- Keep cards, panels, and modal content on the shared internal-padding scale (normally `p-6`). Use shared spacing tokens, responsive grids, `gap-4`/`gap-6`, and `space-y-4`/`space-y-6`; do not introduce arbitrary spacing or negative margins that break viewport fit.
+- Use `min-w-0` and `min-h-0` on constrained flex/grid children where needed. Ensure grids wrap responsively and content cannot force its ancestors wider than the viewport.
+- Reuse the existing shell and shared page, section, card, table, and modal components. New pages must inherit the shell and place responsive content padding inside the designated content region.
+
+### Color, semantic status, and typography
+
+- Use the centrally registered brand, surface, and semantic status tokens. The intended brand palette is primary `brand-500` (`#4f46e5`), the registered secondary accents, and the registered `surface-dark` token; success, warning, error, and info states must use their corresponding predefined background/border/text token pairs.
+- Never add arbitrary hex or RGB colors, random Tailwind palette colors, or inline color styles to application UI. If a required token is absent or the registered theme conflicts with this specification, stop and request an approved design-system/token update rather than inventing a local value or silently changing shared theme behavior.
+- Use the shared typography scale for page, header, module, and navigation titles. Do not create local font-size/weight systems for the same semantic roles.
+
+### Shared components and destructive actions
+
+- Prefer the canonical shared `Button`, `Card`, `Badge`, `AppLayout`, and other existing UI primitives over hand-built equivalents. Extend a shared primitive when a reusable capability is missing; do not create parallel component structures.
+- Every delete/destructive action must use the shared `destructive` button/action variant and a confirmation step appropriate to the operation. Do not render raw delete buttons or icon-only delete actions. Preserve server-side authorization, dependency checks, and audit behavior for destructive business operations.
+- Keep shared component structure, tokens, and variants stable across platform and organization pages. A screen-specific override may handle layout or state only; it must not establish a competing visual language.

@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import {
   listPlatformLeadAppLogins,
@@ -11,7 +13,10 @@ export default async function PlatformLeadsPage({
 }: {
   searchParams?: Promise<{ leadId?: string }>;
 }) {
-  await requirePlatformSessionAdmin();
+  const admin = await requirePlatformSessionAdmin();
+  if (admin.role !== "ADMIN" && admin.role !== "SUPER_ADMIN" && admin.team_role !== "CMO" && admin.team_role !== "CTO") {
+    redirect("/platform/organisations");
+  }
   const query = (await searchParams) ?? {};
   const [leadRows, appLoginRows] = await Promise.all([
     listPlatformLeads(),

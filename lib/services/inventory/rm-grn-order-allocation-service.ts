@@ -61,7 +61,13 @@ export async function getRmGrnOrderAllocationLines(organizationId: string, alloc
           organization_id: true,
           lines: {
             orderBy: [{ created_at: "asc" }, { id: "asc" }],
-            select: { id: true, order_no: true, style_name: true, grouped_qty: true },
+            select: {
+              id: true,
+              order_no: true,
+              style_name: true,
+              grouped_qty: true,
+              sourceOrder: { select: { organization_id: true, orderNo: true } },
+            },
           },
         },
       },
@@ -77,6 +83,7 @@ export async function getRmGrnOrderAllocationLines(organizationId: string, alloc
     || allocation.verification.organization_id !== organizationId
     || !allocation.verification.inventory_receipt_line_id
     || allocation.groupedPurchaseOrder.organization_id !== organizationId
+    || allocation.groupedPurchaseOrder.lines.some((line) => line.sourceOrder.organization_id !== organizationId)
   ) {
     throw new RmGrnOrderAllocationNotFoundError();
   }
@@ -100,7 +107,7 @@ export async function getRmGrnOrderAllocationLines(organizationId: string, alloc
       const maxAllocatable = remainingQuantity(grouped, allocatedByOtherReceipts);
       return {
         groupedPurchaseOrderLineId: line.id,
-        orderNo: line.order_no ?? "",
+        orderNo: line.order_no?.trim() || line.sourceOrder.orderNo,
         styleNo: line.style_name ?? "",
         alreadyAllocated: allocatedByOtherReceipts.toString(),
         balanceToAllocate: remainingQuantity(maxAllocatable, allocated).toString(),

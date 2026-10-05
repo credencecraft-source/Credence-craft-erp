@@ -119,7 +119,7 @@ export default async function ApprovalMasterReviewPage({
                         type="submit"
                         name="action"
                         value="approve"
-                        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700 transition"
+                        className="rounded-lg px-3 py-1.5 text-xs font-medium transition"
                       >
                         Approve
                       </Button>
@@ -127,7 +127,8 @@ export default async function ApprovalMasterReviewPage({
                         type="submit"
                         name="action"
                         value="reject"
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition"
+                        variant="secondary"
+                        className="rounded-lg px-3 py-1.5 text-xs font-medium transition"
                       >
                         Reject
                       </Button>

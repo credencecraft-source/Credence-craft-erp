@@ -26,6 +26,7 @@ import {
   ChevronRight,
   CheckCircle2,
   LoaderCircle,
+  PanelsTopLeft,
 } from "lucide-react";
 
 import {
@@ -39,6 +40,7 @@ import { SupportTicketTrigger } from "@/components/organizations/support-ticket-
 import OrganizationTrialStatus from "@/components/organizations/organization-trial-status";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
+import Tabs from "@/components/ui/Tabs";
 import { getSidebarFeatureKeysForRoute, normalizeRestrictionPart, restrictionMatchesHiddenRoute, restrictionMatchesRoute } from "@/lib/services/platform/plan-restriction-matcher";
 
 type SubItem = {
@@ -86,6 +88,7 @@ type MasterModuleWrapperProps = {
   workspaceId: string;
   organizationId: string;
   organizationName: string;
+  canAccessPlatformControlPanel: boolean;
   hasAssignedPlatformVersion: boolean;
   trialEnabled: boolean;
   trialStartedAt: string | null;
@@ -133,6 +136,7 @@ export function MasterModuleWrapper({
   workspaceId,
   organizationId,
   organizationName,
+  canAccessPlatformControlPanel,
   hasAssignedPlatformVersion,
   trialEnabled,
   trialStartedAt,
@@ -447,7 +451,7 @@ export function MasterModuleWrapper({
 
   return (
     <div
-      className="erp-organization-shell flex h-dvh min-h-0 min-w-0 overflow-hidden bg-slate-100"
+      className="erp-organization-shell flex h-dvh w-full min-h-0 min-w-0 max-w-full overflow-hidden bg-slate-100"
       style={{ "--organization-sidebar-width": sidebarOpen ? "15rem" : "3.75rem" } as React.CSSProperties}
     >
       <motion.aside
@@ -540,6 +544,17 @@ export function MasterModuleWrapper({
             >
               <Sparkles className="h-4 w-4" aria-hidden="true" />
             </Button>
+            {canAccessPlatformControlPanel && (
+              <Link
+                href="/platform/organisations"
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 text-xs font-semibold text-indigo-800 transition-colors hover:border-indigo-300 hover:bg-indigo-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
+                aria-label="Open platform Control Panel"
+                title="Open platform Control Panel"
+              >
+                <PanelsTopLeft className="h-4 w-4" aria-hidden="true" />
+                <span>Control Panel</span>
+              </Link>
+            )}
             <SupportTicketTrigger organizationId={organizationId} />
             <Button
               variant="ghost"
@@ -560,7 +575,7 @@ export function MasterModuleWrapper({
           </div>
         </header>
 
-        <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-slate-100 p-2 sm:p-4">
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-slate-100 p-4 lg:p-8">
           {currentBlockInfo ? (
             <div className="flex flex-col items-center justify-center h-[60vh] rounded-xl border border-red-200 bg-white p-8 text-center shadow-sm">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600 mb-4">
@@ -728,48 +743,15 @@ export function MasterModuleWrapper({
           </div>
         </div>
         <div className="max-h-[calc(88vh-5rem)] space-y-5 overflow-y-auto p-5">
-          <div role="tablist" aria-label="Sample data actions" className="grid grid-cols-2 rounded-md border border-slate-200 bg-slate-50 p-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="md"
-              role="tab"
-              id="dummy-data-create-tab"
-              aria-selected={dummyDataTab === "create"}
-              aria-controls="dummy-data-create-panel"
-              tabIndex={dummyDataTab === "create" ? 0 : -1}
-              onClick={() => setDummyDataTab("create")}
-              onKeyDown={(event) => {
-                if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
-                event.preventDefault();
-                setDummyDataTab("delete");
-                document.getElementById("dummy-data-delete-tab")?.focus();
-              }}
-              className={`w-full rounded px-3 py-2.5 text-sm font-semibold shadow-none ${dummyDataTab === "create" ? "bg-white text-emerald-800 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
-            >
-              Create sample data
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="md"
-              role="tab"
-              id="dummy-data-delete-tab"
-              aria-selected={dummyDataTab === "delete"}
-              aria-controls="dummy-data-delete-panel"
-              tabIndex={dummyDataTab === "delete" ? 0 : -1}
-              onClick={() => setDummyDataTab("delete")}
-              onKeyDown={(event) => {
-                if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
-                event.preventDefault();
-                setDummyDataTab("create");
-                document.getElementById("dummy-data-create-tab")?.focus();
-              }}
-              className={`w-full rounded px-3 py-2.5 text-sm font-semibold shadow-none ${dummyDataTab === "delete" ? "bg-white text-rose-700 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
-            >
-              Remove sample data
-            </Button>
-          </div>
+          <Tabs
+            tabs={[
+              { id: "dummy-data-create-tab", value: "create", label: "Create sample data", panelId: "dummy-data-create-panel" },
+              { id: "dummy-data-delete-tab", value: "delete", label: "Remove sample data", panelId: "dummy-data-delete-panel" },
+            ]}
+            value={dummyDataTab}
+            onChange={setDummyDataTab}
+            ariaLabel="Sample data actions"
+          />
           {dummyDataStatus.status === "SCHEMA_NOT_READY" ? (
             <p className="text-sm text-amber-800" role="status">
               Dummy-data tracking must be deployed before sample data can be managed.

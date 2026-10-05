@@ -13,7 +13,7 @@ type SizeAllocation = { id: string; size: string | null; buyerSize: string | nul
 type AllocationResponse = { order: { orderNo: string; styleName: string | null; buyer: string | null; orderQty: number | null }; sizes: SizeAllocation[] };
 type RelatedOrder = { id: string; orderNo: string; article: string | null; styleName: string | null; orderQty: number | null };
 type ArticleOption = { id: string; label: string };
-type WorkOrderMode = "single" | "all";
+type WorkOrderMode = "" | "single" | "all";
 type WorkOrderReport = { id: string; workOrderNo: string; orderNo: string; article: string | null; styleName: string | null; totalQty: number; status: string; createdAt: string; sizeLines: Array<{ size: string; quantity: number }> };
 
 export default function WorkOrderForm({ organizationId, showReport = true }: { workspaceId: string; organizationId: string; showReport?: boolean }) {
@@ -22,7 +22,7 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
   const [orderNo, setOrderNo] = useState("");
   const [relatedOrders, setRelatedOrders] = useState<RelatedOrder[]>([]);
   const [relatedOrdersNextCursor, setRelatedOrdersNextCursor] = useState<string | null>(null);
-  const [mode, setMode] = useState<WorkOrderMode>("single");
+  const [mode, setMode] = useState<WorkOrderMode>("");
   const [allAllocations, setAllAllocations] = useState<AllocationResponse[]>([]);
   const [allQuantities, setAllQuantities] = useState<Record<string, string>>({});
   const [selectedOrderNos, setSelectedOrderNos] = useState<string[]>([]);
@@ -98,7 +98,7 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
     setMessage("");
     setAllocation(null);
     setOrderNo("");
-    setMode("single");
+    setMode("");
     setAllAllocations([]);
     setAllQuantities({});
     setLoading(true);
@@ -350,6 +350,7 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
                 setArticleNo(event.target.value);
                 setRelatedOrders([]);
                 setRelatedOrdersNextCursor(null);
+                setMode("");
                 setAllocation(null);
                 setOrderNo("");
                 setAllAllocations([]);
@@ -387,6 +388,7 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
                 disabled={loading}
                 className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
               >
+                <option value="">Select work order creation</option>
                 <option value="single">Create single work order</option>
                 <option value="all">Create work orders for all</option>
               </Select>

@@ -128,7 +128,7 @@ export default function MerchandisingOrderVariantDialog({
               <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-semibold text-emerald-700">{variantRows.length} rows</span>
             </div>
 
-            <div className="max-h-[50vh] overflow-y-auto">
+            <div className="max-h-[50vh] max-w-full overflow-x-auto overflow-y-auto">
               {variantRows.length === 0 ? (
                 <p className={`px-3 py-6 text-center text-xs ${loadError ? "text-rose-700" : "text-slate-500"}`} role={loadError ? "alert" : "status"}>
                   {loadError || (isLoading ? "Preparing source order..." : "No size rows available for this order.")}

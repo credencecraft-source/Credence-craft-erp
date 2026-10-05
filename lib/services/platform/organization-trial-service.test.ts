@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const transaction = {
     organization: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
-    supportTicket: { updateMany: vi.fn() },
+    supportTicket: { findUnique: vi.fn(), updateMany: vi.fn() },
     platformAuditEvent: { create: vi.fn() },
     auditEvent: { create: vi.fn() },
   };
@@ -26,7 +26,12 @@ vi.mock("@/lib/auth/platform-session-manager", () => ({ requirePlatformSessionAd
 vi.mock("@/lib/services/platform/subscription-service", () => ({ getEffectivePlansForOrganization: mocks.getEffectivePlansForOrganization }));
 
 import {
+  LEGACY_TRIAL_EXTENSION_REQUEST_DESCRIPTION,
+  PLATFORM_REVIEW_TRIAL_EXTENSION_DESCRIPTION_PREFIX,
+} from "@/lib/services/organizations/trial-extension-request-constants";
+import {
   extendOrganizationTrial,
+  approveOrganizationTrialExtensionRequest,
   hasOrganizationTrialAccess,
   isOrganizationTrialActive,
   listOrganizationTrialHistory,
@@ -72,6 +77,73 @@ describe("organization trial lifecycle", () => {
       }),
     }));
     vi.useRealTimers();
+  });
+
+  it("claims a pending extension ticket and grants the trial in one serializable transaction", async () => {
+    mocks.transaction.supportTicket.findUnique.mockResolvedValue({
+      id: "trial-request-id",
+      organization_id: "internal-org-id",
+      request_type: "TICKET",
+      subject: "Trial extension request",
+      description: `${PLATFORM_REVIEW_TRIAL_EXTENSION_DESCRIPTION_PREFIX}24 hours`,
+      status: "OPEN",
+    });
+    mocks.transaction.supportTicket.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.organization.findUnique.mockResolvedValue({
+      id: "internal-org-id",
+      trial_started_at: new Date("2026-10-01T10:00:00.000Z"),
+      trial_ends_at: new Date("2026-10-03T10:00:00.000Z"),
+      trial_enabled: true,
+      trial_extension_hours: 0,
+    });
+    mocks.transaction.organization.update.mockResolvedValue({
+      trial_started_at: new Date("2026-10-01T10:00:00.000Z"),
+      trial_ends_at: new Date("2026-10-04T10:00:00.000Z"),
+      trial_enabled: true,
+      trial_extension_hours: 0,
+    });
+
+    await approveOrganizationTrialExtensionRequest("trial-request-id", 24);
+
+    expect(mocks.transaction.supportTicket.updateMany).toHaveBeenNthCalledWith(1, {
+      where: {
+        id: "trial-request-id",
+        organization_id: "internal-org-id",
+        subject: "Trial extension request",
+        request_type: "TICKET",
+        status: { in: ["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS"] },
+        OR: [
+          { description: { startsWith: PLATFORM_REVIEW_TRIAL_EXTENSION_DESCRIPTION_PREFIX } },
+          { description: LEGACY_TRIAL_EXTENSION_REQUEST_DESCRIPTION },
+        ],
+      },
+      data: { status: "RESOLVED" },
+    });
+    expect(mocks.transaction.organization.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "internal-org-id" },
+      data: { trial_enabled: true, trial_ends_at: expect.any(Date) },
+    }));
+    expect(mocks.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({
+      isolationLevel: "Serializable",
+    }));
+  });
+
+  it("does not grant time when a trial extension request was already claimed", async () => {
+    mocks.transaction.supportTicket.findUnique.mockResolvedValue({
+      id: "trial-request-id",
+      organization_id: "internal-org-id",
+      request_type: "TICKET",
+      subject: "Trial extension request",
+      description: `${PLATFORM_REVIEW_TRIAL_EXTENSION_DESCRIPTION_PREFIX}24 hours`,
+      status: "OPEN",
+    });
+    mocks.transaction.supportTicket.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(approveOrganizationTrialExtensionRequest("trial-request-id", 24))
+      .rejects.toThrow("This trial extension request has already been processed.");
+
+    expect(mocks.transaction.organization.update).not.toHaveBeenCalled();
+    expect(mocks.transaction.platformAuditEvent.create).not.toHaveBeenCalled();
   });
 
   it("does not start a trial before approval and recognizes only an active trial window", async () => {
@@ -158,6 +230,9 @@ describe("organization trial lifecycle", () => {
         action: "ORGANIZATION_TRIAL_EXTENDED",
         entity_id: "internal-org-id",
       }),
+    }));
+    expect(mocks.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({
+      isolationLevel: "Serializable",
     }));
     vi.useRealTimers();
   });

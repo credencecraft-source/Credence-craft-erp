@@ -1,37 +1,39 @@
 @import "tailwindcss";
 
 @theme {
-  --color-brand-50: #f1faf6;
-  --color-brand-100: #dff4ea;
-  --color-brand-200: #bfead9;
-  --color-brand-300: #8dd5b6;
-  --color-brand-400: #54ba8b;
-  --color-brand-500: #2b9d71;
-  --color-brand-600: #1d7f5c;
-  --color-brand-700: #17674d;
-  --color-brand-800: #12513d;
-  --color-brand-900: #0d3f30;
+  --color-brand-50: #ecfdf5;
+  --color-brand-100: #d1fae5;
+  --color-brand-200: #a7f3d0;
+  --color-brand-300: #6ee7b7;
+  --color-brand-400: #34d399;
+  --color-brand-500: #10b981;
+  --color-brand-600: #059669;
+  --color-brand-700: #047857;
+  --color-brand-800: #065f46;
+  --color-brand-900: #064e3b;
 
-  --color-surface-0: #f5f8f7;
+  --color-surface-0: #f1f5f9;
   --color-surface-1: #ffffff;
-  --color-surface-2: #eef3f1;
-  --color-border: #dfe9e5;
-  --color-muted-text: #587066;
+  --color-surface-2: #f8fafc;
+  --color-border: #e2e8f0;
+  --color-muted-text: #64748b;
   --color-strong-text: #0f172a;
 }
 
 :root {
   --font-geist-sans: "Segoe UI";
   --font-geist-mono: "Cascadia Mono";
-  --erp-bg: #f5f8f7;
+  --erp-bg: #f1f5f9;
   --erp-surface: #ffffff;
-  --erp-surface-soft: #eef3f1;
-  --erp-border: #dfe9e5;
-  --erp-brand: #1d7f5c;
-  --erp-brand-hover: #17674d;
-  --erp-brand-soft: #e9f8f1;
-  --erp-text: #18232b;
-  --erp-muted: #587066;
+  --erp-surface-soft: #f8fafc;
+  --erp-border: #e2e8f0;
+  --erp-brand: #047857;
+  --erp-brand-hover: #065f46;
+  --erp-brand-soft: #ecfdf5;
+  --erp-text: #0f172a;
+  --erp-muted: #64748b;
+  --erp-danger: #dc2626;
+  --erp-danger-hover: #b91c1c;
   --erp-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
 }
 
@@ -55,8 +57,8 @@
     max-width: 100%;
     overflow-x: hidden;
     background:
-      radial-gradient(circle at top right, rgba(29, 127, 92, 0.12), transparent 25rem),
-      linear-gradient(180deg, #f5f8f7 0%, #eef3f1 100%);
+      radial-gradient(circle at top right, rgb(209 250 229 / 0.4), transparent 28rem),
+      var(--erp-bg);
     color: var(--erp-text);
     font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   }
@@ -87,7 +89,8 @@
 
 }
 
-html:has(.erp-organization-shell) {
+html:has(.erp-organization-shell),
+html:has(.erp-platform-shell) {
   font-size: 67%;
 }
 
@@ -98,6 +101,12 @@ html:has(.erp-organization-shell) {
 }
 
 @layer utilities {
+  .erp-platform-shell .erp-page-container,
+  .erp-organization-shell .erp-page-container,
+  .workspace-configuration-layout .erp-page-container {
+    padding: 0;
+  }
+
   @keyframes navigation-loading-progress {
     0% {
       transform: translateX(-160%);

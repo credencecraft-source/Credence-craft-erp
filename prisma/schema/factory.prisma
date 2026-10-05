@@ -12,6 +12,7 @@ model FactoryWorkOrder {
   order                      MerchandisingOrder                 @relation(fields: [order_id], references: [id], onDelete: Cascade)
   sizeLines                  FactoryWorkOrderSizeLine[]
   bomLines                   FactoryWorkOrderBomLine[]
+  rawMaterialOutwardRequests RawMaterialOutwardRequest[]
   processController          WorkOrderProcessController?
   productionUpdates          FactoryProductionUpdate[]
   bundleTransfers            FactoryBundleTransfer[]
@@ -60,6 +61,7 @@ model FactoryWorkOrderBomLine {
   updated_at                  DateTime           @updatedAt
   workOrder                   FactoryWorkOrder   @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
   sourceBomItem               BillOfMaterialItem @relation(fields: [source_bom_item_id], references: [id], onDelete: Restrict)
+  outwardRequestLines         RawMaterialOutwardRequestLine[]
 
   @@unique([work_order_id, source_bom_item_id])
   @@index([work_order_id])

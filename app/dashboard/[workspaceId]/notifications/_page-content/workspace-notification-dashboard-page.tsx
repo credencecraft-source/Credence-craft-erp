@@ -125,9 +125,9 @@ export default function WorkspaceNotificationDashboardPage() {
   const isInvitations = activeType === "invitations";
 
   return (
-    <main className="min-h-screen bg-slate-50/70">
-      <div className="mx-auto flex min-h-screen w-full max-w-7xl">
-        <aside className="w-64 shrink-0 border-r border-slate-200 bg-white px-4 py-6">
+    <main className="h-full min-h-0 overflow-hidden bg-slate-50/70">
+      <div className="mx-auto flex h-full min-h-0 w-full min-w-0 max-w-7xl flex-col lg:flex-row">
+        <aside className="w-full min-w-0 shrink-0 border-b border-slate-200 bg-white px-4 py-6 lg:h-full lg:w-64 lg:overflow-y-auto lg:border-b-0 lg:border-r">
           <Link href={`/dashboard/${workspaceId}/home`} className="mb-8 flex items-center gap-2 text-sm font-semibold text-slate-700 hover:text-emerald-700">
             <span aria-hidden="true">←</span> Workspace home
           </Link>
@@ -136,7 +136,7 @@ export default function WorkspaceNotificationDashboardPage() {
             <h1 className="mt-2 text-xl font-bold tracking-tight text-slate-900">Notifications</h1>
             <p className="mt-1 text-xs leading-5 text-slate-500">Review requests, invitations, and shared work.</p>
           </div>
-          <nav aria-label="Notification types" className="space-y-1">
+          <nav aria-label="Notification types" className="flex flex-wrap gap-1 lg:block lg:space-y-1">
             <Button type="button" onClick={() => setActiveType("orders")} className={`flex w-full items-center justify-between rounded-lg px-3 py-3 text-left text-sm font-semibold transition ${isOrders ? "bg-emerald-50 text-emerald-800" : "text-slate-600 hover:bg-slate-50"}`}>
               <span className="flex items-center gap-3"><span aria-hidden="true">↗</span> Orders</span>
               {shareCount > 0 && <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] text-white">{shareCount}</span>}
@@ -150,7 +150,7 @@ export default function WorkspaceNotificationDashboardPage() {
           <div className="mt-8 border-t border-slate-100 px-3 pt-5 text-xs text-slate-400">{total} pending request{total === 1 ? "" : "s"}</div>
         </aside>
 
-        <section className="min-w-0 flex-1 px-5 py-6 sm:px-8 lg:px-10">
+        <section className="min-h-0 min-w-0 flex-1 overflow-y-auto p-6 lg:p-8">
           <div className="flex flex-col gap-3 border-b border-slate-200 pb-6 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Request queue</p>

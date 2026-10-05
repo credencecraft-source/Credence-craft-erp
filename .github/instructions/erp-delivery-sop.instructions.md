@@ -13,6 +13,18 @@ applyTo: "**/*.{ts,tsx,prisma,sql,css,md}"
 - Read only the local call chain needed to identify the code that decides the behavior.
 - Record one falsifiable hypothesis and one cheap discriminating check before the first edit.
 
+## 1A. Mandatory Shared Branding And UI Rule
+
+- This repository must maintain one unified branded UI language across the entire application. The same theme, colors, spacing, borders, shadows, icon treatment, and control styling must be used everywhere unless a shared component is intentionally extended.
+- Do not create local or isolated visual differences for a screen, feature, or platform surface when the shared UI primitive already exists. If a non-branded UI pattern is found, fix it immediately.
+- If the required branded element does not exist, create it in the shared design layer and reuse it across the application instead of injecting one-off custom styling.
+- Keep the ERP brand consistent in every corner of the app, including organization-level pages, platform-level screens, and shared components. Use matching element classes, variants, icon style, and design semantics to achieve identical branding.
+- Do not allow manual styling drift. A one-off green, card, tab, button, panel, input, badge, or status treatment is not acceptable when a shared component exists or should be created.
+- Preserve and standardize on the same branded UI element set across the system: shared buttons, tabs, cards, sections, forms, tables, modals, filters, and status visuals.
+- Before changing any UI, layout, style, design token, or shared component, read and apply the repository-level `AGENTS.md` section "UI Architecture Laws." It governs shell boundaries, content-only padding, scroll containment, canonical color/status/typography tokens, reusable components, and destructive actions across the entire application.
+- Treat those laws as durable project constraints, not suggestions. Do not modify or bypass them during unrelated work. A deliberate design-system revision requires explicit product-owner approval and an update to `AGENTS.md`.
+- If implementation reality conflicts with the locked token or shared-component rules, do not invent local styles or silently change the global theme; report the specific conflict and request an approved design-system update.
+
 ## 2. Specify The Contract
 
 - Define actor, workspace, organization, permission, input shape, response shape, lifecycle transition, and failure behavior.
@@ -31,6 +43,9 @@ applyTo: "**/*.{ts,tsx,prisma,sql,css,md}"
 
 - After the first substantive edit, run the narrowest executable check available for the touched slice.
 - If it fails, repair that same slice and rerun the same check before expanding scope.
+- For UI changes, change only the visual properties and interactions required by the explicit request. Preserve existing colors, typography, spacing, layout, icons, and behavior otherwise; if the request is ambiguous about a material visual change, ask before implementing it.
+- Validate the requested UI behavior in the affected screen, including relevant loading, error, empty, disabled, and success states. Check responsive behavior and keyboard/accessibility interactions where applicable; use the browser for a visual smoke check when available and report any checks that could not be performed.
+- Run focused UI regression tests and the relevant lint or type checks where available. Review the final diff to confirm there are no incidental UI or styling changes. Do not substitute broad QA for these focused checks or bypass the user-confirmation gate below.
 - For APIs, test unauthenticated, wrong-workspace, non-member, insufficient-role, cross-tenant-ID, invalid-input, duplicate-request, and happy-path cases.
 - For documents and inventory, test legal and illegal lifecycle transitions, quantity overages, duplicate posting, concurrent writes where relevant, and reversal behavior.
 - Do not defer checks needed to establish the changed slice's security, tenant isolation, authorization, lifecycle, financial, stock, counter, or data-integrity behavior. Run the focused checks relevant to the change before handoff.

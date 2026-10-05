@@ -181,7 +181,7 @@ export default function FgStockModulePage({ moduleName, addMode = false }: { mod
           <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Qty In</span><Input min="0" step="0.01" type="number" className={fieldClass} value={form.qtyIn} onChange={(event) => updateForm("qtyIn", event.target.value)} /></label>
           <label className="block space-y-1"><span className="text-xs font-semibold text-slate-700">Qty Out</span><Input min="0" step="0.01" type="number" className={fieldClass} value={form.qtyOut} onChange={(event) => updateForm("qtyOut", event.target.value)} /></label>
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2"><span className="block text-xs font-semibold text-emerald-800">Current Stock</span><strong className="text-lg text-emerald-950">{currentStock.toFixed(2)}</strong></div>
-          <div className="flex items-end"><Button disabled={saving} className="w-full rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"type="submit" >{saving ? "Adding..." : "Add Record"}</Button></div>
+          <div className="flex items-end"><Button disabled={saving} className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold"type="submit" >{saving ? "Adding..." : "Add Record"}</Button></div>
           {message && <p className="sm:col-span-2 lg:col-span-4 text-sm font-medium text-slate-600">{message}</p>}
           </form>
         </div>}

@@ -70,6 +70,7 @@ describe("platform Support email login", () => {
     const response = await sendOtp(supportRequest("sales-admin@example.com"));
 
     expect(response.status).toBe(200);
+    expect(mocks.ensurePlatformDefaults).not.toHaveBeenCalled();
     expect(mocks.findPlatformAdmin).toHaveBeenCalledWith({
       where: { email: "sales-admin@example.com" },
     });

@@ -186,7 +186,7 @@ export default function PlatformSupportTicketsWorkspace({
   const openCount = tickets.filter((ticket) => OPEN_STATUSES.includes(ticket.status)).length;
 
   return (
-    <section className="flex min-h-[calc(100dvh-9rem)] flex-col gap-3">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
       <header className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <p className="erp-eyebrow">Platform</p>
@@ -196,7 +196,7 @@ export default function PlatformSupportTicketsWorkspace({
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden lg:flex-row">
-        <div className="min-w-0 flex-1 overflow-auto">
+        <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
           <ReportGrid
             title="Support ticket report"
             records={filteredTickets}

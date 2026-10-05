@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, type ReactNode } from "react";
+import React, { useEffect, useMemo, useState, type ReactNode } from "react";
 import Button from "@/components/ui/Button";
 import Checkbox from "@/components/ui/Checkbox";
 import Modal from "@/components/ui/Modal";
@@ -175,32 +175,39 @@ export function ReportGrid<T>({
     setColumnFilters({});
   };
 
-  const visibleFieldDefinitions = fields.filter((f) => visibleFields.includes(f.key));
-  const allFilteredSelected = records.length > 0 && records.every((r) => selectedIds.includes(rowIdSelector(r)));
+  const visibleFieldDefinitions = useMemo(
+    () => fields.filter((field) => visibleFields.includes(field.key)),
+    [fields, visibleFields],
+  );
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const allFilteredSelected = records.length > 0 && records.every((record) => selectedIdSet.has(rowIdSelector(record)));
   const activeFilterCount = Object.keys(columnFilters).length;
 
-  const filteredRecords = records.filter((record) => {
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      const matchesGlobal = visibleFieldDefinitions.some((field) => {
-        const val = renderCell(String(field.key), record);
-        return String(val ?? "").toLowerCase().includes(query);
-      });
-      if (!matchesGlobal) return false;
-    }
+  const filteredRecords = useMemo(
+    () => records.filter((record) => {
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        const matchesGlobal = visibleFieldDefinitions.some((field) => {
+          const val = renderCell(String(field.key), record);
+          return String(val ?? "").toLowerCase().includes(query);
+        });
+        if (!matchesGlobal) return false;
+      }
 
-    for (const [fieldKey, filter] of Object.entries(columnFilters)) {
-      const cellVal = String(renderCell(fieldKey, record) ?? "").toLowerCase();
-      const targetVal = filter.value.toLowerCase();
+      for (const [fieldKey, filter] of Object.entries(columnFilters)) {
+        const cellVal = String(renderCell(fieldKey, record) ?? "").toLowerCase();
+        const targetVal = filter.value.toLowerCase();
 
-      if (filter.operator === "contains" && !cellVal.includes(targetVal)) return false;
-      if (filter.operator === "is" && cellVal !== targetVal) return false;
-      if (filter.operator === "notContains" && cellVal.includes(targetVal)) return false;
-      if (filter.operator === "empty" && cellVal.trim() !== "") return false;
-    }
+        if (filter.operator === "contains" && !cellVal.includes(targetVal)) return false;
+        if (filter.operator === "is" && cellVal !== targetVal) return false;
+        if (filter.operator === "notContains" && cellVal.includes(targetVal)) return false;
+        if (filter.operator === "empty" && cellVal.trim() !== "") return false;
+      }
 
-    return true;
-  });
+      return true;
+    }),
+    [columnFilters, records, renderCell, searchQuery, visibleFieldDefinitions],
+  );
 
   return (
     <div className="space-y-2.5 text-[11px]">
@@ -317,7 +324,7 @@ export function ReportGrid<T>({
           ) : (
             filteredRecords.map((record, index) => {
               const recordId = rowIdSelector(record);
-              const isSelected = selectedIds.includes(recordId);
+              const isSelected = selectedIdSet.has(recordId);
               return (
                 <tr
                   key={recordId}

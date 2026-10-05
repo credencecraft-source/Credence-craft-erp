@@ -4,6 +4,7 @@ import nextTs from "eslint-config-next/typescript";
 import react from "eslint-plugin-react";
 import reactHooks from "eslint-plugin-react-hooks";
 import noRawUiControls from "./scripts/eslint/no-raw-ui-controls.mjs";
+import preferSharedCardButton from "./scripts/eslint/prefer-shared-card-button.mjs";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -15,6 +16,7 @@ const eslintConfig = defineConfig([
       local: {
         rules: {
           "no-raw-ui-controls": noRawUiControls,
+          "prefer-shared-card-button": preferSharedCardButton,
         },
       },
     },
@@ -33,7 +35,8 @@ const eslintConfig = defineConfig([
     files: ["app/**/*.{ts,tsx}", "components/**/*.{ts,tsx}"],
     ignores: ["components/ui/**"],
     rules: {
-      "local/no-raw-ui-controls": "warn",
+      "local/no-raw-ui-controls": "error",
+      "local/prefer-shared-card-button": "error",
     },
   },
   {

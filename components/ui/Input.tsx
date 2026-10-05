@@ -35,7 +35,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(function Input({
         aria-invalid={error ? true : props["aria-invalid"]}
         aria-describedby={[props["aria-describedby"], hint ? `${inputId}-hint` : "", error ? `${inputId}-error` : ""].filter(Boolean).join(" ") || undefined}
         className={cn(
-          "w-full rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] px-3 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[var(--erp-brand)] focus:ring-2 focus:ring-[var(--erp-brand-soft)] disabled:cursor-not-allowed disabled:bg-slate-100",
+          "w-full rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] px-3 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[var(--erp-brand)] focus:ring-2 focus:ring-[var(--erp-brand-soft)] read-only:bg-slate-50 read-only:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-100",
           className,
         )}
       />

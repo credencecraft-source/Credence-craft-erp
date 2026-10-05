@@ -246,7 +246,7 @@ export function PriceApprovalStage({
           type="button"
           disabled={approving || selectedCount < 1}
           onClick={approveSelectedRecords}
-          className="rounded-md bg-blue-700 px-4 py-2 text-xs font-bold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+          className="rounded-md px-4 py-2 text-xs font-bold"
         >
           {approving
             ? "Creating master group..."
@@ -640,13 +640,13 @@ function GroupedPurchaseOrderPriceRow({
           )}
           <Button
             type="button"
-            variant="ghost"
+            variant="danger"
             size="sm"
             disabled={deleting}
             onClick={onDelete}
             aria-label={`Delete ${order.groupedPoNo}`}
             title="Delete Grouped PO"
-            className="h-7 min-h-7 w-7 rounded-md border border-red-200 p-0 text-red-600 hover:bg-red-50"
+            className="h-7 min-h-7 w-7 rounded-md p-0"
           >
             {deleting ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />

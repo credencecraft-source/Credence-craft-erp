@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { Suspense, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import UiPage from "@/components/ui/Page";
@@ -27,6 +29,8 @@ type AllocationRow = {
     groupedPurchaseOrderLineId: string;
     orderNo: string;
     styleNo: string;
+    pickedQuantity: number | string;
+    balanceStock: number | string;
     alreadyAllocated: number | string;
     balanceToAllocate: number | string;
     grouped: number | string;
@@ -40,10 +44,41 @@ type AllocationDetailRow = {
   purchaseOrderNumber: string;
   orderNo: string;
   styleNo: string;
+  groupedPurchaseOrderLineId: string;
+  pickedQuantity: number | string;
+  balanceStock: number | string;
   alreadyAllocated: number | string;
   balanceToAllocate: number | string;
   grouped: number | string;
   allocate: number | string;
+};
+
+type PickHistoryRecord = {
+  id: string;
+  orderNo: string;
+  styleNo: string;
+  workOrderNo: string;
+  requestedBy: string | null;
+  requestedAt: string;
+  requestedQuantity: string;
+  pickedBy: string | null;
+  pickedAt: string | null;
+  pickedQuantity: string;
+  rawMaterial: string | null;
+  category: string | null;
+  size: string | null;
+};
+
+type PickHistory = {
+  rawMaterialName: string | null;
+  orderNo: string;
+  styleNo: string;
+  groupedQuantity: string;
+  allocatedQuantity: string;
+  availableStock: string;
+  requestedTotal: string;
+  pickedTotal: string;
+  records: PickHistoryRecord[];
 };
 
 const reportFields: Array<{ key: keyof AllocationRow; label: string }> = [
@@ -62,6 +97,8 @@ const allocationDetailFields: Array<{ key: keyof AllocationDetailRow; label: str
   { key: "purchaseOrderNumber", label: "Purchase Order" },
   { key: "orderNo", label: "Order No" },
   { key: "styleNo", label: "Style No" },
+  { key: "pickedQuantity", label: "Picked Qty" },
+  { key: "balanceStock", label: "Balance Stock" },
   { key: "alreadyAllocated", label: "Already Allocated" },
   { key: "balanceToAllocate", label: "Balance To Allocate" },
   { key: "grouped", label: "Grouped" },
@@ -90,10 +127,26 @@ export default function GrnAllocationReportPage({
   title?: string;
   allocationDetailsOnly?: boolean;
 }) {
+  return (
+    <Suspense fallback={<UiPage as="div"><Section><Card>Loading inventory records...</Card></Section></UiPage>}>
+      <GrnAllocationReportContent title={title} allocationDetailsOnly={allocationDetailsOnly} />
+    </Suspense>
+  );
+}
+
+function GrnAllocationReportContent({
+  title,
+  allocationDetailsOnly,
+}: {
+  title: string;
+  allocationDetailsOnly: boolean;
+}) {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
+  const pickedHistoryLineId = allocationDetailsOnly ? searchParams.get("groupedPurchaseOrderLineId") ?? "" : "";
   const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/grn`;
   const [records, setRecords] = useState<AllocationRow[]>([]);
   const [allocationDetailRecords, setAllocationDetailRecords] = useState<AllocationDetailRow[]>([]);
@@ -116,6 +169,11 @@ export default function GrnAllocationReportPage({
   const [allocationLinesLoading, setAllocationLinesLoading] = useState(false);
   const [allocationSaving, setAllocationSaving] = useState(false);
   const [allocationSuccess, setAllocationSuccess] = useState("");
+  const [pickHistoryState, setPickHistoryState] = useState<{
+    lineId: string;
+    data?: PickHistory;
+    error?: string;
+  } | null>(null);
 
   const loadGroupedOrderLines = async (row: AllocationRow) => {
     setAllocationLinesLoading(true);
@@ -157,6 +215,9 @@ export default function GrnAllocationReportPage({
               purchaseOrderNumber: row.purchaseOrderNumber,
               orderNo: line.orderNo,
               styleNo: line.styleNo,
+              groupedPurchaseOrderLineId: line.groupedPurchaseOrderLineId,
+              pickedQuantity: line.pickedQuantity,
+              balanceStock: line.balanceStock,
               alreadyAllocated: line.alreadyAllocated,
               balanceToAllocate: line.balanceToAllocate,
               grouped: line.grouped,
@@ -177,6 +238,30 @@ export default function GrnAllocationReportPage({
 
     return () => controller.abort();
   }, [allocationDetailsOnly, organizationId]);
+
+  useEffect(() => {
+    if (!pickedHistoryLineId) return;
+    const controller = new AbortController();
+    void fetch(
+      `/api/inventory/raw-material-outward?organizationId=${encodeURIComponent(organizationId)}&groupedPurchaseOrderLineId=${encodeURIComponent(pickedHistoryLineId)}`,
+      { cache: "no-store", signal: controller.signal },
+    ).then(async (response) => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "Unable to load picked-material history.");
+      setPickHistoryState({ lineId: pickedHistoryLineId, data: data.pickHistory as PickHistory });
+    }).catch((loadError) => {
+      if (!controller.signal.aborted) {
+        setPickHistoryState({
+          lineId: pickedHistoryLineId,
+          error: loadError instanceof Error ? loadError.message : "Unable to load picked-material history.",
+        });
+      }
+    });
+    return () => controller.abort();
+  }, [organizationId, pickedHistoryLineId]);
+  const pickHistory = pickHistoryState?.lineId === pickedHistoryLineId ? pickHistoryState.data ?? null : null;
+  const pickHistoryError = pickHistoryState?.lineId === pickedHistoryLineId ? pickHistoryState.error ?? "" : "";
+  const pickHistoryLoading = Boolean(pickedHistoryLineId) && !pickHistory && !pickHistoryError;
 
   const openAllocationModal = (recordId: string) => {
     const row = records.find((record) => record.id === recordId);
@@ -298,7 +383,95 @@ export default function GrnAllocationReportPage({
           <div role="alert" className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700">{error}</div>
         ) : (
           <div className="erp-surface overflow-hidden rounded-md">
-            {allocationDetailsOnly ? (
+            {allocationDetailsOnly && pickedHistoryLineId ? (
+              <div className="space-y-4 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="erp-eyebrow">Style-wise Inventory / Pick History</p>
+                    <h2 className="erp-page-heading mt-1">{pickHistory?.rawMaterialName || "Raw material pick history"}</h2>
+                    {pickHistory && (
+                      <p className="mt-1 text-sm text-slate-500">
+                        Order {pickHistory.orderNo} · Style {pickHistory.styleNo || "-"} · Grouped {quantity(pickHistory.groupedQuantity)} · Allocated {quantity(pickHistory.allocatedQuantity)}
+                      </p>
+                    )}
+                  </div>
+                  <Button type="button" variant="secondary" onClick={() => router.push(window.location.pathname)}>
+                    Back to Style-wise Inventory
+                  </Button>
+                </div>
+                {pickHistoryError && (
+                  <Card role="alert" className="border-[var(--erp-danger)] bg-[var(--erp-surface-soft)] text-sm text-[var(--erp-danger)]">
+                    {pickHistoryError}
+                  </Card>
+                )}
+                {pickHistoryLoading ? (
+                  <Card className="text-sm text-slate-500">Loading picked-material history...</Card>
+                ) : pickHistory ? (
+                  <>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Card className="space-y-1 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Balance Stock</p>
+                        <p className="text-2xl font-bold text-slate-950">{quantity(pickHistory.availableStock)}</p>
+                        <p className="text-xs text-slate-500">Allocated quantity less picked quantity</p>
+                      </Card>
+                      <Card className="space-y-1 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Requested</p>
+                        <p className="text-2xl font-bold text-slate-950">{quantity(pickHistory.requestedTotal)}</p>
+                      </Card>
+                      <Card className="space-y-1 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Picked</p>
+                        <p className="text-2xl font-bold text-slate-950">{quantity(pickHistory.pickedTotal)}</p>
+                      </Card>
+                    </div>
+                    <Card className="space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-base font-bold text-slate-950">Picked History</h3>
+                          <p className="mt-1 text-sm text-slate-500">Request and pick activity for this allocated material line.</p>
+                        </div>
+                        <Badge>{pickHistory.records.length} picked records</Badge>
+                      </div>
+                      {pickHistory.records.length === 0 ? (
+                        <p className="text-sm text-slate-500">No picked quantities are recorded for this material yet.</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-[1100px] text-left text-sm">
+                            <thead className="erp-table-head">
+                              <tr>
+                                <th className="p-3">Order No.</th>
+                                <th className="p-3">Style No.</th>
+                                <th className="p-3">Work Order No.</th>
+                                <th className="p-3">Requested By</th>
+                                <th className="p-3 text-right">Requested Qty</th>
+                                <th className="p-3">Picked By</th>
+                                <th className="p-3">Picked At</th>
+                                <th className="p-3 text-right">Picked Qty</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[var(--erp-border)]">
+                              {pickHistory.records.map((record) => (
+                                <tr key={record.id}>
+                                  <td className="p-3">{record.orderNo}</td>
+                                  <td className="p-3">{record.styleNo || "-"}</td>
+                                  <td className="p-3 font-semibold">{record.workOrderNo}</td>
+                                  <td className="p-3">{record.requestedBy || "-"}</td>
+                                  <td className="p-3 text-right">{quantity(record.requestedQuantity)}</td>
+                                  <td className="p-3">{record.pickedBy || "-"}</td>
+                                  <td className="p-3">{record.pickedAt ? new Date(record.pickedAt).toLocaleString("en-IN") : "-"}</td>
+                                  <td className="p-3 text-right font-semibold">{quantity(record.pickedQuantity)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </Card>
+                  </>
+                ) : !pickHistoryError ? (
+                  <Card role="alert" className="text-sm text-slate-500">Pick history is unavailable.</Card>
+                ) : null}
+              </div>
+            ) : allocationDetailsOnly ? (
               <ReportGrid
                 title="RM Allocation Details"
                 records={allocationDetailRecords}
@@ -309,9 +482,16 @@ export default function GrnAllocationReportPage({
                 selectedIds={[]}
                 selectable={false}
                 storageKey={`rm-style-allocation-columns-${organizationId}`}
+                onRecordClick={(row) => {
+                  const query = new URLSearchParams({
+                    organizationId,
+                    groupedPurchaseOrderLineId: row.groupedPurchaseOrderLineId,
+                  });
+                  router.push(`${window.location.pathname}?${query.toString()}`);
+                }}
                 onRowClick={() => undefined}
                 renderCell={(fieldKey, row) => {
-                  if (["alreadyAllocated", "balanceToAllocate", "grouped", "allocate"].includes(fieldKey)) {
+                  if (["alreadyAllocated", "balanceToAllocate", "grouped", "allocate", "pickedQuantity", "balanceStock"].includes(fieldKey)) {
                     return quantity(row[fieldKey as keyof AllocationDetailRow] as number | string);
                   }
                   return String(row[fieldKey as keyof AllocationDetailRow] ?? "-");

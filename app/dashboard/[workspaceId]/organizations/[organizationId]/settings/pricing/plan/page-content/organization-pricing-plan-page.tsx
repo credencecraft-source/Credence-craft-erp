@@ -192,7 +192,7 @@ export default function OrganizationPricingPlanPage({
               type="button"
               onClick={handleProceedToCheckout}
               disabled={Object.keys(selections).length === 0 || isCheckoutPending}
-              className="min-h-7 rounded-md border-emerald-500 bg-emerald-600 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-emerald-500"
+              className="min-h-7 rounded-md px-2.5 py-1 text-[10px] font-bold"
             >
               {isCheckoutPending && <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
               {isCheckoutPending ? "Opening checkout..." : `Pay Now (${Object.keys(selections).length})`}

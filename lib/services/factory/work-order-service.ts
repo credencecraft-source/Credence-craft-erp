@@ -4,6 +4,7 @@ import { prisma } from "@/lib/database/prisma-client";
 import { reserveChallanNumber } from "@/lib/services/organizations/challan-number-configuration-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { splitBomSizes } from "@/lib/services/orders/order-quantity-calculations";
+import { getWorkOrderBomAllocatedQuantities } from "@/lib/services/factory/work-order-material-allocation-service";
 
 export type WorkOrderQuantityInput = {
   sourceFinishedGoodsId?: string;
@@ -553,6 +554,10 @@ export async function listWorkOrders(organizationId: string, options: { cursor?:
   });
   const hasMore = workOrders.length > take;
   const page = hasMore ? workOrders.slice(0, take) : workOrders;
+  const allocatedByBomLineId = await getWorkOrderBomAllocatedQuantities(
+    organizationId,
+    page.flatMap((workOrder) => workOrder.bomLines.map((line) => line.id)),
+  );
 
   return {
     workOrders: page.map((workOrder) => ({
@@ -574,6 +579,7 @@ export async function listWorkOrders(organizationId: string, options: { cursor?:
         workOrderQty: Number(line.work_order_qty),
         requiredQty: Number(line.required_qty),
         totalRequiredQty: Number(line.total_required_qty),
+        allocatedQty: (allocatedByBomLineId.get(line.id) ?? new Prisma.Decimal(0)).toString(),
       })),
     })),
     nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,

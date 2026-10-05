@@ -2,16 +2,21 @@
 
 import React, { useMemo, useState } from "react";
 import Image from "next/image";
+import { Boxes, FileDown, Plus } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { calculateBomRows, calculateFinishedGoodsRows, splitBomSizes } from "@/lib/services/orders/order-quantity-calculations";
 import { findDuplicateBomMaterialNames, getBomMaterialIdentity } from "@/lib/services/orders/bom-row-validation";
 import type { OrderFormState, BomEditorRow } from "./order-form-types";
+import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
+import Section from "@/components/ui/Section";
+import Table from "@/components/ui/Table";
 
 type BomRow = BomEditorRow;
 type MasterDataOption = {
@@ -351,10 +356,10 @@ export default function BomTab({
       <>
         <Button
           type="button"
-          variant="ghost"
+          variant="secondary"
           onClick={() => { setSizePickerRowIndex(index); setSizeSearch(""); }}
           aria-label={selectedSizes.length > 0 ? `Edit sizes: ${selectedSizes.join(", ")}` : "Select sizes"}
-          className="flex min-h-[48px] w-full flex-wrap items-center justify-start gap-1 rounded-xl border border-slate-300 bg-white p-1.5 text-left shadow-sm hover:border-emerald-400 hover:bg-emerald-50/30"
+          className="flex min-h-10 w-full flex-wrap items-center justify-start gap-1 rounded-xl p-1.5 text-left"
         >
           {selectedSizes.length === 0 ? (
             <span className="px-1 text-[12px] font-normal text-slate-400">Select sizes</span>
@@ -384,7 +389,7 @@ export default function BomTab({
               {filteredSizes.length === 0 ? (
                 <p className="p-2 text-[10px] text-slate-500">No matching sizes.</p>
               ) : filteredSizes.map((size) => (
-                <Button key={size} type="button" variant="ghost" onClick={() => addSize(size)} className="w-full justify-start px-2 py-1.5 text-xs hover:bg-emerald-50">{size}</Button>
+                <Button key={size} type="button" variant="ghost" onClick={() => addSize(size)} className="w-full justify-start px-2 py-1.5 text-xs">{size}</Button>
               ))}
             </div>
             <div className="flex flex-wrap gap-1 rounded-md border border-slate-200 bg-white p-1.5">
@@ -503,87 +508,119 @@ export default function BomTab({
 
   return (
     <>
-    <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 print:hidden">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-        <div />
-        <div className="flex items-center gap-3">
-          <Checkbox
-            label="Advanced"
-              checked={showAdvancedFields}
-              onChange={(event) => setShowAdvancedFields(event.target.checked)}
-            className="h-4 w-4"
-          />
-          <Button type="button" variant="secondary" size="sm" onClick={downloadBomPdf} className="gap-1.5 text-xs">
-            Download PDF
-          </Button>
-          <Button
-            size="sm"
-            type="button"
-            onClick={addBomRow}
-            disabled={isAllCategoryView}
-            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            + Add Row
-          </Button>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1.5">
-        {bomCategories.map((category) => (
-          <Button
-            variant={selectedBomCategory === category ? "primary" : "secondary"}
-            size="sm"
-            key={category}
-            type="button"
-            onClick={() => {
-              setSelectedBomCategory(category);
-              setSelectedBomSubCategory("All");
-            }}
-            className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
-              selectedBomCategory === category
-                ? "border-emerald-600 bg-emerald-600 text-white shadow-sm"
-                : "border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:text-emerald-700"
-            }`}
-          >
-            {category}
-          </Button>
-        ))}
-      </div>
-
-      {selectedBomCategory !== "All" && getFilteredSubCategoryOptions(selectedBomCategory).length > 0 ? (
-        <div className="space-y-1 rounded-xl border border-emerald-100 bg-emerald-50/50 p-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {["All", ...getFilteredSubCategoryOptions(selectedBomCategory).map((option) => String(option.label ?? option.name ?? "").trim()).filter(Boolean)]
-              .filter((subcategory, index, values) => values.indexOf(subcategory) === index)
-              .map((subcategory) => (
-                <Button
-                  key={subcategory}
-                  variant={selectedBomSubCategory === subcategory ? "primary" : "secondary"}
-                  size="sm"
-                  type="button"
-                  onClick={() => selectBomSubCategory(subcategory)}
-                  className={`rounded-full border px-2 py-1 text-[10px] font-semibold transition ${
-                    selectedBomSubCategory === subcategory
-                      ? "border-emerald-600 bg-emerald-600 text-white shadow-sm"
-                      : "border-emerald-100 bg-white text-emerald-700 hover:border-emerald-300"
-                  }`}
-                >
-                  {subcategory === "All" ? "All subcategories" : subcategory}
-                </Button>
-              ))}
+    <Section className="space-y-4 print:hidden">
+      <Card className="overflow-hidden p-0">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-gradient-to-r from-emerald-50 via-white to-slate-50 px-5 py-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800">
+              <Boxes className="h-5 w-5" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">Order planning</p>
+              <h2 className="text-base font-bold tracking-tight text-slate-950">Bill of Materials</h2>
+              <p className="mt-0.5 text-xs text-slate-500">Review material requirements by category and size.</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge className="bg-white text-slate-700 ring-1 ring-inset ring-slate-200">
+              {calculatedBomRows.length} material lines
+            </Badge>
+            <Badge className="bg-white text-slate-700 ring-1 ring-inset ring-slate-200">
+              Order qty {String(finishedGoods.orderQty ?? 0)}
+            </Badge>
           </div>
         </div>
-      ) : null}
 
-      {duplicateMaterials.length > 0 && (
-        <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          Duplicate BOM material{duplicateMaterials.length === 1 ? "" : "s"}: {duplicateMaterials.join(", ")}. Keep one row per material in the order; add all applicable sizes to that row before saving.
+        <div className="space-y-3 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Category</span>
+              {bomCategories.map((category) => {
+                const categoryCount = category === "All"
+                  ? calculatedBomRows.length
+                  : calculatedBomRows.filter((row) => normalizeBomCategory(String(row.category ?? "")) === category).length;
+                const selected = selectedBomCategory === category;
+                return (
+                  <Button
+                    variant={selected ? "primary" : "secondary"}
+                    size="sm"
+                    key={category}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => {
+                      setSelectedBomCategory(category);
+                      setSelectedBomSubCategory("All");
+                    }}
+                    className="min-h-8 gap-2 rounded-full px-3.5 text-xs"
+                  >
+                    {category}
+                    <span className={selected ? "rounded-full bg-white/20 px-1.5 py-0.5 text-[10px]" : "rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500"}>
+                      {categoryCount}
+                    </span>
+                  </Button>
+                );
+              })}
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <Checkbox
+                label="Advanced fields"
+                checked={showAdvancedFields}
+                onChange={(event) => setShowAdvancedFields(event.target.checked)}
+              />
+              <Button type="button" variant="secondary" size="sm" onClick={downloadBomPdf} className="gap-1.5">
+                <FileDown className="h-4 w-4" aria-hidden="true" />
+                Download PDF
+              </Button>
+              <Button
+                size="sm"
+                type="button"
+                onClick={addBomRow}
+                disabled={isAllCategoryView}
+                className="gap-1.5"
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Add row
+              </Button>
+            </div>
+          </div>
+
+          {selectedBomCategory !== "All" && getFilteredSubCategoryOptions(selectedBomCategory).length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50/50 px-3 py-2">
+              <span className="mr-1 text-[10px] font-bold uppercase tracking-wide text-emerald-800">Subcategory</span>
+              {["All", ...getFilteredSubCategoryOptions(selectedBomCategory).map((option) => String(option.label ?? option.name ?? "").trim()).filter(Boolean)]
+                .filter((subcategory, index, values) => values.indexOf(subcategory) === index)
+                .map((subcategory) => {
+                  const selected = selectedBomSubCategory === subcategory;
+                  return (
+                    <Button
+                      key={subcategory}
+                      variant={selected ? "primary" : "secondary"}
+                      size="sm"
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => selectBomSubCategory(subcategory)}
+                      className="min-h-7 rounded-full px-3 text-[10px]"
+                    >
+                      {subcategory === "All" ? "All subcategories" : subcategory}
+                    </Button>
+                  );
+                })}
+            </div>
+          ) : null}
+
+          {duplicateMaterials.length > 0 && (
+            <Card role="alert" className="border-amber-200 bg-amber-50/70 p-3 shadow-none">
+              <p className="text-xs text-amber-950">
+                <Badge className="mr-2 bg-amber-100 text-amber-900">Review duplicates</Badge>
+                Duplicate BOM material{duplicateMaterials.length === 1 ? "" : "s"}: {duplicateMaterials.join(", ")}. Keep one row per material in the order; add all applicable sizes to that row before saving.
+              </p>
+            </Card>
+          )}
         </div>
-      )}
+      </Card>
 
-      <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-slate-200 bg-slate-50/40 shadow-inner">
-        <fieldset disabled={isAllCategoryView} className="min-w-0 border-0 p-0">
-          <table className="min-w-[1650px] table-fixed text-left text-sm">
+      <fieldset disabled={isAllCategoryView} className="min-w-0 border-0 p-0">
+        <Table className="overscroll-x-contain print:hidden" tableClassName="min-w-[1650px] table-fixed text-left text-sm">
           <colgroup>
             <col className="w-[120px]" />
             <col className="w-[320px]" />
@@ -690,7 +727,7 @@ export default function BomTab({
                         value={value}
                         onChange={(event) => updateBomRow(index, "subCategory", event.target.value)}
                         options={[{ value: "", label: "Select sub category" }, ...safeOptions.map((option) => ({ value: option.label ?? option.name ?? "", label: option.label ?? option.name ?? "" }))]}
-                        className="min-h-[48px] rounded-xl border-slate-300 bg-white px-3 py-2.5 text-[15px] shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                        className="min-h-10 text-xs"
                       />
                     );
                   })() : (
@@ -698,7 +735,7 @@ export default function BomTab({
                       value={row.subCategory || ""}
                       onChange={(e) => updateBomRow(index, "subCategory", e.target.value)}
                       placeholder="Sub Category"
-                      className="min-h-[48px] rounded-xl border-slate-300 bg-white px-3 py-2.5 text-[15px] shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                      className="min-h-10 text-xs"
                     />
                   )}
                 </td>
@@ -726,7 +763,7 @@ export default function BomTab({
                           updateBomRow(index, "image", getRawMaterialImage(rawMaterialName));
                         }}
                         options={[{ value: "", label: row.subCategory ? "Select raw material" : "Select sub category first" }, ...safeOptions.map((option) => ({ value: option.label ?? option.name ?? "", label: option.label ?? option.name ?? "" }))]}
-                        className="min-h-[48px] rounded-xl border-slate-300 bg-white px-3 py-2.5 text-[15px] shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                        className="min-h-10 text-xs"
                       />
                     );
                   })() : (
@@ -734,7 +771,7 @@ export default function BomTab({
                       value={row.rawMaterialName || ""}
                       onChange={(e) => updateBomRow(index, "rawMaterialName", e.target.value)}
                       placeholder="Name"
-                      className="min-h-[48px] rounded-xl border-slate-300 bg-white px-3 py-2.5 text-[15px] shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                      className="min-h-10 text-xs"
                     />
                   )}
                 </td>
@@ -743,7 +780,7 @@ export default function BomTab({
                     value={String(row.stockUom ?? getRawMaterialStockUom(String(row.rawMaterialName ?? "")))}
                     disabled
                     placeholder="Auto-filled"
-                    className="min-h-[48px] rounded-xl border-slate-300 bg-slate-100 px-3 py-2.5 text-[15px] text-slate-600 shadow-sm"
+                    className="min-h-10 text-xs"
                   />
                 </td>
                 <td className="min-w-[190px] whitespace-nowrap p-2.5 align-top">
@@ -755,7 +792,7 @@ export default function BomTab({
                     value={row.buyerConsumption || ""}
                     onChange={(e) => updateBomRow(index, "buyerConsumption", e.target.value)}
                     placeholder="0"
-                    className="min-h-[42px] rounded-lg border-slate-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                    className="min-h-9 text-xs"
                   />
                 </td>}
                 {showAdvancedFields && <td className="p-2.5 align-top">
@@ -764,7 +801,7 @@ export default function BomTab({
                     value={row.buyerPrice || ""}
                     onChange={(e) => updateBomRow(index, "buyerPrice", e.target.value)}
                     placeholder="0.00"
-                    className="min-h-[42px] rounded-lg border-slate-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                    className="min-h-9 text-xs"
                   />
                 </td>}
                 <td className="p-2.5 align-top">
@@ -773,7 +810,7 @@ export default function BomTab({
                     value={row.internalConsumption || ""}
                     onChange={(e) => updateBomRow(index, "internalConsumption", e.target.value)}
                     placeholder="0"
-                    className="min-h-[42px] rounded-lg border-slate-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                    className="min-h-9 text-xs"
                   />
                 </td>
                 <td className="p-2.5 align-top">
@@ -782,7 +819,7 @@ export default function BomTab({
                     value={row.internalPrice || ""}
                     onChange={(e) => updateBomRow(index, "internalPrice", e.target.value)}
                     placeholder="0.00"
-                    className="min-h-[42px] rounded-lg border-slate-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                    className="min-h-9 text-xs"
                   />
                 </td>
                 <td className="p-2.5 align-top">
@@ -791,7 +828,7 @@ export default function BomTab({
                     value={row.requiredQty || ""}
                     readOnly
                     placeholder="0"
-                    className="min-h-[42px] rounded-lg border-slate-300 bg-slate-50 px-2.5 py-2 text-sm text-slate-600 shadow-sm"
+                    className="min-h-9 text-xs"
                   />
                 </td>
                 {showAdvancedFields && <td className="p-2.5 align-top">
@@ -800,7 +837,7 @@ export default function BomTab({
                     value={row.itemWiseExcessPercentage || ""}
                     onChange={(e) => updateBomRow(index, "itemWiseExcessPercentage", e.target.value)}
                     placeholder="0"
-                    className="min-h-[42px] rounded-lg border-slate-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                    className="min-h-9 text-xs"
                   />
                 </td>}
                 {showAdvancedFields && <td className="p-2.5 align-top">
@@ -809,7 +846,7 @@ export default function BomTab({
                     value={row.itemWiseExcessQty || ""}
                     readOnly
                     placeholder="0"
-                    className="min-h-[42px] rounded-lg border-slate-300 bg-slate-50 px-2.5 py-2 text-sm text-slate-600 shadow-sm"
+                    className="min-h-9 text-xs"
                   />
                 </td>}
                 <td className="p-2.5 align-top">
@@ -818,7 +855,7 @@ export default function BomTab({
                     value={row.totalRequiredQty || ""}
                     readOnly
                     placeholder="0"
-                    className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2 text-sm text-slate-700 shadow-sm"
+                    className="min-h-9 w-full text-xs"
                   />
                 </td>
                 {showAdvancedFields && <td className="p-2 align-top">
@@ -827,7 +864,7 @@ export default function BomTab({
                     size="sm"
                     type="button"
                     onClick={() => removeBomRow(index)}
-                    className="rounded-md border border-red-200 bg-red-50 px-2 py-1 font-semibold text-red-600 hover:bg-red-100"
+                    className="rounded-md px-2 py-1"
                   >
                     Delete
                   </Button>
@@ -835,10 +872,9 @@ export default function BomTab({
               </tr>
             ))}
           </tbody>
-          </table>
-        </fieldset>
-      </div>
-    </div>
+        </Table>
+      </fieldset>
+    </Section>
     <div className="hidden print:block print:bg-white print:p-0">
       <header className="border-b-2 border-emerald-700 pb-4">
         <div className="flex items-start justify-between gap-6">

@@ -338,6 +338,7 @@ export async function listRmGrnVerificationAllocations(
               order_no: true,
               style_name: true,
               grouped_qty: true,
+              sourceOrder: { select: { organization_id: true, orderNo: true } },
               groupedPurchaseOrder: { select: { id: true, organization_id: true } },
             },
           },
@@ -398,9 +399,7 @@ export async function listRmGrnVerificationAllocations(
   const hiddenSampleVerificationIds = styleWiseInventory
     ? [...new Set(records.filter((record) => isDummySample(record) && !isFullyAllocated(record)).map((record) => record.verification.id))]
     : [];
-  const visibleRecords = styleWiseInventory
-    ? records.filter((record) => !isDummySample(record) || isFullyAllocated(record))
-    : records;
+  const visibleRecords = records;
   const totalAllocatedByOrderLine = new Map<string, Prisma.Decimal>();
   for (const record of records) {
     for (const allocation of record.orderAllocations) {
@@ -408,6 +407,7 @@ export async function listRmGrnVerificationAllocations(
       if (
         line.groupedPurchaseOrder.organization_id !== organizationId
         || line.groupedPurchaseOrder.id !== record.groupedPurchaseOrder.id
+        || line.sourceOrder.organization_id !== organizationId
       ) continue;
       const total = totalAllocatedByOrderLine.get(line.id) ?? zero();
       totalAllocatedByOrderLine.set(line.id, total.plus(allocation.allocated_quantity));
@@ -444,6 +444,7 @@ export async function listRmGrnVerificationAllocations(
         allocation.allocated_quantity.isZero()
         || line.groupedPurchaseOrder.organization_id !== organizationId
         || line.groupedPurchaseOrder.id !== grouping.id
+        || line.sourceOrder.organization_id !== organizationId
       ) return [];
 
       const totalAllocated = totalAllocatedByOrderLine.get(line.id) ?? allocation.allocated_quantity;
@@ -451,7 +452,7 @@ export async function listRmGrnVerificationAllocations(
       const lineBalance = line.grouped_qty.minus(totalAllocated);
       return [{
         groupedPurchaseOrderLineId: line.id,
-        orderNo: line.order_no ?? "",
+        orderNo: line.order_no?.trim() || line.sourceOrder.orderNo,
         styleNo: line.style_name ?? "",
         alreadyAllocated: (alreadyAllocated.isNegative() ? zero() : alreadyAllocated).toString(),
         balanceToAllocate: (lineBalance.isNegative() ? zero() : lineBalance).toString(),

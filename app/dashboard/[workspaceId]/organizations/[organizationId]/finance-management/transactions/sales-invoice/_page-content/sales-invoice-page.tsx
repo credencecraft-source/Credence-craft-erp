@@ -180,14 +180,16 @@ function InvoicePreview({
         <Button
           type="button"
           onClick={onBack}
-          className="text-xs font-semibold text-sky-700"
+          variant="ghost"
+          className="text-xs font-semibold"
         >
           &larr; Sales Invoice report
         </Button>
         <Button
           type="button"
           onClick={() => window.print()}
-          className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          variant="secondary"
+          className="rounded-lg px-4 py-2 text-sm font-semibold"
         >
           <Printer className="h-4 w-4" />
           Print
@@ -230,8 +232,9 @@ function InvoicePreview({
           </div>
         </section>
 
-        <section className="px-8 py-6 print:px-0">
-          <table className="w-full border-collapse text-xs">
+        <section className="min-w-0 px-8 py-6 print:px-0">
+          <div className="min-w-0 max-w-full overflow-x-auto print:overflow-visible">
+            <table className="w-full border-collapse text-xs">
             <thead>
               <tr className="border-y border-slate-300 bg-slate-50 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-600">
                 <th className="px-3 py-3 text-left">#</th>
@@ -261,7 +264,8 @@ function InvoicePreview({
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
 
           <div className="mt-6 flex justify-end">
             <div className="w-full max-w-xs space-y-2 text-sm text-slate-700">

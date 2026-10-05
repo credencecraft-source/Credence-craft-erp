@@ -145,6 +145,8 @@ export default function OrderDetailsTab({
           <span>{label}{required ? " *" : ""}</span>
           {!disabled && (
             <Button
+              variant="ghost"
+              size="sm"
               type="button"
               onClick={() => onOpenCreateMaster(masterKey)}
               className="text-[11px] font-medium text-emerald-600 hover:text-emerald-700"

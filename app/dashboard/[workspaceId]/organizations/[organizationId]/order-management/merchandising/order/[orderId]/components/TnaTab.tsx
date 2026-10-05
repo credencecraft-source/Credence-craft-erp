@@ -88,7 +88,7 @@ export default function TnaTab<TForm extends TnaFormState>({
           size="sm"
           type="button"
           onClick={addTnaRow}
-          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-all flex items-center gap-1"
+          className="rounded-lg px-3 py-1.5 text-xs font-semibold transition-all flex items-center gap-1"
         >
           <span>+</span> Add Milestone
         </Button>

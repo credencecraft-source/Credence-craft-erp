@@ -167,7 +167,7 @@ export default function CreateMerchandisingOrderPage() {
           <Button
             type="button"
             onClick={handleCreateNew}
-            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700"
+            className="rounded-lg px-3 py-1.5 text-xs font-medium"
           >
             + New Order
           </Button>

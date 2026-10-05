@@ -727,6 +727,123 @@ model RawMaterialStockBooking {
   @@map("raw_material_stock_bookings")
 }
 
+model RawMaterialOutwardRequest {
+  id              String                        @id @default(cuid())
+  organization_id String
+  work_order_id   String
+  request_no      String                        @db.VarChar(100)
+  status          String                        @default("REQUESTED") @db.VarChar(30)
+  requested_by    String?                       @db.VarChar(255)
+  requested_at    DateTime                      @default(now())
+  accepted_by     String?                       @db.VarChar(255)
+  accepted_at     DateTime?
+  created_at      DateTime                      @default(now())
+  updated_at      DateTime                      @updatedAt
+  organization    Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  workOrder       FactoryWorkOrder               @relation(fields: [work_order_id], references: [id], onDelete: Restrict)
+  lines           RawMaterialOutwardRequestLine[]
+
+  @@unique([organization_id, request_no])
+  @@unique([organization_id, id])
+  @@index([organization_id, status, requested_at])
+  @@index([work_order_id, requested_at])
+  @@map("raw_material_outward_requests")
+}
+
+model RawMaterialOutwardRequestLine {
+  id                      String                        @id @default(cuid())
+  organization_id         String
+  request_id              String
+  work_order_bom_line_id  String
+  raw_material            String?                       @db.VarChar(255)
+  category                String?                       @db.VarChar(255)
+  size                    String?                       @db.VarChar(100)
+  allocated_quantity      Decimal                       @db.Decimal(14, 2)
+  requested_quantity      Decimal                       @db.Decimal(14, 2)
+  picked_quantity         Decimal                       @default(0) @db.Decimal(14, 2)
+  status                  String                        @default("REQUESTED") @db.VarChar(30)
+  picked_by               String?                       @db.VarChar(255)
+  picked_at               DateTime?
+  created_at              DateTime                      @default(now())
+  updated_at              DateTime                      @updatedAt
+  organization            Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  request                 RawMaterialOutwardRequest     @relation(fields: [organization_id, request_id], references: [organization_id, id], onDelete: Restrict)
+  workOrderBomLine        FactoryWorkOrderBomLine       @relation(fields: [work_order_bom_line_id], references: [id], onDelete: Restrict)
+  boxLines                RawMaterialOutwardBoxLine[]
+
+  @@unique([organization_id, id])
+  @@index([organization_id, request_id, status])
+  @@index([work_order_bom_line_id])
+  @@map("raw_material_outward_request_lines")
+}
+
+model RawMaterialOutwardBox {
+  id              String                        @id @default(cuid())
+  organization_id String
+  box_no          String                        @db.VarChar(100)
+  packed_by       String?                       @db.VarChar(255)
+  packed_at       DateTime                      @default(now())
+  created_at      DateTime                      @default(now())
+  organization    Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  lines           RawMaterialOutwardBoxLine[]
+  shipment        RawMaterialOutwardShipmentBox?
+
+  @@unique([organization_id, box_no])
+  @@unique([organization_id, id])
+  @@index([organization_id, packed_at])
+  @@map("raw_material_outward_boxes")
+}
+
+model RawMaterialOutwardBoxLine {
+  id              String                         @id @default(cuid())
+  organization_id String
+  box_id          String
+  request_line_id String
+  quantity        Decimal                        @db.Decimal(14, 2)
+  created_at      DateTime                       @default(now())
+  organization    Organization                   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  box             RawMaterialOutwardBox          @relation(fields: [organization_id, box_id], references: [organization_id, id], onDelete: Restrict)
+  requestLine     RawMaterialOutwardRequestLine  @relation(fields: [organization_id, request_line_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, box_id, request_line_id])
+  @@index([organization_id, request_line_id])
+  @@map("raw_material_outward_box_lines")
+}
+
+model RawMaterialOutwardShipment {
+  id               String                            @id @default(cuid())
+  organization_id  String
+  packing_list_no  String                            @db.VarChar(100)
+  shipped_by       String?                           @db.VarChar(255)
+  shipped_at       DateTime                          @default(now())
+  created_at       DateTime                          @default(now())
+  organization     Organization                      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  boxes            RawMaterialOutwardShipmentBox[]
+
+  @@unique([organization_id, packing_list_no])
+  @@unique([organization_id, id])
+  @@index([organization_id, shipped_at])
+  @@map("raw_material_outward_shipments")
+}
+
+model RawMaterialOutwardShipmentBox {
+  id              String                       @id @default(cuid())
+  organization_id String
+  shipment_id     String
+  box_id          String                       @unique
+  created_at      DateTime                     @default(now())
+  organization    Organization                 @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  shipment        RawMaterialOutwardShipment   @relation(fields: [organization_id, shipment_id], references: [organization_id, id], onDelete: Restrict)
+  box             RawMaterialOutwardBox        @relation(fields: [organization_id, box_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, box_id])
+  @@unique([organization_id, shipment_id, box_id])
+  @@index([organization_id, shipment_id])
+  @@map("raw_material_outward_shipment_boxes")
+}
+
 model FinishedGoodsStock {
   id                String       @id @default(cuid())
   organization_id   String

@@ -1,6 +1,25 @@
 import { NextResponse } from "next/server";
 
-import { createPlatformLeadSupportTicket } from "@/lib/services/organizations/support-ticket-service";
+import {
+  createPlatformLeadSupportTicket,
+  listPlatformLeadSupportTickets,
+} from "@/lib/services/organizations/support-ticket-service";
+
+export async function GET(
+  _request: Request,
+  context: { params: Promise<{ leadId: string }> },
+) {
+  try {
+    const { leadId } = await context.params;
+    const tickets = await listPlatformLeadSupportTickets(leadId);
+    return NextResponse.json({ tickets });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to load lead activity." },
+      { status: 400 },
+    );
+  }
+}
 
 export async function POST(
   request: Request,

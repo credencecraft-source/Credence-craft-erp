@@ -2,20 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   Building2,
-  Database,
-  Users,
-  UserRoundPlus,
-  CreditCard,
-  Layers3,
-  Tags,
-  CalendarRange,
   ChevronDown,
-  LifeBuoy,
-  Mail,
-  Smartphone,
-  ShieldCheck,
 } from "lucide-react";
 import Sidebar from "@/components/ui/Sidebar";
 import Button from "@/components/ui/Button";
@@ -24,60 +14,52 @@ import Button from "@/components/ui/Button";
 const NAV_SECTIONS = [
   {
     title: "Organisations",
-    icon: Users,
     items: [
-      { label: "Organisations", href: "/platform/organisations", icon: Building2 },
-      { label: "Subscriptions", href: "/platform/subscriptions", icon: CreditCard },
+      { label: "Organisations", href: "/platform/organisations" },
+      { label: "Subscriptions", href: "/platform/subscriptions" },
     ],
   },
   {
     title: "Leads",
-    icon: UserRoundPlus,
     items: [
-      { label: "Leads", href: "/platform/leads", icon: UserRoundPlus },
+      { label: "Leads", href: "/platform/leads" },
     ],
   },
   {
     title: "Workspace",
-    icon: Users,
     items: [
-      { label: "Workspace Users", href: "/platform/workspace-users", icon: Users },
+      { label: "Workspace Users", href: "/platform/workspace-users" },
     ],
   },
   {
     title: "Databases",
-    icon: Database,
     items: [
-      { label: "Databases", href: "/platform/databases", icon: Database },
+      { label: "Databases", href: "/platform/databases" },
     ],
   },
   {
     title: "Plans",
-    icon: Layers3,
     items: [
-      { label: "Business Types", href: "/platform/business-types", icon: Building2 },
-      { label: "Segments", href: "/platform/segments", icon: Tags },
-      { label: "Versions", href: "/platform/versions", icon: CalendarRange },
+      { label: "Business Types", href: "/platform/business-types" },
+      { label: "Segments", href: "/platform/segments" },
+      { label: "Versions", href: "/platform/versions" },
     ],
   },
   {
     title: "Support",
-    icon: LifeBuoy,
     items: [
-      { label: "Support Tickets", href: "/platform/support-tickets", icon: LifeBuoy },
+      { label: "Support Tickets", href: "/platform/support-tickets" },
     ],
   },
   {
     title: "Settings",
-    icon: Mail,
     items: [
-      { label: "Email and OTP", href: "/platform/settings/email", icon: Mail },
+      { label: "Email and OTP", href: "/platform/settings/email" },
       {
         label: "Mobile OTP (MSG91)",
         href: "/platform/settings/mobile-otp",
-        icon: Smartphone,
       },
-      { label: "Platform access", href: "/platform/settings/access", icon: ShieldCheck },
+      { label: "Platform access", href: "/platform/settings/access" },
     ],
   },
 ] as const;
@@ -87,12 +69,14 @@ export default function PlatformRootLayoutClient({
   isSuperAdminView,
   canManageAccounts,
   canAccessConfiguration,
+  canAccessLeads,
   attentionCounts,
 }: {
   accessLabel: string;
   isSuperAdminView: boolean;
   canManageAccounts: boolean;
   canAccessConfiguration: boolean;
+  canAccessLeads: boolean;
   attentionCounts: {
     openTickets: number;
     pendingOrganizations: number;
@@ -100,51 +84,72 @@ export default function PlatformRootLayoutClient({
     total: number;
   };
 }) {
+  const pathname = usePathname();
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
 
-  const toggleSection = (title: string) => {
+  const toggleSection = (title: string, isOpen: boolean) => {
     setOpenSections((prev) => ({
       ...prev,
-      [title]: !prev[title],
+      [title]: !isOpen,
     }));
   };
 
-  const visibleSections = NAV_SECTIONS.filter(
-    (section) =>
+  const visibleSections = NAV_SECTIONS.filter((section) => {
+    if (section.title === "Leads") {
+      return canAccessLeads;
+    }
+
+    return (
       (!isSuperAdminView || !["Databases", "Plans", "Support"].includes(section.title)) &&
       (isSuperAdminView && section.title === "Settings"
         ? true
         : canAccessConfiguration ||
-          !["Databases", "Plans", "Settings"].includes(section.title)),
-  );
+          !["Databases", "Plans", "Settings"].includes(section.title))
+    );
+  });
 
   return (
-    <Sidebar className="group">
-      <div className="mb-6 flex items-center gap-3 px-2">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white">
-          <Building2 size={18} />
+    <Sidebar className="group erp-platform-shell border-slate-800 bg-slate-950 text-slate-200 shadow-none">
+      <div className="-mx-4 -mt-4 mb-3 flex items-center gap-2.5 border-b border-slate-800 p-2.5">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white">
+          <Building2 size={16} aria-hidden="true" />
         </div>
 
         <div className="hidden group-data-[expanded=true]:block">
-          <h2 className="text-sm font-bold text-slate-800">Platform</h2>
-          <p className="text-xs text-slate-500">{accessLabel}</p>
+          <h2 className="text-[1.125rem] font-semibold text-white">Platform</h2>
+          <p className="text-[0.625rem] text-slate-400">{accessLabel}</p>
         </div>
       </div>
 
-      <nav className="space-y-2">
+      <nav className="-mx-2 space-y-1">
         {visibleSections.map((section) => {
-          const SectionIcon = section.icon;
-          const isOpen = !!openSections[section.title];
+          const items = section.items
+            .filter((item) => item.href !== "/platform/settings/access" || canManageAccounts)
+            .filter((item) => !isSuperAdminView || section.title !== "Settings" || item.href === "/platform/settings/access");
+          const isCurrentSection = items.some(({ href }) => pathname === href || pathname.startsWith(`${href}/`));
+          const isOpen = openSections[section.title] ?? isCurrentSection;
 
           return (
             <div key={section.title} className="space-y-1">
               <Button
-                onClick={() => toggleSection(section.title)}
-                className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-slate-700 transition-all hover:bg-slate-100 hover:text-slate-900"
-              type="submit" >
+                onClick={() => toggleSection(section.title, isOpen)}
+                variant="ghost"
+                aria-expanded={isOpen}
+                className={`flex w-full items-center justify-between rounded-md border-l-2 px-2 py-2 text-slate-300 transition-colors hover:bg-slate-800 hover:text-white ${
+                  isCurrentSection
+                    ? "border-emerald-500 font-bold text-white"
+                    : "border-transparent"
+                }`}
+                type="button"
+              >
                 <div className="flex items-center gap-2">
-                  <SectionIcon size={15} className="text-slate-500" />
-                  <span className="hidden text-[11px] font-semibold uppercase tracking-wider text-slate-500 group-data-[expanded=true]:block">
+                  <span
+                    className={`h-2 w-2 shrink-0 rounded-full ${
+                      isCurrentSection ? "bg-emerald-400" : "bg-slate-500"
+                    }`}
+                    aria-hidden="true"
+                  />
+                  <span className="hidden text-[0.875rem] font-medium text-slate-300 group-data-[expanded=true]:block">
                     {section.title}
                   </span>
                 </div>
@@ -157,12 +162,9 @@ export default function PlatformRootLayoutClient({
               </Button>
 
               {isOpen && (
-                <div className="space-y-1 pl-2 group-data-[expanded=true]:pl-4">
-                  {section.items
-                    .filter((item) => item.href !== "/platform/settings/access" || canManageAccounts)
-                    .filter((item) => !isSuperAdminView || section.title !== "Settings" || item.href === "/platform/settings/access")
-                    .map((item) => {
-                    const ItemIcon = item.icon;
+                <div className="ml-3 space-y-1 border-l border-slate-800 pl-2 group-data-[expanded=true]:ml-4 group-data-[expanded=true]:pl-3">
+                  {items.map((item) => {
+                    const isCurrentPage = pathname === item.href || pathname.startsWith(`${item.href}/`);
                     const attentionCount = item.href === "/platform/support-tickets"
                       ? attentionCounts.openTickets
                       : item.href === "/platform/organisations"
@@ -175,13 +177,23 @@ export default function PlatformRootLayoutClient({
                       <Link
                         key={item.href}
                         href={item.href}
-                        className="flex items-center gap-3 rounded-lg px-2 py-2 text-sm font-medium text-slate-700 transition-all hover:bg-slate-100 hover:text-slate-900"
+                        aria-current={isCurrentPage ? "page" : undefined}
+                        className={`flex items-center gap-3 border-l-2 px-2 py-2 text-[0.8125rem] font-normal transition-colors ${
+                          isCurrentPage
+                            ? "-ml-px rounded-md border-emerald-600 bg-emerald-600 font-medium text-white"
+                            : "border-transparent text-slate-200 hover:rounded-md hover:bg-slate-800 hover:text-white"
+                        }`}
                       >
-                        <ItemIcon size={18} className="shrink-0 text-slate-500" />
+                        <span
+                          className={`h-2 w-2 shrink-0 rounded-full ${
+                            isCurrentPage ? "bg-white" : "bg-slate-500"
+                          }`}
+                          aria-hidden="true"
+                        />
                         <span className="hidden whitespace-nowrap group-data-[expanded=true]:block">
                           {item.label}
                         </span>
-                        {attentionCount > 0 && <span aria-label={`${attentionCount} items need attention`} className="ml-auto rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold leading-none text-amber-800">{attentionCount}</span>}
+                        {attentionCount > 0 && <span aria-label={`${attentionCount} items need attention`} className="ml-auto rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold leading-none text-slate-950">{attentionCount}</span>}
                       </Link>
                     );
                     })}

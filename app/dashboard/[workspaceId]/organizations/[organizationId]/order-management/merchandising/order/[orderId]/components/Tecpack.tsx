@@ -28,7 +28,8 @@ export default function TecPackTab({
         <Button
           type="button"
           onClick={handlePrint}
-          className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 transition-all flex items-center gap-2"
+          variant="secondary"
+          className="rounded-xl px-4 py-2 text-xs font-semibold transition-all flex items-center gap-2"
         >
           <span>🖨️</span> Print / Download PDF
         </Button>

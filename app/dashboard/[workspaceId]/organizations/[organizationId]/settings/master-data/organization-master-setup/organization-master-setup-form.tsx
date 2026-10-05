@@ -338,10 +338,10 @@ export default function OrganizationMasterSetupForm({
             });
           const removeButton = (recordIndex: number) => (
             <Button
-              className="h-9 min-h-9 w-9 shrink-0 self-end p-0 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+              className="h-9 min-h-9 w-9 shrink-0 self-end p-0"
               size="sm"
               type="button"
-              variant="ghost"
+              variant="danger"
               onClick={() => removeRecord(recordIndex)}
               aria-label={`Remove ${definition.label} entry`}
               title="Remove entry"
@@ -380,15 +380,12 @@ export default function OrganizationMasterSetupForm({
                 record.moduleKey === definition.key ? (
                   <div
                     key={`${definition.key}-${index}`}
-                    className="overflow-x-auto rounded-lg border border-dashed border-slate-200 bg-slate-50/50 p-2"
+                    className="min-w-0 max-w-full rounded-lg border border-dashed border-slate-200 bg-slate-50/50 p-2"
                   >
                     <div
-                      className="grid min-w-0 gap-2 items-end"
+                      className="grid min-w-0 items-end gap-2"
                       style={{
-                        gridTemplateColumns:
-                          activeStage === "independent"
-                            ? `minmax(12rem, 1.2fr) repeat(${editableFields.length}, minmax(7rem, 1fr))`
-                            : `repeat(${editableFields.length}, minmax(8rem, 1fr)) minmax(12rem, 1.1fr)`,
+                        gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 12rem), 1fr))",
                       }}
                     >
                       {activeStage === "independent" ? (

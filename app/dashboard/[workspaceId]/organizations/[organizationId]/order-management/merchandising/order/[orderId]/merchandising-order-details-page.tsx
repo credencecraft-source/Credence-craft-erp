@@ -758,7 +758,7 @@ export default function MerchandisingOrderDetailsPage() {
               variant="secondary"
               size="sm"
               onClick={goBack}
-              className="rounded-lg border border-slate-200 px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-200"
+              className="rounded-lg px-3 py-1.5 font-semibold"
             >
               ← Back
             </Button>
@@ -768,12 +768,12 @@ export default function MerchandisingOrderDetailsPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            {orderId && <Button type="button" variant="secondary" onClick={openShareDialog} className="border-emerald-200 bg-emerald-50 px-4 py-2 text-emerald-800 hover:bg-emerald-100">Share with Buyer</Button>}
+            {orderId && <Button type="button" variant="secondary" onClick={openShareDialog} className="px-4 py-2">Share with Buyer</Button>}
             {orderId && <Button type="button" onClick={handleSave} disabled={isSaving} className="px-4 py-2">{isSaving ? "Saving..." : "Save Order"}</Button>}
           </div>
         </div>
 
-        {shareOpen && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center justify-between"><div><h3 className="font-bold text-emerald-950">Share with Buyer</h3><p className="mt-1 text-emerald-800">The buyer configured for this order will receive a workspace notification.</p><p className="mt-1 text-xs text-emerald-700">Internal consumption and internal price are never shared with the buyer.</p></div><Button type="button" variant="ghost" onClick={() => setShareOpen(false)} className="text-sm font-semibold text-emerald-800">Close</Button></div><div className="mt-3 flex gap-2"><Button type="button" onClick={() => void handleShare()} disabled={isSharing} className="rounded-md bg-emerald-700 px-4 py-2 font-semibold text-white">{isSharing ? "Sharing..." : "Confirm and share"}</Button></div></div>}
+        {shareOpen && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center justify-between"><div><h3 className="font-bold text-emerald-950">Share with Buyer</h3><p className="mt-1 text-emerald-800">The buyer configured for this order will receive a workspace notification.</p><p className="mt-1 text-xs text-emerald-700">Internal consumption and internal price are never shared with the buyer.</p></div><Button type="button" variant="ghost" onClick={() => setShareOpen(false)} className="text-sm font-semibold">Close</Button></div><div className="mt-3 flex gap-2"><Button type="button" onClick={() => void handleShare()} disabled={isSharing} className="rounded-md px-4 py-2 font-semibold">{isSharing ? "Sharing..." : "Confirm and share"}</Button></div></div>}
         {/* Scrollable Tab Navigation */}
         <Tabs
           tabs={tabs.map((tab) => ({ value: tab.id, label: `${tab.label}${tab.count !== undefined && tab.count > 0 ? ` (${tab.count})` : ""}`, panelId: "merchandising-order-tab-panel" }))}

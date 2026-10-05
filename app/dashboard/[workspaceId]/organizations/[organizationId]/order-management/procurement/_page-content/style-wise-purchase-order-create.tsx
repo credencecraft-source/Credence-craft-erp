@@ -163,7 +163,7 @@ export function MasterPurchaseOrderReport({
             type="button"
             onClick={generatePurchaseOrders}
             disabled={generating || selectedIds.size === 0}
-            className="rounded-md bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            className="rounded-md px-4 py-2 text-xs font-bold"
           >
             {generating
               ? "Generating..."
@@ -289,7 +289,14 @@ export function MasterPurchaseOrderReport({
                     >
                       <div className="flex items-center gap-2">
                         {master.sourceType === "STOCK" && (master.status === "MASTER_GROUPED" ? (
-                          <Button type="button" size="sm" disabled={notifyingId === master.id || deletingId === master.id} onClick={() => void notifyStore(master)}>
+                          <Button
+                            type="button"
+                            variant="primary"
+                            size="sm"
+                            className="whitespace-nowrap"
+                            disabled={notifyingId === master.id || deletingId === master.id}
+                            onClick={() => void notifyStore(master)}
+                          >
                             {notifyingId === master.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Store className="h-3.5 w-3.5" />}
                             Notify Store
                           </Button>
@@ -298,11 +305,13 @@ export function MasterPurchaseOrderReport({
                         ))}
                         <Button
                           type="button"
+                          variant="danger"
+                          size="sm"
                           disabled={deletingId === master.id || notifyingId === master.id}
                           onClick={() => void deleteMaster(master)}
                           aria-label={`Delete ${master.masterPoNo}`}
                           title={master.sourceType === "STOCK" ? "Delete Master Group and linked Store records" : "Delete Master Group"}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="h-8 w-8 min-h-0 rounded-lg px-0 py-0"
                         >
                           {deletingId === master.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                         </Button>

@@ -487,7 +487,7 @@ export default function PosBarcodeBillingPage({
   };
 
   return (
-    <Page as="div" className="min-h-screen max-w-[1600px] py-4">
+    <Page as="div" className="min-w-0 max-w-[1600px]">
       <div className="print:hidden">
         <Section className="flex min-h-[calc(100vh-2rem)] flex-col gap-4">
           <div className="sticky top-0 z-20 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 bg-white/95 pb-4 backdrop-blur">
@@ -511,7 +511,7 @@ export default function PosBarcodeBillingPage({
                 type="button"
                 onClick={saveInvoice}
                 disabled={billLines.length === 0}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:bg-slate-300"
+                className="rounded-lg px-4 py-2 text-sm font-semibold"
               >
                 Save Invoice
               </Button>
@@ -544,7 +544,7 @@ export default function PosBarcodeBillingPage({
                 <Button
                   type="submit"
                   disabled={loading || !scanValue.trim()}
-                  className="rounded-lg bg-emerald-700 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-800 disabled:bg-slate-300"
+                  className="rounded-lg px-5 py-3 text-sm font-bold"
                 >
                   <Search className="h-4 w-4" />
                   {loading ? "Finding..." : "Find"}
@@ -647,7 +647,7 @@ export default function PosBarcodeBillingPage({
                   />
                 </label>
               </div>
-              <div className="mt-6 min-h-0 flex-1 overflow-auto rounded-md border border-slate-200">
+              <div className="mt-6 min-h-0 flex-1 overflow-x-hidden overflow-y-auto rounded-md border border-slate-200">
                 <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
                   <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-600">
                     Bill items
@@ -873,7 +873,8 @@ function SalesInvoicePrint({
         <Button
           type="button"
           onClick={onPrint}
-          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          variant="secondary"
+          className="rounded-lg px-4 py-2 text-sm font-semibold"
         >
           <Printer className="h-4 w-4" />
           Print / Download PDF
@@ -913,7 +914,8 @@ function SalesInvoicePrint({
             <p className="mt-1 font-semibold text-emerald-700">Pending</p>
           </div>
         </div>
-        <table className="mt-6 w-full text-left text-sm">
+        <div className="mt-6 min-w-0 max-w-full overflow-x-auto print:overflow-visible">
+          <table className="w-full text-left text-sm">
           <thead className="border-b-2 border-slate-200 text-[10px] font-bold uppercase tracking-wide text-slate-500">
             <tr>
               <th className="pb-3">Item / Style</th>
@@ -947,7 +949,8 @@ function SalesInvoicePrint({
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
         <div className="mt-6 flex justify-end border-t-2 border-slate-900 pt-4">
           <div className="w-64 space-y-2 text-sm">
             <div className="flex justify-between text-slate-600">
@@ -1032,12 +1035,12 @@ function StockDetailsDialog({
             size="sm"
             onClick={onClose}
             aria-label="Close stock details"
-            className="min-h-0 rounded-md p-1 text-slate-500 hover:bg-slate-100"
+            className="min-h-0 rounded-md p-1"
           >
             <X className="h-5 w-5" />
           </Button>
         </div>
-        <div className="min-h-0 overflow-auto p-5">
+        <div className="min-h-0 overflow-x-hidden overflow-y-auto p-5">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {details.map(([label, value]) => (
               <div
@@ -1060,14 +1063,14 @@ function StockDetailsDialog({
             variant="secondary"
             size="sm"
             onClick={onClose}
-            className="rounded-md border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+            className="rounded-md px-4 py-2 text-xs font-semibold"
           >
             Cancel
           </Button>
           <Button
             type="button"
             onClick={onAdd}
-            className="rounded-md bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800"
+            className="rounded-md px-4 py-2 text-xs font-bold"
           >
             Add to bill
           </Button>

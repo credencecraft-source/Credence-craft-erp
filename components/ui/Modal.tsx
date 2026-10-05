@@ -95,7 +95,7 @@ export default function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-[2px]"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 backdrop-blur-[2px] sm:items-center"
       onClick={closeOnBackdrop ? onClose : undefined}
       onKeyDown={handleKeyDown}
       role="presentation"
@@ -107,7 +107,7 @@ export default function Modal({
         aria-modal="true"
         ref={dialogRef}
         tabIndex={-1}
-        className={cn("w-full overflow-hidden rounded-2xl border bg-white shadow-[0_24px_70px_rgba(15,23,42,0.2)]", variants[variant], sizes[size], className)}
+        className={cn("max-h-[calc(100dvh-2rem)] w-full min-w-0 max-w-full overflow-x-hidden overflow-y-auto rounded-2xl border bg-white shadow-[0_24px_70px_rgba(15,23,42,0.2)]", variants[variant], sizes[size], className)}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
       >

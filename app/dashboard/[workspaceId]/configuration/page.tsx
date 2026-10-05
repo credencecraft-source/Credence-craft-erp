@@ -100,7 +100,7 @@ export default async function WorkspaceConfigurationPage({
   }
 
   return (
-    <Page className="max-w-4xl px-4 py-8">
+    <Page className="max-w-4xl">
       <Section className="space-y-6">
         {successMessage && (
           <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900 shadow-xs" role="status">

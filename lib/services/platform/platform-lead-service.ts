@@ -366,3 +366,64 @@ export async function updateNewPlatformLeadStages(leadIds: string[], stage: stri
     return { updatedCount: result.count };
   });
 }
+
+export async function updatePlatformLeadStages(leadIds: string[], stage: string) {
+  const admin = await requirePlatformSessionAdmin();
+  if (!Array.isArray(leadIds) || leadIds.length === 0 || leadIds.length > 500) {
+    throw new Error("Select between 1 and 500 leads.");
+  }
+  const ids = [...new Set(leadIds.map((id) => id.trim()).filter(Boolean))];
+  if (ids.length !== leadIds.length || ids.some((id) => id.length > 255)) {
+    throw new Error("Select valid leads.");
+  }
+  const normalizedStage = stage.trim();
+  if (!PLATFORM_LEAD_STAGES.includes(normalizedStage as PlatformLeadStage)) {
+    throw new Error("Select a valid lead stage.");
+  }
+
+  return prisma.$transaction(async (transaction) => {
+    const records = await transaction.platformLead.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, stage: true },
+    });
+    if (records.length !== ids.length) throw new Error("One or more selected leads were not found.");
+
+    const changes = records.filter((lead) => lead.stage !== normalizedStage);
+    if (changes.length === 0) {
+      return { updatedCount: 0, unchangedCount: records.length };
+    }
+
+    const stageGroups = new Map<string, typeof changes>();
+    for (const change of changes) {
+      const group = stageGroups.get(change.stage) ?? [];
+      group.push(change);
+      stageGroups.set(change.stage, group);
+    }
+    for (const [previousStage, group] of stageGroups) {
+      const result = await transaction.platformLead.updateMany({
+        where: {
+          id: { in: group.map(({ id }) => id) },
+          stage: previousStage,
+        },
+        data: { stage: normalizedStage },
+      });
+      if (result.count !== group.length) {
+        throw new Error("A selected lead changed status. Refresh and try again.");
+      }
+    }
+
+    await transaction.platformAuditEvent.createMany({
+      data: changes.map((lead) => ({
+        platform_admin_id: admin.id,
+        action: "PLATFORM_LEAD_STAGE_UPDATED",
+        entity_type: "PlatformLead",
+        entity_id: lead.id,
+        details: { previousStage: lead.stage, stage: normalizedStage },
+      })),
+    });
+    return {
+      updatedCount: changes.length,
+      unchangedCount: records.length - changes.length,
+    };
+  });
+}

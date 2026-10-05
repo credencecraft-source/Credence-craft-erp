@@ -86,7 +86,7 @@ export default function AsnTab({
           size="sm"
           type="button"
           onClick={addAsnRow}
-          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
+          className="rounded-lg px-3 py-1.5 text-xs font-semibold"
         >
           <span>+</span> Create ASN
         </Button>

@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getRmGrnVerification, getRmGrnVerificationDraftsForPurchaseOrder, InvalidActualCountError, listRmGrnVerificationAllocations, MasterGroupRequiredError, RmGrnVerificationNotFoundError, saveRmGrnVerification } from "@/lib/services/inventory/rm-grn-verification-service";
 import { getStockVerificationDetails, listPendingStockVerificationTasks, saveStockGroupVerification } from "@/lib/services/inventory/rm-stock-verification-service";
+import { getRawMaterialPickSummariesForGroupedLines } from "@/lib/services/inventory/raw-material-outward-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 function errorResponse(error: unknown, fallback: string) {
@@ -40,10 +41,23 @@ export async function GET(request: Request) {
       return NextResponse.json({ stockTasks });
     }
     if (searchParams.get("allocationRegister") === "true") {
-      const allocations = searchParams.get("styleWiseInventory") === "true"
+      const styleWiseInventory = searchParams.get("styleWiseInventory") === "true";
+      const allocations = styleWiseInventory
         ? await listRmGrnVerificationAllocations(organization.id, { styleWiseInventory: true })
         : await listRmGrnVerificationAllocations(organization.id);
-      return NextResponse.json({ allocations });
+      if (!styleWiseInventory) return NextResponse.json({ allocations });
+      const lineIds = allocations.flatMap((record) => record.orderAllocations.map((line) => line.groupedPurchaseOrderLineId));
+      const pickSummaries = await getRawMaterialPickSummariesForGroupedLines(organization.id, user.id, lineIds);
+      return NextResponse.json({
+        allocations: allocations.map((record) => ({
+          ...record,
+          orderAllocations: record.orderAllocations.map((line) => ({
+            ...line,
+            pickedQuantity: pickSummaries[line.groupedPurchaseOrderLineId]?.pickedQuantity ?? "0",
+            balanceStock: pickSummaries[line.groupedPurchaseOrderLineId]?.balanceStock ?? "0",
+          })),
+        })),
+      });
     }
 
     const purchaseOrderId = searchParams.get("purchaseOrderId") ?? "";

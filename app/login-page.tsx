@@ -145,30 +145,59 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-dvh flex-col bg-[#f3f6f1] text-[#183b2c]">
+    <main className="flex min-h-dvh flex-col bg-[var(--erp-bg)] text-[var(--erp-text)]">
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 sm:px-6 lg:px-8">
         <PublicHeader active={view === "impact" ? "impact" : undefined} onImpactClick={() => setView("impact")} />
         <section className="grid flex-1 content-center items-center gap-6 py-4 sm:gap-10 sm:py-8 lg:min-h-[calc(100dvh-73px)] lg:grid-cols-[1.05fr_0.95fr] lg:gap-20 lg:py-12">
           <div className="hidden max-w-xl text-center lg:block lg:text-left">
-            <div className="flex items-center justify-center gap-2 text-[9px] font-semibold uppercase tracking-[0.2em] text-[#6d8c46] lg:justify-start"><span className="h-1.5 w-1.5 rounded-full bg-[#a7c65a]" /> Apparel, with intention</div>
-            <h1 className="mt-4 text-4xl font-semibold leading-[0.96] tracking-[-0.065em] sm:text-5xl lg:mt-5 lg:text-7xl">Make better clothes. <span className="text-[#6d8c46]">Leave less behind.</span></h1>
-            <p className="mx-auto mt-4 max-w-md text-sm leading-6 text-[#587066] lg:mx-0 lg:mt-6 lg:text-[14px] lg:leading-7">One thoughtful workspace for the people, materials and decisions that move fashion forward.</p>
-            <div className="mt-7 grid max-w-md grid-cols-3 gap-3 border-t border-[#d9e3dc] pt-5 text-left lg:mt-10">{[{ icon: Leaf, label: "Trace materials" }, { icon: Scissors, label: "Respect craft" }, { icon: Recycle, label: "Reduce waste" }].map(({ icon: Icon, label }) => <div key={label} className="space-y-2"><Icon size={16} className="text-[#6d8c46]" /><p className="text-[11px] leading-4 text-[#587066]">{label}</p></div>)}</div>
-            <Button variant="ghost" size="sm" onClick={() => setView(view === "impact" ? "login" : "impact")} className="mt-7 min-h-0 rounded-none border-0 px-0 py-0 text-[12px] font-semibold text-[#183b2c] underline decoration-[#a7c65a] decoration-2 underline-offset-4 hover:bg-transparent lg:mt-10">{view === "impact" ? "Return to sign in" : "See the impact of one production cycle"}<ArrowRight size={14} /></Button>
+            <div className="flex items-center justify-center gap-2 text-[0.625rem] font-bold uppercase tracking-[0.16em] text-[var(--erp-brand)] lg:justify-start">
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--erp-brand)]" /> Apparel, with intention
+            </div>
+            <h1 className="mt-4 text-[1.5rem] font-bold leading-[0.96] tracking-[-0.04em] sm:text-[2.5rem] lg:mt-5 lg:text-[3.5rem]">
+              Make better clothes. <span className="text-[var(--erp-brand)]">Leave less behind.</span>
+            </h1>
+            <p className="mx-auto mt-4 max-w-md text-sm leading-6 text-[var(--erp-muted)] lg:mx-0 lg:mt-6 lg:text-[0.875rem] lg:leading-7">
+              One thoughtful workspace for the people, materials and decisions that move fashion forward.
+            </p>
+            <div className="mt-7 grid max-w-md grid-cols-3 gap-3 border-t border-[var(--erp-border)] pt-5 text-left lg:mt-10">
+              {[{ icon: Leaf, label: "Trace materials" }, { icon: Scissors, label: "Respect craft" }, { icon: Recycle, label: "Reduce waste" }].map(({ icon: Icon, label }) => (
+                <div key={label} className="space-y-2">
+                  <Icon size={16} className="text-[var(--erp-brand)]" />
+                  <p className="text-[0.6875rem] leading-4 text-[var(--erp-muted)]">{label}</p>
+                </div>
+              ))}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setView(view === "impact" ? "login" : "impact")}
+              className="mt-7 min-h-0 rounded-none border-0 px-0 py-0 text-[0.75rem] font-semibold text-[var(--erp-text)] underline decoration-[var(--erp-brand)] decoration-2 underline-offset-4 hover:bg-transparent lg:mt-10"
+            >
+              {view === "impact" ? "Return to sign in" : "See the impact of one production cycle"}
+              <ArrowRight size={14} />
+            </Button>
           </div>
 
-          {view === "login" ? <section id="sign-in" className="mx-auto flex min-h-[calc(100dvh-7rem)] w-full max-w-lg flex-col justify-center rounded-[1.5rem] border border-[#d9e3dc] bg-white p-5 shadow-[0_22px_70px_rgba(24,59,44,0.08)] sm:min-h-0 sm:p-6 lg:rounded-[1.75rem] lg:p-8">
-            <div className="flex items-start justify-between gap-3"><div><p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-[#6d8c46] sm:text-[10px]">Your workspace</p><h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] sm:text-2xl">Welcome back.</h2></div><span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#edf5e7] text-[#6d8c46] sm:h-9 sm:w-9"><Leaf size={17} /></span></div>
-            <div className="mt-5 flex gap-3 border-b border-[#e7eee8] text-[12px] font-semibold sm:mt-7">
-              <Button variant="ghost" size="sm" aria-pressed={authMethod === "email" && mode !== "support"} onClick={() => { switchAuthMethod("email"); switchMode("login"); }} className={`hidden min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[12px] hover:bg-transparent ${authMethod === "email" && mode !== "support" ? "border-[#183b2c] text-[#183b2c]" : "border-transparent text-[#93a39a]"}`}>Email</Button>
-              <Button variant="ghost" size="sm" aria-pressed={authMethod === "mobile"} onClick={() => switchAuthMethod("mobile")} className={`min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[12px] hover:bg-transparent ${authMethod === "mobile" ? "border-[#183b2c] text-[#183b2c]" : "border-transparent text-[#93a39a]"}`}>Mobile</Button>
-              <Button variant="ghost" size="sm" aria-pressed={mode === "support"} onClick={() => { switchAuthMethod("email"); switchMode("support"); }} className={`min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[12px] hover:bg-transparent ${mode === "support" && authMethod === "email" ? "border-[#183b2c] text-[#183b2c]" : "border-transparent text-[#93a39a]"}`}>Support</Button>
+          {view === "login" ? <section id="sign-in" className="mx-auto flex min-h-[calc(100dvh-7rem)] w-full max-w-lg flex-col justify-center rounded-[1.5rem] border border-[var(--erp-border)] bg-[var(--erp-surface)] p-5 shadow-[var(--erp-shadow)] sm:min-h-0 sm:p-6 lg:rounded-[1.75rem] lg:p-8">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[0.625rem] font-bold uppercase tracking-[0.16em] text-[var(--erp-brand)] sm:text-[0.625rem]">Your workspace</p>
+                <h2 className="mt-2 text-[1.5rem] font-semibold tracking-[-0.04em] sm:text-[1.625rem]">Welcome back.</h2>
+              </div>
+              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--erp-brand-soft)] text-[var(--erp-brand)] sm:h-9 sm:w-9">
+                <Leaf size={17} />
+              </span>
+            </div>
+            <div className="mt-5 flex gap-3 border-b border-[var(--erp-border)] text-[0.75rem] font-semibold sm:mt-7">
+              <Button variant="ghost" size="sm" aria-pressed={authMethod === "email" && mode !== "support"} onClick={() => { switchAuthMethod("email"); switchMode("login"); }} className={`hidden min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[0.75rem] hover:bg-transparent ${authMethod === "email" && mode !== "support" ? "border-[var(--erp-text)] text-[var(--erp-text)]" : "border-transparent text-[var(--erp-muted)]"}`}>Email</Button>
+              <Button variant="ghost" size="sm" aria-pressed={authMethod === "mobile"} onClick={() => switchAuthMethod("mobile")} className={`min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[0.75rem] hover:bg-transparent ${authMethod === "mobile" ? "border-[var(--erp-text)] text-[var(--erp-text)]" : "border-transparent text-[var(--erp-muted)]"}`}>Mobile</Button>
+              <Button variant="ghost" size="sm" aria-pressed={mode === "support"} onClick={() => { switchAuthMethod("email"); switchMode("support"); }} className={`min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[0.75rem] hover:bg-transparent ${mode === "support" && authMethod === "email" ? "border-[var(--erp-text)] text-[var(--erp-text)]" : "border-transparent text-[var(--erp-muted)]"}`}>Support</Button>
             </div>
             {authMethod === "mobile" ? (
               <div className="mt-5 sm:mt-6">
                 {mobileEmailNumber ? (
                   <div className="space-y-3">
-                    <p className="rounded-xl border border-[#f4dfbb] bg-gradient-to-r from-[#fffaf0] to-[#fff3e8] px-4 py-3 text-center text-lg font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-[#b45309] via-[#ea7c16] to-[#f2b544]" role="status">
+                    <p className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-brand-soft)] px-4 py-3 text-center text-lg font-extrabold tracking-tight text-[var(--erp-brand)]" role="status">
                       {mobileEmailHint}
                     </p>
                     <Input
@@ -197,11 +226,11 @@ export default function LoginPage() {
                         setMobileEmailMessage("");
                       }}
                       disabled={mobileEmailBusy}
-                      className="h-auto min-h-0 px-0 py-0 text-xs font-semibold text-[#587066] underline underline-offset-2 hover:bg-transparent"
+                      className="h-auto min-h-0 px-0 py-0 text-xs font-semibold text-[var(--erp-muted)] underline underline-offset-2 hover:bg-transparent"
                     >
                       Change mobile number
                     </Button>
-                    {mobileEmailMessage && <p className="rounded-xl bg-[#f3f6f1] p-3 text-[12px] leading-5 text-[#587066]" role="alert">{mobileEmailMessage}</p>}
+                    {mobileEmailMessage && <p className="rounded-xl bg-[var(--erp-bg)] p-3 text-[0.75rem] leading-5 text-[var(--erp-muted)]" role="alert">{mobileEmailMessage}</p>}
                   </div>
                 ) : (
                   <Msg91MobileOtpWidget
@@ -219,10 +248,10 @@ export default function LoginPage() {
                 )}
               </div>
             ) : (
-              <div className="mt-5 space-y-4 sm:mt-6"><Input label={mode === "support" ? "Support email" : "Email"} type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" className="min-h-[52px] text-base" />{otpSent && <Input label="One-time code" value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="6-digit code" className="min-h-[52px] text-base" />}{!otpSent ? <Button onClick={requestOtp} disabled={loading} className="mt-1 w-full bg-[#183b2c] py-3 text-base font-semibold hover:bg-[#245640]">{loading ? "Sending..." : "Continue with email"}</Button> : <Button onClick={verifyOtp} disabled={loading} className="mt-1 w-full bg-[#183b2c] py-3 text-base font-semibold hover:bg-[#245640]">{loading ? "Verifying..." : "Verify and continue"}</Button>}{message && <p className="rounded-xl bg-[#f3f6f1] p-3 text-[12px] leading-5 text-[#587066]" role="status">{message}</p>}</div>
+              <div className="mt-5 space-y-4 sm:mt-6"><Input label={mode === "support" ? "Support email" : "Email"} type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" className="min-h-[52px] text-base" />{otpSent && <Input label="One-time code" value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="6-digit code" className="min-h-[52px] text-base" />}{!otpSent ? <Button onClick={requestOtp} disabled={loading} className="mt-1 w-full bg-[var(--erp-brand)] py-3 text-base font-semibold hover:bg-[var(--erp-brand-hover)]">{loading ? "Sending..." : "Continue with email"}</Button> : <Button onClick={verifyOtp} disabled={loading} className="mt-1 w-full bg-[var(--erp-brand)] py-3 text-base font-semibold hover:bg-[var(--erp-brand-hover)]">{loading ? "Verifying..." : "Verify and continue"}</Button>}{message && <p className="rounded-xl bg-[var(--erp-bg)] p-3 text-[0.75rem] leading-5 text-[var(--erp-muted)]" role="status">{message}</p>}</div>
             )}
-            <p className="mt-5 text-[10px] leading-4 text-[#93a39a] sm:mt-6">By continuing, you agree to our <Link href="/terms" className="text-[#587066] underline underline-offset-2">terms</Link>.</p>
-          </section> : <section id="impact" className="mx-auto w-full max-w-lg rounded-[1.5rem] bg-[#183b2c] p-4 text-white shadow-[0_22px_70px_rgba(24,59,44,0.12)] sm:p-6 lg:rounded-[1.75rem] lg:p-8"><div className="flex items-start justify-between gap-3"><div><p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-[#d8ef72] sm:text-[10px]">A clearer footprint</p><h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] sm:text-2xl">Impact snapshot</h2></div><Waves size={18} className="text-[#d8ef72]" /></div><div className="mt-7 grid gap-4 sm:mt-8 sm:grid-cols-2"><Input label="Fabric waste (kg)" type="number" min="0" value={fabricWaste} onChange={(event) => updateNumber(setFabricWaste, event.target.value)} className="border-white/20 bg-white/10 text-white" /><Input label="Recovered waste (kg)" type="number" min="0" value={recycledWaste} onChange={(event) => updateNumber(setRecycledWaste, event.target.value)} className="border-white/20 bg-white/10 text-white" /><Input label="Water used (litres)" type="number" min="0" value={waterUsed} onChange={(event) => updateNumber(setWaterUsed, event.target.value)} className="border-white/20 bg-white/10 text-white" /></div><div className="mt-7 grid grid-cols-2 gap-3"><div className="rounded-xl bg-white/10 p-4"><Recycle size={15} className="text-[#d8ef72]" /><p className="mt-4 text-[10px] uppercase tracking-wider text-white/50">Waste recovered</p><p className="mt-1 text-2xl font-semibold">{recoveryRate.toFixed(0)}%</p></div><div className="rounded-xl bg-white/10 p-4"><Zap size={15} className="text-[#e8c875]" /><p className="mt-4 text-[10px] uppercase tracking-wider text-white/50">Carbon estimate</p><p className="mt-1 text-2xl font-semibold">{Math.round(carbonImpact).toLocaleString()} <span className="text-[10px] text-white/50">kg CO₂e</span></p></div></div><p className="mt-6 text-[11px] leading-5 text-white/60">A directional estimate to help teams ask better questions about recovery, water and material flow.</p></section>}
+            <p className="mt-5 text-[0.625rem] leading-4 text-[var(--erp-muted)] sm:mt-6">By continuing, you agree to our <Link href="/terms" className="text-[var(--erp-text)] underline underline-offset-2">terms</Link>.</p>
+          </section> : <section id="impact" className="mx-auto w-full max-w-lg rounded-[1.5rem] bg-[var(--erp-brand)] p-4 text-white shadow-[0_22px_70px_rgba(24,59,44,0.12)] sm:p-6 lg:rounded-[1.75rem] lg:p-8"><div className="flex items-start justify-between gap-3"><div><p className="text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-[var(--erp-brand-soft)] sm:text-[0.625rem]">A clearer footprint</p><h2 className="mt-2 text-[1.5rem] font-semibold tracking-[-0.04em] sm:text-[1.625rem]">Impact snapshot</h2></div><Waves size={18} className="text-[var(--erp-brand-soft)]" /></div><div className="mt-7 grid gap-4 sm:mt-8 sm:grid-cols-2"><Input label="Fabric waste (kg)" type="number" min="0" value={fabricWaste} onChange={(event) => updateNumber(setFabricWaste, event.target.value)} className="border-white/20 bg-white/10 text-white" /><Input label="Recovered waste (kg)" type="number" min="0" value={recycledWaste} onChange={(event) => updateNumber(setRecycledWaste, event.target.value)} className="border-white/20 bg-white/10 text-white" /><Input label="Water used (litres)" type="number" min="0" value={waterUsed} onChange={(event) => updateNumber(setWaterUsed, event.target.value)} className="border-white/20 bg-white/10 text-white" /></div><div className="mt-7 grid grid-cols-2 gap-3"><div className="rounded-xl bg-white/10 p-4"><Recycle size={15} className="text-[var(--erp-brand-soft)]" /><p className="mt-4 text-[0.625rem] uppercase tracking-wider text-white/50">Waste recovered</p><p className="mt-1 text-[1.5rem] font-semibold">{recoveryRate.toFixed(0)}%</p></div><div className="rounded-xl bg-white/10 p-4"><Zap size={15} className="text-[var(--erp-brand-soft)]" /><p className="mt-4 text-[0.625rem] uppercase tracking-wider text-white/50">Carbon estimate</p><p className="mt-1 text-[1.5rem] font-semibold">{Math.round(carbonImpact).toLocaleString()} <span className="text-[0.625rem] text-white/50">kg CO₂e</span></p></div></div><p className="mt-6 text-[0.6875rem] leading-5 text-white/60">A directional estimate to help teams ask better questions about recovery, water and material flow.</p></section>}
         </section>
         <Modal
           open={showMobileEmailNotice}
@@ -233,18 +262,18 @@ export default function LoginPage() {
           size="sm"
           className="p-6 text-center"
         >
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#edf5e7] text-[#47733b]">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[var(--erp-brand-soft)] text-[var(--erp-brand)]">
             <MailCheck size={26} aria-hidden="true" />
           </div>
-          <h2 id="mobile-email-otp-title" className="mt-4 text-xl font-semibold tracking-tight text-[#183b2c]">
+          <h2 id="mobile-email-otp-title" className="mt-4 text-xl font-semibold tracking-tight text-[var(--erp-text)]">
             Check your email
           </h2>
-          <p id="mobile-email-otp-description" className="mt-3 break-all bg-gradient-to-r from-[#b45309] via-[#ea7c16] to-[#f2b544] bg-clip-text text-2xl font-extrabold tracking-tight text-transparent">
+          <p id="mobile-email-otp-description" className="mt-3 break-all text-[1.5rem] font-extrabold tracking-tight text-[var(--erp-brand)]">
             {mobileEmailHint}
           </p>
           <Button
             onClick={() => setShowMobileEmailNotice(false)}
-            className="mt-5 w-full bg-[#183b2c] py-2.5 text-sm font-semibold hover:bg-[#245640]"
+            className="mt-5 w-full bg-[var(--erp-brand)] py-2.5 text-sm font-semibold hover:bg-[var(--erp-brand-hover)]"
           >
             Got it, enter my code
           </Button>

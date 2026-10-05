@@ -16,6 +16,7 @@ import {
 import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
 import { requireSessionUser } from "@/lib/auth/session-manager"; // Fixed typo (removed trailing 's')
 import { hasOrganizationTrialAccess, startOrganizationTrialOnFirstOpen } from "@/lib/services/platform/organization-trial-service";
+import { getPlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 
 type OrganizationShellLayoutProps = {
   children: React.ReactNode;
@@ -58,7 +59,10 @@ export default async function OrganizationShellLayout({
   const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
 
   const activeBusinessTypesPromise = listActiveBusinessTypes();
-  const organization = await getOrganizationShellContext(user.id, organizationId);
+  const [organization, platformAdmin] = await Promise.all([
+    getOrganizationShellContext(user.id, organizationId),
+    getPlatformSessionAdmin(),
+  ]);
 
   if (!organization) {
     redirect(`/dashboard/${user.workspace_id}/home`);
@@ -170,6 +174,7 @@ export default async function OrganizationShellLayout({
       workspaceId={workspaceId}
       organizationId={organizationId}
       organizationName={organization.organization_name}
+      canAccessPlatformControlPanel={Boolean(platformAdmin)}
       hasAssignedPlatformVersion={Boolean(trialOrganization.platform_version_id)}
       trialEnabled={trialOrganization.trial_enabled}
       trialStartedAt={trialOrganization.trial_started_at?.toISOString() ?? null}

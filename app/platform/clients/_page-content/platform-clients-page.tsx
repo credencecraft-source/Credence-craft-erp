@@ -29,7 +29,7 @@ export default async function PlatformClientsPage({ searchParams }: { searchPara
   }
 
   return (
-    <Page className="max-w-none px-1 py-1 sm:px-2 lg:px-3">
+    <Page className="max-w-none">
       <Section className="space-y-3">
         <div>
           <p className="erp-eyebrow">Platform</p>

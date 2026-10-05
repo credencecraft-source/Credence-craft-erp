@@ -49,7 +49,7 @@ export default function SegmentRestrictionNavigation({
           {nextSegment ? <Link href={pathFor(nextSegment)} className="rounded-md bg-slate-900 px-2.5 py-1.5 text-white hover:bg-slate-700">Next</Link> : <span className="rounded-md bg-slate-100 px-2.5 py-1.5 text-slate-400">Next</span>}
         </div>
       </div>
-      <nav aria-label={`${restrictionLabel} restriction segments`} className="mt-4 flex gap-2 overflow-x-auto pb-1">
+      <nav aria-label={`${restrictionLabel} restriction segments`} className="mt-4 flex min-w-0 flex-wrap gap-2 pb-1">
         {segments.map((segment) => {
           const isCurrent = segment.id === currentSegmentId;
           return (
@@ -57,7 +57,7 @@ export default function SegmentRestrictionNavigation({
               key={segment.id}
               href={pathFor(segment)}
               aria-current={isCurrent ? "page" : undefined}
-              className={`shrink-0 rounded-md border px-3 py-2 text-xs font-semibold transition-colors ${isCurrent ? "border-emerald-600 bg-emerald-50 text-emerald-800" : "border-slate-200 text-slate-600 hover:border-emerald-300 hover:text-emerald-800"}`}
+              className={`max-w-full rounded-md border px-3 py-2 text-xs font-semibold transition-colors ${isCurrent ? "border-emerald-600 bg-emerald-50 text-emerald-800" : "border-slate-200 text-slate-600 hover:border-emerald-300 hover:text-emerald-800"}`}
             >
               {segment.name.toUpperCase()}
             </Link>

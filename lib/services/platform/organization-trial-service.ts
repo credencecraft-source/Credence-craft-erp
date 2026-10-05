@@ -7,7 +7,7 @@ import {
   PLATFORM_REVIEW_TRIAL_EXTENSION_DESCRIPTION_PREFIX,
   TRIAL_EXTENSION_REQUEST_SUBJECT,
 } from "@/lib/services/organizations/trial-extension-request-constants";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 const DEFAULT_TRIAL_HOURS = 24;
 const MAX_TRIAL_EXTENSION_HOURS = 8760;
@@ -18,6 +18,29 @@ const TRIAL_AUDIT_ACTIONS = [
   "ORGANIZATION_TRIAL_AUTO_EXTENDED",
   "ORGANIZATION_TRIAL_REMOVED",
 ] as const;
+const OPEN_TRIAL_REQUEST_STATUSES = ["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS"] as const;
+
+type PlatformTrialExtensionRequest = {
+  id: string;
+  organization_id: string | null;
+  request_type: string;
+  subject: string;
+  description: string;
+  status: string;
+};
+
+function isPlatformTrialExtensionRequest(
+  ticket: PlatformTrialExtensionRequest | null,
+): ticket is PlatformTrialExtensionRequest & { organization_id: string } {
+  return Boolean(
+    ticket?.organization_id
+    && ticket.request_type === "TICKET"
+    && ticket.subject === TRIAL_EXTENSION_REQUEST_SUBJECT
+    && (ticket.description.startsWith(PLATFORM_REVIEW_TRIAL_EXTENSION_DESCRIPTION_PREFIX)
+      || ticket.description === LEGACY_TRIAL_EXTENSION_REQUEST_DESCRIPTION)
+    && OPEN_TRIAL_REQUEST_STATUSES.includes(ticket.status as typeof OPEN_TRIAL_REQUEST_STATUSES[number]),
+  );
+}
 
 type OrganizationTrialHistoryEntry = {
   id: string;
@@ -288,47 +311,114 @@ export async function hasOrganizationTrialAccess(organizationId: string, now = n
   return effectivePlans.some(({ plan, isFree }) => Boolean(plan) && !isFree);
 }
 
+async function extendOrganizationTrialInTransaction(
+  transaction: Prisma.TransactionClient,
+  organizationId: string,
+  extensionHours: number,
+  platformAdminId: string,
+) {
+  if (!Number.isInteger(extensionHours) || extensionHours < 1 || extensionHours > MAX_TRIAL_EXTENSION_HOURS) {
+    throw new Error(`Trial extension must be between 1 and ${MAX_TRIAL_EXTENSION_HOURS} hours.`);
+  }
+
+  const organization = await transaction.organization.findUnique({
+    where: { id: organizationId },
+    select: {
+      id: true,
+      trial_started_at: true,
+      trial_ends_at: true,
+      trial_enabled: true,
+      trial_extension_hours: true,
+    },
+  });
+  if (!organization) throw new Error("Organization not found.");
+
+  const now = new Date();
+  const data = organization.trial_started_at
+    ? {
+        trial_enabled: true,
+        trial_ends_at: new Date(Math.max(organization.trial_ends_at?.getTime() ?? 0, now.getTime()) + extensionHours * HOUR_IN_MS),
+      }
+    : {
+        trial_enabled: true,
+        trial_extension_hours: organization.trial_extension_hours + extensionHours,
+      };
+  const updatedOrganization = await transaction.organization.update({
+    where: { id: organization.id },
+    data,
+    select: { trial_started_at: true, trial_ends_at: true, trial_enabled: true, trial_extension_hours: true },
+  });
+  await transaction.supportTicket.updateMany({
+    where: {
+      organization_id: organization.id,
+      subject: TRIAL_EXTENSION_REQUEST_SUBJECT,
+      request_type: "TICKET",
+      status: { in: [...OPEN_TRIAL_REQUEST_STATUSES] },
+      OR: [
+        { description: { startsWith: PLATFORM_REVIEW_TRIAL_EXTENSION_DESCRIPTION_PREFIX } },
+        { description: LEGACY_TRIAL_EXTENSION_REQUEST_DESCRIPTION },
+      ],
+    },
+    data: { status: "RESOLVED" },
+  });
+
+  await transaction.platformAuditEvent.create({
+    data: {
+      platform_admin_id: platformAdminId,
+      action: "ORGANIZATION_TRIAL_EXTENDED",
+      entity_type: "Organization",
+      entity_id: organization.id,
+      details: {
+        extensionHours,
+        previousTrialEnd: organization.trial_ends_at?.toISOString() ?? null,
+        trialEnd: updatedOrganization.trial_ends_at?.toISOString() ?? null,
+        configuredExtensionHours: updatedOrganization.trial_extension_hours,
+      },
+    },
+  });
+  return updatedOrganization;
+}
+
 export async function extendOrganizationTrial(organizationId: string, extensionHours: number) {
   const admin = await requirePlatformSessionAdmin();
   if (!organizationId.trim()) throw new Error("Select an organization.");
+
+  return prisma.$transaction(
+    (transaction) => extendOrganizationTrialInTransaction(transaction, organizationId, extensionHours, admin.id),
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 20000 },
+  );
+}
+
+export async function approveOrganizationTrialExtensionRequest(ticketId: string, extensionHours: number) {
+  const admin = await requirePlatformSessionAdmin();
+  if (!ticketId.trim()) throw new Error("Select a trial extension request.");
   if (!Number.isInteger(extensionHours) || extensionHours < 1 || extensionHours > MAX_TRIAL_EXTENSION_HOURS) {
     throw new Error(`Trial extension must be between 1 and ${MAX_TRIAL_EXTENSION_HOURS} hours.`);
   }
 
   return prisma.$transaction(async (transaction) => {
-    const organization = await transaction.organization.findUnique({
-      where: { id: organizationId },
+    const ticket = await transaction.supportTicket.findUnique({
+      where: { id: ticketId },
       select: {
         id: true,
-        trial_started_at: true,
-        trial_ends_at: true,
-        trial_enabled: true,
-        trial_extension_hours: true,
+        organization_id: true,
+        request_type: true,
+        subject: true,
+        description: true,
+        status: true,
       },
     });
-    if (!organization) throw new Error("Organization not found.");
+    if (!isPlatformTrialExtensionRequest(ticket)) {
+      throw new Error("This ticket is not an open trial extension request.");
+    }
 
-    const now = new Date();
-    const data = organization.trial_started_at
-      ? {
-          trial_enabled: true,
-          trial_ends_at: new Date(Math.max(organization.trial_ends_at?.getTime() ?? 0, now.getTime()) + extensionHours * HOUR_IN_MS),
-        }
-      : {
-          trial_enabled: true,
-          trial_extension_hours: organization.trial_extension_hours + extensionHours,
-        };
-    const updatedOrganization = await transaction.organization.update({
-      where: { id: organization.id },
-      data,
-      select: { trial_started_at: true, trial_ends_at: true, trial_enabled: true, trial_extension_hours: true },
-    });
-    await transaction.supportTicket.updateMany({
+    const claimed = await transaction.supportTicket.updateMany({
       where: {
-        organization_id: organization.id,
+        id: ticket.id,
+        organization_id: ticket.organization_id,
         subject: TRIAL_EXTENSION_REQUEST_SUBJECT,
         request_type: "TICKET",
-        status: { in: ["OPEN", "ACTIVE", "HOLD", "IN_PROGRESS"] },
+        status: { in: [...OPEN_TRIAL_REQUEST_STATUSES] },
         OR: [
           { description: { startsWith: PLATFORM_REVIEW_TRIAL_EXTENSION_DESCRIPTION_PREFIX } },
           { description: LEGACY_TRIAL_EXTENSION_REQUEST_DESCRIPTION },
@@ -336,23 +426,12 @@ export async function extendOrganizationTrial(organizationId: string, extensionH
       },
       data: { status: "RESOLVED" },
     });
+    if (claimed.count !== 1) {
+      throw new Error("This trial extension request has already been processed.");
+    }
 
-    await transaction.platformAuditEvent.create({
-      data: {
-        platform_admin_id: admin.id,
-        action: "ORGANIZATION_TRIAL_EXTENDED",
-        entity_type: "Organization",
-        entity_id: organization.id,
-        details: {
-          extensionHours,
-          previousTrialEnd: organization.trial_ends_at?.toISOString() ?? null,
-          trialEnd: updatedOrganization.trial_ends_at?.toISOString() ?? null,
-          configuredExtensionHours: updatedOrganization.trial_extension_hours,
-        },
-      },
-    });
-    return updatedOrganization;
-  });
+    return extendOrganizationTrialInTransaction(transaction, ticket.organization_id, extensionHours, admin.id);
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 20000 });
 }
 
 export async function removeOrganizationTrial(organizationId: string) {

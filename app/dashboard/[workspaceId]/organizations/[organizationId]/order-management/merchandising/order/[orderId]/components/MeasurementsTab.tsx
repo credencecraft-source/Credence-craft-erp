@@ -94,7 +94,7 @@ export default function MeasurementsTab({
             size="sm"
             type="button"
             onClick={addMeasurementRow}
-            className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-all flex items-center gap-1"
+            className="rounded-xl px-3 py-2 text-xs font-semibold transition-all flex items-center gap-1"
           >
             <span>+</span> Add POM
           </Button>
@@ -103,7 +103,7 @@ export default function MeasurementsTab({
             size="sm"
             type="button"
             onClick={handlePrint}
-            className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 transition-all flex items-center gap-2"
+            className="rounded-xl px-4 py-2 text-xs font-semibold transition-all flex items-center gap-2"
           >
             <span>🖨️</span> Print / Download PDF
           </Button>

@@ -2,7 +2,18 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/database/prisma-client";
-import { signValue } from "@/lib/auth/session-manager";
+import {
+  createPlatformSessionToken,
+  PLATFORM_SESSION_COOKIE_NAME,
+  PLATFORM_SESSION_TTL_SECONDS,
+  verifyPlatformSessionToken,
+} from "@/lib/auth/session-token";
+
+export {
+  createPlatformSessionToken,
+  PLATFORM_SESSION_COOKIE_NAME,
+  verifyPlatformSessionToken,
+} from "@/lib/auth/session-token";
 
 export type PlatformSessionAdmin = {
   id: string;
@@ -18,9 +29,7 @@ export type PlatformSessionAdmin = {
 
 export type PlatformViewMode = "SUPER_ADMIN" | "ADMIN" | "CMO" | "CTO";
 
-export const PLATFORM_SESSION_COOKIE_NAME = "cc_platform_session";
 export const PLATFORM_VIEW_COOKIE_NAME = "cc_platform_view";
-const PLATFORM_SESSION_TTL_SECONDS = 60 * 60 * 24;
 
 export function getEffectivePlatformRole(
   actualRole: "SUPER_ADMIN" | "ADMIN",
@@ -54,36 +63,6 @@ export function assertPlatformConfigurationAccess(admin: PlatformSessionAdmin) {
   if (admin.team_role) {
     throw new Error("CMO and CTO team accounts cannot access platform settings, plans, or databases.");
   }
-}
-
-export function createPlatformSessionToken(adminId: string) {
-  const expiresAt = Math.floor(Date.now() / 1000) + PLATFORM_SESSION_TTL_SECONDS;
-  const payload = `${adminId}.${expiresAt}`;
-  return `${payload}.${signValue(`platform:${payload}`)}`;
-}
-
-export function verifyPlatformSessionToken(token: string | null | undefined) {
-  if (!token) {
-    return null;
-  }
-
-  const [adminId, expiresAtValue, signature] = token.split(".");
-
-  if (!adminId || !expiresAtValue || !signature) {
-    return null;
-  }
-
-  const expiresAt = Number(expiresAtValue);
-  if (!Number.isSafeInteger(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000)) {
-    return null;
-  }
-
-  const payload = `${adminId}.${expiresAtValue}`;
-  if (signature !== signValue(`platform:${payload}`)) {
-    return null;
-  }
-
-  return adminId;
 }
 
 export async function setPlatformSessionCookie(adminId: string) {

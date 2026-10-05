@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Check, ChevronRight, Loader2, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Layers3, Loader2, Package, X } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Button from "@/components/ui/Button";
@@ -19,32 +19,40 @@ export function MaterialCategoryCard({
   return (
     <Button
       type="button"
+      variant="card"
       onClick={onClick}
-      className="group w-full rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-emerald-300 hover:shadow-md"
+      className="group h-auto min-h-40 w-full gap-0 overflow-hidden rounded-2xl border-slate-200 p-0 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
     >
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-[9px] font-bold uppercase tracking-[0.13em] text-emerald-700">
-            Material category
-          </p>
-          <h3 className="mt-1 truncate text-sm font-bold text-slate-950">
-            {category.label}
-          </h3>
+      <div className="flex w-full items-center justify-between gap-3 bg-[var(--erp-brand-soft)] px-4 py-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/80 bg-white text-[var(--erp-brand)] shadow-sm">
+            <Layers3 className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[var(--erp-brand)]">
+              Material category
+            </p>
+            <h3 className="mt-1 truncate text-sm font-bold text-slate-950">
+              {category.label}
+            </h3>
+          </div>
         </div>
-        <ChevronRight className="h-4 w-4 shrink-0 text-slate-400 group-hover:text-emerald-600" />
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/80 text-slate-500 transition-colors group-hover:text-[var(--erp-brand)]">
+          <ChevronRight className="h-4 w-4" aria-hidden="true" />
+        </span>
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-100 pt-2">
-        <div>
-          <p className="text-[9px] font-bold uppercase text-slate-500">
+      <div className="grid w-full grid-cols-2 gap-2 p-3">
+        <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+          <p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
             Materials
           </p>
-          <p className="text-sm font-bold text-slate-950">
+          <p className="mt-1 text-lg font-bold tabular-nums text-slate-950">
             {category.groupCount}
           </p>
         </div>
-        <div>
-          <p className="text-[9px] font-bold uppercase text-slate-500">Lines</p>
-          <p className="text-sm font-bold text-slate-950">
+        <div className="rounded-xl border border-slate-100 bg-[var(--erp-brand-soft)] px-3 py-2">
+          <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--erp-brand)]">BOM lines</p>
+          <p className="mt-1 text-lg font-bold tabular-nums text-slate-950">
             {category.lineCount}
           </p>
         </div>
@@ -63,51 +71,63 @@ export function MaterialGroupCard({
   return (
     <Button
       type="button"
+      variant="card"
       onClick={onClick}
-      className="group w-full rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
+      className="group h-auto min-h-48 w-full gap-0 overflow-hidden rounded-2xl border-slate-200 p-0 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700">
-            {group.entityName} - {group.category}
-          </p>
-          <h3 className="mt-1 truncate text-base font-bold text-slate-950">
-            {group.rawMaterialName}
-          </h3>
-          <p className="mt-1 truncate text-xs text-slate-500">
-            {group.subCategory}
-          </p>
+      <div className="flex w-full items-start justify-between gap-3 bg-[var(--erp-brand-soft)] p-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/80 bg-white text-[var(--erp-brand)] shadow-sm">
+            <Package className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <span className="inline-flex max-w-full truncate rounded-full border border-slate-100 bg-white px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--erp-brand)]">
+              {group.category}
+            </span>
+            <h3 className="mt-2 truncate text-base font-bold tracking-tight text-slate-950">
+              {group.rawMaterialName}
+            </h3>
+            <p className="mt-1 truncate text-xs text-slate-600">
+              {group.subCategory}
+            </p>
+          </div>
         </div>
-        <ChevronRight className="h-4 w-4 shrink-0 text-slate-400 group-hover:text-emerald-700" />
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/80 text-slate-400 transition-colors group-hover:text-[var(--erp-brand)]">
+          <ChevronRight className="h-4 w-4" />
+        </span>
       </div>
-      <div className="mt-4 grid grid-cols-3 gap-3 border-t border-slate-100 pt-3">
-        <div>
-          <p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
+      <div className="grid w-full grid-cols-3 gap-2 p-3">
+        <div className="min-w-0 rounded-xl border border-slate-100 bg-slate-50 px-2.5 py-2">
+          <p className="truncate text-[9px] font-bold uppercase tracking-wide text-slate-500">
             Stock UOM
           </p>
-          <p className="mt-1 text-sm font-bold text-slate-950">
+          <p className="mt-1 truncate text-sm font-bold text-slate-950">
             {text(group.stockUom)}
           </p>
         </div>
-        <div>
-          <p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
+        <div className="min-w-0 rounded-xl border border-slate-100 bg-[var(--erp-brand-soft)] px-2.5 py-2">
+          <p className="truncate text-[9px] font-bold uppercase tracking-wide text-slate-500">
             Grouped Qty
           </p>
-          <p className="mt-1 text-xl font-bold text-slate-950">
+          <p className="mt-1 truncate text-lg font-bold tabular-nums text-slate-950">
             {formatNumber(group.groupedQty)}
           </p>
         </div>
-        <div>
-          <p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
+        <div className="min-w-0 rounded-xl border border-slate-100 bg-slate-50 px-2.5 py-2">
+          <p className="truncate text-[9px] font-bold uppercase tracking-wide text-slate-500">
             Related Orders
           </p>
-          <p className="mt-1 text-xl font-bold text-slate-950">{orderCount}</p>
+          <p className="mt-1 truncate text-lg font-bold tabular-nums text-slate-950">{orderCount}</p>
         </div>
       </div>
-      <p className="mt-3 text-[10px] text-slate-500">
-        {group.rows.length} BOM line{group.rows.length === 1 ? "" : "s"} · Click
-        to view details
-      </p>
+      <div className="flex w-full items-center justify-between gap-2 border-t border-slate-100 px-4 py-2.5 text-[10px] text-slate-500">
+        <span className="min-w-0 truncate" title={group.entityName}>
+          {group.entityName}
+        </span>
+        <span className="shrink-0 font-medium">
+          {group.rows.length} line{group.rows.length === 1 ? "" : "s"}
+        </span>
+      </div>
     </Button>
   );
 }
@@ -140,7 +160,7 @@ export function MaterialDetail({
             <ArrowLeft className="h-3.5 w-3.5" />
           </Button>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700">
+            <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--erp-brand)]">
               Selected raw material
             </p>
             <h3 className="mt-1 text-sm font-bold text-slate-950">
@@ -152,7 +172,7 @@ export function MaterialDetail({
           <p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
             Selected records
           </p>
-          <p className="text-lg font-bold text-emerald-700">
+          <p className="text-lg font-bold text-[var(--erp-brand)]">
             {selectedIds.size}
           </p>
         </div>
@@ -189,8 +209,8 @@ export function MaterialDetail({
                 key={row.id}
                 className={
                   selectedIds.has(row.id)
-                    ? "bg-emerald-50/60"
-                    : "hover:bg-emerald-50/40"
+                    ? "bg-[var(--erp-brand-soft)]"
+                    : "hover:bg-[var(--erp-brand-soft)]"
                 }
               >
                 <td className="px-2.5 py-2">
@@ -256,14 +276,19 @@ export function StageButton({
   return (
     <Button
       type="button"
+      variant="ghost"
       disabled={disabled}
       onClick={onClick}
       onMouseEnter={onMouseEnter}
       onFocus={onFocus}
-      className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-left ${active ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50"} ${disabled ? "cursor-not-allowed opacity-60" : "hover:border-emerald-300"}`}
+      className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-left transition-colors ${
+        active
+          ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] hover:bg-[var(--erp-brand-soft)]"
+          : "border-slate-200 bg-slate-50 hover:border-[var(--erp-brand)] hover:bg-[var(--erp-brand-soft)]"
+      } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
     >
       <span
-        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${active ? "bg-emerald-700 text-white" : "bg-slate-200 text-slate-600"}`}
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${active ? "bg-[var(--erp-brand)] text-white" : "bg-slate-200 text-slate-600"}`}
       >
         {number}
       </span>
@@ -521,7 +546,7 @@ export function GroupedPurchaseOrderForm({
             </Button>
           </div>
         </div>
-        <div className="min-h-0 overflow-auto p-5">
+        <div className="min-h-0 overflow-x-auto overflow-y-auto p-5">
           <div className="mb-2 flex items-center justify-between">
             <p className="text-xs font-bold text-slate-900">
               {takingFromStock ? "Stock booking subform" : "Grouped PO subform"}

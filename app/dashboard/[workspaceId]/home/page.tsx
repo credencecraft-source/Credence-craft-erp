@@ -79,7 +79,7 @@ export default async function WorkspaceHomePage({
     .join("|");
 
   return (
-    <Page className="max-w-[1500px] px-3 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+    <Page className="max-w-[1500px]">
       <Section className="space-y-6 lg:space-y-8">
         <div className="flex justify-end sm:hidden">
           <form action={logoutAction}>

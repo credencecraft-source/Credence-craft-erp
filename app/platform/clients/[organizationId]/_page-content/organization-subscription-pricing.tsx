@@ -61,7 +61,7 @@ export default function OrganizationSubscriptionPricing({
         role="tabpanel"
         aria-label={`${activeBusinessType.name} segments`}
         tabIndex={0}
-        className="overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+        className="min-w-0 max-w-full overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
       >
         {activeBusinessType.segments.length > 0 ? (
           <table className="w-full min-w-[52rem] text-left text-sm">

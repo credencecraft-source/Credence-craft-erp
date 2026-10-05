@@ -21,7 +21,7 @@ export default async function WorkspaceUsageStatisticsPage({
   const usage = await getWorkspaceUsageStatistics(user.id);
 
   return (
-    <Page className="max-w-6xl px-0 py-0">
+    <Page className="max-w-6xl">
       <Section className="space-y-6">
         <div>
           <p className="erp-eyebrow">Workspace usage</p>

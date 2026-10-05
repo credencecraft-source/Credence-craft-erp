@@ -69,7 +69,8 @@ function InvoicePreview({ invoice, onBack }: { invoice: SavedInvoice; onBack: ()
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4">
       <div className="flex items-center justify-between print:hidden">
-        <Button type="button" onClick={onBack} className="text-xs font-semibold text-emerald-700">&larr; Invoice report</Button>
+        <Button type="button" onClick={onBack}         variant="ghost"
+        className="text-xs font-semibold">&larr; Invoice report</Button>
         <Button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
           <Printer className="h-4 w-4" /> Print Tax Invoice
         </Button>
@@ -110,8 +111,9 @@ function InvoicePreview({ invoice, onBack }: { invoice: SavedInvoice; onBack: ()
           </div>
         </section>
 
-        <section className="px-8 py-6 print:px-0">
-          <table className="w-full border-collapse text-xs">
+        <section className="min-w-0 px-8 py-6 print:px-0">
+          <div className="min-w-0 max-w-full overflow-x-auto print:overflow-visible">
+            <table className="w-full border-collapse text-xs">
             <thead>
               <tr className="border-y border-slate-300 bg-slate-50 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-600 print:bg-white">
                 <th className="w-8 px-3 py-3 text-left">#</th>
@@ -136,7 +138,8 @@ function InvoicePreview({ invoice, onBack }: { invoice: SavedInvoice; onBack: ()
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
 
           <div className="mt-6 flex justify-end">
             <div className="w-full max-w-xs space-y-3 text-sm">

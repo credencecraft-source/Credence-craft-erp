@@ -89,7 +89,7 @@ export default async function PlatformAdminAccessPage({
   }
 
   return (
-    <Page className="max-w-none px-1 py-1 sm:px-2 lg:px-2">
+    <Page className="max-w-none">
       <Section className="space-y-3">
         <header>
           <p className="erp-eyebrow">Platform Settings</p>

@@ -13,7 +13,6 @@ import {
   DATABASE_UNAVAILABLE_MESSAGE,
   isDatabaseUnavailableError,
 } from "@/lib/database/database-errors";
-import { ensurePlatformDefaults } from "@/lib/services/platform/platform-bootstrap-service";
 
 const USE_DEV_USER_STORE = process.env.USE_DEV_USER_STORE === "true";
 const isDevBypass =
@@ -55,7 +54,6 @@ export async function POST(request: Request) {
     }
 
     if (mode === "support") {
-      await ensurePlatformDefaults();
       const admin = await prisma.platformAdmin.findUnique({ where: { email } });
       if (!admin || !admin.is_active) {
         return NextResponse.json({ error: "That email address is not registered for platform access." }, { status: 403 });

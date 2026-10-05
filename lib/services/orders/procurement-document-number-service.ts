@@ -2,12 +2,21 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
 
-export type ProcurementDocumentType = "GROUPED_PO" | "MASTER_GROUP" | "PURCHASE_ORDER";
+export type ProcurementDocumentType =
+  | "GROUPED_PO"
+  | "MASTER_GROUP"
+  | "PURCHASE_ORDER"
+  | "RM_OUTWARD_REQUEST"
+  | "RM_OUTWARD_BOX"
+  | "RM_OUTWARD_PACKING_LIST";
 
 const documentPrefixes: Record<ProcurementDocumentType, string> = {
   GROUPED_PO: "GP",
   MASTER_GROUP: "MGP",
   PURCHASE_ORDER: "PO",
+  RM_OUTWARD_REQUEST: "RMR",
+  RM_OUTWARD_BOX: "RM-BOX",
+  RM_OUTWARD_PACKING_LIST: "RM-PL",
 };
 
 export async function reserveProcurementDocumentNumber(

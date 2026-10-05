@@ -5,6 +5,7 @@
   "scripts": {
     "db:migrate:status": "prisma migrate status",
     "db:migrate:deploy": "node scripts/deploy-prisma-migrations.cjs",
+    "platform:bootstrap-admin": "node scripts/bootstrap-platform-admin.cjs",
     "predev": "npm run db:migrate:status",
     "dev": "node scripts/start-dev-server.cjs",
     "predev:3000": "npm run db:migrate:status",
@@ -14,7 +15,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "lint:ui": "eslint app components --rule local/no-raw-ui-controls:warn",
+    "lint:ui": "eslint app components",
     "typecheck": "tsc --noEmit",
     "audit:production": "npm audit --omit=dev --audit-level=high",
     "qa": "npm run audit:production && npm test && npm run lint && npm run typecheck && npm run build",

@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  createPlatformSessionToken,
   createSessionToken,
+  PLATFORM_SESSION_TTL_SECONDS,
   SESSION_TTL_SECONDS,
+  verifyPlatformSessionToken,
   verifySessionToken,
 } from "./session-token";
 
@@ -45,5 +48,16 @@ describe("session token verification", () => {
     vi.setSystemTime(Date.now() + (SESSION_TTL_SECONDS + 1) * 1000);
 
     expect(verifySessionToken(token)).toBeNull();
+  });
+
+  it("accepts only valid, unexpired platform session tokens", () => {
+    const token = createPlatformSessionToken("admin-123");
+
+    expect(verifyPlatformSessionToken(token)).toBe("admin-123");
+    expect(verifyPlatformSessionToken(createSessionToken("admin-123"))).toBeNull();
+    expect(verifySessionToken(token)).toBeNull();
+
+    vi.setSystemTime(Date.now() + (PLATFORM_SESSION_TTL_SECONDS + 1) * 1000);
+    expect(verifyPlatformSessionToken(token)).toBeNull();
   });
 });

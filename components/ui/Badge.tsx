@@ -12,7 +12,13 @@ export default function Badge({
   ...props
 }: BadgeProps) {
   return (
-    <span {...props} className={cn("inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800", className)}>
+    <span
+      {...props}
+      className={cn(
+        "inline-flex items-center rounded-full border border-[var(--erp-brand-soft)] bg-[var(--erp-brand-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--erp-brand)]",
+        className,
+      )}
+    >
       {children}
     </span>
   );

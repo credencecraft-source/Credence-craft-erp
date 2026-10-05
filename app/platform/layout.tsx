@@ -47,8 +47,8 @@ export default async function PlatformRootLayout({
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="flex min-h-screen flex-col">
+    <div className="erp-platform-shell flex h-dvh w-full min-w-0 max-w-full flex-col overflow-hidden bg-slate-50">
+      <div className="flex min-h-0 flex-1 flex-col">
         <Navbar
           title={
             <div className="flex min-w-0 items-center gap-2 sm:gap-3">
@@ -107,15 +107,18 @@ export default async function PlatformRootLayout({
           </form>
         </Navbar>
 
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
           <PlatformRootLayoutClient
             accessLabel={admin.role === "SUPER_ADMIN" ? "Super Admin" : admin.team_role ?? "Admin"}
             isSuperAdminView={admin.role === "SUPER_ADMIN"}
             canManageAccounts={admin.role === "SUPER_ADMIN" || (admin.role === "ADMIN" && admin.team_role === null)}
             canAccessConfiguration={admin.team_role === null}
+            canAccessLeads={admin.role === "ADMIN" || admin.team_role === "CMO" || admin.team_role === "CTO"}
             attentionCounts={attentionCounts}
           />
-          <main className="min-w-0 flex-1 p-4 sm:p-6">{children}</main>
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden p-4 lg:p-8">
+            {children}
+          </main>
         </div>
       </div>
     </div>

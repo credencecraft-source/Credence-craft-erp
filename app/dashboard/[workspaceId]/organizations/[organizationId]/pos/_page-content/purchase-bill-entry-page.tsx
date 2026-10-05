@@ -526,7 +526,7 @@ export default function PurchaseBillEntryPage({
   };
 
   return (
-    <Page as="div" className="py-3 sm:px-5 lg:px-6">
+    <Page as="div">
       <Section className="space-y-2">
         <div className="erp-page-header">
           <div>
@@ -724,7 +724,7 @@ export default function PurchaseBillEntryPage({
                   </label>
                 </div>
               )}
-              <div className="max-h-[34vh] overflow-auto rounded-lg border border-slate-200">
+              <div className="max-h-[34vh] overflow-x-auto overflow-y-auto rounded-lg border border-slate-200">
                 <table className="w-full min-w-[1080px] text-left text-xs">
                   <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                     <tr>
@@ -973,7 +973,7 @@ export default function PurchaseBillEntryPage({
                 </Select>
               </label>
             </div>
-            <div className="max-h-[34vh] overflow-auto rounded-lg border border-slate-200">
+            <div className="max-h-[34vh] overflow-x-auto overflow-y-auto rounded-lg border border-slate-200">
               <table className="w-full min-w-[820px] text-left text-xs">
                 <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                   <tr>

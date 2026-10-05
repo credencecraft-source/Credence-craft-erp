@@ -352,7 +352,7 @@ export default function StyleWisePurchaseOrderPage({
       </div>
 
       {notice && (
-        <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
+        <div className="flex items-center gap-2 rounded-md border border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] px-3 py-2 text-xs font-semibold text-[var(--erp-brand)]">
           <Check className="h-4 w-4" />
           {notice}
         </div>
@@ -374,7 +374,7 @@ export default function StyleWisePurchaseOrderPage({
         <section className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700">
+              <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--erp-brand)]">
                 Stage 1
               </p>
               <h2 className="text-sm font-bold text-slate-950">
@@ -388,7 +388,7 @@ export default function StyleWisePurchaseOrderPage({
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Search material or subcategory"
-                  className="w-full rounded-md border border-slate-300 bg-white py-1.5 pl-8 pr-2 text-xs outline-none focus:border-emerald-500"
+                  className="w-full rounded-md border border-slate-300 bg-white py-1.5 pl-8 pr-2 text-xs outline-none focus:border-[var(--erp-brand)]"
                 />
               </div>
               {selectedMaterial && (
@@ -396,7 +396,7 @@ export default function StyleWisePurchaseOrderPage({
                   type="button"
                   onClick={() => setShowGroupedForm(true)}
                   disabled={selectedRows.length === 0}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-emerald-700 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  className="inline-flex items-center gap-1.5 rounded-md bg-[var(--erp-brand)] px-3 py-2 text-xs font-bold text-white hover:bg-[var(--erp-brand-hover)] disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
                   <Store className="h-3.5 w-3.5" /> Allocate vendor{" "}
                   <span className="rounded bg-white/20 px-1.5">
@@ -408,7 +408,7 @@ export default function StyleWisePurchaseOrderPage({
           </div>
           {loading ? (
             <div className="erp-surface flex min-h-40 items-center justify-center gap-2 text-xs text-slate-500">
-              <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />{" "}
+              <Loader2 className="h-4 w-4 animate-spin text-[var(--erp-brand)]" />{" "}
               Loading procurement categories
             </div>
           ) : selectedMaterial ? (
@@ -433,11 +433,13 @@ export default function StyleWisePurchaseOrderPage({
               <div className="flex items-center gap-2">
                 <Button
                   type="button"
+                  variant="secondary"
+                  size="sm"
                   onClick={() => {
                     setSelectedCategoryKey(null);
                     setSearch("");
                   }}
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-emerald-700"
+                  className="gap-1.5 px-2 text-xs text-slate-600 hover:text-[var(--erp-brand)]"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" /> Categories
                 </Button>
@@ -465,7 +467,7 @@ export default function StyleWisePurchaseOrderPage({
               </div>
             </div>
           ) : (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {materialCategories.map((category) => (
                 <MaterialCategoryCard
                   key={category.key}

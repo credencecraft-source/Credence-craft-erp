@@ -356,7 +356,7 @@ export function DetailedPriceApprovalCard({
           type="button"
           disabled={saving}
           onClick={savePrice}
-          className="rounded-md bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:opacity-60"
+          className="rounded-md px-4 py-2 text-xs font-bold"
         >
           {saving ? "Saving..." : "Save price"}
         </Button>

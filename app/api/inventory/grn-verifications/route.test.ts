@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getRmGrnVerification: vi.fn(),
   saveRmGrnVerification: vi.fn(),
   listRmGrnVerificationAllocations: vi.fn(),
+  getRawMaterialPickSummariesForGroupedLines: vi.fn(),
   listPendingStockVerificationTasks: vi.fn(),
   getStockVerificationDetails: vi.fn(),
   saveStockGroupVerification: vi.fn(),
@@ -38,6 +39,10 @@ vi.mock("@/lib/services/inventory/rm-stock-verification-service", () => ({
   saveStockGroupVerification: mocks.saveStockGroupVerification,
 }));
 
+vi.mock("@/lib/services/inventory/raw-material-outward-service", () => ({
+  getRawMaterialPickSummariesForGroupedLines: mocks.getRawMaterialPickSummariesForGroupedLines,
+}));
+
 import { GET, POST } from "./route";
 
 describe("RM GRN Verification route", () => {
@@ -65,6 +70,13 @@ describe("RM GRN Verification route", () => {
   });
 
   it("requests completed sample allocations for Style-wise Inventory", async () => {
+    mocks.listRmGrnVerificationAllocations.mockResolvedValue([{
+      id: "allocation-1",
+      orderAllocations: [{ groupedPurchaseOrderLineId: "group-line-1", allocate: "10" }],
+    }]);
+    mocks.getRawMaterialPickSummariesForGroupedLines.mockResolvedValue({
+      "group-line-1": { pickedQuantity: "4", balanceStock: "6" },
+    });
     const response = await GET(new Request("http://localhost/api/inventory/grn-verifications?organizationId=public-org&allocationRegister=true&styleWiseInventory=true"));
 
     expect(response.status).toBe(200);
@@ -72,6 +84,20 @@ describe("RM GRN Verification route", () => {
       "internal-org-1",
       { styleWiseInventory: true },
     );
+    expect(mocks.getRawMaterialPickSummariesForGroupedLines).toHaveBeenCalledWith(
+      "internal-org-1",
+      "user-1",
+      ["group-line-1"],
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      allocations: [{
+        orderAllocations: [{
+          groupedPurchaseOrderLineId: "group-line-1",
+          pickedQuantity: "4",
+          balanceStock: "6",
+        }],
+      }],
+    });
   });
 
   it("loads notified stock verification tasks for the authorized organization", async () => {

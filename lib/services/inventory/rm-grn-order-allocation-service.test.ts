@@ -39,8 +39,20 @@ const allocation = () => ({
   groupedPurchaseOrder: {
     organization_id: "org-1",
     lines: [
-      { id: "line-1", order_no: "ORDER-1", style_name: "STYLE-1", grouped_qty: new Prisma.Decimal("5") },
-      { id: "line-2", order_no: "ORDER-2", style_name: "STYLE-2", grouped_qty: new Prisma.Decimal("3") },
+      {
+        id: "line-1",
+        order_no: null,
+        style_name: "STYLE-1",
+        grouped_qty: new Prisma.Decimal("5"),
+        sourceOrder: { organization_id: "org-1", orderNo: "ORDER-1" },
+      },
+      {
+        id: "line-2",
+        order_no: "ORDER-2",
+        style_name: "STYLE-2",
+        grouped_qty: new Prisma.Decimal("3"),
+        sourceOrder: { organization_id: "org-1", orderNo: "ORDER-2" },
+      },
     ],
   },
   orderAllocations: [{ grouped_purchase_order_line_id: "line-1", allocated_quantity: new Prisma.Decimal("1") }],

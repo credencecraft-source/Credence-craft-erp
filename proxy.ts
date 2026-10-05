@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/auth/session-token";
+import {
+  PLATFORM_SESSION_COOKIE_NAME,
+  SESSION_COOKIE_NAME,
+  verifyPlatformSessionToken,
+  verifySessionToken,
+} from "@/lib/auth/session-token";
 
 export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
@@ -18,8 +23,14 @@ export function proxy(request: NextRequest) {
     });
   }
 
-  const sessionToken = request.cookies.get(SESSION_COOKIE_NAME)?.value;
-  if (!verifySessionToken(sessionToken)) {
+  const isPlatformApiRoute = pathname.startsWith("/api/platform/");
+  const sessionToken = request.cookies.get(
+    isPlatformApiRoute ? PLATFORM_SESSION_COOKIE_NAME : SESSION_COOKIE_NAME,
+  )?.value;
+  const authenticatedUserId = isPlatformApiRoute
+    ? verifyPlatformSessionToken(sessionToken)
+    : verifySessionToken(sessionToken);
+  if (!authenticatedUserId) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }

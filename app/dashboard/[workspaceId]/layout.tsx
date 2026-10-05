@@ -22,5 +22,11 @@ export default async function WorkspaceLayout({
     redirect("/dashboard/organizations/create");
   }
 
-  return children;
+  return (
+    <div className="erp-workspace-shell h-dvh w-full max-w-full overflow-hidden">
+      <div className="h-full min-h-0 min-w-0 overflow-y-auto overflow-x-hidden">
+        {children}
+      </div>
+    </div>
+  );
 }
