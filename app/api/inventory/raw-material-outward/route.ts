@@ -4,12 +4,17 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import {
   acceptRawMaterialOutwardRequest,
+  cancelRawMaterialOutwardRequest,
   createRawMaterialOutwardBox,
   createRawMaterialOutwardShipment,
   createWorkOrderMaterialRequest,
+  deleteRawMaterialOutwardBox,
+  deleteRawMaterialOutwardShipment,
   getRawMaterialPickHistoryForGroupedLine,
   listRawMaterialOutwardWorkflow,
   markRawMaterialOutwardItemPicked,
+  undoAcceptRawMaterialOutwardRequest,
+  undoPickRawMaterialOutwardItem,
 } from "@/lib/services/inventory/raw-material-outward-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
@@ -85,7 +90,10 @@ export async function POST(request: Request) {
   const organizationId = text(input.organizationId);
   const action = text(input.action);
   if (!organizationId) return NextResponse.json({ error: "Organization ID is required." }, { status: 400 });
-  if (!["request", "accept", "pick", "box", "ship"].includes(action)) {
+  if (![
+    "request", "accept", "pick", "box", "ship", "delete-shipment", "cancel-request",
+    "undo-accept", "undo-pick", "delete-box",
+  ].includes(action)) {
     return NextResponse.json({ error: "Select a valid outward workflow action." }, { status: 400 });
   }
 
@@ -108,8 +116,26 @@ export async function POST(request: Request) {
       const result = await acceptRawMaterialOutwardRequest({ ...actor, requestId: text(input.requestId) });
       return NextResponse.json({ ok: true, request: result });
     }
+    if (action === "cancel-request") {
+      const requestId = text(input.requestId);
+      if (!requestId) return NextResponse.json({ error: "Request ID is required." }, { status: 400 });
+      const result = await cancelRawMaterialOutwardRequest({ ...actor, requestId });
+      return NextResponse.json({ ok: true, request: result });
+    }
+    if (action === "undo-accept") {
+      const requestId = text(input.requestId);
+      if (!requestId) return NextResponse.json({ error: "Request ID is required." }, { status: 400 });
+      const result = await undoAcceptRawMaterialOutwardRequest({ ...actor, requestId });
+      return NextResponse.json({ ok: true, request: result });
+    }
     if (action === "pick") {
       const result = await markRawMaterialOutwardItemPicked({ ...actor, requestLineId: text(input.requestLineId) });
+      return NextResponse.json({ ok: true, item: result });
+    }
+    if (action === "undo-pick") {
+      const requestLineId = text(input.requestLineId);
+      if (!requestLineId) return NextResponse.json({ error: "Request line ID is required." }, { status: 400 });
+      const result = await undoPickRawMaterialOutwardItem({ ...actor, requestLineId });
       return NextResponse.json({ ok: true, item: result });
     }
     if (action === "box") {
@@ -118,6 +144,18 @@ export async function POST(request: Request) {
       }
       const result = await createRawMaterialOutwardBox({ ...actor, requestLineIds: input.requestLineIds as string[] });
       return NextResponse.json({ ok: true, box: result }, { status: 201 });
+    }
+    if (action === "delete-shipment") {
+      const shipmentId = text(input.shipmentId);
+      if (!shipmentId) return NextResponse.json({ error: "Packing list ID is required." }, { status: 400 });
+      const result = await deleteRawMaterialOutwardShipment({ ...actor, shipmentId });
+      return NextResponse.json({ ok: true, shipment: result });
+    }
+    if (action === "delete-box") {
+      const boxId = text(input.boxId);
+      if (!boxId) return NextResponse.json({ error: "Box ID is required." }, { status: 400 });
+      const result = await deleteRawMaterialOutwardBox({ ...actor, boxId });
+      return NextResponse.json({ ok: true, box: result });
     }
     if (!Array.isArray(input.boxIds) || input.boxIds.some((value) => typeof value !== "string")) {
       return NextResponse.json({ error: "Shipment box IDs must be provided as a list." }, { status: 400 });

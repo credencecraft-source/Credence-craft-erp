@@ -12,6 +12,15 @@ import { Prisma } from "@prisma/client";
 const DEFAULT_TRIAL_HOURS = 24;
 const MAX_TRIAL_EXTENSION_HOURS = 8760;
 const HOUR_IN_MS = 60 * 60 * 1000;
+export const ORGANIZATION_TRIAL_ACCESS_ENDED_MESSAGE =
+  "Your 24-hour organization trial has ended. Activate a subscription or contact the platform administrator.";
+
+export function shouldRedirectExpiredTrialRequest(currentPath: string, organizationPath: string) {
+  const defaultOrganizationRoute = `${organizationPath}/order-management/merchandising/order`;
+  return currentPath !== defaultOrganizationRoute
+    && !currentPath.startsWith(`${organizationPath}/settings`)
+    && !currentPath.includes("/access-blocked");
+}
 const TRIAL_AUDIT_ACTIONS = [
   "ORGANIZATION_TRIAL_STARTED",
   "ORGANIZATION_TRIAL_EXTENDED",
@@ -296,8 +305,18 @@ export async function isOrganizationTrialActive(organizationId: string, now = ne
   );
 }
 
-export async function hasOrganizationTrialAccess(organizationId: string, now = new Date()) {
-  const organization = await prisma.organization.findUnique({
+type OrganizationTrialAccessSnapshot = {
+  trial_started_at: Date | null;
+  trial_ends_at: Date | null;
+  trial_enabled: boolean;
+};
+
+export async function hasOrganizationTrialAccess(
+  organizationId: string,
+  now = new Date(),
+  snapshot?: OrganizationTrialAccessSnapshot,
+) {
+  const organization = snapshot ?? await prisma.organization.findUnique({
     where: { id: organizationId },
     select: { trial_started_at: true, trial_ends_at: true, trial_enabled: true },
   });

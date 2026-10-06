@@ -48,6 +48,7 @@ import {
   createPlatformSupportTicket,
   getSupportTicketForOrganization,
   getSupportTicketForUser,
+  listSupportTickets,
   listSupportTicketsForUser,
   updateSupportTicketStatus,
 } from "./support-ticket-service";
@@ -72,6 +73,15 @@ beforeEach(() => {
 });
 
 describe("support ticket access and internal notes", () => {
+  it("loads only report fields for the platform ticket list", async () => {
+    await listSupportTickets();
+
+    expect(mocks.prisma.supportTicket.findMany).toHaveBeenCalledWith({
+      select: expect.not.objectContaining({ description: true }),
+      orderBy: { created_at: "desc" },
+    });
+  });
+
   it("scopes organization ticket details to the authorized internal organization and omits private notes", async () => {
     await getSupportTicketForOrganization("public-org-id", "ticket-id", "member-id");
 

@@ -3,8 +3,10 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
+import { getPlatformPricingSettings } from "@/lib/services/platform/pricing-mode-service";
 
 export const FREE_PLAN_NAME = "Free";
+const MAX_STANDARD_USER_LICENSES = 10;
 
 export const STANDARD_PLAN_DEFINITIONS = [
   { tierKey: "FREE", label: "Free", price: 0, color: "slate" },
@@ -125,6 +127,47 @@ export function isSubscriptionActiveAt(
     && (!subscription.end_date || subscription.end_date > now);
 }
 
+export function subscriptionMatchesPricingMode(
+  subscription: {
+    business_type_id: string | null;
+    plan: { tier_key?: string | null };
+  },
+  pricingMode: string,
+) {
+  const isUserBasedSubscription = subscription.plan.tier_key === "USER_BASED"
+    && subscription.business_type_id === null;
+  if (pricingMode === "USER_BASED") return isUserBasedSubscription;
+  if (pricingMode === "MODULE_BASED") {
+    return !isUserBasedSubscription && subscription.business_type_id !== null;
+  }
+  return false;
+}
+
+export function getLatestPaidUserLicenseCount(
+  subscriptions: Array<{
+    business_type_id: string | null;
+    payment_status: string;
+    billed_user_count: number | null;
+    created_at: Date;
+    plan: { tier_key?: string | null };
+  }>,
+) {
+  const latestPaidUserSubscription = subscriptions
+    .filter((subscription) =>
+      subscriptionMatchesPricingMode(subscription, "USER_BASED")
+      && subscription.payment_status.toLowerCase() === "paid",
+    )
+    .reduce<typeof subscriptions[number] | null>(
+      (latest, subscription) => !latest || subscription.created_at > latest.created_at
+        ? subscription
+        : latest,
+      null,
+    );
+
+  const billedUserCount = latestPaidUserSubscription?.billed_user_count ?? 0;
+  return Number.isSafeInteger(billedUserCount) && billedUserCount > 0 ? billedUserCount : 0;
+}
+
 export async function listSubscriptions(organizationId?: string, limit = 100) {
   const page = await listSubscriptionsPage({ organizationId, limit });
   const now = new Date();
@@ -145,6 +188,7 @@ export async function listSubscriptionsPage(options: { organizationId?: string; 
       ...(options.organizationId ? { organization_id: options.organizationId } : {}),
       plan: { price: { gt: 0 } },
     },
+    include: { plan: true },
     orderBy: { created_at: "desc" },
     ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     take: take + 1,
@@ -184,7 +228,7 @@ export async function listSubscriptionsPage(options: { organizationId?: string; 
     organizationNumber: organizationByReference.get(sub.organization_id)?.organization_number ?? null,
     organizationMissing: !organizationByReference.has(sub.organization_id),
     business_type_name: sub.business_type_id,
-    plan_name: sub.plan_id,
+    plan_name: sub.plan.plan_name,
     })),
     nextCursor: hasNextPage ? pageSubscriptions.at(-1)?.id ?? null : null,
   };
@@ -202,6 +246,7 @@ export function mapOrganizationsByReference<T extends { id: string; organization
 export async function getSubscriptionsByOrganization(organizationId: string) {
   const subscriptions = await prisma.subscription.findMany({
     where: { organization_id: organizationId, plan: { price: { gt: 0 } } },
+    include: { plan: true },
   });
 
   return subscriptions.map((sub) => ({
@@ -211,7 +256,7 @@ export async function getSubscriptionsByOrganization(organizationId: string) {
     planId: sub.plan_id,
     paymentStatus: sub.payment_status,
     plan: {
-      plan_name: sub.plan_id,
+      plan_name: sub.plan.plan_name,
       features: [],
     },
   }));
@@ -339,6 +384,18 @@ export async function createPendingSubscriptions(data: {
   }
 
   return prisma.$transaction(async (transaction) => {
+    const [organization, pricingSettings] = await Promise.all([
+      transaction.organization.findUnique({
+        where: { id: data.organizationId },
+        select: { id: true, pricing_mode: true },
+      }),
+      getPlatformPricingSettings(transaction),
+    ]);
+    if (!organization) throw new Error("Organization not found.");
+    if (organization.pricing_mode !== "MODULE_BASED" || !pricingSettings.module_based_active) {
+      throw new Error("Module Based Pricing is not active for this organization.");
+    }
+
     const pendingSubscriptions = await transaction.subscription.findMany({
       where: {
         organization_id: data.organizationId,
@@ -388,6 +445,122 @@ export async function createPendingSubscriptions(data: {
     }
 
     return subscriptions;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function createPendingUserBasedSubscription(data: {
+  organizationId: string;
+  organizationName?: string;
+  userId: string;
+  billingMonths: 6 | 12;
+  billedUserCount: number;
+}) {
+  return prisma.$transaction(async (transaction) => {
+    const [organization, settings, activeUserCount] = await Promise.all([
+      transaction.organization.findUnique({
+        where: { id: data.organizationId },
+        select: { id: true, pricing_mode: true },
+      }),
+      getPlatformPricingSettings(transaction),
+      transaction.organizationMembership.count({
+        where: { organization_id: data.organizationId, is_active: true },
+      }),
+    ]);
+    if (!organization) throw new Error("Organization not found.");
+    if (organization.pricing_mode !== "USER_BASED" || !settings.user_based_active) {
+      throw new Error("User Based Pricing is not active for this organization.");
+    }
+    if (activeUserCount < 1) throw new Error("Add an active organization member before subscribing.");
+    if (!Number.isSafeInteger(data.billedUserCount) || data.billedUserCount < activeUserCount) {
+      throw new Error(`Purchase at least ${activeUserCount} user license${activeUserCount === 1 ? "" : "s"} for the current active members.`);
+    }
+    if (data.billedUserCount > MAX_STANDARD_USER_LICENSES) {
+      throw new Error("For more than 10 users, contact support for better pricing.");
+    }
+    if (settings.user_monthly_price.lessThanOrEqualTo(0)) {
+      throw new Error("The per-user monthly rate is not configured.");
+    }
+
+    const plan = await transaction.plan.upsert({
+      where: { plan_name: "User Based Pricing" },
+      create: {
+        plan_id: randomUUID(),
+        plan_name: "User Based Pricing",
+        description: "Monthly subscription billed per purchased organization user license.",
+        price: settings.user_monthly_price,
+        billing_cycle: "monthly",
+        tier_key: "USER_BASED",
+        is_system_plan: true,
+        display_color: "blue",
+        sort_order: -2,
+      },
+      update: {
+        business_type_id: null,
+        price: settings.user_monthly_price,
+        billing_cycle: "monthly",
+        tier_key: "USER_BASED",
+        is_system_plan: true,
+        is_active: true,
+      },
+    });
+
+    const existingPending = await transaction.subscription.findFirst({
+      where: {
+        organization_id: organization.id,
+        business_type_id: null,
+        payment_status: { in: ["pending", "PENDING"] },
+        plan: { tier_key: "USER_BASED" },
+      },
+    });
+    const amounts = calculateUserBasedSubscriptionAmounts(
+      settings.user_monthly_price,
+      data.billedUserCount,
+      data.billingMonths,
+    );
+    const subscriptionData = {
+      organization_name: data.organizationName || null,
+      plan_id: plan.id,
+      billing_months: data.billingMonths,
+      billed_user_count: data.billedUserCount,
+      ...amounts,
+    };
+
+    if (existingPending) {
+      if (existingPending.plan_id !== plan.id || existingPending.billing_months !== data.billingMonths
+        || existingPending.billed_user_count !== data.billedUserCount) {
+        throw new Error("A user-based subscription request is already awaiting approval.");
+      }
+      return existingPending;
+    }
+
+    const subscription = await transaction.subscription.create({
+      data: {
+        organization_id: organization.id,
+        business_type_id: null,
+        payment_status: "pending",
+        service_status: "inactive",
+        ...subscriptionData,
+      },
+    });
+    await transaction.auditEvent.create({
+      data: {
+        organization_id: organization.id,
+        user_id: data.userId,
+        module: "pricing",
+        action: "USER_BASED_SUBSCRIPTION_REQUESTED",
+        entity_type: "Subscription",
+        entity_id: subscription.id,
+        details: {
+          billedUserCount: data.billedUserCount,
+          monthlyRate: settings.user_monthly_price.toString(),
+          billingMonths: data.billingMonths,
+          subtotalAmount: amounts.subtotal_amount.toString(),
+          gstAmount: amounts.gst_amount.toString(),
+          totalAmount: amounts.total_amount.toString(),
+        },
+      },
+    });
+    return subscription;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
@@ -542,7 +715,7 @@ export async function deleteSubscription(
         { organization_id: subscription.organization_id },
       ],
     },
-    select: { id: true },
+    select: { id: true, pricing_mode: true },
   });
 
   if (organization) {
@@ -770,6 +943,26 @@ export function addBillingMonths(date: Date, months: number) {
   return result;
 }
 
+export function calculateUserBasedSubscriptionAmounts(
+  monthlyRate: Prisma.Decimal,
+  licensedUserCount: number,
+  billingMonths: 6 | 12,
+) {
+  if (!Number.isSafeInteger(licensedUserCount) || licensedUserCount < 1) {
+    throw new Error("A user-based subscription requires at least one user license.");
+  }
+  if (billingMonths !== 6 && billingMonths !== 12) {
+    throw new Error("Billing term must be 6 or 12 months.");
+  }
+  const subtotalAmount = monthlyRate.mul(licensedUserCount).mul(billingMonths).toDecimalPlaces(2);
+  const gstAmount = subtotalAmount.mul("0.18").toDecimalPlaces(2);
+  return {
+    subtotal_amount: subtotalAmount,
+    gst_amount: gstAmount,
+    total_amount: subtotalAmount.add(gstAmount).toDecimalPlaces(2),
+  };
+}
+
 export async function approveSubscription(id: string) {
   const admin = await requirePlatformSessionAdmin();
 
@@ -787,7 +980,7 @@ export async function approveSubscription(id: string) {
           { organization_id: subscription.organization_id },
         ],
       },
-      select: { id: true },
+      select: { id: true, pricing_mode: true },
     });
     if (!organization) {
       throw new Error("Cannot approve this subscription because its organization no longer exists. Remove the orphaned subscription first.");
@@ -799,7 +992,9 @@ export async function approveSubscription(id: string) {
       });
       subscription.organization_id = organization.id;
     }
-    if (!subscription.business_type_id) {
+    const subscriptionPlan = await transaction.plan.findUnique({ where: { id: subscription.plan_id } });
+    if (!subscription.business_type_id
+      && (subscriptionPlan?.tier_key !== "USER_BASED" || organization.pricing_mode !== "USER_BASED")) {
       throw new Error("Assign a business type before approving this subscription.");
     }
 
@@ -850,6 +1045,7 @@ export async function approveSubscription(id: string) {
           organizationId: approvedSubscription.organization_id,
           businessTypeId: approvedSubscription.business_type_id,
           planId: approvedSubscription.plan_id,
+          billedUserCount: approvedSubscription.billed_user_count,
           billingMonths,
           startDate: approvedSubscription.start_date.toISOString(),
           endDate: approvedSubscription.end_date?.toISOString() ?? null,

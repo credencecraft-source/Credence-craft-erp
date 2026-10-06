@@ -179,8 +179,11 @@ export async function setSegmentRestrictionAssignment(
   });
 }
 
-export async function getEffectiveSegmentRestrictions(organizationId: string) {
-  if (await isOrganizationTrialActive(organizationId)) return [];
+export async function getEffectiveSegmentRestrictions(
+  organizationId: string,
+  trialIsActive?: boolean,
+) {
+  if (trialIsActive ?? await isOrganizationTrialActive(organizationId)) return [];
 
   const [versionId, effectivePlans] = await Promise.all([
     getOrganizationVersionId(organizationId),

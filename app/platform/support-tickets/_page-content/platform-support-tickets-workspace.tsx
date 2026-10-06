@@ -16,7 +16,6 @@ type PlatformTicket = {
   id: string;
   ticket_number: string;
   subject: string;
-  description: string;
   status: string;
   priority: string;
   request_type: string;
@@ -31,7 +30,7 @@ type PlatformTicket = {
 };
 
 type TicketMessage = { id: string; body: string; senderType: string; senderName: string; createdAt: string };
-type SelectedTicket = PlatformTicket & { messages: TicketMessage[] };
+type SelectedTicket = PlatformTicket & { description: string; messages: TicketMessage[] };
 type TicketOrganization = {
   organizationId: string;
   organizationName: string;

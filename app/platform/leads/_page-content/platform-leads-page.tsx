@@ -5,19 +5,13 @@ import {
   listPlatformLeadAppLogins,
   listPlatformLeads,
 } from "@/lib/services/platform/platform-lead-service";
-import { listPlatformLeadSupportTickets } from "@/lib/services/organizations/support-ticket-service";
 import PlatformLeadsWorkspace from "./platform-leads-workspace";
 
-export default async function PlatformLeadsPage({
-  searchParams,
-}: {
-  searchParams?: Promise<{ leadId?: string }>;
-}) {
+export default async function PlatformLeadsPage() {
   const admin = await requirePlatformSessionAdmin();
   if (admin.role !== "ADMIN" && admin.role !== "SUPER_ADMIN" && admin.team_role !== "CMO" && admin.team_role !== "CTO") {
     redirect("/platform/organisations");
   }
-  const query = (await searchParams) ?? {};
   const [leadRows, appLoginRows] = await Promise.all([
     listPlatformLeads(),
     listPlatformLeadAppLogins(),
@@ -28,15 +22,6 @@ export default async function PlatformLeadsPage({
     updated_at: lead.updated_at.toISOString(),
     recordType: "THIRD_PARTY" as const,
   }));
-  const selectedLead = leads.find((lead) => lead.id === query.leadId) ?? null;
-  const leadTicketRows = selectedLead
-    ? await listPlatformLeadSupportTickets(selectedLead.id)
-    : [];
-  const selectedLeadTickets = leadTicketRows.map((ticket) => ({
-    ...ticket,
-    created_at: ticket.created_at.toISOString(),
-    updated_at: ticket.updated_at.toISOString(),
-  }));
   const appLogins = appLoginRows.map((user) => ({
     ...user,
     last_login_at: user.last_login_at?.toISOString() ?? "",
@@ -46,8 +31,6 @@ export default async function PlatformLeadsPage({
     <PlatformLeadsWorkspace
       leads={leads}
       appLogins={appLogins}
-      selectedLead={selectedLead}
-      selectedLeadTickets={selectedLeadTickets}
     />
   );
 }

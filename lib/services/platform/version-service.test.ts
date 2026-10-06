@@ -10,8 +10,10 @@ const {
     $transaction: vi.fn(),
     platformVersion: {
       findUnique: vi.fn().mockResolvedValue(null),
-      create: vi.fn().mockResolvedValue({ id: "version-copy-id", version_name: "2026 Copy", description: "source description", is_active: true }),
+      create: vi.fn().mockResolvedValue({ id: "version-copy-id", version_name: "2026 Copy", version_type: "PREMIUM", description: "source description", is_active: true }),
       delete: vi.fn().mockResolvedValue({ id: "version-id" }),
+      findFirst: vi.fn(),
+      update: vi.fn(),
     },
     organization: {
       count: vi.fn().mockResolvedValue(0),
@@ -55,7 +57,7 @@ vi.mock("@/lib/services/platform/segment-service", () => ({
   ensureDefaultSegments: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { deleteVersion, duplicateVersion } from "./version-service";
+import { createVersion, deleteVersion, duplicateVersion, updateVersionDetails } from "./version-service";
 
 describe("version service", () => {
   beforeEach(() => {
@@ -65,13 +67,14 @@ describe("version service", () => {
     prismaMock.platformVersion.findUnique.mockResolvedValueOnce({
       id: "source-version-id",
       version_name: "2026",
+      version_type: "PREMIUM",
       description: "Original description",
       is_active: true,
       businessTypes: [
         {
           business_type_id: "business-type-1",
           is_free: false,
-          tags: [{ label: "Tag A" }],
+          tags: [{ platform_tag_id: "tag-a-id" }],
           segments: [
             {
               segment_id: "segment-1",
@@ -106,9 +109,36 @@ describe("version service", () => {
         monthly_entry_limit: 15,
       }],
     }).mockResolvedValue(null);
-    prismaMock.platformVersion.create.mockResolvedValue({ id: "version-copy-id", version_name: "2026 Copy", description: "Original description", is_active: true });
+    prismaMock.platformVersion.create.mockResolvedValue({ id: "version-copy-id", version_name: "2026 Copy", version_type: "PREMIUM", description: "Original description", is_active: true });
     prismaMock.versionBusinessType.create.mockResolvedValue({ id: "vbt-id" });
     prismaMock.versionBusinessTypeSegment.create.mockResolvedValue({ id: "vbts-id" });
+  });
+
+  it("creates a version with its selected type", async () => {
+    prismaMock.platformVersion.findUnique.mockReset().mockResolvedValue(null);
+
+    await createVersion({
+      versionName: "2027",
+      versionType: "BEST_PRICE",
+      description: "Best price release",
+    });
+
+    expect(prismaMock.platformVersion.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        version_name: "2027",
+        version_type: "BEST_PRICE",
+        description: "Best price release",
+      }),
+    }));
+  });
+
+  it("rejects an unsupported version type", async () => {
+    await expect(createVersion({
+      versionName: "2027",
+      versionType: "INVALID",
+    })).rejects.toThrow("Select a valid version type.");
+
+    expect(prismaMock.platformVersion.create).not.toHaveBeenCalled();
   });
 
   it("duplicates a version as a distinct standalone record with copied restrictions", async () => {
@@ -122,12 +152,21 @@ describe("version service", () => {
       }),
     });
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(prismaMock.platformVersion.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ version_type: "PREMIUM" }),
+    }));
     expect(prismaMock.versionBusinessType.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         version_id: "version-copy-id",
         business_type_id: "business-type-1",
       }),
     }));
+    expect(prismaMock.versionBusinessTypeTag.create).toHaveBeenCalledWith({
+      data: {
+        version_business_type_id: "vbt-id",
+        platform_tag_id: "tag-a-id",
+      },
+    });
     expect(prismaMock.versionBusinessTypeSegment.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         version_business_type_id: "vbt-id",
@@ -151,5 +190,45 @@ describe("version service", () => {
 
     expect(prismaMock.organization.count).toHaveBeenCalledWith({ where: { platform_version_id: "version-id" } });
     expect(prismaMock.platformVersion.delete).not.toHaveBeenCalled();
+  });
+
+  it("updates version name, type, and description after configuration authorization", async () => {
+    prismaMock.platformVersion.findFirst.mockResolvedValue(null);
+    prismaMock.platformVersion.update.mockResolvedValue({
+      id: "version-id",
+      version_name: "2027",
+      description: "Annual release",
+    });
+
+    await updateVersionDetails("version-id", "  2027  ", "  Annual release  ", "BEST_PRICE");
+
+    expect(requirePlatformConfigurationAccessMock).toHaveBeenCalledOnce();
+    expect(prismaMock.platformVersion.update).toHaveBeenCalledWith({
+      where: { id: "version-id" },
+      data: { version_name: "2027", description: "Annual release", version_type: "BEST_PRICE" },
+    });
+  });
+
+  it("rejects duplicate version names and invalid lengths", async () => {
+    await expect(updateVersionDetails("version-id", " ", undefined, "REGULAR_PRICE")).rejects.toThrow("Version name is required.");
+    await expect(updateVersionDetails("version-id", "x".repeat(101), undefined, "REGULAR_PRICE")).rejects.toThrow(
+      "Version name must be 100 characters or fewer.",
+    );
+    await expect(updateVersionDetails("version-id", "2027", "x".repeat(501), "REGULAR_PRICE")).rejects.toThrow(
+      "Version description must be 500 characters or fewer.",
+    );
+    prismaMock.platformVersion.findFirst.mockResolvedValue({ id: "other-version" });
+    await expect(updateVersionDetails("version-id", "2027", undefined, "REGULAR_PRICE")).rejects.toThrow(
+      "A version with this name already exists.",
+    );
+    expect(prismaMock.platformVersion.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unsupported version type when updating a version", async () => {
+    await expect(updateVersionDetails("version-id", "2027", undefined, "INVALID")).rejects.toThrow(
+      "Select a valid version type.",
+    );
+
+    expect(prismaMock.platformVersion.update).not.toHaveBeenCalled();
   });
 });

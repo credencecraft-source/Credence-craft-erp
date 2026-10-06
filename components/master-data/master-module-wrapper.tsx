@@ -12,6 +12,7 @@ import {
   BriefcaseBusiness,
   ClipboardList,
   Crown,
+  Headset,
   Factory,
   Gauge,
   Landmark,
@@ -43,6 +44,7 @@ import Modal from "@/components/ui/Modal";
 import Tabs from "@/components/ui/Tabs";
 import NavigationLinkStatus from "@/components/ui/navigation-link-status";
 import { getSidebarFeatureKeysForRoute, normalizeRestrictionPart, restrictionMatchesHiddenRoute, restrictionMatchesRoute } from "@/lib/services/platform/plan-restriction-matcher";
+import { isOrganizationTrialInactive } from "@/lib/utilities/organization-trial-visibility";
 
 type SubItem = {
   key: string;
@@ -90,7 +92,10 @@ type MasterModuleWrapperProps = {
   organizationId: string;
   organizationName: string;
   canAccessPlatformControlPanel: boolean;
-  hasAssignedPlatformVersion: boolean;
+  hasConfiguredPricingType: boolean;
+  pricingMode: string;
+  userMonthlyPrice: number;
+  requiresUserPricingToAccess: boolean;
   trialEnabled: boolean;
   trialStartedAt: string | null;
   trialEndsAt: string | null;
@@ -139,7 +144,10 @@ export function MasterModuleWrapper({
   organizationId,
   organizationName,
   canAccessPlatformControlPanel,
-  hasAssignedPlatformVersion,
+  hasConfiguredPricingType,
+  pricingMode,
+  userMonthlyPrice,
+  requiresUserPricingToAccess,
   trialEnabled,
   trialStartedAt,
   trialEndsAt,
@@ -155,9 +163,13 @@ export function MasterModuleWrapper({
   const pathname = usePathname();
   const router = useRouter();
   const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
+  const isBillingOrSupportRoute =
+    pathname.startsWith(`${organizationPath}/settings/pricing`)
+    || pathname.startsWith(`${organizationPath}/support-tickets`);
   const visibilityStorageKey = `erp-visible-modules:${organizationId}`;
-  const hasTrialWindow = trialEnabled && Boolean(trialStartedAt && trialEndsAt);
-  const [trialExpired, setTrialExpired] = useState(!hasTrialWindow);
+  const [trialExpired, setTrialExpired] = useState(false);
+  const trialNeedsPricing = isOrganizationTrialInactive(trialEnabled, trialStartedAt, trialEndsAt)
+    || trialExpired;
 
   const checkIsBlocked = useCallback((targetPath: string) => {
     if (!restrictions || !restrictions.length) return null;
@@ -516,7 +528,7 @@ export function MasterModuleWrapper({
           </div>
 
           <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2 sm:gap-3">
-            {trialExpired && hasAssignedPlatformVersion && (
+            {trialNeedsPricing && hasConfiguredPricingType && (
               <Button
                 type="button"
                 variant="ghost"
@@ -530,13 +542,15 @@ export function MasterModuleWrapper({
                 <Crown className="h-4 w-4" />
               </Button>
             )}
-            <OrganizationTrialStatus
-              organizationId={organizationId}
-              trialEnabled={trialEnabled}
-              trialStartedAt={trialStartedAt}
-              trialEndsAt={trialEndsAt}
-              onExpiryChange={setTrialExpired}
-            />
+            {!requiresUserPricingToAccess && (
+              <OrganizationTrialStatus
+                organizationId={organizationId}
+                trialEnabled={trialEnabled}
+                trialStartedAt={trialStartedAt}
+                trialEndsAt={trialEndsAt}
+                onExpiryChange={setTrialExpired}
+              />
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -605,55 +619,93 @@ export function MasterModuleWrapper({
       </div>
 
       <Modal
-        open={pricingDialogOpen}
-        onClose={() => setPricingDialogOpen(false)}
+        open={!isBillingOrSupportRoute && (pricingDialogOpen || requiresUserPricingToAccess)}
+        onClose={() => {
+          if (!requiresUserPricingToAccess) setPricingDialogOpen(false);
+        }}
+        closeOnBackdrop={!requiresUserPricingToAccess}
         ariaLabelledBy="subscription-pricing-title"
         ariaDescribedBy="subscription-pricing-description"
-        size="sm"
+        size="md"
       >
-        <div className="border-b border-amber-100 bg-amber-50/70 px-5 py-4">
+        <div className={`border-b px-5 py-4 ${requiresUserPricingToAccess ? "border-[var(--erp-border)] bg-[var(--erp-brand-soft)]" : "border-amber-100 bg-amber-50/70"}`}>
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-3">
-              <span className="grid h-10 w-10 place-items-center rounded-lg border border-amber-200 bg-white text-amber-700">
+              <span className={`grid h-10 w-10 place-items-center rounded-lg border bg-white ${requiresUserPricingToAccess ? "border-[var(--erp-border)] text-[var(--erp-brand)]" : "border-amber-200 text-amber-700"}`}>
                 <Crown className="h-5 w-5" aria-hidden="true" />
               </span>
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-amber-700">Organization billing</p>
-                <h2 id="subscription-pricing-title" className="mt-1 text-base font-semibold text-slate-950">Subscription and pricing</h2>
+                <p className={`text-[10px] font-bold uppercase tracking-[0.16em] ${requiresUserPricingToAccess ? "text-[var(--erp-brand)]" : "text-amber-700"}`}>
+                  {requiresUserPricingToAccess ? "Trial ended" : "Organization billing"}
+                </p>
+                <h2 id="subscription-pricing-title" className="mt-1 text-base font-semibold text-[var(--erp-text)]">
+                  {requiresUserPricingToAccess ? "Choose a subscription to continue" : "Subscription and pricing"}
+                </h2>
               </div>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              aria-label="Close subscription and pricing dialog"
-              onClick={() => setPricingDialogOpen(false)}
-              className="h-8 w-8 rounded-md p-0 text-slate-500 hover:text-slate-800"
-            >
-              <X className="h-4 w-4" aria-hidden="true" />
-            </Button>
+            {!requiresUserPricingToAccess && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label="Close subscription and pricing dialog"
+                onClick={() => setPricingDialogOpen(false)}
+                className="h-8 w-8 rounded-md p-0 text-slate-500 hover:text-slate-800"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            )}
           </div>
         </div>
         <div className="space-y-3 p-5">
-          <p id="subscription-pricing-description" className="text-sm leading-5 text-slate-600">
-            Review your active modules or choose plans for this organization.
+          <p id="subscription-pricing-description" className="text-sm leading-5 text-[var(--erp-muted)]">
+            {requiresUserPricingToAccess
+              ? "Your organization trial has ended. Choose a User Based subscription to restore organization access."
+              : "Review your active modules or choose plans for this organization."}
           </p>
+          {requiresUserPricingToAccess && (
+            <OrganizationTrialStatus
+              organizationId={organizationId}
+              trialEnabled={trialEnabled}
+              trialStartedAt={trialStartedAt}
+              trialEndsAt={trialEndsAt}
+              onExpiryChange={setTrialExpired}
+            />
+          )}
+          {requiresUserPricingToAccess && pricingMode === "USER_BASED" && (
+            <p className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4 text-sm font-semibold text-[var(--erp-text)]">
+              ₹{userMonthlyPrice.toLocaleString("en-IN", { useGrouping: false, maximumFractionDigits: 2 })}
+              <span className="ml-1 font-normal text-[var(--erp-muted)]">per user license / month</span>
+            </p>
+          )}
           <Link
             href={`${organizationPath}/settings/pricing/plan`}
             onClick={() => setPricingDialogOpen(false)}
-            className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+            className="flex items-center justify-between rounded-lg border border-[var(--erp-brand)] bg-[var(--erp-brand)] px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-[var(--erp-brand-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)]"
           >
-            <span>Browse plans and pricing</span>
+            <span>{requiresUserPricingToAccess ? "View pricing and subscribe" : "Browse plans and pricing"}</span>
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </Link>
-          <Link
-            href={`${organizationPath}/settings/pricing/current-plan`}
-            onClick={() => setPricingDialogOpen(false)}
-            className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
-          >
-            <span>Current subscription</span>
-            <ChevronRight className="h-4 w-4" aria-hidden="true" />
-          </Link>
+          {requiresUserPricingToAccess && (
+            <Link
+              href={`${organizationPath}/support-tickets`}
+              onClick={() => setPricingDialogOpen(false)}
+              className="flex items-center gap-3 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-4 py-3 text-sm font-semibold text-[var(--erp-text)] transition-colors hover:bg-[var(--erp-surface-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)]"
+            >
+              <Headset className="h-4 w-4 shrink-0 text-[var(--erp-brand)]" aria-hidden="true" />
+              Create a support ticket
+            </Link>
+          )}
+          {!requiresUserPricingToAccess && (
+            <Link
+              href={`${organizationPath}/settings/pricing/current-plan`}
+              onClick={() => setPricingDialogOpen(false)}
+              className="flex items-center justify-between rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-4 py-3 text-sm font-semibold text-[var(--erp-text)] transition-colors hover:bg-[var(--erp-surface-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)]"
+            >
+              <span>Current subscription</span>
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          )}
         </div>
       </Modal>
 

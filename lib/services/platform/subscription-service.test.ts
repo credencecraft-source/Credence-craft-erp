@@ -18,26 +18,35 @@ const mocks = vi.hoisted(() => ({
       deleteMany: vi.fn(),
       create: vi.fn(),
     },
-    plan: { findMany: vi.fn() },
-    organization: { findFirst: vi.fn() },
+    plan: { findMany: vi.fn(), findUnique: vi.fn(), upsert: vi.fn() },
+    organization: { findFirst: vi.fn(), findUnique: vi.fn() },
+    organizationMembership: { count: vi.fn() },
     platformAuditEvent: { create: vi.fn() },
     auditEvent: { create: vi.fn() },
     $executeRaw: vi.fn(),
   },
   requirePlatformSessionAdmin: vi.fn(),
+  pricingMode: { getPlatformPricingSettings: vi.fn() },
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({ prisma: mocks.prisma }));
 vi.mock("@/lib/auth/platform-session-manager", () => ({
   requirePlatformSessionAdmin: mocks.requirePlatformSessionAdmin,
 }));
+vi.mock("@/lib/services/platform/pricing-mode-service", () => ({
+  getPlatformPricingSettings: mocks.pricingMode.getPlatformPricingSettings,
+}));
 
 import {
   addBillingMonths,
+  calculateUserBasedSubscriptionAmounts,
   approveSubscription,
   createPendingSubscriptions,
+  createPendingUserBasedSubscription,
   deleteSubscription,
   isSubscriptionActiveAt,
+  getLatestPaidUserLicenseCount,
+  subscriptionMatchesPricingMode,
   mapOrganizationsByReference,
   orphanedSubscriptionAuditDetails,
 } from "./subscription-service";
@@ -47,6 +56,15 @@ beforeEach(() => {
   mocks.prisma.$transaction.mockImplementation(
     (operation: (transaction: typeof mocks.transaction) => Promise<unknown>) => operation(mocks.transaction),
   );
+  mocks.transaction.plan.findUnique.mockResolvedValue({ tier_key: "CLASSIC" });
+  mocks.transaction.organization.findUnique.mockResolvedValue({
+    id: "organization-id",
+    pricing_mode: "MODULE_BASED",
+  });
+  mocks.pricingMode.getPlatformPricingSettings.mockResolvedValue({
+    module_based_active: true,
+    user_based_active: false,
+  });
 });
 
 describe("subscription report organization lookup", () => {
@@ -61,6 +79,66 @@ describe("subscription report organization lookup", () => {
 
     expect(organizationsByReference.get("internal-org-id")).toEqual(organization);
     expect(organizationsByReference.get("public-org-id")).toEqual(organization);
+  });
+
+  describe("subscription pricing mode mapping", () => {
+    it("maps user-based flat subscriptions without business types", () => {
+      const subscription = {
+        business_type_id: null,
+        plan: { tier_key: "USER_BASED" },
+      };
+
+      expect(subscriptionMatchesPricingMode(subscription, "USER_BASED")).toBe(true);
+      expect(subscriptionMatchesPricingMode(subscription, "MODULE_BASED")).toBe(false);
+    });
+
+    it("reports the user-license count from the latest paid user-based subscription only", () => {
+      const subscriptions = [
+        {
+          business_type_id: null,
+          payment_status: "paid",
+          billed_user_count: 3,
+          created_at: new Date("2026-09-01T00:00:00.000Z"),
+          plan: { tier_key: "USER_BASED" },
+        },
+        {
+          business_type_id: null,
+          payment_status: "paid",
+          billed_user_count: 5,
+          created_at: new Date("2026-10-01T00:00:00.000Z"),
+          plan: { tier_key: "USER_BASED" },
+        },
+        {
+          business_type_id: null,
+          payment_status: "pending",
+          billed_user_count: 8,
+          created_at: new Date("2026-10-05T00:00:00.000Z"),
+          plan: { tier_key: "USER_BASED" },
+        },
+        {
+          business_type_id: "business-type-id",
+          payment_status: "paid",
+          billed_user_count: 12,
+          created_at: new Date("2026-10-06T00:00:00.000Z"),
+          plan: { tier_key: "STANDARD" },
+        },
+      ];
+
+      expect(getLatestPaidUserLicenseCount(subscriptions)).toBe(5);
+      expect(getLatestPaidUserLicenseCount([])).toBe(0);
+    });
+
+    it("maps module subscriptions only when they have a business type", () => {
+      const subscription = {
+        business_type_id: "business-type-id",
+        plan: { tier_key: "STANDARD" },
+      };
+
+      expect(subscriptionMatchesPricingMode(subscription, "MODULE_BASED")).toBe(true);
+      expect(subscriptionMatchesPricingMode(subscription, "USER_BASED")).toBe(false);
+      expect(subscriptionMatchesPricingMode({ ...subscription, business_type_id: null }, "MODULE_BASED")).toBe(false);
+      expect(subscriptionMatchesPricingMode(subscription, "UNASSIGNED")).toBe(false);
+    });
   });
 
   it("leaves an unmatched subscription reference detectable", () => {
@@ -179,6 +257,98 @@ describe("subscription lifecycle eligibility", () => {
   it("clamps billing-month calculations to the last day of short months", () => {
     expect(addBillingMonths(new Date("2026-08-31T09:30:00.000Z"), 6))
       .toEqual(new Date("2027-02-28T09:30:00.000Z"));
+  });
+
+  it("calculates user-based subscription totals from the requested license count", () => {
+    const amounts = calculateUserBasedSubscriptionAmounts(new Prisma.Decimal("25.00"), 5, 6);
+    expect(amounts.subtotal_amount.toFixed(2)).toBe("750.00");
+    expect(amounts.gst_amount.toFixed(2)).toBe("135.00");
+    expect(amounts.total_amount.toFixed(2)).toBe("885.00");
+    expect(() => calculateUserBasedSubscriptionAmounts(new Prisma.Decimal("25.00"), 0, 6))
+      .toThrow(/at least one user license/);
+  });
+
+  it("creates a user-based request for purchased licenses beyond the active member count", async () => {
+    mocks.transaction.organization.findUnique.mockResolvedValue({
+      id: "organization-id",
+      pricing_mode: "USER_BASED",
+    });
+    mocks.pricingMode.getPlatformPricingSettings.mockResolvedValue({
+      user_based_active: true,
+      user_monthly_price: new Prisma.Decimal("25.00"),
+    });
+    mocks.transaction.organizationMembership.count.mockResolvedValue(5);
+    mocks.transaction.plan.upsert.mockResolvedValue({ id: "user-plan-id" });
+    mocks.transaction.subscription.findFirst.mockResolvedValue(null);
+    mocks.transaction.subscription.create.mockResolvedValue({ id: "subscription-id" });
+
+    await createPendingUserBasedSubscription({
+      organizationId: "organization-id",
+      organizationName: "Example Organization",
+      userId: "user-id",
+      billingMonths: 6,
+      billedUserCount: 8,
+    });
+
+    expect(mocks.transaction.subscription.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organization_id: "organization-id",
+        plan_id: "user-plan-id",
+        billing_months: 6,
+        billed_user_count: 8,
+        subtotal_amount: new Prisma.Decimal("1200"),
+        gst_amount: new Prisma.Decimal("216"),
+        total_amount: new Prisma.Decimal("1416"),
+      }),
+    });
+    expect(mocks.transaction.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: "USER_BASED_SUBSCRIPTION_REQUESTED",
+        details: expect.objectContaining({ billedUserCount: 8 }),
+      }),
+    }));
+  });
+
+  it("rejects a user-based license request below the current active member count", async () => {
+    mocks.transaction.organization.findUnique.mockResolvedValue({
+      id: "organization-id",
+      pricing_mode: "USER_BASED",
+    });
+    mocks.pricingMode.getPlatformPricingSettings.mockResolvedValue({
+      user_based_active: true,
+      user_monthly_price: new Prisma.Decimal("25.00"),
+    });
+    mocks.transaction.organizationMembership.count.mockResolvedValue(5);
+
+    await expect(createPendingUserBasedSubscription({
+      organizationId: "organization-id",
+      userId: "user-id",
+      billingMonths: 12,
+      billedUserCount: 4,
+    })).rejects.toThrow(/at least 5 user licenses/);
+
+    expect(mocks.transaction.subscription.create).not.toHaveBeenCalled();
+  });
+
+  it("requires support pricing for more than ten user licenses", async () => {
+    mocks.transaction.organization.findUnique.mockResolvedValue({
+      id: "organization-id",
+      pricing_mode: "USER_BASED",
+    });
+    mocks.pricingMode.getPlatformPricingSettings.mockResolvedValue({
+      user_based_active: true,
+      user_monthly_price: new Prisma.Decimal("25.00"),
+    });
+    mocks.transaction.organizationMembership.count.mockResolvedValue(5);
+
+    await expect(createPendingUserBasedSubscription({
+      organizationId: "organization-id",
+      userId: "user-id",
+      billingMonths: 12,
+      billedUserCount: 11,
+    })).rejects.toThrow(/more than 10 users, contact support/);
+
+    expect(mocks.transaction.subscription.create).not.toHaveBeenCalled();
   });
 
   it("returns an identical pending request on retry without creating duplicates", async () => {

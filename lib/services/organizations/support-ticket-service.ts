@@ -356,7 +356,17 @@ export async function requestExpiredTrialExtension(
 
 export async function listSupportTickets() {
   return prisma.supportTicket.findMany({
-    include: {
+    select: {
+      id: true,
+      ticket_number: true,
+      subject: true,
+      request_type: true,
+      callback_date: true,
+      callback_time: true,
+      priority: true,
+      status: true,
+      created_at: true,
+      updated_at: true,
       organization: { select: { organization_name: true, organization_id: true } },
       submittedBy: { select: { full_name: true, email: true } },
       platformLead: { select: { id: true, name: true, email: true, mobile: true, company_name: true } },

@@ -287,6 +287,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                 <th className="px-3 py-3">Organization ID</th>
                 <th className="px-3 py-3">Organization Number</th>
                 <th className="px-3 py-3">Plan Name</th>
+                <th className="px-3 py-3">Billable Users</th>
                 <th className="px-3 py-3">Start Date</th>
                 <th className="px-3 py-3">End Date</th>
                 <th className="px-3 py-3">Term</th>
@@ -319,6 +320,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                     <td className="max-w-48 break-all px-3 py-3 font-mono text-[10px] text-slate-600">{sub.organizationPublicId || (sub.organizationMissing ? "Unavailable" : "—")}</td>
                     <td className="whitespace-nowrap px-3 py-3 font-mono tabular-nums text-slate-700">{sub.organizationNumber || (sub.organizationMissing ? "Unavailable" : "—")}</td>
                     <td className="px-3 py-3">{sub.plan_name || plan?.name || plan?.plan_name || "—"}</td>
+                    <td className="px-3 py-3 tabular-nums">{sub.billed_user_count ?? "—"}</td>
                     <td className="px-3 py-3">{startStr || "—"}</td>
                     <td className="px-3 py-3">{endStr || "—"}</td>
                     <td className="px-3 py-3">{sub.billingMonths ? `${sub.billingMonths} months` : "—"}</td>
@@ -332,7 +334,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                           <FormSubmitButton variant="secondary" size="sm" pendingLabel="Approving..." className="rounded border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs text-emerald-700 hover:bg-emerald-100">Approve</FormSubmitButton>
                         </form>
                       )}
-                      <a href={`/platform/subscriptions?edit=${subId}`} className="text-emerald-600 font-semibold">Edit</a>
+                      {sub.business_type_id && <a href={`/platform/subscriptions?edit=${subId}`} className="text-emerald-600 font-semibold">Edit</a>}
                       <form action={remove} className="inline" title={sub.organizationMissing ? "Delete orphaned subscription and record the action in platform audit" : "Delete subscription"}>
                         <input type="hidden" name="id" value={subId} />
                         <FormSubmitButton variant="ghost" size="sm" pendingLabel="Deleting..." className="text-red-600 hover:bg-red-50">Delete</FormSubmitButton>

@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import { cookies } from "next/headers";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { countOrganizationsForUser } from "@/lib/services/organizations/organization-service";
+import { hasOrganizationsForUser } from "@/lib/services/organizations/organization-service";
 import { createOrganizationDummyDataForNewOrganization } from "@/lib/services/organizations/organization-dummy-data-service";
 import { GstVerificationError } from "@/lib/services/organizations/gst-verification-service";
 import { createOrganizationFromGst } from "@/lib/services/organizations/organization-onboarding-service";
@@ -20,7 +20,7 @@ export default async function CreateOrganizationPage({
 }) {
   const user = await requireSessionUser();
   const params = (await searchParams) ?? {};
-  const isOnboardingRequired = await countOrganizationsForUser(user.id) === 0;
+  const isOnboardingRequired = !await hasOrganizationsForUser(user.id);
 
   async function createOrganizationAction(formData: FormData) {
     "use server";

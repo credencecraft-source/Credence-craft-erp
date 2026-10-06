@@ -194,12 +194,14 @@ export async function getEffectiveSegmentFormRestriction(
 ) {
   if (await isOrganizationTrialActive(organizationId)) return null;
 
-  const [effectivePlans, organization] = await Promise.all([
-    getEffectivePlansForOrganization(organizationId),
-    prisma.organization.findUnique({ where: { id: organizationId }, select: { platform_version_id: true } }),
-  ]);
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { platform_version_id: true, pricing_mode: true },
+  });
+  if (organization?.pricing_mode === "USER_BASED") return null;
   if (!organization?.platform_version_id) return null;
 
+  const effectivePlans = await getEffectivePlansForOrganization(organizationId);
   const businessTypeIds = [...new Set(effectivePlans.map(({ businessType }) => businessType.id))];
   const assignments = businessTypeIds.length === 0 ? [] : await prisma.versionBusinessType.findMany({
     where: { version_id: organization.platform_version_id, business_type_id: { in: businessTypeIds } },

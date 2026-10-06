@@ -78,7 +78,7 @@ function LeadEditor({
   ticketsLoading: boolean;
   ticketLoadError: string;
   onClose: () => void;
-  onSaved: (leadId: string, movedToThirdParty?: boolean) => void;
+  onSaved: (lead: PlatformLead, movedToThirdParty?: boolean) => void;
 }) {
   const [name, setName] = useState(lead?.name ?? "");
   const [email, setEmail] = useState(lead?.email ?? "");
@@ -111,7 +111,7 @@ function LeadEditor({
       );
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Unable to save lead.");
-      onSaved(payload.lead.id, movedToThirdParty);
+      onSaved(payload.lead, movedToThirdParty);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save lead.");
     } finally {
@@ -242,10 +242,8 @@ function LeadActivityInfo({ label, value }: { label: string; value: string }) {
 }
 
 export default function PlatformLeadsWorkspace({
-  leads,
+  leads: initialLeads,
   appLogins,
-  selectedLead,
-  selectedLeadTickets,
 }: {
   leads: PlatformLead[];
   appLogins: Array<{
@@ -259,17 +257,24 @@ export default function PlatformLeadsWorkspace({
     stage: string;
     last_login_at: string;
   }>;
-  selectedLead: PlatformLead | null;
-  selectedLeadTickets: LeadTicket[];
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const leadIdFromUrl = searchParams.get("leadId");
+  const [leadOverrides, setLeadOverrides] = useState<Record<string, PlatformLead>>({});
+  const leads = useMemo(() => {
+    const merged = initialLeads.map((lead) => leadOverrides[lead.id] ?? lead);
+    const initialIds = new Set(initialLeads.map((lead) => lead.id));
+    for (const [id, lead] of Object.entries(leadOverrides)) {
+      if (!initialIds.has(id)) merged.push(lead);
+    }
+    return merged;
+  }, [initialLeads, leadOverrides]);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [newLead, setNewLead] = useState(false);
   const selectedLeadId = leadIdFromUrl;
-  const [leadTickets, setLeadTickets] = useState<LeadTicket[]>(selectedLeadTickets);
-  const [ticketsLoadedForLeadId, setTicketsLoadedForLeadId] = useState<string | null>(leadIdFromUrl ?? selectedLead?.id ?? null);
+  const [leadTickets, setLeadTickets] = useState<LeadTicket[]>([]);
+  const [ticketsLoadedForLeadId, setTicketsLoadedForLeadId] = useState<string | null>(null);
   const [ticketLoadFailure, setTicketLoadFailure] = useState<{ leadId: string; error: string } | null>(null);
   const [stageFilter, setStageFilter] = useState("ALL");
   const [verifiedLeadTab, setVerifiedLeadTab] = useState<VerifiedLeadTab | null>(null);
@@ -298,6 +303,18 @@ export default function PlatformLeadsWorkspace({
   const activeSelectedLead = leads.find((lead) => lead.id === selectedLeadId) ?? null;
   const ticketsLoading = Boolean(selectedLeadId && selectedLeadId !== ticketsLoadedForLeadId);
   const ticketLoadError = ticketLoadFailure?.leadId === selectedLeadId ? ticketLoadFailure.error : "";
+
+  function applyLeadStageChanges(changes: Array<{ leadId: string; stage: string }>) {
+    const updatedAt = new Date().toISOString();
+    setLeadOverrides((current) => {
+      const next = { ...current };
+      for (const { leadId, stage } of changes) {
+        const lead = next[leadId] ?? leads.find((item) => item.id === leadId);
+        if (lead) next[leadId] = { ...lead, stage, updated_at: updatedAt };
+      }
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!selectedLeadId || selectedLeadId === ticketsLoadedForLeadId) return;
@@ -358,6 +375,15 @@ export default function PlatformLeadsWorkspace({
       })
       .map((lead) => ({ ...lead, recordType: "THIRD_PARTY" as const }));
   }, [activeTab, appLogins, leads, stageFilter, verifiedLeadTab, verifiedStageFilter]);
+  const leadCountsByStage = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const lead of leads) {
+      counts[lead.stage] = (counts[lead.stage] ?? 0) + 1;
+    }
+    return counts;
+  }, [leads]);
+  const countLeadStages = (stages: readonly string[]) =>
+    stages.reduce((total, stage) => total + (leadCountsByStage[stage] ?? 0), 0);
   const stageOptions = activeTab === "DEAD"
     ? PLATFORM_LEAD_DEAD_STAGES
     : activeTab === "PAID"
@@ -367,18 +393,18 @@ export default function PlatformLeadsWorkspace({
     {
       id: "THIRD_PARTY",
       label: "3rd Party Leads",
-      count: leads.filter((lead) => PLATFORM_LEAD_THIRD_PARTY_STAGES.some((stage) => stage === lead.stage)).length,
+      count: countLeadStages(PLATFORM_LEAD_THIRD_PARTY_STAGES),
     },
     { id: "APP_LOGIN", label: "App Login", count: appLogins.length },
     {
       id: "DEAD",
       label: "Dead",
-      count: leads.filter((lead) => PLATFORM_LEAD_DEAD_STAGES.some((stage) => stage === lead.stage)).length,
+      count: countLeadStages(PLATFORM_LEAD_DEAD_STAGES),
     },
     {
       id: "PAID",
       label: "Paid",
-      count: leads.filter((lead) => PLATFORM_LEAD_PAID_STAGES.some((stage) => stage === lead.stage)).length,
+      count: countLeadStages(PLATFORM_LEAD_PAID_STAGES),
     },
   ];
   const changeVisibleFields = useCallback((next: (string | keyof PlatformLead)[]) => {
@@ -459,8 +485,11 @@ export default function PlatformLeadsWorkspace({
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Unable to update lead stage.");
+      setLeadOverrides((current) => ({
+        ...current,
+        [lead.id]: { ...lead, ...payload.lead, recordType: "THIRD_PARTY" },
+      }));
       setStatusLeadId(null);
-      router.refresh();
     } catch (error) {
       setStatusError(error instanceof Error ? error.message : "Unable to update lead stage.");
     } finally {
@@ -481,11 +510,21 @@ export default function PlatformLeadsWorkspace({
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Unable to move lead statuses.");
+      applyLeadStageChanges(selectedLeadIds.flatMap((leadId) => {
+        const lead = leads.find((item) => item.id === leadId);
+        if (!lead) return [];
+        const currentIndex = PLATFORM_LEAD_THIRD_PARTY_STAGES.indexOf(
+          lead.stage as (typeof PLATFORM_LEAD_THIRD_PARTY_STAGES)[number],
+        );
+        const nextStage = PLATFORM_LEAD_THIRD_PARTY_STAGES[
+          currentIndex + (direction === "NEXT" ? 1 : -1)
+        ];
+        return nextStage ? [{ leadId, stage: nextStage }] : [];
+      }));
       setStageMovementMessage(
         `${payload.updatedCount} lead${payload.updatedCount === 1 ? "" : "s"} moved${payload.skippedCount ? `; ${payload.skippedCount} at a status boundary were unchanged` : ""}.`,
       );
       setSelectedLeadIds([]);
-      router.refresh();
     } catch (error) {
       setStageMovementError(error instanceof Error ? error.message : "Unable to move lead statuses.");
     } finally {
@@ -506,11 +545,11 @@ export default function PlatformLeadsWorkspace({
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Unable to update new leads.");
+      applyLeadStageChanges(selectedLeadIds.map((leadId) => ({ leadId, stage })));
       setStageMovementMessage(
         `${payload.updatedCount} lead${payload.updatedCount === 1 ? "" : "s"} moved to ${stage === "Interested For Demo" ? "Interested" : "Mark as Fraud"}.`,
       );
       setSelectedLeadIds([]);
-      router.refresh();
     } catch (error) {
       setStageMovementError(error instanceof Error ? error.message : "Unable to update new leads.");
     } finally {
@@ -531,13 +570,13 @@ export default function PlatformLeadsWorkspace({
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Unable to update lead stages.");
+      applyLeadStageChanges(selectedLeadIds.map((leadId) => ({ leadId, stage: bulkTargetStage })));
       setStageMovementMessage(
         `${payload.updatedCount} lead${payload.updatedCount === 1 ? "" : "s"} changed to ${bulkTargetStage}${payload.unchangedCount ? `; ${payload.unchangedCount} already had this stage` : ""}.`,
       );
       setSelectedLeadIds([]);
       setBulkStageDialogOpen(false);
       setBulkTargetStage("");
-      router.refresh();
     } catch (error) {
       setStageMovementError(error instanceof Error ? error.message : "Unable to update lead stages.");
     } finally {
@@ -545,14 +584,17 @@ export default function PlatformLeadsWorkspace({
     }
   }
 
-  function handleSaved(leadId: string, movedToThirdParty = false) {
+  function handleSaved(lead: PlatformLead, movedToThirdParty = false) {
+    setLeadOverrides((current) => ({
+      ...current,
+      [lead.id]: { ...lead, recordType: "THIRD_PARTY" },
+    }));
     setNewLead(false);
     if (movedToThirdParty) {
       setActiveTab("THIRD_PARTY");
       setStageFilter("ALL");
     }
-    router.push(`/platform/leads?leadId=${encodeURIComponent(leadId)}`);
-    router.refresh();
+    window.history.pushState(null, "", `/platform/leads?leadId=${encodeURIComponent(lead.id)}`);
   }
 
   async function uploadWorkbook(event: React.ChangeEvent<HTMLInputElement>) {
@@ -682,7 +724,7 @@ export default function PlatformLeadsWorkspace({
                       setSelectedLeadIds([]);
                     }}
                   >
-                    New <span className="text-[10px] opacity-75">({leads.filter((lead) => lead.stage === "1-new").length})</span>
+                    New <span className="text-[10px] opacity-75">({leadCountsByStage["1-new"] ?? 0})</span>
                   </Button>
                   <Button
                     type="button"
@@ -696,7 +738,7 @@ export default function PlatformLeadsWorkspace({
                       setSelectedLeadIds([]);
                     }}
                   >
-                    Verified <span className="text-[10px] opacity-75">({leads.filter((lead) => PLATFORM_LEAD_VERIFIED_STAGES.includes(lead.stage as (typeof PLATFORM_LEAD_VERIFIED_STAGES)[number])).length})</span>
+                    Verified <span className="text-[10px] opacity-75">({countLeadStages(PLATFORM_LEAD_VERIFIED_STAGES)})</span>
                   </Button>
                 </>
               )}
@@ -720,7 +762,7 @@ export default function PlatformLeadsWorkspace({
                       setSelectedLeadIds([]);
                     }}
                   >
-                    {stage} <span className="text-[10px] opacity-75">({leads.filter((lead) => lead.stage === stage).length})</span>
+                    {stage} <span className="text-[10px] opacity-75">({leadCountsByStage[stage] ?? 0})</span>
                   </Button>
                 ))}
             </div>
@@ -752,7 +794,7 @@ export default function PlatformLeadsWorkspace({
                       setSelectedLeadIds([]);
                     }}
                   >
-                    {tab.label} <span className="text-[10px] opacity-75">({leads.filter((lead) => tab.stages.some((stage) => stage === lead.stage)).length})</span>
+                    {tab.label} <span className="text-[10px] opacity-75">({countLeadStages(tab.stages)})</span>
                   </Button>
                 ))}
               </div>
@@ -788,7 +830,7 @@ export default function PlatformLeadsWorkspace({
                       }}
                     >
                       {stage === "2-Potential" ? "Potential" : stage === "3-Dead" ? "Dead" : stage}
-                      <span className="text-[10px] opacity-75">({leads.filter((lead) => lead.stage === stage).length})</span>
+                      <span className="text-[10px] opacity-75">({leadCountsByStage[stage] ?? 0})</span>
                     </Button>
                   ))}
                 </div>

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
+import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 import { createWorkOrder, createWorkOrders, getWorkOrderAllocation, listOrdersByArticle, listWorkOrderAllocationsByArticle, listWorkOrderArticles, listWorkOrders } from "@/lib/services/factory/work-order-service";
 
@@ -33,6 +34,12 @@ export async function GET(request: Request) {
     if (!allocation) return NextResponse.json({ error: "Order number was not found." }, { status: 404 });
     return NextResponse.json(allocation);
   } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      console.error("Unable to load work orders because the database is unavailable.", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+      return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load work order data." }, { status: 400 });
   }
 }
@@ -60,6 +67,12 @@ export async function POST(request: Request) {
     const workOrder = await createWorkOrder(organization.id, user.id, orderNo, Array.isArray(body.lines) ? body.lines : []);
     return NextResponse.json({ ok: true, workOrder }, { status: 201 });
   } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      console.error("Unable to create work orders because the database is unavailable.", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+      return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to create work order." }, { status: 400 });
   }
 }

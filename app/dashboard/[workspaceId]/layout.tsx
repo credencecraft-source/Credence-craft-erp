@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { notFound, redirect } from "next/navigation";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { countOrganizationsForUser } from "@/lib/services/organizations/organization-service";
+import { hasOrganizationsForUser } from "@/lib/services/organizations/organization-service";
 
 export default async function WorkspaceLayout({
   children,
@@ -18,7 +18,7 @@ export default async function WorkspaceLayout({
     notFound();
   }
 
-  if (await countOrganizationsForUser(user.id) === 0) {
+  if (!await hasOrganizationsForUser(user.id)) {
     redirect("/dashboard/organizations/create");
   }
 

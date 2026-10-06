@@ -13,9 +13,18 @@ model Segment {
   @@map("segments")
 }
 
+enum PlatformVersionType {
+  BEST_PRICE
+  REGULAR_PRICE
+  PREMIUM
+
+  @@map("platform_version_type")
+}
+
 model PlatformVersion {
   id               String                @id @default(uuid())
   version_name     String                @unique @db.VarChar(100)
+  version_type     PlatformVersionType   @default(REGULAR_PRICE)
   description      String?               @db.VarChar(500)
   is_active        Boolean               @default(true)
   created_at       DateTime              @default(now())
@@ -42,6 +51,19 @@ model VersionBusinessType {
   @@unique([version_id, business_type_id])
   @@index([business_type_id])
   @@map("version_business_types")
+}
+
+model PlatformTag {
+  id                     String                   @id @default(cuid())
+  label                  String                   @unique @db.VarChar(100)
+  is_active              Boolean                  @default(true)
+  sort_order             Int                      @default(0)
+  created_at             DateTime                 @default(now())
+  updated_at             DateTime                 @updatedAt
+  versionBusinessTypes   VersionBusinessTypeTag[]
+
+  @@index([is_active, sort_order])
+  @@map("platform_tags")
 }
 
 model VersionBusinessTypeSegment {
@@ -97,12 +119,14 @@ model VersionBusinessTypeSegmentLocationLimit {
 model VersionBusinessTypeTag {
   id                       String             @id @default(cuid())
   version_business_type_id String
-  label                    String             @db.VarChar(100)
+  platform_tag_id          String
   created_at               DateTime           @default(now())
   versionBusinessType      VersionBusinessType @relation(fields: [version_business_type_id], references: [id], onDelete: Cascade)
+  platformTag              PlatformTag         @relation(fields: [platform_tag_id], references: [id], onDelete: Restrict)
 
-  @@unique([version_business_type_id, label])
+  @@unique([version_business_type_id, platform_tag_id])
   @@index([version_business_type_id])
+  @@index([platform_tag_id])
   @@map("version_business_type_tags")
 }
 

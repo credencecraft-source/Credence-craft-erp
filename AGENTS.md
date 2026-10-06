@@ -51,3 +51,16 @@ These are persistent project governance requirements for all future human, AI, a
 - Prefer the canonical shared `Button`, `Card`, `Badge`, `AppLayout`, and other existing UI primitives over hand-built equivalents. Extend a shared primitive when a reusable capability is missing; do not create parallel component structures.
 - Every delete/destructive action must use the shared `destructive` button/action variant and a confirmation step appropriate to the operation. Do not render raw delete buttons or icon-only delete actions. Preserve server-side authorization, dependency checks, and audit behavior for destructive business operations.
 - Keep shared component structure, tokens, and variants stable across platform and organization pages. A screen-specific override may handle layout or state only; it must not establish a competing visual language.
+
+## Implementation Verification Gate
+
+- No implementation is complete until its relevant behavior has been exercised in a running application. For user-facing work, use the browser to run the changed workflow, verify its visible result, and reload or revisit the route to confirm persisted state where applicable. Automated tests and a successful build do not replace this browser check.
+- Before implementing a database-backed change, determine whether it requires a Prisma migration. If it does, the implementation is incomplete until the migration has been applied successfully to a verified disposable or non-production database, Prisma migration status confirms it is applied, and the affected workflow has been verified in the browser against that same migrated environment.
+- Never apply migrations to an unverified or production database for local validation. Production migrations are applied only by the approved deployment/release pipeline before serving code that requires the schema.
+- If the required safe database or running browser environment is unavailable, do not claim the implementation is complete: report the exact verification that remains blocked and what environment is needed. Do not bypass this gate by treating schema validation, client generation, mocks, or a successful build as proof that a migration is applied or the workflow works.
+
+## Platform Audience Tag Master
+
+- Audience tags are managed once in the platform Tags catalog, linked beneath Segments in the platform sidebar. Do not accept comma-separated or free-text tags on version/business-type configuration screens.
+- Assign catalog tags to a version/business-type pair through stable tag IDs. Keep current assignments when a catalog label is renamed; deactivation hides a tag from new assignments but preserves and displays existing assignments.
+- Migrate legacy free-text assignments into distinct catalog records before switching consumers to the master relation. Keep organization pricing, plan filtering, version duplication, and public catalog output reading tag labels through that relation.

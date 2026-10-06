@@ -51,7 +51,7 @@ export default async function VersionModuleBasedRestrictionPage({
                 <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Business Type</p>
                 <h2 className="mt-2 text-lg font-bold text-slate-900">{entry.businessType.name}</h2>
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {entry.tags.map((tag) => <span key={tag.id} className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-800">{tag.label}</span>)}
+                  {entry.tags.map((tag) => <span key={tag.id} className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-800">{tag.platformTag.label}</span>)}
                   {entry.tags.length === 0 && <span className="text-xs text-slate-400">No audience tags</span>}
                 </div>
                 <p className="mt-1 text-sm text-slate-500">{entry.segments.length} segments configured</p>

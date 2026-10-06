@@ -7,12 +7,12 @@ const mocks = vi.hoisted(() => ({
   requireOrganizationAccess: vi.fn(),
   tx: {
     factoryWorkOrder: { findFirst: vi.fn() },
-    rawMaterialOutwardRequestLine: { findMany: vi.fn(), updateMany: vi.fn() },
+    rawMaterialOutwardRequestLine: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     rawMaterialOutwardRequest: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
-    rawMaterialOutwardBox: { findMany: vi.fn(), create: vi.fn() },
-    rawMaterialOutwardBoxLine: { findMany: vi.fn(), createMany: vi.fn() },
-    rawMaterialOutwardShipment: { create: vi.fn() },
-    rawMaterialOutwardShipmentBox: { createMany: vi.fn() },
+    rawMaterialOutwardBox: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
+    rawMaterialOutwardBoxLine: { findFirst: vi.fn(), findMany: vi.fn(), createMany: vi.fn(), deleteMany: vi.fn() },
+    rawMaterialOutwardShipment: { create: vi.fn(), findFirst: vi.fn(), deleteMany: vi.fn() },
+    rawMaterialOutwardShipmentBox: { createMany: vi.fn(), deleteMany: vi.fn() },
   },
   prisma: {
     $transaction: vi.fn(),
@@ -36,12 +36,17 @@ vi.mock("@/lib/services/orders/procurement-document-number-service", () => ({
 import { Prisma } from "@prisma/client";
 import {
   acceptRawMaterialOutwardRequest,
+  cancelRawMaterialOutwardRequest,
   createRawMaterialOutwardBox,
   createRawMaterialOutwardShipment,
   createWorkOrderMaterialRequest,
+  deleteRawMaterialOutwardBox,
+  deleteRawMaterialOutwardShipment,
   getRawMaterialPickHistoryForGroupedLine,
   getRawMaterialPickSummariesForGroupedLines,
   listRawMaterialOutwardWorkflow,
+  undoAcceptRawMaterialOutwardRequest,
+  undoPickRawMaterialOutwardItem,
 } from "./raw-material-outward-service";
 
 describe("raw-material-outward-service", () => {
@@ -84,6 +89,12 @@ describe("raw-material-outward-service", () => {
 
     expect(result.request_no).toBe("RMR-1");
     expect(mocks.allocatedQuantities).toHaveBeenCalledWith("org-internal-1", ["line-1", "line-2"], mocks.tx);
+    expect(mocks.tx.rawMaterialOutwardRequestLine.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "org-internal-1",
+        request: { organization_id: "org-internal-1", status: { not: "CANCELLED" } },
+      }),
+    }));
     expect(mocks.tx.rawMaterialOutwardRequest.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         organization_id: "org-internal-1",
@@ -133,6 +144,83 @@ describe("raw-material-outward-service", () => {
     }), mocks.tx);
   });
 
+  it("cancels a not-yet-accepted request and its lines without deleting its audit history", async () => {
+    mocks.tx.rawMaterialOutwardRequest.findFirst.mockResolvedValue({
+      id: "request-1",
+      request_no: "RMR-1",
+      lines: [{ id: "line-1" }, { id: "line-2" }],
+    });
+    mocks.tx.rawMaterialOutwardRequest.updateMany.mockResolvedValue({ count: 1 });
+    mocks.tx.rawMaterialOutwardRequestLine.updateMany.mockResolvedValue({ count: 2 });
+
+    const result = await cancelRawMaterialOutwardRequest({
+      organizationId: "org-1",
+      requestId: "request-1",
+      actorId: "user-1",
+    });
+
+    expect(result).toEqual({ id: "request-1", status: "CANCELLED" });
+    expect(mocks.tx.rawMaterialOutwardRequest.updateMany).toHaveBeenCalledWith({
+      where: { id: "request-1", organization_id: "org-1", status: "REQUESTED" },
+      data: { status: "CANCELLED" },
+    });
+    expect(mocks.tx.rawMaterialOutwardRequestLine.updateMany).toHaveBeenCalledWith({
+      where: { request_id: "request-1", organization_id: "org-1", status: "REQUESTED" },
+      data: { status: "CANCELLED" },
+    });
+    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      action: "RAW_MATERIAL_OUTWARD_REQUEST_CANCELLED",
+      entityId: "request-1",
+    }), mocks.tx);
+  });
+
+  it("reverses acceptance only while every request line remains accepted", async () => {
+    mocks.tx.rawMaterialOutwardRequest.findFirst.mockResolvedValue({
+      id: "request-1",
+      request_no: "RMR-1",
+      lines: [{ id: "line-1", status: "ACCEPTED" }],
+    });
+    mocks.tx.rawMaterialOutwardRequest.updateMany.mockResolvedValue({ count: 1 });
+    mocks.tx.rawMaterialOutwardRequestLine.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await undoAcceptRawMaterialOutwardRequest({
+      organizationId: "org-1",
+      requestId: "request-1",
+      actorId: "user-1",
+    });
+
+    expect(result).toEqual({ id: "request-1", status: "REQUESTED" });
+    expect(mocks.tx.rawMaterialOutwardRequest.updateMany).toHaveBeenCalledWith({
+      where: { id: "request-1", organization_id: "org-1", status: "ACCEPTED" },
+      data: { status: "REQUESTED", accepted_by: null, accepted_at: null },
+    });
+    expect(mocks.tx.rawMaterialOutwardRequestLine.updateMany).toHaveBeenCalledWith({
+      where: { request_id: "request-1", organization_id: "org-1", status: "ACCEPTED" },
+      data: { status: "REQUESTED" },
+    });
+    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      action: "RAW_MATERIAL_OUTWARD_ACCEPTANCE_REVERSED",
+      entityId: "request-1",
+    }), mocks.tx);
+  });
+
+  it("does not reverse acceptance after any item has moved to picking", async () => {
+    mocks.tx.rawMaterialOutwardRequest.findFirst.mockResolvedValue({
+      id: "request-1",
+      request_no: "RMR-1",
+      lines: [{ id: "line-1", status: "PICKED" }],
+    });
+
+    await expect(undoAcceptRawMaterialOutwardRequest({
+      organizationId: "org-1",
+      requestId: "request-1",
+      actorId: "user-1",
+    })).rejects.toThrow("Acceptance can only be reversed before any item is picked.");
+
+    expect(mocks.tx.rawMaterialOutwardRequest.updateMany).not.toHaveBeenCalled();
+    expect(mocks.createAuditEvent).not.toHaveBeenCalled();
+  });
+
   it("boxes the full picked balance remaining and creates tenant-scoped box lines", async () => {
     mocks.reserveNumber.mockResolvedValue("RM-BOX-1");
     mocks.tx.rawMaterialOutwardRequestLine.findMany
@@ -174,6 +262,122 @@ describe("raw-material-outward-service", () => {
       where: { id: "line-1", organization_id: "org-1", status: { in: ["PICKED", "PACKED"] } },
       data: { status: "PACKED" },
     }));
+  });
+
+  it("undoes a pick only when the item has not been packed", async () => {
+    mocks.tx.rawMaterialOutwardRequestLine.findFirst.mockResolvedValue({
+      id: "line-1",
+      request_id: "request-1",
+      request: { request_no: "RMR-1" },
+    });
+    mocks.tx.rawMaterialOutwardBoxLine.findFirst.mockResolvedValue(null);
+    mocks.tx.rawMaterialOutwardRequestLine.updateMany.mockResolvedValue({ count: 1 });
+    mocks.tx.rawMaterialOutwardRequestLine.findMany.mockResolvedValue([{ status: "ACCEPTED" }]);
+    mocks.tx.rawMaterialOutwardRequest.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await undoPickRawMaterialOutwardItem({
+      organizationId: "org-1",
+      requestLineId: "line-1",
+      actorId: "user-1",
+    });
+
+    expect(result).toEqual({ id: "line-1", status: "ACCEPTED" });
+    expect(mocks.tx.rawMaterialOutwardRequestLine.updateMany).toHaveBeenCalledWith({
+      where: { id: "line-1", organization_id: "org-1", status: "PICKED" },
+      data: {
+        status: "ACCEPTED",
+        picked_quantity: new Prisma.Decimal(0),
+        picked_by: null,
+        picked_at: null,
+      },
+    });
+    expect(mocks.tx.rawMaterialOutwardBoxLine.findFirst).toHaveBeenCalledWith({
+      where: { organization_id: "org-1", request_line_id: "line-1" },
+      select: { id: true },
+    });
+    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      action: "RAW_MATERIAL_OUTWARD_PICK_REVERSED",
+      entityId: "line-1",
+    }), mocks.tx);
+  });
+
+  it("does not undo a pick while a box still contains the item", async () => {
+    mocks.tx.rawMaterialOutwardRequestLine.findFirst.mockResolvedValue({
+      id: "line-1",
+      request_id: "request-1",
+      request: { request_no: "RMR-1" },
+    });
+    mocks.tx.rawMaterialOutwardBoxLine.findFirst.mockResolvedValue({ id: "box-line-1" });
+
+    await expect(undoPickRawMaterialOutwardItem({
+      organizationId: "org-1",
+      requestLineId: "line-1",
+      actorId: "user-1",
+    })).rejects.toThrow("Remove the item's unshipped box before undoing its pick.");
+
+    expect(mocks.tx.rawMaterialOutwardRequestLine.updateMany).not.toHaveBeenCalled();
+    expect(mocks.createAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("removes an unshipped box and returns affected quantities to the pick queue", async () => {
+    mocks.tx.rawMaterialOutwardBox.findFirst.mockResolvedValue({
+      id: "box-1",
+      box_no: "RM-BOX-1",
+      lines: [{ request_line_id: "line-1" }],
+    });
+    mocks.tx.rawMaterialOutwardBoxLine.deleteMany.mockResolvedValue({ count: 1 });
+    mocks.tx.rawMaterialOutwardBox.deleteMany.mockResolvedValue({ count: 1 });
+    mocks.tx.rawMaterialOutwardRequestLine.findMany
+      .mockResolvedValueOnce([{
+        id: "line-1",
+        request_id: "request-1",
+        requested_quantity: new Prisma.Decimal("4"),
+        picked_quantity: new Prisma.Decimal("4"),
+        status: "PACKED",
+      }])
+      .mockResolvedValueOnce([{ status: "PICKED" }]);
+    mocks.tx.rawMaterialOutwardBoxLine.findMany.mockResolvedValue([]);
+    mocks.tx.rawMaterialOutwardRequestLine.updateMany.mockResolvedValue({ count: 1 });
+    mocks.tx.rawMaterialOutwardRequest.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await deleteRawMaterialOutwardBox({
+      organizationId: "org-1",
+      boxId: "box-1",
+      actorId: "user-1",
+    });
+
+    expect(result).toEqual({ id: "box-1", box_no: "RM-BOX-1" });
+    expect(mocks.tx.rawMaterialOutwardBox.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "box-1", organization_id: "org-1", shipment: { is: null } },
+    }));
+    expect(mocks.tx.rawMaterialOutwardBoxLine.deleteMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-1", box_id: "box-1" },
+    });
+    expect(mocks.tx.rawMaterialOutwardBox.deleteMany).toHaveBeenCalledWith({
+      where: { id: "box-1", organization_id: "org-1" },
+    });
+    expect(mocks.tx.rawMaterialOutwardRequestLine.updateMany).toHaveBeenCalledWith({
+      where: { id: "line-1", organization_id: "org-1", status: "PACKED" },
+      data: { status: "PICKED" },
+    });
+    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      action: "RAW_MATERIAL_OUTWARD_BOX_REMOVED",
+      entityId: "box-1",
+    }), mocks.tx);
+  });
+
+  it("does not remove a box already included in a shipment", async () => {
+    mocks.tx.rawMaterialOutwardBox.findFirst.mockResolvedValue(null);
+
+    await expect(deleteRawMaterialOutwardBox({
+      organizationId: "org-1",
+      boxId: "shipped-box",
+      actorId: "user-1",
+    })).rejects.toThrow("Only an unshipped box in this organization can be removed.");
+
+    expect(mocks.tx.rawMaterialOutwardBoxLine.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.tx.rawMaterialOutwardBox.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.createAuditEvent).not.toHaveBeenCalled();
   });
 
   it("creates a uniquely numbered packing list from organization-scoped boxes", async () => {
@@ -232,6 +436,77 @@ describe("raw-material-outward-service", () => {
       where: { id: "line-1", organization_id: "org-1", status: "PACKED" },
       data: { status: "SHIPPED" },
     }));
+  });
+
+  it("deletes a packing list, restores unshipped line statuses, and audits the action", async () => {
+    mocks.tx.rawMaterialOutwardShipment.findFirst.mockResolvedValue({
+      id: "shipment-1",
+      packing_list_no: "RM-PL-42",
+      boxes: [{
+        box: { box_no: "RM-BOX-5", lines: [{ request_line_id: "line-1" }] },
+      }],
+    });
+    mocks.tx.rawMaterialOutwardShipmentBox.deleteMany.mockResolvedValue({ count: 1 });
+    mocks.tx.rawMaterialOutwardShipment.deleteMany.mockResolvedValue({ count: 1 });
+    mocks.tx.rawMaterialOutwardRequestLine.findMany
+      .mockResolvedValueOnce([{
+        id: "line-1",
+        request_id: "request-1",
+        requested_quantity: new Prisma.Decimal("4"),
+        picked_quantity: new Prisma.Decimal("4"),
+        status: "SHIPPED",
+      }])
+      .mockResolvedValueOnce([{ status: "PACKED" }]);
+    mocks.tx.rawMaterialOutwardBoxLine.findMany.mockResolvedValue([{
+      request_line_id: "line-1",
+      quantity: new Prisma.Decimal("4"),
+      box: { shipment: null },
+    }]);
+    mocks.tx.rawMaterialOutwardRequestLine.updateMany.mockResolvedValue({ count: 1 });
+    mocks.tx.rawMaterialOutwardRequest.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await deleteRawMaterialOutwardShipment({
+      organizationId: "org-1",
+      shipmentId: "shipment-1",
+      actorId: "user-1",
+    });
+
+    expect(result).toEqual({ id: "shipment-1", packing_list_no: "RM-PL-42" });
+    expect(mocks.tx.rawMaterialOutwardShipment.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "shipment-1", organization_id: "org-1" },
+    }));
+    expect(mocks.tx.rawMaterialOutwardShipmentBox.deleteMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-1", shipment_id: "shipment-1" },
+    });
+    expect(mocks.tx.rawMaterialOutwardShipment.deleteMany).toHaveBeenCalledWith({
+      where: { id: "shipment-1", organization_id: "org-1" },
+    });
+    expect(mocks.tx.rawMaterialOutwardRequestLine.updateMany).toHaveBeenCalledWith({
+      where: { id: "line-1", organization_id: "org-1", status: "SHIPPED" },
+      data: { status: "PACKED" },
+    });
+    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      action: "RAW_MATERIAL_OUTWARD_SHIPMENT_DELETED",
+      entityId: "shipment-1",
+      details: { packingListNo: "RM-PL-42", boxNos: ["RM-BOX-5"] },
+    }), mocks.tx);
+  });
+
+  it("does not delete a packing list outside the authorized organization", async () => {
+    mocks.tx.rawMaterialOutwardShipment.findFirst.mockResolvedValue(null);
+
+    await expect(deleteRawMaterialOutwardShipment({
+      organizationId: "org-1",
+      shipmentId: "foreign-shipment",
+      actorId: "user-1",
+    })).rejects.toThrow("Packing list was not found in this organization.");
+
+    expect(mocks.tx.rawMaterialOutwardShipment.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "foreign-shipment", organization_id: "org-1" },
+    }));
+    expect(mocks.tx.rawMaterialOutwardShipmentBox.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.tx.rawMaterialOutwardShipment.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.createAuditEvent).not.toHaveBeenCalled();
   });
 
   it("returns requested and picked quantities by request line for BOM progress", async () => {

@@ -43,13 +43,15 @@ applyTo: "**/*.{ts,tsx,prisma,sql,css,md}"
 
 - After the first substantive edit, run the narrowest executable check available for the touched slice.
 - If it fails, repair that same slice and rerun the same check before expanding scope.
+- No implementation is complete until its relevant behavior has been exercised in a running application. For user-facing changes, use the browser to run the changed workflow, verify its visible result, and reload or revisit the route to confirm persisted state where applicable. Automated tests and a successful build do not replace this browser check.
 - For UI changes, change only the visual properties and interactions required by the explicit request. Preserve existing colors, typography, spacing, layout, icons, and behavior otherwise; if the request is ambiguous about a material visual change, ask before implementing it.
 - Validate the requested UI behavior in the affected screen, including relevant loading, error, empty, disabled, and success states. Check responsive behavior and keyboard/accessibility interactions where applicable; use the browser for a visual smoke check when available and report any checks that could not be performed.
 - Run focused UI regression tests and the relevant lint or type checks where available. Review the final diff to confirm there are no incidental UI or styling changes. Do not substitute broad QA for these focused checks or bypass the user-confirmation gate below.
 - For APIs, test unauthenticated, wrong-workspace, non-member, insufficient-role, cross-tenant-ID, invalid-input, duplicate-request, and happy-path cases.
 - For documents and inventory, test legal and illegal lifecycle transitions, quantity overages, duplicate posting, concurrent writes where relevant, and reversal behavior.
 - Do not defer checks needed to establish the changed slice's security, tenant isolation, authorization, lifecycle, financial, stock, counter, or data-integrity behavior. Run the focused checks relevant to the change before handoff.
-- For Prisma changes, perform the required schema/client workflow and disposable-database migration verification before handoff when the environment permits. Never use a production database for validation; explicitly report any unavailable verification.
+- Before implementing a database-backed change, determine whether it requires a Prisma migration. If it does, the implementation is incomplete until the migration has been applied successfully to a verified disposable or non-production database, Prisma migration status confirms it is applied, and the affected workflow has been verified in the browser against that same migrated environment.
+- For Prisma changes, perform the required schema/client workflow and disposable-database migration verification before handoff. Never use an unverified or production database for validation; if the safe database or browser environment is unavailable, do not claim completion and explicitly report the exact blocked verification and required environment. Schema validation, client generation, mocks, and a successful build do not prove that a migration was applied or the workflow works.
 
 ## 5. User-Test Handoff And Confirmation Gate
 
@@ -61,7 +63,7 @@ applyTo: "**/*.{ts,tsx,prisma,sql,css,md}"
 ## 6. Full QA After User Confirmation
 
 - Only after explicit user confirmation, run the broader validation appropriate to the change, then run `npm run qa` before declaring the change complete. The quality gate includes production dependency audit, ESLint, strict TypeScript, and production build.
-- For Prisma changes, run `prisma generate`, inspect the generated SQL and indexes, and verify the migration against a disposable database. Before serving code that uses changed schema, apply and verify the migration in that environment. Use `npm run db:migrate:status` as a read-only check and `npm run db:migrate:deploy` only as an explicit release operation after verifying the target from redacted metadata.
+- For Prisma changes, run `prisma generate`, inspect the generated SQL and indexes, apply the migration to a verified disposable or non-production database, and confirm with `npm run db:migrate:status` that it is applied. Then run the affected workflow in the browser against that same database before declaring the implementation complete. Use `npm run db:migrate:deploy` only after verifying the target from redacted metadata; never run it against production for local validation.
 - Standard dev/start scripts must perform a read-only migration-status preflight and fail fast on pending migrations; they must not auto-apply migrations. Deployment pipelines apply migrations before the new code is served, not from request handlers or independently in each replica.
 - Never catch Prisma missing-table/missing-column errors and return empty data or success. Treat schema drift as a deployment/readiness failure with an actionable message.
 - Review the final diff for accidental scope expansion, secret exposure, missing tenant filters, unsafe deletes, inconsistent UI, and missing tests.

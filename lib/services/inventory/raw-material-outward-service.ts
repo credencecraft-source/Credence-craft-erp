@@ -76,6 +76,7 @@ export async function createWorkOrderMaterialRequest(input: {
       where: {
         organization_id: input.organizationId,
         work_order_bom_line_id: { in: workOrder.bomLines.map((line) => line.id) },
+        request: { organization_id: input.organizationId, status: { not: "CANCELLED" } },
       },
       select: { work_order_bom_line_id: true, requested_quantity: true },
     });
@@ -168,6 +169,82 @@ export async function acceptRawMaterialOutwardRequest(input: {
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
+export async function cancelRawMaterialOutwardRequest(input: {
+  organizationId: string;
+  requestId: string;
+  actorId: string;
+}) {
+  await requireOrganizationAccess(input.actorId, input.organizationId, ["OWNER", "ADMIN", "INVENTORY"]);
+  return prisma.$transaction(async (transaction) => {
+    const request = await transaction.rawMaterialOutwardRequest.findFirst({
+      where: { id: input.requestId, organization_id: input.organizationId, status: "REQUESTED" },
+      select: { id: true, request_no: true, lines: { select: { id: true } } },
+    });
+    if (!request) throw new Error("Only a request awaiting acceptance can be cancelled.");
+    const updated = await transaction.rawMaterialOutwardRequest.updateMany({
+      where: { id: request.id, organization_id: input.organizationId, status: "REQUESTED" },
+      data: { status: "CANCELLED" },
+    });
+    if (updated.count !== 1) throw new Error("This request changed before it could be cancelled. Reload and try again.");
+    const cancelledLines = await transaction.rawMaterialOutwardRequestLine.updateMany({
+      where: { request_id: request.id, organization_id: input.organizationId, status: "REQUESTED" },
+      data: { status: "CANCELLED" },
+    });
+    if (cancelledLines.count !== request.lines.length) {
+      throw new Error("This request changed before it could be cancelled. Reload and try again.");
+    }
+    await createAuditEvent({
+      organizationId: input.organizationId,
+      userId: input.actorId,
+      module: "Inventory Management",
+      action: "RAW_MATERIAL_OUTWARD_REQUEST_CANCELLED",
+      entityType: "RawMaterialOutwardRequest",
+      entityId: request.id,
+      details: { requestNo: request.request_no },
+    }, transaction);
+    return { id: request.id, status: "CANCELLED" };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function undoAcceptRawMaterialOutwardRequest(input: {
+  organizationId: string;
+  requestId: string;
+  actorId: string;
+}) {
+  await requireOrganizationAccess(input.actorId, input.organizationId, ["OWNER", "ADMIN", "INVENTORY"]);
+  return prisma.$transaction(async (transaction) => {
+    const request = await transaction.rawMaterialOutwardRequest.findFirst({
+      where: { id: input.requestId, organization_id: input.organizationId, status: "ACCEPTED" },
+      select: { id: true, request_no: true, lines: { select: { id: true, status: true } } },
+    });
+    if (!request || request.lines.length === 0 || request.lines.some((line) => line.status !== "ACCEPTED")) {
+      throw new Error("Acceptance can only be reversed before any item is picked.");
+    }
+    const updated = await transaction.rawMaterialOutwardRequest.updateMany({
+      where: { id: request.id, organization_id: input.organizationId, status: "ACCEPTED" },
+      data: { status: "REQUESTED", accepted_by: null, accepted_at: null },
+    });
+    if (updated.count !== 1) throw new Error("This request changed before acceptance could be reversed. Reload and try again.");
+    const reversedLines = await transaction.rawMaterialOutwardRequestLine.updateMany({
+      where: { request_id: request.id, organization_id: input.organizationId, status: "ACCEPTED" },
+      data: { status: "REQUESTED" },
+    });
+    if (reversedLines.count !== request.lines.length) {
+      throw new Error("This request changed before acceptance could be reversed. Reload and try again.");
+    }
+    await createAuditEvent({
+      organizationId: input.organizationId,
+      userId: input.actorId,
+      module: "Inventory Management",
+      action: "RAW_MATERIAL_OUTWARD_ACCEPTANCE_REVERSED",
+      entityType: "RawMaterialOutwardRequest",
+      entityId: request.id,
+      details: { requestNo: request.request_no },
+    }, transaction);
+    return { id: request.id, status: "REQUESTED" };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
 export async function markRawMaterialOutwardItemPicked(input: {
   organizationId: string;
   requestLineId: string;
@@ -207,6 +284,47 @@ export async function markRawMaterialOutwardItemPicked(input: {
       details: { requestId: line.request_id, pickedQuantity: line.requested_quantity.toString() },
     }, transaction);
     return { id: line.id, status: "PICKED" };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function undoPickRawMaterialOutwardItem(input: {
+  organizationId: string;
+  requestLineId: string;
+  actorId: string;
+}) {
+  await requireOrganizationAccess(input.actorId, input.organizationId, ["OWNER", "ADMIN", "INVENTORY"]);
+  return prisma.$transaction(async (transaction) => {
+    const line = await transaction.rawMaterialOutwardRequestLine.findFirst({
+      where: {
+        id: input.requestLineId,
+        organization_id: input.organizationId,
+        status: "PICKED",
+        request: { organization_id: input.organizationId },
+      },
+      select: { id: true, request_id: true, request: { select: { request_no: true } } },
+    });
+    if (!line) throw new Error("Only a picked item can be returned to the pick queue.");
+    const existingBoxLine = await transaction.rawMaterialOutwardBoxLine.findFirst({
+      where: { organization_id: input.organizationId, request_line_id: line.id },
+      select: { id: true },
+    });
+    if (existingBoxLine) throw new Error("Remove the item's unshipped box before undoing its pick.");
+    const updated = await transaction.rawMaterialOutwardRequestLine.updateMany({
+      where: { id: line.id, organization_id: input.organizationId, status: "PICKED" },
+      data: { status: "ACCEPTED", picked_quantity: new Prisma.Decimal(0), picked_by: null, picked_at: null },
+    });
+    if (updated.count !== 1) throw new Error("This item changed before its pick could be undone. Reload and try again.");
+    await refreshRequestStatuses(transaction, input.organizationId, [line.request_id]);
+    await createAuditEvent({
+      organizationId: input.organizationId,
+      userId: input.actorId,
+      module: "Inventory Management",
+      action: "RAW_MATERIAL_OUTWARD_PICK_REVERSED",
+      entityType: "RawMaterialOutwardRequestLine",
+      entityId: line.id,
+      details: { requestNo: line.request.request_no },
+    }, transaction);
+    return { id: line.id, status: "ACCEPTED" };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
@@ -285,6 +403,100 @@ export async function createRawMaterialOutwardBox(input: {
       details: { boxNo, lineCount: boxLines.length },
     }, transaction);
     return box;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function deleteRawMaterialOutwardBox(input: {
+  organizationId: string;
+  boxId: string;
+  actorId: string;
+}) {
+  await requireOrganizationAccess(input.actorId, input.organizationId, ["OWNER", "ADMIN", "INVENTORY"]);
+  return prisma.$transaction(async (transaction) => {
+    const box = await transaction.rawMaterialOutwardBox.findFirst({
+      where: { id: input.boxId, organization_id: input.organizationId, shipment: { is: null } },
+      select: {
+        id: true,
+        box_no: true,
+        lines: { select: { request_line_id: true } },
+      },
+    });
+    if (!box) throw new Error("Only an unshipped box in this organization can be removed.");
+
+    const removedLines = await transaction.rawMaterialOutwardBoxLine.deleteMany({
+      where: { organization_id: input.organizationId, box_id: box.id },
+    });
+    if (removedLines.count !== box.lines.length) {
+      throw new Error("This box changed before it could be removed. Reload and try again.");
+    }
+    const deleted = await transaction.rawMaterialOutwardBox.deleteMany({
+      where: { id: box.id, organization_id: input.organizationId },
+    });
+    if (deleted.count !== 1) throw new Error("This box changed before it could be removed. Reload and try again.");
+
+    const requestLineIds = [...new Set(box.lines.map((line) => line.request_line_id))];
+    const [requestLines, remainingBoxLines] = await Promise.all([
+      requestLineIds.length === 0
+        ? Promise.resolve([])
+        : transaction.rawMaterialOutwardRequestLine.findMany({
+          where: { id: { in: requestLineIds }, organization_id: input.organizationId },
+          select: { id: true, request_id: true, requested_quantity: true, picked_quantity: true, status: true },
+        }),
+      requestLineIds.length === 0
+        ? Promise.resolve([])
+        : transaction.rawMaterialOutwardBoxLine.findMany({
+          where: { organization_id: input.organizationId, request_line_id: { in: requestLineIds } },
+          select: {
+            request_line_id: true,
+            quantity: true,
+            box: { select: { shipment: { select: { shipment_id: true } } } },
+          },
+        }),
+    ]);
+    const packedByLineId = new Map<string, Prisma.Decimal>();
+    const shippedByLineId = new Map<string, Prisma.Decimal>();
+    for (const boxLine of remainingBoxLines) {
+      packedByLineId.set(
+        boxLine.request_line_id,
+        (packedByLineId.get(boxLine.request_line_id) ?? new Prisma.Decimal(0)).plus(boxLine.quantity),
+      );
+      if (boxLine.box.shipment) {
+        shippedByLineId.set(
+          boxLine.request_line_id,
+          (shippedByLineId.get(boxLine.request_line_id) ?? new Prisma.Decimal(0)).plus(boxLine.quantity),
+        );
+      }
+    }
+    for (const line of requestLines) {
+      const packedQuantity = packedByLineId.get(line.id) ?? new Prisma.Decimal(0);
+      const shippedQuantity = shippedByLineId.get(line.id) ?? new Prisma.Decimal(0);
+      const status = shippedQuantity.greaterThanOrEqualTo(line.requested_quantity)
+        ? "SHIPPED"
+        : packedQuantity.greaterThanOrEqualTo(line.picked_quantity) ? "PACKED" : "PICKED";
+      if (status === line.status) continue;
+      const updated = await transaction.rawMaterialOutwardRequestLine.updateMany({
+        where: { id: line.id, organization_id: input.organizationId, status: line.status },
+        data: { status },
+      });
+      if (updated.count !== 1) {
+        throw new Error("A material request changed while the box was being removed. Reload and try again.");
+      }
+    }
+    await refreshRequestStatuses(
+      transaction,
+      input.organizationId,
+      requestLines.map((line) => line.request_id),
+    );
+    await createAuditEvent({
+      organizationId: input.organizationId,
+      userId: input.actorId,
+      module: "Inventory Management",
+      action: "RAW_MATERIAL_OUTWARD_BOX_REMOVED",
+      entityType: "RawMaterialOutwardBox",
+      entityId: box.id,
+      details: { boxNo: box.box_no, lineCount: box.lines.length },
+    }, transaction);
+    return { id: box.id, box_no: box.box_no };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
@@ -369,6 +581,117 @@ export async function createRawMaterialOutwardShipment(input: {
       details: { packingListNo, boxNos: boxes.map((box) => box.box_no) },
     }, transaction);
     return { ...shipment, boxCount: boxes.length };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function deleteRawMaterialOutwardShipment(input: {
+  organizationId: string;
+  shipmentId: string;
+  actorId: string;
+}) {
+  await requireOrganizationAccess(input.actorId, input.organizationId, ["OWNER", "ADMIN", "INVENTORY"]);
+  return prisma.$transaction(async (transaction) => {
+    const shipment = await transaction.rawMaterialOutwardShipment.findFirst({
+      where: { id: input.shipmentId, organization_id: input.organizationId },
+      select: {
+        id: true,
+        packing_list_no: true,
+        boxes: {
+          select: {
+            box: {
+              select: {
+                box_no: true,
+                lines: { select: { request_line_id: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!shipment) throw new Error("Packing list was not found in this organization.");
+
+    const boxLinks = await transaction.rawMaterialOutwardShipmentBox.deleteMany({
+      where: { organization_id: input.organizationId, shipment_id: shipment.id },
+    });
+    if (boxLinks.count !== shipment.boxes.length) {
+      throw new Error("This packing list changed before it could be deleted. Reload and try again.");
+    }
+    const deleted = await transaction.rawMaterialOutwardShipment.deleteMany({
+      where: { id: shipment.id, organization_id: input.organizationId },
+    });
+    if (deleted.count !== 1) throw new Error("This packing list changed before it could be deleted. Reload and try again.");
+
+    const requestLineIds = [...new Set(
+      shipment.boxes.flatMap(({ box }) => box.lines.map((line) => line.request_line_id)),
+    )];
+    const [requestLines, remainingBoxLines] = await Promise.all([
+      requestLineIds.length === 0
+        ? Promise.resolve([])
+        : transaction.rawMaterialOutwardRequestLine.findMany({
+          where: { id: { in: requestLineIds }, organization_id: input.organizationId },
+          select: { id: true, request_id: true, requested_quantity: true, picked_quantity: true, status: true },
+        }),
+      requestLineIds.length === 0
+        ? Promise.resolve([])
+        : transaction.rawMaterialOutwardBoxLine.findMany({
+          where: { organization_id: input.organizationId, request_line_id: { in: requestLineIds } },
+          select: {
+            request_line_id: true,
+            quantity: true,
+            box: { select: { shipment: { select: { shipment_id: true } } } },
+          },
+        }),
+    ]);
+    const packedByLineId = new Map<string, Prisma.Decimal>();
+    const shippedByLineId = new Map<string, Prisma.Decimal>();
+    for (const boxLine of remainingBoxLines) {
+      packedByLineId.set(
+        boxLine.request_line_id,
+        (packedByLineId.get(boxLine.request_line_id) ?? new Prisma.Decimal(0)).plus(boxLine.quantity),
+      );
+      if (boxLine.box.shipment) {
+        shippedByLineId.set(
+          boxLine.request_line_id,
+          (shippedByLineId.get(boxLine.request_line_id) ?? new Prisma.Decimal(0)).plus(boxLine.quantity),
+        );
+      }
+    }
+
+    for (const line of requestLines) {
+      if (line.status !== "SHIPPED") continue;
+      const packedQuantity = packedByLineId.get(line.id) ?? new Prisma.Decimal(0);
+      const shippedQuantity = shippedByLineId.get(line.id) ?? new Prisma.Decimal(0);
+      const status = shippedQuantity.greaterThanOrEqualTo(line.requested_quantity)
+        ? "SHIPPED"
+        : packedQuantity.greaterThanOrEqualTo(line.picked_quantity) ? "PACKED" : "PICKED";
+      if (status === line.status) continue;
+      const updated = await transaction.rawMaterialOutwardRequestLine.updateMany({
+        where: { id: line.id, organization_id: input.organizationId, status: line.status },
+        data: { status },
+      });
+      if (updated.count !== 1) {
+        throw new Error("A material request changed while the packing list was being deleted. Reload and try again.");
+      }
+    }
+
+    await refreshRequestStatuses(
+      transaction,
+      input.organizationId,
+      requestLines.map((line) => line.request_id),
+    );
+    await createAuditEvent({
+      organizationId: input.organizationId,
+      userId: input.actorId,
+      module: "Inventory Management",
+      action: "RAW_MATERIAL_OUTWARD_SHIPMENT_DELETED",
+      entityType: "RawMaterialOutwardShipment",
+      entityId: shipment.id,
+      details: {
+        packingListNo: shipment.packing_list_no,
+        boxNos: shipment.boxes.map(({ box }) => box.box_no),
+      },
+    }, transaction);
+    return { id: shipment.id, packing_list_no: shipment.packing_list_no };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 

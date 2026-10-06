@@ -51,7 +51,7 @@ export default function MerchandisingOrderVariantDialog({
   ).orderQty;
 
   return (
-    <Modal open={open} onClose={onClose} ariaLabel="Create order variant" variant="success" size="lg" className="max-w-3xl">
+    <Modal open={open} onClose={onClose} ariaLabel="Create order variant" variant="success" size="xl">
         <div className="border-b border-slate-200 bg-gradient-to-r from-emerald-50 via-white to-slate-50 px-4 py-3">
           <div className="flex items-start justify-between gap-3">
             <div>

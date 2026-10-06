@@ -8,6 +8,11 @@ const mocks = vi.hoisted(() => ({
   markRawMaterialOutwardItemPicked: vi.fn(),
   createRawMaterialOutwardBox: vi.fn(),
   createRawMaterialOutwardShipment: vi.fn(),
+  cancelRawMaterialOutwardRequest: vi.fn(),
+  undoAcceptRawMaterialOutwardRequest: vi.fn(),
+  undoPickRawMaterialOutwardItem: vi.fn(),
+  deleteRawMaterialOutwardBox: vi.fn(),
+  deleteRawMaterialOutwardShipment: vi.fn(),
   listRawMaterialOutwardWorkflow: vi.fn(),
   getRawMaterialPickHistoryForGroupedLine: vi.fn(),
 }));
@@ -22,6 +27,11 @@ vi.mock("@/lib/services/inventory/raw-material-outward-service", () => ({
   markRawMaterialOutwardItemPicked: mocks.markRawMaterialOutwardItemPicked,
   createRawMaterialOutwardBox: mocks.createRawMaterialOutwardBox,
   createRawMaterialOutwardShipment: mocks.createRawMaterialOutwardShipment,
+  cancelRawMaterialOutwardRequest: mocks.cancelRawMaterialOutwardRequest,
+  undoAcceptRawMaterialOutwardRequest: mocks.undoAcceptRawMaterialOutwardRequest,
+  undoPickRawMaterialOutwardItem: mocks.undoPickRawMaterialOutwardItem,
+  deleteRawMaterialOutwardBox: mocks.deleteRawMaterialOutwardBox,
+  deleteRawMaterialOutwardShipment: mocks.deleteRawMaterialOutwardShipment,
   listRawMaterialOutwardWorkflow: mocks.listRawMaterialOutwardWorkflow,
   getRawMaterialPickHistoryForGroupedLine: mocks.getRawMaterialPickHistoryForGroupedLine,
 }));
@@ -152,5 +162,118 @@ describe("raw-material-outward route", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.createRawMaterialOutwardBox).not.toHaveBeenCalled();
+  });
+
+  it("deletes packing lists using the authorized internal organization context", async () => {
+    mocks.deleteRawMaterialOutwardShipment.mockResolvedValue({
+      id: "shipment-1",
+      packing_list_no: "RM-PL-42",
+    });
+
+    const response = await POST(jsonRequest({
+      organizationId: "public-org",
+      action: "delete-shipment",
+      shipmentId: "shipment-1",
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
+      "user-1",
+      "public-org",
+      ["OWNER", "ADMIN", "INVENTORY"],
+    );
+    expect(mocks.deleteRawMaterialOutwardShipment).toHaveBeenCalledWith({
+      organizationId: "internal-org-1",
+      actorId: "user-1",
+      actorName: "Factory User",
+      shipmentId: "shipment-1",
+    });
+  });
+
+  it("rejects packing-list deletion when organization authorization fails", async () => {
+    mocks.requireOrganizationContext.mockRejectedValue(new Error("Access denied: insufficient organization permissions."));
+
+    const response = await POST(jsonRequest({
+      organizationId: "public-org",
+      action: "delete-shipment",
+      shipmentId: "shipment-1",
+    }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.deleteRawMaterialOutwardShipment).not.toHaveBeenCalled();
+  });
+
+  it("requires a packing-list ID before deletion", async () => {
+    const response = await POST(jsonRequest({
+      organizationId: "public-org",
+      action: "delete-shipment",
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.deleteRawMaterialOutwardShipment).not.toHaveBeenCalled();
+  });
+
+  it("dispatches request cancellation through the authorized organization", async () => {
+    mocks.cancelRawMaterialOutwardRequest.mockResolvedValue({ id: "request-1", status: "CANCELLED" });
+
+    const response = await POST(jsonRequest({
+      organizationId: "public-org",
+      action: "cancel-request",
+      requestId: "request-1",
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.cancelRawMaterialOutwardRequest).toHaveBeenCalledWith({
+      organizationId: "internal-org-1",
+      actorId: "user-1",
+      actorName: "Factory User",
+      requestId: "request-1",
+    });
+  });
+
+  it("dispatches acceptance and pick reversals with scoped record IDs", async () => {
+    const undoAcceptance = await POST(jsonRequest({
+      organizationId: "public-org",
+      action: "undo-accept",
+      requestId: "request-1",
+    }));
+    const undoPick = await POST(jsonRequest({
+      organizationId: "public-org",
+      action: "undo-pick",
+      requestLineId: "line-1",
+    }));
+
+    expect(undoAcceptance.status).toBe(200);
+    expect(undoPick.status).toBe(200);
+    expect(mocks.undoAcceptRawMaterialOutwardRequest).toHaveBeenCalledWith({
+      organizationId: "internal-org-1",
+      actorId: "user-1",
+      actorName: "Factory User",
+      requestId: "request-1",
+    });
+    expect(mocks.undoPickRawMaterialOutwardItem).toHaveBeenCalledWith({
+      organizationId: "internal-org-1",
+      actorId: "user-1",
+      actorName: "Factory User",
+      requestLineId: "line-1",
+    });
+  });
+
+  it("dispatches unshipped box removal through the authorized organization", async () => {
+    mocks.deleteRawMaterialOutwardBox.mockResolvedValue({ id: "box-1", box_no: "RM-BOX-1" });
+
+    const response = await POST(jsonRequest({
+      organizationId: "public-org",
+      action: "delete-box",
+      boxId: "box-1",
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.deleteRawMaterialOutwardBox).toHaveBeenCalledWith({
+      organizationId: "internal-org-1",
+      actorId: "user-1",
+      actorName: "Factory User",
+      boxId: "box-1",
+    });
   });
 });

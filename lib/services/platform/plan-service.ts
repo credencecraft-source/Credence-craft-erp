@@ -72,7 +72,10 @@ export async function listVersionSegmentPlansForOrganization(organizationId: str
       businessTypes: {
         include: {
           businessType: true,
-          tags: { orderBy: { label: "asc" } },
+          tags: {
+            orderBy: { platformTag: { label: "asc" } },
+            include: { platformTag: true },
+          },
           segments: { where: { is_active: true }, include: { segment: true, locationLimit: true } },
         },
       },
@@ -144,7 +147,7 @@ export async function listVersionSegmentPlansForOrganization(organizationId: str
     versionId: version.id,
     businessTypes: billableBusinessTypes.map(({ businessType, tags }) => ({
       ...businessType,
-      tags: tags.map(({ id, label }) => ({ id, label })),
+      tags: tags.map(({ id, platformTag }) => ({ id, label: platformTag.label })),
     })),
     versionName: version.version_name,
   };

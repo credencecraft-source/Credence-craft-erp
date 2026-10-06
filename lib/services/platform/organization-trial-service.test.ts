@@ -38,6 +38,7 @@ import {
   removeOrganizationTrial,
   startOrganizationTrialOnApproval,
   startOrganizationTrialOnFirstOpen,
+  shouldRedirectExpiredTrialRequest,
 } from "./organization-trial-service";
 
 beforeEach(() => {
@@ -49,6 +50,24 @@ beforeEach(() => {
 });
 
 describe("organization trial lifecycle", () => {
+  it("redirects expired-trial organization entry to the default orders route but preserves settings", () => {
+    const organizationPath = "/dashboard/workspace/organizations/organization";
+
+    expect(shouldRedirectExpiredTrialRequest(organizationPath, organizationPath)).toBe(true);
+    expect(shouldRedirectExpiredTrialRequest(
+      `${organizationPath}/settings/users`,
+      organizationPath,
+    )).toBe(false);
+    expect(shouldRedirectExpiredTrialRequest(
+      `${organizationPath}/settings/pricing/plan`,
+      organizationPath,
+    )).toBe(false);
+    expect(shouldRedirectExpiredTrialRequest(
+      `${organizationPath}/order-management/merchandising/order`,
+      organizationPath,
+    )).toBe(false);
+  });
+
   it("starts an approved trial for 24 hours plus configured extension and audits the admin", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-02T10:00:00.000Z"));
@@ -249,6 +268,21 @@ describe("organization trial lifecycle", () => {
 
     mocks.getEffectivePlansForOrganization.mockResolvedValue([{ plan: { id: "paid" }, isFree: false }]);
     await expect(hasOrganizationTrialAccess("internal-org-id", new Date("2026-10-02T10:00:00.000Z"))).resolves.toBe(true);
+  });
+
+  it("uses the authorized trial snapshot without rereading the organization", async () => {
+    await expect(hasOrganizationTrialAccess(
+      "internal-org-id",
+      new Date("2026-10-02T11:00:00.000Z"),
+      {
+        trial_started_at: new Date("2026-10-02T10:00:00.000Z"),
+        trial_ends_at: new Date("2026-10-03T10:00:00.000Z"),
+        trial_enabled: true,
+      },
+    )).resolves.toBe(true);
+
+    expect(mocks.prisma.organization.findUnique).not.toHaveBeenCalled();
+    expect(mocks.getEffectivePlansForOrganization).not.toHaveBeenCalled();
   });
 
   it("removes the trial and records the platform audit event", async () => {

@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { cache } from "react";
 
 import { prisma } from "@/lib/database/prisma-client";
 import {
@@ -79,7 +80,7 @@ export async function setPlatformSessionCookie(adminId: string) {
   });
 }
 
-export async function getPlatformSessionAdmin(): Promise<PlatformSessionAdmin | null> {
+export const getPlatformSessionAdmin = cache(async (): Promise<PlatformSessionAdmin | null> => {
   const cookieStore = await cookies();
   const token = cookieStore.get(PLATFORM_SESSION_COOKIE_NAME)?.value ?? null;
   const requestedView = cookieStore.get(PLATFORM_VIEW_COOKIE_NAME)?.value;
@@ -106,7 +107,7 @@ export async function getPlatformSessionAdmin(): Promise<PlatformSessionAdmin | 
     team_role: getEffectivePlatformTeamRole(admin.role, requestedView, admin.team_role),
     mobile_number: admin.mobile_number,
   };
-}
+});
 
 export async function requirePlatformSessionAdmin(): Promise<PlatformSessionAdmin> {
   const admin = await getPlatformSessionAdmin();

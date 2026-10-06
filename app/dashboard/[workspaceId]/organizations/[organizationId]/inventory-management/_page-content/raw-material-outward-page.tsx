@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, PackageCheck, Printer, Truck } from "lucide-react";
+import { Check, PackageCheck, Printer, Trash2, Truck } from "lucide-react";
 import { useParams } from "next/navigation";
 
 import Badge from "@/components/ui/Badge";
@@ -254,6 +254,40 @@ export default function RawMaterialOutwardPage() {
     }
   }
 
+  async function deleteShipment(shipment: OutwardShipment) {
+    if (!window.confirm(`Delete packing list ${shipment.packingListNo}? Its boxes will return to the unshipped queue.`)) return;
+    await mutate(
+      "delete-shipment",
+      { shipmentId: shipment.id },
+      `Packing list ${shipment.packingListNo} deleted. Its boxes are available to ship again.`,
+    );
+  }
+
+  async function cancelRequest(request: OutwardRequest) {
+    if (!window.confirm(`Delete request ${request.requestNo}? It will be cancelled and its quantities released for a new request.`)) return;
+    await mutate("cancel-request", { requestId: request.id }, `${request.requestNo} cancelled.`);
+  }
+
+  async function undoAcceptance(request: OutwardRequest) {
+    if (!window.confirm(`Return ${request.requestNo} to Accept?`)) return;
+    await mutate("undo-accept", { requestId: request.id }, `${request.requestNo} returned to Accept.`);
+  }
+
+  async function undoPick(line: OutwardLine) {
+    if (!window.confirm(`Undo the pick for ${line.rawMaterial || "this material"}?`)) return;
+    await mutate("undo-pick", { requestLineId: line.id }, `${line.rawMaterial || "Material"} returned to the pick queue.`);
+  }
+
+  async function removeFromPack(line: OutwardLine) {
+    if (!window.confirm(`Delete ${line.rawMaterial || "this material"} from Pack and return it to Pick?`)) return;
+    await mutate("undo-pick", { requestLineId: line.id }, `${line.rawMaterial || "Material"} removed from Pack and returned to Pick.`);
+  }
+
+  async function removeBox(box: OutwardBox) {
+    if (!window.confirm(`Delete box ${box.boxNo}? Its quantities will return to Pack.`)) return;
+    await mutate("delete-box", { boxId: box.id }, `${box.boxNo} removed. Its quantities are available to pack again.`);
+  }
+
   const tabs: Array<{ label: string; value: Stage }> = [
     { label: `Accept ${counts.accept}`, value: "accept" },
     { label: `Pick ${counts.pick}`, value: "pick" },
@@ -273,7 +307,7 @@ export default function RawMaterialOutwardPage() {
                 <h1 className="erp-page-heading mt-1">Raw Material Pick, Pack &amp; Ship</h1>
                 <p className="erp-page-subheading mt-1">One queue for allocated work-order material requests, picking, box packing, and shipment documents. Store Verification remains the stock-posting step.</p>
               </div>
-              <Badge>{workflow.requests.length} material requests</Badge>
+              <Badge>{workflow.requests.filter((request) => request.status !== "CANCELLED").length} material requests</Badge>
             </header>
 
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -308,9 +342,14 @@ export default function RawMaterialOutwardPage() {
                         <p className="mt-1 text-sm text-slate-500">Work Order {request.workOrderNo} · Order {request.orderNo}</p>
                         <p className="mt-1 text-xs text-slate-500">Requested {new Date(request.requestedAt).toLocaleString("en-IN")} by {request.requestedBy || "Work Order"}</p>
                       </div>
-                      <Button type="button" onClick={() => void mutate("accept", { requestId: request.id }, `${request.requestNo} accepted and moved to Pick.`)} disabled={saving}>
-                        <Check className="h-4 w-4" /> Accept request
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button type="button" onClick={() => void mutate("accept", { requestId: request.id }, `${request.requestNo} accepted and moved to Pick.`)} disabled={saving}>
+                          <Check className="h-4 w-4" /> Accept request
+                        </Button>
+                        <Button type="button" variant="destructive" onClick={() => void cancelRequest(request)} disabled={saving}>
+                          <Trash2 className="h-4 w-4" /> Delete request
+                        </Button>
+                      </div>
                     </div>
                     <DocumentTable lines={request.lines.map((line) => ({
                       rawMaterial: line.rawMaterial,
@@ -327,13 +366,20 @@ export default function RawMaterialOutwardPage() {
             ) : stage === "pick" ? (
               <div className="space-y-4" role="tabpanel" aria-label="Items ready to pick">
                 {workflow.requests.map((request) => {
-                  const lines = request.lines.filter((line) => line.status === "ACCEPTED");
+                  const lines = request.lines.filter((line) => line.status === "ACCEPTED" || line.status === "PICKED");
                   if (lines.length === 0) return null;
                   return (
                     <Card key={request.id} className="space-y-4">
-                      <div>
-                        <h2 className="text-base font-bold text-slate-950">{request.requestNo}</h2>
-                        <p className="mt-1 text-sm text-slate-500">Work Order {request.workOrderNo} · Order {request.orderNo}</p>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h2 className="text-base font-bold text-slate-950">{request.requestNo}</h2>
+                          <p className="mt-1 text-sm text-slate-500">Work Order {request.workOrderNo} · Order {request.orderNo}</p>
+                        </div>
+                        {request.status === "ACCEPTED" && request.lines.every((line) => line.status === "ACCEPTED") && (
+                          <Button type="button" variant="destructive" onClick={() => void undoAcceptance(request)} disabled={saving}>
+                            <Trash2 className="h-4 w-4" /> Undo acceptance
+                          </Button>
+                        )}
                       </div>
                       <div className="overflow-x-auto">
                         <table className="w-full min-w-[720px] text-left text-sm">
@@ -345,9 +391,15 @@ export default function RawMaterialOutwardPage() {
                                 <td className="p-3">{line.category || "-"} / {line.size || "-"}</td>
                                 <td className="p-3 text-right">{quantity(line.requestedQuantity)}</td>
                                 <td className="p-3 text-right">
-                                  <Button type="button" size="sm" onClick={() => void mutate("pick", { requestLineId: line.id }, `${line.rawMaterial || "Material"} marked picked.`)} disabled={saving}>
-                                    <Check className="h-4 w-4" /> Mark picked
-                                  </Button>
+                                  {line.status === "PICKED" ? (
+                                    <Button type="button" size="sm" variant="destructive" onClick={() => void undoPick(line)} disabled={saving}>
+                                      <Trash2 className="h-4 w-4" /> Undo pick
+                                    </Button>
+                                  ) : (
+                                    <Button type="button" size="sm" onClick={() => void mutate("pick", { requestLineId: line.id }, `${line.rawMaterial || "Material"} marked picked.`)} disabled={saving}>
+                                      <Check className="h-4 w-4" /> Mark picked
+                                    </Button>
+                                  )}
                                 </td>
                               </tr>
                             ))}
@@ -357,7 +409,9 @@ export default function RawMaterialOutwardPage() {
                     </Card>
                   );
                 })}
-                {counts.pick === 0 && <Card className="text-center text-sm text-slate-500">No accepted items are waiting to be picked.</Card>}
+                {workflow.requests.every((request) => request.lines.every((line) => line.status !== "ACCEPTED" && line.status !== "PICKED")) && (
+                  <Card className="text-center text-sm text-slate-500">No accepted or picked items are waiting here.</Card>
+                )}
               </div>
             ) : stage === "pack" ? (
               <Card className="space-y-4" role="tabpanel" aria-label="Picked items ready to pack">
@@ -375,7 +429,7 @@ export default function RawMaterialOutwardPage() {
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[900px] text-left text-sm">
-                      <thead className="erp-table-head"><tr><th className="p-3">Select</th><th className="p-3">Request / Work Order</th><th className="p-3">Raw Material</th><th className="p-3">Category / Size</th><th className="p-3 text-right">Quantity to Box</th></tr></thead>
+                      <thead className="erp-table-head"><tr><th className="p-3">Select</th><th className="p-3">Request / Work Order</th><th className="p-3">Raw Material</th><th className="p-3">Category / Size</th><th className="p-3 text-right">Quantity to Box</th><th className="p-3 text-right">Action</th></tr></thead>
                       <tbody className="divide-y divide-[var(--erp-border)]">
                         {packableItems.map(({ request, line, remaining }) => (
                           <tr key={line.id}>
@@ -390,6 +444,21 @@ export default function RawMaterialOutwardPage() {
                             <td className="p-3 font-semibold">{line.rawMaterial || "-"}</td>
                             <td className="p-3">{line.category || "-"} / {line.size || "-"}</td>
                             <td className="p-3 text-right font-semibold">{quantity(remaining)}</td>
+                            <td className="p-3 text-right">
+                              {line.status === "PICKED" && !packedByRequestLine.has(line.id) ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => void removeFromPack(line)}
+                                  disabled={saving}
+                                >
+                                  <Trash2 className="h-4 w-4" /> Delete from Pack
+                                </Button>
+                              ) : (
+                                <span className="text-xs text-slate-500">Remove box first</span>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -410,6 +479,9 @@ export default function RawMaterialOutwardPage() {
                       </div>
                       <Button type="button" variant="secondary" onClick={() => setPrintDocument({ type: "box", box })}>
                         <Printer className="h-4 w-4" /> Print box contents
+                      </Button>
+                      <Button type="button" variant="destructive" onClick={() => void removeBox(box)} disabled={saving}>
+                        <Trash2 className="h-4 w-4" /> Delete box
                       </Button>
                     </div>
                     <DocumentTable lines={box.lines} />
@@ -464,6 +536,15 @@ export default function RawMaterialOutwardPage() {
                       </div>
                       <Button type="button" variant="secondary" onClick={() => setPrintDocument({ type: "shipment", shipment })}>
                         <Printer className="h-4 w-4" /> Print packing list
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        onClick={() => void deleteShipment(shipment)}
+                        disabled={saving}
+                        aria-label={`Delete packing list ${shipment.packingListNo}`}
+                      >
+                        <Trash2 className="h-4 w-4" /> Delete packing list
                       </Button>
                     </div>
                   ))}

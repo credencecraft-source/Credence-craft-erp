@@ -14,7 +14,7 @@ export default function NavigationLoadingOverlay({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-white p-4"
+      className="pointer-events-none fixed inset-0 z-[100] flex items-center justify-center bg-transparent p-4"
       role="status"
       aria-live="polite"
       aria-label={label}

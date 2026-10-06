@@ -15,8 +15,15 @@ import {
 } from "@/lib/services/organizations/organization-dummy-data-service";
 import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
 import { requireSessionUser } from "@/lib/auth/session-manager"; // Fixed typo (removed trailing 's')
-import { hasOrganizationTrialAccess, startOrganizationTrialOnFirstOpen } from "@/lib/services/platform/organization-trial-service";
+import {
+  hasOrganizationTrialAccess,
+  ORGANIZATION_TRIAL_ACCESS_ENDED_MESSAGE,
+  shouldRedirectExpiredTrialRequest,
+  startOrganizationTrialOnFirstOpen,
+} from "@/lib/services/platform/organization-trial-service";
 import { getPlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { getPlatformPricingSettings, isPricingModeEnabled } from "@/lib/services/platform/pricing-mode-service";
+import { shouldBlockOrganizationForUserPricing } from "@/lib/utilities/organization-trial-visibility";
 
 type OrganizationShellLayoutProps = {
   children: React.ReactNode;
@@ -59,29 +66,45 @@ export default async function OrganizationShellLayout({
   const organizationPath = `/dashboard/${workspaceId}/organizations/${organizationId}`;
 
   const activeBusinessTypesPromise = listActiveBusinessTypes();
-  const [organization, platformAdmin] = await Promise.all([
+  const [organization, platformAdmin, pricingSettings] = await Promise.all([
     getOrganizationShellContext(user.id, organizationId),
     getPlatformSessionAdmin(),
+    getPlatformPricingSettings(),
   ]);
 
   if (!organization) {
     redirect(`/dashboard/${user.workspace_id}/home`);
   }
 
+  const hasConfiguredPricingType = isPricingModeEnabled(pricingSettings, organization.pricing_mode);
+
   if (organization.approval_status !== "APPROVED") {
     redirect(`/dashboard/${workspaceId}/home`);
   }
 
-  await startOrganizationTrialOnFirstOpen(organization.id, user.id);
-  if (!await hasOrganizationTrialAccess(organization.id)
-    && !currentPath.includes("/access-blocked")
-    && !currentPath.includes("/settings/pricing")) {
-    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/access-blocked?message=${encodeURIComponent("Your 24-hour organization trial has ended. Activate a subscription or contact the platform administrator.")}`);
+  let trialOrganization = organization;
+  if (organization.trial_enabled && !organization.trial_started_at) {
+    await startOrganizationTrialOnFirstOpen(organization.id, user.id);
+    const refreshedOrganization = await getOrganizationShellContext(user.id, organizationId);
+    if (!refreshedOrganization) {
+      redirect(`/dashboard/${user.workspace_id}/home`);
+    }
+    trialOrganization = refreshedOrganization;
   }
 
-  const trialOrganization = await getOrganizationShellContext(user.id, organizationId);
-  if (!trialOrganization) {
-    redirect(`/dashboard/${user.workspace_id}/home`);
+  const now = new Date();
+  const trialIsActive = Boolean(
+    trialOrganization.trial_enabled
+    && trialOrganization.trial_started_at
+    && trialOrganization.trial_ends_at
+    && trialOrganization.trial_ends_at > now,
+  );
+  const organizationHasTrialAccess = await hasOrganizationTrialAccess(organization.id, now, trialOrganization);
+  if (!organizationHasTrialAccess
+    && shouldRedirectExpiredTrialRequest(currentPath, organizationPath)) {
+    redirect(
+      `${organizationPath}/access-blocked?message=${encodeURIComponent(ORGANIZATION_TRIAL_ACCESS_ENDED_MESSAGE)}`,
+    );
   }
 
   if (currentPath === organizationPath) {
@@ -147,7 +170,7 @@ export default async function OrganizationShellLayout({
   }
 
   const [scopedRestrictions, activeBusinessTypes, dummyDataStatus] = await Promise.all([
-    validateOrganizationAccess(organization, currentPath),
+    validateOrganizationAccess(organization, currentPath, trialIsActive),
     activeBusinessTypesPromise,
     getOrganizationDummyDataStatus(user.id, organizationId).catch(() => ({
       status: "UNAVAILABLE",
@@ -175,7 +198,14 @@ export default async function OrganizationShellLayout({
       organizationId={organizationId}
       organizationName={organization.organization_name}
       canAccessPlatformControlPanel={Boolean(platformAdmin)}
-      hasAssignedPlatformVersion={Boolean(trialOrganization.platform_version_id)}
+      hasConfiguredPricingType={hasConfiguredPricingType}
+      pricingMode={organization.pricing_mode}
+      userMonthlyPrice={pricingSettings.user_monthly_price.toNumber()}
+      requiresUserPricingToAccess={shouldBlockOrganizationForUserPricing(
+        organization.pricing_mode,
+        hasConfiguredPricingType,
+        organizationHasTrialAccess,
+      )}
       trialEnabled={trialOrganization.trial_enabled}
       trialStartedAt={trialOrganization.trial_started_at?.toISOString() ?? null}
       trialEndsAt={trialOrganization.trial_ends_at?.toISOString() ?? null}

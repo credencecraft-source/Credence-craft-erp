@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import Button from "@/components/ui/Button";
+import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
-import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
-import { getVersionDetails, renameVersion } from "@/lib/services/platform/version-service";
+import VersionEditDialog from "@/app/platform/versions/_components/version-edit-dialog";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { getPlatformVersionTypeLabel } from "@/lib/constants/platform-version-types";
+import { getVersionDetails, updateVersionDetails } from "@/lib/services/platform/version-service";
 
 export default async function VersionDetailPage({
   params,
@@ -22,33 +24,45 @@ export default async function VersionDetailPage({
   ]);
   if (!version) redirect("/platform/versions?error=Version%20not%20found");
 
-  async function renameAction(formData: FormData) {
+  async function updateVersionAction(formData: FormData) {
     "use server";
+    await requirePlatformSessionAdmin();
     try {
-      await renameVersion(versionId, String(formData.get("versionName") || ""));
+      await updateVersionDetails(
+        versionId,
+        String(formData.get("versionName") || ""),
+        String(formData.get("description") || ""),
+        String(formData.get("versionType") || ""),
+      );
     } catch (error) {
-      redirect(`/platform/versions/${versionId}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to rename version.")}`);
+      redirect(`/platform/versions/${versionId}?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to update version.")}`);
     }
-    redirect(`/platform/versions/${versionId}?success=Version%20renamed.`);
+    redirect(`/platform/versions/${versionId}?success=Version%20updated.`);
   }
 
   return (
     <Page className="max-w-6xl">
       <Section className="space-y-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
-          <div><p className="erp-eyebrow">Version Configuration</p><h1 className="text-2xl font-bold text-slate-900">{version.version_name}</h1><p className="text-sm text-slate-600">Choose a business type to manage its segments for this version.</p></div>
-          <Link href="/platform/versions" className="text-sm font-semibold text-slate-600 hover:text-slate-900">Back to versions</Link>
+          <div>
+            <p className="erp-eyebrow">Version Configuration</p>
+            <h1 className="text-2xl font-bold text-slate-900">{version.version_name}</h1>
+            <Badge className="mt-2">{getPlatformVersionTypeLabel(version.version_type)}</Badge>
+            <p className="text-sm text-slate-600">{version.description || "No description provided."}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <VersionEditDialog
+              versionName={version.version_name}
+              versionType={version.version_type}
+              description={version.description ?? ""}
+              action={updateVersionAction}
+            />
+            <Link href="/platform/versions" className="text-sm font-semibold text-slate-600 hover:text-slate-900">Back to versions</Link>
+          </div>
         </div>
 
         {messages.error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{messages.error}</p>}
         {messages.success && <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{messages.success}</p>}
-
-        <Card className="p-5">
-          <form action={renameAction} className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
-            <Input label="Version name" name="versionName" required defaultValue={version.version_name} />
-            <Button type="submit">Rename version</Button>
-          </form>
-        </Card>
 
         <div className="grid gap-4 md:grid-cols-2">
           <Link href={`/platform/versions/${version.id}/module-based`}>

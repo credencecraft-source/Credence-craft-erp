@@ -381,6 +381,7 @@ export async function getOrganizationShellContext(workspaceUserId: string, organ
       organization_id: true,
       organization_name: true,
       approval_status: true,
+      pricing_mode: true,
       platform_version_id: true,
       trial_enabled: true,
       trial_started_at: true,
@@ -606,6 +607,7 @@ export async function requireOrganizationContext(
   workspaceUserId: string,
   publicOrganizationId: string,
   allowedRoles?: string[],
+  options: { allowExpiredTrial?: boolean } = {},
 ): Promise<OrganizationContext> {
   const organization = await prisma.organization.findFirst({
     where: {
@@ -636,7 +638,7 @@ export async function requireOrganizationContext(
   }
 
   await startOrganizationTrialOnFirstOpen(organization.id, workspaceUserId);
-  if (!await hasOrganizationTrialAccess(organization.id)) {
+  if (!options.allowExpiredTrial && !await hasOrganizationTrialAccess(organization.id)) {
     throw new Error("This organization's trial has ended. Activate a subscription or contact the platform administrator.");
   }
 

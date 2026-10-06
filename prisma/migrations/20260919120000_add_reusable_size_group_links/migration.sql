@@ -1,4 +1,4 @@
--- CreateTable
+nn-- CreateTable
 CREATE TABLE "master_size_group_sizes" (
     "id" TEXT NOT NULL,
     "organization_id" TEXT NOT NULL,

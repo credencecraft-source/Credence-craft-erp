@@ -11,7 +11,10 @@ export async function getPublicHowItWorksCatalog(versionId?: string) {
           orderBy: { businessType: { name: "asc" } },
           select: {
             businessType: { select: { name: true } },
-            tags: { orderBy: { label: "asc" }, select: { label: true } },
+            tags: {
+              orderBy: { platformTag: { label: "asc" } },
+              select: { platformTag: { select: { label: true } } },
+            },
           },
         },
       },
@@ -26,7 +29,10 @@ export async function getPublicHowItWorksCatalog(versionId?: string) {
           orderBy: { businessType: { name: "asc" } },
           select: {
             businessType: { select: { name: true } },
-            tags: { orderBy: { label: "asc" }, select: { label: true } },
+            tags: {
+              orderBy: { platformTag: { label: "asc" } },
+              select: { platformTag: { select: { label: true } } },
+            },
           },
         },
       },
@@ -39,7 +45,7 @@ export async function getPublicHowItWorksCatalog(versionId?: string) {
     versionName: version.version_name,
     businessTypes: version.businessTypes.map((entry) => ({
       name: entry.businessType.name,
-      tags: entry.tags.map((tag) => tag.label),
+      tags: entry.tags.map((tag) => tag.platformTag.label),
     })),
   };
 }

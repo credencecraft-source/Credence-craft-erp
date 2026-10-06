@@ -3,8 +3,9 @@ import { getEffectiveSegmentRestrictions } from "@/lib/services/platform/segment
 import { getSidebarFeatureKeysForRoute, restrictionMatchesRoute } from "@/lib/services/platform/plan-restriction-matcher";
 
 export async function validateOrganizationAccess(
-  organization: { id: string; organization_id: string },
+  organization: { id: string; organization_id: string; pricing_mode: string },
   currentPath: string,
+  trialIsActive?: boolean,
 ) {
   if (!currentPath) {
     throw new Error("Unable to determine the current organization route.");
@@ -18,7 +19,9 @@ export async function validateOrganizationAccess(
     const orgIndex = segments.indexOf("organizations");
     const moduleSegments = orgIndex !== -1 ? segments.slice(orgIndex + 2) : [];
 
-    const restrictions = await getEffectiveSegmentRestrictions(organization.id);
+    const restrictions = organization.pricing_mode === "USER_BASED"
+      ? []
+      : await getEffectiveSegmentRestrictions(organization.id, trialIsActive);
 
     if (moduleSegments.length === 0 || restrictions.length === 0) return restrictions;
     const featureKeys = getSidebarFeatureKeysForRoute(moduleSegments);

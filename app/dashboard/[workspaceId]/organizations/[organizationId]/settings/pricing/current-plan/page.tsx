@@ -3,8 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
-import { getEffectivePlansForOrganization, listSubscriptions, deleteSubscription } from "@/lib/services/platform/subscription-service";
-import { listPlans } from "@/lib/services/platform/plan-service";
+import { isSubscriptionActiveAt, listSubscriptions, deleteSubscription, subscriptionMatchesPricingMode } from "@/lib/services/platform/subscription-service";
 import { listBusinessTypes } from "@/lib/services/platform/business-type-service";
 import FormSubmitButton from "@/components/ui/FormSubmitButton";
 
@@ -29,23 +28,27 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
     redirect(`/dashboard/${workspaceId}/home`);
   }
 
-  const [plans, allBusinessTypes, effectivePlans, subscriptions] = await Promise.all([
-    listPlans(),
+  const [allBusinessTypes, subscriptions] = await Promise.all([
     listBusinessTypes(),
-    getEffectivePlansForOrganization(organization.id),
     listSubscriptions(organization.id),
   ]);
-  const planById = new Map(plans.map((plan) => [plan.id, plan]));
   const businessTypeById = new Map(allBusinessTypes.map((businessType) => [businessType.id, businessType]));
   const activeSubscriptionIds = new Set(
-    effectivePlans.flatMap(({ subscription }) => subscription ? [subscription.id] : []),
+    subscriptions
+      .filter((subscription) =>
+        subscriptionMatchesPricingMode(subscription, organization.pricing_mode)
+        && isSubscriptionActiveAt(subscription, subscription.plan),
+      )
+      .map(({ id }) => id),
   );
   const orgSubscriptions = subscriptions.map((subscription) => ({
     ...subscription,
     planId: subscription.plan_id,
     businessTypeId: subscription.business_type_id,
-    plan_name: planById.get(subscription.plan_id)?.plan_name ?? "Unknown plan",
-    business_type_name: businessTypeById.get(subscription.business_type_id ?? "")?.name ?? "—",
+    plan_name: subscription.plan_name,
+    business_type_name: subscription.plan.tier_key === "USER_BASED" && !subscription.business_type_id
+      ? "Per-user pricing"
+      : businessTypeById.get(subscription.business_type_id ?? "")?.name ?? "—",
     isCurrentPlan: activeSubscriptionIds.has(subscription.id),
   }));
 
@@ -92,7 +95,7 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
           <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wider">Settings</p>
           <h1 className="text-2xl font-bold text-slate-900">Current Organization Plan</h1>
           <p className="text-sm text-slate-600 mt-0.5">
-            Review your active module subscriptions, payment status, and service status.
+            Review your active plan or per-user subscription, payment status, and expiry dates.
           </p>
         </div>
         <Link
@@ -120,6 +123,7 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
                 <th className="p-3 font-bold">Business Type</th>
+                <th className="p-3 font-bold">Billable Users</th>
                 <th className="p-3 font-bold">Plan</th>
                 <th className="p-3 font-bold">Start Date</th>
                 <th className="p-3 font-bold">End Date</th>
@@ -134,11 +138,8 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
             <tbody className="divide-y divide-slate-100">
               {orgSubscriptions.length > 0 ? (
                 orgSubscriptions.map((sub) => {
-                  const subPlanId = String(sub.planId ?? "").trim();
-                  const matchedPlan = planById.get(subPlanId);
-                  const planName = matchedPlan?.plan_name ?? sub.plan_name;
-                  const matchedBusinessType = businessTypeById.get(String(sub.businessTypeId ?? ""));
-                  const businessTypeName = matchedBusinessType?.name ?? sub.business_type_name;
+                  const planName = sub.plan_name;
+                  const businessTypeName = sub.business_type_name;
                   const startDate = sub.start_date ? String(sub.start_date).split("T")[0] : "—";
                   const endDate = sub.end_date ? String(sub.end_date).split("T")[0] : "";
                   const paymentType = "Offline";
@@ -156,6 +157,7 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                           {businessTypeName}
                         </span>
                       </td>
+                      <td className="p-3 tabular-nums">{sub.billed_user_count ?? "—"}</td>
                       <td className="p-3 font-semibold text-emerald-700">
                         <span className="bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100">
                           {planName}
@@ -213,7 +215,7 @@ export default async function CurrentPlanPage({ params, searchParams }: PageProp
                 })
               ) : (
                 <tr>
-                  <td colSpan={10} className="p-6 text-center text-slate-500 italic">
+                  <td colSpan={11} className="p-6 text-center text-slate-500 italic">
                     No paid subscription requests found.
                   </td>
                 </tr>

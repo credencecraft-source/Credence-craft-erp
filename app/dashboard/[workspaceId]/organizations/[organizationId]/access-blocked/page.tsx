@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ShieldAlert, ArrowLeft, Zap } from "lucide-react";
+import { ORGANIZATION_TRIAL_ACCESS_ENDED_MESSAGE } from "@/lib/services/platform/organization-trial-service";
 
 interface PageProps {
   params: Promise<{ workspaceId: string; organizationId: string }>;
@@ -13,6 +15,9 @@ export default async function AccessBlockedPage({ params, searchParams }: PagePr
   const { workspaceId, organizationId } = resolvedParams;
   const displayMessage = resolvedSearch.message || "Access to this module/feature is restricted on your current plan.";
   const orgHome = `/dashboard/${workspaceId}/organizations/${organizationId}`;
+  if (displayMessage === ORGANIZATION_TRIAL_ACCESS_ENDED_MESSAGE) {
+    redirect(`${orgHome}/order-management/merchandising/order`);
+  }
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[75vh] px-4">
@@ -39,7 +44,7 @@ export default async function AccessBlockedPage({ params, searchParams }: PagePr
           </Link>
 
           <Link
-            href={`${orgHome}/settings/pricing/current-plan`}
+            href={`${orgHome}/settings/pricing/plan`}
             className="flex items-center justify-center gap-2 w-full rounded-xl bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition border border-emerald-200"
           >
             <Zap className="h-3.5 w-3.5" />

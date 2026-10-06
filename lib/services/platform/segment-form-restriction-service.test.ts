@@ -31,6 +31,22 @@ describe("trial form access", () => {
   });
 });
 
+describe("User Based form access", () => {
+  it("does not resolve segment restrictions or monthly limits", async () => {
+    mocks.isOrganizationTrialActive.mockResolvedValue(false);
+    mocks.prisma.organization.findUnique.mockResolvedValue({
+      platform_version_id: "version-1",
+      pricing_mode: "USER_BASED",
+    });
+
+    await expect(
+      getEffectiveSegmentFormRestriction("internal-organization-id", "merchandising_orders"),
+    ).resolves.toBeNull();
+
+    expect(mocks.getEffectivePlansForOrganization).not.toHaveBeenCalled();
+  });
+});
+
 describe("factory monthly record limit pricing data", () => {
   it("rejects monthly order quantities above the cap but allows the exact cap", () => {
     expect(exceedsMonthlyQuantityLimit(80, 21, 100)).toBe(true);

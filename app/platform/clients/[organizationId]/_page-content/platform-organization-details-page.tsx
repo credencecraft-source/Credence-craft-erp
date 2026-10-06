@@ -2,8 +2,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import Page from "@/components/ui/Page";
 import Select from "@/components/ui/Select";
+import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { assignOrganizationPlatformVersion, getOrganizationClient, listPlatformVersions } from "@/lib/services/platform/client-service";
@@ -11,9 +11,11 @@ import { listOrganizationSegmentPricing, resetOrganizationSegmentPrice, setOrgan
 import { deleteOrganizationFromPlatform, forceDeleteOrganizationFromPlatform, getOrganizationDeletionEligibility, ORGANIZATION_DELETE_RETENTION_DAYS, updateOrganizationApprovalStatus } from "@/lib/services/organizations/organization-service";
 import { extendOrganizationTrial, listOrganizationTrialHistory, removeOrganizationTrial } from "@/lib/services/platform/organization-trial-service";
 import OrganizationDetailTabs from "./organization-detail-tabs";
+import OrganizationPlatformVersionAssignment from "./organization-platform-version-assignment";
 import OrganizationSubscriptionPricing from "./organization-subscription-pricing";
 import OrganizationTrialControls from "../../_page-content/organization-trial-controls";
 import OrganizationDeleteControl from "./organization-delete-control";
+import { countActiveOrganizationMembers, getPlatformPricingSettings, setOrganizationPricingMode, type PricingMode } from "@/lib/services/platform/pricing-mode-service";
 
 function Detail({ label, value }: { label: string; value: string }) {
   return (
@@ -42,9 +44,11 @@ export default async function PlatformOrganizationDetailsPage({
   if (!organization) {
     notFound();
   }
-  const [pricing, trialHistory] = await Promise.all([
+  const [pricing, trialHistory, pricingSettings, activeUserCount] = await Promise.all([
     listOrganizationSegmentPricing(organizationId),
     listOrganizationTrialHistory(organizationId),
+    getPlatformPricingSettings(),
+    countActiveOrganizationMembers(organization.id),
   ]);
   const trialExtensionRequests = trialHistory.requests;
 
@@ -118,11 +122,26 @@ export default async function PlatformOrganizationDetailsPage({
     "use server";
     await requirePlatformSessionAdmin();
     try {
-      await assignOrganizationPlatformVersion(organizationId, String(formData.get("platformVersionId") || ""));
+      await assignOrganizationPlatformVersion(
+        organizationId,
+        String(formData.get("platformVersionId") || ""),
+        String(formData.get("versionType") || ""),
+      );
     } catch (error) {
       redirect(`/platform/organisations/${organizationId}?tab=pricing&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to assign version.")}`);
     }
     redirect(`/platform/organisations/${organizationId}?tab=pricing&success=${encodeURIComponent("Platform version assigned.")}`);
+  }
+
+  async function updatePricingModeAction(formData: FormData) {
+    "use server";
+    await requirePlatformSessionAdmin();
+    try {
+      await setOrganizationPricingMode(organizationId, String(formData.get("pricingMode") || "") as PricingMode);
+    } catch (error) {
+      redirect(`/platform/organisations/${organizationId}?tab=pricing-type&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to update pricing type.")}`);
+    }
+    redirect(`/platform/organisations/${organizationId}?tab=pricing-type&success=${encodeURIComponent("Pricing type updated.")}`);
   }
 
   async function extendTrial(formData: FormData) {
@@ -174,7 +193,33 @@ export default async function PlatformOrganizationDetailsPage({
           </header>
         </div>
 
-        <OrganizationDetailTabs initialValue={["overview", "database", "pricing", "subscriptions", "trial", "users", "activity", "delete"].includes(query.tab ?? "") ? query.tab : undefined} panels={[
+        <OrganizationDetailTabs initialValue={["overview", "database", "pricing-type", "pricing", "subscriptions", "trial", "users", "activity", "delete"].includes(query.tab ?? "") ? query.tab : undefined} panels={[
+          {
+            label: "Pricing Type",
+            value: "pricing-type",
+            content: (
+              <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900">Organization pricing type</h2>
+                  <p className="mt-1 text-xs text-slate-600">Select the billing model. The assigned version continues to control module access, restrictions, and operational limits.</p>
+                </div>
+                <form action={updatePricingModeAction} className="flex flex-wrap items-end gap-3">
+                  <Select
+                    label="Pricing type"
+                    name="pricingMode"
+                    defaultValue={organization.pricing_mode}
+                    className="min-w-56"
+                    options={[
+                      ...(pricingSettings.module_based_active ? [{ value: "MODULE_BASED", label: "Module Based Pricing" }] : []),
+                      ...(pricingSettings.user_based_active ? [{ value: "USER_BASED", label: "User Based Pricing" }] : []),
+                    ]}
+                  />
+                  <Button type="submit" size="sm">Save pricing type</Button>
+                </form>
+                <p className="text-xs text-slate-500">Current type: {organization.pricing_mode === "USER_BASED" ? "User Based Pricing" : "Module Based Pricing"}</p>
+              </section>
+            ),
+          },
           {
             label: "Overview",
             value: "overview",
@@ -215,7 +260,7 @@ export default async function PlatformOrganizationDetailsPage({
             ),
           },
           {
-            label: "Pricing",
+            label: "Version & Access",
             value: "pricing",
             content: (
               <div className="space-y-4">
@@ -224,14 +269,11 @@ export default async function PlatformOrganizationDetailsPage({
                     <h2 className="text-sm font-bold text-slate-900">Approval &amp; version</h2>
                     <Badge>{organization.approval_status.replaceAll("_", " ")}</Badge>
                   </div>
-                  <form action={assignPlatformVersion} className="mt-3 flex flex-col gap-2 sm:flex-row">
-                    <label className="sr-only" htmlFor="platform-version">Platform version</label>
-                    <Select id="platform-version" name="platformVersionId" defaultValue={organization.platform_version_id ?? ""} required className="min-w-0 flex-1 rounded-md border-slate-300 bg-white px-3 py-2 text-sm text-slate-800">
-                      <option value="">Select a required version...</option>
-                      {platformVersions.map((version) => <option key={version.id} value={version.id}>{version.version_name}{version.description ? ` - ${version.description}` : ""}</option>)}
-                    </Select>
-                    <Button type="submit" size="sm" className="rounded-md bg-emerald-700 px-4 text-white hover:bg-emerald-800">Save version</Button>
-                  </form>
+                  <OrganizationPlatformVersionAssignment
+                    versions={platformVersions}
+                    assignedVersionId={organization.platform_version_id}
+                    action={assignPlatformVersion}
+                  />
                   <p className="mt-2 text-xs text-slate-500">A version is optional for approval. The pricing shortcut inside the organisation appears after a version is assigned.</p>
                   <form action={updateApprovalStatus} className="mt-3 flex flex-wrap gap-2" aria-label="Organisation approval status">
                     {[
@@ -272,19 +314,27 @@ export default async function PlatformOrganizationDetailsPage({
             ),
           },
           {
-            label: "Subscriptions",
+            label: organization.pricing_mode === "USER_BASED" ? "User Based Price" : "Module Based Price",
             value: "subscriptions",
             content: (
               <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
                 <div className="border-b border-slate-200 px-4 py-3">
-                  <h2 className="text-sm font-bold text-slate-900">Version segment pricing</h2>
+                  <h2 className="text-sm font-bold text-slate-900">
+                    {organization.pricing_mode === "USER_BASED" ? "User Based Pricing" : "Version segment pricing"}
+                  </h2>
                   <p className="mt-1 text-xs text-slate-500">
                     {pricing.versionName
                       ? `${pricing.versionName} prices are captured when assigned. Custom prices change billing only; version restrictions and limits remain unchanged.`
                       : "Assign a platform version to configure this organization's segment prices."}
                   </p>
                 </div>
-                {pricing.businessTypes.length > 0 ? (
+                {organization.pricing_mode === "USER_BASED" ? (
+                  <dl className="grid gap-4 p-4 sm:grid-cols-3">
+                    <Detail label="Active billable members" value={String(activeUserCount)} />
+                    <Detail label="Price per member / month" value={`₹${pricingSettings.user_monthly_price.toNumber().toLocaleString("en-IN", { minimumFractionDigits: 2 })}`} />
+                    <Detail label="Monthly total before GST" value={`₹${pricingSettings.user_monthly_price.mul(activeUserCount).toNumber().toLocaleString("en-IN", { minimumFractionDigits: 2 })}`} />
+                  </dl>
+                ) : pricing.businessTypes.length > 0 ? (
                   <OrganizationSubscriptionPricing
                     businessTypes={pricing.businessTypes}
                     initialBusinessTypeId={query.businessType}

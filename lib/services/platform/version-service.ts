@@ -2,6 +2,7 @@ import { prisma } from "@/lib/database/prisma-client";
 import { Prisma } from "@prisma/client";
 import { requirePlatformConfigurationAccess } from "@/lib/auth/platform-session-manager";
 import { ensureDefaultSegments } from "@/lib/services/platform/segment-service";
+import { isPlatformVersionType } from "@/lib/constants/platform-version-types";
 
 export async function listVersions() {
   await requirePlatformConfigurationAccess();
@@ -13,10 +14,11 @@ export async function listVersions() {
   });
 }
 
-export async function createVersion(input: { versionName: string; description?: string }) {
+export async function createVersion(input: { versionName: string; versionType: string; description?: string }) {
   await requirePlatformConfigurationAccess();
   const versionName = input.versionName.trim();
   if (!versionName) throw new Error("Version name is required.");
+  if (!isPlatformVersionType(input.versionType)) throw new Error("Select a valid version type.");
 
   const existing = await prisma.platformVersion.findUnique({ where: { version_name: versionName } });
   if (existing) throw new Error("A version with this name already exists.");
@@ -31,6 +33,7 @@ export async function createVersion(input: { versionName: string; description?: 
   return prisma.platformVersion.create({
     data: {
       version_name: versionName,
+      version_type: input.versionType,
       description: input.description?.trim() || null,
       businessTypes: {
         create: businessTypes.map(({ id }) => ({
@@ -123,6 +126,7 @@ export async function duplicateVersion(id: string, input?: { versionName?: strin
     const createdVersion = await transaction.platformVersion.create({
       data: {
         version_name: candidateName,
+        version_type: sourceVersion.version_type,
         description: input?.description?.trim() ?? sourceVersion.description,
         is_active: sourceVersion.is_active,
       },
@@ -142,7 +146,7 @@ export async function duplicateVersion(id: string, input?: { versionName?: strin
         await transaction.versionBusinessTypeTag.create({
           data: {
             version_business_type_id: createdBusinessType.id,
-            label: tag.label,
+            platform_tag_id: tag.platform_tag_id,
           },
         });
       }
@@ -238,10 +242,21 @@ export async function deleteVersion(id: string) {
   return prisma.platformVersion.delete({ where: { id } });
 }
 
-export async function renameVersion(id: string, versionName: string) {
+export async function updateVersionDetails(
+  id: string,
+  versionName: string,
+  description: string | undefined,
+  versionType: string,
+) {
   await requirePlatformConfigurationAccess();
   const normalizedName = versionName.trim();
   if (!normalizedName) throw new Error("Version name is required.");
+  if (normalizedName.length > 100) throw new Error("Version name must be 100 characters or fewer.");
+  if (!isPlatformVersionType(versionType)) throw new Error("Select a valid version type.");
+  const normalizedDescription = description?.trim() || null;
+  if (normalizedDescription && normalizedDescription.length > 500) {
+    throw new Error("Version description must be 500 characters or fewer.");
+  }
 
   const existing = await prisma.platformVersion.findFirst({
     where: { version_name: normalizedName, NOT: { id } },
@@ -251,7 +266,7 @@ export async function renameVersion(id: string, versionName: string) {
 
   return prisma.platformVersion.update({
     where: { id },
-    data: { version_name: normalizedName },
+    data: { version_name: normalizedName, description: normalizedDescription, version_type: versionType },
   });
 }
 
@@ -266,7 +281,10 @@ export async function getVersionDetails(id: string) {
         orderBy: { businessType: { name: "asc" } },
         include: {
           businessType: true,
-          tags: { orderBy: { label: "asc" } },
+          tags: {
+            orderBy: { platformTag: { label: "asc" } },
+            include: { platformTag: true },
+          },
           segments: { include: { segment: true, tags: { orderBy: { label: "asc" } } }, orderBy: { segment: { sort_order: "asc" } } },
         },
       },

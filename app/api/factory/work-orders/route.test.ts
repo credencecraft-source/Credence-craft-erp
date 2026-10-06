@@ -31,6 +31,7 @@ vi.mock("@/lib/services/factory/work-order-service", () => ({
 }));
 
 import { GET, POST } from "./route";
+import { DATABASE_UNAVAILABLE_MESSAGE } from "@/lib/database/database-errors";
 
 const jsonRequest = (body: unknown) => new Request("http://localhost/api/factory/work-orders", {
   method: "POST",
@@ -90,5 +91,27 @@ describe("factory work-orders route", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.listWorkOrders).not.toHaveBeenCalled();
+  });
+
+  it("reports database connectivity failures for reads as service unavailable", async () => {
+    mocks.listWorkOrders.mockRejectedValue({ code: "P1001" });
+
+    const response = await GET(new Request("http://localhost/api/factory/work-orders?organizationId=public-org"));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: DATABASE_UNAVAILABLE_MESSAGE });
+  });
+
+  it("reports database connectivity failures for creates as service unavailable", async () => {
+    mocks.createWorkOrder.mockRejectedValue({ code: "P1001" });
+
+    const response = await POST(jsonRequest({
+      organizationId: "public-org",
+      orderNo: "ORD-1",
+      lines: [],
+    }));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: DATABASE_UNAVAILABLE_MESSAGE });
   });
 });

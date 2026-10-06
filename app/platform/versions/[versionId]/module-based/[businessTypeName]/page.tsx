@@ -2,13 +2,14 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import Button from "@/components/ui/Button";
-import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
-import { addVersionBusinessTypeTags, removeVersionBusinessTypeTag } from "@/lib/services/platform/version-business-type-tag-service";
+import VersionBusinessTypeAudienceTags from "@/app/platform/versions/_components/version-business-type-audience-tags";
+import { listPlatformTags } from "@/lib/services/platform/platform-tag-service";
+import { assignVersionBusinessTypeTag, removeVersionBusinessTypeTag } from "@/lib/services/platform/version-business-type-tag-service";
 import { getVersionDetails, setVersionBusinessTypeSegmentActive, setVersionBusinessTypeSegmentPrice } from "@/lib/services/platform/version-service";
 
 function toUrlSegment(value: string) {
@@ -25,7 +26,7 @@ export default async function ModuleBasedBusinessTypePage({
   params: Promise<{ versionId: string; businessTypeName: string }>;
 }) {
   const { versionId, businessTypeName } = await params;
-  const version = await getVersionDetails(versionId);
+  const [version, platformTags] = await Promise.all([getVersionDetails(versionId), listPlatformTags()]);
   const entry = version?.businessTypes.find((item) => item.businessType && toUrlSegment(item.businessType.name) === businessTypeName);
 
   if (!version || !entry) redirect(`/platform/versions/${versionId}/module-based`);
@@ -55,10 +56,10 @@ export default async function ModuleBasedBusinessTypePage({
     redirect(modulePath);
   }
 
-  async function addTagAction(formData: FormData) {
+  async function assignTagAction(formData: FormData) {
     "use server";
     await requirePlatformSessionAdmin();
-    await addVersionBusinessTypeTags(versionBusinessTypeId, String(formData.get("labels") || ""));
+    await assignVersionBusinessTypeTag(versionBusinessTypeId, String(formData.get("platformTagId") || ""));
     redirect(modulePath);
   }
 
@@ -77,7 +78,14 @@ export default async function ModuleBasedBusinessTypePage({
           <Link href={`/platform/versions/${version.id}/module-based`} className="text-sm font-semibold text-slate-600 hover:text-slate-900">Back to module-based</Link>
         </div>
 
-        <Card className="p-6"><div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Module header</p><h2 className="mt-1 text-lg font-bold text-slate-900">Audience tags</h2><p className="mt-1 text-sm text-slate-500">Help identify whether this module is for Retail, Wholesale, Factory, or another audience.</p></div><form action={addTagAction} className="flex items-end gap-2"><Input name="labels" label="Tags" required placeholder="Retail, Wholesale" /><Button type="submit">Add tags</Button></form></div><div className="mt-5 flex flex-wrap gap-2">{entry.tags.map((tag) => <span key={tag.id} className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-800">{tag.label}<form action={removeTagAction}><input type="hidden" name="tagId" value={tag.id} /><Button type="submit" className="text-emerald-600 hover:text-rose-600" aria-label={`Remove ${tag.label} tag`}>x</Button></form></span>)}{entry.tags.length === 0 && <p className="text-sm text-slate-500">No audience tags added yet.</p>}</div></Card>
+        <VersionBusinessTypeAudienceTags
+          tags={entry.tags.map((tag) => ({ id: tag.id, label: tag.platformTag.label, isActive: tag.platformTag.is_active }))}
+          availableTags={platformTags
+            .filter((tag) => tag.is_active && !entry.tags.some((assignedTag) => assignedTag.platform_tag_id === tag.id))
+            .map((tag) => ({ id: tag.id, label: tag.label, isActive: tag.is_active }))}
+          addTagAction={assignTagAction}
+          removeTagAction={removeTagAction}
+        />
 
         <div>
           <div className="mb-4 flex items-center justify-between"><div><h2 className="text-base font-bold text-slate-900">Segments</h2><p className="mt-1 text-sm text-slate-500">Enable a segment to make it available in organization pricing.</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{enabledSegmentCount}/{entry.segments.length} enabled</span></div>

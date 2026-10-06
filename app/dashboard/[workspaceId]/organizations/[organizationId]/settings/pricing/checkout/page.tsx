@@ -1,17 +1,24 @@
 import React from "react";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { findPlanForVersionSegment, getPlanById } from "@/lib/services/platform/plan-service";
-import { createPendingSubscriptions, getEffectivePlansForOrganization } from "@/lib/services/platform/subscription-service";
+import { createPendingSubscriptions, createPendingUserBasedSubscription, getEffectivePlansForOrganization } from "@/lib/services/platform/subscription-service";
 import { resolveOrganizationSegmentPrice } from "@/lib/services/platform/organization-segment-pricing-service";
+import { countActiveOrganizationMembers, getPlatformPricingSettings, isPricingModeEnabled } from "@/lib/services/platform/pricing-mode-service";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { prisma } from "@/lib/database/prisma-client";
+import Card from "@/components/ui/Card";
+import Page from "@/components/ui/Page";
+import Section from "@/components/ui/Section";
 import SubscriptionCheckoutForm from "./_page-content/subscription-checkout-form";
 
 interface PageProps {
   params: Promise<{ workspaceId: string; organizationId: string }>;
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }
+
+const MAX_STANDARD_USER_LICENSES = 10;
 
 function valuesOf(value: string | string[] | undefined) {
   if (!value) return [];
@@ -23,8 +30,9 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
   const query = (await searchParams) ?? {};
   const explicitPlanIds = valuesOf(query.planId);
   const selectedSegmentIds = valuesOf(query.segmentId);
+  const isUserBasedCheckout = query.pricingMode === "USER_BASED";
   const legacyPlanIds = Object.entries(query)
-    .filter(([key]) => !["error", "billingCycle", "billingMonths", "planId", "segmentId"].includes(key))
+    .filter(([key]) => !["error", "billingCycle", "billingMonths", "billedUserCount", "planId", "segmentId", "pricingMode"].includes(key))
     .flatMap(([, value]) => valuesOf(value));
   const selectedPlanIds = explicitPlanIds.length ? explicitPlanIds : legacyPlanIds;
   const billingMonths = Number(query.billingMonths) === 6 ? 6 : 12;
@@ -33,6 +41,20 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
   const organization = await getOrganizationForUser(user.id, organizationId);
 
   if (!organization) redirect(`/dashboard/${workspaceId}/home`);
+  const [pricingSettings, activeUserCount] = await Promise.all([
+    getPlatformPricingSettings(),
+    countActiveOrganizationMembers(organization.id),
+  ]);
+  const requestedBilledUserCount = query.billedUserCount === undefined
+    ? activeUserCount
+    : typeof query.billedUserCount === "string"
+      ? Number(query.billedUserCount)
+      : Number.NaN;
+  const isBilledUserCountValid = Number.isSafeInteger(requestedBilledUserCount)
+    && requestedBilledUserCount >= activeUserCount
+    && requestedBilledUserCount <= MAX_STANDARD_USER_LICENSES
+    && requestedBilledUserCount > 0;
+  const billedUserCount = isBilledUserCountValid ? requestedBilledUserCount : activeUserCount;
 
   const segmentAssignments = await prisma.versionBusinessTypeSegment.findMany({
     where: {
@@ -78,10 +100,16 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
     const price = resolveOrganizationSegmentPrice(organizationPrice, assignment.price);
     return [{ plan, price }];
   });
-  const hasInvalidSelection =
-    selectedPlanIds.length === 0 ||
-    selectedPlanIds.length !== selectedSegmentIds.length ||
-    checkoutItems.length !== selectedPlanIds.length;
+  const hasInvalidSelection = isUserBasedCheckout
+    ? organization.pricing_mode !== "USER_BASED"
+      || !isPricingModeEnabled(pricingSettings, "USER_BASED")
+      || activeUserCount < 1
+      || !isBilledUserCountValid
+    : organization.pricing_mode !== "MODULE_BASED"
+      || !isPricingModeEnabled(pricingSettings, "MODULE_BASED")
+      || selectedPlanIds.length === 0
+      || selectedPlanIds.length !== selectedSegmentIds.length
+      || checkoutItems.length !== selectedPlanIds.length;
   const effectivePlans = await getEffectivePlansForOrganization(organization.id);
   const now = new Date();
   const projectedStartByBusinessType = new Map(
@@ -90,7 +118,14 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
       !isFree && subscription?.end_date && subscription.end_date > now ? subscription.end_date : now,
     ]),
   );
-  const displayPlans = checkoutItems.map(({ plan, price }) => {
+  const displayPlans = isUserBasedCheckout
+    ? [{
+        id: "user-based-subscription",
+        plan_name: "User Based Pricing",
+        price: pricingSettings.user_monthly_price.toNumber(),
+        projectedStartDate: now.toISOString(),
+      }]
+    : checkoutItems.map(({ plan, price }) => {
     const projectedStart = projectedStartByBusinessType.get(plan.business_type_id ?? "") ?? now;
     return {
       id: plan.id,
@@ -106,7 +141,9 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
     const segmentId = selectedSegmentIds[index];
     if (segmentId) checkoutParams.append("segmentId", segmentId);
   });
+  if (isUserBasedCheckout) checkoutParams.set("pricingMode", "USER_BASED");
   checkoutParams.set("billingMonths", String(billingMonths));
+  if (isUserBasedCheckout) checkoutParams.set("billedUserCount", String(billedUserCount));
   const checkoutUrl = `/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/checkout?${checkoutParams.toString()}`;
 
   async function handleCheckoutAction(formData: FormData) {
@@ -118,6 +155,26 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
     await requireOrganizationAccess(actionUser.id, actionOrganization.organization_id, ["OWNER", "ADMIN"]);
 
     const requestedMonths = Number(formData.get("billingMonths"));
+    if (isUserBasedCheckout) {
+      const requestedLicenseCount = Number(formData.get("billedUserCount"));
+      try {
+        if (requestedMonths !== 6 && requestedMonths !== 12) {
+          throw new Error("Choose a 6 or 12 month billing term.");
+        }
+        await createPendingUserBasedSubscription({
+          organizationId: actionOrganization.id,
+          organizationName: actionOrganization.organization_name,
+          userId: actionUser.id,
+          billingMonths: requestedMonths,
+          billedUserCount: requestedLicenseCount,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to submit the payment request.";
+        redirect(`${checkoutUrl}&error=${encodeURIComponent(message)}`);
+      }
+      redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/settings/pricing/current-plan?success=${encodeURIComponent("Payment request submitted. Awaiting payment approval.")}`);
+    }
+
     if (
       !selectedPlanIds.length ||
       selectedPlanIds.length !== selectedSegmentIds.length ||
@@ -197,28 +254,53 @@ export default async function CheckoutPage({ params, searchParams }: PageProps) 
   }
 
   return (
-    <div className="min-h-full bg-slate-50 p-6 sm:p-8">
-      <div className="mx-auto max-w-4xl space-y-6">
+    <Page as="div" className="max-w-4xl">
+      <Section className="space-y-6">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-600">Settings / Pricing</p>
-          <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">Complete your subscription</h1>
-          <p className="mt-2 text-sm text-slate-600">Review the billing details below before sending the request for approval.</p>
+          <p className="erp-eyebrow">Settings / Pricing</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-[var(--erp-text)] sm:text-3xl">Complete your subscription</h1>
+          <p className="mt-2 text-sm text-[var(--erp-muted)]">Review the billing details below before sending the request for approval.</p>
         </div>
 
-        {typeof query.error === "string" && query.error && <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs font-medium text-red-700">{query.error}</p>}
+        {typeof query.error === "string" && query.error && (
+          <Card role="alert" className="border-[var(--erp-danger)] p-4 text-xs font-medium text-[var(--erp-danger)]">
+            {query.error}
+          </Card>
+        )}
 
         {hasInvalidSelection ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">No valid paid plans were selected. Return to the plan page and choose a paid tier.</div>
+          <Card role="alert" className="p-6 text-sm text-[var(--erp-text)]">
+            {isUserBasedCheckout ? (
+              <div className="space-y-2">
+                <p>
+                  {!isBilledUserCountValid
+                    ? requestedBilledUserCount > MAX_STANDARD_USER_LICENSES
+                      ? "For more than 10 users, contact support for better pricing."
+                      : `Choose a whole-number license count from ${Math.max(activeUserCount, 1)} to ${MAX_STANDARD_USER_LICENSES}.`
+                    : "User Based Pricing is unavailable, has no active members, or has no configured rate. Contact your platform administrator."}
+                </p>
+                <Link
+                  href={`/dashboard/${workspaceId}/organizations/${encodeURIComponent(organizationId)}/support-tickets`}
+                  className="font-semibold text-[var(--erp-brand)] underline-offset-2 hover:underline"
+                >
+                  Contact support
+                </Link>
+              </div>
+            ) : "No valid paid plans were selected. Return to the plan page and choose a paid tier."}
+          </Card>
         ) : (
           <SubscriptionCheckoutForm
             plans={displayPlans}
             organizationName={organization.organization_name}
             defaultBillingMonths={billingMonths as 6 | 12}
+            userBasedLicenseCount={isUserBasedCheckout ? billedUserCount : undefined}
+            userBasedMonthlyRate={isUserBasedCheckout ? pricingSettings.user_monthly_price.toNumber() : undefined}
+            minimumBilledUserCount={activeUserCount}
             pricingPlanUrl={pricingPlanUrl}
             handleCheckoutAction={handleCheckoutAction}
           />
         )}
-      </div>
-    </div>
+      </Section>
+    </Page>
   );
 }

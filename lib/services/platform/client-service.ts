@@ -1,16 +1,22 @@
 import { prisma } from "@/lib/database/prisma-client";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { isPlatformVersionType } from "@/lib/constants/platform-version-types";
 
 export async function listPlatformVersions() {
   return prisma.platformVersion.findMany({
     where: { is_active: true },
     orderBy: [{ created_at: "desc" }, { version_name: "desc" }],
-    select: { id: true, version_name: true, description: true },
+    select: { id: true, version_name: true, version_type: true, description: true },
   });
 }
 
-export async function assignOrganizationPlatformVersion(organizationId: string, platformVersionId: string) {
+export async function assignOrganizationPlatformVersion(
+  organizationId: string,
+  platformVersionId: string,
+  versionType: string,
+) {
   const admin = await requirePlatformSessionAdmin();
+  if (!isPlatformVersionType(versionType)) throw new Error("Select a valid version type.");
 
   return prisma.$transaction(async (transaction) => {
     const [organization, version] = await Promise.all([
@@ -20,11 +26,14 @@ export async function assignOrganizationPlatformVersion(organizationId: string, 
       }),
       transaction.platformVersion.findFirst({
         where: { id: platformVersionId, is_active: true },
-        select: { id: true },
+        select: { id: true, version_type: true },
       }),
     ]);
     if (!organization) throw new Error("Organization not found.");
     if (!version) throw new Error("Select a valid active version.");
+    if (version.version_type !== versionType) {
+      throw new Error("The selected version does not match the chosen version type.");
+    }
 
     const segmentAssignments = await transaction.versionBusinessTypeSegment.findMany({
       where: { versionBusinessType: { is: { version_id: version.id } } },
