@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
 import Badge from "@/components/ui/Badge";
@@ -11,6 +11,9 @@ import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import {
+  filterBookingsWaitingForWorkOrderAssignment,
+  filterAdvanceBookingsForView,
+  filterFullyAssignedBookings,
   validateBookingQuotationSelection,
 } from "@/lib/services/distribution/quotation-selection-service";
 
@@ -48,7 +51,10 @@ type BookingRecord = {
   orderId: string;
   vendorId: string;
   orderNo: string;
+  quotationNo: string | null;
   customer: string;
+  quotationVendor: string | null;
+  masterQuotationVendor: string | null;
   brand: string;
   styleName: string;
   deliveryDate: string;
@@ -73,6 +79,7 @@ type BookingRecord = {
   createdAt: string;
   totalBooked: number;
   totalAssigned: number;
+  totalAllocated: number;
   totalUnassigned: number;
   totalFulfilled: number;
   assignmentStatus: string;
@@ -96,10 +103,13 @@ type BookingReportField =
   | "bookingId"
   | "orderNo"
   | "customer"
+  | "quotationVendor"
+  | "masterQuotationVendor"
   | "brand"
   | "styleName"
   | "totalBooked"
   | "totalAssigned"
+  | "totalAllocated"
   | "assignmentStatus"
   | "fulfillmentStatus"
   | "createdAt";
@@ -111,7 +121,9 @@ const bookingReportFields: Array<{ key: BookingReportField; label: string }> = [
   { key: "fulfillmentStatus", label: "Fulfillment Status" },
   { key: "bookingId", label: "Booking ID" },
   { key: "orderNo", label: "Order No" },
-  { key: "customer", label: "Vendor" },
+  { key: "customer", label: "Booking Vendor" },
+  { key: "quotationVendor", label: "Quotation Vendor" },
+  { key: "masterQuotationVendor", label: "Sales Order Vendor" },
   { key: "brand", label: "Brand" },
   { key: "styleName", label: "Style" },
   { key: "totalBooked", label: "Total Qty" },
@@ -119,17 +131,35 @@ const bookingReportFields: Array<{ key: BookingReportField; label: string }> = [
   { key: "createdAt", label: "Created Date" },
 ];
 
+const fulfillmentReportFields = bookingReportFields.filter(
+  ({ key }) => key !== "assignmentStatus" && key !== "fulfillmentStatus",
+);
+
+const shipmentTrackingReportFields = [
+  ...bookingReportFields.filter(({ key }) => key === "bookingId"),
+  ...bookingReportFields.filter(({ key }) => key === "totalBooked"),
+  { key: "totalAllocated" as const, label: "Allocated Qty" },
+  { key: "assignmentStatus" as const, label: "Stock Availability" },
+  ...bookingReportFields.filter(({ key }) =>
+    key !== "totalAssigned" &&
+    key !== "bookingId" &&
+    key !== "totalBooked" &&
+    key !== "totalAllocated" &&
+    key !== "assignmentStatus",
+  ),
+];
+
 function orderBookingReportFields(fields: BookingReportField[]) {
   const selected = new Set(fields);
-  return bookingReportFields
-    .map(({ key }) => key)
+  return [...bookingReportFields.map(({ key }) => key), "totalAllocated" as const]
     .filter((key) => selected.has(key));
 }
 
 const emptySizes = (): Record<string, number> => ({});
 
-export default function AdvanceBookingPage({ view = "booking" }: { view?: "booking" | "fulfillment" } = {}) {
+export default function AdvanceBookingPage({ view = "booking" }: { view?: "booking" | "fulfillment" | "shipment" } = {}) {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
+  const pathname = usePathname();
   const router = useRouter();
   const organizationId = params?.organizationId ?? "demo-org";
 
@@ -150,6 +180,9 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [isCreating, setIsCreating] = useState(false);
   const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
   const [isCreatingQuotation, setIsCreatingQuotation] = useState(false);
+  const [isRequestingFinishedGoods, setIsRequestingFinishedGoods] = useState(false);
+  const [isDeletingBookings, setIsDeletingBookings] = useState(false);
+  const [showDeleteBookingsConfirmation, setShowDeleteBookingsConfirmation] = useState(false);
   const [selectedBookingIds, setSelectedBookingIds] = useState<string[]>([]);
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [bookingsError, setBookingsError] = useState("");
@@ -164,7 +197,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [visibleReportFields, setVisibleReportFields] = useState<BookingReportField[]>(
-    bookingReportFields.map(({ key }) => key),
+    [...bookingReportFields.map(({ key }) => key), "totalAllocated"],
   );
 
   const loadBookings = useCallback(async (signal?: AbortSignal) => {
@@ -231,8 +264,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
 
   const reportRows = useMemo<BookingReportRow[]>(
     () =>
-      bookings
-        .filter((booking) => Boolean(booking.orderId))
+      filterAdvanceBookingsForView(
+        bookings.filter((booking) => Boolean(booking.orderId)),
+        view,
+      )
         .map((booking) => ({
           ...booking,
           sizeSummary: booking.sizes
@@ -240,11 +275,27 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             .map((line) => `${line.size}: ${line.bookedQuantity}`)
             .join(", "),
         })),
-    [bookings],
+    [bookings, view],
+  );
+  const workOrderTrackingRows = useMemo(
+    () => view === "shipment"
+      ? []
+      : view === "fulfillment"
+        ? filterBookingsWaitingForWorkOrderAssignment(reportRows)
+        : reportRows,
+    [reportRows, view],
+  );
+  const shipmentTrackingRows = useMemo(
+    () => view === "fulfillment" || view === "shipment" ? filterFullyAssignedBookings(reportRows) : [],
+    [reportRows, view],
   );
   const selectedReportBookings = useMemo(
-    () => reportRows.filter((booking) => selectedBookingIds.includes(booking.bookingId)),
-    [reportRows, selectedBookingIds],
+    () => workOrderTrackingRows.filter((booking) => selectedBookingIds.includes(booking.bookingId)),
+    [workOrderTrackingRows, selectedBookingIds],
+  );
+  const selectedShipmentBookings = useMemo(
+    () => shipmentTrackingRows.filter((booking) => selectedBookingIds.includes(booking.bookingId)),
+    [shipmentTrackingRows, selectedBookingIds],
   );
   const quotationSelectionError = validateBookingQuotationSelection(selectedReportBookings);
   const selectedAssignmentWorkOrder = assignableWorkOrders.find(
@@ -532,6 +583,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   }
 
   async function createQuotationFromSelectedBookings(selectedBookings: BookingRecord[]) {
+    if (view !== "booking") return;
     setError("");
     setStatus("");
     if (quotationSelectionError || isCreatingQuotation) {
@@ -553,7 +605,9 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to create the quotation.");
       }
       setSelectedBookingIds([]);
-      router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/quotation/${encodeURIComponent(data.quotation.id)}`);
+      setStatus(
+        `${typeof data.quotation.quotationNo === "string" ? `${data.quotation.quotationNo} was` : "Quotation was"} created and saved as a draft. Unit prices default to 0.00.`,
+      );
     } catch (quotationError) {
       setError(quotationError instanceof Error ? quotationError.message : "Unable to create the quotation.");
     } finally {
@@ -561,12 +615,75 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     }
   }
 
+  async function requestFinishedGoodsForSelectedBookings() {
+    if (view !== "shipment" || selectedShipmentBookings.length === 0 || isRequestingFinishedGoods) return;
+    setError("");
+    setStatus("");
+    setIsRequestingFinishedGoods(true);
+    try {
+      const response = await fetch("/api/inventory/finished-goods-outward", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organizationId,
+          action: "request-bookings",
+          bookingIds: selectedShipmentBookings.map((booking) => booking.id),
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.request || typeof data.request.request_no !== "string") {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to request finished goods for the selected bookings.");
+      }
+      setSelectedBookingIds([]);
+      setStatus(
+        `Finished-goods request ${data.request.request_no} sent to Inventory Accept for ${selectedShipmentBookings.length} booking${selectedShipmentBookings.length === 1 ? "" : "s"}.`,
+      );
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to request finished goods for the selected bookings.");
+    } finally {
+      setIsRequestingFinishedGoods(false);
+    }
+  }
+
+  async function deleteSelectedBookings() {
+    if (selectedReportBookings.length === 0 || isDeletingBookings) return;
+    setError("");
+    setStatus("");
+    setIsDeletingBookings(true);
+    try {
+      const response = await fetch("/api/distribution/advance-bookings", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organizationId,
+          bookingIds: selectedReportBookings.map((booking) => booking.id),
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data?.deletedBookingNos)) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to delete the selected bookings.");
+      }
+      setSelectedBookingIds([]);
+      setShowDeleteBookingsConfirmation(false);
+      setStatus(`Deleted ${data.deletedBookingNos.length} advance booking${data.deletedBookingNos.length === 1 ? "" : "s"}.`);
+      await loadBookings();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the selected bookings.");
+    } finally {
+      setIsDeletingBookings(false);
+    }
+  }
+
   return (
     <div className="w-full min-w-0 space-y-3 p-2">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="erp-eyebrow">{view === "fulfillment" ? "Distribution / Fulfillment" : "Distribution / Order"}</p>
-          <h1 className="mt-1 text-3xl font-bold text-slate-900">{view === "fulfillment" ? "Fulfillment" : "Advance Booking"}</h1>
+          <p className="erp-eyebrow">
+            {view === "booking" ? "Distribution / Order" : `Distribution / ASN / ${view === "fulfillment" ? "Work Order Tracking" : "Shipment Tracking"}`}
+          </p>
+          <h1 className="mt-1 text-3xl font-bold text-slate-900">
+            {view === "booking" ? "Advance Booking" : view === "fulfillment" ? "Work Order Tracking" : "Shipment Tracking"}
+          </h1>
         </div>
         {isCreating ? (
           <Button
@@ -598,7 +715,11 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       ) : null}
       {!bookingsError && !isLoadingBookings ? (
         <p role="status" className="rounded-md border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] px-3 py-2 text-sm text-slate-700">
-          Advance bookings are saved to this organization’s database and shared across users. Bookings made in the older browser-only version are not included in this database register.
+          {view === "booking"
+            ? "Advance bookings linked to a quotation are hidden from this register. They remain available in Work Order Tracking."
+            : view === "shipment"
+              ? "Shipment Tracking shows quoted bookings after their work-order quantities are fully assigned."
+              : "Advance bookings are saved to this organization’s database and shared across users."}
         </p>
       ) : null}
 
@@ -821,17 +942,18 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         </Card>
       ) : (
         <>
-        <Card className="p-1 shadow-none">
+        {view !== "shipment" ? <Card className="p-1 shadow-none">
           <ReportGrid
-            title={view === "fulfillment" ? "Fulfillment Report" : "Advance Bookings"}
-            records={reportRows}
-            fields={bookingReportFields}
+            title={view === "fulfillment" ? "Work Order Tracking Report" : "Advance Bookings"}
+            records={workOrderTrackingRows}
+            fields={view === "fulfillment" ? fulfillmentReportFields : bookingReportFields}
             visibleFields={visibleReportFields}
             onVisibleFieldsChange={(fields) => setVisibleReportFields(orderBookingReportFields(fields as BookingReportField[]))}
             storageKey={`distribution-booking-report-columns:${organizationId}`}
             rowIdSelector={(booking) => booking.bookingId}
             selectedIds={selectedBookingIds}
-            onToggleSelectAll={(checked) => setSelectedBookingIds(checked ? reportRows.map((booking) => booking.bookingId) : [])}
+            selectable={view === "booking"}
+            onToggleSelectAll={(checked) => setSelectedBookingIds(checked ? workOrderTrackingRows.map((booking) => booking.bookingId) : [])}
             onToggleRowSelection={(bookingId, checked) => setSelectedBookingIds((current) =>
               checked
                 ? current.includes(bookingId) ? current : [...current, bookingId]
@@ -839,7 +961,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             )}
             onRowClick={() => undefined}
             onRowAction={(bookingId) => {
-              const booking = reportRows.find((record) => record.bookingId === bookingId);
+              const booking = workOrderTrackingRows.find((record) => record.bookingId === bookingId);
               if (booking) void openAssignment(booking);
             }}
             rowActionPosition="start"
@@ -850,22 +972,41 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             newActionLabel="Create Advance Booking"
             toolbarActions={(
               <>
-                <Button
-                  type="button"
-                  variant="primary"
-                  size="sm"
-                  disabled={Boolean(quotationSelectionError) || isLoadingBookings || isCreatingQuotation}
-                  title={quotationSelectionError || undefined}
-                  onClick={() => void createQuotationFromSelectedBookings(selectedReportBookings)}
-                >
-                  {isCreatingQuotation ? "Saving Quotation..." : `Create Quotation${selectedBookingIds.length > 0 ? ` (${selectedBookingIds.length})` : ""}`}
-                </Button>
+                {view === "booking" ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    disabled={selectedBookingIds.length === 0 || isLoadingBookings || isDeletingBookings}
+                    onClick={() => setShowDeleteBookingsConfirmation(true)}
+                  >
+                    Delete Booking{selectedBookingIds.length === 1 ? "" : "s"}{selectedBookingIds.length > 0 ? ` (${selectedBookingIds.length})` : ""}
+                  </Button>
+                ) : null}
+                {view === "booking" ? (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    disabled={Boolean(quotationSelectionError) || isLoadingBookings || isCreatingQuotation}
+                    title={quotationSelectionError || undefined}
+                    onClick={() => void createQuotationFromSelectedBookings(selectedReportBookings)}
+                  >
+                    {isCreatingQuotation ? "Creating Quotation..." : `Create & Save Quotation${selectedBookingIds.length > 0 ? ` (${selectedBookingIds.length})` : ""}`}
+                  </Button>
+                ) : null}
                 <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings()} disabled={isLoadingBookings}>
                   Refresh bookings
                 </Button>
               </>
             )}
-            emptyMessage={isLoadingBookings ? "Loading advance bookings..." : undefined}
+            emptyMessage={isLoadingBookings
+              ? "Loading advance bookings..."
+              : view === "fulfillment"
+                ? reportRows.length === 0
+                  ? "No advance bookings have a quotation yet."
+                  : "All quoted bookings are fully assigned. Open Shipment Tracking."
+                : "No unquoted advance bookings are available."}
             renderCell={(fieldKey, booking) => {
               if (fieldKey === "createdAt") return booking.createdAt.slice(0, 10);
               if (fieldKey === "assignmentStatus") {
@@ -886,7 +1027,83 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               return value === null || value === undefined ? "" : String(value);
             }}
           />
-        </Card>
+        </Card> : null}
+        {view === "shipment" ? (
+          <Card className="p-1 shadow-none">
+            <ReportGrid
+              title="Shipment Tracking"
+              records={shipmentTrackingRows}
+              fields={shipmentTrackingReportFields}
+              visibleFields={visibleReportFields}
+              onVisibleFieldsChange={(fields) => setVisibleReportFields(orderBookingReportFields(fields as BookingReportField[]))}
+              storageKey={`distribution-shipment-tracking-report-columns:v2:${organizationId}`}
+              rowIdSelector={(booking) => booking.bookingId}
+              selectedIds={selectedBookingIds}
+              selectable
+              onToggleSelectAll={(checked) => setSelectedBookingIds(checked ? shipmentTrackingRows.map((booking) => booking.bookingId) : [])}
+              onToggleRowSelection={(bookingId, checked) => setSelectedBookingIds((current) =>
+                checked
+                  ? current.includes(bookingId) ? current : [...current, bookingId]
+                  : current.filter((id) => id !== bookingId),
+              )}
+              onRecordClick={(booking) => router.push(`${pathname}/${encodeURIComponent(booking.id)}`)}
+              onRowClick={() => undefined}
+              toolbarActions={(
+                <>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    disabled={selectedShipmentBookings.length === 0 || isLoadingBookings || isRequestingFinishedGoods}
+                    onClick={() => void requestFinishedGoodsForSelectedBookings()}
+                  >
+                    {isRequestingFinishedGoods
+                      ? "Requesting FG Stock..."
+                      : `Request Material${selectedShipmentBookings.length > 0 ? ` (${selectedShipmentBookings.length})` : ""}`}
+                  </Button>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings()} disabled={isLoadingBookings}>
+                    Refresh bookings
+                  </Button>
+                </>
+              )}
+              emptyMessage={isLoadingBookings
+                ? "Loading shipment tracking..."
+                : "No quoted bookings are fully assigned to work orders yet."}
+              renderCell={(fieldKey, booking) => {
+                if (fieldKey === "bookingId") {
+                  return (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`View booking ${booking.bookingId}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        router.push(`${pathname}/${encodeURIComponent(booking.id)}`);
+                      }}
+                    >
+                      {booking.bookingId}
+                    </Button>
+                  );
+                }
+                if (fieldKey === "createdAt") return booking.createdAt.slice(0, 10);
+                if (fieldKey === "assignmentStatus") {
+                  const isFullyAllocated = booking.totalAllocated >= booking.totalBooked;
+                  return <Badge>{isFullyAllocated ? "Stock Available" : "Allocation Pending"}</Badge>;
+                }
+                if (fieldKey === "fulfillmentStatus") {
+                  return (
+                    <Badge className={booking.fulfillmentStatus === "UNFULFILLED" ? "border-red-200 bg-red-50 text-red-800" : ""}>
+                      {booking.fulfillmentStatus.replaceAll("_", " ")}
+                    </Badge>
+                  );
+                }
+                const value = booking[fieldKey as keyof BookingReportRow];
+                return value === null || value === undefined ? "" : String(value);
+              }}
+            />
+          </Card>
+        ) : null}
         </>
       )}
       <Modal
@@ -1008,6 +1225,46 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             </div>
           </div>
         ) : null}
+      </Modal>
+      <Modal
+        open={showDeleteBookingsConfirmation}
+        onClose={() => {
+          if (!isDeletingBookings) setShowDeleteBookingsConfirmation(false);
+        }}
+        ariaLabelledBy="advance-booking-delete-title"
+        ariaDescribedBy="advance-booking-delete-description"
+        variant="danger"
+        size="sm"
+      >
+        <div className="space-y-4 p-6">
+          <header className="space-y-1">
+            <h2 id="advance-booking-delete-title" className="text-xl font-semibold text-slate-900">
+              Delete selected advance bookings?
+            </h2>
+            <p id="advance-booking-delete-description" className="text-sm text-slate-600">
+              {selectedReportBookings.length} booking record(s) and their size rows will be permanently deleted. Remove any quotation first; bookings assigned to work orders cannot be deleted.
+            </p>
+          </header>
+          {error ? <p role="alert" className="text-sm text-red-700">{error}</p> : null}
+          <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--erp-border)] pt-4">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setShowDeleteBookingsConfirmation(false)}
+              disabled={isDeletingBookings}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void deleteSelectedBookings()}
+              disabled={isDeletingBookings || selectedReportBookings.length === 0}
+            >
+              {isDeletingBookings ? "Deleting..." : "Delete Booking Records"}
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

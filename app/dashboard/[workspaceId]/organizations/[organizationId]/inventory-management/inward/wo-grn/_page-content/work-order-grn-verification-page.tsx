@@ -9,6 +9,7 @@ import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Page from "@/components/ui/Page";
+import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
 import { calculateWorkOrderGrnVerificationSplit } from "@/lib/services/inventory/work-order-grn-validation";
 import { flattenWorkOrderGrnVerificationTasks } from "@/lib/services/inventory/work-order-grn-verification";
@@ -52,6 +53,7 @@ type WorkOrderGrnRecord = {
     article: string | null;
     styleName: string | null;
     brand: string | null;
+    locations: Array<{ id: string; location_name: string }>;
   };
   lines: WorkOrderGrnLine[];
 };
@@ -59,6 +61,7 @@ type WorkOrderGrnRecord = {
 type VerificationInput = {
   actualReceivedQuantity: string;
   approvedQuantity: string;
+  locationId: string;
 };
 
 type ReportRecord = {
@@ -74,6 +77,7 @@ type ReportRecord = {
   orderedQuantity: number;
   receivedQuantity: number;
   status: string;
+  locations: Array<{ id: string; location_name: string }>;
 };
 
 type ReportField =
@@ -119,6 +123,8 @@ export default function WorkOrderGrnVerificationPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [savingVerification, setSavingVerification] = useState(false);
   const [error, setError] = useState("");
+  const [verificationError, setVerificationError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
   const loadPendingGrns = useCallback(async (cursor?: string) => {
     if (cursor) setLoadingMore(true);
@@ -156,6 +162,7 @@ export default function WorkOrderGrnVerificationPage() {
     const value = verificationInputs[line.id] ?? {
       actualReceivedQuantity: String(line.receivedQuantity),
       approvedQuantity: String(line.receivedQuantity),
+      locationId: activeTask.locations.length === 1 ? activeTask.locations[0].id : "",
     };
     const actual = parseQuantity(value.actualReceivedQuantity);
     const approved = parseQuantity(value.approvedQuantity);
@@ -186,11 +193,14 @@ export default function WorkOrderGrnVerificationPage() {
   }, [activeTask, verificationInputs]);
 
   function openVerification(task: ReportRecord) {
+    setVerificationError("");
+    setSuccessMessage("");
     setActiveTask(task);
     setVerificationInputs({
       [task.line.id]: {
         actualReceivedQuantity: String(task.line.receivedQuantity),
         approvedQuantity: String(task.line.receivedQuantity),
+        locationId: task.locations.length === 1 ? task.locations[0].id : "",
       },
     });
   }
@@ -200,13 +210,26 @@ export default function WorkOrderGrnVerificationPage() {
     setVerificationInputs((current) => ({
       ...current,
       [lineId]: {
-        ...(current[lineId] ?? { actualReceivedQuantity: "0", approvedQuantity: "0" }),
+        ...(current[lineId] ?? { actualReceivedQuantity: "0", approvedQuantity: "0", locationId: "" }),
         [field]: value,
       },
     }));
   }
 
-  const hasInvalidSplit = modalRows.some((row) => row.validationError !== "");
+  function updateVerificationLocation(lineId: string, locationId: string) {
+    setVerificationInputs((current) => ({
+      ...current,
+      [lineId]: {
+        ...(current[lineId] ?? { actualReceivedQuantity: "0", approvedQuantity: "0", locationId: "" }),
+        locationId,
+      },
+    }));
+  }
+
+  const hasMissingStockLocation = modalRows.some(({ value, approved }) =>
+    approved !== null && approved > 0 && !value.locationId,
+  );
+  const hasInvalidSplit = modalRows.some((row) => row.validationError !== "") || hasMissingStockLocation;
 
   async function submitVerification() {
     if (!activeTask || hasInvalidSplit || savingVerification) return;
@@ -216,22 +239,34 @@ export default function WorkOrderGrnVerificationPage() {
     const approvedQuantity = parseQuantity(value.approvedQuantity);
     if (actualReceivedQuantity === null || approvedQuantity === null) return;
     setSavingVerification(true);
-    setError("");
+    setVerificationError("");
     try {
       const response = await fetch(
         `/api/inventory/work-order-grns/${encodeURIComponent(activeTask.grnId)}/lines/${encodeURIComponent(activeTask.line.id)}/verification`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ organizationId, actualReceivedQuantity, approvedQuantity }),
+          body: JSON.stringify({
+            organizationId,
+            actualReceivedQuantity,
+            approvedQuantity,
+            locationId: value.locationId,
+          }),
         },
       );
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(typeof data?.error === "string" ? data.error : "Unable to save Work Order GRN verification.");
+      const allocatedQuantity = Number(data.advanceBookedQuantity ?? 0);
+      const generalQuantity = Number(data.generalInventoryQuantity ?? 0);
+      const rejectedQuantity = Number(data.rejectedQuantity ?? 0);
+      setSuccessMessage(
+        `GRN ${activeTask.grnNo} verified. Approved: ${approvedQuantity}; allocated stock: ${allocatedQuantity}; general stock: ${generalQuantity}; rejected: ${rejectedQuantity}.`,
+      );
+      setRecords((current) => current.filter((record) => record.id !== activeTask.id));
       setActiveTask(null);
       await loadPendingGrns();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to save Work Order GRN verification.");
+      setVerificationError(saveError instanceof Error ? saveError.message : "Unable to save Work Order GRN verification.");
     } finally {
       setSavingVerification(false);
     }
@@ -244,7 +279,7 @@ export default function WorkOrderGrnVerificationPage() {
           <div>
             <p className="erp-eyebrow">Inventory / Inward</p>
             <h1 className="mt-2 text-2xl font-bold text-slate-900">Work Order GRN Verification</h1>
-            <p className="mt-1 text-sm text-slate-600">Review and approve each received size line independently before finished-goods inventory is enabled.</p>
+            <p className="mt-1 text-sm text-slate-600">Review each received size line and post its approved split to finished-goods stock.</p>
           </div>
           <div className="flex flex-wrap gap-3">
             <Button variant="secondary" onClick={() => router.push(`${basePath}/report`)}>GRN Report</Button>
@@ -256,6 +291,11 @@ export default function WorkOrderGrnVerificationPage() {
           <Card role="alert" className="space-y-3">
             <p className="text-sm text-slate-700">{error}</p>
             <Button variant="secondary" size="sm" onClick={() => void loadPendingGrns()} disabled={loading}>Retry</Button>
+          </Card>
+        ) : null}
+        {successMessage ? (
+          <Card role="status">
+            <p className="text-sm text-slate-700">{successMessage}</p>
           </Card>
         ) : null}
         {loading ? <p role="status" className="text-sm text-slate-600">Loading pending verification tasks...</p> : null}
@@ -313,8 +353,26 @@ export default function WorkOrderGrnVerificationPage() {
               </p>
             </header>
             <p className="rounded-md border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] px-3 py-2 text-sm text-slate-700">
-              Enter actual and approved quantities for this size line. The verifier must be a different user from the GRN submitter. Rejected quantity and booking allocation are saved atomically when verified.
+              Enter actual and approved quantities, then select the finished-goods location. Verification posts booking-allocated and general stock separately and records rejected quantity atomically.
             </p>
+            {verificationError ? (
+              <Card role="alert">
+                <p className="text-sm text-slate-700">{verificationError}</p>
+              </Card>
+            ) : null}
+            <Select
+              label="Finished Goods Location"
+              value={verificationInputs[activeTask.line.id]?.locationId ?? ""}
+              onChange={(event) => updateVerificationLocation(activeTask.line.id, event.target.value)}
+              disabled={activeTask.locations.length === 0}
+              options={[
+                { value: "", label: activeTask.locations.length === 0 ? "No active location for this order entity" : "Select location" },
+                ...activeTask.locations.map((location) => ({ value: location.id, label: location.location_name })),
+              ]}
+            />
+            {activeTask.locations.length === 0 ? (
+              <p role="alert" className="text-sm text-slate-700">An active location must be configured under this order&apos;s entity before approved stock can be posted.</p>
+            ) : null}
             {modalRows.map(({ line, value, advanceBooked, split, bookingAllocations }) => (
               <section key={line.id} aria-label={`Verification quantities for size ${line.size || line.buyerSize || "unspecified"}`} className="space-y-4 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4 sm:p-6">
                 <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -413,15 +471,13 @@ export default function WorkOrderGrnVerificationPage() {
                 {modalRows.filter((row) => row.validationError).map(({ line, validationError }) => (
                   <p key={line.id}>{line.size || line.buyerSize || "Size"}: {validationError}</p>
                 ))}
+                {hasMissingStockLocation ? <p>Select a finished-goods location to post the approved quantity.</p> : null}
               </div>
             ) : null}
-            <p role="status" className="rounded-md border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] px-3 py-2 text-sm text-slate-700">
-              Saving records approved, rejected, booking-fulfilled, and general-inventory quantities. It does not post finished-goods stock; stock posting remains subject to the FG location workflow.
-            </p>
             <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--erp-border)] pt-4">
               <Button variant="secondary" onClick={() => setActiveTask(null)} disabled={savingVerification}>Close</Button>
               <Button type="button" disabled={hasInvalidSplit || savingVerification} onClick={() => void submitVerification()}>
-                {savingVerification ? "Saving verification..." : "Save verification"}
+                {savingVerification ? "Verifying and posting..." : "Verify & Post Stock"}
               </Button>
             </div>
           </div>

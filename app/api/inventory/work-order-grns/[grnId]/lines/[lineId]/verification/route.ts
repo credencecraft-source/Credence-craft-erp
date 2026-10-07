@@ -41,6 +41,8 @@ export async function POST(request: Request, context: RouteContext) {
       {
         actualReceivedQuantity: parseQuantity(body.actualReceivedQuantity, "Actual received"),
         approvedQuantity: parseQuantity(body.approvedQuantity, "Approved"),
+        locationId: typeof body.locationId === "string" ? body.locationId.trim() : "",
+        actorEmail: user.email,
       },
     );
     return NextResponse.json({ ok: true, ...result });

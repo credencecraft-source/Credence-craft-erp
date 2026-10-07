@@ -18,6 +18,7 @@ type WorkOrderGrnVerificationSource = {
     orderNo: string;
     styleName: string | null;
     article: string | null;
+    locations: Array<{ id: string; location_name: string }>;
   };
   lines: WorkOrderGrnVerificationSourceLine[];
 };
@@ -40,5 +41,6 @@ export function flattenWorkOrderGrnVerificationTasks<TLine extends WorkOrderGrnV
     receivedQuantity: line.receivedQuantity,
     receivedDate: grn.receivedDate,
     status: grn.status,
+    locations: grn.workOrder.locations,
     })));
 }

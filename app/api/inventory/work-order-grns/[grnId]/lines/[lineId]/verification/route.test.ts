@@ -26,7 +26,7 @@ const postRequest = (body: unknown) => new Request("http://localhost/api/invento
 describe("work-order GRN line verification route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.requireSessionUser.mockResolvedValue({ id: "verifier-1" });
+    mocks.requireSessionUser.mockResolvedValue({ id: "verifier-1", email: "verifier@example.test" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
     mocks.verifyWorkOrderInventoryGrnLine.mockResolvedValue({
       grnId: "grn-1",
@@ -40,6 +40,7 @@ describe("work-order GRN line verification route", () => {
       organizationId: "public-org",
       actualReceivedQuantity: "8",
       approvedQuantity: 6,
+      locationId: " location-1 ",
     }), context);
 
     expect(response.status).toBe(200);
@@ -53,7 +54,7 @@ describe("work-order GRN line verification route", () => {
       "verifier-1",
       "grn-1",
       "line-1",
-      { actualReceivedQuantity: 8, approvedQuantity: 6 },
+      { actualReceivedQuantity: 8, approvedQuantity: 6, locationId: "location-1", actorEmail: "verifier@example.test" },
     );
   });
 

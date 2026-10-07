@@ -3,7 +3,9 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
+import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import Input from "@/components/ui/Input";
 
@@ -35,6 +37,26 @@ type StockRecord = {
   purchase_price: string | number | null;
   sales_price: string | number | null;
   mrp: string | number | null;
+  inventory_bucket?: "GENERAL" | "ALLOCATED";
+  grn_id?: string;
+  grn_line_id?: string;
+  grn_no?: string;
+  work_order_id?: string;
+  work_order_no?: string;
+  order_id?: string;
+  booking_id?: string;
+  booking_size_line_id?: string;
+  booking_assignment_id?: string;
+  booking_no?: string;
+  buyer?: string | null;
+  buyer_size?: string | null;
+  received_quantity?: number;
+  actual_received_quantity?: number;
+  approved_quantity?: number;
+  rejected_quantity?: number;
+  created_by?: string;
+  verified_by?: string;
+  posted_at?: string;
 };
 
 type FormState = {
@@ -69,7 +91,6 @@ const emptyForm: FormState = {
 const sourceOptions = [
   ["DIRECT", "Direct"],
   ["PACKING_LIST_GRN", "Packing List GRN"],
-  ["WO_ORDER_GRN", "WO Order GRN"],
 ] as const;
 
 function directItemName(form: FormState) {
@@ -88,6 +109,7 @@ export default function FgStockModulePage({ moduleName, addMode = false, allocat
   const pathname = usePathname();
   const [form, setForm] = useState<FormState>(emptyForm);
   const [records, setRecords] = useState<StockRecord[]>([]);
+  const [selectedRecord, setSelectedRecord] = useState<StockRecord | null>(null);
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [masters, setMasters] = useState<Record<string, MasterValue[]>>({});
   const [loading, setLoading] = useState(true);
@@ -100,8 +122,11 @@ export default function FgStockModulePage({ moduleName, addMode = false, allocat
   const currentStock = Math.max(0, Number(form.qtyIn || 0) - Number(form.qtyOut || 0));
   const loadData = useCallback(async () => {
     setLoading(true);
+    const stockQuery = new URLSearchParams({ organizationId });
+    if (allocatedOnly) stockQuery.set("bucket", "ALLOCATED");
+    else if (moduleName === "General Stock") stockQuery.set("bucket", "GENERAL");
     const [stockResponse, masterResponse, locationsResponse] = await Promise.all([
-      fetch(`/api/inventory/stock/fg-sku?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" }),
+      fetch(`/api/inventory/stock/fg-sku?${stockQuery.toString()}`, { cache: "no-store" }),
       fetch(`/api/masters?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" }),
       fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/location?includeInactive=false`, { cache: "no-store" }),
     ]);
@@ -112,19 +137,85 @@ export default function FgStockModulePage({ moduleName, addMode = false, allocat
     setLocations(Array.isArray(locationsPayload) ? locationsPayload : []);
     setMasters(Object.fromEntries((masterPayload.masters ?? []).map((master: { module_key: string; values: MasterValue[] }) => [master.module_key, master.values])));
     setLoading(false);
-  }, [organizationId]);
+  }, [allocatedOnly, moduleName, organizationId]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => { void loadData(); }, 0);
     return () => window.clearTimeout(timeoutId);
   }, [loadData]);
 
-  const sortedRecords = useMemo(
-    () => allocatedOnly
-      ? records.filter((record) => record.source !== "DIRECT" && record.order_no.trim().length > 0)
-      : records,
-    [allocatedOnly, records],
-  );
+  const sortedRecords = useMemo(() => {
+    if (allocatedOnly) {
+      return records.filter((record) => record.inventory_bucket === "ALLOCATED"
+        || (!record.inventory_bucket && record.source !== "DIRECT" && record.order_no.trim().length > 0));
+    }
+    if (moduleName === "General Stock") {
+      return records.filter((record) => record.inventory_bucket
+        ? record.inventory_bucket === "GENERAL"
+        : record.source === "DIRECT" || record.order_no.trim().length === 0);
+    }
+    return records;
+  }, [allocatedOnly, moduleName, records]);
+  const reportFields = [
+    { key: "booking_no", label: "Booking ID" },
+    { key: "inventory_bucket", label: "Stock Type" },
+    { key: "location", label: "Location" },
+    { key: "grn_no", label: "GRN No" },
+    { key: "style_name", label: "Style" },
+    { key: "order_no", label: "Order No" },
+    { key: "work_order_no", label: "Work Order No" },
+    { key: "size", label: "Size" },
+    { key: "qty_in", label: "Qty In" },
+    { key: "qty_out", label: "Qty Out" },
+    { key: "current_stock", label: "Current Stock" },
+    { key: "added_user", label: "Record Added Email" },
+    { key: "added_time", label: "Posted At" },
+  ];
+  const detailFields: Array<{ key: keyof StockRecord; label: string }> = [
+    { key: "id", label: "Record ID" },
+    { key: "inventory_bucket", label: "Stock Type" },
+    { key: "source", label: "Source" },
+    { key: "location", label: "Location" },
+    { key: "sku_code", label: "SKU Code" },
+    { key: "barcode", label: "Customer Barcode" },
+    { key: "style_name", label: "Style Name" },
+    { key: "order_no", label: "Order No" },
+    { key: "order_id", label: "Order ID" },
+    { key: "article_no", label: "Article No / Style No" },
+    { key: "work_order_no", label: "Work Order No" },
+    { key: "work_order_id", label: "Work Order ID" },
+    { key: "grn_no", label: "GRN No" },
+    { key: "grn_id", label: "GRN ID" },
+    { key: "grn_line_id", label: "GRN Line ID" },
+    { key: "booking_no", label: "Booking No" },
+    { key: "booking_id", label: "Booking ID" },
+    { key: "booking_size_line_id", label: "Booking Size Line ID" },
+    { key: "booking_assignment_id", label: "Booking Assignment ID" },
+    { key: "brand", label: "Brand" },
+    { key: "size", label: "Size" },
+    { key: "buyer_size", label: "Buyer Size" },
+    { key: "colour", label: "Colour" },
+    { key: "product_category", label: "Product Category" },
+    { key: "sub_product_category", label: "Sub Product Category" },
+    { key: "buyer", label: "Buyer" },
+    { key: "received_quantity", label: "GRN Submitted Qty" },
+    { key: "actual_received_quantity", label: "GRN Actual Qty" },
+    { key: "approved_quantity", label: "GRN Approved Qty" },
+    { key: "rejected_quantity", label: "GRN Rejected Qty" },
+    { key: "qty_in", label: "Qty In" },
+    { key: "qty_out", label: "Qty Out" },
+    { key: "current_stock", label: "Current Stock" },
+    { key: "gst_rate", label: "GST %" },
+    { key: "hsn_code", label: "HSN Code" },
+    { key: "purchase_price", label: "Purchase Price" },
+    { key: "sales_price", label: "Sales Price" },
+    { key: "mrp", label: "MRP" },
+    { key: "added_time", label: "Added Time" },
+    { key: "posted_at", label: "Posted At" },
+    { key: "added_user", label: "Added User Email" },
+    { key: "created_by", label: "GRN Submitted By Email" },
+    { key: "verified_by", label: "GRN Verified By Email" },
+  ];
   const updateForm = (key: keyof FormState, value: string) => setForm((current) => ({ ...current, [key]: value }));
   const gstOptions = masters.gst ?? [];
   const hsnOptions = masters.hsn ?? [];
@@ -194,31 +285,72 @@ export default function FgStockModulePage({ moduleName, addMode = false, allocat
         {!addMode && <ReportGrid
           title={allocatedOnly ? "Allocated Finished Goods Stock" : moduleName === "General Stock" ? "Finished Goods General Stock" : "Finished Goods SKU Stock"}
           records={sortedRecords}
-          fields={[
-            { key: "sku_code", label: "SKU Code" }, { key: "barcode", label: "Customer Barcode" }, { key: "id", label: "Record ID / Barcode" }, { key: "location", label: "Location" }, { key: "style_name", label: "Style Name" }, { key: "order_no", label: "Order No" }, { key: "work_order", label: "Work Order" }, { key: "article_no", label: "Article No / Style No" },
-            { key: "brand", label: "Brand" }, { key: "size", label: "Size" }, { key: "colour", label: "Colour" }, { key: "product_category", label: "Product Category" },
-            { key: "sub_product_category", label: "Sub Product Category" }, { key: "gst_rate", label: "GST %" }, { key: "hsn_code", label: "HSN Code" }, { key: "purchase_price", label: "Purchase Price" }, { key: "sales_price", label: "Sales Price" }, { key: "mrp", label: "MRP" }, { key: "added_time", label: "Added Time" }, { key: "added_user", label: "Added User" },
-            { key: "source", label: "Source" }, { key: "qty_in", label: "Qty In" }, { key: "qty_out", label: "Qty Out" }, { key: "current_stock", label: "Current Stock" },
-          ]}
-          visibleFields={visibleFields.length > 0 ? visibleFields : ["sku_code", "barcode", "id", "location", "style_name", "order_no", "work_order", "article_no", "brand", "size", "colour", "product_category", "sub_product_category", "gst_rate", "hsn_code", "purchase_price", "sales_price", "mrp", "added_time", "added_user", "source", "qty_in", "qty_out", "current_stock"]}
+          fields={reportFields}
+          visibleFields={visibleFields.length > 0 ? visibleFields : reportFields.map(({ key }) => key)}
           onVisibleFieldsChange={(fields) => setVisibleFields(fields.map(String))}
           rowIdSelector={(record) => record.id}
           selectedIds={[]}
-          onRowClick={(recordId) => router.push(`${pathname}/${encodeURIComponent(recordId)}`)}
+          onRowClick={(recordId) => {
+            const record = sortedRecords.find((candidate) => candidate.id === recordId);
+            if (!record) return;
+            if (allocatedOnly) {
+              router.push(`${pathname}/${encodeURIComponent(recordId)}`);
+              return;
+            }
+            setSelectedRecord(record);
+          }}
           onNewOrder={() => router.push(`${pathname}/add`)}
           newActionLabel="+ Add Record"
           renderCell={(fieldKey, record) => fieldKey === "location"
             ? record.location.location_name
-            : fieldKey === "work_order"
-              ? record.source === "WO_ORDER_GRN" ? record.order_no : "-"
-              : fieldKey === "added_time"
-                ? new Date(record.added_time).toLocaleString()
-                : fieldKey === "source"
-                  ? record.source.replaceAll("_", " ")
-                  : String(record[fieldKey as keyof StockRecord] ?? "-")}
+            : fieldKey === "added_time"
+              ? new Date(record.added_time).toLocaleString()
+              : fieldKey === "inventory_bucket"
+                ? <Badge>{record.inventory_bucket ? record.inventory_bucket.replaceAll("_", " ") : record.source === "DIRECT" ? "GENERAL" : "ALLOCATED"}</Badge>
+                : fieldKey === "booking_no"
+                  ? record.booking_no ? <Badge>{record.booking_no}</Badge> : "-"
+                : String(record[fieldKey as keyof StockRecord] ?? "-")}
           emptyMessage={loading ? "Loading stock records..." : allocatedOnly ? "No order-linked finished goods stock records yet." : "No finished goods SKU stock records yet."}
         />}
       </section>
+      <Modal
+        open={selectedRecord !== null}
+        onClose={() => setSelectedRecord(null)}
+        ariaLabelledBy="finished-goods-stock-record-title"
+        size="xl"
+      >
+        {selectedRecord ? (
+          <div className="space-y-6 p-6">
+            <header className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 id="finished-goods-stock-record-title" className="text-xl font-semibold text-slate-900">Finished Goods Stock Record</h2>
+                <p className="mt-1 text-sm text-slate-600">{selectedRecord.grn_no || selectedRecord.sku_code || selectedRecord.id}</p>
+              </div>
+              <Button type="button" variant="secondary" onClick={() => setSelectedRecord(null)}>Close</Button>
+            </header>
+            <dl className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {detailFields.map(({ key, label }) => {
+                const value = selectedRecord[key];
+                const displayValue = key === "location"
+                  ? selectedRecord.location.location_name
+                  : key === "added_time" || key === "posted_at"
+                    ? value ? new Date(String(value)).toLocaleString() : "-"
+                    : value === null || value === undefined || value === ""
+                      ? "-"
+                      : typeof value === "string" && key === "inventory_bucket"
+                        ? value.replaceAll("_", " ")
+                        : String(value);
+                return (
+                  <div key={String(key)} className="min-w-0 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
+                    <dt className="text-sm text-slate-600">{label}</dt>
+                    <dd className="mt-1 break-words text-sm font-medium text-slate-900">{displayValue}</dd>
+                  </div>
+                );
+              })}
+            </dl>
+          </div>
+        ) : null}
+      </Modal>
     </main>
   );
 }

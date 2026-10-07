@@ -42,12 +42,12 @@ export default function DistributionHomePage() {
           </div>
         </Link>
 
-        <Link href={`${base}/master-quotation`} className="block">
+        <Link href={`${base}/sales-order`} className="block">
           <div className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-indigo-300 hover:shadow-md">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-700">Sales</p>
-            <h2 className="mt-3 text-2xl font-bold text-slate-900">Master Quotation</h2>
+            <h2 className="mt-3 text-2xl font-bold text-slate-900">Sales Order</h2>
             <p className="mt-2 text-sm text-slate-600">
-              Review master quotation parents and the quotation records grouped beneath each parent.
+              Review sales orders and the quotation records grouped beneath each order.
             </p>
             <span className="mt-6 inline-block text-sm font-semibold text-indigo-700">Open →</span>
           </div>

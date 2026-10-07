@@ -5,9 +5,13 @@ import { useParams, useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Modal from "@/components/ui/Modal";
+import Select from "@/components/ui/Select";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import { validateMasterQuotationChildSelection } from "@/lib/services/distribution/quotation-selection-service";
 import type { DistributionQuotationSummary } from "./quotation-types";
+
+type VendorOption = { id: string; label: string };
 
 type QuotationField = keyof Pick<
   DistributionQuotationSummary,
@@ -34,7 +38,12 @@ export default function QuotationListPage() {
   const [visibleFields, setVisibleFields] = useState<QuotationField[]>(fields.map(({ key }) => key));
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
-  const [isCreatingMaster, setIsCreatingMaster] = useState(false);
+  const [isCreatingSalesOrder, setIsCreatingSalesOrder] = useState(false);
+  const [vendors, setVendors] = useState<VendorOption[]>([]);
+  const [selectedVendorId, setSelectedVendorId] = useState("");
+  const [isLoadingVendors, setIsLoadingVendors] = useState(true);
+  const [vendorError, setVendorError] = useState("");
+  const [isSalesOrderModalOpen, setIsSalesOrderModalOpen] = useState(false);
 
   const loadQuotations = useCallback(async () => {
     setIsLoading(true);
@@ -59,6 +68,44 @@ export default function QuotationListPage() {
     return () => window.clearTimeout(timer);
   }, [loadQuotations]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadVendors = async () => {
+      setIsLoadingVendors(true);
+      setVendorError("");
+      try {
+        const response = await fetch(
+          `/api/organizations/${encodeURIComponent(organizationId)}/master-data/vendor?includeInactive=false&includeDummyData=true`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !Array.isArray(data)) {
+          throw new Error(typeof data?.error === "string" ? data.error : "Unable to load Vendor Master.");
+        }
+        const options = data
+          .filter((value: { id?: string; label?: string }) =>
+            typeof value?.id === "string" && typeof value?.label === "string" && value.label.trim(),
+          )
+          .map((value: { id: string; label: string }) => ({ id: value.id, label: value.label.trim() }))
+          .sort((left: VendorOption, right: VendorOption) => left.label.localeCompare(right.label));
+        setVendors(options);
+        setSelectedVendorId((current) => options.some((vendor: VendorOption) => vendor.id === current) ? current : "");
+        if (options.length === 0) setVendorError("Add an active vendor in Vendor Master before creating a sales order.");
+      } catch (loadError) {
+        if (!controller.signal.aborted) {
+          setVendorError(loadError instanceof Error ? loadError.message : "Unable to load Vendor Master.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setIsLoadingVendors(false);
+      }
+    };
+    const timer = window.setTimeout(() => void loadVendors(), 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [organizationId]);
+
   const regularQuotations = useMemo(
     () => quotations.filter((quotation) => quotation.mode !== "MASTER" && !quotation.parentQuotationId),
     [quotations],
@@ -72,24 +119,25 @@ export default function QuotationListPage() {
   );
   const selectionError = validateMasterQuotationChildSelection(selectedIds, validationQuotes);
 
-  async function createMasterQuotation() {
-    setIsCreatingMaster(true);
+  async function createSalesOrder() {
+    setIsCreatingSalesOrder(true);
     setError("");
     try {
       const response = await fetch("/api/distribution/master-quotations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ organizationId, quotationIds: selectedIds }),
+        body: JSON.stringify({ organizationId, quotationIds: selectedIds, vendorId: selectedVendorId }),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || typeof data?.quotation?.id !== "string") {
-        throw new Error(typeof data?.error === "string" ? data.error : "Unable to create master quotation.");
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to create sales order.");
       }
-      router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/master-quotation/${encodeURIComponent(data.quotation.id)}`);
+      setIsSalesOrderModalOpen(false);
+      router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/sales-order/${encodeURIComponent(data.quotation.id)}`);
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "Unable to create master quotation.");
+      setError(createError instanceof Error ? createError.message : "Unable to create sales order.");
     } finally {
-      setIsCreatingMaster(false);
+      setIsCreatingSalesOrder(false);
     }
   }
 
@@ -106,15 +154,19 @@ export default function QuotationListPage() {
           <p className="mt-2 text-sm text-slate-600">Database-backed quotation headers and booking-derived detail lines.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="secondary" onClick={() => router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/master-quotation`)}>
-            Master Quotations
+          <Button type="button" variant="secondary" onClick={() => router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/sales-order`)}>
+            Sales Orders
           </Button>
           <Button type="button" variant="secondary" onClick={() => void loadQuotations()} disabled={isLoading}>
             Refresh
           </Button>
         </div>
       </header>
-      {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
+      {vendorError || error ? (
+        <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          {vendorError || error}
+        </p>
+      ) : null}
       <Card className="p-2 shadow-none">
         <ReportGrid
           title="Quotation Register"
@@ -137,11 +189,14 @@ export default function QuotationListPage() {
               type="button"
               variant="primary"
               size="sm"
-              disabled={Boolean(selectionError) || isLoading || isCreatingMaster}
+              disabled={Boolean(selectionError) || isLoading || isCreatingSalesOrder}
               title={selectionError || undefined}
-              onClick={() => void createMasterQuotation()}
+              onClick={() => {
+                setError("");
+                setIsSalesOrderModalOpen(true);
+              }}
             >
-              {isCreatingMaster ? "Creating..." : `Create Master Quotation${selectedIds.length ? ` (${selectedIds.length})` : ""}`}
+              {`Create Sales Order${selectedIds.length ? ` (${selectedIds.length})` : ""}`}
             </Button>
           )}
           emptyMessage={isLoading ? "Loading quotations..." : "No ungrouped regular quotations are available. Create one from selected advance bookings."}
@@ -152,6 +207,47 @@ export default function QuotationListPage() {
           }}
         />
       </Card>
+      <Modal
+        open={isSalesOrderModalOpen}
+        onClose={() => {
+          if (!isCreatingSalesOrder) setIsSalesOrderModalOpen(false);
+        }}
+        ariaLabelledBy="sales-order-vendor-title"
+        size="sm"
+        closeOnBackdrop={!isCreatingSalesOrder}
+      >
+        <form
+          className="space-y-4 p-6"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void createSalesOrder();
+          }}
+        >
+          <div>
+            <h2 id="sales-order-vendor-title" className="text-lg font-semibold text-slate-900">Create Sales Order</h2>
+            <p className="mt-1 text-sm text-slate-600">Choose the Vendor Master vendor for this quotation header.</p>
+          </div>
+          <Select
+            label="Sales Order Vendor"
+            required
+            value={selectedVendorId}
+            onChange={(event) => setSelectedVendorId(event.target.value)}
+            disabled={isLoadingVendors || isCreatingSalesOrder || vendors.length === 0}
+          >
+            <option value="">{isLoadingVendors ? "Loading vendors..." : "Select a vendor"}</option>
+            {vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.label}</option>)}
+          </Select>
+          {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="secondary" onClick={() => setIsSalesOrderModalOpen(false)} disabled={isCreatingSalesOrder}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={!selectedVendorId || isLoadingVendors || isCreatingSalesOrder}>
+              {isCreatingSalesOrder ? "Creating..." : "Create Sales Order"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

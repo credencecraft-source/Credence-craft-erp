@@ -118,6 +118,7 @@ model Organization {
   purchaseOrders                PurchaseOrder[]
   posPurchaseRecords            PosPurchaseRecord[]
   posPurchaseBills              PosPurchaseBill[]
+  posSalesInvoices              PosSalesInvoice[]
   subscriptions                 Subscription[]
   segmentPrices                 OrganizationSegmentPrice[]
   invitations                   OrganizationInvitation[]
@@ -140,8 +141,16 @@ model Organization {
   rawMaterialOutwardBoxLines    RawMaterialOutwardBoxLine[]
   rawMaterialOutwardShipments   RawMaterialOutwardShipment[]
   rawMaterialOutwardShipmentBoxes RawMaterialOutwardShipmentBox[]
+  fgStockOutwardRequests       FinishedGoodsOutwardRequest[]
+  fgStockOutwardRequestLines   FinishedGoodsOutwardRequestLine[]
+  fgStockOutwardBoxes          FinishedGoodsOutwardBox[]
+  fgStockOutwardBoxLines       FinishedGoodsOutwardBoxLine[]
+  fgStockOutwardShipments      FinishedGoodsOutwardShipment[]
+  fgStockOutwardShipmentBoxes  FinishedGoodsOutwardShipmentBox[]
   finishedGoodsStocks           FinishedGoodsStock[]
   finishedGoodsSkuStocks        FinishedGoodsSkuStock[]
+  finishedGoodsGeneralStockReceipts   FinishedGoodsGeneralStockReceipt[]
+  finishedGoodsAllocatedStockReceipts FinishedGoodsAllocatedStockReceipt[]
   gateEntries                   GateEntry[]
   factoryWorkOrders             FactoryWorkOrder[]
   shopFloorBatches              BatchMaster[]
@@ -679,6 +688,8 @@ model MasterLocation {
   rawMaterialStocks RawMaterialStock[]
   finishedGoodsStocks FinishedGoodsStock[]
   finishedGoodsSkuStocks FinishedGoodsSkuStock[]
+  finishedGoodsGeneralStockReceipts   FinishedGoodsGeneralStockReceipt[]
+  finishedGoodsAllocatedStockReceipts FinishedGoodsAllocatedStockReceipt[]
 
   @@unique([organization_id, location_name])
   @@unique([organization_id, entity_id, id])

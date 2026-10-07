@@ -9,7 +9,9 @@ import {
 export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isPublicAuthRoute =
+    pathname === "/api/auth" ||
     pathname.startsWith("/api/auth/") ||
+    pathname === "/api/platform/auth" ||
     pathname.startsWith("/api/platform/auth/");
 
   if (isPublicAuthRoute) {

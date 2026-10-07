@@ -34,7 +34,12 @@ function mapGrn(record: {
     order_no: string;
     total_qty: number;
     status: string;
-    order: { article: string | null; styleName: string | null; brand: string | null };
+    order: {
+      article: string | null;
+      styleName: string | null;
+      brand: string | null;
+      entity: { is_active: boolean; locations: Array<{ id: string; location_name: string }> } | null;
+    };
   };
   lines: Array<{
     id: string;
@@ -54,8 +59,9 @@ function mapGrn(record: {
         id: string;
         assigned_quantity: number;
         bookingSizeLine: {
+          id: string;
           size: string;
-          booking: { booking_no: string };
+          booking: { id: string; booking_no: string };
         };
         grnAllocations: Array<{ allocated_quantity: number }>;
       }>;
@@ -78,6 +84,7 @@ function mapGrn(record: {
       article: record.workOrder.order.article,
       styleName: record.workOrder.order.styleName,
       brand: record.workOrder.order.brand,
+      locations: record.workOrder.order.entity?.is_active ? record.workOrder.order.entity.locations : [],
     },
     lines: record.lines.map((line) => ({
       id: line.id,
@@ -112,7 +119,27 @@ const grnIncludes = {
       order_no: true,
       total_qty: true,
       status: true,
-      order: { select: { article: true, styleName: true, brand: true, buyer: true } },
+      order: {
+        select: {
+          entity_id: true,
+          article: true,
+          styleName: true,
+          brand: true,
+          buyer: true,
+          category: true,
+          colors: true,
+          entity: {
+            select: {
+              is_active: true,
+              locations: {
+                where: { is_active: true },
+                select: { id: true, location_name: true },
+                orderBy: [{ sort_order: "asc" as const }, { location_name: "asc" as const }],
+              },
+            },
+          },
+        },
+      },
     },
   },
   lines: {
@@ -121,7 +148,7 @@ const grnIncludes = {
         include: {
           bookingAssignments: {
             include: {
-              bookingSizeLine: { include: { booking: { select: { booking_no: true } } } },
+              bookingSizeLine: { include: { booking: { select: { id: true, booking_no: true } } } },
               grnAllocations: { select: { allocated_quantity: true } },
             },
             orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
@@ -379,7 +406,7 @@ export async function verifyWorkOrderInventoryGrnLine(
   userId: string,
   grnId: string,
   lineId: string,
-  input: { actualReceivedQuantity: number; approvedQuantity: number },
+  input: { actualReceivedQuantity: number; approvedQuantity: number; locationId?: string; actorEmail?: string | null },
 ) {
   if (!grnId.trim() || !lineId.trim()) throw new Error("Select a Work Order GRN size line to verify.");
   const { actualReceivedQuantity, approvedQuantity } = input;
@@ -402,13 +429,42 @@ export async function verifyWorkOrderInventoryGrnLine(
             grn: { organization_id: organizationId },
           },
           include: {
-            grn: { select: { id: true, grn_no: true, status: true, submitted_by: true } },
+            grn: {
+              select: {
+                id: true,
+                grn_no: true,
+                grn_date: true,
+                status: true,
+                submitted_by: true,
+                workOrder: {
+                  select: {
+                    id: true,
+                    work_order_no: true,
+                    order_id: true,
+                    order_no: true,
+                    order: {
+                      select: {
+                        id: true,
+                        organization_id: true,
+                        entity_id: true,
+                        article: true,
+                        styleName: true,
+                        brand: true,
+                        buyer: true,
+                        category: true,
+                        colors: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
             workOrderSizeLine: {
               include: {
                 bookingAssignments: {
                   where: { organization_id: organizationId },
                   include: {
-                    bookingSizeLine: { include: { booking: { select: { booking_no: true } } } },
+                    bookingSizeLine: { include: { booking: { select: { id: true, booking_no: true } } } },
                     grnAllocations: { select: { allocated_quantity: true } },
                   },
                   orderBy: [{ created_at: "asc" }, { id: "asc" }],
@@ -420,9 +476,6 @@ export async function verifyWorkOrderInventoryGrnLine(
         if (!line) throw new Error("Work Order GRN size line was not found in this organization.");
         if (line.grn.status !== "PENDING_VERIFICATION" || line.verified_actual_quantity !== null) {
           throw new Error("This Work Order GRN size line has already been verified or is no longer pending.");
-        }
-        if (line.grn.submitted_by === userId) {
-          throw new Error("The person who created this Work Order GRN cannot verify it. Ask another authorized inventory user.");
         }
         if (actualReceivedQuantity > line.received_quantity) {
           throw new Error("Actual received quantity cannot exceed the quantity submitted on this GRN line.");
@@ -448,6 +501,34 @@ export async function verifyWorkOrderInventoryGrnLine(
           approvedQuantity,
           advanceBookedQuantity,
         });
+        const submitter = await transaction.workspaceUser.findUnique({
+          where: { id: line.grn.submitted_by },
+          select: { email: true },
+        });
+        const hasStockToPost = approvedQuantity > 0;
+        const order = line.grn.workOrder.order;
+        if (order.organization_id !== organizationId) {
+          throw new Error("The Work Order GRN order does not belong to this organization.");
+        }
+        const styleName = order.styleName?.trim() || order.article?.trim() || line.grn.workOrder.order_no;
+        const stockSize = line.size?.trim() || line.buyer_size?.trim() || assignments[0]?.size || "Unspecified";
+        if (hasStockToPost && !order.entity_id) {
+          throw new Error("The order must have an organization entity before finished-goods stock can be posted.");
+        }
+        const stockLocation = hasStockToPost
+          ? await transaction.masterLocation.findFirst({
+            where: {
+              id: input.locationId?.trim() ?? "",
+              organization_id: organizationId,
+              entity_id: order.entity_id ?? "",
+              is_active: true,
+            },
+            select: { id: true, entity_id: true, entity: { select: { is_active: true } } },
+          })
+          : null;
+        if (hasStockToPost && (!stockLocation || !stockLocation.entity.is_active)) {
+          throw new Error("Select an active finished-goods location under an active order entity.");
+        }
 
         const update = await transaction.workOrderInventoryGrnLine.updateMany({
           where: {
@@ -467,16 +548,104 @@ export async function verifyWorkOrderInventoryGrnLine(
         if (update.count !== 1) throw new Error("This Work Order GRN size line changed while being verified. Reload and try again.");
 
         const allocations = bookingSplit.allocations.filter((allocation) => allocation.allocatedQuantity > 0);
-        if (allocations.length > 0) {
-          await transaction.workOrderInventoryGrnBookingAllocation.createMany({
-            data: allocations.map((allocation) => ({
+        const allocationRecords = [];
+        for (const allocation of allocations) {
+          const assignment = line.workOrderSizeLine.bookingAssignments.find(
+            (candidate) => candidate.id === allocation.assignmentId,
+          );
+          if (!assignment) throw new Error("The booking assignment changed while this GRN was being verified.");
+          const createdAllocation = await transaction.workOrderInventoryGrnBookingAllocation.create({
+            data: {
               organization_id: organizationId,
               grn_line_id: line.id,
               booking_assignment_id: allocation.assignmentId,
               allocated_quantity: allocation.allocatedQuantity,
               created_by: userId,
-            })),
+            },
+            select: { id: true },
           });
+          allocationRecords.push({ ...allocation, assignment, grnAllocationId: createdAllocation.id });
+        }
+
+        const stockReceiptIds: { general: string | null; allocated: string[] } = {
+          general: null,
+          allocated: [],
+        };
+        if (hasStockToPost && stockLocation) {
+          const commonReceiptDetails = {
+            organization_id: organizationId,
+            entity_id: stockLocation.entity_id,
+            location_id: stockLocation.id,
+            grn_id: line.grn.id,
+            grn_line_id: line.id,
+            work_order_id: line.grn.workOrder.id,
+            order_id: line.grn.workOrder.order_id,
+            grn_no: line.grn.grn_no,
+            grn_date: line.grn.grn_date,
+            work_order_no: line.grn.workOrder.work_order_no,
+            order_no: line.grn.workOrder.order_no,
+            article_no: order.article,
+            style_name: styleName,
+            brand: order.brand,
+            buyer: order.buyer,
+            product_category: order.category,
+            colour: order.colors,
+            size: stockSize,
+            buyer_size: line.buyer_size,
+            received_quantity: line.received_quantity,
+            actual_received_quantity: actualReceivedQuantity,
+            approved_quantity: approvedQuantity,
+            rejected_quantity: verificationSplit.rejectedQuantity,
+            created_by: submitter?.email || line.grn.submitted_by,
+            verified_by: input.actorEmail?.trim() || userId,
+          };
+          if (verificationSplit.generalInventoryQuantity > 0) {
+            const receipt = await transaction.finishedGoodsGeneralStockReceipt.create({
+              data: {
+                ...commonReceiptDetails,
+                quantity_in: verificationSplit.generalInventoryQuantity,
+                current_stock: verificationSplit.generalInventoryQuantity,
+              },
+              select: { id: true },
+            });
+            stockReceiptIds.general = receipt.id;
+            await updateFinishedGoodsStockAggregate(
+              transaction,
+              organizationId,
+              stockLocation.entity_id,
+              stockLocation.id,
+              styleName,
+              stockSize,
+              verificationSplit.generalInventoryQuantity,
+              0,
+            );
+          }
+          for (const allocation of allocationRecords) {
+            const receipt = await transaction.finishedGoodsAllocatedStockReceipt.create({
+              data: {
+                ...commonReceiptDetails,
+                grn_allocation_id: allocation.grnAllocationId,
+                booking_id: allocation.assignment.bookingSizeLine.booking.id,
+                booking_size_line_id: allocation.assignment.bookingSizeLine.id,
+                booking_assignment_id: allocation.assignmentId,
+                booking_no: allocation.bookingNo,
+                quantity_in: allocation.allocatedQuantity,
+                current_stock: allocation.allocatedQuantity,
+              },
+              select: { id: true },
+            });
+            stockReceiptIds.allocated.push(receipt.id);
+            await updateFinishedGoodsStockAggregate(
+              transaction,
+              organizationId,
+              stockLocation.entity_id,
+              stockLocation.id,
+              styleName,
+              stockSize,
+              allocation.allocatedQuantity,
+              allocation.allocatedQuantity,
+            );
+          }
         }
 
         const pendingLines = await transaction.workOrderInventoryGrnLine.count({
@@ -506,6 +675,9 @@ export async function verifyWorkOrderInventoryGrnLine(
             rejected_quantity: verificationSplit.rejectedQuantity,
             advance_booked_quantity: advanceBookedQuantity,
             general_inventory_quantity: verificationSplit.generalInventoryQuantity,
+            stock_location_id: stockLocation?.id ?? null,
+            general_stock_receipt_id: stockReceiptIds.general,
+            allocated_stock_receipt_ids: stockReceiptIds.allocated,
             booking_allocations: allocations.map(({ assignmentId, bookingNo, allocatedQuantity }) => ({
               assignment_id: assignmentId,
               booking_no: bookingNo,
@@ -524,6 +696,8 @@ export async function verifyWorkOrderInventoryGrnLine(
           rejectedQuantity: verificationSplit.rejectedQuantity,
           advanceBookedQuantity,
           generalInventoryQuantity: verificationSplit.generalInventoryQuantity,
+          stockLocationId: stockLocation?.id ?? null,
+          stockReceiptIds,
           bookingAllocations: allocations,
           grnCompleted,
         };
@@ -535,4 +709,41 @@ export async function verifyWorkOrderInventoryGrnLine(
     }
   }
   throw new Error("Work Order GRN verification changed concurrently. Reload and try again.");
+}
+
+async function updateFinishedGoodsStockAggregate(
+  transaction: Database,
+  organizationId: string,
+  entityId: string,
+  locationId: string,
+  styleName: string,
+  size: string,
+  quantity: number,
+  reservedQuantity: number,
+) {
+  const quantityOnHand = new Prisma.Decimal(quantity);
+  const quantityReserved = new Prisma.Decimal(reservedQuantity);
+  await transaction.finishedGoodsStock.upsert({
+    where: {
+      organization_id_style_name_size_location_id: {
+        organization_id: organizationId,
+        style_name: styleName,
+        size,
+        location_id: locationId,
+      },
+    },
+    create: {
+      organization_id: organizationId,
+      entity_id: entityId,
+      location_id: locationId,
+      style_name: styleName,
+      size,
+      quantity_on_hand: quantityOnHand,
+      quantity_reserved: quantityReserved,
+    },
+    update: {
+      quantity_on_hand: { increment: quantityOnHand },
+      quantity_reserved: { increment: quantityReserved },
+    },
+  });
 }

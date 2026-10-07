@@ -51,6 +51,14 @@ describe("API authentication proxy", () => {
     await expect(response.json()).resolves.toEqual({ error: "Authentication required." });
   });
 
+  it("allows the exact auth endpoints without a session", () => {
+    const authResponse = proxy(new NextRequest("http://localhost/api/auth"));
+    const platformAuthResponse = proxy(new NextRequest("http://localhost/api/platform/auth"));
+
+    expect(authResponse.headers.get("x-middleware-next")).toBe("1");
+    expect(platformAuthResponse.headers.get("x-middleware-next")).toBe("1");
+  });
+
   it("does not accept a platform session in place of an organization API session", async () => {
     const response = proxy(createRequest(
       "/api/orders/article-summary",

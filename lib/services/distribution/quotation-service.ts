@@ -32,13 +32,12 @@ function mapQuotation(record: Prisma.DistributionQuotationGetPayload<{ include: 
     createdAt: record.created_at.toISOString(),
     lines: record.lines.map((line) => ({
       id: line.id,
-      sourceBookingSizeId: line.source_booking_size_id,
+      sourceBookingId: line.source_booking_id,
       bookingNo: line.booking_no,
       orderNo: line.order_no,
       description: line.item_description,
       brand: line.brand ?? "",
       styleName: line.style_name ?? "",
-      size: line.size,
       quantity: line.quantity,
       unitPrice: line.unit_price.toFixed(4),
       lineTotal: line.line_total.toFixed(2),
@@ -97,9 +96,8 @@ export async function createDistributionQuotationFromBookings(
     if (orderedBookings.some((booking) => booking.vendor_id !== vendorId || booking.customer !== customer)) {
       throw new Error("Select advance bookings for the same Vendor Master vendor.");
     }
-    const sourceIds = orderedBookings.flatMap((booking) => booking.sizeLines.map((line) => line.id));
     const previouslyQuoted = await transaction.distributionQuotationLine.findFirst({
-      where: { organization_id: organizationId, source_booking_size_id: { in: sourceIds } },
+      where: { organization_id: organizationId, source_booking_id: { in: bookingIds } },
       select: { booking_no: true },
     });
     if (previouslyQuoted) {
@@ -116,25 +114,27 @@ export async function createDistributionQuotationFromBookings(
     const orderNumbers = [...new Set(orderedBookings.map((booking) => booking.order.orderNo))];
     const combinedOrderNumbers = orderNumbers.join(", ");
     if (combinedOrderNumbers.length > 1000) throw new Error("The selected source order numbers exceed the quotation header limit.");
-    const quotationLines = orderedBookings.flatMap((booking) => booking.sizeLines.map((line) => {
+    const quotationLines = orderedBookings.map((booking) => {
       const itemDescription = [booking.brand, booking.style_name].filter(Boolean).join(" ");
       if (itemDescription.length > 500) {
         throw new Error(`Booking ${booking.booking_no} has a description that exceeds the quotation line limit.`);
       }
+      const quantity = booking.sizeLines.reduce((sum, line) => sum + line.booked_quantity, 0);
+      if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+        throw new Error(`Booking ${booking.booking_no} must have a positive, supported total quantity.`);
+      }
       return {
-        organization_id: organizationId,
-        source_booking_size_id: line.id,
+        source_booking_id: booking.id,
         booking_no: booking.booking_no,
         order_no: booking.order.orderNo,
         item_description: itemDescription,
         brand: booking.brand,
         style_name: booking.style_name,
-        size: line.size,
-        quantity: line.booked_quantity,
+        quantity,
         unit_price: new Prisma.Decimal(0),
         line_total: new Prisma.Decimal(0),
       };
-    }));
+    });
     const quotation = await transaction.distributionQuotation.create({
       data: {
         organization_id: organizationId,
@@ -259,14 +259,21 @@ export async function createDistributionMasterQuotation(
   organizationId: string,
   userId: string,
   quotationIds: string[],
+  vendorId: string,
 ) {
+  if (!vendorId.trim()) throw new Error("Select a Vendor Master vendor for the sales order.");
   if (quotationIds.length < 2 || quotationIds.length > 100) {
-    throw new Error("Select between two and 100 regular quotations for a master quotation.");
+    throw new Error("Select between two and 100 regular quotations for a sales order.");
   }
   if (new Set(quotationIds).size !== quotationIds.length || quotationIds.some((id) => !id.trim())) {
     throw new Error("Each regular quotation can only be included once.");
   }
   const record = await prisma.$transaction(async (transaction) => {
+    const vendor = await transaction.masterVendor.findFirst({
+      where: { organization_id: organizationId, id: vendorId, is_active: true },
+      select: { id: true, vendor: true },
+    });
+    if (!vendor) throw new Error("Select an active vendor from Vendor Master.");
     const children = await transaction.distributionQuotation.findMany({
       where: {
         organization_id: organizationId,
@@ -283,15 +290,15 @@ export async function createDistributionMasterQuotation(
     const totalQuantity = orderedChildren.reduce((sum, child) => sum + child.total_quantity, 0);
     if (!Number.isSafeInteger(totalQuantity)) throw new Error("The selected quotation quantities exceed the supported total.");
     const orderNumbers = [...new Set(orderedChildren.flatMap((child) => child.order_no.split(",").map((value) => value.trim()).filter(Boolean)))];
-    const customers = [...new Set(orderedChildren.map((child) => child.customer))];
     const subtotal = orderedChildren.reduce((sum, child) => sum.add(child.subtotal), new Prisma.Decimal(0));
     const master = await transaction.distributionQuotation.create({
       data: {
         organization_id: organizationId,
+        vendor_id: vendor.id,
         quotation_no: await reserveProcurementDocumentNumber(organizationId, "DISTRIBUTION_MASTER_QUOTATION", transaction),
         quotation_date: new Date(),
         order_no: orderNumbers.join(", "),
-        customer: customers.length === 1 ? customers[0] : "Multiple customers",
+        customer: vendor.vendor,
         mode: "MASTER",
         status: "DRAFT",
         total_quantity: totalQuantity,
@@ -320,10 +327,77 @@ export async function createDistributionMasterQuotation(
       details: {
         quotation_no: master.quotation_no,
         child_quotation_nos: orderedChildren.map((child) => child.quotation_no),
+        vendor_id: vendor.id,
+        vendor_name: vendor.vendor,
         total_quantity: totalQuantity,
       },
     }, transaction);
     return master;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
   return mapQuotation(record);
+}
+
+export async function deleteDistributionQuotation(
+  organizationId: string,
+  userId: string,
+  quotationId: string,
+) {
+  if (!quotationId.trim()) throw new Error("Select a quotation to delete.");
+
+  return prisma.$transaction(async (transaction) => {
+    const quotation = await transaction.distributionQuotation.findFirst({
+      where: { organization_id: organizationId, id: quotationId },
+      include: {
+        lines: { select: { booking_no: true } },
+        childQuotations: { select: { id: true, quotation_no: true } },
+      },
+    });
+    if (!quotation) throw new Error("The quotation was not found in this organization.");
+    if (quotation.status !== "DRAFT") {
+      throw new Error("Only draft quotations can be deleted. Preserve issued quotations and use the approved reversal process.");
+    }
+
+    if (quotation.mode === "MASTER") {
+      const unlinked = await transaction.distributionQuotation.updateMany({
+        where: {
+          organization_id: organizationId,
+          id: { in: quotation.childQuotations.map((child) => child.id) },
+          parent_quotation_id: quotation.id,
+        },
+        data: { parent_quotation_id: null },
+      });
+      if (unlinked.count !== quotation.childQuotations.length) {
+        throw new Error("The sales order's linked quotations changed. Reload and try again.");
+      }
+    } else if (quotation.parent_quotation_id) {
+      throw new Error("Delete the parent sales order first, then delete this quotation.");
+    }
+
+    const deleted = await transaction.distributionQuotation.deleteMany({
+      where: { organization_id: organizationId, id: quotation.id, status: "DRAFT" },
+    });
+    if (deleted.count !== 1) throw new Error("The quotation changed while deleting. Reload and try again.");
+
+    await createAuditEvent({
+      organizationId,
+      userId,
+      module: "Distribution",
+      action: quotation.mode === "MASTER" ? "DELETE_DISTRIBUTION_MASTER_QUOTATION" : "DELETE_DISTRIBUTION_QUOTATION",
+      entityType: "DistributionQuotation",
+      entityId: quotation.id,
+      details: {
+        quotation_no: quotation.quotation_no,
+        mode: quotation.mode,
+        child_quotation_nos: quotation.childQuotations.map((child) => child.quotation_no),
+        booking_nos: quotation.lines.map((line) => line.booking_no),
+      },
+    }, transaction);
+
+    return {
+      id: quotation.id,
+      quotationNo: quotation.quotation_no,
+      mode: quotation.mode,
+      unlinkedQuotationCount: quotation.mode === "MASTER" ? quotation.childQuotations.length : 0,
+    };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
 }

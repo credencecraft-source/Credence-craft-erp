@@ -32,7 +32,18 @@ function verifyToken(token: string | null | undefined, signaturePrefix = "") {
     return null;
   }
 
-  const [userId, expiresAtValue, signature] = token.split(".");
+  const parts = token.split(".");
+  if (parts.length < 3) {
+    return null;
+  }
+
+  const signature = parts.pop();
+  const expiresAtValue = parts.pop();
+  const userId = parts.join(".");
+
+  if (!userId || !expiresAtValue || !signature) {
+    return null;
+  }
 
   if (!userId || !expiresAtValue || !signature) {
     return null;

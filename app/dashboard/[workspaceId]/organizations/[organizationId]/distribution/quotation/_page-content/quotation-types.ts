@@ -1,12 +1,11 @@
 export type DistributionQuotationLine = {
   id: string;
-  sourceBookingSizeId: string;
+  sourceBookingId: string;
   bookingNo: string;
   orderNo: string;
   description: string;
   brand: string;
   styleName: string;
-  size: string;
   quantity: number;
   unitPrice: string;
   lineTotal: string;
@@ -32,5 +31,5 @@ export type DistributionQuotation = {
 
 export type DistributionQuotationSummary = Pick<
   DistributionQuotation,
-  "id" | "quotationNo" | "customer" | "orderNo" | "mode" | "status" | "totalQuantity" | "subtotal" | "createdAt" | "parentQuotationId"
+  "id" | "quotationNo" | "quotationDate" | "customer" | "orderNo" | "mode" | "status" | "totalQuantity" | "subtotal" | "createdAt" | "parentQuotationId"
 >;

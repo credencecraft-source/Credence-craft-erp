@@ -60,29 +60,6 @@ type MasterStateOption = {
 type MasterVendorOption = {
   label?: string | null;
 };
-type StoredPosInvoice = {
-  invoiceNumber: string;
-  invoiceDate: string;
-  customer: string;
-  lines: Array<{
-    record: StockRecord;
-    quantity: number;
-    rate: number;
-    gstRate: number;
-    discountPercent: number;
-    amount: number;
-  }>;
-  subtotal: number;
-  taxRate: number;
-  taxAmount: number;
-  taxMode: "LOCAL" | "INTERSTATE";
-  cgstAmount: number;
-  sgstAmount: number;
-  igstAmount: number;
-  otherCharges: number;
-  grandTotal: number;
-  savedAt: string;
-};
 type StoredFinanceDocument = {
   id: string;
   documentType: string;
@@ -98,7 +75,6 @@ type StoredFinanceDocument = {
   paymentStatus: string;
   archivedYear: number;
 };
-
 export default function PosBarcodeBillingPage({
   workspaceId,
   organizationId,
@@ -108,6 +84,7 @@ export default function PosBarcodeBillingPage({
 }) {
   const router = useRouter();
   const scannerRef = useRef<HTMLInputElement>(null);
+  const saleRequestKey = useRef("");
   const [scanValue, setScanValue] = useState("");
   const [records, setRecords] = useState<StockRecord[]>([]);
   const [selectedRecord, setSelectedRecord] = useState<StockRecord | null>(
@@ -133,13 +110,14 @@ export default function PosBarcodeBillingPage({
   } | null>(null);
   const [invoiceNumber, setInvoiceNumber] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [savingInvoice, setSavingInvoice] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     scannerRef.current?.focus();
     Promise.all([
       fetch(
-        `/api/inventory/stock/fg-sku?organizationId=${encodeURIComponent(organizationId)}`,
+        `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock`,
         { cache: "no-store" },
       ).then((response) => response.json()),
       fetch(
@@ -167,7 +145,7 @@ export default function PosBarcodeBillingPage({
           vendorData,
           stateData,
         ]: [
-          { records?: StockRecord[] },
+          { records?: StockRecord[]; error?: string },
           GstOption[],
           {
             profile?: {
@@ -179,6 +157,7 @@ export default function PosBarcodeBillingPage({
           MasterVendorOption[],
           MasterStateOption[],
         ]) => {
+          if (stockData.error) throw new Error(stockData.error);
           setRecords(Array.isArray(stockData.records) ? stockData.records : []);
           setGstOptions(Array.isArray(gstData) ? gstData : []);
           setTaxProfile(taxData.profile ?? null);
@@ -207,7 +186,9 @@ export default function PosBarcodeBillingPage({
           );
         },
       )
-      .catch(() => setError("Unable to load finished goods stock records."));
+      .catch((loadError: unknown) => setError(
+        loadError instanceof Error ? loadError.message : "Unable to load General finished-goods stock.",
+      ));
   }, [organizationId]);
 
   const createVendor = async () => {
@@ -261,17 +242,18 @@ export default function PosBarcodeBillingPage({
     setError("");
     try {
       const response = await fetch(
-        `/api/inventory/stock/fg-sku?organizationId=${encodeURIComponent(organizationId)}&barcode=${encodeURIComponent(barcode)}`,
+        `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock?stockId=${encodeURIComponent(barcode)}`,
         { cache: "no-store" },
       );
       const data = (await response.json()) as {
         error?: string;
-        record?: StockRecord;
+        records?: StockRecord[];
       };
       if (!response.ok)
         throw new Error(data?.error || "Unable to find this stock barcode.");
-      if (!data.record) throw new Error("Unable to find this stock barcode.");
-      setSelectedRecord(data.record);
+      const record = data.records?.[0];
+      if (!record) throw new Error("Unable to find this General stock record.");
+      setSelectedRecord(record);
       setScanValue("");
     } catch (lookupError) {
       setError(
@@ -294,7 +276,7 @@ export default function PosBarcodeBillingPage({
     if (!selectedRecord) return;
     const available = Math.max(0, Number(selectedRecord.current_stock));
     if (available < 1) {
-      setError("This SKU has no available stock.");
+    setError("This General stock record has no available units.");
       setSelectedRecord(null);
       return;
     }
@@ -417,73 +399,74 @@ export default function PosBarcodeBillingPage({
   );
   const taxAmount = taxBreakdown.cgst + taxBreakdown.sgst + taxBreakdown.igst;
   const charges = Math.max(0, Number(otherCharges) || 0);
-  const taxRate = subtotal > 0 ? (taxAmount / subtotal) * 100 : 0;
   const grandTotal = subtotal + taxAmount + charges;
   const base = `/dashboard/${workspaceId}/organizations/${organizationId}/pos`;
-  const saveInvoice = () => {
-    const number =
-      invoiceNumber ?? `POS-${new Date().getTime().toString().slice(-8)}`;
-    const savedInvoices = JSON.parse(
-      window.localStorage.getItem(`pos-sales-invoices-${organizationId}`) ??
-        "[]",
-    ) as StoredPosInvoice[];
-    const invoice: StoredPosInvoice = {
-      invoiceNumber: number,
-      invoiceDate,
-      customer,
-      lines: billLines.map((line) => ({
-        record: line.record,
-        quantity: line.quantity,
-        rate: line.rate,
-        gstRate: line.gstRate,
-        discountPercent: line.discountPercent,
-        amount: line.quantity * line.rate * (1 - line.discountPercent / 100),
-      })),
-      subtotal,
-      taxRate: Number(taxRate) || 0,
-      taxAmount,
-      taxMode,
-      cgstAmount: taxBreakdown.cgst,
-      sgstAmount: taxBreakdown.sgst,
-      igstAmount: taxBreakdown.igst,
-      otherCharges: charges,
-      grandTotal,
-      savedAt: new Date().toISOString(),
-    };
-    const withoutCurrent = savedInvoices.filter(
-      (item) => item.invoiceNumber !== number,
-    );
-    window.localStorage.setItem(
-      `pos-sales-invoices-${organizationId}`,
-      JSON.stringify([invoice, ...withoutCurrent]),
-    );
-    const financeRecords = JSON.parse(
-      window.localStorage.getItem(`finance-documents-${organizationId}`) ?? "[]",
-    ) as StoredFinanceDocument[];
-    const financeRecord: StoredFinanceDocument = {
-      id: `pos-${number}`,
-      documentType: "Sales Invoice",
-      documentNumber: number,
-      sourceModule: "POS",
-      sourceRecordId: number,
-      date: invoiceDate,
-      party: customer || "Walk-in customer",
-      amount: subtotal,
-      tax: taxAmount,
-      net: grandTotal,
-      status: "Posted",
-      paymentStatus: "Pending",
-      archivedYear: new Date(invoiceDate).getFullYear(),
-    };
-    const withoutExistingFinanceRecord = financeRecords.filter(
-      (item) => item.documentNumber !== number || item.sourceModule !== "POS",
-    );
-    window.localStorage.setItem(
-      `finance-documents-${organizationId}`,
-      JSON.stringify([financeRecord, ...withoutExistingFinanceRecord]),
-    );
-    setInvoiceNumber(number);
-    router.push(`${base}/invoice`);
+  const saveInvoice = async () => {
+    setSavingInvoice(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/pos/sales`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceDate,
+          customer,
+          taxMode,
+          requestKey: saleRequestKey.current || (saleRequestKey.current = crypto.randomUUID()),
+          lines: billLines.map((line) => ({
+            stockId: line.record.id,
+            quantity: String(line.quantity),
+            rate: String(line.rate),
+            gstRate: String(line.gstRate),
+            discountPercent: String(line.discountPercent),
+            hsnCode: line.hsnCode,
+          })),
+        }),
+      });
+      const data = (await response.json()) as {
+        error?: string;
+        invoice?: { id?: string; invoiceNo?: string; subtotal?: string; taxAmount?: string; totalAmount?: string };
+      };
+      if (!response.ok || !data.invoice?.invoiceNo) {
+        throw new Error(data.error || "Unable to post POS invoice.");
+      }
+      saleRequestKey.current = "";
+      try {
+        const financeRecords = JSON.parse(
+          window.localStorage.getItem(`finance-documents-${organizationId}`) ?? "[]",
+        ) as StoredFinanceDocument[];
+        const financeRecord: StoredFinanceDocument = {
+          id: `pos-${data.invoice.id}`,
+          documentType: "Sales Invoice",
+          documentNumber: data.invoice.invoiceNo,
+          sourceModule: "POS",
+          sourceRecordId: data.invoice.id ?? "",
+          date: invoiceDate,
+          party: customer || "Walk-in customer",
+          amount: Number(data.invoice.subtotal ?? subtotal),
+          tax: Number(data.invoice.taxAmount ?? taxAmount),
+          net: Number(data.invoice.totalAmount ?? grandTotal),
+          status: "Posted",
+          paymentStatus: "Pending",
+          archivedYear: new Date(invoiceDate).getFullYear(),
+        };
+        const withoutExistingFinanceRecord = financeRecords.filter(
+          (item) => item.documentNumber !== data.invoice?.invoiceNo || item.sourceModule !== "POS",
+        );
+        window.localStorage.setItem(
+          `finance-documents-${organizationId}`,
+          JSON.stringify([financeRecord, ...withoutExistingFinanceRecord]),
+        );
+      } catch {
+        setError("Invoice posted and stock deducted, but the local finance cache could not be updated.");
+      }
+      setInvoiceNumber(data.invoice.invoiceNo);
+      router.push(`${base}/invoice`);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to post POS invoice.");
+    } finally {
+      setSavingInvoice(false);
+    }
   };
 
   return (
@@ -509,11 +492,11 @@ export default function PosBarcodeBillingPage({
               </div>
               <Button
                 type="button"
-                onClick={saveInvoice}
-                disabled={billLines.length === 0}
+                onClick={() => void saveInvoice()}
+                disabled={billLines.length === 0 || billLines.some((line) => line.quantity < 1) || savingInvoice}
                 className="rounded-lg px-4 py-2 text-sm font-semibold"
               >
-                Save Invoice
+                  {savingInvoice ? "Posting..." : "Post Invoice"}
               </Button>
             </div>
           </div>
@@ -526,7 +509,7 @@ export default function PosBarcodeBillingPage({
                 className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-800"
                 htmlFor="barcode-input"
               >
-                Stock Barcode / Record ID
+                General Stock Record ID
               </label>
               <div className="mt-2 flex gap-2">
                 <div className="relative min-w-0 flex-1">
@@ -537,7 +520,7 @@ export default function PosBarcodeBillingPage({
                     value={scanValue}
                     onChange={(event) => setScanValue(event.target.value)}
                     className="rounded-lg border-emerald-300 bg-white py-3 pl-10 pr-3 text-base outline-none focus:border-emerald-600 focus:ring-emerald-200"
-                    placeholder="Scan record ID or enter it manually"
+                    placeholder="Scan or enter a General stock record ID"
                     autoComplete="off"
                   />
                 </div>
@@ -559,7 +542,7 @@ export default function PosBarcodeBillingPage({
                 className="block text-xs font-bold uppercase tracking-[0.16em] text-slate-600"
                 htmlFor="stock-record-select"
               >
-                Select stock record manually
+                Select General stock manually
               </label>
               <Select
                 id="stock-record-select"
@@ -568,7 +551,7 @@ export default function PosBarcodeBillingPage({
                 onChange={(event) => chooseRecord(event.target.value)}
                 className="mt-2 rounded-lg px-3 py-2 text-sm text-slate-800"
               >
-                <option value="">Select style, order, or stock record</option>
+                <option value="">Select style, order, or General stock</option>
                 {records.map((record) => (
                   <option key={record.id} value={record.id}>
                     {record.style_name} | {record.order_no} | {record.size || "-"}{" "}
@@ -656,7 +639,7 @@ export default function PosBarcodeBillingPage({
                 {billLines.length === 0 ? (
                   <div className="p-10 text-center">
                     <p className="text-sm font-semibold text-slate-700">
-                      Scan or select a stock record to start billing
+                          Scan or select General FG stock to start billing
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
                       The stock record ID is accepted as the barcode.
@@ -683,7 +666,7 @@ export default function PosBarcodeBillingPage({
                           <Input
                             type="number"
                             aria-label={`${line.record.style_name} quantity`}
-                            min="0"
+                            min="1"
                             value={line.quantity}
                             onChange={(event) =>
                               updateLine(

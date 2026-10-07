@@ -35,6 +35,8 @@ model MerchandisingOrder {
   groupedPurchaseOrderLines GroupedPurchaseOrderLine[]
   workOrders                FactoryWorkOrder[]
   advanceBookings           AdvanceBooking[]
+  finishedGoodsGeneralStockReceipts   FinishedGoodsGeneralStockReceipt[]
+  finishedGoodsAllocatedStockReceipts FinishedGoodsAllocatedStockReceipt[]
 
   @@unique([organization_id, orderNo])
   @@unique([organization_id, id])
@@ -552,6 +554,63 @@ model PosPurchaseBillLine {
   @@map("pos_purchase_bill_lines")
 }
 
+model PosSalesInvoice {
+  id              String                 @id @default(cuid())
+  organization_id String
+  invoice_no      String                 @db.VarChar(100)
+  request_key     String                 @db.VarChar(100)
+  invoice_date    DateTime               @db.Date
+  customer        String?                @db.VarChar(255)
+  tax_mode        String                 @default("LOCAL") @db.VarChar(20)
+  status          String                 @default("POSTED") @db.VarChar(30)
+  subtotal        Decimal                @db.Decimal(14, 2)
+  cgst_amount     Decimal                @db.Decimal(14, 2)
+  sgst_amount     Decimal                @db.Decimal(14, 2)
+  igst_amount     Decimal                @db.Decimal(14, 2)
+  tax_amount      Decimal                @db.Decimal(14, 2)
+  total_amount    Decimal                @db.Decimal(14, 2)
+  created_by      String                 @db.VarChar(255)
+  posted_at       DateTime               @default(now())
+  created_at      DateTime               @default(now())
+  organization    Organization           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  lines           PosSalesInvoiceLine[]
+
+  @@unique([organization_id, invoice_no])
+  @@unique([organization_id, id])
+  @@unique([organization_id, request_key], map: "pos_sales_invoice_request_key")
+  @@index([organization_id, invoice_date, status])
+  @@map("pos_sales_invoices")
+}
+
+model PosSalesInvoiceLine {
+  id                      String                       @id @default(cuid())
+  organization_id         String
+  invoice_id              String
+  general_stock_receipt_id String
+  style_name              String                       @db.VarChar(255)
+  order_no                String                       @db.VarChar(100)
+  article_no              String                       @db.VarChar(255)
+  size                    String                       @db.VarChar(100)
+  colour                  String?                      @db.VarChar(255)
+  quantity                Int
+  unit_rate               Decimal                      @db.Decimal(14, 4)
+  gst_rate                Decimal                      @db.Decimal(8, 2)
+  discount_percent        Decimal                      @db.Decimal(8, 2)
+  hsn_code                String?                      @db.VarChar(100)
+  taxable_amount          Decimal                      @db.Decimal(14, 2)
+  cgst_amount             Decimal                      @db.Decimal(14, 2)
+  sgst_amount             Decimal                      @db.Decimal(14, 2)
+  igst_amount             Decimal                      @db.Decimal(14, 2)
+  total_amount            Decimal                      @db.Decimal(14, 2)
+  created_at              DateTime                     @default(now())
+  invoice                 PosSalesInvoice              @relation(fields: [organization_id, invoice_id], references: [organization_id, id], onDelete: Restrict)
+  generalStockReceipt     FinishedGoodsGeneralStockReceipt @relation(fields: [organization_id, general_stock_receipt_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, invoice_id, general_stock_receipt_id], map: "pos_sales_lines_invoice_stock_key")
+  @@index([organization_id, general_stock_receipt_id, created_at])
+  @@map("pos_sales_invoice_lines")
+}
+
 model ProcurementDocumentCounter {
   id              String       @id @default(cuid())
   organization_id String
@@ -905,6 +964,231 @@ model FinishedGoodsSkuStock {
   @@map("finished_goods_sku_stocks")
 }
 
+model FinishedGoodsGeneralStockReceipt {
+  id                       String                       @id @default(cuid())
+  organization_id          String
+  entity_id                String
+  location_id              String
+  grn_id                   String
+  grn_line_id              String                       @unique(map: "fg_general_receipt_grn_line_key")
+  work_order_id            String
+  order_id                 String
+  grn_no                   String                       @db.VarChar(100)
+  grn_date                 DateTime                     @db.Date
+  work_order_no            String                       @db.VarChar(100)
+  order_no                 String                       @db.VarChar(100)
+  article_no               String?                      @db.VarChar(255)
+  style_name               String                       @db.VarChar(255)
+  brand                    String?                      @db.VarChar(255)
+  buyer                    String?                      @db.VarChar(255)
+  product_category         String?                      @db.VarChar(255)
+  colour                   String?                      @db.VarChar(255)
+  size                     String                       @db.VarChar(100)
+  buyer_size               String?                      @db.VarChar(100)
+  received_quantity        Int
+  actual_received_quantity Int
+  approved_quantity        Int
+  rejected_quantity        Int
+  quantity_in              Int
+  quantity_out             Int                          @default(0)
+  current_stock            Int
+  created_by               String                       @db.VarChar(255)
+  verified_by              String                       @db.VarChar(255)
+  posted_at                DateTime                     @default(now())
+  created_at               DateTime                     @default(now())
+  organization             Organization                 @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "finished_goods_general_stock_receipts_organization_id_fkey")
+  location                 MasterLocation               @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict, map: "finished_goods_general_stock_receipts_location_fkey")
+  workOrder                FactoryWorkOrder             @relation(fields: [organization_id, work_order_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_general_stock_receipts_work_order_fkey")
+  order                    MerchandisingOrder           @relation(fields: [organization_id, order_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_general_stock_receipts_order_fkey")
+  grnLine                  WorkOrderInventoryGrnLine    @relation(fields: [grn_id, work_order_id, grn_line_id], references: [grn_id, work_order_id, id], onDelete: Restrict, map: "finished_goods_general_stock_receipts_grn_line_fkey")
+  posSalesLines            PosSalesInvoiceLine[]
+
+  @@unique([organization_id, id], map: "fg_general_receipt_org_id_key")
+  @@unique([grn_id, work_order_id, grn_line_id], map: "fg_general_stock_grn_line_scope_key")
+  @@index([organization_id, location_id, posted_at], map: "fg_general_receipt_location_posted_idx")
+  @@index([organization_id, order_no, size], map: "fg_general_receipt_order_size_idx")
+  @@map("finished_goods_general_stock_receipts")
+}
+
+model FinishedGoodsAllocatedStockReceipt {
+  id                       String                              @id @default(cuid())
+  organization_id          String
+  entity_id                String
+  location_id              String
+  grn_id                   String
+  grn_line_id              String
+  grn_allocation_id        String                              @unique(map: "fg_allocated_receipt_allocation_key")
+  work_order_id            String
+  order_id                 String
+  booking_id               String
+  booking_size_line_id     String
+  booking_assignment_id    String
+  grn_no                   String                              @db.VarChar(100)
+  grn_date                 DateTime                            @db.Date
+  work_order_no            String                              @db.VarChar(100)
+  order_no                 String                              @db.VarChar(100)
+  booking_no               String                              @db.VarChar(100)
+  article_no               String?                             @db.VarChar(255)
+  style_name               String                              @db.VarChar(255)
+  brand                    String?                             @db.VarChar(255)
+  buyer                    String?                             @db.VarChar(255)
+  product_category         String?                             @db.VarChar(255)
+  colour                   String?                             @db.VarChar(255)
+  size                     String                              @db.VarChar(100)
+  buyer_size               String?                             @db.VarChar(100)
+  received_quantity        Int
+  actual_received_quantity Int
+  approved_quantity        Int
+  rejected_quantity        Int
+  quantity_in              Int
+  quantity_out             Int                                 @default(0)
+  current_stock            Int
+  created_by               String                              @db.VarChar(255)
+  verified_by              String                              @db.VarChar(255)
+  posted_at                DateTime                            @default(now())
+  created_at               DateTime                            @default(now())
+  organization             Organization                         @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "finished_goods_allocated_stock_receipts_organization_id_fkey")
+  location                 MasterLocation                       @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict, map: "finished_goods_allocated_stock_receipts_location_fkey")
+  workOrder                FactoryWorkOrder                     @relation(fields: [organization_id, work_order_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_allocated_stock_receipts_work_order_fkey")
+  order                    MerchandisingOrder                   @relation(fields: [organization_id, order_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_allocated_stock_receipts_order_fkey")
+  booking                  AdvanceBooking                       @relation(fields: [organization_id, booking_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_allocated_stock_receipts_booking_fkey")
+  bookingSizeLine          AdvanceBookingSizeLine               @relation(fields: [organization_id, booking_size_line_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_allocated_stock_receipts_booking_size_line_fkey")
+  bookingAssignment        AdvanceBookingWorkOrderAssignment    @relation(fields: [organization_id, booking_assignment_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_allocated_stock_receipts_booking_assignment_fkey")
+  grnLine                  WorkOrderInventoryGrnLine             @relation(fields: [grn_id, work_order_id, grn_line_id], references: [grn_id, work_order_id, id], onDelete: Restrict, map: "finished_goods_allocated_stock_receipts_grn_line_fkey")
+  grnAllocation            WorkOrderInventoryGrnBookingAllocation @relation(fields: [grn_allocation_id], references: [id], onDelete: Restrict, map: "finished_goods_allocated_stock_receipts_grn_allocation_fkey")
+
+  @@unique([organization_id, id], map: "fg_allocated_receipt_org_id_key")
+  @@unique([organization_id, grn_line_id, booking_assignment_id], map: "fg_allocated_receipt_line_assignment_key")
+  @@index([organization_id, location_id, posted_at], map: "fg_alloc_receipt_location_posted_idx")
+  @@index([organization_id, booking_id, size], map: "fg_alloc_receipt_booking_size_idx")
+  @@index([organization_id, order_no, size], map: "fg_alloc_receipt_order_size_idx")
+  @@map("finished_goods_allocated_stock_receipts")
+}
+
+model FinishedGoodsOutwardRequest {
+  id              String                            @id @default(cuid())
+  organization_id String
+  request_no      String                            @db.VarChar(100)
+  status          String                            @default("REQUESTED") @db.VarChar(30)
+  requested_by    String?                           @db.VarChar(255)
+  requested_at    DateTime                          @default(now())
+  accepted_by     String?                           @db.VarChar(255)
+  accepted_at     DateTime?
+  created_at      DateTime                          @default(now())
+  updated_at      DateTime                          @updatedAt
+  organization    Organization                      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  lines           FinishedGoodsOutwardRequestLine[]
+
+  @@unique([organization_id, request_no])
+  @@unique([organization_id, id])
+  @@index([organization_id, status, requested_at])
+  @@map("finished_goods_outward_requests")
+}
+
+model FinishedGoodsOutwardRequestLine {
+  id                  String                       @id @default(cuid())
+  organization_id     String
+  request_id          String
+  source_booking_id   String?
+  source_stock_type   String                       @db.VarChar(20)
+  source_stock_id     String                       @db.VarChar(255)
+  stock_bucket        String                       @db.VarChar(20)
+  location_name       String?                      @db.VarChar(255)
+  sku_code            String?                      @db.VarChar(100)
+  style_name          String                       @db.VarChar(255)
+  order_no            String                       @db.VarChar(255)
+  article_no          String                       @db.VarChar(255)
+  brand               String?                      @db.VarChar(255)
+  size                String?                      @db.VarChar(100)
+  colour              String?                      @db.VarChar(150)
+  requested_quantity  Decimal                      @db.Decimal(14, 2)
+  picked_quantity     Decimal                      @default(0) @db.Decimal(14, 2)
+  shipped_quantity    Decimal                      @default(0) @db.Decimal(14, 2)
+  status              String                       @default("REQUESTED") @db.VarChar(30)
+  picked_by           String?                      @db.VarChar(255)
+  picked_at           DateTime?
+  created_at          DateTime                     @default(now())
+  updated_at          DateTime                     @updatedAt
+  organization        Organization                 @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  request             FinishedGoodsOutwardRequest  @relation(fields: [organization_id, request_id], references: [organization_id, id], onDelete: Restrict)
+  sourceBooking       AdvanceBooking?               @relation(fields: [organization_id, source_booking_id], references: [organization_id, id], onDelete: Restrict)
+  boxLines            FinishedGoodsOutwardBoxLine[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, request_id, source_stock_type, source_stock_id], map: "fg_outward_request_lines_source_stock_key")
+  @@index([organization_id, source_stock_type, source_stock_id, status], map: "fg_outward_request_lines_stock_idx")
+  @@index([organization_id, request_id, status], map: "fg_outward_request_lines_request_status_idx")
+  @@index([organization_id, source_booking_id], map: "fg_outward_request_lines_booking_idx")
+  @@map("finished_goods_outward_request_lines")
+}
+
+model FinishedGoodsOutwardBox {
+  id              String                        @id @default(cuid())
+  organization_id String
+  box_no          String                        @db.VarChar(100)
+  packed_by       String?                       @db.VarChar(255)
+  packed_at       DateTime                      @default(now())
+  created_at      DateTime                      @default(now())
+  organization    Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  lines           FinishedGoodsOutwardBoxLine[]
+  shipment        FinishedGoodsOutwardShipmentBox?
+
+  @@unique([organization_id, box_no])
+  @@unique([organization_id, id])
+  @@index([organization_id, packed_at])
+  @@map("finished_goods_outward_boxes")
+}
+
+model FinishedGoodsOutwardBoxLine {
+  id              String                            @id @default(cuid())
+  organization_id String
+  box_id          String
+  request_line_id String
+  quantity        Decimal                           @db.Decimal(14, 2)
+  created_at      DateTime                          @default(now())
+  organization    Organization                      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  box             FinishedGoodsOutwardBox          @relation(fields: [organization_id, box_id], references: [organization_id, id], onDelete: Restrict)
+  requestLine     FinishedGoodsOutwardRequestLine  @relation(fields: [organization_id, request_line_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, box_id, request_line_id])
+  @@index([organization_id, request_line_id])
+  @@map("finished_goods_outward_box_lines")
+}
+
+model FinishedGoodsOutwardShipment {
+  id              String                            @id @default(cuid())
+  organization_id String
+  packing_list_no String                            @db.VarChar(100)
+  shipped_by      String?                           @db.VarChar(255)
+  shipped_at      DateTime                          @default(now())
+  created_at      DateTime                          @default(now())
+  organization    Organization                      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  boxes           FinishedGoodsOutwardShipmentBox[]
+
+  @@unique([organization_id, packing_list_no])
+  @@unique([organization_id, id])
+  @@index([organization_id, shipped_at])
+  @@map("finished_goods_outward_shipments")
+}
+
+model FinishedGoodsOutwardShipmentBox {
+  id              String                        @id @default(cuid())
+  organization_id String
+  shipment_id     String
+  box_id          String                        @unique
+  created_at      DateTime                      @default(now())
+  organization    Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  shipment        FinishedGoodsOutwardShipment  @relation(fields: [organization_id, shipment_id], references: [organization_id, id], onDelete: Restrict)
+  box             FinishedGoodsOutwardBox       @relation(fields: [organization_id, box_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, box_id])
+  @@unique([organization_id, shipment_id, box_id], map: "fg_outward_shipment_boxes_shipment_box_key")
+  @@index([organization_id, shipment_id], map: "fg_outward_shipment_boxes_shipment_idx")
+  @@map("finished_goods_outward_shipment_boxes")
+}
+
 model GateEntry {
   id                String         @id @default(cuid())
   organization_id   String
@@ -955,6 +1239,9 @@ model AdvanceBooking {
   organization    Organization              @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "advance_bookings_organization_id_fkey")
   order           MerchandisingOrder        @relation(fields: [organization_id, order_id], references: [organization_id, id], onDelete: Restrict, map: "advance_bookings_organization_order_id_fkey")
   sizeLines       AdvanceBookingSizeLine[]
+  quotationLines  DistributionQuotationLine[]
+  finishedGoodsAllocatedStockReceipts FinishedGoodsAllocatedStockReceipt[]
+  finishedGoodsOutwardRequestLines FinishedGoodsOutwardRequestLine[]
 
   @@unique([organization_id, id])
   @@unique([organization_id, booking_no])
@@ -972,7 +1259,7 @@ model AdvanceBookingSizeLine {
   organization     Organization                      @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "advance_booking_size_lines_organization_id_fkey")
   booking          AdvanceBooking                    @relation(fields: [organization_id, booking_id], references: [organization_id, id], onDelete: Cascade, map: "advance_booking_size_lines_booking_fkey")
   assignments      AdvanceBookingWorkOrderAssignment[]
-  quotationLines   DistributionQuotationLine[]
+  finishedGoodsAllocatedStockReceipts FinishedGoodsAllocatedStockReceipt[]
 
   @@unique([organization_id, id])
   @@unique([booking_id, size])
@@ -1016,24 +1303,23 @@ model DistributionQuotationLine {
   id                       String                     @id @default(cuid())
   organization_id          String
   quotation_id             String
-  source_booking_size_id   String
+  source_booking_id        String
   item_description         String                  @db.VarChar(500)
   booking_no               String                     @db.VarChar(100)
   order_no                 String                     @db.VarChar(100)
   brand                    String?                    @db.VarChar(255)
   style_name               String?                    @db.VarChar(255)
-  size                     String                     @db.VarChar(100)
   quantity                 Int
   unit_price               Decimal                    @db.Decimal(14, 4)
   line_total               Decimal                    @db.Decimal(18, 2)
   created_at               DateTime                   @default(now())
   organization             Organization               @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   quotation                DistributionQuotation      @relation(fields: [organization_id, quotation_id], references: [organization_id, id], onDelete: Cascade)
-  sourceBookingSize        AdvanceBookingSizeLine      @relation(fields: [organization_id, source_booking_size_id], references: [organization_id, id], onDelete: Restrict)
+  sourceBooking            AdvanceBooking              @relation(fields: [organization_id, source_booking_id], references: [organization_id, id], onDelete: Restrict)
 
   @@unique([organization_id, id])
   @@index([organization_id, quotation_id])
-  @@unique([organization_id, source_booking_size_id])
+  @@unique([organization_id, source_booking_id])
   @@map("distribution_quotation_lines")
 }
 
@@ -1052,6 +1338,7 @@ model AdvanceBookingWorkOrderAssignment {
   workOrderSizeLine        FactoryWorkOrderSizeLine                   @relation(fields: [work_order_id, work_order_size_line_id], references: [work_order_id, id], onDelete: Restrict)
   workOrder                FactoryWorkOrder                           @relation(fields: [organization_id, work_order_id], references: [organization_id, id], onDelete: Restrict, map: "advance_booking_work_order_assignments_work_order_fkey")
   grnAllocations           WorkOrderInventoryGrnBookingAllocation[]
+  finishedGoodsStockReceipts FinishedGoodsAllocatedStockReceipt[]
 
   @@unique([organization_id, id])
   @@unique([booking_size_line_id, work_order_size_line_id])
@@ -1070,6 +1357,7 @@ model WorkOrderInventoryGrnBookingAllocation {
   organization            Organization                      @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "work_order_inventory_grn_booking_allocations_org_fkey")
   grnLine                 WorkOrderInventoryGrnLine         @relation(fields: [grn_line_id], references: [id], onDelete: Restrict)
   bookingAssignment       AdvanceBookingWorkOrderAssignment @relation(fields: [organization_id, booking_assignment_id], references: [organization_id, id], onDelete: Restrict, map: "work_order_inventory_grn_booking_allocations_assignment_fkey")
+  finishedGoodsStockReceipt FinishedGoodsAllocatedStockReceipt?
 
   @@unique([grn_line_id, booking_assignment_id])
   @@index([organization_id, booking_assignment_id])

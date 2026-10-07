@@ -23,6 +23,8 @@ model FactoryWorkOrder {
   shopFloorTransfers         ShopFloorTransfer[]
   inventoryGrns              WorkOrderInventoryGrn[]
   advanceBookingAssignments AdvanceBookingWorkOrderAssignment[]
+  finishedGoodsGeneralStockReceipts   FinishedGoodsGeneralStockReceipt[]
+  finishedGoodsAllocatedStockReceipts FinishedGoodsAllocatedStockReceipt[]
 
   @@unique([organization_id, id])
   @@unique([organization_id, work_order_no])
@@ -317,8 +319,11 @@ model WorkOrderInventoryGrnLine {
   grn                        WorkOrderInventoryGrn     @relation(fields: [grn_id, work_order_id], references: [id, work_order_id], onDelete: Cascade)
   workOrderSizeLine          FactoryWorkOrderSizeLine  @relation(fields: [work_order_id, work_order_size_line_id], references: [work_order_id, id], onDelete: Restrict)
   bookingAllocations         WorkOrderInventoryGrnBookingAllocation[]
+  generalStockReceipt        FinishedGoodsGeneralStockReceipt?
+  allocatedStockReceipts     FinishedGoodsAllocatedStockReceipt[]
 
   @@unique([grn_id, work_order_size_line_id])
+  @@unique([grn_id, work_order_id, id], map: "wo_grn_lines_grn_work_order_id_key")
   @@index([work_order_id, work_order_size_line_id])
   @@map("work_order_inventory_grn_lines")
 }

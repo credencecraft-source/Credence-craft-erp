@@ -34,10 +34,11 @@ describe("session token verification", () => {
     expect(verifySessionToken(token)).toBe("user-123");
   });
 
-  it("rejects malformed and tampered tokens", () => {
-    const token = createSessionToken("user-123");
+  it("accepts user identifiers containing dots and rejects malformed or tampered tokens", () => {
+    const token = createSessionToken("user.with.dots");
     const tamperedToken = `${token.slice(0, -1)}${token.endsWith("0") ? "1" : "0"}`;
 
+    expect(verifySessionToken(token)).toBe("user.with.dots");
     expect(verifySessionToken(undefined)).toBeNull();
     expect(verifySessionToken("not-a-session-token")).toBeNull();
     expect(verifySessionToken(tamperedToken)).toBeNull();

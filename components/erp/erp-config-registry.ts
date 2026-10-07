@@ -202,6 +202,7 @@ export const ERP_MODULES: ErpModule[] = [
         pathSegment: "outward",
         children: [
           { key: "raw-material-dc", label: "Raw Material DC", pathSegment: "raw-material-dc" },
+          { key: "fg-stock-dc", label: "FG Stock DC", pathSegment: "fg-stock-dc" },
         ],
       },
     ],
@@ -212,8 +213,8 @@ export const ERP_MODULES: ErpModule[] = [
     pathSegment: "distribution",
     children: [
       {
-        key: "order",
-        label: "Order",
+        key: "quotation",
+        label: "Quotation",
         href: "/distribution",
         children: [
           {
@@ -221,18 +222,6 @@ export const ERP_MODULES: ErpModule[] = [
             label: "Advance Booking",
             href: "/distribution/order/advance-booking",
           },
-        ],
-      },
-      {
-        key: "fulfillment",
-        label: "Fulfillment",
-        href: "/distribution/fulfillment",
-      },
-      {
-        key: "quotation",
-        label: "Quotation",
-        href: "/distribution",
-        children: [
           {
             key: "quotation",
             label: "Quotation",
@@ -240,8 +229,25 @@ export const ERP_MODULES: ErpModule[] = [
           },
           {
             key: "master-quotation",
-            label: "Master Quotation",
-            href: "/distribution/master-quotation",
+            label: "Sales Order",
+            href: "/distribution/sales-order",
+          },
+        ],
+      },
+      {
+        key: "asn",
+        label: "ASN",
+        href: "/distribution",
+        children: [
+          {
+            key: "fulfillment",
+            label: "Work Order Tracking",
+            href: "/distribution/fulfillment",
+          },
+          {
+            key: "shipment-tracking",
+            label: "Shipment Tracking",
+            href: "/distribution/shipment-tracking",
           },
         ],
       },

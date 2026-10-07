@@ -31,16 +31,33 @@ const reportFields: Array<{ key: keyof SavedInvoice; label: string }> = [
 export default function PosInvoicePage({ organizationId }: { workspaceId: string; organizationId: string }) {
   const [invoices, setInvoices] = useState<SavedInvoice[]>([]);
   const [selected, setSelected] = useState<SavedInvoice | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [visibleReportFields, setVisibleReportFields] = useState<Array<string | keyof SavedInvoice>>(
     reportFields.map((field) => field.key),
   );
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const stored = window.localStorage.getItem(`pos-sales-invoices-${organizationId}`);
-      if (stored) setInvoices(JSON.parse(stored) as SavedInvoice[]);
-    }, 0);
-    return () => window.clearTimeout(timer);
+    const controller = new AbortController();
+    fetch(`/api/organizations/${encodeURIComponent(organizationId)}/pos/sales`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json() as { invoices?: SavedInvoice[]; error?: string };
+        if (!response.ok) throw new Error(data.error || "Unable to load saved POS invoices.");
+        setInvoices(Array.isArray(data.invoices) ? data.invoices : []);
+        setError("");
+      })
+      .catch((loadError: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(loadError instanceof Error ? loadError.message : "Unable to load saved POS invoices.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
   }, [organizationId]);
 
   const renderCell = (fieldKey: string, record: SavedInvoice) => {
@@ -58,7 +75,8 @@ export default function PosInvoicePage({ organizationId }: { workspaceId: string
 
   return <Page as="div"><Section className="space-y-6">
     <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-4"><div><p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">POS Invoice</p><h1 className="mt-2 text-3xl font-bold text-slate-900">Saved Invoices</h1><p className="mt-2 text-sm text-slate-600">Review and print sales invoices saved from Quick Invoice.</p></div></div>
-    {selected ? <InvoicePreview invoice={selected} onBack={() => setSelected(null)} /> : <ReportGrid title="Saved POS Invoices" records={invoices} fields={reportFields} visibleFields={visibleReportFields} onVisibleFieldsChange={setVisibleReportFields} rowIdSelector={(record) => record.invoiceNumber} selectedIds={[]} onRowClick={(recordId) => { const match = invoices.find((invoice) => invoice.invoiceNumber === recordId); if (match) setSelected(match); }} renderCell={renderCell} emptyMessage="No saved POS invoices yet." />}
+    {error && <p role="alert">{error}</p>}
+    {loading ? <p role="status">Loading POS invoices...</p> : selected ? <InvoicePreview invoice={selected} onBack={() => setSelected(null)} /> : <ReportGrid title="Saved POS Invoices" records={invoices} fields={reportFields} visibleFields={visibleReportFields} onVisibleFieldsChange={setVisibleReportFields} rowIdSelector={(record) => record.invoiceNumber} selectedIds={[]} onRowClick={(recordId) => { const match = invoices.find((invoice) => invoice.invoiceNumber === recordId); if (match) setSelected(match); }} renderCell={renderCell} emptyMessage="No saved POS invoices yet." />}
   </Section></Page>;
 }
 

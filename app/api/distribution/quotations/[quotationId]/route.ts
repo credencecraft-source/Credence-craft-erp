@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import {
+  deleteDistributionQuotation,
   getDistributionQuotation,
   saveDistributionQuotationDraft,
 } from "@/lib/services/distribution/quotation-service";
@@ -75,6 +76,7 @@ export async function PATCH(request: Request, context: RouteContext) {
         return NextResponse.json({ error: "Quotation or booking data changed while saving. Reload and try again." }, { status: 409 });
       }
     }
+
     if (isDatabaseUnavailableError(error)) {
       console.error("Unable to save distribution quotation because the database is unavailable.", {
         errorName: error instanceof Error ? error.name : "UnknownError",
@@ -83,6 +85,46 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to save the distribution quotation." },
+      { status: 400 },
+    );
+  }
+}
+
+export async function DELETE(request: Request, context: RouteContext) {
+  try {
+    const user = await requireSessionUser();
+    const body = await request.json() as Record<string, unknown>;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new Error("Submit a valid quotation deletion request.");
+    }
+    if (typeof body.organizationId !== "string" || !body.organizationId.trim()) {
+      throw new Error("Select the organization for this quotation deletion.");
+    }
+    const organization = await requireOrganizationContext(
+      user.id,
+      String(body.organizationId ?? ""),
+      ["OWNER", "ADMIN", "MERCHANDISING"],
+    );
+    const { quotationId } = await context.params;
+    const deleted = await deleteDistributionQuotation(organization.id, user.id, quotationId);
+    return NextResponse.json({ deleted });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (["P2021", "P2022"].includes(error.code)) {
+        return NextResponse.json({ error: "Distribution Quotations are unavailable until their database migration is deployed." }, { status: 503 });
+      }
+      if (["P2003", "P2034"].includes(error.code)) {
+        return NextResponse.json({ error: "Quotation dependencies changed while deleting. Reload and follow the required deletion order." }, { status: 409 });
+      }
+    }
+    if (isDatabaseUnavailableError(error)) {
+      console.error("Unable to delete distribution quotation because the database is unavailable.", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+      return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to delete the distribution quotation." },
       { status: 400 },
     );
   }

@@ -17,9 +17,12 @@ export async function POST(request: Request) {
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
     if (!Array.isArray(body.quotationIds) || body.quotationIds.some((id) => typeof id !== "string")) {
-      throw new Error("Select regular quotations to create a master quotation.");
+      throw new Error("Select regular quotations to create a sales order.");
     }
-    const quotation = await createDistributionMasterQuotation(organization.id, user.id, body.quotationIds);
+    if (typeof body.vendorId !== "string" || !body.vendorId.trim()) {
+      throw new Error("Select a Vendor Master vendor for the sales order.");
+    }
+    const quotation = await createDistributionMasterQuotation(organization.id, user.id, body.quotationIds, body.vendorId);
     return NextResponse.json({ quotation }, { status: 201 });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -37,7 +40,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
     }
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unable to create the master quotation." },
+      { error: error instanceof Error ? error.message : "Unable to create the sales order." },
       { status: 400 },
     );
   }

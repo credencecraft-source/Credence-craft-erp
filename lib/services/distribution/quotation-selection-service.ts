@@ -9,10 +9,10 @@ export function validateMasterQuotationChildSelection(
   quotations: MasterQuotationChildSource[],
 ): string {
   if (selectedQuoteIds.length < 2) {
-    return "Select at least two quotations to create a master quotation.";
+    return "Select at least two quotations to create a sales order.";
   }
   if (new Set(selectedQuoteIds).size !== selectedQuoteIds.length) {
-    return "A quotation can only be included once in a master quotation.";
+    return "A quotation can only be included once in a sales order.";
   }
 
   const selectedIdSet = new Set(selectedQuoteIds);
@@ -30,7 +30,7 @@ export function validateMasterQuotationChildSelection(
   if ([...selectedQuotes.values()].some((quotation) =>
     Boolean(quotation.parentQuoteId?.trim()) || Boolean(quotation.childQuoteIds?.length),
   )) {
-    return "Only quotations that are not already part of a master quotation can be selected.";
+    return "Only quotations that are not already part of a sales order can be selected.";
   }
 
   return "";
@@ -43,6 +43,23 @@ export type BookingQuotationSource = {
     customer: string;
     totalBooked: number;
 };
+
+export function filterAdvanceBookingsForView<T extends { quotationNo: string | null }>(
+  bookings: T[],
+  view: "booking" | "fulfillment" | "shipment",
+) {
+  return bookings.filter((booking) => (
+    view === "booking" ? !booking.quotationNo : Boolean(booking.quotationNo)
+  ));
+}
+
+export function filterFullyAssignedBookings<T extends { assignmentStatus: string }>(bookings: T[]) {
+  return bookings.filter((booking) => booking.assignmentStatus === "FULLY_ASSIGNED");
+}
+
+export function filterBookingsWaitingForWorkOrderAssignment<T extends { assignmentStatus: string }>(bookings: T[]) {
+  return bookings.filter((booking) => booking.assignmentStatus !== "FULLY_ASSIGNED");
+}
 
 export function validateBookingQuotationSelection(bookings: BookingQuotationSource[]) {
   if (bookings.length === 0) return "Select at least one advance booking to create a quotation.";

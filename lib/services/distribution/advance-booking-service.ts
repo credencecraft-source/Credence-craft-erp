@@ -32,6 +32,18 @@ function fulfillmentStatusFor(fulfilled: number, assigned: number) {
 
 const bookingInclude = {
   order: { select: { orderNo: true } },
+  quotationLines: {
+    select: {
+      quotation: {
+        select: {
+          quotation_no: true,
+          customer: true,
+          parentQuotation: { select: { customer: true } },
+        },
+      },
+    },
+    take: 1,
+  },
   sizeLines: {
     orderBy: { size: "asc" as const },
     include: {
@@ -88,12 +100,16 @@ function mapBooking(record: Prisma.AdvanceBookingGetPayload<{ include: typeof bo
     orderNo: record.order.orderNo,
     vendorId: record.vendor_id,
     customer: record.customer,
+    quotationNo: record.quotationLines[0]?.quotation.quotation_no ?? null,
+    quotationVendor: record.quotationLines[0]?.quotation.customer ?? null,
+    masterQuotationVendor: record.quotationLines[0]?.quotation.parentQuotation?.customer ?? null,
     brand: record.brand ?? "",
     styleName: record.style_name ?? "",
     deliveryDate: record.delivery_date?.toISOString().slice(0, 10) ?? "",
     createdAt: record.created_at.toISOString(),
     totalBooked,
     totalAssigned,
+    totalAllocated: totalAssigned,
     totalUnassigned: Math.max(totalBooked - totalAssigned, 0),
     totalFulfilled,
     assignmentStatus: statusFor(totalAssigned, totalBooked),
@@ -110,6 +126,15 @@ export async function listAdvanceBookings(organizationId: string) {
     take: 500,
   });
   return { bookings: rows.map(mapBooking) };
+}
+
+export async function getAdvanceBookingById(organizationId: string, bookingId: string) {
+  const record = await prisma.advanceBooking.findFirst({
+    where: { id: bookingId, organization_id: organizationId },
+    include: bookingInclude,
+  });
+  if (!record) throw new Error("Advance booking was not found in this organization.");
+  return { booking: mapBooking(record) };
 }
 
 async function createBookingInTransaction(
@@ -223,6 +248,64 @@ export async function createAdvanceBooking(
     }
   }
   throw new Error("Advance booking changed concurrently. Reload and try again.");
+}
+
+export async function deleteAdvanceBookings(
+  organizationId: string,
+  userId: string,
+  bookingIds: string[],
+) {
+  if (bookingIds.length === 0 || bookingIds.length > 100) {
+    throw new Error("Select between one and 100 advance bookings to delete.");
+  }
+  if (bookingIds.some((id) => !id.trim()) || new Set(bookingIds).size !== bookingIds.length) {
+    throw new Error("Each advance booking can only be selected once.");
+  }
+
+  return prisma.$transaction(async (transaction) => {
+    const bookings = await transaction.advanceBooking.findMany({
+      where: { organization_id: organizationId, id: { in: bookingIds } },
+      include: {
+        sizeLines: { include: { assignments: { select: { id: true } } } },
+        quotationLines: { select: { quotation: { select: { quotation_no: true } } } },
+      },
+    });
+    if (bookings.length !== bookingIds.length) {
+      throw new Error("One or more selected bookings are unavailable in this organization.");
+    }
+
+    for (const booking of bookings) {
+      if (booking.quotationLines.length > 0) {
+        throw new Error(`Delete quotation ${booking.quotationLines[0].quotation.quotation_no} before deleting booking ${booking.booking_no}.`);
+      }
+      if (booking.sizeLines.some((line) => line.assignments.length > 0)) {
+        throw new Error(`Booking ${booking.booking_no} has work-order assignments. Reverse its fulfillment and remove its assignments before deleting the booking.`);
+      }
+    }
+
+    const deleted = await transaction.advanceBooking.deleteMany({
+      where: { organization_id: organizationId, id: { in: bookingIds } },
+    });
+    if (deleted.count !== bookingIds.length) {
+      throw new Error("Selected bookings changed while deleting. Reload and try again.");
+    }
+    for (const booking of bookings) {
+      await createAuditEvent({
+        organizationId,
+        userId,
+        module: "Distribution",
+        action: "DELETE_ADVANCE_BOOKING",
+        entityType: "AdvanceBooking",
+        entityId: booking.id,
+        details: {
+          booking_no: booking.booking_no,
+          size_count: booking.sizeLines.length,
+          total_quantity: booking.sizeLines.reduce((sum, line) => sum + line.booked_quantity, 0),
+        },
+      }, transaction);
+    }
+    return { deletedBookingNos: bookings.map((booking) => booking.booking_no) };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
 }
 
 export async function listAssignableWorkOrders(organizationId: string, bookingId: string) {

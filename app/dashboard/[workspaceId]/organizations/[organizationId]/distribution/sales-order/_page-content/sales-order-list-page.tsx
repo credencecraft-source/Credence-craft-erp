@@ -8,11 +8,11 @@ import Card from "@/components/ui/Card";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import type { DistributionQuotationSummary } from "../../quotation/_page-content/quotation-types";
 
-type MasterRow = DistributionQuotationSummary & { childCount: number };
-type MasterField = "quotationNo" | "orderNo" | "customer" | "childCount" | "totalQuantity" | "subtotal" | "createdAt";
+type SalesOrderRow = DistributionQuotationSummary & { childCount: number };
+type SalesOrderField = "quotationNo" | "orderNo" | "customer" | "childCount" | "totalQuantity" | "subtotal" | "createdAt";
 
-const fields: Array<{ key: MasterField; label: string }> = [
-  { key: "quotationNo", label: "Master Quotation No" },
+const fields: Array<{ key: SalesOrderField; label: string }> = [
+  { key: "quotationNo", label: "Sales Order No" },
   { key: "orderNo", label: "Order No" },
   { key: "customer", label: "Customer" },
   { key: "childCount", label: "Child Quotations" },
@@ -21,12 +21,12 @@ const fields: Array<{ key: MasterField; label: string }> = [
   { key: "createdAt", label: "Created Date" },
 ];
 
-export default function MasterQuotationListPage() {
+export default function SalesOrderListPage() {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
   const organizationId = params.organizationId;
   const [quotations, setQuotations] = useState<DistributionQuotationSummary[]>([]);
-  const [visibleFields, setVisibleFields] = useState<MasterField[]>(fields.map(({ key }) => key));
+  const [visibleFields, setVisibleFields] = useState<SalesOrderField[]>(fields.map(({ key }) => key));
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
 
@@ -38,11 +38,11 @@ export default function MasterQuotationListPage() {
       const response = await fetch(`/api/distribution/quotations?${query}`, { cache: "no-store" });
       const data = await response.json().catch(() => null);
       if (!response.ok || !Array.isArray(data?.quotations)) {
-        throw new Error(typeof data?.error === "string" ? data.error : "Unable to load master quotations.");
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to load sales orders.");
       }
       setQuotations(data.quotations as DistributionQuotationSummary[]);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load master quotations.");
+      setError(loadError instanceof Error ? loadError.message : "Unable to load sales orders.");
     } finally {
       setIsLoading(false);
     }
@@ -52,7 +52,7 @@ export default function MasterQuotationListPage() {
     const timer = window.setTimeout(() => void loadQuotations(), 0);
     return () => window.clearTimeout(timer);
   }, [loadQuotations]);
-  const masters = useMemo<MasterRow[]>(() => quotations
+  const salesOrders = useMemo<SalesOrderRow[]>(() => quotations
     .filter((quotation) => quotation.mode === "MASTER")
     .map((quotation) => ({
       ...quotation,
@@ -60,16 +60,16 @@ export default function MasterQuotationListPage() {
     })), [quotations]);
 
   function openDetails(id: string) {
-    router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/master-quotation/${encodeURIComponent(id)}`);
+    router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/sales-order/${encodeURIComponent(id)}`);
   }
 
   return (
     <div className="w-full min-w-0 space-y-4 p-4 md:p-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="erp-eyebrow">Distribution / Master Quotation</p>
-          <h1 className="mt-2 text-3xl font-bold text-slate-900">Master Quotations</h1>
-          <p className="mt-2 text-sm text-slate-600">Persisted parent records and linked regular quotations.</p>
+          <p className="erp-eyebrow">Distribution / Sales Order</p>
+          <h1 className="mt-2 text-3xl font-bold text-slate-900">Sales Orders</h1>
+          <p className="mt-2 text-sm text-slate-600">Persisted sales orders and linked quotations.</p>
         </div>
         <div className="flex gap-2">
           <Button type="button" variant="secondary" onClick={() => router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/quotation`)}>
@@ -81,11 +81,11 @@ export default function MasterQuotationListPage() {
       {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
       <Card className="p-2 shadow-none">
         <ReportGrid
-          title="Master Quotation Register"
-          records={masters}
+          title="Sales Order Register"
+          records={salesOrders}
           fields={fields}
           visibleFields={visibleFields}
-          onVisibleFieldsChange={(next) => setVisibleFields(next as MasterField[])}
+          onVisibleFieldsChange={(next) => setVisibleFields(next as SalesOrderField[])}
           storageKey={`distribution-master-quotation-report-columns:${organizationId}`}
           rowIdSelector={(quotation) => quotation.id}
           selectedIds={[]}
@@ -93,10 +93,10 @@ export default function MasterQuotationListPage() {
           onRowClick={openDetails}
           onRowAction={openDetails}
           rowActionLabel="View Details"
-          emptyMessage={isLoading ? "Loading master quotations..." : "No master quotations have been created."}
+          emptyMessage={isLoading ? "Loading sales orders..." : "No sales orders have been created."}
           renderCell={(fieldKey, quotation) => {
             if (fieldKey === "createdAt") return quotation.createdAt.slice(0, 10);
-            const value = quotation[fieldKey as keyof MasterRow];
+            const value = quotation[fieldKey as keyof SalesOrderRow];
             return value === null || value === undefined ? "" : String(value);
           }}
         />

@@ -14,6 +14,7 @@ describe("flattenWorkOrderGrnVerificationTasks", () => {
         orderNo: "ORD-1",
         styleName: "Style 1",
         article: "Article 1",
+        locations: [{ id: "location-1", location_name: "Finished Goods" }],
       },
       lines: ["S", "M", "L", "XL", "XXL"].map((size, index) => ({
         id: `line-${index + 1}`,
@@ -50,7 +51,7 @@ describe("flattenWorkOrderGrnVerificationTasks", () => {
       grnNo: "FGRN-1",
       receivedDate: "2026-10-07",
       status: "PENDING_VERIFICATION",
-      workOrder: { workOrderNo: "WO-1", orderNo: "ORD-1", styleName: null, article: null },
+      workOrder: { workOrderNo: "WO-1", orderNo: "ORD-1", styleName: null, article: null, locations: [] },
       lines: [
         { id: "line-verified", size: "S", buyerSize: "S", orderedQuantity: 10, availableQuantity: 10, receivedQuantity: 4, verifiedActualQuantity: 4 },
         { id: "line-pending", size: "M", buyerSize: "M", orderedQuantity: 10, availableQuantity: 10, receivedQuantity: 3, verifiedActualQuantity: null },
