@@ -516,6 +516,35 @@ export async function createOrganizationDummyDataForNewOrganization(userId: stri
   return createOrganizationDummyDataForUser(userId, routeOrganizationId, true, requestedBy, true);
 }
 
+export async function startOrganizationDummyDataAfterApproval(organizationId: string) {
+  const organization = await prisma.organization.findFirst({
+    where: { id: organizationId, is_active: true, approval_status: "APPROVED" },
+    select: {
+      organization_id: true,
+      memberships: {
+        where: { role: "OWNER", is_active: true },
+        select: { workspace_user_id: true },
+        take: 1,
+      },
+    },
+  });
+  if (!organization?.memberships[0]) {
+    throw new Error("An approved organization owner is required to start sample-data setup.");
+  }
+
+  const existingBatch = await prisma.organizationDummyDataBatch.findUnique({
+    where: { organization_id: organizationId },
+    select: { id: true },
+  });
+  if (existingBatch) return { created: false, reason: "Sample-data setup was already started for this organization." };
+
+  return startDummyDataWizardStep(
+    organization.memberships[0].workspace_user_id,
+    organization.organization_id,
+    1,
+  );
+}
+
 async function createOrganizationDummyDataForUser(
   userId: string,
   routeOrganizationId: string,

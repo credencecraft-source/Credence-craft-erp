@@ -151,6 +151,13 @@ model Organization {
   factoryBundleTransfers        FactoryBundleTransfer[]
   factoryDailyProductionReports FactoryDailyProductionReport[]
   factoryGrns                   FactoryGrn[]
+  workOrderInventoryGrns        WorkOrderInventoryGrn[]
+  advanceBookings               AdvanceBooking[]
+  advanceBookingSizeLines       AdvanceBookingSizeLine[]
+  advanceBookingAssignments     AdvanceBookingWorkOrderAssignment[]
+  advanceBookingGrnAllocations  WorkOrderInventoryGrnBookingAllocation[]
+  distributionQuotations        DistributionQuotation[]
+  distributionQuotationLines    DistributionQuotationLine[]
   auditEvents                   AuditEvent[]
 
   @@index([plan_id])
@@ -1052,6 +1059,7 @@ model MasterVendor {
   purchaseOrders        PurchaseOrder[]
   rawMaterialStockBookings RawMaterialStockBooking[]
   generalPurchaseOrderRequests GeneralPurchaseOrderRequest[]
+  distributionQuotations       DistributionQuotation[]
 
   @@unique([organization_id, id])
   @@index([organization_id, is_active])

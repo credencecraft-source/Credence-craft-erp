@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/database/prisma-client";
+import type { ShopFloorProcessSummary } from "@/lib/services/factory/shop-floor-board";
 
 export type ShopFloorProcessStatus = "UNASSIGNED" | "ASSIGNED" | "IN_PROGRESS" | "COMPLETED" | "TRANSFERRED";
 
@@ -18,50 +19,6 @@ export type ShopFloorQueueItem = {
   receivedAt: string | null;
   completedAt: string | null;
 };
-
-export async function ensureInitialUnassignedPool(organizationId: string, workOrderId: string, createdBy: string) {
-  const workOrder = await prisma.factoryWorkOrder.findFirst({
-    where: { id: workOrderId, organization_id: organizationId },
-    include: {
-      processController: {
-        include: {
-          processes: {
-            orderBy: { sl_no: "asc" },
-            include: { operations: true },
-          },
-        },
-      },
-    },
-  });
-
-  if (!workOrder) throw new Error("The selected work order was not found.");
-  const processes = workOrder.processController?.processes ?? [];
-  const firstProcess = processes[0];
-  if (!firstProcess) return null;
-
-  const existing = await prisma.shopFloorProcessLog.findFirst({
-    where: {
-      organization_id: organizationId,
-      work_order_id: workOrderId,
-      process_id: firstProcess.process_id,
-    },
-  });
-
-  if (existing) return existing;
-
-  return prisma.shopFloorProcessLog.create({
-    data: {
-      organization_id: organizationId,
-      work_order_id: workOrderId,
-      process_id: firstProcess.process_id,
-      quantity: workOrder.total_qty,
-      status: "UNASSIGNED",
-      scanned_by: createdBy,
-      received_at: new Date(),
-      completed_at: null,
-    },
-  });
-}
 
 async function getNextProcessId(organizationId: string, workOrderId: string, processId: string) {
   const workOrder = await prisma.factoryWorkOrder.findFirst({
@@ -92,97 +49,277 @@ function normalizeShopFloorStatus(status: string): ShopFloorProcessStatus {
   return "UNASSIGNED";
 }
 
+export async function listShopFloorBoardSummary(
+  organizationId: string,
+  workOrderId?: string,
+  createdBy = "system",
+) {
+  const workOrders = await prisma.factoryWorkOrder.findMany({
+    where: {
+      organization_id: organizationId,
+      ...(workOrderId ? { id: workOrderId } : {}),
+    },
+    select: {
+      id: true,
+      total_qty: true,
+      created_at: true,
+      processController: {
+        select: {
+          processes: {
+            orderBy: { sl_no: "asc" },
+            select: { process_id: true, process_name: true, sl_no: true },
+          },
+        },
+      },
+    },
+    orderBy: [{ created_at: "desc" }, { work_order_no: "desc" }],
+  });
+
+  if (workOrders.length === 0) return { processes: [] as ShopFloorProcessSummary[] };
+
+  const groupedLogs = await prisma.shopFloorProcessLog.groupBy({
+    by: ["work_order_id", "process_id", "status"],
+    where: {
+      organization_id: organizationId,
+      work_order_id: { in: workOrders.map((workOrder) => workOrder.id) },
+    },
+    _sum: { quantity: true },
+    _count: { _all: true },
+  });
+  const existingProcessPairs = new Set(
+    groupedLogs.map((log) => `${log.work_order_id}:${log.process_id}`),
+  );
+  const missingPools = workOrders.flatMap((workOrder) => {
+    const firstProcess = workOrder.processController?.processes[0];
+    if (!firstProcess || existingProcessPairs.has(`${workOrder.id}:${firstProcess.process_id}`)) {
+      return [];
+    }
+
+    return [{
+      organization_id: organizationId,
+      work_order_id: workOrder.id,
+      process_id: firstProcess.process_id,
+      quantity: workOrder.total_qty,
+      status: "UNASSIGNED",
+      scanned_by: createdBy,
+      received_at: new Date(),
+      completed_at: null,
+    }];
+  });
+  const createdPools = missingPools.length > 0
+    ? await prisma.shopFloorProcessLog.createManyAndReturn({
+      data: missingPools,
+      select: { work_order_id: true, process_id: true, quantity: true, status: true },
+    })
+    : [];
+
+  const logsByWorkOrderProcess = new Map<string, typeof groupedLogs>();
+  for (const log of groupedLogs) {
+    const key = `${log.work_order_id}:${log.process_id}`;
+    const processLogs = logsByWorkOrderProcess.get(key) ?? [];
+    processLogs.push(log);
+    logsByWorkOrderProcess.set(key, processLogs);
+  }
+  for (const log of createdPools) {
+    const key = `${log.work_order_id}:${log.process_id}`;
+    const processLogs = logsByWorkOrderProcess.get(key) ?? [];
+    processLogs.push({
+      work_order_id: log.work_order_id,
+      process_id: log.process_id,
+      status: log.status,
+      _sum: { quantity: log.quantity },
+      _count: { _all: 1 },
+    });
+    logsByWorkOrderProcess.set(key, processLogs);
+  }
+
+  const processesByName = new Map<string, ShopFloorProcessSummary & { workOrderIds: Set<string> }>();
+  for (const workOrder of workOrders) {
+    for (const process of workOrder.processController?.processes ?? []) {
+      const processName = process.process_name.trim();
+      const key = processName.toLocaleLowerCase();
+      if (!key) continue;
+      let summary = processesByName.get(key);
+      if (!summary) {
+        summary = {
+          id: key,
+          processName,
+          totalQty: 0,
+          workOrderCount: 0,
+          batchCount: 0,
+          statusCounts: { UNASSIGNED: 0, ASSIGNED: 0, IN_PROGRESS: 0, COMPLETED: 0, TRANSFERRED: 0 },
+          workOrderIds: new Set<string>(),
+        };
+        processesByName.set(key, summary);
+      }
+
+      summary.totalQty += workOrder.total_qty;
+      summary.workOrderIds.add(workOrder.id);
+      for (const log of logsByWorkOrderProcess.get(`${workOrder.id}:${process.process_id}`) ?? []) {
+        const status = normalizeShopFloorStatus(log.status);
+        summary.statusCounts[status] += log._sum.quantity ?? 0;
+        summary.batchCount += log._count._all;
+      }
+    }
+  }
+
+  return {
+    processes: [...processesByName.values()].map(({ workOrderIds, ...process }) => ({
+      ...process,
+      workOrderCount: workOrderIds.size,
+    })),
+  };
+}
+
 export async function listShopFloorBoard(organizationId: string, workOrderId?: string, createdBy = "system") {
   const workOrders = await prisma.factoryWorkOrder.findMany({
     where: {
       organization_id: organizationId,
       ...(workOrderId ? { id: workOrderId } : {}),
     },
-    include: {
+    select: {
+      id: true,
+      work_order_no: true,
+      total_qty: true,
+      status: true,
+      created_at: true,
       order: {
         select: {
           orderNo: true,
           styleName: true,
-          buyer: true,
           brand: true,
-          orderQty: true,
         },
       },
       processController: {
-        include: {
+        select: {
           processes: {
             orderBy: { sl_no: "asc" },
-            include: { operations: true },
+            select: {
+              id: true,
+              process_id: true,
+              process_name: true,
+              sl_no: true,
+            },
           },
         },
       },
       shopFloorBatches: {
         orderBy: { created_at: "desc" },
+        select: {
+          id: true,
+          process_id: true,
+          contractor_name: true,
+          laborer_name: true,
+          assigned_quantity: true,
+          status: true,
+          created_at: true,
+        },
       },
       shopFloorProcessLogs: {
         orderBy: { created_at: "asc" },
-        include: { batch: true },
+        select: {
+          id: true,
+          work_order_id: true,
+          process_id: true,
+          batch_id: true,
+          quantity: true,
+          status: true,
+          scanned_by: true,
+          received_at: true,
+          completed_at: true,
+          created_at: true,
+          batch: {
+            select: {
+              contractor_name: true,
+              laborer_name: true,
+            },
+          },
+        },
       },
       shopFloorTransfers: {
         where: { status: "PENDING_RECEIPT" },
-        include: { fromProcess: { select: { process_name: true } } },
         orderBy: { sent_at: "asc" },
+        select: {
+          id: true,
+          quantity: true,
+          work_order_id: true,
+          to_process_id: true,
+          sent_at: true,
+          fromProcess: { select: { process_name: true } },
+        },
       },
     },
     orderBy: [{ created_at: "desc" }, { work_order_no: "desc" }],
   });
 
-  for (const workOrder of workOrders) {
-    await ensureInitialUnassignedPool(organizationId, workOrder.id, createdBy);
+  const missingPools = workOrders.flatMap((workOrder) => {
+    const firstProcess = workOrder.processController?.processes[0];
+    if (!firstProcess || workOrder.shopFloorProcessLogs.some((log) => log.process_id === firstProcess.process_id)) {
+      return [];
+    }
+
+    return [{
+      organization_id: organizationId,
+      work_order_id: workOrder.id,
+      process_id: firstProcess.process_id,
+      quantity: workOrder.total_qty,
+      status: "UNASSIGNED",
+      scanned_by: createdBy,
+      received_at: new Date(),
+      completed_at: null,
+    }];
+  });
+
+  if (missingPools.length > 0) {
+    const createdLogs = await prisma.shopFloorProcessLog.createManyAndReturn({
+      data: missingPools,
+      select: {
+        id: true,
+        work_order_id: true,
+        process_id: true,
+        batch_id: true,
+        quantity: true,
+        status: true,
+        scanned_by: true,
+        received_at: true,
+        completed_at: true,
+        created_at: true,
+      },
+    });
+    const workOrdersById = new Map(workOrders.map((workOrder) => [workOrder.id, workOrder]));
+    for (const log of createdLogs) {
+      workOrdersById.get(log.work_order_id)?.shopFloorProcessLogs.push({ ...log, batch: null });
+    }
   }
 
-  const refreshedOrders = await prisma.factoryWorkOrder.findMany({
-    where: {
-      organization_id: organizationId,
-      ...(workOrderId ? { id: workOrderId } : {}),
-    },
-    include: {
-      order: {
-        select: {
-          orderNo: true,
-          styleName: true,
-          buyer: true,
-          brand: true,
-          orderQty: true,
-        },
-      },
-      processController: {
-        include: {
-          processes: {
-            orderBy: { sl_no: "asc" },
-            include: { operations: true },
-          },
-        },
-      },
-      shopFloorBatches: {
-        orderBy: { created_at: "desc" },
-      },
-      shopFloorProcessLogs: {
-        orderBy: { created_at: "asc" },
-        include: { batch: true },
-      },
-      shopFloorTransfers: {
-        where: { status: "PENDING_RECEIPT" },
-        include: { fromProcess: { select: { process_name: true } } },
-        orderBy: { sent_at: "asc" },
-      },
-    },
-    orderBy: [{ created_at: "desc" }, { work_order_no: "desc" }],
-  });
-
-  const board = refreshedOrders.flatMap((workOrder) => {
+  const board = workOrders.flatMap((workOrder) => {
     const processes = workOrder.processController?.processes ?? [];
     if (processes.length === 0) return [];
 
+    const logsByProcessId = new Map<string, typeof workOrder.shopFloorProcessLogs>();
+    for (const log of workOrder.shopFloorProcessLogs) {
+      const processLogs = logsByProcessId.get(log.process_id) ?? [];
+      processLogs.push(log);
+      logsByProcessId.set(log.process_id, processLogs);
+    }
+    const batchesByProcessId = new Map<string, typeof workOrder.shopFloorBatches>();
+    for (const batch of workOrder.shopFloorBatches) {
+      const processBatches = batchesByProcessId.get(batch.process_id) ?? [];
+      processBatches.push(batch);
+      batchesByProcessId.set(batch.process_id, processBatches);
+    }
+    const transfersByProcessId = new Map<string, typeof workOrder.shopFloorTransfers>();
+    for (const transfer of workOrder.shopFloorTransfers) {
+      if (!transfer.to_process_id) continue;
+      const processTransfers = transfersByProcessId.get(transfer.to_process_id) ?? [];
+      processTransfers.push(transfer);
+      transfersByProcessId.set(transfer.to_process_id, processTransfers);
+    }
+
     return processes.map((process) => {
-      const logs = workOrder.shopFloorProcessLogs.filter((log) => log.process_id === process.process_id);
-      const batches = workOrder.shopFloorBatches.filter((batch) => batch.process_id === process.process_id);
-      const incomingTransfers = workOrder.shopFloorTransfers.filter((transfer) => transfer.to_process_id === process.process_id);
+      const logs = logsByProcessId.get(process.process_id) ?? [];
+      const batches = batchesByProcessId.get(process.process_id) ?? [];
+      const incomingTransfers = transfersByProcessId.get(process.process_id) ?? [];
       const statusCounts = { UNASSIGNED: 0, ASSIGNED: 0, IN_PROGRESS: 0, COMPLETED: 0, TRANSFERRED: 0 };
 
       for (const log of logs) {
@@ -235,7 +372,7 @@ export async function listShopFloorBoard(organizationId: string, workOrderId?: s
   });
 
   return {
-    workOrders: refreshedOrders.map((workOrder) => ({
+    workOrders: workOrders.map((workOrder) => ({
       id: workOrder.id,
       workOrderNo: workOrder.work_order_no,
       orderNo: workOrder.order.orderNo,

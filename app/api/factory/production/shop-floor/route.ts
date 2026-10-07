@@ -7,6 +7,7 @@ import {
   assignWorkToBatch,
   createShopFloorTransfer,
   listShopFloorBoard,
+  listShopFloorBoardSummary,
   updateProcessLogStatus,
 } from "@/lib/services/factory/shop-floor-service";
 
@@ -17,7 +18,9 @@ export async function GET(request: Request) {
     const organizationId = params.get("organizationId") ?? "";
     const workOrderId = params.get("workOrderId")?.trim() || undefined;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
-    const board = await listShopFloorBoard(organization.id, workOrderId, user.id);
+    const board = params.get("summary") === "true"
+      ? await listShopFloorBoardSummary(organization.id, workOrderId, user.id)
+      : await listShopFloorBoard(organization.id, workOrderId, user.id);
     return NextResponse.json(board);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load the shop-floor board." }, { status: 400 });

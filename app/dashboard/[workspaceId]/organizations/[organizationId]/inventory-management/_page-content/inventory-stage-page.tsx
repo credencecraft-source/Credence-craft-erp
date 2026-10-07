@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Plus } from "lucide-react";
+import { ArrowRight, Boxes, ClipboardList, Plus } from "lucide-react";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
@@ -233,17 +234,44 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
   return (
     <main className="mx-auto max-w-[1500px] space-y-5">
       {stage === "fg-stock" ? (
-        <div className="grid gap-3 sm:grid-cols-3">
-          {[
-            { label: "Carton Box", href: `${basePath}/stock/fg-stock/carton-box` },
-            { label: "SKU", href: `${basePath}/stock/fg-stock/sku` },
-            { label: "Tags", href: `${basePath}/stock/fg-stock/tags` },
-          ].map((card) => (
-            <Link key={card.label} href={card.href} className="erp-surface block p-6 transition hover:border-emerald-400 hover:shadow-md">
-              <h2 className="text-lg font-bold text-slate-950">{card.label}</h2>
-            </Link>
-          ))}
-        </div>
+        <>
+          <header className="border-b border-[var(--erp-border)] pb-4">
+            <p className="erp-eyebrow">{details.eyebrow}</p>
+            <h1 className="erp-page-heading mt-1">{details.title}</h1>
+            <p className="erp-page-subheading mt-1">{details.description}</p>
+          </header>
+          <section aria-label="Finished goods stock views" className="grid gap-4 sm:grid-cols-2">
+            {[
+              {
+                label: "General Stock",
+                description: "View all finished-goods stock records, quantities, and locations.",
+                href: `${basePath}/stock/fg-stock/general-stock`,
+                Icon: Boxes,
+              },
+              {
+                label: "Allocated Stock",
+                description: "View finished-goods stock linked to an order.",
+                href: `${basePath}/stock/fg-stock/allocated-stock`,
+                Icon: ClipboardList,
+              },
+            ].map(({ label, description, href, Icon }) => (
+              <Link key={label} href={href} className="group block rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--erp-brand)]">
+                <Card className="flex min-h-48 h-full flex-col justify-between transition group-hover:border-[var(--erp-brand)] group-hover:shadow-md">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--erp-brand-soft)] text-[var(--erp-brand)]">
+                    <Icon aria-hidden="true" className="h-5 w-5" />
+                  </span>
+                  <span className="mt-8 block">
+                    <span className="flex items-center justify-between gap-3 text-lg font-bold text-[var(--erp-text)]">
+                      {label}
+                      <ArrowRight aria-hidden="true" className="h-5 w-5 shrink-0 text-[var(--erp-muted)] transition group-hover:translate-x-1 group-hover:text-[var(--erp-brand)]" />
+                    </span>
+                    <span className="mt-2 block max-w-md text-sm leading-6 text-[var(--erp-muted)]">{description}</span>
+                  </span>
+                </Card>
+              </Link>
+            ))}
+          </section>
+        </>
       ) : null}
 
       {stage !== "fg-stock" ? (

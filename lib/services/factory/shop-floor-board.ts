@@ -45,6 +45,29 @@ export type ShopFloorProcessBoard = {
   incomingTransfers: ShopFloorProcessBoardRow["incomingTransfers"];
 };
 
+export type ShopFloorProcessSummary = {
+  id: string;
+  processName: string;
+  totalQty: number;
+  workOrderCount: number;
+  batchCount: number;
+  statusCounts: Record<ShopFloorStatusKey, number>;
+};
+
+export function getShopFloorFlowTotals(statusCounts: Record<ShopFloorStatusKey, number>) {
+  const out = statusCounts.TRANSFERRED;
+  const balanceInHand = statusCounts.UNASSIGNED
+    + statusCounts.ASSIGNED
+    + statusCounts.IN_PROGRESS
+    + statusCounts.COMPLETED;
+
+  return {
+    in: balanceInHand + out,
+    out,
+    balanceInHand,
+  };
+}
+
 const STATUS_ORDER: ShopFloorStatusKey[] = ["UNASSIGNED", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "TRANSFERRED"];
 
 export function consolidateShopFloorProcesses(rows: ShopFloorProcessBoardRow[]): ShopFloorProcessBoard[] {

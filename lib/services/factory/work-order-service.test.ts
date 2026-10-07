@@ -166,6 +166,8 @@ describe("factory work-order batch creation", () => {
         productionUpdates: [],
         bundleTransfers: [],
         grns: [],
+        inventoryGrns: [],
+        sizeLines: [],
         dailyProductionReportLines: [],
         processController: null,
       });
@@ -187,6 +189,27 @@ describe("factory work-order batch creation", () => {
       expect(mocks.factoryWorkOrderDelete).not.toHaveBeenCalled();
     });
 
+    it("rejects deletion when advance-booking quantities are assigned", async () => {
+      mocks.factoryWorkOrderFindFirst.mockResolvedValue({
+        id: "work-order-1",
+        status: "OPEN",
+        rawMaterialOutwardRequests: [],
+        productionUpdates: [],
+        bundleTransfers: [],
+        grns: [],
+        inventoryGrns: [],
+        sizeLines: [{ bookingAssignments: [{ id: "assignment-1" }] }],
+        dailyProductionReportLines: [],
+        processController: null,
+      });
+
+      await expect(deleteWorkOrder("internal-org-1", "user-1", "work-order-1"))
+        .rejects.toThrow("advance-booking quantities are assigned");
+
+      expect(mocks.factoryWorkOrderDelete).not.toHaveBeenCalled();
+      expect(mocks.createAuditEvent).not.toHaveBeenCalled();
+    });
+
     it("allows deleting an untouched OPEN work order when its only outward request was cancelled", async () => {
       mocks.factoryWorkOrderFindFirst.mockResolvedValue({
         id: "work-order-1",
@@ -195,6 +218,8 @@ describe("factory work-order batch creation", () => {
         productionUpdates: [],
         bundleTransfers: [],
         grns: [],
+        inventoryGrns: [],
+        sizeLines: [],
         dailyProductionReportLines: [],
         processController: null,
       });
@@ -243,6 +268,8 @@ describe("factory work-order batch creation", () => {
         productionUpdates: [],
         bundleTransfers: [],
         grns: [],
+        inventoryGrns: [],
+        sizeLines: [],
         dailyProductionReportLines: [],
         processController: null,
       });
@@ -304,6 +331,8 @@ describe("factory work-order batch creation", () => {
         productionUpdates: [],
         bundleTransfers: [],
         grns: [],
+        inventoryGrns: [],
+        sizeLines: [],
         dailyProductionReportLines: [],
         processController: null,
       });
@@ -329,6 +358,8 @@ describe("factory work-order batch creation", () => {
         productionUpdates: [],
         bundleTransfers: [],
         grns: [],
+        inventoryGrns: [],
+        sizeLines: [],
         dailyProductionReportLines: [],
         processController: null,
       });
@@ -354,6 +385,8 @@ describe("factory work-order batch creation", () => {
         productionUpdates: [],
         bundleTransfers: [],
         grns: [],
+        inventoryGrns: [],
+        sizeLines: [],
         dailyProductionReportLines: [],
         processController: null,
       });

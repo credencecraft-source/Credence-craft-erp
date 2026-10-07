@@ -21,7 +21,10 @@ model FactoryWorkOrder {
   shopFloorBatches           BatchMaster[]
   shopFloorProcessLogs       ShopFloorProcessLog[]
   shopFloorTransfers         ShopFloorTransfer[]
+  inventoryGrns              WorkOrderInventoryGrn[]
+  advanceBookingAssignments AdvanceBookingWorkOrderAssignment[]
 
+  @@unique([organization_id, id])
   @@unique([organization_id, work_order_no])
   @@index([organization_id, created_at])
   @@index([order_id, created_at])
@@ -38,7 +41,10 @@ model FactoryWorkOrderSizeLine {
   created_at               DateTime              @default(now())
   workOrder                FactoryWorkOrder      @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
   sourceFinishedGoods      FinishedGoodsSizeWise @relation(fields: [source_finished_goods_id], references: [id], onDelete: Cascade)
+  inventoryGrnLines        WorkOrderInventoryGrnLine[]
+  bookingAssignments      AdvanceBookingWorkOrderAssignment[]
 
+  @@unique([work_order_id, id])
   @@unique([work_order_id, source_finished_goods_id])
   @@index([source_finished_goods_id])
   @@map("factory_work_order_size_lines")
@@ -266,6 +272,55 @@ model FactoryGrnLine {
   @@index([grn_id])
   @@index([operation_id])
   @@map("factory_grn_lines")
+}
+
+model WorkOrderInventoryGrn {
+  id              String                        @id @default(cuid())
+  organization_id String
+  work_order_id   String
+  grn_no          String                        @db.VarChar(100)
+  grn_date        DateTime                      @db.Date
+  status          String                        @default("PENDING_VERIFICATION") @db.VarChar(30)
+  submitted_by    String                        @db.VarChar(255)
+  verified_by     String?                       @db.VarChar(255)
+  verified_at     DateTime?
+  notes           String?                       @db.VarChar(1000)
+  created_at      DateTime                      @default(now())
+  updated_at      DateTime                      @updatedAt
+  organization    Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  workOrder       FactoryWorkOrder              @relation(fields: [organization_id, work_order_id], references: [organization_id, id], onDelete: Restrict)
+  lines           WorkOrderInventoryGrnLine[]
+
+  @@unique([id, work_order_id])
+  @@unique([organization_id, grn_no])
+  @@index([organization_id, status, grn_date])
+  @@index([organization_id, work_order_id, created_at])
+  @@map("work_order_inventory_grns")
+}
+
+model WorkOrderInventoryGrnLine {
+  id                         String                    @id @default(cuid())
+  grn_id                     String
+  work_order_id              String
+  work_order_size_line_id    String
+  size                       String?                   @db.VarChar(100)
+  buyer_size                 String?                   @db.VarChar(100)
+  ordered_quantity           Int
+  available_quantity         Int
+  received_quantity          Int
+  verified_actual_quantity   Int?
+  approved_quantity          Int?
+  rejected_quantity          Int?
+  advance_booked_quantity    Int?
+  general_inventory_quantity Int?
+  created_at                 DateTime                  @default(now())
+  grn                        WorkOrderInventoryGrn     @relation(fields: [grn_id, work_order_id], references: [id, work_order_id], onDelete: Cascade)
+  workOrderSizeLine          FactoryWorkOrderSizeLine  @relation(fields: [work_order_id, work_order_size_line_id], references: [work_order_id, id], onDelete: Restrict)
+  bookingAllocations         WorkOrderInventoryGrnBookingAllocation[]
+
+  @@unique([grn_id, work_order_size_line_id])
+  @@index([work_order_id, work_order_size_line_id])
+  @@map("work_order_inventory_grn_lines")
 }
 
 model FactoryDailyProductionReport {

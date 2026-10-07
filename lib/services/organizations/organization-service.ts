@@ -725,13 +725,23 @@ export async function deleteOrganizationRole(organizationId: string, workspaceUs
 import { normalizeSystemStatusKey } from "@/lib/auth/validation-rules";
 
 export async function updateOrganizationApprovalStatus(organizationId: string, approvalStatus: string) {
+  const result = await updateOrganizationApprovalStatusWithTransition(organizationId, approvalStatus);
+  return result.organization;
+}
+
+export async function updateOrganizationApprovalStatusWithTransition(organizationId: string, approvalStatus: string) {
   const normalizedStatus = normalizeSystemStatusKey(approvalStatus);
   if (!["PENDING_APPROVAL", "APPROVED", "REJECTED"].includes(normalizedStatus)) {
     throw new Error("Select a valid organization approval status.");
   }
   const platformAdmin = await requirePlatformSessionAdmin();
+  const existingOrganization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { approval_status: true },
+  });
+  if (!existingOrganization) throw new Error("Organization not found.");
 
-  return prisma.$transaction(async (transaction) => {
+  const organization = await prisma.$transaction(async (transaction) => {
     const updated = await transaction.organization.updateMany({
       where: {
         id: organizationId,
@@ -774,6 +784,10 @@ export async function updateOrganizationApprovalStatus(organizationId: string, a
     if (!organization) throw new Error("Organization not found.");
     return organization;
   });
+  return {
+    organization,
+    approvedNow: normalizedStatus === "APPROVED" && existingOrganization.approval_status !== "APPROVED",
+  };
 }
 
 export const ORGANIZATION_DELETE_RETENTION_DAYS = 90;
@@ -809,7 +823,11 @@ export async function deleteOrganizationFromPlatform(organizationId: string) {
     }
 
     await permanentlyDeleteOrganization(transaction, organization.id);
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 20000,
+    timeout: 150000,
+  });
 }
 
 export async function forceDeleteOrganizationFromPlatform(organizationId: string, confirmationName: string) {
@@ -842,5 +860,9 @@ export async function forceDeleteOrganizationFromPlatform(organizationId: string
     });
 
     await permanentlyDeleteOrganization(transaction, organization.id);
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 20000,
+    timeout: 150000,
+  });
 }

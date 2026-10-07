@@ -106,7 +106,7 @@ export async function createDummySampleGateEntries(
         },
       }, transaction);
       return created;
-    });
+    }, { maxWait: 10_000, timeout: 30_000 });
     entries.push({ id: entry.id, purchaseOrderId });
   }
 

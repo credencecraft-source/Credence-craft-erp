@@ -41,9 +41,14 @@ interface ReportGridProps<T> {
   bulkUploadLabel?: string;
   bulkUploadDisabled?: boolean;
   onRowAction?: (recordId: string) => void;
+  onSecondaryRowAction?: (recordId: string) => void;
+  rowActionPosition?: "start" | "end";
   rowActionLabel?: string;
   rowActionLabelSelector?: (record: T) => string;
   rowActionDisabledSelector?: (record: T) => boolean;
+  secondaryRowActionLabel?: string;
+  secondaryRowActionLabelSelector?: (record: T) => string;
+  secondaryRowActionDisabledSelector?: (record: T) => boolean;
   wrapCells?: boolean;
   toolbarActions?: ReactNode;
   onSearchQueryChange?: (query: string) => void;
@@ -76,9 +81,14 @@ export function ReportGrid<T>({
   bulkUploadLabel = "Bulk Upload",
   bulkUploadDisabled = false,
   onRowAction,
+  onSecondaryRowAction,
+  rowActionPosition = "end",
   rowActionLabel = "Action",
   rowActionLabelSelector,
   rowActionDisabledSelector,
+  secondaryRowActionLabel = "Action",
+  secondaryRowActionLabelSelector,
+  secondaryRowActionDisabledSelector,
   wrapCells = false,
   toolbarActions,
   onSearchQueryChange,
@@ -306,18 +316,19 @@ export function ReportGrid<T>({
                 />
               </th>
             )}
+            {(onRowAction || onSecondaryRowAction) && rowActionPosition === "start" && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
             {visibleFieldDefinitions.map((field) => (
               <th key={String(field.key)} className="p-2 font-semibold whitespace-nowrap">
                 {field.label}
               </th>
             ))}
-            {onRowAction && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
+            {(onRowAction || onSecondaryRowAction) && rowActionPosition === "end" && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200 bg-white text-slate-700 text-[11px]">
           {filteredRecords.length === 0 ? (
             <tr>
-              <td colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (onRowAction ? 1 : 0)} className="p-6 text-center text-slate-500">
+              <td colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (onRowAction || onSecondaryRowAction ? 1 : 0)} className="p-6 text-center text-slate-500">
                 {emptyMessage}
               </td>
             </tr>
@@ -342,6 +353,34 @@ export function ReportGrid<T>({
                       />
                     </td>
                   )}
+                  {(onRowAction || onSecondaryRowAction) && rowActionPosition === "start" && (
+                    <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2">
+                        {onRowAction ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onRowAction(recordId)}
+                            disabled={rowActionDisabledSelector?.(record)}
+                            className="text-[10px]"
+                          >
+                            {rowActionLabelSelector?.(record) ?? rowActionLabel}
+                          </Button>
+                        ) : null}
+                        {onSecondaryRowAction ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onSecondaryRowAction(recordId)}
+                            disabled={secondaryRowActionDisabledSelector?.(record)}
+                            className="text-[10px]"
+                          >
+                            {secondaryRowActionLabelSelector?.(record) ?? secondaryRowActionLabel}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </td>
+                  )}
                   {visibleFieldDefinitions.map((field) => (
                     <td
                       key={`${recordId}-${String(field.key)}`}
@@ -354,17 +393,32 @@ export function ReportGrid<T>({
                       {renderCell(String(field.key), record)}
                     </td>
                   ))}
-                  {onRowAction && (
+                  {(onRowAction || onSecondaryRowAction) && rowActionPosition === "end" && (
                     <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => onRowAction(recordId)}
-                        disabled={rowActionDisabledSelector?.(record)}
-                        className="text-[10px]"
-                      >
-                        {rowActionLabelSelector?.(record) ?? rowActionLabel}
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        {onRowAction ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onRowAction(recordId)}
+                            disabled={rowActionDisabledSelector?.(record)}
+                            className="text-[10px]"
+                          >
+                            {rowActionLabelSelector?.(record) ?? rowActionLabel}
+                          </Button>
+                        ) : null}
+                        {onSecondaryRowAction ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onSecondaryRowAction(recordId)}
+                            disabled={secondaryRowActionDisabledSelector?.(record)}
+                            className="text-[10px]"
+                          >
+                            {secondaryRowActionLabelSelector?.(record) ?? secondaryRowActionLabel}
+                          </Button>
+                        ) : null}
+                      </div>
                     </td>
                   )}
                 </tr>

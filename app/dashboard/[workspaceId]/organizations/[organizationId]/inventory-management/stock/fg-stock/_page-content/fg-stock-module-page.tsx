@@ -82,7 +82,7 @@ function MasterSelect({ label, value, options, onChange }: { label: string; valu
   );
 }
 
-export default function FgStockModulePage({ moduleName, addMode = false }: { moduleName: string; addMode?: boolean }) {
+export default function FgStockModulePage({ moduleName, addMode = false, allocatedOnly = false }: { moduleName: string; addMode?: boolean; allocatedOnly?: boolean }) {
   const { organizationId } = useParams<{ organizationId: string }>();
   const router = useRouter();
   const pathname = usePathname();
@@ -119,7 +119,12 @@ export default function FgStockModulePage({ moduleName, addMode = false }: { mod
     return () => window.clearTimeout(timeoutId);
   }, [loadData]);
 
-  const sortedRecords = useMemo(() => records, [records]);
+  const sortedRecords = useMemo(
+    () => allocatedOnly
+      ? records.filter((record) => record.source !== "DIRECT" && record.order_no.trim().length > 0)
+      : records,
+    [allocatedOnly, records],
+  );
   const updateForm = (key: keyof FormState, value: string) => setForm((current) => ({ ...current, [key]: value }));
   const gstOptions = masters.gst ?? [];
   const hsnOptions = masters.hsn ?? [];
@@ -187,23 +192,31 @@ export default function FgStockModulePage({ moduleName, addMode = false }: { mod
         </div>}
 
         {!addMode && <ReportGrid
-          title="Finished Goods SKU Stock"
+          title={allocatedOnly ? "Allocated Finished Goods Stock" : moduleName === "General Stock" ? "Finished Goods General Stock" : "Finished Goods SKU Stock"}
           records={sortedRecords}
           fields={[
-            { key: "sku_code", label: "SKU Code" }, { key: "barcode", label: "Customer Barcode" }, { key: "id", label: "Record ID / Barcode" }, { key: "location", label: "Location" }, { key: "style_name", label: "Style Name" }, { key: "order_no", label: "Order No" }, { key: "article_no", label: "Article No" },
+            { key: "sku_code", label: "SKU Code" }, { key: "barcode", label: "Customer Barcode" }, { key: "id", label: "Record ID / Barcode" }, { key: "location", label: "Location" }, { key: "style_name", label: "Style Name" }, { key: "order_no", label: "Order No" }, { key: "work_order", label: "Work Order" }, { key: "article_no", label: "Article No / Style No" },
             { key: "brand", label: "Brand" }, { key: "size", label: "Size" }, { key: "colour", label: "Colour" }, { key: "product_category", label: "Product Category" },
             { key: "sub_product_category", label: "Sub Product Category" }, { key: "gst_rate", label: "GST %" }, { key: "hsn_code", label: "HSN Code" }, { key: "purchase_price", label: "Purchase Price" }, { key: "sales_price", label: "Sales Price" }, { key: "mrp", label: "MRP" }, { key: "added_time", label: "Added Time" }, { key: "added_user", label: "Added User" },
             { key: "source", label: "Source" }, { key: "qty_in", label: "Qty In" }, { key: "qty_out", label: "Qty Out" }, { key: "current_stock", label: "Current Stock" },
           ]}
-          visibleFields={visibleFields.length > 0 ? visibleFields : ["sku_code", "barcode", "id", "location", "style_name", "order_no", "article_no", "brand", "size", "colour", "product_category", "sub_product_category", "gst_rate", "hsn_code", "purchase_price", "sales_price", "mrp", "added_time", "added_user", "source", "qty_in", "qty_out", "current_stock"]}
+          visibleFields={visibleFields.length > 0 ? visibleFields : ["sku_code", "barcode", "id", "location", "style_name", "order_no", "work_order", "article_no", "brand", "size", "colour", "product_category", "sub_product_category", "gst_rate", "hsn_code", "purchase_price", "sales_price", "mrp", "added_time", "added_user", "source", "qty_in", "qty_out", "current_stock"]}
           onVisibleFieldsChange={(fields) => setVisibleFields(fields.map(String))}
           rowIdSelector={(record) => record.id}
           selectedIds={[]}
           onRowClick={(recordId) => router.push(`${pathname}/${encodeURIComponent(recordId)}`)}
           onNewOrder={() => router.push(`${pathname}/add`)}
           newActionLabel="+ Add Record"
-          renderCell={(fieldKey, record) => fieldKey === "location" ? record.location.location_name : fieldKey === "added_time" ? new Date(record.added_time).toLocaleString() : fieldKey === "source" ? record.source.replaceAll("_", " ") : String(record[fieldKey as keyof StockRecord] ?? "-")}
-          emptyMessage={loading ? "Loading stock records..." : "No finished goods SKU stock records yet."}
+          renderCell={(fieldKey, record) => fieldKey === "location"
+            ? record.location.location_name
+            : fieldKey === "work_order"
+              ? record.source === "WO_ORDER_GRN" ? record.order_no : "-"
+              : fieldKey === "added_time"
+                ? new Date(record.added_time).toLocaleString()
+                : fieldKey === "source"
+                  ? record.source.replaceAll("_", " ")
+                  : String(record[fieldKey as keyof StockRecord] ?? "-")}
+          emptyMessage={loading ? "Loading stock records..." : allocatedOnly ? "No order-linked finished goods stock records yet." : "No finished goods SKU stock records yet."}
         />}
       </section>
     </main>

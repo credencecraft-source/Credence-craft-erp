@@ -6,6 +6,7 @@ import { INVENTORY_MASTER_DEFINITIONS } from "@/lib/master-data/inventory-manage
 import { QUALITY_MANAGEMENT_MASTER_DEFINITIONS } from "@/lib/master-data/quality-management-system/quality-management-masters";
 import { FINANCE_MANAGEMENT_MASTER_DEFINITIONS } from "@/lib/master-data/finance-management/finance-management-masters";
 import { GOLD_SEAL_MASTER_DEFINITIONS } from "@/lib/master-data/design-development/gold-seal-masters";
+import { DISTRIBUTION_MASTER_DEFINITIONS } from "@/lib/master-data/distribution/distribution-masters";
 import { createMaster, lookup, text, type MasterDefinition } from "@/lib/master-data/master-data-models";
 
 export type { MasterFieldType, MasterFieldDefinition, MasterDefinition } from "@/lib/master-data/master-data-models";
@@ -28,6 +29,7 @@ export const MASTER_DEFINITIONS: MasterDefinition[] = [
   ...INVENTORY_MASTER_DEFINITIONS,
   ...QUALITY_MANAGEMENT_MASTER_DEFINITIONS,
   ...FINANCE_MANAGEMENT_MASTER_DEFINITIONS,
+  ...DISTRIBUTION_MASTER_DEFINITIONS,
   ...GOLD_SEAL_MASTER_DEFINITIONS,
   ...GENERAL_MASTER_DEFINITIONS,
 ];
@@ -73,6 +75,14 @@ export const MASTER_MODULE_HIERARCHY: Record<string, { label: string; children: 
     label: "Finance Management",
     children: {
       transactions: "Transactions",
+    },
+  },
+  distribution: {
+    label: "Distribution",
+    children: {
+      dispatch: "Dispatch",
+      delivery: "Delivery",
+      "sales-order": "Sales Order",
     },
   },
   approvals: {

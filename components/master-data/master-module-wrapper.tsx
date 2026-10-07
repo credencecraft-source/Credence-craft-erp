@@ -1,7 +1,7 @@
 "use client";
 
 import type { SegmentRestriction } from "@prisma/client";
-import { useState, useMemo, useEffect, useTransition, useCallback, type ReactNode } from "react";
+import { useState, useMemo, useEffect, useTransition, useCallback, useRef, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -22,6 +22,7 @@ import {
   Settings,
   Sparkles,
   Trash2,
+  Truck,
   X,
   ChevronDown,
   ChevronRight,
@@ -72,6 +73,8 @@ type NavigationModuleOption = Pick<ErpModule, "key" | "label" | "pathSegment" | 
   moduleKey?: string;
 };
 
+const DUMMY_DATA_WIZARD_STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
+
 const moduleIcons = {
   online: Gauge,
   pos: Landmark,
@@ -81,6 +84,7 @@ const moduleIcons = {
   "quality-management-system": Boxes,
   "finance-management": Landmark,
   "inventory-management": Package,
+  distribution: Truck,
   "security-management": Lock,
   approvals: ClipboardList,
   settings: Settings,
@@ -271,6 +275,16 @@ export function MasterModuleWrapper({
   const [dummyDataStateOverride, setDummyDataStateOverride] = useState<boolean | null>(null);
   const [dummyDataDeleteError, setDummyDataDeleteError] = useState("");
   const [dummyDataDeleteNotice, setDummyDataDeleteNotice] = useState("");
+  const [dummyDataDeletionStatus, setDummyDataDeletionStatus] = useState<"planned" | "deleting" | "complete" | null>(null);
+  const [dummyDataDeleteConfirmOpen, setDummyDataDeleteConfirmOpen] = useState(false);
+  const [dummyDataBuildStep, setDummyDataBuildStep] = useState<number | null>(null);
+  const [dummyDataBuildError, setDummyDataBuildError] = useState("");
+  const [dummyDataBuildFailedStep, setDummyDataBuildFailedStep] = useState<number | null>(null);
+  const [isBuildingDummyData, setIsBuildingDummyData] = useState(false);
+  const [isRemovingDummyData, setIsRemovingDummyData] = useState(false);
+  const dummyDataBuildRunningRef = useRef(false);
+  const stopDummyDataBuildRef = useRef(false);
+  const deleteAfterDummyDataBuildRef = useRef(false);
   const [isUpdatingDummyData, startUpdatingDummyData] = useTransition();
   const dummyDataActive = dummyDataStateOverride ?? !["EMPTY", "SCHEMA_NOT_READY", "UNAVAILABLE"].includes(dummyDataStatus.status);
   const dummyDataAvailable = !["SCHEMA_NOT_READY", "UNAVAILABLE"].includes(dummyDataStatus.status);
@@ -287,6 +301,7 @@ export function MasterModuleWrapper({
         setDummyDataDeleteError(result.error);
         return;
       }
+      setDummyDataStateOverride(true);
       setDummyDataDeleteNotice(`Step ${step} completed.`);
       router.refresh();
     });
@@ -294,18 +309,104 @@ export function MasterModuleWrapper({
 
   function handleDeleteDummyData() {
     setDummyDataDeleteError("");
-    startUpdatingDummyData(async () => {
+    setDummyDataDeleteConfirmOpen(true);
+  }
+
+  const performDeleteDummyData = useCallback(async () => {
+    setDummyDataDeleteError("");
+    setIsRemovingDummyData(true);
+    setDummyDataDeletionStatus("deleting");
+    try {
       const result = await deleteDummyData();
       if (result.error) {
         setDummyDataDeleteError(result.error);
+        setDummyDataDeletionStatus(null);
         return;
       }
       setDummyDataStateOverride(false);
       setDummyDataDeleteNotice(result.deleted ? "Dummy data was deleted." : "There is no dummy dataset to delete.");
+      setDummyDataDeletionStatus("complete");
+      setDummyDataDeleteConfirmOpen(false);
       setDummyDataHelpOpen(false);
       router.refresh();
+    } catch (error) {
+      setDummyDataDeleteError(error instanceof Error ? error.message : "Unable to delete sample data.");
+      setDummyDataDeletionStatus(null);
+    } finally {
+      setIsRemovingDummyData(false);
+    }
+  }, [deleteDummyData, router]);
+
+  const runDummyDataBuild = useCallback(async (startStep: number) => {
+    if (dummyDataBuildRunningRef.current) return;
+
+    dummyDataBuildRunningRef.current = true;
+    stopDummyDataBuildRef.current = false;
+    setIsBuildingDummyData(true);
+    setDummyDataBuildError("");
+    setDummyDataBuildFailedStep(null);
+    setDummyDataDeleteNotice("");
+
+    try {
+      for (const step of DUMMY_DATA_WIZARD_STEPS) {
+        if (step < startStep) continue;
+        if (stopDummyDataBuildRef.current) break;
+        setDummyDataBuildStep(step);
+        const result = await startDummyDataWizardStep(step);
+        if (result.error && !stopDummyDataBuildRef.current) {
+          setDummyDataBuildError(result.error);
+          setDummyDataBuildFailedStep(step);
+          return;
+        }
+        if (step === 1 && !result.error) setDummyDataStateOverride(true);
+      }
+
+      if (stopDummyDataBuildRef.current) {
+        if (deleteAfterDummyDataBuildRef.current) {
+          deleteAfterDummyDataBuildRef.current = false;
+          await performDeleteDummyData();
+        }
+        return;
+      }
+
+      setDummyDataBuildStep(null);
+      setDummyDataDeleteNotice("Sample data is ready to explore.");
+      router.refresh();
+    } catch (error) {
+      setDummyDataBuildError(error instanceof Error ? error.message : "Unable to continue sample-data setup.");
+      setDummyDataBuildFailedStep((current) => current ?? startStep);
+    } finally {
+      dummyDataBuildRunningRef.current = false;
+      setIsBuildingDummyData(false);
+      setDummyDataBuildStep(null);
+    }
+  }, [performDeleteDummyData, router, startDummyDataWizardStep]);
+
+  function confirmDeleteDummyData() {
+    setDummyDataDeleteError("");
+    setDummyDataDeletionStatus("planned");
+    if (dummyDataBuildRunningRef.current) {
+      deleteAfterDummyDataBuildRef.current = true;
+      stopDummyDataBuildRef.current = true;
+      setDummyDataDeleteNotice("Stopping sample-data setup before removing its records...");
+      return;
+    }
+    startUpdatingDummyData(async () => {
+      await performDeleteDummyData();
     });
   }
+
+  useEffect(() => {
+    const resumableStatuses = ["IN_PROGRESS", "AWAITING_GROUPED_APPROVAL", "AWAITING_PO_APPROVAL"];
+    if (!dummyDataAvailable || !resumableStatuses.includes(dummyDataStatus.status)) return;
+
+    const startStep = dummyDataStatus.currentStep ?? 1;
+    const timeoutId = window.setTimeout(() => {
+      void runDummyDataBuild(startStep);
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [dummyDataAvailable, dummyDataStatus.currentStep, dummyDataStatus.status, runDummyDataBuild]);
 
   const moduleOptions = useMemo(
     () => allModuleOptions.filter((option) => !hiddenModuleKeys.includes(option.key)),
@@ -522,10 +623,70 @@ export function MasterModuleWrapper({
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex min-h-14 min-w-0 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:px-6">
-          <div className="flex min-w-0 items-center gap-2">
-            <Layers className="h-5 w-5 text-emerald-600" />
-            <span className="truncate font-semibold capitalize">{activeModule?.label ?? "Modules"}</span>
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <Layers className="h-5 w-5 text-emerald-600" />
+              <span className="truncate font-semibold capitalize">{activeModule?.label ?? "Modules"}</span>
+            </div>
+            {isBuildingDummyData ? (
+              <div className="flex min-w-0 items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-800" role="status" aria-live="polite">
+                <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-emerald-700" aria-hidden="true" />
+                <span className="truncate">
+                  We’re preparing sample data{dummyDataBuildStep ? ` · step ${dummyDataBuildStep} of 9` : ""}. Some areas may feel a little slower during setup.
+                </span>
+              </div>
+            ) : dummyDataDeletionStatus ? (
+              <div className="flex min-w-0 items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900" role="status" aria-live="polite">
+                {dummyDataDeletionStatus !== "complete" ? (
+                  <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-amber-700" aria-hidden="true" />
+                ) : null}
+                <span className="truncate">
+                  {dummyDataDeletionStatus === "planned"
+                    ? "Deletion planned. We’re stopping sample-data setup before removing its records."
+                    : dummyDataDeletionStatus === "deleting"
+                      ? "Sample-data deletion is in progress."
+                      : "Sample data was deleted."}
+                </span>
+              </div>
+            ) : dummyDataDeleteError ? (
+              <div className="flex min-w-0 items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800" role="alert">
+                <span className="truncate">Sample-data deletion failed: {dummyDataDeleteError}</span>
+              </div>
+            ) : dummyDataBuildError ? (
+              <div className="flex min-w-0 items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900" role="alert">
+                <span className="truncate">Sample-data setup paused: {dummyDataBuildError}</span>
+                {dummyDataBuildFailedStep ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={isRemovingDummyData}
+                    onClick={() => void runDummyDataBuild(dummyDataBuildFailedStep)}
+                  >
+                    Retry
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
+
+          {dummyDataAvailable && dummyDataActive ? (
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              aria-haspopup="dialog"
+              disabled={isUpdatingDummyData || isRemovingDummyData || dummyDataDeletionStatus === "planned" || dummyDataDeletionStatus === "deleting"}
+              onClick={() => {
+                setDummyDataTab("delete");
+                setDummyDataDeleteConfirmOpen(false);
+                setDummyDataHelpOpen(true);
+              }}
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              Delete Sample Data
+            </Button>
+          ) : null}
 
           <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2 sm:gap-3">
             {trialNeedsPricing && hasConfiguredPricingType && (
@@ -773,6 +934,7 @@ export function MasterModuleWrapper({
         open={dummyDataHelpOpen}
         onClose={() => {
           setDummyDataHelpOpen(false);
+          setDummyDataDeleteConfirmOpen(false);
         }}
         ariaLabelledBy="dummy-data-help-title"
         ariaDescribedBy="dummy-data-help-description"
@@ -858,7 +1020,7 @@ export function MasterModuleWrapper({
                 ].map((step) => {
                   const isComplete = completedSteps.has(step.number);
                   const isCurrent = currentStep === step.number;
-                  const canStart = dummyDataAvailable && isCurrent && !isComplete && !isUpdatingDummyData;
+                  const canStart = dummyDataAvailable && isCurrent && !isComplete && !isUpdatingDummyData && !isBuildingDummyData;
                   return (
                     <li key={step.number} className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 px-3 py-3">
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-700" aria-hidden="true">
@@ -903,6 +1065,41 @@ export function MasterModuleWrapper({
             hidden={dummyDataTab !== "delete"}
             className="space-y-4"
           >
+            {dummyDataDeleteConfirmOpen ? (
+              <>
+                <div className="space-y-2 rounded-lg border border-rose-200 bg-rose-50 p-4">
+                  <h3 className="text-base font-semibold text-rose-900">Confirm sample data deletion</h3>
+                  <p className="text-sm leading-5 text-rose-800">
+                    This permanently removes the generated sample records. Organization setup and baseline master values will be kept.
+                    {dummyDataStatus.orderNo ? ` This includes ${dummyDataStatus.orderCount ?? 1} sample orders, starting with ${dummyDataStatus.orderNo}.` : ""}
+                  </p>
+                </div>
+                <div className="flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setDummyDataDeleteConfirmOpen(false)}
+                    disabled={isUpdatingDummyData || isRemovingDummyData || dummyDataDeletionStatus === "planned" || dummyDataDeletionStatus === "deleting"}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={confirmDeleteDummyData}
+                    disabled={isUpdatingDummyData || isRemovingDummyData || dummyDataDeletionStatus === "planned" || dummyDataDeletionStatus === "deleting"}
+                  >
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    {dummyDataDeletionStatus === "planned"
+                      ? "Waiting for setup to stop..."
+                      : dummyDataDeletionStatus === "deleting" || isUpdatingDummyData || isRemovingDummyData
+                        ? "Deleting..."
+                        : "Confirm Delete"}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
               <div>
                 <h3 className="text-base font-semibold text-slate-900">Remove sample data</h3>
                 <p className="mt-1 text-sm leading-5 text-slate-600">
@@ -930,14 +1127,16 @@ export function MasterModuleWrapper({
                 </Button>
                 <Button
                   type="button"
-                  variant="danger"
+                  variant="destructive"
                   onClick={handleDeleteDummyData}
-                  disabled={isUpdatingDummyData || !dummyDataActive}
+                  disabled={isUpdatingDummyData || isRemovingDummyData || !dummyDataActive}
                 >
                   <Trash2 className="h-4 w-4" aria-hidden="true" />
-                  {isUpdatingDummyData ? "Deleting..." : "Delete Dummy Data"}
+                  Delete Sample Data
                 </Button>
               </div>
+              </>
+            )}
           </section>
           {dummyDataDeleteNotice ? <p className="text-sm text-emerald-700" role="status">{dummyDataDeleteNotice}</p> : null}
           {dummyDataDeleteError ? <p className="text-sm text-red-700" role="alert">{dummyDataDeleteError}</p> : null}

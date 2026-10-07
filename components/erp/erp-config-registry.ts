@@ -115,6 +115,7 @@ export const ERP_MODULES: ErpModule[] = [
         pathSegment: "production",
         children: [
           { key: "shop-floor", label: "Shop Floor", pathSegment: "shop-floor" },
+          { key: "dpr-report", label: "DPR Report", pathSegment: "dpr-report" },
         ],
       },
       {
@@ -206,6 +207,47 @@ export const ERP_MODULES: ErpModule[] = [
     ],
   },
   {
+    key: "distribution",
+    label: "Distribution",
+    pathSegment: "distribution",
+    children: [
+      {
+        key: "order",
+        label: "Order",
+        href: "/distribution",
+        children: [
+          {
+            key: "advance-booking",
+            label: "Advance Booking",
+            href: "/distribution/order/advance-booking",
+          },
+        ],
+      },
+      {
+        key: "fulfillment",
+        label: "Fulfillment",
+        href: "/distribution/fulfillment",
+      },
+      {
+        key: "quotation",
+        label: "Quotation",
+        href: "/distribution",
+        children: [
+          {
+            key: "quotation",
+            label: "Quotation",
+            href: "/distribution/quotation",
+          },
+          {
+            key: "master-quotation",
+            label: "Master Quotation",
+            href: "/distribution/master-quotation",
+          },
+        ],
+      },
+    ],
+  },
+  {
     key: "security-management",
     label: "Security Management",
     pathSegment: "security-management",
@@ -273,6 +315,7 @@ const BUSINESS_TYPE_MODULE_ALIASES: Record<string, string> = {
   "quality-management": "quality-management-system",
   "finance-management": "finance-management",
   "inventory-management": "inventory-management",
+  "distribution": "distribution",
   "security-management": "security-management",
   "security": "security-management",
   "settings": "settings",

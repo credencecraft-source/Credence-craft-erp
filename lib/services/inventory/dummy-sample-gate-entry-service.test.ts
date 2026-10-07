@@ -65,6 +65,10 @@ describe("dummy sample Gate Entry service", () => {
 
     const entries = await createDummySampleGateEntries("org-id", "batch-id", purchaseOrderIds, "actor-id");
 
+    expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      maxWait: 10_000,
+      timeout: 30_000,
+    });
     expect(entries).toHaveLength(5);
     expect(new Set(entries.map((entry) => entry.purchaseOrderId)).size).toBe(5);
     expect(prismaMock.purchaseOrder.findMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -76,6 +80,10 @@ describe("dummy sample Gate Entry service", () => {
     }));
     expect(transactionMock.gateEntry.create).toHaveBeenCalledTimes(5);
     expect(reserveChallanNumberMock).toHaveBeenCalledWith("org-id", "GATE_ENTRY", transactionMock);
+    expect(createAuditEventMock).toHaveBeenCalledTimes(5);
+    expect(createAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: "CREATE_DUMMY_RM_GATE_ENTRY",
+    }), transactionMock);
     for (const [index, [call]] of transactionMock.gateEntry.create.mock.calls.entries()) {
       expect(call.data).toMatchObject({
         organization_id: "org-id",

@@ -161,8 +161,8 @@ html:has(.erp-platform-shell) {
     @apply overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.2)];
   }
 
-  :is(input, select, textarea)[data-erp-field-state="empty-required"],
-  :is(input, select, textarea)[data-erp-field-state="empty-required"]:focus {
+  :is(input, select, textarea):required:invalid,
+  :is(input, select, textarea):required:invalid:focus {
     border: 2px solid #dc2626;
   }
 

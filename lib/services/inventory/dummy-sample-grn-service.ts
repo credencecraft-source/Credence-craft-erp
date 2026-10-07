@@ -127,7 +127,11 @@ export async function createDummySampleGrns(
         },
       }, transaction);
       return { id: created.id, purchaseOrderId };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 10_000,
+      timeout: 30_000,
+    });
     receipts.push(receipt);
   }
 

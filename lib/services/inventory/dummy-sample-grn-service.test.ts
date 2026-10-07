@@ -77,6 +77,11 @@ describe("dummy sample GRN creation", () => {
   it("creates five pending GRNs, each linked to one approved PO", async () => {
     const grns = await createDummySampleGrns("org-1", purchaseOrderIds, "batch-1", "actor-1");
 
+    expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 10_000,
+      timeout: 30_000,
+    });
     expect(grns).toHaveLength(5);
     expect(new Set(grns.map((grn) => grn.purchaseOrderId)).size).toBe(5);
     expect(mocks.purchaseOrderFindFirst).toHaveBeenCalledTimes(5);
@@ -97,6 +102,10 @@ describe("dummy sample GRN creation", () => {
       });
     }
     expect(mocks.reserveNumber).toHaveBeenCalledTimes(5);
+    expect(mocks.createAuditEvent).toHaveBeenCalledTimes(5);
+    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      action: "CREATE_DUMMY_RM_GRN",
+    }), transaction);
   });
 
   it("creates an active master receiving location when the PO entity has none", async () => {

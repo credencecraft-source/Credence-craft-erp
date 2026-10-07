@@ -155,6 +155,7 @@ import {
   deleteOrganizationDummyData,
   getDummyDataWorkflowSummary,
   getOrganizationDummyDataStatus,
+  startOrganizationDummyDataAfterApproval,
   startDummyDataWizardStep,
 } from "./organization-dummy-data-service";
 
@@ -1701,7 +1702,7 @@ describe("organization dummy data service", () => {
       .resolves.toMatchObject({ status: "EMPTY", completedSteps: [], currentStep: 1 });
   });
 
-  it("returns the wizard to Step 1 after the batch has been deleted", async () => {
+  it("does not auto-create sample data again after its batch has been deleted", async () => {
     prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
       id: "batch-id",
       status: "EMPTY",
@@ -1715,6 +1716,25 @@ describe("organization dummy data service", () => {
 
     await expect(getOrganizationDummyDataStatus("user-id", "public-org-id"))
       .resolves.toMatchObject({ status: "EMPTY", stage: "IDLE", completedSteps: [], currentStep: 1 });
+  });
+
+  it("does not start sample-data creation from organization page visits", async () => {
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue(null);
+
+    await expect(getOrganizationDummyDataStatus("user-id", "public-org-id"))
+      .resolves.toMatchObject({ status: "EMPTY", stage: "IDLE", completedSteps: [], currentStep: 1 });
+  });
+
+  it("does not restart sample-data creation after approval when a batch already exists", async () => {
+    prismaMock.organization.findFirst.mockResolvedValueOnce({
+      organization_id: "public-org-id",
+      memberships: [{ workspace_user_id: "owner-user-id" }],
+    });
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValueOnce({ id: "deleted-sample-batch" });
+
+    await expect(startOrganizationDummyDataAfterApproval("internal-org-id"))
+      .resolves.toMatchObject({ created: false });
+    expect(transactionMock.organizationDummyDataBatch.upsert).not.toHaveBeenCalled();
   });
 
   it("reconstructs step and per-record approval progress from the persisted batch", async () => {

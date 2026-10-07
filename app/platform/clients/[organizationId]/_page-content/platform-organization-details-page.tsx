@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { after } from "next/server";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
@@ -8,7 +9,8 @@ import Section from "@/components/ui/Section";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { assignOrganizationPlatformVersion, getOrganizationClient, listPlatformVersions } from "@/lib/services/platform/client-service";
 import { listOrganizationSegmentPricing, resetOrganizationSegmentPrice, setOrganizationSegmentCustomPrice } from "@/lib/services/platform/organization-segment-pricing-service";
-import { deleteOrganizationFromPlatform, forceDeleteOrganizationFromPlatform, getOrganizationDeletionEligibility, ORGANIZATION_DELETE_RETENTION_DAYS, updateOrganizationApprovalStatus } from "@/lib/services/organizations/organization-service";
+import { deleteOrganizationFromPlatform, forceDeleteOrganizationFromPlatform, getOrganizationDeletionEligibility, ORGANIZATION_DELETE_RETENTION_DAYS, updateOrganizationApprovalStatusWithTransition } from "@/lib/services/organizations/organization-service";
+import { startOrganizationDummyDataAfterApproval } from "@/lib/services/organizations/organization-dummy-data-service";
 import { extendOrganizationTrial, listOrganizationTrialHistory, removeOrganizationTrial } from "@/lib/services/platform/organization-trial-service";
 import OrganizationDetailTabs from "./organization-detail-tabs";
 import OrganizationPlatformVersionAssignment from "./organization-platform-version-assignment";
@@ -85,7 +87,22 @@ export default async function PlatformOrganizationDetailsPage({
     "use server";
     await requirePlatformSessionAdmin();
     try {
-      await updateOrganizationApprovalStatus(organizationId, String(formData.get("approvalStatus")));
+      const result = await updateOrganizationApprovalStatusWithTransition(
+        organizationId,
+        String(formData.get("approvalStatus")),
+      );
+      if (result.approvedNow) {
+        after(async () => {
+          try {
+            await startOrganizationDummyDataAfterApproval(result.organization.id);
+          } catch (error) {
+            console.error(
+              "Automatic sample-data setup failed after organization approval.",
+              error instanceof Error ? error.message : "Unknown setup error.",
+            );
+          }
+        });
+      }
     } catch (error) {
       redirect(`/platform/organisations/${organizationId}?tab=pricing&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to update approval status.")}`);
     }

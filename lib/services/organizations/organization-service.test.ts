@@ -75,6 +75,7 @@ import {
   listWorkspaceOrganizationPage,
   restoreOrganization,
   updateOrganizationApprovalStatus,
+  updateOrganizationApprovalStatusWithTransition,
 } from "./organization-service";
 
 const organization = {
@@ -89,6 +90,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   requirePlatformSessionAdmin.mockResolvedValue({ id: "platform-admin-id" });
   requirePlatformSessionSuperAdmin.mockResolvedValue({ id: "platform-admin-id" });
+  prismaMock.organization.findUnique.mockResolvedValue({ approval_status: "PENDING_APPROVAL" });
   prismaMock.$transaction.mockImplementation(
     (callback: (transaction: typeof transactionMock) => Promise<unknown>) => callback(transactionMock),
   );
@@ -126,6 +128,39 @@ describe("organization creation defaults", () => {
       organizationEmail: " SALES@NORTHWIND.COM ",
       gstNumber: "22AAAAA0000A1Z5",
       mobileNo: "9876543210",
+    });
+
+    describe("organization approval transitions", () => {
+      it("reports a new approval transition so sample setup can be queued once", async () => {
+        transactionMock.organization.updateMany.mockResolvedValue({ count: 1 });
+        transactionMock.organization.findUnique
+          .mockResolvedValueOnce({
+            approval_status: "APPROVED",
+            trial_started_at: null,
+            trial_enabled: true,
+            trial_extension_hours: 0,
+          })
+          .mockResolvedValueOnce(organization);
+
+        await expect(updateOrganizationApprovalStatusWithTransition("org-internal-id", "APPROVED"))
+          .resolves.toEqual({ organization, approvedNow: true });
+      });
+
+      it("does not report a new approval transition for an already-approved organization", async () => {
+        prismaMock.organization.findUnique.mockResolvedValue({ approval_status: "APPROVED" });
+        transactionMock.organization.updateMany.mockResolvedValue({ count: 1 });
+        transactionMock.organization.findUnique
+          .mockResolvedValueOnce({
+            approval_status: "APPROVED",
+            trial_started_at: null,
+            trial_enabled: true,
+            trial_extension_hours: 0,
+          })
+          .mockResolvedValueOnce(organization);
+
+        await expect(updateOrganizationApprovalStatusWithTransition("org-internal-id", "APPROVED"))
+          .resolves.toEqual({ organization, approvedNow: false });
+      });
     });
 
     expect(transactionMock.organization.create).toHaveBeenCalledWith({
@@ -392,7 +427,9 @@ describe("organization archive lifecycle", () => {
 
     expect(transactionMock.organization.delete).toHaveBeenCalledWith({ where: { id: "org-internal-id" } });
     expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), {
-      isolationLevel: expect.any(String),
+      isolationLevel: "Serializable",
+      maxWait: 20000,
+      timeout: 150000,
     });
   });
 
@@ -423,7 +460,9 @@ describe("organization archive lifecycle", () => {
     });
     expect(transactionMock.organization.delete).toHaveBeenCalledWith({ where: { id: "org-internal-id" } });
     expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), {
-      isolationLevel: expect.any(String),
+      isolationLevel: "Serializable",
+      maxWait: 20000,
+      timeout: 150000,
     });
   });
 

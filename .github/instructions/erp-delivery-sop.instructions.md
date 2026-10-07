@@ -41,6 +41,9 @@ applyTo: "**/*.{ts,tsx,prisma,sql,css,md}"
 
 ## 4. Validate The Changed Slice Immediately
 
+- For every implementation, proactively perform the runtime checks before handoff: use read-only Prisma migration status for database-backed work; verify whether the expected local development URL is already serving the application; reuse a responsive existing server rather than starting a duplicate; then open the affected route in the browser and exercise the changed workflow, including a reload for persisted state where applicable.
+- If migrations are pending, do not retry application startup as a migration mechanism and do not apply migrations automatically. Verify a disposable or otherwise approved non-production target before migration writes. If the target cannot be verified, stop and report the pending migration and required safe environment. Never modify protected database settings or validate against production.
+- If the local port is occupied but the application cannot be confirmed responsive, do not terminate an unknown process. Report the blocker and obtain or establish the correct local runtime before claiming browser verification.
 - After the first substantive edit, run the narrowest executable check available for the touched slice.
 - If it fails, repair that same slice and rerun the same check before expanding scope.
 - No implementation is complete until its relevant behavior has been exercised in a running application. For user-facing changes, use the browser to run the changed workflow, verify its visible result, and reload or revisit the route to confirm persisted state where applicable. Automated tests and a successful build do not replace this browser check.

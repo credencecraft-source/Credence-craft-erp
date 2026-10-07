@@ -8,19 +8,17 @@ import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import {
-  consolidateShopFloorProcesses,
-  type ShopFloorProcessBoard,
-  type ShopFloorProcessBoardRow,
+  type ShopFloorProcessSummary,
   type ShopFloorStatusKey,
 } from "@/lib/services/factory/shop-floor-board";
 
 const STATUS_ORDER: ShopFloorStatusKey[] = ["UNASSIGNED", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "TRANSFERRED"];
 
 async function fetchBoard(organizationId: string) {
-  const response = await fetch(`/api/factory/production/shop-floor?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" });
+  const response = await fetch(`/api/factory/production/shop-floor?organizationId=${encodeURIComponent(organizationId)}&summary=true`, { cache: "no-store" });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "Unable to load the shop-floor board.");
-  return consolidateShopFloorProcesses((data.processes ?? []) as ShopFloorProcessBoardRow[]);
+  return (data.processes ?? []) as ShopFloorProcessSummary[];
 }
 
 export default function FactoryShopFloorDashboardPage() {
@@ -28,7 +26,7 @@ export default function FactoryShopFloorDashboardPage() {
   const router = useRouter();
   const organizationId = params?.organizationId ?? "";
   const workspaceId = params?.workspaceId ?? "";
-  const [processes, setProcesses] = useState<ShopFloorProcessBoard[]>([]);
+  const [processes, setProcesses] = useState<ShopFloorProcessSummary[]>([]);
   const [loading, setLoading] = useState(Boolean(organizationId));
   const [error, setError] = useState("");
 
@@ -97,7 +95,7 @@ export default function FactoryShopFloorDashboardPage() {
                         </span>
                       </span>
                       <span className="shrink-0 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-700">
-                        {process.queue.length} batches
+                        {process.batchCount} batches
                       </span>
                     </span>
                     <span className="mt-4 grid w-full grid-cols-5 gap-2 border-t border-slate-200 pt-3">

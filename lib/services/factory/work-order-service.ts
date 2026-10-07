@@ -747,12 +747,13 @@ export async function updateWorkOrder(organizationId: string, userId: string, wo
       where: { id: workOrderId, organization_id: organizationId },
       include: {
         order: { include: { finishedGoods: true, workOrders: { include: { sizeLines: true } } } },
-        sizeLines: true,
+        sizeLines: { include: { bookingAssignments: { select: { id: true } } } },
         bomLines: true,
         processController: { include: { processes: { select: { sl_no: true, order_qty: true, completed_qty: true, received_qty: true } } } },
         productionUpdates: { select: { id: true }, take: 1 },
         bundleTransfers: { select: { issued_qty: true, accepted_qty: true } },
         grns: { select: { id: true }, take: 1 },
+        inventoryGrns: { select: { id: true }, take: 1 },
       },
     });
     if (!workOrder) throw new Error("Work order was not found in this organization.");
@@ -783,6 +784,7 @@ export async function updateWorkOrder(organizationId: string, userId: string, wo
     const hasProductionActivity = workOrder.productionUpdates.length > 0
       || workOrder.bundleTransfers.length > 0
       || workOrder.grns.length > 0
+      || workOrder.inventoryGrns.length > 0
       || workOrder.processController?.processes.some((process) => process.completed_qty > 0 || process.received_qty > 0) === true;
     let normalizedLines: Array<{ sourceFinishedGoodsId: string; quantity: number }> | null = null;
     if (input.lines !== undefined) {
@@ -816,6 +818,9 @@ export async function updateWorkOrder(organizationId: string, userId: string, wo
       || normalizedLines.some((line) => !workOrder.sizeLines.some((existing) =>
         existing.source_finished_goods_id === line.sourceFinishedGoodsId && existing.quantity === line.quantity))
     );
+    if (quantityChanged && workOrder.sizeLines.some((line) => line.bookingAssignments.length > 0)) {
+      throw new Error("Work-order quantities are locked after advance-booking assignments. Adjust the booking assignment first.");
+    }
     if (quantityChanged && hasProductionActivity) {
       throw new Error("Work-order quantities are locked after production activity. Use a controlled adjustment instead.");
     }
@@ -845,7 +850,7 @@ export async function updateWorkOrder(organizationId: string, userId: string, wo
         },
         include: { sizeLines: true },
       });
-      updatedSizeLines = result.sizeLines;
+      updatedSizeLines = result.sizeLines.map((line) => ({ ...line, bookingAssignments: [] }));
       updatedTotalQty = result.total_qty;
       const bomItems = await transaction.billOfMaterialItem.findMany({ where: { order_id: workOrder.order_id } });
       const bomLines = buildWorkOrderBomLines(bomItems, normalizedLines.map((line) => ({ size: sourceRows.get(line.sourceFinishedGoodsId)!.size, quantity: line.quantity })), totalQty);
@@ -921,6 +926,8 @@ export async function deleteWorkOrder(organizationId: string, userId: string, wo
         productionUpdates: { select: { id: true }, take: 1 },
         bundleTransfers: { select: { id: true }, take: 1 },
         grns: { select: { id: true }, take: 1 },
+        inventoryGrns: { select: { grn_no: true }, take: 1 },
+        sizeLines: { select: { bookingAssignments: { select: { id: true }, take: 1 } } },
         dailyProductionReportLines: { select: { id: true }, take: 1 },
         processController: { select: { processes: { where: { OR: [{ completed_qty: { gt: 0 } }, { received_qty: { gt: 0 } }] }, select: { id: true }, take: 1 } } },
       },
@@ -932,9 +939,19 @@ export async function deleteWorkOrder(organizationId: string, userId: string, wo
         `This work order cannot be deleted because it has raw-material outward request ${outwardRequest.request_no}. Keep the work order to preserve its inventory history.`,
       );
     }
+    const inventoryGrn = workOrder.inventoryGrns[0];
+    if (inventoryGrn) {
+      throw new Error(
+        `This work order cannot be deleted because it has inventory GRN ${inventoryGrn.grn_no}. Keep the work order to preserve its receiving history.`,
+      );
+    }
+    if (workOrder.sizeLines.some((line) => line.bookingAssignments.length > 0)) {
+      throw new Error("This work order cannot be deleted because advance-booking quantities are assigned to it.");
+    }
     const hasActivity = workOrder.productionUpdates.length > 0
       || workOrder.bundleTransfers.length > 0
       || workOrder.grns.length > 0
+      || workOrder.inventoryGrns.length > 0
       || workOrder.dailyProductionReportLines.length > 0
       || (workOrder.processController?.processes.length ?? 0) > 0;
     if (hasActivity || workOrder.status !== "OPEN") {

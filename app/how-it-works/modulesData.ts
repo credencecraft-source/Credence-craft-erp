@@ -335,6 +335,39 @@ const moduleContent: Record<string, ModuleContent> = {
       },
     ],
   },
+  distribution: {
+    purpose: "Keep dispatches, delivery promises, and customer orders moving as one flow.",
+    hook: "Know where every dispatch stands before the next delivery window.",
+    factoryExample: "A distribution desk tracks the packed garments, route, and promised delivery date for each order.",
+    result: "Reduce late dispatches by keeping route, stock, and delivery status together.",
+    toolkitLabel: "DISTRIBUTION TOOLKIT",
+    toolkitSummary: "One view for dispatch readiness and delivery follow-up.",
+    toolkit: ["Dispatch planning", "Delivery tracking", "Sales-order visibility", "Route and warehouse coordination"],
+    workflows: [
+      {
+        key: "dispatch",
+        label: "Dispatch",
+        title: "Move ready goods to the next customer handoff",
+        description: "Keep the order, warehouse, and dispatch window aligned before release.",
+        steps: [
+          { title: "Check readiness", detail: "Verify the packed quantity, warehouse, and customer destination." },
+          { title: "Plan the dispatch", detail: "Assign the route, vehicle or partner, and required dispatch notes." },
+          { title: "Release the load", detail: "Record the dispatch and leave a traceable handoff for the delivery team." },
+        ],
+      },
+      {
+        key: "delivery",
+        label: "Delivery",
+        title: "Track the customer handoff to the final mile",
+        description: "Carry delivery progress and any exceptions without losing the original order trail.",
+        steps: [
+          { title: "Confirm the route", detail: "Open the delivery plan tied to the customer and dispatch record." },
+          { title: "Monitor status", detail: "Update the current stage and note any delay or approval needed." },
+          { title: "Close the delivery", detail: "Capture the completion evidence and keep the order customer-ready." },
+        ],
+      },
+    ],
+  },
   "security-management": {
     purpose: "Record what enters and leaves the premises and who handled the movement.",
     hook: "Know what entered, left, and who signed.",

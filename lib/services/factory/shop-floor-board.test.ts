@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { consolidateShopFloorProcesses, type ShopFloorProcessBoardRow } from "./shop-floor-board";
+import { consolidateShopFloorProcesses, getShopFloorFlowTotals, type ShopFloorProcessBoardRow } from "./shop-floor-board";
 
 function processRow(
   workOrderId: string,
@@ -50,6 +50,22 @@ describe("consolidateShopFloorProcesses", () => {
       totalQty: 180,
       workOrderCount: 2,
       statusCounts: { UNASSIGNED: 180 },
+    });
+
+    describe("shop-floor flow totals", () => {
+      it("sums process inputs, transferred output, and quantity remaining in WIP", () => {
+        expect(getShopFloorFlowTotals({
+          UNASSIGNED: 10,
+          ASSIGNED: 20,
+          IN_PROGRESS: 30,
+          COMPLETED: 15,
+          TRANSFERRED: 25,
+        })).toEqual({
+          in: 100,
+          out: 25,
+          balanceInHand: 75,
+        });
+      });
     });
     expect(result[0].queue.map((item) => [item.workOrderId, item.processId, item.id])).toEqual([
       ["1", "master-process-1", "log-1"],

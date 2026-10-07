@@ -8,7 +8,10 @@ export type ProcurementDocumentType =
   | "PURCHASE_ORDER"
   | "RM_OUTWARD_REQUEST"
   | "RM_OUTWARD_BOX"
-  | "RM_OUTWARD_PACKING_LIST";
+  | "RM_OUTWARD_PACKING_LIST"
+  | "ADVANCE_BOOKING"
+  | "DISTRIBUTION_QUOTATION"
+  | "DISTRIBUTION_MASTER_QUOTATION";
 
 const documentPrefixes: Record<ProcurementDocumentType, string> = {
   GROUPED_PO: "GP",
@@ -17,6 +20,9 @@ const documentPrefixes: Record<ProcurementDocumentType, string> = {
   RM_OUTWARD_REQUEST: "RMR",
   RM_OUTWARD_BOX: "RM-BOX",
   RM_OUTWARD_PACKING_LIST: "RM-PL",
+  ADVANCE_BOOKING: "BK",
+  DISTRIBUTION_QUOTATION: "QT",
+  DISTRIBUTION_MASTER_QUOTATION: "MQT",
 };
 
 export async function reserveProcurementDocumentNumber(

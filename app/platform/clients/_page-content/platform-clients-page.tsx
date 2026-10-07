@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import Link from "next/link";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
@@ -9,7 +10,8 @@ import { BadgePercent } from "lucide-react";
 import { ensurePlatformDefaults } from "@/lib/services/platform/platform-bootstrap-service";
 import { listOrganizationClientsPage } from "@/lib/services/platform/client-service";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
-import { updateOrganizationApprovalStatus } from "@/lib/services/organizations/organization-service";
+import { updateOrganizationApprovalStatusWithTransition } from "@/lib/services/organizations/organization-service";
+import { startOrganizationDummyDataAfterApproval } from "@/lib/services/organizations/organization-dummy-data-service";
 
 export default async function PlatformClientsPage({ searchParams }: { searchParams?: Promise<{ cursor?: string; error?: string; success?: string }> }) {
   await ensurePlatformDefaults();
@@ -21,7 +23,22 @@ export default async function PlatformClientsPage({ searchParams }: { searchPara
     "use server";
     await requirePlatformSessionAdmin();
     try {
-      await updateOrganizationApprovalStatus(String(formData.get("organizationId") || ""), "APPROVED");
+      const result = await updateOrganizationApprovalStatusWithTransition(
+        String(formData.get("organizationId") || ""),
+        "APPROVED",
+      );
+      if (result.approvedNow) {
+        after(async () => {
+          try {
+            await startOrganizationDummyDataAfterApproval(result.organization.id);
+          } catch (error) {
+            console.error(
+              "Automatic sample-data setup failed after organization approval.",
+              error instanceof Error ? error.message : "Unknown setup error.",
+            );
+          }
+        });
+      }
     } catch (error) {
       redirect(`/platform/organisations?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to approve organisation.")}`);
     }

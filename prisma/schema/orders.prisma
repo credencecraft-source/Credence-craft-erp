@@ -34,8 +34,10 @@ model MerchandisingOrder {
   acceptedShares            OrderShare[]                    @relation("OrderShareAcceptedOrder")
   groupedPurchaseOrderLines GroupedPurchaseOrderLine[]
   workOrders                FactoryWorkOrder[]
+  advanceBookings           AdvanceBooking[]
 
   @@unique([organization_id, orderNo])
+  @@unique([organization_id, id])
   @@index([organization_id, entity_id, created_at])
   @@index([organization_id, created_at])
   @@map("merchandising_orders")
@@ -935,4 +937,141 @@ model GateEntry {
   @@index([organization_id, movement_type, direction])
   @@index([organization_id, challan_no])
   @@map("gate_entries")
+}
+
+model AdvanceBooking {
+  id              String                    @id @default(cuid())
+  organization_id String
+  order_id        String
+  vendor_id       String
+  booking_no      String                    @db.VarChar(100)
+  customer        String                    @db.VarChar(255)
+  brand           String?                   @db.VarChar(255)
+  style_name      String?                   @db.VarChar(255)
+  delivery_date   DateTime?                 @db.Date
+  created_by      String                    @db.VarChar(255)
+  created_at      DateTime                  @default(now())
+  updated_at      DateTime                  @updatedAt
+  organization    Organization              @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "advance_bookings_organization_id_fkey")
+  order           MerchandisingOrder        @relation(fields: [organization_id, order_id], references: [organization_id, id], onDelete: Restrict, map: "advance_bookings_organization_order_id_fkey")
+  sizeLines       AdvanceBookingSizeLine[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, booking_no])
+  @@index([organization_id, order_id, created_at])
+  @@map("advance_bookings")
+}
+
+model AdvanceBookingSizeLine {
+  id               String                            @id @default(cuid())
+  organization_id  String
+  booking_id       String
+  size             String                            @db.VarChar(100)
+  booked_quantity  Int
+  created_at       DateTime                          @default(now())
+  organization     Organization                      @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "advance_booking_size_lines_organization_id_fkey")
+  booking          AdvanceBooking                    @relation(fields: [organization_id, booking_id], references: [organization_id, id], onDelete: Cascade, map: "advance_booking_size_lines_booking_fkey")
+  assignments      AdvanceBookingWorkOrderAssignment[]
+  quotationLines   DistributionQuotationLine[]
+
+  @@unique([organization_id, id])
+  @@unique([booking_id, size])
+  @@index([organization_id, booking_id])
+  @@map("advance_booking_size_lines")
+}
+
+model DistributionQuotation {
+  id                   String                    @id @default(cuid())
+  organization_id      String
+  vendor_id            String?
+  parent_quotation_id  String?
+  quotation_no         String                    @db.VarChar(100)
+  quotation_date       DateTime                  @db.Date
+  valid_until          DateTime?                 @db.Date
+  order_no             String                    @db.VarChar(1000)
+  customer             String                    @db.VarChar(255)
+  notes                String?                   @db.VarChar(2000)
+  mode                 String                    @default("SINGLE") @db.VarChar(20)
+  status               String                    @default("DRAFT") @db.VarChar(30)
+  total_quantity       Int                       @default(0)
+  subtotal             Decimal                   @default(0) @db.Decimal(18, 2)
+  created_by           String                    @db.VarChar(255)
+  created_at           DateTime                  @default(now())
+  updated_at           DateTime                  @updatedAt
+  organization         Organization              @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  vendor               MasterVendor?             @relation(fields: [organization_id, vendor_id], references: [organization_id, id], onDelete: Restrict)
+  parentQuotation      DistributionQuotation?    @relation("DistributionQuotationHierarchy", fields: [organization_id, parent_quotation_id], references: [organization_id, id], onDelete: Restrict)
+  childQuotations      DistributionQuotation[]   @relation("DistributionQuotationHierarchy")
+  lines                DistributionQuotationLine[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, quotation_no])
+  @@index([organization_id, quotation_date, created_at])
+  @@index([organization_id, parent_quotation_id])
+  @@index([organization_id, vendor_id])
+  @@map("distribution_quotations")
+}
+
+model DistributionQuotationLine {
+  id                       String                     @id @default(cuid())
+  organization_id          String
+  quotation_id             String
+  source_booking_size_id   String
+  item_description         String                  @db.VarChar(500)
+  booking_no               String                     @db.VarChar(100)
+  order_no                 String                     @db.VarChar(100)
+  brand                    String?                    @db.VarChar(255)
+  style_name               String?                    @db.VarChar(255)
+  size                     String                     @db.VarChar(100)
+  quantity                 Int
+  unit_price               Decimal                    @db.Decimal(14, 4)
+  line_total               Decimal                    @db.Decimal(18, 2)
+  created_at               DateTime                   @default(now())
+  organization             Organization               @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  quotation                DistributionQuotation      @relation(fields: [organization_id, quotation_id], references: [organization_id, id], onDelete: Cascade)
+  sourceBookingSize        AdvanceBookingSizeLine      @relation(fields: [organization_id, source_booking_size_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id])
+  @@index([organization_id, quotation_id])
+  @@unique([organization_id, source_booking_size_id])
+  @@map("distribution_quotation_lines")
+}
+
+model AdvanceBookingWorkOrderAssignment {
+  id                       String                                     @id @default(cuid())
+  organization_id          String
+  booking_size_line_id     String
+  work_order_id            String
+  work_order_size_line_id  String
+  assigned_quantity        Int
+  created_by               String                                     @db.VarChar(255)
+  created_at               DateTime                                   @default(now())
+  updated_at               DateTime                                   @updatedAt
+  organization             Organization                               @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "advance_booking_work_order_assignments_organization_fkey")
+  bookingSizeLine          AdvanceBookingSizeLine                     @relation(fields: [organization_id, booking_size_line_id], references: [organization_id, id], onDelete: Cascade, map: "advance_booking_work_order_assignments_booking_size_fkey")
+  workOrderSizeLine        FactoryWorkOrderSizeLine                   @relation(fields: [work_order_id, work_order_size_line_id], references: [work_order_id, id], onDelete: Restrict)
+  workOrder                FactoryWorkOrder                           @relation(fields: [organization_id, work_order_id], references: [organization_id, id], onDelete: Restrict, map: "advance_booking_work_order_assignments_work_order_fkey")
+  grnAllocations           WorkOrderInventoryGrnBookingAllocation[]
+
+  @@unique([organization_id, id])
+  @@unique([booking_size_line_id, work_order_size_line_id])
+  @@index([organization_id, work_order_id, work_order_size_line_id])
+  @@map("advance_booking_work_order_assignments")
+}
+
+model WorkOrderInventoryGrnBookingAllocation {
+  id                      String                            @id @default(cuid())
+  organization_id         String
+  grn_line_id             String
+  booking_assignment_id   String
+  allocated_quantity      Int
+  created_by              String                            @db.VarChar(255)
+  created_at              DateTime                          @default(now())
+  organization            Organization                      @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "work_order_inventory_grn_booking_allocations_org_fkey")
+  grnLine                 WorkOrderInventoryGrnLine         @relation(fields: [grn_line_id], references: [id], onDelete: Restrict)
+  bookingAssignment       AdvanceBookingWorkOrderAssignment @relation(fields: [organization_id, booking_assignment_id], references: [organization_id, id], onDelete: Restrict, map: "work_order_inventory_grn_booking_allocations_assignment_fkey")
+
+  @@unique([grn_line_id, booking_assignment_id])
+  @@index([organization_id, booking_assignment_id])
+  @@map("work_order_inventory_grn_booking_allocations")
 }
