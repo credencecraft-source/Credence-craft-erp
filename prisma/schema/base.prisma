@@ -127,6 +127,7 @@ model Organization {
   supportTickets                SupportTicket[]
   orderNumberCounter            OrganizationOrderCounter?
   dummyDataBatch                OrganizationDummyDataBatch?
+  kycProfile                    OrganizationKycProfile?
   procurementDocumentCounters   ProcurementDocumentCounter[]
   challanNumberConfigurations   ChallanNumberConfiguration[]
   inventoryReceipts             InventoryReceipt[]
@@ -195,6 +196,39 @@ model OrganizationTaxProfile {
   @@unique([organization_id, country, tax_regime])
   @@index([organization_id, is_default, is_active])
   @@map("organization_tax_profiles")
+}
+
+model OrganizationKycProfile {
+  id                          String        @id @default(cuid())
+  organization_id             String        @unique
+  status                      String        @default("NOT_STARTED") @db.VarChar(20)
+  registration_snapshot       Json?
+  kyc_details                 Json?
+  business_types              String[]      @default([])
+  business_type_other         String?       @db.VarChar(255)
+  staff_count                 Int?
+  factory_count               Int?
+  outlet_count                Int?
+  business_started_year       Int?
+  software_used               String?       @db.VarChar(1000)
+  major_challenges            String[]      @default([])
+  major_challenge_other       String?       @db.VarChar(1000)
+  brands_worked_with          String?       @db.VarChar(2000)
+  monthly_production_pcs      Int?
+  business_activities         String[]      @default([])
+  factory_arrangement         String?       @db.VarChar(20)
+  submitted_at                DateTime?
+  reviewed_at                 DateTime?
+  reviewed_by_platform_admin_id String?
+  review_note                 String?       @db.VarChar(2000)
+  created_at                  DateTime      @default(now())
+  updated_at                  DateTime      @updatedAt
+  organization                Organization  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  reviewedByPlatformAdmin     PlatformAdmin? @relation(fields: [reviewed_by_platform_admin_id], references: [id], onDelete: SetNull)
+
+  @@index([status, submitted_at])
+  @@index([reviewed_by_platform_admin_id, reviewed_at])
+  @@map("organization_kyc_profiles")
 }
 
 model ChallanNumberConfiguration {
@@ -334,6 +368,7 @@ model PlatformAdmin {
   ticketMessages TicketMessage[]
   createdSupportTickets SupportTicket[] @relation("SupportTicketPlatformCreator")
   auditEvents    PlatformAuditEvent[]
+  reviewedKycProfiles OrganizationKycProfile[]
 
   @@unique([manager_id, team_role])
   @@index([manager_id, role, is_active])

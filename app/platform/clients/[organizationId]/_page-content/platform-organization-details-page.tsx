@@ -1,8 +1,10 @@
 import Link from "next/link";
+import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 import { after } from "next/server";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
@@ -12,7 +14,14 @@ import { listOrganizationSegmentPricing, resetOrganizationSegmentPrice, setOrgan
 import { deleteOrganizationFromPlatform, forceDeleteOrganizationFromPlatform, getOrganizationDeletionEligibility, ORGANIZATION_DELETE_RETENTION_DAYS, updateOrganizationApprovalStatusWithTransition } from "@/lib/services/organizations/organization-service";
 import { startOrganizationDummyDataAfterApproval } from "@/lib/services/organizations/organization-dummy-data-service";
 import { extendOrganizationTrial, listOrganizationTrialHistory, removeOrganizationTrial } from "@/lib/services/platform/organization-trial-service";
+import {
+  getOrganizationKycProfileForPlatform,
+  OrganizationKycReviewError,
+  reviewOrganizationKyc,
+} from "@/lib/services/organizations/organization-kyc-service";
+import { readOrganizationKycDetails } from "@/lib/services/organizations/organization-kyc-types";
 import OrganizationDetailTabs from "./organization-detail-tabs";
+import OrganizationKycStepTabs from "./organization-kyc-step-tabs";
 import OrganizationPlatformVersionAssignment from "./organization-platform-version-assignment";
 import OrganizationSubscriptionPricing from "./organization-subscription-pricing";
 import OrganizationTrialControls from "../../_page-content/organization-trial-controls";
@@ -23,9 +32,20 @@ function Detail({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</dt>
-      <dd className="mt-1 text-sm text-slate-800">{value || "Not provided"}</dd>
+      <dd className="mt-1 whitespace-pre-line text-sm text-slate-800">{value || "Not provided"}</dd>
     </div>
   );
+}
+
+function readKycRegistrationSnapshot(value: unknown) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const snapshot = value as Record<string, unknown>;
+  return {
+    name: typeof snapshot.name === "string" ? snapshot.name : null,
+    gstNumber: typeof snapshot.gst_number === "string" ? snapshot.gst_number : null,
+    address: typeof snapshot.address === "string" ? snapshot.address : null,
+    createdAt: typeof snapshot.createdAt === "string" ? snapshot.createdAt : null,
+  };
 }
 
 export default async function PlatformOrganizationDetailsPage({
@@ -46,13 +66,131 @@ export default async function PlatformOrganizationDetailsPage({
   if (!organization) {
     notFound();
   }
-  const [pricing, trialHistory, pricingSettings, activeUserCount] = await Promise.all([
+  const internalOrganizationId = organization.id;
+  const [pricing, trialHistory, pricingSettings, activeUserCount, kycProfile] = await Promise.all([
     listOrganizationSegmentPricing(organizationId),
     listOrganizationTrialHistory(organizationId),
     getPlatformPricingSettings(),
     countActiveOrganizationMembers(organization.id),
+    getOrganizationKycProfileForPlatform(organization.id),
   ]);
   const trialExtensionRequests = trialHistory.requests;
+  const kycDetails = readOrganizationKycDetails(kycProfile?.kyc_details);
+  const registrationSnapshot = readKycRegistrationSnapshot(kycProfile?.registration_snapshot);
+  const kycValue = (value: string | null | undefined) => value?.replaceAll("_", " ") || "Not provided";
+  const kycList = (values: string[]) => values.length ? values.join(", ") : "Not provided";
+  const kycStepPanels = kycProfile ? [
+    {
+      label: "Company",
+      details: [
+        { label: "Company name", value: registrationSnapshot.name ?? organization.organization_name },
+        { label: "GSTIN", value: registrationSnapshot.gstNumber ?? organization.gst_number },
+        {
+          label: "Registered address",
+          value: registrationSnapshot.address ?? ([
+            organization.address_line_1,
+            organization.address_line_2,
+            organization.city,
+            organization.state,
+            organization.pin_code,
+            organization.country,
+          ].filter(Boolean).join(", ") || "Not provided"),
+        },
+        { label: "Organization profile created", value: registrationSnapshot.createdAt ?? organization.created_at.toLocaleDateString() },
+        { label: "Business started", value: kycProfile.business_started_year == null ? "Not provided" : String(kycProfile.business_started_year) },
+      ],
+    },
+    {
+      label: "Founder & team",
+      details: [
+        { label: "Founder", value: [kycDetails.founderName, kycDetails.founderDesignation].filter(Boolean).join(" — ") || "Not provided" },
+        { label: "Total team members", value: kycDetails.teamMemberCount == null ? "Not provided" : String(kycDetails.teamMemberCount) },
+        { label: "Staff / labour", value: kycProfile.staff_count == null ? "Not provided" : String(kycProfile.staff_count) },
+        { label: "Top management members", value: kycDetails.topManagementCount == null ? "Not provided" : String(kycDetails.topManagementCount) },
+      ],
+    },
+    {
+      label: "Business",
+      details: [
+        {
+          label: "Products",
+          value: kycList([
+            ...kycDetails.products.filter((product) => product !== "Other"),
+            ...(kycDetails.otherProduct ? [`Other: ${kycDetails.otherProduct}`] : []),
+          ]),
+        },
+        {
+            label: "Business types",
+            value: kycList([...kycProfile.business_types, ...(kycProfile.business_type_other ? [kycProfile.business_type_other] : [])]),
+        },
+        { label: "Factories", value: kycProfile.factory_count == null ? "Not provided" : String(kycProfile.factory_count) },
+        { label: "Outlets", value: kycProfile.outlet_count == null ? "Not provided" : String(kycProfile.outlet_count) },
+        { label: "Monthly production (pcs)", value: kycProfile.monthly_production_pcs == null ? "Not provided" : String(kycProfile.monthly_production_pcs) },
+        { label: "Activities", value: kycList(kycProfile.business_activities) },
+        { label: "Factory arrangement", value: kycValue(kycProfile.factory_arrangement) },
+        { label: "Washing unit", value: kycValue(kycDetails.washingUnit) },
+        { label: "Embroidery unit", value: kycValue(kycDetails.embroideryUnit) },
+        { label: "Shifts per day", value: kycDetails.shiftCount == null ? "Not provided" : String(kycDetails.shiftCount) },
+      ],
+    },
+    {
+      label: "Business role",
+      details: [
+        { label: "Business ownership", value: kycValue(kycDetails.businessRole) },
+        { label: "Business channel", value: kycValue(kycDetails.businessChannel) },
+        { label: "Brand model", value: kycValue(kycDetails.brandModel) },
+      ],
+    },
+    {
+      label: "Brands",
+      details: [
+        { label: "Own brands", value: kycDetails.ownBrandNames ?? "Not provided" },
+        { label: "Own-brand sales channels", value: kycList(kycDetails.ownBrandChannels) },
+        { label: "White-label brands", value: kycDetails.whiteLabelBrands ?? "Not provided" },
+        { label: "Brands worked with", value: kycProfile.brands_worked_with ?? "Not provided" },
+        { label: "White-label fulfilment", value: kycValue(kycDetails.whiteLabelFulfilment) },
+      ],
+    },
+    {
+      label: "Markets & work",
+      details: [
+        { label: "Market coverage", value: kycValue(kycDetails.marketCoverage) },
+        { label: "Work types", value: kycList(kycDetails.whiteLabelWorkTypes) },
+        { label: "Buyer-nominated raw materials", value: kycValue(kycDetails.buyerNominatedRawMaterials) },
+      ],
+    },
+    {
+      label: "Migration",
+      details: [
+        { label: "Currently using software", value: kycValue(kycDetails.usesSoftware) },
+        { label: "Software used", value: kycProfile.software_used ?? "Not provided" },
+        { label: "Software modules", value: kycList(kycDetails.softwareModules) },
+        {
+          label: "Finance software to integrate",
+          value: kycList([
+            ...kycDetails.financeSoftware
+              .filter((value) => value !== "OTHER")
+              .map((value) => value === "ZOHO_BOOKS" ? "Zoho Books" : value.replaceAll("_", " ")),
+            ...(kycDetails.financeSoftwareOther ? [kycDetails.financeSoftwareOther] : []),
+          ]),
+        },
+        { label: "Merchandisers handle orders", value: kycValue(kycDetails.hasMerchandisers) },
+        { label: "Dedicated store in-charge", value: kycValue(kycDetails.hasDedicatedStoreIncharge) },
+        { label: "Production manager / supervisor", value: kycValue(kycDetails.hasProductionManager) },
+        { label: "Separate dispatch team", value: kycValue(kycDetails.hasSeparateDispatchAccounts) },
+      ],
+    },
+    {
+      label: "Financials",
+      details: [
+        { label: "Last financial year turnover", value: kycDetails.lastYearTurnover == null ? "Not provided" : `₹${kycDetails.lastYearTurnover.toLocaleString("en-IN")}` },
+        { label: "MSME status", value: kycValue(kycDetails.msmeStatus) },
+        { label: "Major challenges", value: kycList([...kycProfile.major_challenges, ...(kycProfile.major_challenge_other ? [kycProfile.major_challenge_other] : [])]) },
+        { label: "Submitted", value: kycProfile.submitted_at?.toLocaleString() ?? "Not submitted" },
+        { label: "Review note", value: kycProfile.review_note ?? "Not provided" },
+      ],
+    },
+  ] : [];
 
   async function saveCustomSegmentPrice(formData: FormData) {
     "use server";
@@ -107,6 +245,27 @@ export default async function PlatformOrganizationDetailsPage({
       redirect(`/platform/organisations/${organizationId}?tab=pricing&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to update approval status.")}`);
     }
     redirect(`/platform/organisations/${organizationId}?tab=pricing&success=${encodeURIComponent("Approval status updated.")}`);
+  }
+
+  async function reviewKyc(formData: FormData) {
+    "use server";
+    const admin = await requirePlatformSessionAdmin();
+    const approvedValue = formData.get("approved");
+    if (approvedValue !== "true" && approvedValue !== "false") {
+      redirect(`/platform/organisations/${organizationId}?tab=kyc&error=${encodeURIComponent("Select an approve or reject action.")}`);
+    }
+    const noteValue = formData.get("note");
+    const note = typeof noteValue === "string" ? noteValue.trim() : "";
+    try {
+      await reviewOrganizationKyc(admin.id, internalOrganizationId, approvedValue === "true", note || undefined);
+    } catch (error) {
+      if (error instanceof OrganizationKycReviewError) {
+        redirect(`/platform/organisations/${organizationId}?tab=kyc&error=${encodeURIComponent(error.message)}`);
+      }
+      throw error;
+    }
+    revalidatePath(`/platform/organisations/${organizationId}`);
+    redirect(`/platform/organisations/${organizationId}?tab=kyc&success=${encodeURIComponent(approvedValue === "true" ? "KYC profile approved." : "KYC profile rejected.")}`);
   }
 
   async function deleteOrganization() {
@@ -210,7 +369,7 @@ export default async function PlatformOrganizationDetailsPage({
           </header>
         </div>
 
-        <OrganizationDetailTabs initialValue={["overview", "database", "pricing-type", "pricing", "subscriptions", "trial", "users", "activity", "delete"].includes(query.tab ?? "") ? query.tab : undefined} panels={[
+        <OrganizationDetailTabs initialValue={["overview", "database", "pricing-type", "pricing", "subscriptions", "trial", "users", "activity", "delete", "kyc"].includes(query.tab ?? "") ? query.tab : undefined} panels={[
           {
             label: "Pricing Type",
             value: "pricing-type",
@@ -253,6 +412,42 @@ export default async function PlatformOrganizationDetailsPage({
                   <Detail label="Created" value={new Date(organization.created_at).toLocaleString()} />
                   <Detail label="Last updated" value={new Date(organization.updated_at).toLocaleString()} />
                 </dl>
+              </section>
+            ),
+          },
+          {
+            label: "KYC",
+            value: "kyc",
+            content: (
+              <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-900">Organization KYC review</h2>
+                    <p className="mt-1 text-xs text-slate-600">Review the organization’s submitted profile and record the platform decision.</p>
+                  </div>
+                  <Badge>{kycProfile?.status?.replaceAll("_", " ") ?? "NOT STARTED"}</Badge>
+                </div>
+                {kycProfile ? (
+                  <>
+                    <OrganizationKycStepTabs steps={kycStepPanels} />
+                    {kycProfile.status === "SUBMITTED" ? (
+                      <div className="flex flex-wrap gap-3 border-t border-slate-200 pt-4">
+                        <form action={reviewKyc} className="flex flex-wrap items-end gap-3">
+                          <input type="hidden" name="approved" value="true" />
+                          <Input label="Approval note (optional)" name="note" maxLength={2000} />
+                          <Button type="submit" size="sm">Approve KYC</Button>
+                        </form>
+                        <form action={reviewKyc} className="flex flex-wrap items-end gap-3">
+                          <input type="hidden" name="approved" value="false" />
+                          <Input label="Rejection reason" name="note" maxLength={2000} required />
+                          <Button type="submit" variant="destructive" size="sm">Reject KYC</Button>
+                        </form>
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-600">The organization has not started its KYC profile.</p>
+                )}
               </section>
             ),
           },

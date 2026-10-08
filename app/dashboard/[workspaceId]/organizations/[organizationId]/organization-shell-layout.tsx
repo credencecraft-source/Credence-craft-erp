@@ -1,12 +1,15 @@
 // app/dashboard/[workspaceId]/organizations/[organizationId]/organization-shell-layout.tsx
 
 import React from "react";
+import type { OrganizationKycProfile } from "@prisma/client";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { MasterModuleWrapper } from "@/components/master-data/master-module-wrapper";
+import OrganizationKycForm from "./settings/kyc/_page-content/organization-kyc-form";
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
 import { getOrganizationShellContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationKycProfileForUser } from "@/lib/services/organizations/organization-kyc-service";
 import {
   deleteOrganizationDummyData,
   getOrganizationDummyDataStatus,
@@ -24,6 +27,11 @@ import {
 import { getPlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { getPlatformPricingSettings, isPricingModeEnabled } from "@/lib/services/platform/pricing-mode-service";
 import { shouldBlockOrganizationForUserPricing } from "@/lib/utilities/organization-trial-visibility";
+import {
+  resetOrganizationKycDraftAction,
+  saveOrganizationKycDraftAction,
+  submitOrganizationKycAction,
+} from "./settings/kyc/organization-kyc-actions";
 
 type OrganizationShellLayoutProps = {
   children: React.ReactNode;
@@ -188,10 +196,44 @@ export default async function OrganizationShellLayout({
       : businessType.name,
   }));
 
-
   if (isOrganizationSettingsRoute) {
     return children;
   }
+
+  let kycProfile: OrganizationKycProfile | null = null;
+  let canManageKyc = true;
+  try {
+    kycProfile = await getOrganizationKycProfileForUser(user.id, organization.id);
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.startsWith("Access denied:")) {
+      throw error;
+    }
+    canManageKyc = false;
+  }
+
+  const kycToolbarControl = canManageKyc && kycProfile?.status !== "SUBMITTED" && kycProfile?.status !== "APPROVED" ? (
+    <OrganizationKycForm
+      initialProfile={kycProfile}
+      progressStorageKey={`organization-kyc-progress:${workspaceId}:${organizationId}`}
+      saveDraftAction={saveOrganizationKycDraftAction.bind(null, workspaceId, organizationId)}
+      submitAction={submitOrganizationKycAction.bind(null, workspaceId, organizationId)}
+      resetDraftAction={resetOrganizationKycDraftAction.bind(null, workspaceId, organizationId)}
+      registrationSnapshot={{
+        gst_number: organization.gst_number,
+        name: organization.organization_name,
+        address: [
+          organization.address_line_1,
+          organization.address_line_2,
+          organization.city,
+          organization.state,
+          organization.pin_code,
+          organization.country,
+        ].filter(Boolean).join(", "),
+        createdAt: organization.created_at.toISOString().slice(0, 10),
+      }}
+    />
+  ) : null;
+
   return (
     <MasterModuleWrapper
       workspaceId={workspaceId}
@@ -211,6 +253,7 @@ export default async function OrganizationShellLayout({
       trialEndsAt={trialOrganization.trial_ends_at?.toISOString() ?? null}
       startDummyDataWizardStep={startDummyDataWizardStepAction}
       deleteDummyData={deleteDummyDataAction}
+      kycToolbarControl={kycToolbarControl}
       dummyDataStatus={dummyDataStatus}
       businessTypes={businessTypes}
       restrictions={scopedRestrictions}
