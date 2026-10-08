@@ -14,8 +14,7 @@ export type CreatePlatformAccountInput = {
   kind: PlatformAccountKind;
 };
 
-export type UpdatePlatformAccountInput = {
-  kind: PlatformAccountKind;
+export type UpdatePlatformAccountInput = CreatePlatformAccountInput & {
   managerId?: string;
 };
 
@@ -238,6 +237,7 @@ export async function updatePlatformAccessAccount(
   if (input.kind !== "ADMIN" && input.kind !== "CMO" && input.kind !== "CTO") {
     throw new Error("Select a valid platform account type.");
   }
+  const { fullName, email, mobileNumber } = normalizePlatformAccountInput(input);
   const teamRole = input.kind === "ADMIN" ? null : input.kind;
   if (actor.role !== "SUPER_ADMIN" && !teamRole) {
     throw new Error("Only a Super Admin can assign Platform Admin access.");
@@ -253,6 +253,9 @@ export async function updatePlatformAccessAccount(
         where: { id: accountId },
         select: {
           id: true,
+          full_name: true,
+          email: true,
+          mobile_number: true,
           role: true,
           team_role: true,
           manager_id: true,
@@ -270,6 +273,14 @@ export async function updatePlatformAccessAccount(
     }
     if (actor.id === account.id) {
       throw new Error("You cannot edit your own platform access.");
+    }
+
+    const duplicateEmail = await transaction.platformAdmin.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+    if (duplicateEmail && duplicateEmail.id !== account.id) {
+      throw new Error("A platform account already uses this email address.");
     }
 
     let managerId: string | null = null;
@@ -314,6 +325,10 @@ export async function updatePlatformAccessAccount(
     const updated = await transaction.platformAdmin.update({
       where: { id: account.id },
       data: {
+        full_name: fullName,
+        email,
+        mobile_number: mobileNumber,
+        role: "ADMIN",
         team_role: teamRole,
         manager_id: managerId,
       },
@@ -325,8 +340,22 @@ export async function updatePlatformAccessAccount(
         entity_type: "PlatformAdmin",
         entity_id: account.id,
         details: {
-          before: { role: account.role, teamRole: account.team_role, managerId: account.manager_id },
-          after: { role: updated.role, teamRole: updated.team_role, managerId: updated.manager_id },
+          before: {
+            fullName: account.full_name,
+            email: account.email,
+            mobileNumber: account.mobile_number,
+            role: account.role,
+            teamRole: account.team_role,
+            managerId: account.manager_id,
+          },
+          after: {
+            fullName: updated.full_name,
+            email: updated.email,
+            mobileNumber: updated.mobile_number,
+            role: updated.role,
+            teamRole: updated.team_role,
+            managerId: updated.manager_id,
+          },
         },
       },
     });
@@ -334,7 +363,7 @@ export async function updatePlatformAccessAccount(
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
-export async function deletePlatformAccessAccount(accountId: string) {
+export async function deletePlatformAccessAccount(accountId: string, confirmationEmail: string) {
   const actor = await requirePlatformSessionAdmin();
   if (actor.team_role) {
     throw new Error("CMO and CTO team accounts cannot manage platform accounts.");
@@ -351,6 +380,7 @@ export async function deletePlatformAccessAccount(accountId: string) {
         where: { id: accountId },
         select: {
           id: true,
+          full_name: true,
           email: true,
           role: true,
           team_role: true,
@@ -369,6 +399,9 @@ export async function deletePlatformAccessAccount(accountId: string) {
     }
     if (actor.role === "ADMIN" && (!account.team_role || account.manager_id !== actor.id)) {
       throw new Error("You can only manage your own CMO and CTO team seats.");
+    }
+    if (confirmationEmail.trim().toLowerCase() !== account.email.toLowerCase()) {
+      throw new Error("Enter the account email exactly to confirm deletion.");
     }
     if (account.team_role === null) {
       const teamMembers = await transaction.platformAdmin.findMany({

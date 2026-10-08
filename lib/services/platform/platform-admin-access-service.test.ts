@@ -283,7 +283,7 @@ describe("platform account management permissions", () => {
     expect(updatePlatformAdminMock).not.toHaveBeenCalled();
   });
 
-  it("allows the Super Admin to change a team account's role without changing its profile with an audit trail", async () => {
+  it("allows the Super Admin to update a team account's role and details with an audit trail", async () => {
     requirePlatformSessionAdminMock.mockResolvedValue({
       id: "super-admin",
       role: "SUPER_ADMIN",
@@ -293,20 +293,30 @@ describe("platform account management permissions", () => {
       .mockResolvedValueOnce({ is_active: true })
       .mockResolvedValueOnce({
         id: "team-seat",
+        full_name: "Support",
+        email: "support@example.com",
+        mobile_number: "+919876543210",
         role: "ADMIN",
         team_role: "CTO",
         manager_id: "admin-1",
       })
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: "admin-1", role: "ADMIN", team_role: null, is_active: true })
       .mockResolvedValueOnce(null);
     updatePlatformAdminMock.mockResolvedValue({
       id: "team-seat",
+      full_name: "Sales Lead",
+      email: "sales@example.com",
+      mobile_number: "+919876543210",
       role: "ADMIN",
       team_role: "CMO",
       manager_id: "admin-1",
     });
 
     await updatePlatformAccessAccount("team-seat", {
+      fullName: "Sales Lead",
+      email: "sales@example.com",
+      mobileNumber: "+919876543210",
       kind: "CMO",
       managerId: "admin-1",
     });
@@ -314,6 +324,10 @@ describe("platform account management permissions", () => {
     expect(updatePlatformAdminMock).toHaveBeenCalledWith({
       where: { id: "team-seat" },
       data: {
+        full_name: "Sales Lead",
+        email: "sales@example.com",
+        mobile_number: "+919876543210",
+        role: "ADMIN",
         team_role: "CMO",
         manager_id: "admin-1",
       },
@@ -337,14 +351,21 @@ describe("platform account management permissions", () => {
       .mockResolvedValueOnce({ is_active: true })
       .mockResolvedValueOnce({
         id: "admin-account",
+        full_name: "Admin",
+        email: "admin@example.com",
+        mobile_number: "+919876543210",
         role: "ADMIN",
         team_role: null,
         manager_id: null,
       })
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: "manager-id", role: "ADMIN", team_role: null, is_active: true })
       .mockResolvedValueOnce({ id: "another-cmo" });
 
     await expect(updatePlatformAccessAccount("admin-account", {
+      fullName: "Admin",
+      email: "admin@example.com",
+      mobileNumber: "+919876543210",
       kind: "CMO",
       managerId: "manager-id",
     })).rejects.toThrow("This Admin already has a CMO team seat.");
@@ -362,10 +383,14 @@ describe("platform account management permissions", () => {
       .mockResolvedValueOnce({ is_active: true })
       .mockResolvedValueOnce({
         id: "admin-account",
+        full_name: "Admin",
+        email: "admin@example.com",
+        mobile_number: "+919876543210",
         role: "ADMIN",
         team_role: null,
         manager_id: null,
       })
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         id: "super-admin",
         role: "SUPER_ADMIN",
@@ -374,15 +399,27 @@ describe("platform account management permissions", () => {
       })
       .mockResolvedValueOnce(null);
 
-    await updatePlatformAccessAccount("admin-account", { kind: "CMO" });
+    await updatePlatformAccessAccount("admin-account", {
+      fullName: "Admin",
+      email: "admin@example.com",
+      mobileNumber: "+919876543210",
+      kind: "CMO",
+    });
 
     expect(updatePlatformAdminMock).toHaveBeenCalledWith({
       where: { id: "admin-account" },
-      data: { team_role: "CMO", manager_id: "super-admin" },
+      data: {
+        full_name: "Admin",
+        email: "admin@example.com",
+        mobile_number: "+919876543210",
+        role: "ADMIN",
+        team_role: "CMO",
+        manager_id: "super-admin",
+      },
     });
   });
 
-  it("deletes a team account and writes an audit record", async () => {
+  it("deletes a team account only after typed confirmation and writes an audit record", async () => {
     requirePlatformSessionAdminMock.mockResolvedValue({
       id: "super-admin",
       role: "SUPER_ADMIN",
@@ -399,7 +436,7 @@ describe("platform account management permissions", () => {
         manager_id: "admin-1",
       });
 
-    await deletePlatformAccessAccount("team-seat");
+    await deletePlatformAccessAccount("team-seat", " SUPPORT@example.com ");
 
     expect(createAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -431,7 +468,7 @@ describe("platform account management permissions", () => {
       { id: "cmo-1", team_role: "CMO", manager_id: "managed-admin" },
     ]);
 
-    await deletePlatformAccessAccount("managed-admin");
+    await deletePlatformAccessAccount("managed-admin", "manager@example.com");
 
     expect(updatePlatformAdminMock).toHaveBeenCalledWith({
       where: { id: "cmo-1" },
@@ -451,4 +488,26 @@ describe("platform account management permissions", () => {
     expect(deletePlatformAdminMock).toHaveBeenCalledWith({ where: { id: "managed-admin" } });
   });
 
+  it("rejects deletion when typed confirmation does not match the account email", async () => {
+    requirePlatformSessionAdminMock.mockResolvedValue({
+      id: "super-admin",
+      role: "SUPER_ADMIN",
+      team_role: null,
+    });
+    findPlatformAdminMock
+      .mockResolvedValueOnce({ is_active: true })
+      .mockResolvedValueOnce({
+        id: "team-seat",
+        full_name: "Support",
+        email: "support@example.com",
+        role: "ADMIN",
+        team_role: "CTO",
+        manager_id: "admin-1",
+      });
+
+    await expect(deletePlatformAccessAccount("team-seat", "wrong@example.com"))
+      .rejects.toThrow("Enter the account email exactly to confirm deletion.");
+
+    expect(deletePlatformAdminMock).not.toHaveBeenCalled();
+  });
 });

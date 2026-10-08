@@ -244,6 +244,8 @@ function LeadActivityInfo({ label, value }: { label: string; value: string }) {
 export default function PlatformLeadsWorkspace({
   leads: initialLeads,
   appLogins,
+  selectedLead,
+  selectedLeadTickets,
 }: {
   leads: PlatformLead[];
   appLogins: Array<{
@@ -257,6 +259,8 @@ export default function PlatformLeadsWorkspace({
     stage: string;
     last_login_at: string;
   }>;
+  selectedLead: PlatformLead | null;
+  selectedLeadTickets: LeadTicket[];
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -273,8 +277,8 @@ export default function PlatformLeadsWorkspace({
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [newLead, setNewLead] = useState(false);
   const selectedLeadId = leadIdFromUrl;
-  const [leadTickets, setLeadTickets] = useState<LeadTicket[]>([]);
-  const [ticketsLoadedForLeadId, setTicketsLoadedForLeadId] = useState<string | null>(null);
+  const [leadTickets, setLeadTickets] = useState<LeadTicket[]>(selectedLeadTickets);
+  const [ticketsLoadedForLeadId, setTicketsLoadedForLeadId] = useState<string | null>(leadIdFromUrl ?? selectedLead?.id ?? null);
   const [ticketLoadFailure, setTicketLoadFailure] = useState<{ leadId: string; error: string } | null>(null);
   const [stageFilter, setStageFilter] = useState("ALL");
   const [verifiedLeadTab, setVerifiedLeadTab] = useState<VerifiedLeadTab | null>(null);

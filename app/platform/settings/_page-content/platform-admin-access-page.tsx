@@ -7,7 +7,6 @@ import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Select from "@/components/ui/Select";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
-import PlatformAccessDeleteForm from "@/app/platform/settings/_page-content/platform-access-delete-form";
 import {
   createPlatformAccessAccount,
   deletePlatformAccessAccount,
@@ -69,6 +68,9 @@ export default async function PlatformAdminAccessPage({
     }
     try {
       await updatePlatformAccessAccount(accountId, {
+        fullName: String(formData.get("fullName") ?? ""),
+        email: String(formData.get("email") ?? ""),
+        mobileNumber: String(formData.get("mobileNumber") ?? ""),
         kind,
         managerId: String(formData.get("managerId") ?? ""),
       });
@@ -81,7 +83,10 @@ export default async function PlatformAdminAccessPage({
   async function deleteAccount(formData: FormData) {
     "use server";
     try {
-      await deletePlatformAccessAccount(String(formData.get("accountId") ?? ""));
+      await deletePlatformAccessAccount(
+        String(formData.get("accountId") ?? ""),
+        String(formData.get("confirmationEmail") ?? ""),
+      );
     } catch (error) {
       redirect(`/platform/settings/access?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to delete platform access.")}`);
     }
@@ -94,8 +99,8 @@ export default async function PlatformAdminAccessPage({
         <header>
           <p className="erp-eyebrow">Platform Settings</p>
           <h1 className="mt-1 text-2xl font-bold text-slate-900">Platform access</h1>
-          <p className="mt-1 text-sm text-slate-600">
-            Change account roles, status, or remove platform access.
+          <p className="mt-2 max-w-3xl text-sm text-slate-600">
+            Super Admins can edit or delete platform Admin, CMO, and CTO access. Admins can manage only their own CMO and CTO team seats. Account changes are audited; deleting a login preserves its audit and ticket history.
           </p>
         </header>
 
@@ -135,7 +140,7 @@ export default async function PlatformAdminAccessPage({
               <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-3 py-2 font-semibold">Account</th>
-                  <th className="px-3 py-2 font-semibold">Role</th>
+                  <th className="px-3 py-2 font-semibold">Edit profile &amp; access</th>
                   <th className="px-3 py-2 font-semibold">Status</th>
                   <th className="px-3 py-2 text-right font-semibold">Actions</th>
                 </tr>
@@ -148,9 +153,32 @@ export default async function PlatformAdminAccessPage({
                       <p className="text-xs text-slate-500">{account.email} · {account.mobile_number ?? "No mobile"} · Last sign-in: {account.last_login_at?.toLocaleString() ?? "Never"}</p>
                     </td>
                     <td className="px-3 py-2">
-                      <form action={editAccount} className="flex min-w-max items-center gap-1.5">
+                      <form action={editAccount} className="grid min-w-[680px] grid-cols-2 gap-2 xl:grid-cols-4">
                         <input type="hidden" name="accountId" value={account.id} />
-                        {account.manager_id && <input type="hidden" name="managerId" value={account.manager_id} />}
+                        <Input
+                          aria-label={`${account.full_name} full name`}
+                          name="fullName"
+                          required
+                          minLength={2}
+                          maxLength={255}
+                          defaultValue={account.full_name}
+                        />
+                        <Input
+                          aria-label={`${account.full_name} email`}
+                          name="email"
+                          type="email"
+                          required
+                          maxLength={255}
+                          defaultValue={account.email}
+                        />
+                        <Input
+                          aria-label={`${account.full_name} mobile number`}
+                          name="mobileNumber"
+                          type="tel"
+                          required
+                          pattern="^\\+?[1-9]\\d{7,14}$"
+                          defaultValue={account.mobile_number ?? ""}
+                        />
                         <Select
                           aria-label={`${account.full_name} access type`}
                           name="kind"
@@ -171,6 +199,23 @@ export default async function PlatformAdminAccessPage({
                               .map((role) => ({ label: role, value: role })),
                           ]}
                         />
+                        {mayCreatePlatformAdmin && (
+                          <Select
+                            aria-label={`${account.full_name} managing Admin`}
+                            name="managerId"
+                            defaultValue={account.manager_id ?? ""}
+                            options={[
+                              { label: "Super Admin", value: actor.id },
+                              { label: "Select Admin", value: "" },
+                              ...accounts
+                                .filter((candidate) => candidate.id !== account.id && candidate.team_role === null)
+                                .map((candidate) => ({
+                                  label: `${candidate.full_name}${candidate.is_active ? "" : " (inactive)"}`,
+                                  value: candidate.id,
+                                })),
+                            ]}
+                          />
+                        )}
                         <Button type="submit" size="sm">Save</Button>
                       </form>
                     </td>
@@ -189,11 +234,43 @@ export default async function PlatformAdminAccessPage({
                           </Button>
                         </form>
                         {mayCreatePlatformAdmin && (
-                          <PlatformAccessDeleteForm
-                            accountId={account.id}
-                            accountName={account.full_name}
-                            deleteAction={deleteAccount}
-                          />
+                          <form action={deleteAccount} className="flex items-end gap-2">
+                            <input type="hidden" name="accountId" value={account.id} />
+                            <Input
+                              aria-label={`Type ${account.email} to confirm deletion`}
+                              name="confirmationEmail"
+                              type="email"
+                              required
+                              placeholder="Confirm account email"
+                              className="max-w-48"
+                            />
+                            <Button type="submit" size="sm" variant="danger">Delete</Button>
+                          </form>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <div className="flex min-w-48 flex-col items-end gap-2">
+                        <form action={updateAccountStatus}>
+                          <input type="hidden" name="accountId" value={account.id} />
+                          <input type="hidden" name="isActive" value={String(!account.is_active)} />
+                          <Button type="submit" size="sm" variant="secondary">
+                            {account.is_active ? "Deactivate" : "Reactivate"}
+                          </Button>
+                        </form>
+                        {mayCreatePlatformAdmin && (
+                          <form action={deleteAccount} className="flex items-end gap-2">
+                            <input type="hidden" name="accountId" value={account.id} />
+                            <Input
+                              aria-label={`Type ${account.email} to confirm deletion`}
+                              name="confirmationEmail"
+                              type="email"
+                              required
+                              placeholder="Confirm account email"
+                              className="max-w-48"
+                            />
+                            <Button type="submit" size="sm" variant="danger">Delete</Button>
+                          </form>
                         )}
                       </div>
                     </td>
