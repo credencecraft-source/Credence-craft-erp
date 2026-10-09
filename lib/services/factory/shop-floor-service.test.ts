@@ -201,6 +201,7 @@ describe("shop floor service", () => {
       _sum: { quantity: true },
       _count: { _all: true },
     });
+
     expect(mocks.shopFloorProcessLogCreateManyAndReturn).toHaveBeenCalledTimes(1);
     expect(board.processes).toEqual([{
       id: "cutting",
@@ -216,6 +217,27 @@ describe("shop floor service", () => {
         TRANSFERRED: 0,
       },
     }]);
+  });
+
+  it("scopes process-board reads to the selected process", async () => {
+    mocks.factoryWorkOrderFindMany.mockResolvedValue([]);
+
+    await listShopFloorBoard("org-1", undefined, "user-1", "cutting");
+
+    expect(mocks.factoryWorkOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "org-1",
+        processController: {
+          is: {
+            processes: {
+              some: {
+                process_name: { equals: "cutting", mode: "insensitive" },
+              },
+            },
+          },
+        },
+      },
+    }));
   });
 
   it("assigns available pool quantity into a batch and reduces the unassigned pool", async () => {

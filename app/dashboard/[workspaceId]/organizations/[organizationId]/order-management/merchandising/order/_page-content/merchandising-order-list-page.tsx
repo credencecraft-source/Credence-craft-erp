@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, startTransition, useCallback, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
@@ -82,20 +82,32 @@ const dsStatusOptions = [
 
 const ORDERS_PAGE_SIZE = 25;
 
-export default function MerchandisingOrdersPage() {
-  const params = useParams<{
-    workspaceId: string;
-    organizationId: string;
-  }>();
+function renderOrderCell(fieldKey: string, order: OrderRecord) {
+  const value = order[fieldKey as keyof OrderRecord];
+  if (fieldKey === "sourceStatus" && value === "DEMO") return "Dummy Data";
+  if (fieldKey === "article" && order.articleCode) {
+    return `${order.articleCode} ${order.article ?? ""}`.trim();
+  }
+  return value !== null && value !== undefined ? String(value) : "";
+}
 
+function getOrderRowId(order: OrderRecord) {
+  return order.id;
+}
+
+export default function MerchandisingOrdersPage({
+  workspaceId,
+  organizationId,
+  initialPage,
+}: {
+  workspaceId: string;
+  organizationId: string;
+  initialPage: { orders: OrderRecord[]; nextCursor: string | null };
+}) {
   const router = useRouter();
-
-  const workspaceId = params?.workspaceId ?? "demo";
-  const organizationId = params?.organizationId ?? "demo-org";
-
-  const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
+  const [orders, setOrders] = useState<OrderRecord[]>(initialPage.orders);
+  const [nextCursor, setNextCursor] = useState<string | null>(initialPage.nextCursor);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [retryCursor, setRetryCursor] = useState<string | null>(null);
@@ -128,6 +140,7 @@ export default function MerchandisingOrdersPage() {
     reportFilterFields.map((field) => field.key),
   );
   const lastLoadedAt = useRef(0);
+  const skipInitialStatusFetch = useRef(true);
 
   const loadOrders = useCallback(async (
     signal?: AbortSignal,
@@ -173,17 +186,18 @@ export default function MerchandisingOrdersPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const initialLoad = window.setTimeout(() => {
+    if (skipInitialStatusFetch.current) {
+      skipInitialStatusFetch.current = false;
+      lastLoadedAt.current = Date.now();
+    } else {
       void loadOrders(controller.signal, true);
-    }, 0);
-
+    }
     const handleFocus = () => {
       void loadOrders(undefined, false);
     };
 
     window.addEventListener("focus", handleFocus);
     return () => {
-      window.clearTimeout(initialLoad);
       controller.abort();
       window.removeEventListener("focus", handleFocus);
     };
@@ -196,15 +210,21 @@ export default function MerchandisingOrdersPage() {
     void loadOrders(undefined, true, nextCursor, true);
   };
 
-  const handleSelectOrder = (orderId: string) => {
+  const handleSelectOrder = useCallback((orderId: string) => {
     startTransition(() => {
       router.push(
         `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/${orderId}`,
       );
     });
-  };
+  }, [organizationId, router, workspaceId]);
 
-  const handleToggleOrderSelection = (orderId: string, checked: boolean) => {
+  const handleStatusChange = useCallback((status: string) => {
+    setOrders([]);
+    setNextCursor(null);
+    setSelectedStatus(status as (typeof dsStatusOptions)[number]);
+  }, []);
+
+  const handleToggleOrderSelection = useCallback((orderId: string, checked: boolean) => {
     setSelectedOrderIds((current) => {
       if (checked) {
         if (current.includes(orderId)) return current;
@@ -212,17 +232,32 @@ export default function MerchandisingOrdersPage() {
       }
       return current.filter((id) => id !== orderId);
     });
-  };
+  }, []);
 
-  const handleToggleSelectAll = (checked: boolean) => {
+  const handleToggleSelectAll = useCallback((checked: boolean) => {
     if (checked) {
       setSelectedOrderIds(filteredOrders.map((order) => order.id));
     } else {
       setSelectedOrderIds([]);
     }
-  };
+  }, [filteredOrders]);
 
-  const handleBulkUpload = async () => {
+  const handleReportFieldsChange = useCallback((fields: (keyof OrderRecord | string)[]) => {
+    setVisibleReportFields(fields as FilterableOrderField[]);
+  }, []);
+
+  const handleReportRowClick = useCallback((rowIdOrName: string) => {
+    const matchedOrder = filteredOrders.find(
+      (order) => order.id === rowIdOrName || order.orderNo === rowIdOrName,
+    );
+    handleSelectOrder(matchedOrder?.id ?? rowIdOrName);
+  }, [filteredOrders, handleSelectOrder]);
+
+  const handleOpenDeleteConfirmation = useCallback(() => {
+    setShowDeleteConfirmation(true);
+  }, []);
+
+  const handleBulkUpload = useCallback(async () => {
     setBulkWorkbookError("");
     if (selectedOrderIds.length < 2) {
       setBulkWorkbookError("Select at least two orders to download the bulk upload workbook.");
@@ -270,17 +305,17 @@ export default function MerchandisingOrdersPage() {
     } finally {
       setIsPreparingBulkWorkbook(false);
     }
-  };
+  }, [organizationId, orders, selectedOrderIds, workspaceId]);
 
-  const handleNewOrder = () => {
+  const handleNewOrder = useCallback(() => {
     startTransition(() => {
       router.push(
         `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/create`,
       );
     });
-  };
+  }, [organizationId, router, workspaceId]);
 
-  const handleVariantOrder = async (orderId: string) => {
+  const handleVariantOrder = useCallback(async (orderId: string) => {
     if (isCreatingVariantRef.current) return;
     setVariantSuccessMessage("");
     setVariantCreateError("");
@@ -342,7 +377,7 @@ export default function MerchandisingOrdersPage() {
         setIsLoadingVariant(false);
       }
     }
-  };
+  }, [organizationId, orders]);
 
   const closeVariantDialog = () => {
     if (isCreatingVariantRef.current) return;
@@ -471,40 +506,25 @@ export default function MerchandisingOrdersPage() {
           records={filteredOrders}
           fields={reportFilterFields}
           visibleFields={visibleReportFields}
-          onVisibleFieldsChange={(fields) => setVisibleReportFields(fields as FilterableOrderField[])}
+          onVisibleFieldsChange={handleReportFieldsChange}
+          isLoading={isLoadingOrders}
           storageKey={`credence-craft-orders-${organizationId}`}
-          rowIdSelector={(order) => order.id}
+          rowIdSelector={getOrderRowId}
           selectedIds={selectedOrderIds}
-          onRowClick={(rowIdOrName) => {
-            const matchedOrder = filteredOrders.find(
-              (o) => o.id === rowIdOrName || o.orderNo === rowIdOrName
-            );
-            if (matchedOrder) {
-              handleSelectOrder(matchedOrder.id);
-            } else {
-              handleSelectOrder(rowIdOrName);
-            }
-          }}
+          onRowClick={handleReportRowClick}
           onToggleSelectAll={handleToggleSelectAll}
           onToggleRowSelection={handleToggleOrderSelection}
           statusOptions={dsStatusOptions}
           selectedStatus={selectedStatus}
-          onStatusChange={(status) => setSelectedStatus(status as (typeof dsStatusOptions)[number])}
+          onStatusChange={handleStatusChange}
           onNewOrder={handleNewOrder}
-          onDeleteSelected={() => setShowDeleteConfirmation(true)}
-          onBulkUpload={() => void handleBulkUpload()}
+          onDeleteSelected={handleOpenDeleteConfirmation}
+          onBulkUpload={handleBulkUpload}
           bulkUploadLabel="Bulk Upload"
           bulkUploadDisabled={isPreparingBulkWorkbook}
           onRowAction={handleVariantOrder}
           rowActionLabel="Variant"
-          renderCell={(fieldKey, order) => {
-            const val = order[fieldKey as keyof OrderRecord];
-            if (fieldKey === "sourceStatus" && val === "DEMO") return "Dummy Data";
-            if (fieldKey === "article" && order.articleCode) {
-              return `${order.articleCode} ${order.article ?? ""}`.trim();
-            }
-            return val !== null && val !== undefined ? String(val) : "";
-          }}
+          renderCell={renderOrderCell}
         />
         {nextCursor && !loadError && (
           <div className="mt-3 flex justify-center">

@@ -5,10 +5,12 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 import { calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
 import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
+import Skeleton from "@/components/ui/Skeleton";
 import Tabs from "@/components/ui/Tabs";
 import OrderDetailsTab from "./components/OrderDetailsTab";
 import { getProcessRows } from "./components/process-tab-state";
@@ -214,16 +216,10 @@ export default function MerchandisingOrderDetailsPage() {
     }
   }, []);
 
-  // Defer master lookups until the page is actually ready to use them, avoiding the
-  // repeated focus-driven refetch cycle that was making the order creation flow feel slow.
   useEffect(() => {
     if (!organizationId || hasLoadedLookupsRef.current) return;
 
-    const timeoutId = window.setTimeout(() => {
-      void fetchMasterData(organizationId);
-    }, 150);
-
-    return () => window.clearTimeout(timeoutId);
+    void fetchMasterData(organizationId);
   }, [fetchMasterData, organizationId]);
 
   useEffect(() => {
@@ -715,9 +711,11 @@ export default function MerchandisingOrderDetailsPage() {
   ];
 
   const tabContentFallback = (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
-      Loading order section...
-    </div>
+    <Card className="min-h-64 space-y-4" role="status" aria-label="Loading order section">
+      <Skeleton className="h-5 w-1/3" />
+      <Skeleton className="h-4 w-2/3" />
+      <Skeleton className="h-32 w-full" />
+    </Card>
   );
 
   const renderActiveTabContent = () => {

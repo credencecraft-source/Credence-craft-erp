@@ -48,6 +48,19 @@ const NAV_SECTIONS: Array<{ title: string; items: NavigationItem[] }> = [
     ],
   },
   {
+    title: "Segments",
+    items: [
+      { label: "Segments", href: "/platform/segments" },
+      { label: "Tags", href: "/platform/tags" },
+    ],
+  },
+  {
+    title: "Module Master",
+    items: [
+      { label: "Business Types", href: "/platform/business-types" },
+    ],
+  },
+  {
     title: "Subscriptions",
     items: [
       { label: "Subscriptions", href: "/platform/subscriptions" },
@@ -77,14 +90,18 @@ export default function PlatformRootLayoutClient({
   isSuperAdminView,
   canManageAccounts,
   canAccessConfiguration,
-  canAccessLeads,
+  canAccessLeadsAndSubscriptions,
+  canAccessWorkspace,
+  canAccessSupport,
   attentionCounts,
 }: {
   accessLabel: string;
   isSuperAdminView: boolean;
   canManageAccounts: boolean;
   canAccessConfiguration: boolean;
-  canAccessLeads: boolean;
+  canAccessLeadsAndSubscriptions: boolean;
+  canAccessWorkspace: boolean;
+  canAccessSupport: boolean;
   attentionCounts: {
     openTickets: number;
     pendingOrganizations: number;
@@ -117,10 +134,12 @@ export default function PlatformRootLayoutClient({
         <div key={item.href}>
           <Link
             href={item.href}
+            aria-label={item.label}
             aria-current={isCurrentPage ? "page" : undefined}
+            title={item.label}
             className={`flex items-center gap-3 px-2 py-2 text-sm font-normal transition-colors ${
               isCurrentPage
-                ? "rounded-md bg-emerald-600 font-medium text-white"
+                ? "rounded-md bg-[var(--erp-brand)] font-medium text-white"
                 : "text-slate-200 hover:rounded-md hover:bg-slate-800 hover:text-white"
             }`}
           >
@@ -146,8 +165,16 @@ export default function PlatformRootLayoutClient({
     });
 
   const visibleSections = NAV_SECTIONS.filter((section) => {
-    if (section.title === "Leads") {
-      return canAccessLeads;
+    if (section.title === "Support") {
+      return canAccessSupport;
+    }
+
+    if (section.title === "Workspace") {
+      return canAccessWorkspace;
+    }
+
+    if (["Leads", "Subscriptions"].includes(section.title)) {
+      return canAccessLeadsAndSubscriptions;
     }
 
     return (
@@ -155,14 +182,14 @@ export default function PlatformRootLayoutClient({
       (isSuperAdminView && section.title === "Settings"
         ? true
         : canAccessConfiguration ||
-          !["Databases", "Plan", "Settings"].includes(section.title))
+          !["Databases", "Plan", "Segments", "Module Master", "Settings"].includes(section.title))
     );
   });
 
   return (
     <Sidebar className="group erp-platform-shell border-slate-800 bg-slate-950 text-slate-200 shadow-none">
-      <div className="-mx-4 -mt-4 mb-3 flex items-center gap-2.5 border-b border-slate-800 p-2.5">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white">
+      <div className="mb-3 flex items-center gap-2.5 border-b border-slate-800 p-2.5">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--erp-brand)] text-white">
           <Building2 size={16} aria-hidden="true" />
         </div>
 
@@ -172,7 +199,7 @@ export default function PlatformRootLayoutClient({
         </div>
       </div>
 
-      <nav className="-mx-2 space-y-1">
+      <nav className="space-y-1">
         {visibleSections.map((section) => {
           const items = section.items
             .filter((item) => item.href !== "/platform/settings/access" || canManageAccounts)
@@ -188,6 +215,8 @@ export default function PlatformRootLayoutClient({
                 onClick={() => toggleSection(section.title, isOpen)}
                 variant="ghost"
                 aria-expanded={isOpen}
+                aria-label={section.title}
+                title={section.title}
                 className="flex w-full items-center justify-between rounded-md border-0 px-2 py-2 text-slate-300 transition-colors hover:bg-slate-800 hover:text-white focus-visible:border-0 focus-visible:bg-slate-800 focus-visible:ring-0 focus-visible:ring-offset-0"
                 type="button"
               >

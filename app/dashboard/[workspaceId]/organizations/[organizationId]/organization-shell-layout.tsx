@@ -164,18 +164,21 @@ export default async function OrganizationShellLayout({
     }
   }
 
-  if (currentPath.includes("/settings")) {
-    const requiredPermission = currentPath.includes("/settings/roles")
-      ? "MANAGE_ROLES"
-      : currentPath.includes("/settings/users")
-        ? "MANAGE_USERS"
-        : currentPath.includes("/settings/reports")
-          ? "VIEW_REPORTS"
-          : currentPath.includes("/settings/master-data")
-            ? "MANAGE_MASTER_DATA"
-            : "ORGANIZATION_SETTINGS";
-    await requireOrganizationPermission(user.id, organizationId, requiredPermission);
-  }
+  const permissionCheck = currentPath.includes("/settings")
+    ? requireOrganizationPermission(
+        user.id,
+        organizationId,
+        currentPath.includes("/settings/roles")
+          ? "MANAGE_ROLES"
+          : currentPath.includes("/settings/users")
+            ? "MANAGE_USERS"
+            : currentPath.includes("/settings/reports")
+              ? "VIEW_REPORTS"
+              : currentPath.includes("/settings/master-data")
+                ? "MANAGE_MASTER_DATA"
+                : "ORGANIZATION_SETTINGS",
+      )
+    : Promise.resolve();
 
   const [scopedRestrictions, activeBusinessTypes, dummyDataStatus] = await Promise.all([
     validateOrganizationAccess(organization, currentPath, trialIsActive),
@@ -187,6 +190,7 @@ export default async function OrganizationShellLayout({
       orderCount: 0,
       masterCount: 0,
     })),
+    permissionCheck,
   ]);
 
   const businessTypes = activeBusinessTypes.map((businessType) => ({

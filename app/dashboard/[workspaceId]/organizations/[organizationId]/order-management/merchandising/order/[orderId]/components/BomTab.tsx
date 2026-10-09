@@ -3,8 +3,7 @@
 import React, { useMemo, useState } from "react";
 import Image from "next/image";
 import { Boxes, FileDown, Plus } from "lucide-react";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import type { jsPDF as JsPdf } from "jspdf";
 import { calculateBomRows, calculateFinishedGoodsRows, splitBomSizes } from "@/lib/services/orders/order-quantity-calculations";
 import { findDuplicateBomMaterialNames, getBomMaterialIdentity } from "@/lib/services/orders/bom-row-validation";
 import type { OrderFormState, BomEditorRow } from "./order-form-types";
@@ -111,6 +110,8 @@ export default function BomTab({
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const [sizePickerRowIndex, setSizePickerRowIndex] = useState<number | null>(null);
   const [sizeSearch, setSizeSearch] = useState("");
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState("");
   const isAllCategoryView = selectedBomCategory === "All";
 
   const categorySet = new Set<string>(["All"]);
@@ -406,8 +407,16 @@ export default function BomTab({
     );
   };
 
-  const downloadBomPdf = () => {
-    const document = new jsPDF({ unit: "mm", format: "a4" });
+  const downloadBomPdf = async () => {
+    if (isDownloadingPdf) return;
+    setIsDownloadingPdf(true);
+    setPdfError("");
+    try {
+      const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+        import("jspdf"),
+        import("jspdf-autotable"),
+      ]);
+      const document = new jsPDF({ unit: "mm", format: "a4" });
     const pageWidth = document.internal.pageSize.getWidth();
     const margin = 14;
     const value = (input: unknown) => String(input ?? "").trim() || "-";
@@ -451,7 +460,7 @@ export default function BomTab({
       didParseCell: (data) => { data.cell.styles.fontStyle = "normal"; },
     });
 
-    let nextY = (document as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 64;
+    let nextY = (document as JsPdf & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 64;
     const sectionTitle = (title: string) => {
       document.setFillColor(241, 245, 249);
       document.roundedRect(margin, nextY + 5, pageWidth - margin * 2, 9, 1.5, 1.5, "F");
@@ -476,7 +485,7 @@ export default function BomTab({
       styles: { lineColor: [226, 232, 240], lineWidth: 0.2 },
       columnStyles: { 0: { cellWidth: 54 }, 1: { cellWidth: 32 }, 2: { cellWidth: 30 }, 3: { cellWidth: 32 }, 4: { cellWidth: 34 } },
     });
-    nextY = (document as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? nextY + 20;
+    nextY = (document as JsPdf & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? nextY + 20;
 
     sectionTitle("03  Bill of Materials");
     autoTable(document, {
@@ -503,7 +512,12 @@ export default function BomTab({
       document.text(value(form?.orderNo), pageWidth - margin, document.internal.pageSize.getHeight() - 8, { align: "right" });
     }
 
-    document.save(`BOM-${filePart}.pdf`);
+      document.save(`BOM-${filePart}.pdf`);
+    } catch (error) {
+      setPdfError(error instanceof Error ? error.message : "Unable to create the BOM PDF.");
+    } finally {
+      setIsDownloadingPdf(false);
+    }
   };
 
   return (
@@ -567,9 +581,16 @@ export default function BomTab({
                 checked={showAdvancedFields}
                 onChange={(event) => setShowAdvancedFields(event.target.checked)}
               />
-              <Button type="button" variant="secondary" size="sm" onClick={downloadBomPdf} className="gap-1.5">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={downloadBomPdf}
+                disabled={isDownloadingPdf}
+                className="gap-1.5"
+              >
                 <FileDown className="h-4 w-4" aria-hidden="true" />
-                Download PDF
+                {isDownloadingPdf ? "Preparing PDF..." : "Download PDF"}
               </Button>
               <Button
                 size="sm"
@@ -582,6 +603,11 @@ export default function BomTab({
                 Add row
               </Button>
             </div>
+            {pdfError && (
+              <p role="alert" className="text-sm text-[var(--erp-danger)]">
+                {pdfError}
+              </p>
+            )}
           </div>
 
           {selectedBomCategory !== "All" && getFilteredSubCategoryOptions(selectedBomCategory).length > 0 ? (

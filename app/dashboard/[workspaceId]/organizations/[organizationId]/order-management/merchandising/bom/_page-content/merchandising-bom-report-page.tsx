@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState, startTransition, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useEffect, useState, startTransition, useCallback } from "react";
+import { useRouter } from "next/navigation";
 
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -31,6 +31,11 @@ type BomReportRow = {
   itemWiseExcessPercentage?: number | string | null;
   itemWiseExcessQty?: number | string | null;
   totalRequiredQty?: number | string | null;
+};
+
+type BomReportPage = {
+  bomItems: BomReportRow[];
+  nextCursor: string | null;
 };
 
 type FilterableBomField =
@@ -80,16 +85,30 @@ const reportFilterFields: Array<{ key: FilterableBomField; label: string }> = [
   { key: "totalRequiredQty", label: "Total Required Qty" },
 ];
 
-export default function MerchandisingBomReportPage() {
-  const params = useParams<{ workspaceId: string; organizationId: string }>();
+function getBomRowId(row: BomReportRow) {
+  return row.id;
+}
+
+function renderBomCell(fieldKey: string, row: BomReportRow) {
+  const value = row[fieldKey as keyof BomReportRow];
+  return value !== null && value !== undefined ? String(value) : "";
+}
+
+export default function MerchandisingBomReportPage({
+  organizationId,
+  workspaceId,
+  initialPage,
+}: {
+  organizationId: string;
+  workspaceId: string;
+  initialPage: BomReportPage;
+}) {
   const router = useRouter();
-
-  const workspaceId = params?.workspaceId ?? "demo";
-  const organizationId = params?.organizationId ?? "demo-org";
-
-  const [bomItems, setBomItems] = useState<BomReportRow[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [bomItems, setBomItems] = useState(initialPage.bomItems);
+  const [nextCursor, setNextCursor] = useState<string | null>(initialPage.nextCursor);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [visibleReportFields, setVisibleReportFields] = useState<FilterableBomField[]>(
     reportFilterFields.map((field) => field.key),
@@ -97,41 +116,40 @@ export default function MerchandisingBomReportPage() {
 
   const loadBomItems = useCallback(async (cursor?: string) => {
     try {
+      setLoadError(null);
       if (cursor) setLoadingMore(true);
+      else setRefreshing(true);
       const response = await fetch(
         `/api/orders/bom?organizationId=${encodeURIComponent(organizationId)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         { cache: "no-store" },
       );
-      const data = await response.json();
+      const data = await response.json() as BomReportPage;
+      if (!response.ok) throw new Error("Unable to load BOM report. Please try again.");
       setBomItems((current) => cursor ? [...current, ...(data?.bomItems ?? [])] : (data?.bomItems ?? []));
       setNextCursor(data?.nextCursor ?? null);
     } catch (error) {
       console.error("Unable to load BOM report", error);
+      setLoadError("Unable to load BOM report. Please try again.");
     } finally {
+      setRefreshing(false);
       setLoadingMore(false);
     }
   }, [organizationId]);
 
   useEffect(() => {
-    let active = true;
-    void Promise.resolve().then(() => {
-      if (active) void loadBomItems();
-    });
-
     const handleFocus = () => {
-      loadBomItems();
+      void loadBomItems();
     };
 
     window.addEventListener("focus", handleFocus);
     return () => {
-      active = false;
       window.removeEventListener("focus", handleFocus);
     };
   }, [loadBomItems]);
 
-  const records = useMemo(() => bomItems, [bomItems]);
+  const records = bomItems;
 
-  const handleToggleSelection = (rowId: string, checked: boolean) => {
+  const handleToggleSelection = useCallback((rowId: string, checked: boolean) => {
     setSelectedIds((current) => {
       if (checked) {
         if (current.includes(rowId)) return current;
@@ -139,19 +157,28 @@ export default function MerchandisingBomReportPage() {
       }
       return current.filter((id) => id !== rowId);
     });
-  };
+  }, []);
 
-  const handleToggleSelectAll = (checked: boolean) => {
+  const handleToggleSelectAll = useCallback((checked: boolean) => {
     setSelectedIds(checked ? records.map((row) => row.id) : []);
-  };
+  }, [records]);
 
-  const openOrder = (row: BomReportRow) => {
+  const openOrder = useCallback((row: BomReportRow) => {
     startTransition(() => {
       router.push(
         `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/${row.orderId}`,
       );
     });
-  };
+  }, [organizationId, router, workspaceId]);
+
+  const handleRowClick = useCallback((rowId: string) => {
+    const matched = records.find((row) => row.id === rowId);
+    if (matched) openOrder(matched);
+  }, [openOrder, records]);
+
+  const handleVisibleFieldsChange = useCallback((fields: (keyof BomReportRow | string)[]) => {
+    setVisibleReportFields(fields as FilterableBomField[]);
+  }, []);
 
   return (
     <div className="space-y-3 text-[11px]">
@@ -159,31 +186,27 @@ export default function MerchandisingBomReportPage() {
         <ReportGrid
           title="BOM Report"
           records={records}
+          isLoading={refreshing}
           fields={reportFilterFields}
           visibleFields={visibleReportFields}
-          onVisibleFieldsChange={(fields) => setVisibleReportFields(fields as FilterableBomField[])}
+          onVisibleFieldsChange={handleVisibleFieldsChange}
           storageKey={`credence-craft-bom-${organizationId}`}
-          rowIdSelector={(row) => row.id}
+          rowIdSelector={getBomRowId}
           selectedIds={selectedIds}
-          onRowClick={(rowId) => {
-            const matched = records.find((row) => row.id === rowId);
-            if (matched) openOrder(matched);
-          }}
+          onRowClick={handleRowClick}
           onToggleSelectAll={handleToggleSelectAll}
           onToggleRowSelection={handleToggleSelection}
-          renderCell={(fieldKey, row) => {
-            const val = row[fieldKey as keyof BomReportRow];
-            return val !== null && val !== undefined ? String(val) : "";
-          }}
+          renderCell={renderBomCell}
         />
       </Card>
+      {loadError && <p role="alert" aria-live="polite" className="text-sm">{loadError}</p>}
       {nextCursor && (
         <Button
           variant="secondary"
           size="sm"
           type="button"
           onClick={() => void loadBomItems(nextCursor)}
-          disabled={loadingMore}
+          disabled={loadingMore || refreshing}
           className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50"
         >
           {loadingMore ? "Loading..." : "Load more BOM rows"}

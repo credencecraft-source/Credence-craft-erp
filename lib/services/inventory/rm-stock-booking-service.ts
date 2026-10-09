@@ -322,5 +322,9 @@ export async function createRawMaterialStockBookings(input: {
       data: createdRows.map((row) => ({ ...row, grouped_purchase_order_id: groupedPurchaseOrder.id })),
     });
     return { bookedLines: result.count, groupedPurchaseOrderId: groupedPurchaseOrder.id };
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 10_000,
+    timeout: 30_000,
+  });
 }

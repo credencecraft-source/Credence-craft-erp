@@ -12,6 +12,7 @@ import {
 } from "@/lib/auth/platform-session-manager";
 import PlatformRootLayoutClient from "./_page-content/platform-root-layout";
 import PlatformViewSelector from "./_page-content/platform-view-selector";
+import { getPlatformNavigationAccess } from "@/lib/auth/platform-navigation-access";
 import { getPlatformSupportAttentionCounts } from "@/lib/services/organizations/support-ticket-service";
 
 export default async function PlatformRootLayout({
@@ -38,6 +39,7 @@ export default async function PlatformRootLayout({
         : "Admin";
   const mobileNumber = admin.mobile_number ?? "Mobile not set";
   const contactDetails = `${admin.full_name} - ${admin.email} - ${mobileNumber}`;
+  const navigationAccess = getPlatformNavigationAccess(admin.team_role);
 
   async function logoutAction() {
     "use server";
@@ -56,13 +58,13 @@ export default async function PlatformRootLayout({
   }
 
   return (
-    <div className="erp-platform-shell flex h-dvh w-full min-w-0 max-w-full flex-col overflow-hidden bg-slate-50">
-      <div className="flex min-h-0 flex-1 flex-col">
+    <div className="erp-platform-shell flex h-dvh w-dvw min-w-0 max-w-full flex-col overflow-hidden bg-slate-50">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Navbar
           title={
             <div className="flex min-w-0 items-center gap-2 sm:gap-3">
               <h1 className="shrink-0 text-base font-bold tracking-tight text-slate-900 sm:text-lg">Platform</h1>
-              <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-800 sm:text-xs">
+              <span className="shrink-0 rounded-full border border-[var(--erp-brand-soft)] bg-[var(--erp-brand-soft)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--erp-brand)] sm:text-xs">
                 {roleLabel}
               </span>
               <p className="min-w-0 truncate text-[10px] font-medium text-slate-500 sm:text-xs" title={contactDetails}>
@@ -73,7 +75,7 @@ export default async function PlatformRootLayout({
         >
           <Link
             href="/platform/organisations"
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-[var(--erp-brand)] hover:bg-[var(--erp-brand-soft)] hover:text-[var(--erp-brand)]"
             aria-label="Platform home"
             title="Platform home"
           >
@@ -84,26 +86,30 @@ export default async function PlatformRootLayout({
             href="/dashboard"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--erp-brand-soft)] bg-[var(--erp-brand-soft)] px-3 py-2 text-xs font-semibold text-[var(--erp-brand)] hover:bg-[var(--erp-brand-soft)]"
             aria-label="Go to app"
             title="Go to app"
           >
             <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
             <span>Go to app</span>
           </Link>
-          <Link
-            href="/platform/support-tickets"
-            className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100"
-            aria-label={`${attentionCounts.total} platform items need attention`}
-            title={`Open tickets: ${attentionCounts.openTickets}; organization approvals: ${attentionCounts.pendingOrganizations}; subscription approvals: ${attentionCounts.pendingSubscriptions}`}
-          >
-            <Bell className="h-4 w-4" aria-hidden="true" />
-            <span className="hidden sm:inline">Attention</span>
-            <span className="rounded-full bg-amber-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{attentionCounts.total}</span>
-          </Link>
-          <span className="hidden text-[10px] text-slate-500 xl:inline">
-            Tickets {attentionCounts.openTickets} · Organizations {attentionCounts.pendingOrganizations} · Subscriptions {attentionCounts.pendingSubscriptions}
-          </span>
+          {navigationAccess.canAccessSupport && (
+            <>
+              <Link
+                href="/platform/support-tickets"
+                className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+                aria-label={`${attentionCounts.total} platform items need attention`}
+                title={`Open tickets: ${attentionCounts.openTickets}; organization approvals: ${attentionCounts.pendingOrganizations}; subscription approvals: ${attentionCounts.pendingSubscriptions}`}
+              >
+                <Bell className="h-4 w-4" aria-hidden="true" />
+                <span className="hidden sm:inline">Attention</span>
+                <span className="rounded-full bg-amber-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{attentionCounts.total}</span>
+              </Link>
+              <span className="hidden text-[10px] text-slate-500 xl:inline">
+                Tickets {attentionCounts.openTickets} · Organizations {attentionCounts.pendingOrganizations} · Subscriptions {attentionCounts.pendingSubscriptions}
+              </span>
+            </>
+          )}
 
           {admin.actualRole === "SUPER_ADMIN" && (
             <PlatformViewSelector action={switchPlatformView} value={admin.team_role ?? admin.role} />
@@ -121,8 +127,7 @@ export default async function PlatformRootLayout({
             accessLabel={admin.role === "SUPER_ADMIN" ? "Super Admin" : admin.team_role ?? "Admin"}
             isSuperAdminView={admin.role === "SUPER_ADMIN"}
             canManageAccounts={admin.role === "SUPER_ADMIN" || (admin.role === "ADMIN" && admin.team_role === null)}
-            canAccessConfiguration={admin.team_role === null}
-            canAccessLeads={admin.role === "ADMIN" || admin.team_role === "CMO" || admin.team_role === "CTO"}
+            {...navigationAccess}
             attentionCounts={attentionCounts}
           />
           <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden p-4 lg:p-8">

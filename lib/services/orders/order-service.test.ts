@@ -5,6 +5,7 @@ const prismaCounterMock = vi.hoisted(() => ({
   upsert: vi.fn(),
   orderFindMany: vi.fn(),
   articleFindMany: vi.fn(),
+  bomItemFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -18,10 +19,19 @@ vi.mock("@/lib/database/prisma-client", () => ({
     masterArticle: {
       findMany: prismaCounterMock.articleFindMany,
     },
+    billOfMaterialItem: {
+      findMany: prismaCounterMock.bomItemFindMany,
+    },
   },
 }));
 
-import { getArticleOrderSummaries, listOrdersPage, reserveNextOrderNumber, reserveNextOrderNumbers } from "./order-service";
+import {
+  getArticleOrderSummaries,
+  listBomItemsPage,
+  listOrdersPage,
+  reserveNextOrderNumber,
+  reserveNextOrderNumbers,
+} from "./order-service";
 
 describe("reserveNextOrderNumber", () => {
   beforeEach(() => {
@@ -139,6 +149,59 @@ describe("reserveNextOrderNumbers", () => {
       expect(prismaCounterMock.orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
         where: { organization_id: "org-1", season: "Winter", article: "Jacket" },
       }));
+    });
+  });
+
+  describe("listBomItemsPage", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("returns tenant-scoped BOM rows with JSON-safe decimal values", async () => {
+      prismaCounterMock.bomItemFindMany.mockResolvedValue([
+        {
+          id: "bom-1",
+          order_id: "order-1",
+          orderQty: new Prisma.Decimal("120.50"),
+          categoryType: "Fabric",
+          category: null,
+          subCategory: null,
+          rawMaterialName: "Cotton",
+          stockUom: "Meter",
+          size: null,
+          consumption: new Prisma.Decimal("1.25"),
+          buyerConsumption: null,
+          buyerPrice: null,
+          internalConsumption: null,
+          internalPrice: null,
+          valuePerGarmentRm: null,
+          requiredQty: null,
+          itemWiseExcessPercentage: null,
+          itemWiseExcessQty: null,
+          totalRequiredQty: null,
+          created_at: new Date("2026-10-01T00:00:00.000Z"),
+          order: {
+            orderNo: "OD-1",
+            styleName: "Style 1",
+            brand: null,
+            buyer: null,
+            entity_id: null,
+            entityName: null,
+          },
+        },
+      ]);
+
+      const page = await listBomItemsPage("org-1", { limit: 1 });
+
+      expect(prismaCounterMock.bomItemFindMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { order: { organization_id: "org-1" } },
+        take: 2,
+      }));
+      expect(page.bomItems[0]).toMatchObject({
+        id: "bom-1",
+        orderQty: "120.5",
+        consumption: "1.25",
+      });
     });
   });
 

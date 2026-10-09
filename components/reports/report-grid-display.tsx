@@ -1,15 +1,22 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, type ReactNode } from "react";
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import Button from "@/components/ui/Button";
 import Checkbox from "@/components/ui/Checkbox";
 import Modal from "@/components/ui/Modal";
+import Skeleton from "@/components/ui/Skeleton";
 import Table from "@/components/ui/Table";
 import Tabs from "@/components/ui/Tabs";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
+import {
+  filterIndexedReportRecords,
+  type FilterOperator,
+  type IndexedReportRow,
+} from "./report-grid-filtering";
 
-export type FilterOperator = "contains" | "is" | "notContains" | "empty";
+export type { FilterOperator } from "./report-grid-filtering";
 
 interface ReportGridField<T> {
   key: keyof T | string;
@@ -53,10 +60,11 @@ interface ReportGridProps<T> {
   toolbarActions?: ReactNode;
   onSearchQueryChange?: (query: string) => void;
   renderCell: (fieldKey: string, record: T) => React.ReactNode;
+  isLoading?: boolean;
   emptyMessage?: string;
 }
 
-export function ReportGrid<T>({
+function ReportGridImplementation<T>({
   title,
   records,
   fields,
@@ -93,9 +101,12 @@ export function ReportGrid<T>({
   toolbarActions,
   onSearchQueryChange,
   renderCell,
+  isLoading = false,
   emptyMessage = "No records found.",
 }: ReportGridProps<T>) {
   const [searchQuery, setSearchQuery] = useState("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, { operator: FilterOperator; value: string }>>({});
   
   const [showFilterModal, setShowFilterModal] = useState(false);
@@ -192,32 +203,61 @@ export function ReportGrid<T>({
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const allFilteredSelected = records.length > 0 && records.every((record) => selectedIdSet.has(rowIdSelector(record)));
   const activeFilterCount = Object.keys(columnFilters).length;
+  const indexedFieldKeys = useMemo(
+    () => [...new Set([
+      ...visibleFieldDefinitions.map((field) => String(field.key)),
+      ...Object.keys(columnFilters),
+    ])],
+    [columnFilters, visibleFieldDefinitions],
+  );
+  const indexedRecords = useMemo(
+    () => records.map<IndexedReportRow<T>>((record) => {
+      const searchableValues: Record<string, string> = {};
+      for (const fieldKey of indexedFieldKeys) {
+        searchableValues[fieldKey] = String(renderCell(fieldKey, record) ?? "").toLowerCase();
+      }
+      return {
+        record,
+        searchableText: visibleFieldDefinitions
+          .map((field) => searchableValues[String(field.key)] ?? "")
+          .join(" "),
+        searchableValues,
+      };
+    }),
+    [indexedFieldKeys, records, renderCell, visibleFieldDefinitions],
+  );
 
   const filteredRecords = useMemo(
-    () => records.filter((record) => {
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        const matchesGlobal = visibleFieldDefinitions.some((field) => {
-          const val = renderCell(String(field.key), record);
-          return String(val ?? "").toLowerCase().includes(query);
-        });
-        if (!matchesGlobal) return false;
-      }
-
-      for (const [fieldKey, filter] of Object.entries(columnFilters)) {
-        const cellVal = String(renderCell(fieldKey, record) ?? "").toLowerCase();
-        const targetVal = filter.value.toLowerCase();
-
-        if (filter.operator === "contains" && !cellVal.includes(targetVal)) return false;
-        if (filter.operator === "is" && cellVal !== targetVal) return false;
-        if (filter.operator === "notContains" && cellVal.includes(targetVal)) return false;
-        if (filter.operator === "empty" && cellVal.trim() !== "") return false;
-      }
-
-      return true;
-    }),
-    [columnFilters, records, renderCell, searchQuery, visibleFieldDefinitions],
+    () => filterIndexedReportRecords(indexedRecords, deferredSearchQuery, columnFilters),
+    [columnFilters, deferredSearchQuery, indexedRecords],
   );
+  const virtualizeRows = filteredRecords.length > 100;
+  // The virtualizer's imperative API is required for measuring and scrolling large report tables.
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const rowVirtualizer = useVirtualizer({
+    count: virtualizeRows ? filteredRecords.length : 0,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => 40,
+    initialRect: { width: 0, height: 600 },
+    overscan: 8,
+  });
+  const virtualRows = virtualizeRows
+    ? rowVirtualizer.getVirtualItems().map(({ index, start, size, key }) => ({ index, start, size, key }))
+    : filteredRecords.map((record, index) => ({
+        index,
+        start: 0,
+        size: 0,
+        key: rowIdSelector(record),
+      }));
+  const topSpacerHeight = virtualizeRows ? (virtualRows[0]?.start ?? 0) : 0;
+  const lastVirtualRow = virtualRows.at(-1);
+  const bottomSpacerHeight = virtualizeRows && lastVirtualRow
+    ? Math.max(0, rowVirtualizer.getTotalSize() - lastVirtualRow.start - lastVirtualRow.size)
+    : 0;
+
+  useEffect(() => {
+    if (virtualizeRows) tableContainerRef.current?.scrollTo({ top: 0 });
+  }, [columnFilters, deferredSearchQuery, virtualizeRows]);
 
   return (
     <div className="space-y-2.5 text-[11px]">
@@ -304,8 +344,12 @@ export function ReportGrid<T>({
       </div>
 
       {/* TABLE */}
-      <Table>
-        <thead className="bg-slate-50 text-slate-700 uppercase tracking-wider text-[10px] border-b border-slate-200">
+      <Table
+        aria-busy={isLoading || searchQuery !== deferredSearchQuery}
+        className={virtualizeRows ? "max-h-[70vh] overflow-y-auto" : undefined}
+        containerRef={tableContainerRef}
+      >
+        <thead className={`bg-slate-50 text-slate-700 uppercase tracking-wider text-[10px] border-b border-slate-200 ${virtualizeRows ? "sticky top-0 z-10" : ""}`}>
           <tr>
             {selectable && (
               <th className="p-2 w-8 text-center">
@@ -326,19 +370,49 @@ export function ReportGrid<T>({
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200 bg-white text-slate-700 text-[11px]">
-          {filteredRecords.length === 0 ? (
+          {isLoading && filteredRecords.length === 0 ? (
+            Array.from({ length: 6 }, (_, index) => (
+              <tr key={`loading-${index}`}>
+                {selectable && <td className="p-2"><Skeleton className="mx-auto h-3 w-3" /></td>}
+                {(onRowAction || onSecondaryRowAction) && rowActionPosition === "start" && (
+                  <td className="p-2"><Skeleton className="h-6 w-14" /></td>
+                )}
+                {visibleFieldDefinitions.map((field) => (
+                  <td key={`loading-${index}-${String(field.key)}`} className="p-2">
+                    <Skeleton className="h-3 w-24" />
+                  </td>
+                ))}
+                {(onRowAction || onSecondaryRowAction) && rowActionPosition === "end" && (
+                  <td className="p-2"><Skeleton className="h-6 w-14" /></td>
+                )}
+              </tr>
+            ))
+          ) : filteredRecords.length === 0 ? (
             <tr>
               <td colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (onRowAction || onSecondaryRowAction ? 1 : 0)} className="p-6 text-center text-slate-500">
                 {emptyMessage}
               </td>
             </tr>
           ) : (
-            filteredRecords.map((record, index) => {
+            <>
+              {topSpacerHeight > 0 && (
+                <tr aria-hidden="true">
+                  <td
+                    colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (onRowAction || onSecondaryRowAction ? 1 : 0)}
+                    style={{ height: topSpacerHeight, padding: 0, border: 0 }}
+                  />
+                </tr>
+              )}
+              {virtualRows.map(({ index, size, key }) => {
+              const record = filteredRecords[index];
               const recordId = rowIdSelector(record);
               const isSelected = selectedIdSet.has(recordId);
               return (
                 <tr
-                  key={recordId}
+                  key={virtualizeRows ? key : recordId}
+                  ref={virtualizeRows ? rowVirtualizer.measureElement : undefined}
+                  data-index={virtualizeRows ? index : undefined}
+                  style={virtualizeRows ? { height: size } : undefined}
                   onClick={() => { onRecordClick?.(record); onRowClick(recordId); }}
                   className={`cursor-pointer transition-colors ${
                     index % 2 === 0 ? "bg-white" : "bg-slate-50/40"
@@ -423,7 +497,16 @@ export function ReportGrid<T>({
                   )}
                 </tr>
               );
-            })
+              })}
+              {bottomSpacerHeight > 0 && (
+                <tr aria-hidden="true">
+                  <td
+                    colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (onRowAction || onSecondaryRowAction ? 1 : 0)}
+                    style={{ height: bottomSpacerHeight, padding: 0, border: 0 }}
+                  />
+                </tr>
+              )}
+            </>
           )}
         </tbody>
       </Table>
@@ -580,3 +663,5 @@ export function ReportGrid<T>({
     </div>
   );
 }
+
+export const ReportGrid = React.memo(ReportGridImplementation) as typeof ReportGridImplementation;

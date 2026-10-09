@@ -8,11 +8,8 @@ import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import {
-  findMissingOrderMasters,
-  normalizeOrderMasterValues,
   type MissingOrderMaster,
   type OrderMasterOption,
-  parseBulkOrderFile,
   type ParsedBulkOrderRow,
 } from "./bulk-order-template";
 
@@ -150,6 +147,11 @@ export default function BulkOrderCreationPage() {
 
     setIsParsing(true);
     try {
+      const {
+        findMissingOrderMasters,
+        normalizeOrderMasterValues,
+        parseBulkOrderFile,
+      } = await import("./bulk-order-template");
       const parsedRows = await parseBulkOrderFile(file);
       if (parsedRows.length > 0) {
         const lookupResponse = await fetch(

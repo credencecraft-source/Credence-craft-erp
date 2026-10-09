@@ -91,6 +91,11 @@ describe("raw-material stock booking", () => {
         total_grouped_qty: new Prisma.Decimal("5"),
       }),
     }));
+    expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 10_000,
+      timeout: 30_000,
+    });
   });
 
   it("resumes an existing sample stock group without reserving inventory twice", async () => {

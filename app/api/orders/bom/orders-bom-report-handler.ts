@@ -14,11 +14,11 @@ export async function GET(request: Request) {
 
     const organization = await requireOrganizationContext(user.id, organizationId);
     const searchParams = new URL(request.url).searchParams;
-    const limit = Number(searchParams.get("limit") || 100);
+    const limit = Number(searchParams.get("limit") || 50);
 
     const page = await listBomItemsPage(organization.id, {
       cursor: searchParams.get("cursor") || undefined,
-      limit: Number.isFinite(limit) ? limit : 100,
+      limit: Number.isFinite(limit) ? limit : 50,
     });
     return NextResponse.json(page);
   } catch (error) {

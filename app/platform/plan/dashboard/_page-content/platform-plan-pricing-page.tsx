@@ -1,27 +1,15 @@
 import Link from "next/link";
-import { ArrowRight, Boxes, Building2, Layers3, Tags } from "lucide-react";
+import { ArrowRight, Boxes, Layers3 } from "lucide-react";
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 
 const modulePricingOptions = [
   {
-    title: "Business Types",
-    description: "Configure the business types available to platform customers.",
-    href: "/platform/business-types",
-    Icon: Building2,
-  },
-  {
     title: "Segments",
     description: "Manage reusable customer tiers for plans.",
     href: "/platform/segments",
     Icon: Layers3,
-  },
-  {
-    title: "Tags",
-    description: "Manage audience tags used by business types.",
-    href: "/platform/tags",
-    Icon: Tags,
   },
   {
     title: "Versions",

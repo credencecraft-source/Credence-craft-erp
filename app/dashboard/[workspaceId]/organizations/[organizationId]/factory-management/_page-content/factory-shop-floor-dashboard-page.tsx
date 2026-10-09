@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
+import Skeleton from "@/components/ui/Skeleton";
 import Section from "@/components/ui/Section";
 import {
   type ShopFloorProcessSummary,
@@ -68,7 +69,26 @@ export default function FactoryShopFloorDashboardPage() {
           </div>
         </div>
 
-        {loading && <Card className="border-slate-200 p-6 text-sm text-slate-600">Loading shop-floor board...</Card>}
+        {loading && (
+          <div role="status" aria-label="Loading shop-floor processes" className="grid items-start gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 6 }, (_, index) => (
+              <Card key={index} className="min-h-40 space-y-5 p-5">
+                <div className="space-y-2">
+                  <Skeleton className="h-5 w-2/3" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+                <div className="grid grid-cols-5 gap-2 border-t border-[var(--erp-border)] pt-3">
+                  {STATUS_ORDER.map((status) => (
+                    <div key={status} className="space-y-2">
+                      <Skeleton className="mx-auto h-4 w-8" />
+                      <Skeleton className="mx-auto h-2 w-full" />
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
         {error && <Card className="border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</Card>}
 
         {!loading && !error && processes.length > 0 && (
@@ -84,7 +104,8 @@ export default function FactoryShopFloorDashboardPage() {
                     className="min-h-40 w-full rounded-none border-0 p-5 shadow-none hover:shadow-none"
                     onClick={() => {
                       const processSlug = process.processName.trim().toLocaleUpperCase().replace(/\s+/g, "-");
-                      router.push(`/dashboard/${workspaceId}/organizations/${params.organizationId}/factory-management/production/shop-floor/${encodeURIComponent(processSlug)}`);
+                      const query = new URLSearchParams({ processName: process.id });
+                      router.push(`/dashboard/${workspaceId}/organizations/${params.organizationId}/factory-management/production/shop-floor/${encodeURIComponent(processSlug)}?${query.toString()}`);
                     }}
                   >
                     <span className="flex items-start justify-between gap-3">

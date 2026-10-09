@@ -171,11 +171,29 @@ export async function listShopFloorBoardSummary(
   };
 }
 
-export async function listShopFloorBoard(organizationId: string, workOrderId?: string, createdBy = "system") {
+export async function listShopFloorBoard(
+  organizationId: string,
+  workOrderId?: string,
+  createdBy = "system",
+  processName?: string,
+) {
   const workOrders = await prisma.factoryWorkOrder.findMany({
     where: {
       organization_id: organizationId,
       ...(workOrderId ? { id: workOrderId } : {}),
+      ...(processName
+        ? {
+            processController: {
+              is: {
+                processes: {
+                  some: {
+                    process_name: { equals: processName, mode: "insensitive" },
+                  },
+                },
+              },
+            },
+          }
+        : {}),
     },
     select: {
       id: true,

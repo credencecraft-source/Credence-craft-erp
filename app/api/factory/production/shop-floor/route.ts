@@ -17,10 +17,14 @@ export async function GET(request: Request) {
     const params = new URL(request.url).searchParams;
     const organizationId = params.get("organizationId") ?? "";
     const workOrderId = params.get("workOrderId")?.trim() || undefined;
+    const processName = params.get("processName")?.trim() || undefined;
+    if (processName && processName.length > 255) {
+      return NextResponse.json({ error: "Process name is too long." }, { status: 400 });
+    }
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
     const board = params.get("summary") === "true"
       ? await listShopFloorBoardSummary(organization.id, workOrderId, user.id)
-      : await listShopFloorBoard(organization.id, workOrderId, user.id);
+      : await listShopFloorBoard(organization.id, workOrderId, user.id, processName);
     return NextResponse.json(board);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load the shop-floor board." }, { status: 400 });

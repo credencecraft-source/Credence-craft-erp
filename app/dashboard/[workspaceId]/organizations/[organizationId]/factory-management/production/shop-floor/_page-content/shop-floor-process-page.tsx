@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
+import Skeleton from "@/components/ui/Skeleton";
 import Section from "@/components/ui/Section";
 import {
   consolidateShopFloorProcesses,
@@ -22,8 +23,10 @@ function normalizeProcessName(value: string) {
   return value.toLocaleLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-async function fetchProcesses(organizationId: string) {
-  const response = await fetch(`/api/factory/production/shop-floor?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" });
+async function fetchProcesses(organizationId: string, processName?: string) {
+  const query = new URLSearchParams({ organizationId });
+  if (processName) query.set("processName", processName);
+  const response = await fetch(`/api/factory/production/shop-floor?${query.toString()}`, { cache: "no-store" });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "Unable to load this process.");
   return consolidateShopFloorProcesses((data.processes ?? []) as ShopFloorProcessBoardRow[]);
@@ -33,10 +36,12 @@ export default function ShopFloorProcessPage({
   workspaceId,
   organizationId,
   processSlug,
+  processName,
 }: {
   workspaceId: string;
   organizationId: string;
   processSlug: string;
+  processName?: string;
 }) {
   const router = useRouter();
   const [processes, setProcesses] = useState<ShopFloorProcessBoard[]>([]);
@@ -45,7 +50,7 @@ export default function ShopFloorProcessPage({
 
   useEffect(() => {
     let active = true;
-    void fetchProcesses(organizationId)
+    void fetchProcesses(organizationId, processName)
       .then((result) => {
         if (active) setProcesses(result);
       })
@@ -59,7 +64,7 @@ export default function ShopFloorProcessPage({
     return () => {
       active = false;
     };
-  }, [organizationId]);
+  }, [organizationId, processName]);
 
   const process = processes.find((item) => normalizeProcessName(item.processName) === normalizeProcessName(processSlug));
   const flowTotals = process ? getShopFloorFlowTotals(process.statusCounts) : null;
@@ -76,7 +81,9 @@ export default function ShopFloorProcessPage({
               &larr; All processes
             </Button>
             <p className="mt-4 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Factory Management · Shop Floor</p>
-            <h1 className="mt-2 text-3xl font-bold text-slate-900">{process?.processName ?? "Process"}</h1>
+            <h1 className="mt-2 text-3xl font-bold text-slate-900">
+              {process?.processName ?? (loading ? <Skeleton className="h-9 w-48" /> : "Process")}
+            </h1>
             <p className="mt-2 max-w-2xl text-sm text-slate-600">View work orders and manage quantities by status for this process.</p>
           </div>
           {process && flowTotals && (
@@ -98,7 +105,30 @@ export default function ShopFloorProcessPage({
           )}
         </div>
 
-        {loading && <Card className="border-slate-200 p-6 text-sm text-slate-600">Loading process status...</Card>}
+        {loading && (
+          <div
+            role="status"
+            aria-label="Loading process status"
+            className="min-w-0 max-w-full overflow-x-auto pb-2"
+            tabIndex={0}
+          >
+            <div className="grid min-w-[72rem] grid-cols-5 items-start gap-4">
+              {STATUS_ORDER.map((status) => (
+                <Card key={status} className="space-y-4 bg-[var(--erp-surface-soft)] p-4">
+                  <Skeleton className="h-5 w-2/3" />
+                  <Skeleton className="h-3 w-1/3" />
+                  {Array.from({ length: 3 }, (_, index) => (
+                    <Card key={index} className="space-y-3 p-4">
+                      <Skeleton className="h-3 w-1/2" />
+                      <Skeleton className="h-6 w-2/3" />
+                      <Skeleton className="h-3 w-full" />
+                    </Card>
+                  ))}
+                </Card>
+              ))}
+            </div>
+          </div>
+        )}
         {error && <Card className="border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</Card>}
         {!loading && !error && !process && (
           <Card className="border-dashed border-slate-300 bg-white p-8 text-center">
