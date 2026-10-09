@@ -105,6 +105,7 @@ type MasterModuleWrapperProps = {
   trialEndsAt: string | null;
   startDummyDataWizardStep: (step: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9) => Promise<{ status?: string; stage?: string; error?: string }>;
   deleteDummyData: () => Promise<{ deleted: boolean; error?: string }>;
+  kycToolbarControl?: ReactNode;
   dummyDataStatus: {
     status: string;
     stage?: string;
@@ -157,6 +158,7 @@ export function MasterModuleWrapper({
   trialEndsAt,
   startDummyDataWizardStep,
   deleteDummyData,
+  kycToolbarControl,
   dummyDataStatus = { status: "UNAVAILABLE", orderNo: null, masterCount: 0 },
   children,
   modules = [],
@@ -670,25 +672,27 @@ export function MasterModuleWrapper({
             ) : null}
           </div>
 
-          {dummyDataAvailable && dummyDataActive ? (
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              aria-haspopup="dialog"
-              disabled={isUpdatingDummyData || isRemovingDummyData || dummyDataDeletionStatus === "planned" || dummyDataDeletionStatus === "deleting"}
-              onClick={() => {
-                setDummyDataTab("delete");
-                setDummyDataDeleteConfirmOpen(false);
-                setDummyDataHelpOpen(true);
-              }}
-            >
-              <Trash2 className="h-4 w-4" aria-hidden="true" />
-              Delete Sample Data
-            </Button>
-          ) : null}
-
           <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2 sm:gap-3">
+            {dummyDataAvailable && dummyDataActive ? (
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                aria-haspopup="dialog"
+                disabled={isUpdatingDummyData || isRemovingDummyData || dummyDataDeletionStatus === "planned" || dummyDataDeletionStatus === "deleting"}
+                onClick={() => {
+                  setDummyDataTab("delete");
+                  setDummyDataDeleteConfirmOpen(false);
+                  setDummyDataHelpOpen(true);
+                }}
+                className="h-9 rounded-md border-[var(--erp-danger)] bg-[var(--erp-surface)] px-3 text-[var(--erp-danger)] hover:bg-[var(--erp-danger)] hover:text-white"
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                <span className="hidden sm:inline">Delete Sample Data</span>
+                <span className="sm:hidden">Delete Samples</span>
+              </Button>
+            ) : null}
+            {kycToolbarControl}
             {trialNeedsPricing && hasConfiguredPricingType && (
               <Button
                 type="button"
