@@ -49,10 +49,10 @@ type BookingRecord = {
   id: string;
   bookingId: string;
   orderId: string;
-  vendorId: string;
+  vendorId: string | null;
   orderNo: string;
   quotationNo: string | null;
-  customer: string;
+  customer: string | null;
   quotationVendor: string | null;
   masterQuotationVendor: string | null;
   brand: string;
@@ -173,6 +173,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [isLoadingVendors, setIsLoadingVendors] = useState(true);
   const [vendorsError, setVendorsError] = useState("");
   const [selectedVendorId, setSelectedVendorId] = useState("");
+  const [selectedQuotationVendorId, setSelectedQuotationVendorId] = useState("");
   const [orderDetailsRetry, setOrderDetailsRetry] = useState(0);
   const [orderDetails, setOrderDetails] = useState<{ id: string; order: OrderDetails } | null>(null);
   const [orderDetailsError, setOrderDetailsError] = useState("");
@@ -180,7 +181,11 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [isCreating, setIsCreating] = useState(false);
   const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
   const [isCreatingQuotation, setIsCreatingQuotation] = useState(false);
+  const [isQuotationVendorModalOpen, setIsQuotationVendorModalOpen] = useState(false);
   const [isRequestingFinishedGoods, setIsRequestingFinishedGoods] = useState(false);
+  const [isFinishedGoodsRequestOpen, setIsFinishedGoodsRequestOpen] = useState(false);
+  const [finishedGoodsRequestQuantities, setFinishedGoodsRequestQuantities] = useState<Record<string, string>>({});
+  const [finishedGoodsRequestError, setFinishedGoodsRequestError] = useState("");
   const [isDeletingBookings, setIsDeletingBookings] = useState(false);
   const [showDeleteBookingsConfirmation, setShowDeleteBookingsConfirmation] = useState(false);
   const [selectedBookingIds, setSelectedBookingIds] = useState<string[]>([]);
@@ -452,10 +457,6 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       setError("Select an order before submitting the advance booking.");
       return;
     }
-    if (!selectedVendor) {
-      setError("Select a customer from Vendor Master before submitting the advance booking.");
-      return;
-    }
     if (orderDetailsError) {
       setError(orderDetailsError);
       return;
@@ -499,7 +500,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         body: JSON.stringify({
           organizationId,
           orderId: selectedOrder.id,
-          vendorId: selectedVendor.id,
+          vendorId: selectedVendor?.id ?? "",
           sizes: Object.entries(quantities).map(([size, quantity]) => ({ size, quantity })),
         }),
       });
@@ -586,8 +587,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     if (view !== "booking") return;
     setError("");
     setStatus("");
-    if (quotationSelectionError || isCreatingQuotation) {
-      setError(quotationSelectionError || "Wait for the current quotation to finish saving.");
+    if (quotationSelectionError || !selectedQuotationVendorId || isCreatingQuotation) {
+      setError(quotationSelectionError || (!selectedQuotationVendorId
+        ? "Select a quotation vendor from Vendor Master."
+        : "Wait for the current quotation to finish saving."));
       return;
     }
     setIsCreatingQuotation(true);
@@ -598,6 +601,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         body: JSON.stringify({
           organizationId,
           bookingIds: selectedBookings.map((booking) => booking.id),
+          vendorId: selectedQuotationVendorId,
         }),
       });
       const data = await response.json().catch(() => null);
@@ -605,6 +609,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to create the quotation.");
       }
       setSelectedBookingIds([]);
+      setIsQuotationVendorModalOpen(false);
       setStatus(
         `${typeof data.quotation.quotationNo === "string" ? `${data.quotation.quotationNo} was` : "Quotation was"} created and saved as a draft. Unit prices default to 0.00.`,
       );
@@ -617,8 +622,37 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
 
   async function requestFinishedGoodsForSelectedBookings() {
     if (view !== "shipment" || selectedShipmentBookings.length === 0 || isRequestingFinishedGoods) return;
-    setError("");
-    setStatus("");
+    const invalidBooking = selectedShipmentBookings.find((booking) => {
+      return booking.sizes.some((size) => {
+        const rawQuantity = finishedGoodsRequestQuantities[size.id] ?? "";
+        const requestedQuantity = Number(rawQuantity);
+        return !/^\d+$/.test(rawQuantity) ||
+          !Number.isSafeInteger(requestedQuantity) ||
+          requestedQuantity < 0 ||
+          requestedQuantity > size.fulfilledQuantity;
+      });
+    });
+    if (invalidBooking) {
+      setFinishedGoodsRequestError(
+        `Enter a whole-number quantity from zero to each size's fulfilled quantity for ${invalidBooking.bookingId}.`,
+      );
+      return;
+    }
+    const totalRequested = selectedShipmentBookings.reduce((total, booking) =>
+      total + booking.sizes.reduce((sizeTotal, size) =>
+        sizeTotal + Number(finishedGoodsRequestQuantities[size.id] ?? 0), 0), 0);
+    if (totalRequested <= 0) {
+      setFinishedGoodsRequestError("Enter a request quantity greater than zero for at least one size.");
+      return;
+    }
+    setFinishedGoodsRequestError("");
+    const bookingRequests = selectedShipmentBookings.map((booking) => ({
+      bookingId: booking.id,
+      sizeRequests: booking.sizes.map((size) => ({
+        sizeLineId: size.id,
+        quantity: finishedGoodsRequestQuantities[size.id] ?? "",
+      })),
+    }));
     setIsRequestingFinishedGoods(true);
     try {
       const response = await fetch("/api/inventory/finished-goods-outward", {
@@ -627,7 +661,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         body: JSON.stringify({
           organizationId,
           action: "request-bookings",
-          bookingIds: selectedShipmentBookings.map((booking) => booking.id),
+          bookingRequests,
         }),
       });
       const data = await response.json().catch(() => null);
@@ -635,11 +669,13 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to request finished goods for the selected bookings.");
       }
       setSelectedBookingIds([]);
+      setFinishedGoodsRequestQuantities({});
+      setIsFinishedGoodsRequestOpen(false);
       setStatus(
-        `Finished-goods request ${data.request.request_no} sent to Inventory Accept for ${selectedShipmentBookings.length} booking${selectedShipmentBookings.length === 1 ? "" : "s"}.`,
+        `Finished-goods request ${data.request.request_no} sent for Inventory approval for ${selectedShipmentBookings.length} booking${selectedShipmentBookings.length === 1 ? "" : "s"}.`,
       );
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to request finished goods for the selected bookings.");
+      setFinishedGoodsRequestError(requestError instanceof Error ? requestError.message : "Unable to request finished goods for the selected bookings.");
     } finally {
       setIsRequestingFinishedGoods(false);
     }
@@ -740,7 +776,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             <section className="space-y-3">
               <div className="border-b border-slate-200 pb-2">
                 <h2 className="text-base font-semibold text-slate-900">Advance Booking Header</h2>
-                <p className="mt-1 text-sm text-slate-600">Choose an order and customer, then enter quantities by finished-goods size.</p>
+                <p className="mt-1 text-sm text-slate-600">Choose an order, optionally assign a booking vendor, then enter quantities by finished-goods size.</p>
               </div>
               <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
                 <Input label="Booking ID" value="Generated when saved" readOnly />
@@ -761,18 +797,17 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   required
                 />
                 <Select
-                  label="Customer (Vendor Master)"
+                  label="Booking Vendor (Optional)"
                   value={selectedVendorId}
                   onChange={(event) => {
                     setSelectedVendorId(event.target.value);
                     setError("");
                   }}
                   options={[
-                    { label: isLoadingVendors ? "Loading Vendor Master..." : "Select customer", value: "" },
+                    { label: isLoadingVendors ? "Loading Vendor Master..." : "No booking vendor", value: "" },
                     ...vendors.map((vendor) => ({ label: vendor.label, value: vendor.id })),
                   ]}
-                  disabled={isLoadingVendors || vendors.length === 0}
-                  required
+                  disabled={isLoadingVendors}
                 />
                 <Input label="Brand" value={selectedOrder?.brand ?? ""} readOnly />
                 <Input label="Style" value={selectedOrder?.styleName ?? ""} readOnly />
@@ -788,15 +823,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               ) : null}
               {!isLoadingVendors && !vendorsError && vendors.length === 0 ? (
                 <div className="flex flex-wrap items-center gap-3">
-                  <p role="status" className="text-sm text-slate-600">No active customer/vendor is available. Add one to Vendor Master before saving.</p>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/admin/master-data/vendor`)}
-                  >
-                    Open Vendor Master
-                  </Button>
+                  <p role="status" className="text-sm text-slate-600">No active booking vendor is available. Booking vendor is optional.</p>
                 </div>
               ) : null}
               {isLoadingOrders ? (
@@ -900,16 +927,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3">
               <p role="status" className="text-sm text-slate-600">
                 {isLoadingVendors
-                  ? "Loading customers..."
-                  : vendorsError
-                    ? "Retry Vendor Master before saving."
-                    : !selectedVendor
-                      ? vendors.length === 0
-                        ? "Add an active customer in Vendor Master to enable saving."
-                        : "Select a customer to enable saving."
-                      : !selectedOrder
-                        ? "Select an order to enable saving."
-                        : "Ready to save this advance booking."}
+                  ? "Loading optional booking vendors..."
+                  : !selectedOrder
+                    ? "Select an order to enable saving."
+                    : "Ready to save; booking vendor is optional."}
               </p>
               <div className="flex flex-wrap justify-end gap-3">
                 <Button
@@ -925,14 +946,8 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                 <Button
                   type="submit"
                   variant="primary"
-                  disabled={!selectedOrder || !selectedVendor || isLoadingVendors || Boolean(vendorsError) || Boolean(bookingsError) || isSubmittingBooking}
-                  title={
-                    !selectedVendor
-                      ? vendors.length === 0
-                        ? "Add an active customer to Vendor Master before saving."
-                        : "Select a customer before saving."
-                      : undefined
-                  }
+                  disabled={!selectedOrder || Boolean(bookingsError) || isSubmittingBooking}
+                  title={!selectedOrder ? "Select an order before saving." : undefined}
                 >
                   {isSubmittingBooking ? "Saving booking..." : "Submit Advance Booking"}
                 </Button>
@@ -988,9 +1003,12 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                     type="button"
                     variant="primary"
                     size="sm"
-                    disabled={Boolean(quotationSelectionError) || isLoadingBookings || isCreatingQuotation}
+                    disabled={Boolean(quotationSelectionError) || isLoadingBookings || isCreatingQuotation || isLoadingVendors || vendors.length === 0}
                     title={quotationSelectionError || undefined}
-                    onClick={() => void createQuotationFromSelectedBookings(selectedReportBookings)}
+                    onClick={() => {
+                      setError("");
+                      setIsQuotationVendorModalOpen(true);
+                    }}
                   >
                     {isCreatingQuotation ? "Creating Quotation..." : `Create & Save Quotation${selectedBookingIds.length > 0 ? ` (${selectedBookingIds.length})` : ""}`}
                   </Button>
@@ -1054,12 +1072,22 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                     type="button"
                     variant="primary"
                     size="sm"
-                    disabled={selectedShipmentBookings.length === 0 || isLoadingBookings || isRequestingFinishedGoods}
-                    onClick={() => void requestFinishedGoodsForSelectedBookings()}
+                    disabled={selectedShipmentBookings.length === 0 || isLoadingBookings || isRequestingFinishedGoods ||
+                      selectedShipmentBookings.some((booking) => !booking.quotationVendor?.trim() || !booking.masterQuotationVendor?.trim())}
+                    title={selectedShipmentBookings.some((booking) => !booking.quotationVendor?.trim() || !booking.masterQuotationVendor?.trim())
+                      ? "Quotation and Sales Order vendors are required before requesting finished goods."
+                      : undefined}
+                    onClick={() => {
+                      setFinishedGoodsRequestQuantities(Object.fromEntries(
+                        selectedShipmentBookings.flatMap((booking) =>
+                          booking.sizes.map((size) => [size.id, String(size.fulfilledQuantity)]),
+                        ),
+                      ));
+                      setFinishedGoodsRequestError("");
+                      setIsFinishedGoodsRequestOpen(true);
+                    }}
                   >
-                    {isRequestingFinishedGoods
-                      ? "Requesting FG Stock..."
-                      : `Request Material${selectedShipmentBookings.length > 0 ? ` (${selectedShipmentBookings.length})` : ""}`}
+                    Request FG Quantity{selectedShipmentBookings.length > 0 ? ` (${selectedShipmentBookings.length})` : ""}
                   </Button>
                   <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings()} disabled={isLoadingBookings}>
                     Refresh bookings
@@ -1106,6 +1134,122 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         ) : null}
         </>
       )}
+      <Modal
+        open={isFinishedGoodsRequestOpen}
+        onClose={() => {
+          if (!isRequestingFinishedGoods) setIsFinishedGoodsRequestOpen(false);
+        }}
+        ariaLabelledBy="finished-goods-request-title"
+        ariaDescribedBy="finished-goods-request-description"
+        size="lg"
+      >
+        <div className="space-y-4 p-6">
+          <header className="space-y-1">
+            <h2 id="finished-goods-request-title" className="text-xl font-semibold text-slate-900">
+              Request Finished-Goods Quantity
+            </h2>
+            <p id="finished-goods-request-description" className="text-sm text-slate-600">
+              Quantities are prefilled with the fulfilled amount for each size. Adjust any size as needed; enter zero to skip it.
+            </p>
+          </header>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead className="erp-table-head">
+                <tr>
+                  <th className="p-3">Booking</th>
+                  <th className="p-3">Finished Good</th>
+                  <th className="p-3">Size</th>
+                  <th className="p-3 text-right">Fulfilled</th>
+                  <th className="p-3">Request Qty</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--erp-border)]">
+                {selectedShipmentBookings.flatMap((booking) => booking.sizes.map((size) => (
+                  <tr key={size.id}>
+                    <td className="p-3 font-medium">{booking.bookingId}</td>
+                    <td className="p-3">{booking.styleName || "-"}<span className="block text-xs text-slate-500">{booking.orderNo}</span></td>
+                    <td className="p-3">{size.size}</td>
+                    <td className="p-3 text-right">{size.fulfilledQuantity}</td>
+                    <td className="p-3">
+                      <Input
+                        aria-label={`Request quantity for ${size.size} in booking ${booking.bookingId}`}
+                        type="number"
+                        min="0"
+                        max={size.fulfilledQuantity}
+                        step="1"
+                        value={finishedGoodsRequestQuantities[size.id] ?? ""}
+                        onChange={(event) => setFinishedGoodsRequestQuantities((current) => ({
+                          ...current,
+                          [size.id]: event.target.value,
+                        }))}
+                        className="max-w-32"
+                      />
+                    </td>
+                  </tr>
+                )))}
+              </tbody>
+            </table>
+          </div>
+          {finishedGoodsRequestError && (
+            <Card role="alert" className="border-[var(--erp-danger)] bg-[var(--erp-surface-soft)] text-sm text-[var(--erp-danger)]">
+              {finishedGoodsRequestError}
+            </Card>
+          )}
+          <footer className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => setIsFinishedGoodsRequestOpen(false)} disabled={isRequestingFinishedGoods}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void requestFinishedGoodsForSelectedBookings()} disabled={isRequestingFinishedGoods}>
+              {isRequestingFinishedGoods ? "Requesting..." : "Submit FG Request"}
+            </Button>
+          </footer>
+        </div>
+      </Modal>
+      <Modal
+        open={isQuotationVendorModalOpen}
+        onClose={() => {
+          if (!isCreatingQuotation) setIsQuotationVendorModalOpen(false);
+        }}
+        ariaLabelledBy="quotation-vendor-title"
+        size="sm"
+        closeOnBackdrop={!isCreatingQuotation}
+      >
+        <form
+          className="space-y-4 p-6"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void createQuotationFromSelectedBookings(selectedReportBookings);
+          }}
+        >
+          <header className="space-y-1">
+            <h2 id="quotation-vendor-title" className="text-lg font-semibold text-slate-900">Create Quotation</h2>
+            <p className="text-sm text-slate-600">Select the quotation vendor independently of the optional booking vendor.</p>
+          </header>
+          <Select
+            label="Quotation Vendor"
+            required
+            value={selectedQuotationVendorId}
+            onChange={(event) => {
+              setSelectedQuotationVendorId(event.target.value);
+              setError("");
+            }}
+            options={[
+              { label: isLoadingVendors ? "Loading vendors..." : "Select a quotation vendor", value: "" },
+              ...vendors.map((vendor) => ({ label: vendor.label, value: vendor.id })),
+            ]}
+            disabled={isLoadingVendors || isCreatingQuotation || vendors.length === 0}
+          />
+          {error ? <p role="alert" className="text-sm text-red-700">{error}</p> : null}
+          <footer className="flex justify-end gap-3 border-t border-[var(--erp-border)] pt-4">
+            <Button type="button" variant="secondary" onClick={() => setIsQuotationVendorModalOpen(false)} disabled={isCreatingQuotation}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={!selectedQuotationVendorId || isLoadingVendors || isCreatingQuotation}>
+              {isCreatingQuotation ? "Creating..." : "Create Quotation"}
+            </Button>
+          </footer>
+        </form>
+      </Modal>
       <Modal
         open={assignmentBooking !== null}
         onClose={() => {

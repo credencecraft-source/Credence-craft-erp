@@ -71,7 +71,9 @@ export async function createDistributionQuotationFromBookings(
   organizationId: string,
   userId: string,
   bookingIds: string[],
+  vendorId: string,
 ) {
+  if (!vendorId.trim()) throw new Error("Select a Vendor Master vendor for the quotation.");
   if (bookingIds.length === 0 || bookingIds.length > 100) {
     throw new Error("Select between one and 100 advance bookings for a quotation.");
   }
@@ -80,6 +82,12 @@ export async function createDistributionQuotationFromBookings(
   }
 
   const created = await prisma.$transaction(async (transaction) => {
+    const vendor = await transaction.masterVendor.findFirst({
+      where: { organization_id: organizationId, id: vendorId, is_active: true },
+      select: { id: true, vendor: true },
+    });
+    if (!vendor) throw new Error("Select an active vendor from Vendor Master for the quotation.");
+
     const bookings = await transaction.advanceBooking.findMany({
       where: { organization_id: organizationId, id: { in: bookingIds } },
       include: {
@@ -91,11 +99,6 @@ export async function createDistributionQuotationFromBookings(
       throw new Error("One or more selected bookings are unavailable in this organization.");
     }
     const orderedBookings = bookingIds.map((id) => bookings.find((booking) => booking.id === id)!);
-    const vendorId = orderedBookings[0].vendor_id;
-    const customer = orderedBookings[0].customer;
-    if (orderedBookings.some((booking) => booking.vendor_id !== vendorId || booking.customer !== customer)) {
-      throw new Error("Select advance bookings for the same Vendor Master vendor.");
-    }
     const previouslyQuoted = await transaction.distributionQuotationLine.findFirst({
       where: { organization_id: organizationId, source_booking_id: { in: bookingIds } },
       select: { booking_no: true },
@@ -138,11 +141,11 @@ export async function createDistributionQuotationFromBookings(
     const quotation = await transaction.distributionQuotation.create({
       data: {
         organization_id: organizationId,
-        vendor_id: vendorId,
+        vendor_id: vendor.id,
         quotation_no: await reserveProcurementDocumentNumber(organizationId, "DISTRIBUTION_QUOTATION", transaction),
         quotation_date: new Date(),
         order_no: combinedOrderNumbers,
-        customer,
+        customer: vendor.vendor,
         mode: orderedBookings.length === 1 ? "SINGLE" : "MULTIPLE",
         status: "DRAFT",
         total_quantity: totalQuantity,
@@ -162,7 +165,7 @@ export async function createDistributionQuotationFromBookings(
       details: {
         quotation_no: quotation.quotation_no,
         booking_nos: orderedBookings.map((booking) => booking.booking_no),
-        vendor_id: vendorId,
+        vendor_id: vendor.id,
         total_quantity: totalQuantity,
       },
     }, transaction);

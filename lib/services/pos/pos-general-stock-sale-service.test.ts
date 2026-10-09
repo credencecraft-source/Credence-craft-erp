@@ -93,7 +93,10 @@ describe("createPosGeneralStockSale", () => {
     });
     expect(mocks.transaction.finishedGoodsStock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ organization_id: "organization-1", location_id: "location-1" }),
-      data: { quantity_on_hand: { decrement: 2 } },
+      data: {
+        quantity_on_hand: { decrement: 2 },
+        quantity_issued: { increment: 2 },
+      },
     }));
     expect(mocks.transaction.posSalesInvoiceLine.createMany).toHaveBeenCalledWith({
       data: [expect.objectContaining({

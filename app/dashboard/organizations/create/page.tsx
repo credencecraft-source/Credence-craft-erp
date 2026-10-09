@@ -65,7 +65,7 @@ export default async function CreateOrganizationPage({
     } catch (error) {
       const message = error instanceof GstVerificationError
         ? error.message
-        : error instanceof Error && /^(Organization name is required|Organization email must|Organization schema is out of date|Organization database table is not available yet|GST number is required|GST number must|Mobile number must)/.test(error.message)
+        : error instanceof Error && /^(Organization name is required|Email is required|Organization email must|This email address is already linked|Organization schema is out of date|Organization database table is not available yet|GST number is required|GST number must|Mobile number must)/.test(error.message)
           ? error.message
           : "Unable to create the organization. Please try again or contact support.";
       return { ok: false as const, error: message };

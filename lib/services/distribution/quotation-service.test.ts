@@ -49,11 +49,11 @@ const createdQuotation = {
   id: "quotation-1",
   organization_id: "internal-org-1",
   vendor_id: "vendor-1",
+  customer: "Master Vendor A",
   quotation_no: "QT-1",
   quotation_date: new Date("2026-10-07T00:00:00.000Z"),
   valid_until: null,
   order_no: "ORD-1",
-  customer: "Vendor A",
   notes: null,
   mode: "MULTIPLE",
   status: "DRAFT",
@@ -99,6 +99,7 @@ describe("distribution quotation persistence", () => {
       "internal-org-1",
       "user-1",
       ["booking-1", "booking-2"],
+      "vendor-1",
     );
 
     expect(result).toMatchObject({
@@ -133,19 +134,25 @@ describe("distribution quotation persistence", () => {
     expect(mocks.createAuditEvent).toHaveBeenCalledOnce();
   });
 
-  it("rejects bookings from mixed vendors and duplicate quotations", async () => {
+  it("allows bookings from different vendors and rejects duplicate quotations", async () => {
     mocks.transaction.advanceBooking.findMany.mockResolvedValue([
       booking("booking-1", "BK-1"),
       booking("booking-2", "BK-2", "vendor-2"),
     ]);
-    await expect(createDistributionQuotationFromBookings("internal-org-1", "user-1", ["booking-1", "booking-2"]))
-      .rejects.toThrow("same Vendor Master vendor");
-    expect(mocks.transaction.distributionQuotation.create).not.toHaveBeenCalled();
+    await expect(createDistributionQuotationFromBookings("internal-org-1", "user-1", ["booking-1", "booking-2"], "vendor-1"))
+      .resolves.toMatchObject({ vendorId: "vendor-1" });
 
     mocks.transaction.advanceBooking.findMany.mockResolvedValue([booking("booking-1", "BK-1")]);
     mocks.transaction.distributionQuotationLine.findFirst.mockResolvedValue({ booking_no: "BK-1" });
-    await expect(createDistributionQuotationFromBookings("internal-org-1", "user-1", ["booking-1"]))
+    await expect(createDistributionQuotationFromBookings("internal-org-1", "user-1", ["booking-1"], "vendor-1"))
       .rejects.toThrow("already has a quotation");
+  });
+
+  it("requires an active quotation vendor from Vendor Master", async () => {
+    mocks.transaction.masterVendor.findFirst.mockResolvedValue(null);
+    await expect(createDistributionQuotationFromBookings("internal-org-1", "user-1", ["booking-1"], "inactive-vendor"))
+      .rejects.toThrow("active vendor from Vendor Master");
+    expect(mocks.transaction.distributionQuotation.create).not.toHaveBeenCalled();
   });
 
   it("persists header and subform prices with server-calculated decimal totals", async () => {

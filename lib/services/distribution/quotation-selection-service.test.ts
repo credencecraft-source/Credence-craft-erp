@@ -36,22 +36,22 @@ describe("validate advance-booking quotation selection", () => {
   const bookingSource = {
     bookingId: "BK 08",
     orderNo: "ORD-08",
-    vendorId: "vendor-8",
-    customer: "Vendor Eight",
+    vendorId: null,
+    customer: null,
     totalBooked: 42,
   };
 
-  it("rejects bookings without a valid vendor or quantity and rejects mixed vendors", () => {
+  it("allows missing or different booking vendors but validates order and quantity", () => {
     expect(validateBookingQuotationSelection([
-      { ...bookingSource, vendorId: "" },
-    ])).toMatch(/Vendor Master customer/i);
+      { ...bookingSource, vendorId: "vendor-8", customer: "Vendor Eight" },
+      { ...bookingSource, bookingId: "BK 09", vendorId: "vendor-9", customer: "Vendor Nine" },
+    ])).toBe("");
+    expect(validateBookingQuotationSelection([
+      { ...bookingSource, orderNo: "" },
+    ])).toMatch(/order/i);
     expect(validateBookingQuotationSelection([
       { ...bookingSource, totalBooked: 0 },
     ])).toMatch(/positive whole-number quantity/i);
-    expect(validateBookingQuotationSelection([
-      bookingSource,
-      { ...bookingSource, bookingId: "BK 09", vendorId: "vendor-9", customer: "Vendor Nine" },
-    ])).toMatch(/same Vendor Master vendor/i);
   });
 
   describe("filter advance bookings by workflow view", () => {

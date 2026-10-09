@@ -59,7 +59,7 @@ describe("mobile OTP sign-in route", () => {
     });
   });
 
-  it("authenticates only using the mobile identifier verified by MSG91", async () => {
+  it("does not authenticate a registered mobile account with an SMS OTP", async () => {
     const response = await post(
       new Request("http://localhost/api/auth/mobile-otp/verify", {
         method: "POST",
@@ -68,10 +68,9 @@ describe("mobile OTP sign-in route", () => {
       }),
     );
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      ok: true,
-      redirectTo: "/dashboard/workspace-1/home",
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: expect.stringContaining("already registered"),
     });
     expect(verifyTokenMock).toHaveBeenCalledWith("header.payload.signature");
     expect(findUniqueMock).toHaveBeenCalledWith(
@@ -79,19 +78,8 @@ describe("mobile OTP sign-in route", () => {
         where: { mobile_number: "919876543210" },
       }),
     );
-    expect(updateManyMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          id: "user-1",
-          mobile_number: "919876543210",
-        },
-        data: expect.objectContaining({
-          mobile_verified_at: expect.any(Date),
-          last_login_at: expect.any(Date),
-        }),
-      }),
-    );
-    expect(response.headers.get("set-cookie")).toContain("test-session=session-token");
+    expect(updateManyMock).not.toHaveBeenCalled();
+    expect(response.headers.get("set-cookie")).toBeNull();
   });
 
   it("creates a workspace account for a newly verified mobile number and starts organization setup", async () => {
@@ -131,7 +119,7 @@ describe("mobile OTP sign-in route", () => {
     expect(response.headers.get("set-cookie")).toContain("test-session=session-token");
   });
 
-  it("marks an existing unverified mobile link verified after MSG91 validates it", async () => {
+  it("requires email OTP for an existing account even if its mobile link is unverified", async () => {
     findUniqueMock.mockResolvedValue({
       id: "user-1",
       workspace_id: "workspace-1",
@@ -149,20 +137,9 @@ describe("mobile OTP sign-in route", () => {
       }),
     );
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      ok: true,
-      redirectTo: "/dashboard/workspace-1/home",
-    });
-    expect(updateManyMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: "user-1", mobile_number: "919876543210" },
-        data: expect.objectContaining({
-          mobile_verified_at: expect.any(Date),
-          last_login_at: expect.any(Date),
-        }),
-      }),
-    );
+    expect(response.status).toBe(409);
+    expect(updateManyMock).not.toHaveBeenCalled();
+    expect(createSessionTokenMock).not.toHaveBeenCalled();
   });
 
   it("does not create an account unless MSG91 has verified the token", async () => {

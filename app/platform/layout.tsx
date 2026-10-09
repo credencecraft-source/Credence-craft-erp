@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { ArrowUpRight, Bell, Home } from "lucide-react";
 import Navbar from "@/components/ui/Navbar";
 import Button from "@/components/ui/Button";
 import {
   logoutPlatformSession,
-  requirePlatformSessionAdmin,
+  getPlatformSessionAdmin,
   setPlatformViewMode,
 } from "@/lib/auth/platform-session-manager";
 import PlatformRootLayoutClient from "./_page-content/platform-root-layout";
@@ -18,7 +19,15 @@ export default async function PlatformRootLayout({
 }: {
   children: ReactNode;
 }) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await getPlatformSessionAdmin();
+  if (!admin) {
+    const currentPath = (await headers()).get("x-current-path");
+    if (currentPath === "/platform" || currentPath === "/platform/") {
+      return children;
+    }
+    redirect("/platform");
+  }
+
   const attentionCounts = await getPlatformSupportAttentionCounts();
   const roleLabel = admin.team_role === "CMO"
     ? "CMO · Sales"

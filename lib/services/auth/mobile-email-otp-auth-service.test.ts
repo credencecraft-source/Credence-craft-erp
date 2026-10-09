@@ -38,9 +38,10 @@ describe("mobile account email OTP authentication", () => {
       email_verified: true,
     });
 
-    await expect(sendMobileAccountEmailOtp("919876543210")).resolves.toBe(
-      "s***@example.com",
-    );
+    await expect(sendMobileAccountEmailOtp("919876543210")).resolves.toEqual({
+      registered: true,
+      email: "sam@example.com",
+    });
     expect(findUniqueMock).toHaveBeenCalledWith({
       where: { mobile_number: "919876543210" },
       select: { email: true, email_verified: true },
@@ -51,13 +52,26 @@ describe("mobile account email OTP authentication", () => {
     );
   });
 
-  it("does not issue email OTP for missing or unverified email addresses", async () => {
+  it("distinguishes registered accounts without a verified email from new numbers", async () => {
     findUniqueMock.mockResolvedValue({
       email: "sam@example.com",
       email_verified: false,
     });
 
-    await expect(sendMobileAccountEmailOtp("919876543210")).resolves.toBeNull();
+    await expect(sendMobileAccountEmailOtp("919876543210")).resolves.toEqual({
+      registered: true,
+      email: null,
+    });
+    expect(issueEmailOtpMock).not.toHaveBeenCalled();
+  });
+
+  it("allows new mobile numbers to continue to mobile OTP registration", async () => {
+    findUniqueMock.mockResolvedValue(null);
+
+    await expect(sendMobileAccountEmailOtp("919876543210")).resolves.toEqual({
+      registered: false,
+      email: null,
+    });
     expect(issueEmailOtpMock).not.toHaveBeenCalled();
   });
 

@@ -44,6 +44,7 @@ describe("distribution quotation API", () => {
     const response = await POST(post({
       organizationId: "public-org",
       bookingIds: ["booking-1", "booking-2"],
+      vendorId: "vendor-1",
     }));
     expect(response.status).toBe(201);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
@@ -55,11 +56,12 @@ describe("distribution quotation API", () => {
       "internal-org-1",
       "user-1",
       ["booking-1", "booking-2"],
+      "vendor-1",
     );
   });
 
   it("rejects invalid selection input before invoking the service", async () => {
-    const response = await POST(post({ organizationId: "public-org", bookingIds: ["booking-1", 3] }));
+    const response = await POST(post({ organizationId: "public-org", bookingIds: ["booking-1", 3], vendorId: "vendor-1" }));
     expect(response.status).toBe(400);
     expect(mocks.createDistributionQuotationFromBookings).not.toHaveBeenCalled();
   });

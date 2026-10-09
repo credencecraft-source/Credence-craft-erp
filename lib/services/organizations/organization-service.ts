@@ -13,6 +13,8 @@ import { ensureDefaultProcessTemplate } from "./organization-process-template-se
 
 export type OrganizationCreateInput = {
   workspaceUserId: string;
+  verifiedWorkspaceEmail?: string;
+  workspaceUserFullName?: string;
   organizationName: string;
   organizationEmail?: string;
   gstNumber: string;
@@ -247,6 +249,19 @@ export async function createOrganization(input: OrganizationCreateInput) {
     });
 
     const organization = await prisma.$transaction(async (transaction) => {
+      if (input.verifiedWorkspaceEmail) {
+        await transaction.workspaceUser.update({
+          where: { id: input.workspaceUserId },
+          data: {
+            email: input.verifiedWorkspaceEmail,
+            email_verified: true,
+            ...(input.workspaceUserFullName
+              ? { full_name: input.workspaceUserFullName }
+              : {}),
+          },
+        });
+      }
+
       const organization = await transaction.organization.create({
         data: {
           organization_id: randomUUID(),

@@ -6,23 +6,19 @@ import {
 
 const MOBILE_LOGIN_OTP_PURPOSE = "MOBILE_LOGIN";
 
-function maskEmail(email: string) {
-  const atIndex = email.lastIndexOf("@");
-  if (atIndex < 1) return "your verified email address";
-
-  return `${email[0]}***${email.slice(atIndex)}`;
-}
-
 export async function sendMobileAccountEmailOtp(mobileNumber: string) {
   const user = await prisma.workspaceUser.findUnique({
     where: { mobile_number: mobileNumber },
     select: { email: true, email_verified: true },
   });
 
-  if (!user?.email || !user.email_verified) return null;
+  if (!user) return { registered: false as const, email: null };
+  if (!user.email || !user.email_verified) {
+    return { registered: true as const, email: null };
+  }
 
   await issueEmailOtp(user.email, MOBILE_LOGIN_OTP_PURPOSE);
-  return maskEmail(user.email);
+  return { registered: true as const, email: user.email };
 }
 
 export async function verifyMobileAccountEmailOtp(

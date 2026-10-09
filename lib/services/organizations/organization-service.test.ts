@@ -4,6 +4,7 @@ const { prismaMock, transactionMock, requirePlatformSessionAdmin, requirePlatfor
   const transactionMock = {
     $executeRaw: vi.fn(),
     platformAuditEvent: { create: vi.fn() },
+    workspaceUser: { update: vi.fn() },
     organization: {
       create: vi.fn(),
       delete: vi.fn(),
@@ -96,6 +97,7 @@ beforeEach(() => {
   );
   transactionMock.$executeRaw.mockResolvedValue(1);
   transactionMock.organization.create.mockResolvedValue(organization);
+  transactionMock.workspaceUser.update.mockResolvedValue({ id: "workspace-user-id" });
   transactionMock.masterGst.findMany.mockResolvedValue([]);
   transactionMock.masterProcess.create.mockImplementation(({ data }: { data: { process_name: string } }) => Promise.resolve({ id: `process-${data.process_name}` }));
   transactionMock.masterOperationTemplate.create.mockImplementation(({ data }: { data: { operation_template_name: string } }) => Promise.resolve({ id: `operation-template-${data.operation_template_name}` }));
@@ -251,6 +253,30 @@ describe("organization creation defaults", () => {
       },
     });
     expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 10000, timeout: 30000 });
+  });
+
+  it("updates the verified workspace email in the organization creation transaction", async () => {
+    await createOrganization({
+      workspaceUserId: "workspace-user-id",
+      verifiedWorkspaceEmail: "owner@example.com",
+      workspaceUserFullName: "Owner Name",
+      organizationName: "Northwind Apparel",
+      organizationEmail: "owner@example.com",
+      gstNumber: "22AAAAA0000A1Z5",
+    });
+
+    expect(transactionMock.workspaceUser.update).toHaveBeenCalledWith({
+      where: { id: "workspace-user-id" },
+      data: {
+        email: "owner@example.com",
+        email_verified: true,
+        full_name: "Owner Name",
+      },
+    });
+    expect(prismaMock.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { maxWait: 10000, timeout: 30000 },
+    );
   });
 
   it("rejects an invalid organization email before writing", async () => {

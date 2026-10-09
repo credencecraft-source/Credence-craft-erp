@@ -260,7 +260,10 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
           size: stock.size,
           quantity_on_hand: { gte: line.quantity },
         },
-        data: { quantity_on_hand: { decrement: line.quantity } },
+        data: {
+          quantity_on_hand: { decrement: line.quantity },
+          quantity_issued: { increment: line.quantity },
+        },
       });
       if (summaryUpdated.count !== 1) {
         throw new Error("Finished-goods summary does not match General stock; sale was not posted.");
@@ -281,6 +284,15 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         invoiceNo,
         lineCount: invoiceLines.length,
         totalAmount: totals.subtotal.plus(totals.cgst).plus(totals.sgst).plus(totals.igst).toFixed(2),
+        stockMovements: normalizedLines.map((line) => {
+          const stock = stockById.get(line.stockId);
+          return {
+            stockId: line.stockId,
+            quantity: line.quantity,
+            beforeQuantity: stock?.current_stock ?? null,
+            afterQuantity: stock ? stock.current_stock - line.quantity : null,
+          };
+        }),
       },
     }, transaction);
 

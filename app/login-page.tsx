@@ -11,7 +11,7 @@ import PublicHeader from "@/components/public/public-header";
 import Msg91MobileOtpWidget from "@/components/auth/msg91-mobile-otp-widget";
 
 type View = "login" | "impact";
-type Mode = "login" | "register" | "support";
+type Mode = "login" | "register";
 type AuthMethod = "email" | "mobile";
 
 function subscribeToLocationHash(onStoreChange: () => void) {
@@ -189,16 +189,18 @@ export default function LoginPage() {
               </span>
             </div>
             <div className="mt-5 flex gap-3 border-b border-[var(--erp-border)] text-[0.75rem] font-semibold sm:mt-7">
-              <Button variant="ghost" size="sm" aria-pressed={authMethod === "email" && mode !== "support"} onClick={() => { switchAuthMethod("email"); switchMode("login"); }} className={`hidden min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[0.75rem] hover:bg-transparent ${authMethod === "email" && mode !== "support" ? "border-[var(--erp-text)] text-[var(--erp-text)]" : "border-transparent text-[var(--erp-muted)]"}`}>Email</Button>
+              <Button variant="ghost" size="sm" aria-pressed={authMethod === "email"} onClick={() => { switchAuthMethod("email"); switchMode("login"); }} className={`hidden min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[0.75rem] hover:bg-transparent ${authMethod === "email" ? "border-[var(--erp-text)] text-[var(--erp-text)]" : "border-transparent text-[var(--erp-muted)]"}`}>Email</Button>
               <Button variant="ghost" size="sm" aria-pressed={authMethod === "mobile"} onClick={() => switchAuthMethod("mobile")} className={`min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[0.75rem] hover:bg-transparent ${authMethod === "mobile" ? "border-[var(--erp-text)] text-[var(--erp-text)]" : "border-transparent text-[var(--erp-muted)]"}`}>Mobile</Button>
-              <Button variant="ghost" size="sm" aria-pressed={mode === "support"} onClick={() => { switchAuthMethod("email"); switchMode("support"); }} className={`min-h-0 rounded-none border-0 border-b-2 px-0 py-0 text-[0.75rem] hover:bg-transparent ${mode === "support" && authMethod === "email" ? "border-[var(--erp-text)] text-[var(--erp-text)]" : "border-transparent text-[var(--erp-muted)]"}`}>Support</Button>
             </div>
             {authMethod === "mobile" ? (
               <div className="mt-5 sm:mt-6">
                 {mobileEmailNumber ? (
                   <div className="space-y-3">
-                    <p className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-brand-soft)] px-4 py-3 text-center text-lg font-extrabold tracking-tight text-[var(--erp-brand)]" role="status">
+                    <p className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-brand-soft)] px-4 py-3 text-center text-sm leading-6 text-[var(--erp-text)]" role="status">
+                      This mobile number is already registered. Check your email for the OTP:
+                      <span className="mt-1 block break-all text-lg font-extrabold tracking-tight text-[var(--erp-brand)]">
                       {mobileEmailHint}
+                      </span>
                     </p>
                     <Input
                       label="Email OTP"
@@ -248,7 +250,7 @@ export default function LoginPage() {
                 )}
               </div>
             ) : (
-              <div className="mt-5 space-y-4 sm:mt-6"><Input label={mode === "support" ? "Support email" : "Email"} type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" className="min-h-[52px] text-base" />{otpSent && <Input label="One-time code" value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="6-digit code" className="min-h-[52px] text-base" />}{!otpSent ? <Button onClick={requestOtp} disabled={loading} className="mt-1 w-full bg-[var(--erp-brand)] py-3 text-base font-semibold hover:bg-[var(--erp-brand-hover)]">{loading ? "Sending..." : "Continue with email"}</Button> : <Button onClick={verifyOtp} disabled={loading} className="mt-1 w-full bg-[var(--erp-brand)] py-3 text-base font-semibold hover:bg-[var(--erp-brand-hover)]">{loading ? "Verifying..." : "Verify and continue"}</Button>}{message && <p className="rounded-xl bg-[var(--erp-bg)] p-3 text-[0.75rem] leading-5 text-[var(--erp-muted)]" role="status">{message}</p>}</div>
+              <div className="mt-5 space-y-4 sm:mt-6"><Input label="Email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" className="min-h-[52px] text-base" />{otpSent && <Input label="One-time code" value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="6-digit code" className="min-h-[52px] text-base" />}{!otpSent ? <Button onClick={requestOtp} disabled={loading} className="mt-1 w-full bg-[var(--erp-brand)] py-3 text-base font-semibold hover:bg-[var(--erp-brand-hover)]">{loading ? "Sending..." : "Continue with email"}</Button> : <Button onClick={verifyOtp} disabled={loading} className="mt-1 w-full bg-[var(--erp-brand)] py-3 text-base font-semibold hover:bg-[var(--erp-brand-hover)]">{loading ? "Verifying..." : "Verify and continue"}</Button>}{message && <p className="rounded-xl bg-[var(--erp-bg)] p-3 text-[0.75rem] leading-5 text-[var(--erp-muted)]" role="status">{message}</p>}</div>
             )}
             <p className="mt-5 text-[0.625rem] leading-4 text-[var(--erp-muted)] sm:mt-6">By continuing, you agree to our <Link href="/terms" className="text-[var(--erp-text)] underline underline-offset-2">terms</Link>.</p>
           </section> : <section id="impact" className="mx-auto w-full max-w-lg rounded-[1.5rem] bg-[var(--erp-brand)] p-4 text-white shadow-[0_22px_70px_rgba(24,59,44,0.12)] sm:p-6 lg:rounded-[1.75rem] lg:p-8"><div className="flex items-start justify-between gap-3"><div><p className="text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-[var(--erp-brand-soft)] sm:text-[0.625rem]">A clearer footprint</p><h2 className="mt-2 text-[1.5rem] font-semibold tracking-[-0.04em] sm:text-[1.625rem]">Impact snapshot</h2></div><Waves size={18} className="text-[var(--erp-brand-soft)]" /></div><div className="mt-7 grid gap-4 sm:mt-8 sm:grid-cols-2"><Input label="Fabric waste (kg)" type="number" min="0" value={fabricWaste} onChange={(event) => updateNumber(setFabricWaste, event.target.value)} className="border-white/20 bg-white/10 text-white" /><Input label="Recovered waste (kg)" type="number" min="0" value={recycledWaste} onChange={(event) => updateNumber(setRecycledWaste, event.target.value)} className="border-white/20 bg-white/10 text-white" /><Input label="Water used (litres)" type="number" min="0" value={waterUsed} onChange={(event) => updateNumber(setWaterUsed, event.target.value)} className="border-white/20 bg-white/10 text-white" /></div><div className="mt-7 grid grid-cols-2 gap-3"><div className="rounded-xl bg-white/10 p-4"><Recycle size={15} className="text-[var(--erp-brand-soft)]" /><p className="mt-4 text-[0.625rem] uppercase tracking-wider text-white/50">Waste recovered</p><p className="mt-1 text-[1.5rem] font-semibold">{recoveryRate.toFixed(0)}%</p></div><div className="rounded-xl bg-white/10 p-4"><Zap size={15} className="text-[var(--erp-brand-soft)]" /><p className="mt-4 text-[0.625rem] uppercase tracking-wider text-white/50">Carbon estimate</p><p className="mt-1 text-[1.5rem] font-semibold">{Math.round(carbonImpact).toLocaleString()} <span className="text-[0.625rem] text-white/50">kg CO₂e</span></p></div></div><p className="mt-6 text-[0.6875rem] leading-5 text-white/60">A directional estimate to help teams ask better questions about recovery, water and material flow.</p></section>}
@@ -268,9 +270,13 @@ export default function LoginPage() {
           <h2 id="mobile-email-otp-title" className="mt-4 text-xl font-semibold tracking-tight text-[var(--erp-text)]">
             Check your email
           </h2>
-          <p id="mobile-email-otp-description" className="mt-3 break-all text-[1.5rem] font-extrabold tracking-tight text-[var(--erp-brand)]">
+          <p id="mobile-email-otp-description" className="mt-3 text-sm leading-6 text-[var(--erp-text)]">
+            This mobile number is already registered. We sent a one-time code to:
+          </p>
+          <p className="mt-2 break-all text-[1.25rem] font-extrabold tracking-tight text-[var(--erp-brand)]">
             {mobileEmailHint}
           </p>
+          <p className="mt-2 text-sm text-[var(--erp-muted)]">Check your email for the OTP.</p>
           <Button
             onClick={() => setShowMobileEmailNotice(false)}
             className="mt-5 w-full bg-[var(--erp-brand)] py-2.5 text-sm font-semibold hover:bg-[var(--erp-brand-hover)]"

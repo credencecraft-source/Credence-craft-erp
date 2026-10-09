@@ -19,6 +19,16 @@ const isDevBypass =
   process.env.NODE_ENV !== "production" &&
   (process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL);
 
+function registeredMobileResponse() {
+  return NextResponse.json(
+    {
+      error:
+        "This mobile number is already registered. Request a new sign-in OTP to the email address on the account.",
+    },
+    { status: 409 },
+  );
+}
+
 export async function POST(request: Request) {
   let body: unknown;
   try {
@@ -81,12 +91,7 @@ export async function POST(request: Request) {
     if (isDevBypass) {
       const devUser = getDevUserAccountByMobileNumber(mobileNumber);
       if (devUser) {
-        user = setDevUser({
-          ...devUser,
-          mobile_verified_at: new Date(),
-          last_login_at: new Date(),
-          updated_at: new Date(),
-        });
+        return registeredMobileResponse();
       } else {
         const now = new Date();
         user = setDevUser({
@@ -117,74 +122,51 @@ export async function POST(request: Request) {
         },
       });
 
-      if (user) {
-        const now = new Date();
-        const updated = await prisma.workspaceUser.updateMany({
-          where: { id: user.id, mobile_number: mobileNumber },
-          data: { mobile_verified_at: user.mobile_verified_at ?? now, last_login_at: now },
+      if (user) return registeredMobileResponse();
+
+      const now = new Date();
+      try {
+        user = await prisma.workspaceUser.create({
+          data: {
+            workspace_id: randomUUID(),
+            profile_name: `mobile-${randomUUID()}`,
+            full_name: fullName,
+            email: null,
+            email_verified: false,
+            mobile_number: mobileNumber,
+            mobile_verified_at: now,
+            last_login_at: now,
+          },
+          select: {
+            id: true,
+            workspace_id: true,
+            profile_name: true,
+            full_name: true,
+            email: true,
+            mobile_verified_at: true,
+          },
         });
-        if (updated.count !== 1) {
-          return NextResponse.json(
-            { error: "Mobile verification failed. Please try again." },
-            { status: 401 },
-          );
+        isNewAccount = true;
+      } catch (error) {
+        if (
+          !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+          error.code !== "P2002"
+        ) {
+          throw error;
         }
-        user.mobile_verified_at = user.mobile_verified_at ?? now;
-      } else {
-        const now = new Date();
-        try {
-          user = await prisma.workspaceUser.create({
-            data: {
-              workspace_id: randomUUID(),
-              profile_name: `mobile-${randomUUID()}`,
-              full_name: fullName,
-              email: null,
-              email_verified: false,
-              mobile_number: mobileNumber,
-              mobile_verified_at: now,
-              last_login_at: now,
-            },
-            select: {
-              id: true,
-              workspace_id: true,
-              profile_name: true,
-              full_name: true,
-              email: true,
-              mobile_verified_at: true,
-            },
-          });
-          isNewAccount = true;
-        } catch (error) {
-          if (
-            !(error instanceof Prisma.PrismaClientKnownRequestError) ||
-            error.code !== "P2002"
-          ) {
-            throw error;
-          }
-          user = await prisma.workspaceUser.findUnique({
-            where: { mobile_number: mobileNumber },
-            select: {
-              id: true,
-              workspace_id: true,
-              profile_name: true,
-              full_name: true,
-              email: true,
-              mobile_verified_at: true,
-            },
-          });
-          if (!user) throw error;
-          const updated = await prisma.workspaceUser.updateMany({
-            where: { id: user.id, mobile_number: mobileNumber },
-            data: { mobile_verified_at: user.mobile_verified_at ?? now, last_login_at: now },
-          });
-          if (updated.count !== 1) {
-            return NextResponse.json(
-              { error: "Mobile verification failed. Please try again." },
-              { status: 401 },
-            );
-          }
-          user.mobile_verified_at = user.mobile_verified_at ?? now;
-        }
+        user = await prisma.workspaceUser.findUnique({
+          where: { mobile_number: mobileNumber },
+          select: {
+            id: true,
+            workspace_id: true,
+            profile_name: true,
+            full_name: true,
+            email: true,
+            mobile_verified_at: true,
+          },
+        });
+        if (!user) throw error;
+        return registeredMobileResponse();
       }
     }
 

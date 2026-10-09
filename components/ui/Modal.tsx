@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utilities/utility-helpers";
 
@@ -78,7 +79,7 @@ export default function Modal({
     }
   };
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
   const variants = {
     default: "border-slate-200",
@@ -93,7 +94,7 @@ export default function Modal({
     xl: "max-w-5xl",
   };
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 backdrop-blur-[2px] sm:items-center"
       onClick={closeOnBackdrop ? onClose : undefined}
@@ -113,6 +114,7 @@ export default function Modal({
       >
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

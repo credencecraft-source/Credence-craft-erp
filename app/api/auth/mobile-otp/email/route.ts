@@ -39,11 +39,14 @@ export async function POST(request: Request) {
 
   try {
     if (body.action === "send") {
-      const emailHint = await sendMobileAccountEmailOtp(body.mobileNumber);
+      const account = await sendMobileAccountEmailOtp(body.mobileNumber);
       return NextResponse.json({
         ok: true,
-        emailOtpSent: Boolean(emailHint),
-        emailHint,
+        registered: account.registered,
+        emailOtpSent: Boolean(account.email),
+        emailHint: account.email,
+      }, {
+        headers: { "Cache-Control": "no-store" },
       });
     }
 

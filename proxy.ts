@@ -25,19 +25,35 @@ export function proxy(request: NextRequest) {
     });
   }
 
+  const isPlatformPageRoute =
+    pathname === "/platform" || pathname.startsWith("/platform/");
+  const isPlatformLoginPage = pathname === "/platform" || pathname === "/platform/";
   const isPlatformApiRoute = pathname.startsWith("/api/platform/");
+  const isPlatformProtectedRoute = isPlatformPageRoute || isPlatformApiRoute;
   const sessionToken = request.cookies.get(
-    isPlatformApiRoute ? PLATFORM_SESSION_COOKIE_NAME : SESSION_COOKIE_NAME,
+    isPlatformProtectedRoute ? PLATFORM_SESSION_COOKIE_NAME : SESSION_COOKIE_NAME,
   )?.value;
-  const authenticatedUserId = isPlatformApiRoute
+  const authenticatedUserId = isPlatformProtectedRoute
     ? verifyPlatformSessionToken(sessionToken)
     : verifySessionToken(sessionToken);
   if (!authenticatedUserId) {
+    if (isPlatformLoginPage) {
+      const requestHeaders = new Headers(request.headers);
+      requestHeaders.set("x-current-path", pathname);
+      return NextResponse.next({
+        request: {
+          headers: requestHeaders,
+        },
+      });
+    }
+
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(
+      new URL(isPlatformPageRoute ? "/platform" : "/", request.url),
+    );
   }
 
   const requestHeaders = new Headers(request.headers);
@@ -52,6 +68,8 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    "/platform",
+    "/platform/:path*",
     "/dashboard/:workspaceId/organizations/:organizationId/:path*",
     "/api/:path*",
   ],

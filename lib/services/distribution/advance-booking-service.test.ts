@@ -82,6 +82,37 @@ describe("advance-booking persistence", () => {
     expect(mocks.createAuditEvent).toHaveBeenCalledOnce();
   });
 
+  it("allows an advance booking without a booking vendor", async () => {
+    mocks.transaction.advanceBooking.create.mockResolvedValue({
+      id: "booking-record-optional",
+      organization_id: "internal-org-1",
+      order_id: "order-1",
+      vendor_id: null,
+      booking_no: "BK-OPTIONAL",
+      customer: null,
+      brand: "Brand",
+      style_name: "Style",
+      delivery_date: new Date("2026-12-01T00:00:00.000Z"),
+      created_at: new Date("2026-10-07T00:00:00.000Z"),
+      order: { orderNo: "ORD-1" },
+      quotationLines: [],
+      sizeLines: [{ id: "booking-size-1", size: "M", booked_quantity: 30, assignments: [] }],
+    });
+    mocks.transaction.masterVendor.findFirst.mockResolvedValue(null);
+
+    const booking = await createAdvanceBooking("internal-org-1", "user-1", {
+      orderId: "order-1",
+      vendorId: null,
+      sizes: [{ size: "M", quantity: 30 }],
+    });
+
+    expect(booking.customer).toBe("");
+    expect(mocks.transaction.masterVendor.findFirst).not.toHaveBeenCalled();
+    expect(mocks.transaction.advanceBooking.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ vendor_id: null, customer: null }),
+    }));
+  });
+
   it("loads shipment details by organization-scoped internal booking ID", async () => {
     mocks.prisma.advanceBooking.findFirst.mockResolvedValue({
       id: "booking-record-1",
@@ -159,7 +190,11 @@ describe("advance-booking persistence", () => {
         quotation: {
           quotation_no: "QT-1",
           customer: "Quotation Vendor",
-          parentQuotation: { customer: "Master Quotation Vendor" },
+          vendor: { vendor: "Quotation Vendor" },
+          parentQuotation: {
+            customer: "Master Quotation Vendor",
+            vendor: { vendor: "Master Quotation Vendor" },
+          },
         },
       }],
     }]);
@@ -194,7 +229,11 @@ describe("advance-booking persistence", () => {
         quotation: {
           quotation_no: "QT-1",
           customer: "Quotation Vendor",
-          parentQuotation: { customer: "Master Quotation Vendor" },
+          vendor: { vendor: "Quotation Vendor" },
+          parentQuotation: {
+            customer: "Master Quotation Vendor",
+            vendor: { vendor: "Master Quotation Vendor" },
+          },
         },
       }],
       sizeLines: [{
@@ -234,7 +273,13 @@ describe("advance-booking persistence", () => {
               select: {
                 quotation_no: true,
                 customer: true,
-                parentQuotation: { select: { customer: true } },
+                vendor: { select: { vendor: true } },
+                parentQuotation: {
+                  select: {
+                    customer: true,
+                    vendor: { select: { vendor: true } },
+                  },
+                },
               },
             },
           },

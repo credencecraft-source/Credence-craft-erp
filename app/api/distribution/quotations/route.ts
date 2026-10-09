@@ -50,10 +50,11 @@ export async function POST(request: Request) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
-    if (!Array.isArray(body.bookingIds) || body.bookingIds.some((id) => typeof id !== "string")) {
-      throw new Error("Select advance bookings to create the quotation.");
+    if (!Array.isArray(body.bookingIds) || body.bookingIds.some((id) => typeof id !== "string") ||
+        typeof body.vendorId !== "string" || !body.vendorId.trim()) {
+      throw new Error("Select advance bookings and a Vendor Master quotation vendor.");
     }
-    const quotation = await createDistributionQuotationFromBookings(organization.id, user.id, body.bookingIds);
+    const quotation = await createDistributionQuotationFromBookings(organization.id, user.id, body.bookingIds, body.vendorId.trim());
     return NextResponse.json({ quotation }, { status: 201 });
   } catch (error) {
     return quotationErrorResponse(error, "Unable to create the distribution quotation.");

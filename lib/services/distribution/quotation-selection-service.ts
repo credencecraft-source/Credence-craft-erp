@@ -39,8 +39,8 @@ export function validateMasterQuotationChildSelection(
 export type BookingQuotationSource = {
     bookingId: string;
     orderNo: string;
-    vendorId: string;
-    customer: string;
+    vendorId: string | null;
+    customer: string | null;
     totalBooked: number;
 };
 
@@ -66,15 +66,11 @@ export function validateBookingQuotationSelection(bookings: BookingQuotationSour
   if (new Set(bookings.map((booking) => booking.bookingId)).size !== bookings.length) {
     return "A booking can only be included once in a quotation.";
   }
-  if (bookings.some((booking) => !booking.bookingId.trim() || !booking.orderNo.trim() || !booking.vendorId.trim() || !booking.customer.trim())) {
-    return "Every selected booking must have an order and Vendor Master customer.";
+  if (bookings.some((booking) => !booking.bookingId.trim() || !booking.orderNo.trim())) {
+    return "Every selected booking must have an order.";
   }
   if (bookings.some((booking) => !Number.isSafeInteger(booking.totalBooked) || booking.totalBooked <= 0)) {
     return "Every selected booking must have a positive whole-number quantity.";
-  }
-  const vendor = bookings[0];
-  if (bookings.some((booking) => booking.vendorId !== vendor.vendorId || booking.customer !== vendor.customer)) {
-    return "Select bookings for the same Vendor Master vendor to create one quotation.";
   }
   const totalBooked = bookings.reduce((total, booking) => total + booking.totalBooked, 0);
   if (!Number.isSafeInteger(totalBooked)) return "The selected booking quantities exceed the supported quotation total.";

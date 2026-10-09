@@ -8,10 +8,14 @@ import {
   createFinishedGoodsOutwardBox,
   createFinishedGoodsOutwardRequest,
   createFinishedGoodsOutwardRequestFromBookings,
-  createFinishedGoodsOutwardShipment,
+  createFinishedGoodsOutwardPackingList,
   deleteFinishedGoodsOutwardBox,
   listFinishedGoodsOutwardWorkflow,
+  markFinishedGoodsOutwardShipmentShipped,
   pickFinishedGoodsOutwardLine,
+  reverseFinishedGoodsOutwardShipment,
+  unpickFinishedGoodsOutwardLine,
+  deleteFinishedGoodsOutwardPackingList,
 } from "@/lib/services/inventory/finished-goods-outward-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
@@ -35,6 +39,24 @@ function isRequestLine(value: unknown): value is { stockType: StockType; stockId
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isBookingSizeRequest(value: unknown): value is { sizeLineId: string; quantity: string } {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && "sizeLineId" in value && typeof value.sizeLineId === "string"
+    && "quantity" in value && typeof value.quantity === "string";
+}
+
+function isBookingRequestArray(value: unknown): value is Array<{
+  bookingId: string;
+  sizeRequests: Array<{ sizeLineId: string; quantity: string }>;
+}> {
+  return Array.isArray(value) && value.every((item) =>
+    typeof item === "object" && item !== null && !Array.isArray(item)
+    && "bookingId" in item && typeof item.bookingId === "string"
+    && "sizeRequests" in item && Array.isArray(item.sizeRequests)
+    && item.sizeRequests.every(isBookingSizeRequest),
+  );
 }
 
 function handleError(error: unknown, fallback: string) {
@@ -94,7 +116,7 @@ export async function POST(request: Request) {
   const organizationId = text(input.organizationId);
   const action = text(input.action);
   if (!organizationId) return NextResponse.json({ error: "Organization ID is required." }, { status: 400 });
-  if (!["request", "request-bookings", "accept", "cancel-request", "pick", "box", "delete-box", "ship"].includes(action)) {
+  if (!["request", "request-bookings", "accept", "cancel-request", "pick", "unpick", "box", "delete-box", "packing-list", "mark-shipped", "delete-packing-list", "reverse-shipment"].includes(action)) {
     return NextResponse.json({ error: "Select a valid FG Stock DC action." }, { status: 400 });
   }
 
@@ -118,12 +140,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, request: result }, { status: 201 });
     }
     if (action === "request-bookings") {
-      if (!isStringArray(input.bookingIds)) {
-        return NextResponse.json({ error: "Select shipment tracking records to request finished goods." }, { status: 400 });
+      if (!isBookingRequestArray(input.bookingRequests)) {
+        return NextResponse.json({ error: "Select shipment tracking records and enter a finished-goods quantity for each booking." }, { status: 400 });
       }
       const result = await createFinishedGoodsOutwardRequestFromBookings({
         ...actor,
-        bookingIds: input.bookingIds,
+        bookingRequests: input.bookingRequests.map((booking) => ({
+          bookingId: text(booking.bookingId),
+          sizeRequests: booking.sizeRequests.map((sizeRequest) => ({
+            sizeLineId: text(sizeRequest.sizeLineId),
+            quantity: text(sizeRequest.quantity),
+          })),
+        })),
       });
       return NextResponse.json({ ok: true, request: result }, { status: 201 });
     }
@@ -145,15 +173,43 @@ export async function POST(request: Request) {
       const result = await pickFinishedGoodsOutwardLine({ ...actor, requestLineId });
       return NextResponse.json({ ok: true, item: result });
     }
-    if (action === "box" || action === "ship") {
+    if (action === "unpick") {
+      const requestLineId = text(input.requestLineId);
+      if (!requestLineId) return NextResponse.json({ error: "Request line ID is required." }, { status: 400 });
+      const result = await unpickFinishedGoodsOutwardLine({ ...actor, requestLineId });
+      return NextResponse.json({ ok: true, item: result });
+    }
+    if (action === "reverse-shipment") {
+      const shipmentId = text(input.shipmentId);
+      if (!shipmentId) return NextResponse.json({ error: "Shipment ID is required." }, { status: 400 });
+      const result = await reverseFinishedGoodsOutwardShipment({
+        organizationId: organization.id,
+        actorId: user.id,
+        shipmentId,
+      });
+      return NextResponse.json({ ok: true, shipment: result });
+    }
+    if (action === "mark-shipped" || action === "delete-packing-list") {
+      const shipmentId = text(input.shipmentId);
+      if (!shipmentId) return NextResponse.json({ error: "Packing list ID is required." }, { status: 400 });
+      const result = action === "mark-shipped"
+        ? await markFinishedGoodsOutwardShipmentShipped({ ...actor, shipmentId })
+        : await deleteFinishedGoodsOutwardPackingList({ organizationId: organization.id, shipmentId, actorId: user.id });
+      return NextResponse.json({ ok: true, packingList: result });
+    }
+    if (action === "box" || action === "packing-list") {
       const ids = action === "box" ? input.requestLineIds : input.boxIds;
       if (!isStringArray(ids)) {
         return NextResponse.json({ error: action === "box" ? "Picked item IDs must be provided as a list." : "Box IDs must be provided as a list." }, { status: 400 });
       }
-      const result = action === "box"
-        ? await createFinishedGoodsOutwardBox({ ...actor, requestLineIds: ids })
-        : await createFinishedGoodsOutwardShipment({ ...actor, boxIds: ids });
-      return NextResponse.json(action === "box" ? { ok: true, box: result } : { ok: true, shipment: result }, { status: 201 });
+      if (action === "box") {
+        const boxNo = text(input.boxNo);
+        if (!boxNo) return NextResponse.json({ error: "Box number is required." }, { status: 400 });
+        const result = await createFinishedGoodsOutwardBox({ ...actor, requestLineIds: ids, boxNo });
+        return NextResponse.json({ ok: true, box: result }, { status: 201 });
+      }
+      const result = await createFinishedGoodsOutwardPackingList({ ...actor, boxIds: ids });
+      return NextResponse.json({ ok: true, packingList: result }, { status: 201 });
     }
 
     const boxId = text(input.boxId);

@@ -192,8 +192,8 @@ export default function Msg91MobileOtpWidget({
   async function sendOtp() {
     const dialCode = normalizeMobileNumber(countryCode);
     const nationalNumber = normalizeMobileNumber(mobileNumber);
-    if (!/^\d{1,4}$/.test(dialCode) || !/^\d{10}$/.test(nationalNumber)) {
-      setMessage("Enter a valid country code and 10-digit mobile number.");
+    if (!/^\d{1,4}$/.test(dialCode) || !/^\d{6,14}$/.test(nationalNumber)) {
+      setMessage("Enter a valid country code and mobile number.");
       return;
     }
 
@@ -215,11 +215,19 @@ export default function Msg91MobileOtpWidget({
         if (!lookupResponse.ok) {
           throw new Error(lookupPayload.error || "Unable to check this account.");
         }
-        if (lookupPayload.emailOtpSent && typeof lookupPayload.emailHint === "string") {
-          if (!onEmailOtpRequired) {
-            throw new Error("Email OTP sign-in is not available.");
+        if (lookupPayload.registered) {
+          if (lookupPayload.emailOtpSent && typeof lookupPayload.emailHint === "string") {
+            if (!onEmailOtpRequired) {
+              throw new Error("Email OTP sign-in is not available.");
+            }
+            onEmailOtpRequired(identifier, lookupPayload.emailHint);
+            setBusy(false);
+            return;
           }
-          onEmailOtpRequired(identifier, lookupPayload.emailHint);
+
+          setMessage(
+            "This mobile number is already registered, but it does not have a verified email address. Contact support to recover the account.",
+          );
           setBusy(false);
           return;
         }
@@ -339,10 +347,10 @@ export default function Msg91MobileOtpWidget({
           autoComplete="tel-national"
           value={mobileNumber}
           onChange={(event) =>
-            setMobileNumber(event.target.value.replace(/\D/g, "").slice(0, 10))
+            setMobileNumber(event.target.value.replace(/\D/g, "").slice(0, 14))
           }
           placeholder="98765 43210"
-          maxLength={10}
+          maxLength={14}
           disabled={otpSent || busy}
           className="min-h-9 bg-white px-2.5 py-2 text-sm"
         />

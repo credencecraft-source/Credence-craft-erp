@@ -30,6 +30,22 @@ function createRequest(path: string, cookieName: string, token: string) {
 }
 
 describe("API authentication proxy", () => {
+  it("allows the platform root login page without a platform session", () => {
+    const response = proxy(new NextRequest("http://localhost/platform"));
+
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+    expect(response.headers.get("x-middleware-override-headers")).toContain(
+      "x-current-path",
+    );
+  });
+
+  it("redirects unauthenticated platform pages to the platform login page", () => {
+    const response = proxy(new NextRequest("http://localhost/platform/clients"));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/platform");
+  });
+
   it("allows platform API requests with a valid platform session", () => {
     const response = proxy(createRequest(
       "/api/platform/leads/lead-123/tickets",

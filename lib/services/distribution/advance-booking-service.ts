@@ -38,7 +38,13 @@ const bookingInclude = {
         select: {
           quotation_no: true,
           customer: true,
-          parentQuotation: { select: { customer: true } },
+          vendor: { select: { vendor: true } },
+          parentQuotation: {
+            select: {
+              customer: true,
+              vendor: { select: { vendor: true } },
+            },
+          },
         },
       },
     },
@@ -99,10 +105,11 @@ function mapBooking(record: Prisma.AdvanceBookingGetPayload<{ include: typeof bo
     orderId: record.order_id,
     orderNo: record.order.orderNo,
     vendorId: record.vendor_id,
-    customer: record.customer,
+    customer: record.customer ?? "",
     quotationNo: record.quotationLines[0]?.quotation.quotation_no ?? null,
-    quotationVendor: record.quotationLines[0]?.quotation.customer ?? null,
-    masterQuotationVendor: record.quotationLines[0]?.quotation.parentQuotation?.customer ?? null,
+    quotationVendor: record.quotationLines[0]?.quotation.vendor?.vendor ?? record.quotationLines[0]?.quotation.customer ?? null,
+    masterQuotationVendor: record.quotationLines[0]?.quotation.parentQuotation?.vendor?.vendor ??
+      record.quotationLines[0]?.quotation.parentQuotation?.customer ?? null,
     brand: record.brand ?? "",
     styleName: record.style_name ?? "",
     deliveryDate: record.delivery_date?.toISOString().slice(0, 10) ?? "",
@@ -143,7 +150,7 @@ async function createBookingInTransaction(
   userId: string,
   input: {
     orderId: string;
-    vendorId: string;
+    vendorId: string | null;
     sizes: AdvanceBookingSizeInput[];
   },
 ) {
@@ -159,11 +166,13 @@ async function createBookingInTransaction(
     },
   });
   if (!order) throw new Error("The selected order was not found in this organization.");
-  const vendor = await transaction.masterVendor.findFirst({
-    where: { id: input.vendorId, organization_id: organizationId, is_active: true },
-    select: { id: true, vendor: true },
-  });
-  if (!vendor) throw new Error("Select an active customer from Vendor Master.");
+  const vendor = input.vendorId
+    ? await transaction.masterVendor.findFirst({
+      where: { id: input.vendorId, organization_id: organizationId, is_active: true },
+      select: { id: true, vendor: true },
+    })
+    : null;
+  if (input.vendorId && !vendor) throw new Error("Select an active customer from Vendor Master.");
 
   const capacityBySize = new Map<string, number>();
   for (const row of order.finishedGoods) {
@@ -201,9 +210,9 @@ async function createBookingInTransaction(
     data: {
       organization_id: organizationId,
       order_id: order.id,
-      vendor_id: vendor.id,
+      vendor_id: vendor?.id ?? null,
       booking_no: await reserveProcurementDocumentNumber(organizationId, "ADVANCE_BOOKING", transaction),
-      customer: vendor.vendor,
+      customer: vendor?.vendor ?? null,
       brand: order.brand,
       style_name: order.styleName,
       delivery_date: order.deliveryDate,
@@ -231,16 +240,17 @@ async function createBookingInTransaction(
 export async function createAdvanceBooking(
   organizationId: string,
   userId: string,
-  input: { orderId: string; vendorId: string; sizes: AdvanceBookingSizeInput[] },
+  input: { orderId: string; vendorId: string | null; sizes: AdvanceBookingSizeInput[] },
 ) {
-  if (!input.orderId.trim() || !input.vendorId.trim()) throw new Error("Select an order and customer.");
+  if (!input.orderId.trim()) throw new Error("Select an order.");
+  const normalizedInput = { ...input, vendorId: input.vendorId?.trim() || null };
   if (!Array.isArray(input.sizes) || input.sizes.length === 0 || input.sizes.length > 200) {
     throw new Error("Submit valid quantities for the order sizes.");
   }
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       return await prisma.$transaction(
-        (transaction) => createBookingInTransaction(transaction, organizationId, userId, input),
+        (transaction) => createBookingInTransaction(transaction, organizationId, userId, normalizedInput),
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 },
       );
     } catch (error) {

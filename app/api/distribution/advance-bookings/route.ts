@@ -65,6 +65,9 @@ export async function POST(request: Request) {
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
     if (!Array.isArray(body.sizes)) throw new Error("Submit size-wise advance booking quantities.");
+    if (body.vendorId !== undefined && body.vendorId !== null && typeof body.vendorId !== "string") {
+      throw new Error("Select a valid optional booking vendor.");
+    }
     const sizes = body.sizes.map((value) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) {
         throw new Error("Each advance booking size quantity must be valid.");
@@ -79,7 +82,7 @@ export async function POST(request: Request) {
     });
     const booking = await createAdvanceBooking(organization.id, user.id, {
       orderId: String(body.orderId ?? "").trim(),
-      vendorId: String(body.vendorId ?? "").trim(),
+      vendorId: typeof body.vendorId === "string" && body.vendorId.trim() ? body.vendorId.trim() : null,
       sizes,
     });
     return NextResponse.json({ booking }, { status: 201 });

@@ -44,8 +44,11 @@ describe("mobile email OTP route", () => {
     expect(sendEmailOtpMock).not.toHaveBeenCalled();
   });
 
-  it("returns a masked email hint when the verified email OTP is sent", async () => {
-    sendEmailOtpMock.mockResolvedValue("s***@example.com");
+  it("returns the full verified email destination when its OTP is sent", async () => {
+    sendEmailOtpMock.mockResolvedValue({
+      registered: true,
+      email: "sam@example.com",
+    });
 
     const response = await post(
       new Request("http://localhost/api/auth/mobile-otp/email", {
@@ -61,10 +64,34 @@ describe("mobile email OTP route", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       ok: true,
+      registered: true,
       emailOtpSent: true,
-      emailHint: "s***@example.com",
+      emailHint: "sam@example.com",
     });
     expect(sendEmailOtpMock).toHaveBeenCalledWith("919876543210");
+  });
+
+  it("identifies registered accounts without a verified email without sending SMS OTP", async () => {
+    sendEmailOtpMock.mockResolvedValue({ registered: true, email: null });
+
+    const response = await post(
+      new Request("http://localhost/api/auth/mobile-otp/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "send",
+          mobileNumber: "919876543210",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      registered: true,
+      emailOtpSent: false,
+      emailHint: null,
+    });
   });
 
   it("creates a session only after the mobile-linked email OTP verifies", async () => {
