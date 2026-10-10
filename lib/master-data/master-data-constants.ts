@@ -123,24 +123,6 @@ async function nextGoldSealCode(organizationId: string, database: MasterDelegate
   return `GS-${nextNumber}`;
 }
 
-async function hydrateArticleMetrics(organizationId: string, row: MasterRow) {
-  const articleName = String(row.article ?? "").trim();
-  if (!articleName) {
-    return { running_order_qty: 0, running_order_variants: 0 };
-  }
-
-  const matchedOrders = await prisma.merchandisingOrder.findMany({
-    where: { organization_id: organizationId, article: articleName },
-    select: { orderNo: true, orderQty: true },
-  });
-
-  const totalQty = matchedOrders.reduce((sum, order) => sum + Number(order.orderQty ?? 0), 0);
-  return {
-    running_order_qty: totalQty,
-    running_order_variants: matchedOrders.length,
-  };
-}
-
 async function resolveLookupId(organizationId: string, moduleKey: string, value: unknown) {
   if (!value) return null;
   const activeDummyBatch = await prisma.organizationDummyDataBatch.findFirst({
@@ -252,18 +234,24 @@ async function buildData(
   return data;
 }
 
-async function rowFields(moduleKey: string, row: MasterRow, definition: NonNullable<ReturnType<typeof getMasterDefinition>>) {
+async function rowFields(
+  moduleKey: string,
+  row: MasterRow,
+  definition: NonNullable<ReturnType<typeof getMasterDefinition>>,
+  articleMetrics?: Map<string, { running_order_qty: number; running_order_variants: number }>,
+  includeImageData = true,
+) {
   const fields: MasterFieldValues = {};
   for (const field of definition.fields) {
+    if (field.type === "image" && !includeImageData) continue;
+    if (moduleKey === "article" && (field.key === "running_order_qty" || field.key === "running_order_variants")) {
+      const metrics = articleMetrics?.get(String(row.article ?? "")) ?? { running_order_qty: 0, running_order_variants: 0 };
+      fields[field.key] = field.key === "running_order_qty" ? metrics.running_order_qty : metrics.running_order_variants;
+      continue;
+    }
     const column = fieldColumns[moduleKey]?.[field.key];
     if (!column) continue;
-    let value = valueForMasterField(row, column);
-    if (field.key === "running_order_qty" || field.key === "running_order_variants") {
-      if (moduleKey === "article") {
-        const metrics = await hydrateArticleMetrics(row.organization_id as string, row);
-        value = field.key === "running_order_qty" ? metrics.running_order_qty : metrics.running_order_variants;
-      }
-    }
+    const value = valueForMasterField(row, column);
     fields[field.key] = value === null || value === undefined
       ? null
       : field.type === "date"
@@ -279,7 +267,7 @@ export async function getMasterValuesForOrganization(
   organizationId: string,
   moduleKey: string,
   includeInactive = false,
-  options: { search?: string; limit?: number; exactSearch?: boolean; includeDummyData?: boolean; entityId?: string } = {},
+  options: { search?: string; limit?: number; exactSearch?: boolean; includeDummyData?: boolean; entityId?: string; includeImageData?: boolean } = {},
 ) {
   const definition = getMasterDefinition(moduleKey);
   const delegate = delegates[moduleKey];
@@ -313,6 +301,26 @@ export async function getMasterValuesForOrganization(
   const rows = fetchedRows
     .filter((row) => options.includeDummyData || !dummyBatch || !belongsToDummyBatch(row, dummyBatch.id))
     .slice(0, limit);
+  const articleNames = moduleKey === "article"
+    ? [...new Set(rows.map((row) => String(row.article ?? "").trim()).filter(Boolean))]
+    : [];
+  const articleMetrics = new Map<string, { running_order_qty: number; running_order_variants: number }>();
+  if (articleNames.length > 0) {
+    const groupedOrders = await prisma.merchandisingOrder.groupBy({
+      by: ["article"],
+      where: { organization_id: organizationId, article: { in: articleNames } },
+      _sum: { orderQty: true },
+      _count: { _all: true },
+    });
+    for (const group of groupedOrders) {
+      if (group.article) {
+        articleMetrics.set(group.article, {
+          running_order_qty: Number(group._sum.orderQty ?? 0),
+          running_order_variants: group._count._all,
+        });
+      }
+    }
+  }
   const lookupKeys = definition.fields
     .filter((field) => field.type === "lookup" && field.lookupModuleKey)
     .map((field) => field.lookupModuleKey as string);
@@ -338,7 +346,7 @@ export async function getMasterValuesForOrganization(
   }));
 
   const hydratedRows = await Promise.all(rows.map(async (row) => {
-    const fields = await rowFields(moduleKey, row, definition);
+    const fields = await rowFields(moduleKey, row, definition, articleMetrics, options.includeImageData !== false);
     for (const field of definition.fields.filter((item) => item.type === "lookup")) {
       const related = fields[field.key] && field.lookupModuleKey
         ? lookupCache.get(field.lookupModuleKey)?.get(String(fields[field.key]))

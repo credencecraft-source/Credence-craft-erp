@@ -10,6 +10,7 @@ const { prismaMock, models } = vi.hoisted(() => {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     findFirst: vi.fn().mockResolvedValue(null),
     findMany: vi.fn().mockResolvedValue([]),
+    groupBy: vi.fn().mockResolvedValue([]),
     update: vi.fn().mockResolvedValue({ id: "updated-id" }),
     upsert: vi.fn().mockResolvedValue({ id: "upserted-id" }),
   });
@@ -22,6 +23,7 @@ const { prismaMock, models } = vi.hoisted(() => {
     "masterRawMaterialCategory", "masterRawMaterialSubCategory", "masterRawMaterialType", "masterSeason",
     "masterSize", "masterSizeGroup", "masterSizeGroupSize", "masterState", "masterStatus", "masterStockUomConvert",
     "masterSubCategory", "masterUom", "masterVendor", "masterSizeWiseConsumption",
+    "merchandisingOrder",
   ];
   const models = Object.fromEntries(modelNames.map((name) => [name, delegate()])) as Record<string, ReturnType<typeof delegate>>;
   const organizationDummyDataBatch = delegate();
@@ -361,5 +363,63 @@ describe("dummy master isolation", () => {
 
     expect(models.masterCategory.update).not.toHaveBeenCalled();
     expect(models.masterCategory.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe("article order metrics", () => {
+  it("loads order quantity and variant count with one organization-scoped aggregate", async () => {
+    models.masterArticle.findMany.mockResolvedValue([{
+      id: "article-id",
+      value_id: "article-value-id",
+      organization_id: "org-id",
+      article: "Winter Jacket",
+      article_code: "AR-1",
+      design_by: null,
+      designed_date: null,
+      is_active: true,
+      sort_order: 0,
+    }] as never);
+    models.merchandisingOrder.groupBy.mockResolvedValue([{
+      article: "Winter Jacket",
+      _sum: { orderQty: 150 },
+      _count: { _all: 2 },
+    }] as never);
+
+    const values = await getMasterValuesForOrganization("org-id", "article", true, { includeDummyData: true });
+
+    expect(values[0].fields).toMatchObject({
+      running_order_qty: 150,
+      running_order_variants: 2,
+    });
+    expect(models.merchandisingOrder.groupBy).toHaveBeenCalledWith({
+      by: ["article"],
+      where: { organization_id: "org-id", article: { in: ["Winter Jacket"] } },
+      _sum: { orderQty: true },
+      _count: { _all: true },
+    });
+    expect(models.merchandisingOrder.findMany).not.toHaveBeenCalled();
+  });
+
+});
+
+describe("master image data projection", () => {
+  it("can omit image fields from master editor and lookup payloads", async () => {
+    models.masterRawMaterial.findMany.mockResolvedValue([{
+      id: "raw-material-id",
+      value_id: "raw-material-value-id",
+      organization_id: "org-id",
+      raw_material_name: "Cotton",
+      image_url: "data:image/png;base64,large-image-data",
+      is_active: true,
+      sort_order: 0,
+    }] as never);
+
+    const values = await getMasterValuesForOrganization("org-id", "raw-material", true, {
+      includeDummyData: true,
+      includeImageData: false,
+    });
+
+    expect(values[0].fields).not.toHaveProperty("Image_Url");
+    expect(JSON.stringify(values)).not.toContain("large-image-data");
   });
 });

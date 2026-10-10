@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
@@ -89,7 +89,7 @@ export function MasterRecordsTable({
     })
     : fields;
 
-  const openEditor = (record: MasterRecord) => {
+  const openEditor = useCallback((record: MasterRecord) => {
     setEditingRecord(record);
 
     let extractedFields: Record<string, unknown> = {};
@@ -115,7 +115,7 @@ export function MasterRecordsTable({
     });
 
     setEditFields(extractedFields);
-  };
+  }, [fields]);
 
   const closeEditor = () => {
     setEditingRecord(null);
@@ -435,7 +435,7 @@ export function MasterRecordsTable({
     );
   };
 
-  const getFieldValue = (record: MasterRecord, field: MasterFieldDefinition) => {
+  const getFieldValue = useCallback((record: MasterRecord, field: MasterFieldDefinition) => {
     const metadata =
       record.metadata && typeof record.metadata === "object"
         ? (record.metadata as { fields?: Record<string, unknown> })
@@ -446,33 +446,78 @@ export function MasterRecordsTable({
     if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
     if (typeof value === "object") return JSON.stringify(value);
     return String(value);
-  };
+  }, []);
 
-  const reportFields = [
+  const reportFields = useMemo(() => [
     { key: "label", label: "Name" },
     { key: "code", label: "Code" },
     ...fields.map((field) => ({ key: field.key, label: field.label })),
     { key: "description", label: "Description" },
     { key: "status", label: "Status" },
     { key: "actions", label: "Actions" },
-  ].filter((field, index, allFields) => allFields.findIndex((item) => item.key === field.key) === index);
+  ].filter((field, index, allFields) => allFields.findIndex((item) => item.key === field.key) === index), [fields]);
 
-  const defaultVisibleReportFields = reportFields
-    .filter((field) => field.key !== "description" || records.some((record) => record.description))
-    .map((field) => field.key);
+  const defaultVisibleReportFields = useMemo(
+    () => reportFields
+      .filter((field) => field.key !== "description" || records.some((record) => record.description))
+      .map((field) => field.key),
+    [records, reportFields],
+  );
 
   const activeVisibleReportFields = visibleReportFields.length > 0
     ? visibleReportFields
     : defaultVisibleReportFields;
 
-  const openRecordDetail = (record: MasterRecord) => {
+  const openRecordDetail = useCallback((record: MasterRecord) => {
     if (moduleKey === "article") {
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/articles/${encodeURIComponent(record.value_id)}`);
     }
     if (moduleKey === "gold-seal") {
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/gold-seals/${encodeURIComponent(record.value_id)}`);
     }
-  };
+  }, [moduleKey, organizationId, router, workspaceId]);
+
+  const renderCell = useCallback((fieldKey: string, record: MasterRecord) => {
+    if (fieldKey === "label") return record.label;
+    if (fieldKey === "code") return record.code || "—";
+    if (fieldKey === "description") return record.description || "—";
+    if (fieldKey === "status") return record.is_active ? "Active" : "Pending";
+    if (fieldKey === "actions") {
+      return (
+        <div className="flex items-center gap-1.5">
+          {(moduleKey === "article" || moduleKey === "gold-seal") && (
+            <Button type="button" size="sm" variant="secondary" onClick={() => openRecordDetail(record)}>
+              Open
+            </Button>
+          )}
+          <Button type="button" size="sm" variant="secondary" onClick={() => openEditor(record)}>
+            Edit
+          </Button>
+          <form action={deleteAction}>
+            <input type="hidden" name="workspaceId" value={workspaceId} />
+            <input type="hidden" name="organizationId" value={organizationId} />
+            <input type="hidden" name="moduleKey" value={moduleKey} />
+            <input type="hidden" name="valueId" value={record.value_id} />
+            <Button type="submit" size="sm" variant="danger">
+              Delete
+            </Button>
+          </form>
+        </div>
+      );
+    }
+    const field = fields.find((candidate) => candidate.key === fieldKey);
+    return field ? getFieldValue(record, field) : "—";
+  }, [deleteAction, fields, getFieldValue, moduleKey, openEditor, openRecordDetail, organizationId, workspaceId]);
+
+  const getSearchValue = useCallback((fieldKey: string, record: MasterRecord) => {
+    if (fieldKey === "actions") return "";
+    if (fieldKey === "label") return record.label;
+    if (fieldKey === "code") return record.code ?? "";
+    if (fieldKey === "description") return record.description ?? "";
+    if (fieldKey === "status") return record.is_active ? "Active" : "Pending";
+    const field = fields.find((candidate) => candidate.key === fieldKey);
+    return field ? getFieldValue(record, field) : "";
+  }, [fields, getFieldValue]);
 
   return (
     <div className="space-y-4">
@@ -488,37 +533,8 @@ export function MasterRecordsTable({
         onRowClick={() => undefined}
         onNewOrder={() => setShowCreateModal(true)}
         newActionLabel="+ Add Record"
-        renderCell={(fieldKey, record) => {
-          if (fieldKey === "label") return record.label;
-          if (fieldKey === "code") return record.code || "—";
-          if (fieldKey === "description") return record.description || "—";
-          if (fieldKey === "status") return record.is_active ? "Active" : "Pending";
-          if (fieldKey === "actions") {
-            return (
-              <div className="flex items-center gap-1.5">
-                {(moduleKey === "article" || moduleKey === "gold-seal") && (
-                  <Button type="button" size="sm" variant="secondary" onClick={() => openRecordDetail(record)}>
-                    Open
-                  </Button>
-                )}
-                <Button type="button" size="sm" variant="secondary" onClick={() => openEditor(record)}>
-                  Edit
-                </Button>
-                <form action={deleteAction}>
-                  <input type="hidden" name="workspaceId" value={workspaceId} />
-                  <input type="hidden" name="organizationId" value={organizationId} />
-                  <input type="hidden" name="moduleKey" value={moduleKey} />
-                  <input type="hidden" name="valueId" value={record.value_id} />
-                  <Button type="submit" size="sm" variant="danger">
-                    Delete
-                  </Button>
-                </form>
-              </div>
-            );
-          }
-          const field = fields.find((candidate) => candidate.key === fieldKey);
-          return field ? getFieldValue(record, field) : "—";
-        }}
+        renderCell={renderCell}
+        getSearchValue={getSearchValue}
         emptyMessage={`No ${moduleLabel.toLowerCase()} records found.`}
       />
 
