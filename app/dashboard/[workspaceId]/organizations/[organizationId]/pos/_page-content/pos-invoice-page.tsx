@@ -1,12 +1,13 @@
 "use client";
 
 import { Printer } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import Card from "@/components/ui/Card";
+import { ReportGrid } from "@/components/reports/report-grid-display";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
+import Button from "@/components/ui/Button";
+
 
 type SavedInvoice = {
   invoiceNumber: string;
@@ -20,22 +21,62 @@ type SavedInvoice = {
   savedAt: string;
 };
 
-export default function PosInvoicePage({ workspaceId, organizationId }: { workspaceId: string; organizationId: string }) {
+const reportFields: Array<{ key: keyof SavedInvoice; label: string }> = [
+  { key: "invoiceNumber", label: "Invoice No." },
+  { key: "invoiceDate", label: "Date" },
+  { key: "customer", label: "Customer" },
+  { key: "subtotal", label: "Total" },
+];
+
+export default function PosInvoicePage({ organizationId }: { workspaceId: string; organizationId: string }) {
   const [invoices, setInvoices] = useState<SavedInvoice[]>([]);
   const [selected, setSelected] = useState<SavedInvoice | null>(null);
-  const base = `/dashboard/${workspaceId}/organizations/${organizationId}/pos`;
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [visibleReportFields, setVisibleReportFields] = useState<Array<string | keyof SavedInvoice>>(
+    reportFields.map((field) => field.key),
+  );
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const stored = window.localStorage.getItem(`pos-sales-invoices-${organizationId}`);
-      if (stored) setInvoices(JSON.parse(stored) as SavedInvoice[]);
-    }, 0);
-    return () => window.clearTimeout(timer);
+    const controller = new AbortController();
+    fetch(`/api/organizations/${encodeURIComponent(organizationId)}/pos/sales`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json() as { invoices?: SavedInvoice[]; error?: string };
+        if (!response.ok) throw new Error(data.error || "Unable to load saved POS invoices.");
+        setInvoices(Array.isArray(data.invoices) ? data.invoices : []);
+        setError("");
+      })
+      .catch((loadError: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(loadError instanceof Error ? loadError.message : "Unable to load saved POS invoices.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
   }, [organizationId]);
 
+  const renderCell = (fieldKey: string, record: SavedInvoice) => {
+    switch (fieldKey) {
+      case "customer":
+        return record.customer || "Walk-in customer";
+      case "quantity":
+        return record.lines.reduce((total, line) => total + line.quantity, 0);
+      case "subtotal":
+        return <span className="font-semibold text-slate-900">Rs {record.subtotal.toFixed(2)}</span>;
+      default:
+        return String(record[fieldKey as keyof SavedInvoice] ?? "");
+    }
+  };
+
   return <Page as="div"><Section className="space-y-6">
-    <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-4"><div><Link href={base} className="text-xs font-semibold text-emerald-700">&larr; POS</Link><p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">POS Invoice</p><h1 className="mt-2 text-3xl font-bold text-slate-900">Saved Invoices</h1><p className="mt-2 text-sm text-slate-600">Review and print sales invoices saved from Quick Invoice.</p></div></div>
-    {selected ? <InvoicePreview invoice={selected} onBack={() => setSelected(null)} /> : <Card className="border-slate-200 p-5"><div className="overflow-x-auto"><table className="w-full min-w-[700px] text-left text-sm"><thead className="border-b border-slate-200 text-[10px] font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">Invoice No.</th><th className="px-3 py-3">Date</th><th className="px-3 py-3">Customer</th><th className="px-3 py-3 text-right">Items</th><th className="px-3 py-3 text-right">Total</th><th className="px-3 py-3 text-right">Action</th></tr></thead><tbody className="divide-y divide-slate-100">{invoices.map((invoice) => <tr key={invoice.invoiceNumber}><td className="px-3 py-3 font-bold text-slate-900">{invoice.invoiceNumber}</td><td className="px-3 py-3">{invoice.invoiceDate}</td><td className="px-3 py-3">{invoice.customer || "Walk-in customer"}</td><td className="px-3 py-3 text-right">{invoice.lines.reduce((total, line) => total + line.quantity, 0)}</td><td className="px-3 py-3 text-right font-semibold">Rs {invoice.subtotal.toFixed(2)}</td><td className="px-3 py-3 text-right"><button type="button" onClick={() => setSelected(invoice)} className="font-bold text-emerald-700 hover:underline">Open / Print</button></td></tr>)}</tbody></table></div>{invoices.length === 0 && <p className="p-10 text-center text-sm text-slate-500">No saved POS invoices yet.</p>}</Card>}
+    <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-4"><div><p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">POS Invoice</p><h1 className="mt-2 text-3xl font-bold text-slate-900">Saved Invoices</h1><p className="mt-2 text-sm text-slate-600">Review and print sales invoices saved from Quick Invoice.</p></div></div>
+    {error && <p role="alert">{error}</p>}
+    {loading ? <p role="status">Loading POS invoices...</p> : selected ? <InvoicePreview invoice={selected} onBack={() => setSelected(null)} /> : <ReportGrid title="Saved POS Invoices" records={invoices} fields={reportFields} visibleFields={visibleReportFields} onVisibleFieldsChange={setVisibleReportFields} rowIdSelector={(record) => record.invoiceNumber} selectedIds={[]} onRowClick={(recordId) => { const match = invoices.find((invoice) => invoice.invoiceNumber === recordId); if (match) setSelected(match); }} renderCell={renderCell} emptyMessage="No saved POS invoices yet." />}
   </Section></Page>;
 }
 
@@ -46,10 +87,11 @@ function InvoicePreview({ invoice, onBack }: { invoice: SavedInvoice; onBack: ()
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4">
       <div className="flex items-center justify-between print:hidden">
-        <button type="button" onClick={onBack} className="text-xs font-semibold text-emerald-700">&larr; Invoice report</button>
-        <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+        <Button type="button" onClick={onBack}         variant="ghost"
+        className="text-xs font-semibold">&larr; Invoice report</Button>
+        <Button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
           <Printer className="h-4 w-4" /> Print Tax Invoice
-        </button>
+        </Button>
       </div>
 
       <article className="overflow-hidden border border-slate-300 bg-white shadow-sm print:border-0 print:shadow-none">
@@ -87,8 +129,9 @@ function InvoicePreview({ invoice, onBack }: { invoice: SavedInvoice; onBack: ()
           </div>
         </section>
 
-        <section className="px-8 py-6 print:px-0">
-          <table className="w-full border-collapse text-xs">
+        <section className="min-w-0 px-8 py-6 print:px-0">
+          <div className="min-w-0 max-w-full overflow-x-auto print:overflow-visible">
+            <table className="w-full border-collapse text-xs">
             <thead>
               <tr className="border-y border-slate-300 bg-slate-50 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-600 print:bg-white">
                 <th className="w-8 px-3 py-3 text-left">#</th>
@@ -113,7 +156,8 @@ function InvoicePreview({ invoice, onBack }: { invoice: SavedInvoice; onBack: ()
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
 
           <div className="mt-6 flex justify-end">
             <div className="w-full max-w-xs space-y-3 text-sm">

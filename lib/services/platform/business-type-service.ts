@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
+import { requirePlatformConfigurationAccess } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 import { ensureStandardPlansForBusinessTypes } from "@/lib/services/platform/subscription-service";
 
@@ -24,6 +25,7 @@ export async function createBusinessType(input: {
   name: string;
   description?: string;
 }) {
+  await requirePlatformConfigurationAccess();
   const name = input.name.trim();
   if (!name) {
     throw new Error("Business type name is required.");
@@ -55,6 +57,7 @@ export async function createBusinessType(input: {
 }
 
 export async function updateBusinessTypeStatus(id: string, isActive: boolean) {
+  await requirePlatformConfigurationAccess();
   return prisma.businessType.update({
     where: { id },
     data: { isActive },
@@ -62,12 +65,14 @@ export async function updateBusinessTypeStatus(id: string, isActive: boolean) {
 }
 
 export async function deleteBusinessType(id: string) {
+  await requirePlatformConfigurationAccess();
   return prisma.businessType.delete({
     where: { id },
   });
 }
 
 export async function createBusinessTypeSidebarModule(id: string) {
+  await requirePlatformConfigurationAccess();
   const businessType = await prisma.businessType.findUnique({ where: { id } });
   const erpModule = businessType
     ? getErpModuleForBusinessTypeName(businessType.name)

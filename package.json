@@ -3,27 +3,42 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "db:migrate:status": "prisma migrate status",
+    "db:migrate:deploy": "node scripts/deploy-prisma-migrations.cjs",
+    "platform:bootstrap-admin": "node scripts/bootstrap-platform-admin.cjs",
+    "predev": "npm run db:migrate:status",
     "dev": "node scripts/start-dev-server.cjs",
-    "dev:3000": "next dev --port 3000 --hostname 0.0.0.0",
-    "build": "prisma generate && next build",
+    "predev:3000": "npm run db:migrate:status",
+    "dev:3000": "node scripts/start-dev-server.cjs",
+    "build": "node scripts/clean-prisma-generated-client.cjs && prisma generate && next build",
+    "prestart": "npm run db:migrate:status",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
+    "lint:ui": "eslint app components",
     "typecheck": "tsc --noEmit",
     "audit:production": "npm audit --omit=dev --audit-level=high",
-    "qa": "npm run audit:production && npm run lint && npm run typecheck && npm run build",
-    "postinstall": "prisma generate"
+    "qa": "npm run audit:production && npm test && npm run lint && npm run typecheck && npm run build",
+    "postinstall": "node scripts/clean-prisma-generated-client.cjs && prisma generate"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",
+    "@tanstack/react-virtual": "^3.14.13",
     "clsx": "^2.1.1",
     "framer-motion": "^13.1.1",
+    "jsbarcode": "^3.12.3",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
+    "jszip": "^3.10.2",
     "lucide-react": "^1.37.0",
-    "next": "^16.3.5",
+    "next": "16.3.8",
     "nodemailer": "^10.0.10",
     "prisma": "6.19.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "xlsx-populate": "^1.21.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -35,7 +50,8 @@
     "eslint-config-next": "^16.3.5",
     "eslint-plugin-react-hooks": "^7.1.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.7"
   },
   "allowScripts": {
     "prisma@6.19.3": true,
@@ -44,6 +60,7 @@
     "unrs-resolver@1.12.2": true
   },
   "overrides": {
-    "deepmerge-ts": "8.0.2"
+    "deepmerge-ts": "8.0.2",
+    "dompurify": "3.4.16"
   }
 }

@@ -1,12 +1,14 @@
 "use client";
 
 import { Printer } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
-import Card from "@/components/ui/Card";
+import { ReportGrid } from "@/components/reports/report-grid-display";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
+import Button from "@/components/ui/Button";
+
 
 type SavedPosInvoice = {
   invoiceNumber: string;
@@ -34,6 +36,48 @@ type SavedPosInvoice = {
   savedAt: string;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+function isSavedPosInvoice(value: unknown): value is SavedPosInvoice {
+  if (
+    !isRecord(value) ||
+    typeof value.invoiceNumber !== "string" ||
+    typeof value.invoiceDate !== "string" ||
+    typeof value.customer !== "string" ||
+    typeof value.subtotal !== "number" ||
+    typeof value.savedAt !== "string" ||
+    !Array.isArray(value.lines)
+  ) {
+    return false;
+  }
+
+  return value.lines.every((line) => {
+    if (
+      !isRecord(line) ||
+      !isRecord(line.record) ||
+      typeof line.quantity !== "number" ||
+      typeof line.rate !== "number" ||
+      typeof line.amount !== "number"
+    ) {
+      return false;
+    }
+    return (
+      typeof line.record.id === "string" &&
+      typeof line.record.style_name === "string" &&
+      typeof line.record.order_no === "string" &&
+      typeof line.record.article_no === "string"
+    );
+  });
+}
+
+const reportFields: Array<{ key: keyof SavedPosInvoice; label: string }> = [
+  { key: "invoiceNumber", label: "Invoice No." },
+  { key: "invoiceDate", label: "Date" },
+  { key: "customer", label: "Customer" },
+  { key: "subtotal", label: "Total" },
+];
+
 export default function SalesInvoicePage({
   workspaceId,
   organizationId,
@@ -41,34 +85,50 @@ export default function SalesInvoicePage({
   workspaceId: string;
   organizationId: string;
 }) {
+  const base = `/dashboard/${workspaceId}/organizations/${organizationId}/finance-management/transactions`;
   const [invoices, setInvoices] = useState<SavedPosInvoice[]>([]);
   const [selected, setSelected] = useState<SavedPosInvoice | null>(null);
-  const base = `/dashboard/${workspaceId}/organizations/${organizationId}/finance-management/transactions`;
+  const [visibleReportFields, setVisibleReportFields] = useState<Array<string | keyof SavedPosInvoice>>(
+    reportFields.map((field) => field.key),
+  );
   const createPath = `${base}/sales-invoice/new`;
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(`pos-sales-invoices-${organizationId}`);
-    if (!stored) {
-      setInvoices([]);
-      return;
-    }
+    const timeoutId = window.setTimeout(() => {
+      const stored = window.localStorage.getItem(`pos-sales-invoices-${organizationId}`);
+      if (!stored) {
+        setInvoices([]);
+        return;
+      }
 
-    try {
-      const parsed = JSON.parse(stored) as SavedPosInvoice[];
-      setInvoices(Array.isArray(parsed) ? parsed : []);
-    } catch {
-      setInvoices([]);
-    }
+      try {
+        const parsed: unknown = JSON.parse(stored);
+        setInvoices(Array.isArray(parsed) ? parsed.filter(isSavedPosInvoice) : []);
+      } catch {
+        setInvoices([]);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [organizationId]);
+
+  const renderCell = (fieldKey: string, record: SavedPosInvoice) => {
+    switch (fieldKey) {
+      case "customer":
+        return record.customer || "Walk-in customer";
+      case "quantity":
+        return record.lines.reduce((sum, line) => sum + line.quantity, 0);
+      case "subtotal":
+        return <span className="font-semibold text-slate-900">Rs {record.subtotal.toFixed(2)}</span>;
+      default:
+        return String(record[fieldKey as keyof SavedPosInvoice] ?? "");
+    }
+  };
 
   return (
     <Page as="div">
       <Section className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
           <div>
-            <Link href={base} className="text-xs font-semibold text-sky-700">
-              &larr; Transactions
-            </Link>
             <h1 className="mt-3 text-3xl font-bold text-slate-900">Sales Invoice</h1>
           </div>
           <Link
@@ -82,65 +142,21 @@ export default function SalesInvoicePage({
         {selected ? (
           <InvoicePreview invoice={selected} onBack={() => setSelected(null)} />
         ) : (
-          <Card className="border-slate-200 p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Report
-                </p>
-                <h2 className="mt-2 text-xl font-bold text-slate-900">
-                  Sales Invoice Report
-                </h2>
-              </div>
-            </div>
-
-            {invoices.length === 0 ? (
-              <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
-                No sales invoice records found.
-              </div>
-            ) : (
-              <div className="mt-5 overflow-x-auto">
-                <table className="w-full min-w-[760px] text-left text-sm">
-                  <thead className="border-b border-slate-200 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    <tr>
-                      <th className="px-3 py-3">Invoice No.</th>
-                      <th className="px-3 py-3">Date</th>
-                      <th className="px-3 py-3">Customer</th>
-                      <th className="px-3 py-3 text-right">Items</th>
-                      <th className="px-3 py-3 text-right">Total</th>
-                      <th className="px-3 py-3 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {invoices.map((invoice) => (
-                      <tr key={invoice.invoiceNumber}>
-                        <td className="px-3 py-3 font-bold text-slate-900">
-                          {invoice.invoiceNumber}
-                        </td>
-                        <td className="px-3 py-3">{invoice.invoiceDate}</td>
-                        <td className="px-3 py-3">{invoice.customer || "Walk-in customer"}</td>
-                        <td className="px-3 py-3 text-right">
-                          {invoice.lines.reduce((sum, line) => sum + line.quantity, 0)}
-                        </td>
-                        <td className="px-3 py-3 text-right font-semibold">
-                          Rs {invoice.subtotal.toFixed(2)}
-                        </td>
-                        <td className="px-3 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => setSelected(invoice)}
-                            className="font-bold text-sky-700 hover:underline"
-                          >
-                            View
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
+          <ReportGrid
+            title="Sales Invoice Report"
+            records={invoices}
+            fields={reportFields}
+            visibleFields={visibleReportFields}
+            onVisibleFieldsChange={setVisibleReportFields}
+            rowIdSelector={(record) => record.invoiceNumber}
+            selectedIds={[]}
+            onRowClick={(recordId) => {
+              const invoice = invoices.find((entry) => entry.invoiceNumber === recordId);
+              if (invoice) setSelected(invoice);
+            }}
+            renderCell={renderCell}
+            emptyMessage="No sales invoice records found."
+          />
         )}
       </Section>
     </Page>
@@ -161,21 +177,23 @@ function InvoicePreview({
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4">
       <div className="flex items-center justify-between print:hidden">
-        <button
+        <Button
           type="button"
           onClick={onBack}
-          className="text-xs font-semibold text-sky-700"
+          variant="ghost"
+          className="text-xs font-semibold"
         >
           &larr; Sales Invoice report
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={() => window.print()}
-          className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          variant="secondary"
+          className="rounded-lg px-4 py-2 text-sm font-semibold"
         >
           <Printer className="h-4 w-4" />
           Print
-        </button>
+        </Button>
       </div>
 
       <article className="overflow-hidden border border-slate-300 bg-white shadow-sm print:border-0 print:shadow-none">
@@ -214,8 +232,9 @@ function InvoicePreview({
           </div>
         </section>
 
-        <section className="px-8 py-6 print:px-0">
-          <table className="w-full border-collapse text-xs">
+        <section className="min-w-0 px-8 py-6 print:px-0">
+          <div className="min-w-0 max-w-full overflow-x-auto print:overflow-visible">
+            <table className="w-full border-collapse text-xs">
             <thead>
               <tr className="border-y border-slate-300 bg-slate-50 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-600">
                 <th className="px-3 py-3 text-left">#</th>
@@ -245,7 +264,8 @@ function InvoicePreview({
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
 
           <div className="mt-6 flex justify-end">
             <div className="w-full max-w-xs space-y-2 text-sm text-slate-700">

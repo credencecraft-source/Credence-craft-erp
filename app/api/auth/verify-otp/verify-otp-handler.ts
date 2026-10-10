@@ -4,9 +4,9 @@ import { NextResponse } from "next/server";
 
 import { createSessionToken, SESSION_COOKIE_NAME } from "@/lib/auth/session-manager";
 import {
+  deriveFallbackFullName,
+  deriveFallbackProfileName,
   isValidEmail,
-  isValidFullName,
-  isValidProfileName,
   normalizeEmail,
   normalizeFullName,
   normalizeProfileName,
@@ -14,9 +14,11 @@ import {
 import { verifyEmailOtp } from "@/lib/services/platform/platform-email-configuration-service";
 import { getDevUser, hasDevProfileName, setDevUser } from "@/lib/dev/dev-user-store-mock";
 import { prisma } from "@/lib/database/prisma-client";
+import {
+  DATABASE_UNAVAILABLE_MESSAGE,
+  isDatabaseUnavailableError,
+} from "@/lib/database/database-errors";
 import { setPlatformSessionCookie } from "@/lib/auth/platform-session-manager";
-
-const SUPPORT_EMAIL = "jassimtkd@gmail.com";
 
 const USE_DEV_USER_STORE = process.env.USE_DEV_USER_STORE === "true";
 const isDevBypass =
@@ -32,7 +34,11 @@ async function findUserByEmail(email: string) {
     return await prisma.workspaceUser.findUnique({
       where: { email },
     });
-  } catch {
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      throw error;
+    }
+
     return null;
   }
 }
@@ -46,7 +52,11 @@ async function findUserByProfileName(profileName: string) {
     return await prisma.workspaceUser.findUnique({
       where: { profile_name: profileName },
     });
-  } catch {
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      throw error;
+    }
+
     return null;
   }
 }
@@ -75,17 +85,13 @@ export async function POST(request: Request) {
     }
 
     if (mode === "support") {
-      if (email !== SUPPORT_EMAIL) {
-        return NextResponse.json({ error: "That email address is not registered for support login." }, { status: 403 });
-      }
-
       if (!(await verifyEmailOtp(email, otp, "SUPPORT"))) {
         return NextResponse.json({ error: "Invalid OTP." }, { status: 401 });
       }
 
-      const admin = await prisma.platformAdmin.findUnique({ where: { email: SUPPORT_EMAIL } });
+      const admin = await prisma.platformAdmin.findUnique({ where: { email } });
       if (!admin || !admin.is_active) {
-        return NextResponse.json({ error: "Support login is not available for this email address." }, { status: 403 });
+        return NextResponse.json({ error: "Platform access is not available for this email address." }, { status: 403 });
       }
 
       await prisma.platformAdmin.update({ where: { id: admin.id }, data: { last_login_at: new Date() } });
@@ -135,13 +141,6 @@ export async function POST(request: Request) {
         });
       }
     } else if (mode === "register") {
-      if (!isValidFullName(fullName) || !isValidProfileName(profileName)) {
-        return NextResponse.json(
-          { error: "Full name and profile name are required and must be valid." },
-          { status: 400 }
-        );
-      }
-
       if (user) {
         return NextResponse.json(
           { error: "An account with this email already exists." },
@@ -149,7 +148,9 @@ export async function POST(request: Request) {
         );
       }
 
-      const existingProfile = await findUserByProfileName(profileName);
+      const fallbackProfileName = normalizeProfileName(profileName) || deriveFallbackProfileName(email);
+      const fallbackFullName = normalizeFullName(fullName) || deriveFallbackFullName(email);
+      const existingProfile = await findUserByProfileName(fallbackProfileName);
       if (existingProfile) {
         return NextResponse.json(
           { error: "Profile name already exists." },
@@ -161,8 +162,8 @@ export async function POST(request: Request) {
         ? setDevUser({
             id: `dev-user-${Date.now()}`,
             workspace_id: randomUUID(),
-            profile_name: profileName,
-            full_name: fullName,
+            profile_name: fallbackProfileName,
+            full_name: fallbackFullName,
             email,
             email_verified: true,
             created_at: new Date(),
@@ -172,8 +173,8 @@ export async function POST(request: Request) {
         : await prisma.workspaceUser.create({
             data: {
               workspace_id: randomUUID(),
-              profile_name: profileName,
-              full_name: fullName,
+              profile_name: fallbackProfileName,
+              full_name: fallbackFullName,
               email,
               email_verified: true,
               last_login_at: new Date(),
@@ -216,19 +217,16 @@ export async function POST(request: Request) {
 
     return response;
 } catch (error) {
-  console.error("VERIFY OTP ERROR:");
-  console.error(error);
-
-  if (error instanceof Error) {
-    console.error("MESSAGE:", error.message);
-    console.error("STACK:", error.stack);
+  if (isDatabaseUnavailableError(error)) {
+    return NextResponse.json(
+      { error: DATABASE_UNAVAILABLE_MESSAGE },
+      { status: 503 },
+    );
   }
 
   return NextResponse.json(
     {
-      error: error instanceof Error
-        ? error.message
-        : "Authentication failed.",
+      error: "Authentication failed. Please try again.",
     },
     { status: 500 }
   );

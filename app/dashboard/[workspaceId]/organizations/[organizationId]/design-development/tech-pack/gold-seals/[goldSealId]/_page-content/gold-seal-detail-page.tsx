@@ -1,5 +1,4 @@
 import { revalidatePath } from "next/cache";
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
@@ -9,6 +8,9 @@ import {
   getMasterValuesForOrganization,
 } from "@/lib/master-data/master-data-constants";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+
 
 async function createGoldSealVariant(formData: FormData) {
   "use server";
@@ -84,13 +86,10 @@ export default async function GoldSealDetailPage({
   const variants = (await getMasterValuesForOrganization(organization.id, "gold-seal-variant", true))
     .filter((item) => item.parent_id === goldSeal.id || item.parent_id === goldSeal.value_id);
   const fields = goldSeal.fields ?? {};
-  const detailPath = `/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/gold-seals/${encodeURIComponent(goldSeal.value_id)}`;
-
   return (
     <main className="space-y-6 p-6">
       <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-5">
         <div>
-          <Link href={`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/gold-seals`} className="text-sm font-medium text-emerald-700">Back to Gold Seal</Link>
           <h1 className="mt-3 text-2xl font-bold text-slate-900">{goldSeal.label}</h1>
           <p className="mt-1 text-sm text-slate-500">Gold Seal header and fixed stock variants</p>
         </div>
@@ -125,7 +124,7 @@ export default async function GoldSealDetailPage({
             <tbody>
               {variants.map((item) => {
                 const variantFields = item.fields ?? {};
-                return <tr key={item.id} className="border-b border-slate-100"><td className="p-3 font-semibold text-slate-900">{item.label}</td><td className="p-3">{String(variantFields.variant_code ?? "-")}</td><td className="p-3">{String(variantFields.color ?? "-")}</td><td className="p-3">{String(variantFields.size ?? "-")}</td><td className="p-3">{String(variantFields.sku ?? "-")}</td><td className="p-3">{String(variantFields.barcode ?? "-")}</td><td className="p-3"><form action={deleteGoldSealVariant}><input type="hidden" name="workspaceId" value={workspaceId} /><input type="hidden" name="organizationId" value={organizationId} /><input type="hidden" name="goldSealValueId" value={goldSeal.value_id} /><input type="hidden" name="variantValueId" value={item.value_id} /><button type="submit" className="text-xs font-semibold text-red-700">Delete</button></form></td></tr>;
+                return <tr key={item.id} className="border-b border-slate-100"><td className="p-3 font-semibold text-slate-900">{item.label}</td><td className="p-3">{String(variantFields.variant_code ?? "-")}</td><td className="p-3">{String(variantFields.color ?? "-")}</td><td className="p-3">{String(variantFields.size ?? "-")}</td><td className="p-3">{String(variantFields.sku ?? "-")}</td><td className="p-3">{String(variantFields.barcode ?? "-")}</td><td className="p-3"><form action={deleteGoldSealVariant}><input type="hidden" name="workspaceId" value={workspaceId} /><input type="hidden" name="organizationId" value={organizationId} /><input type="hidden" name="goldSealValueId" value={goldSeal.value_id} /><input type="hidden" name="variantValueId" value={item.value_id} /><Button type="submit" variant="danger" className="text-xs font-semibold">Delete</Button></form></td></tr>;
               })}
               {variants.length === 0 ? <tr><td colSpan={7} className="p-6 text-center text-slate-500">No variants created yet.</td></tr> : null}
             </tbody>
@@ -138,7 +137,7 @@ export default async function GoldSealDetailPage({
         <form action={createGoldSealVariant} className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <input type="hidden" name="workspaceId" value={workspaceId} /><input type="hidden" name="organizationId" value={organizationId} /><input type="hidden" name="goldSealValueId" value={goldSeal.value_id} />
           <Field name="variant" label="Variant Name" required /><Field name="variant_code" label="Variant Code" required /><Field name="color" label="Color" /><Field name="size" label="Size" /><Field name="sku" label="SKU" /><Field name="barcode" label="Barcode" />
-          <div className="sm:col-span-2 lg:col-span-3"><button type="submit" className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">Save Variant</button></div>
+          <div className="sm:col-span-2 lg:col-span-3"><Button type="submit" className="rounded-lg px-4 py-2 text-sm font-semibold">Save Variant</Button></div>
         </form>
       </section>
     </main>
@@ -146,7 +145,7 @@ export default async function GoldSealDetailPage({
 }
 
 function Field({ name, label, required }: { name: string; label: string; required?: boolean }) {
-  return <label className="space-y-1 text-sm font-semibold text-slate-700"><span>{label}{required ? " *" : ""}</span><input name={name} required={required} className="w-full rounded-lg border border-slate-300 bg-white p-2 font-normal" /></label>;
+  return <label className="space-y-1 text-sm font-semibold text-slate-700"><span>{label}{required ? " *" : ""}</span><Input name={name} required={required} className="w-full rounded-lg border border-slate-300 bg-white p-2 font-normal" /></label>;
 }
 
 function Detail({ label, value }: { label: string; value: string }) {

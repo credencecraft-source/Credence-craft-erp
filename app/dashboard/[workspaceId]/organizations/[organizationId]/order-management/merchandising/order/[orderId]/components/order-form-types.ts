@@ -1,0 +1,51 @@
+import type { FinishedGoodsQuantityInput } from "@/lib/services/orders/order-quantity-calculations";
+
+export type BomEditorRow = {
+  id?: string;
+  categoryType?: string | null;
+  category?: string | null;
+  subCategory?: string | null;
+  rawMaterialName?: string | null;
+  image?: string | null;
+  stockUom?: string | null;
+  size?: string | null;
+  buyerConsumption?: number | string | null;
+  buyerPrice?: number | string | null;
+  internalConsumption?: number | string | null;
+  internalPrice?: number | string | null;
+  valuePerGarmentRm?: number | string | null;
+  consumption?: number | string | null;
+  requiredQty?: number | string | null;
+  itemWiseExcessPercentage?: number | string | null;
+  itemWiseExcessQty?: number | string | null;
+  totalRequiredQty?: number | string | null;
+};
+
+export type OrderFormState = {
+  rows: FinishedGoodsQuantityInput[];
+  bomRows: BomEditorRow[];
+  costingRows: unknown[];
+  techPackRows: unknown[];
+  measurementRows: unknown[];
+  processRows: unknown[];
+  processTemplateId: string;
+  attachmentRows: unknown[];
+  orderQty: number | string;
+  sellingPricePerPcs: number;
+  orderNo: string;
+  article: string;
+  entityName: string;
+  category: string;
+  subCategory: string;
+  season: string;
+  styleName: string;
+  colors: string;
+  buyer: string;
+  brand: string;
+  sizeGroup: string;
+  haveSizeRatio: boolean;
+  ratioOrderQty: number | string;
+  deliveryDate: string;
+  finalStatus: string;
+  processStatus: string;
+};

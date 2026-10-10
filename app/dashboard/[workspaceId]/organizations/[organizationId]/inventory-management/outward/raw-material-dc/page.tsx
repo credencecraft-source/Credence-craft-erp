@@ -1,5 +1,5 @@
-import InventoryStagePage from "../../_page-content/inventory-stage-page";
+import RawMaterialOutwardPage from "../../_page-content/raw-material-outward-page";
 
 export default function Page() {
-  return <InventoryStagePage stage="raw-material-dc" />;
+  return <RawMaterialOutwardPage />;
 }

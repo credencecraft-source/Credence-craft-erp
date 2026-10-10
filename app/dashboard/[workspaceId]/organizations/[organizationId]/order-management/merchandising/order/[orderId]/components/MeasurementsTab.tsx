@@ -1,26 +1,47 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import type { OrderFormState } from "./order-form-types";
 
 type MeasurementItem = {
   id: string;
-  code: string;
-  pom: string;
-  tolerance: string;
-  s: string;
-  m: string;
-  l: string;
-  xl: string;
+  code?: string;
+  pom?: string;
+  tolerance?: string;
+  s?: string;
+  m?: string;
+  l?: string;
+  xl?: string;
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isMeasurementItem = (value: unknown): value is MeasurementItem =>
+  isRecord(value)
+  && typeof value.id === "string"
+  && ["code", "pom", "tolerance", "s", "m", "l", "xl"].every(
+    (field) => value[field] === undefined || typeof value[field] === "string",
+  );
+
+const getRows = (form: unknown): unknown[] => {
+  if (!isRecord(form)) return [];
+  const rows = form.measurementRows;
+  return Array.isArray(rows) ? rows : [];
+};
+
+const getMeasurementRows = (form: unknown): MeasurementItem[] => getRows(form).filter(isMeasurementItem);
 
 export default function MeasurementsTab({
   form,
   setForm,
 }: {
-  form: any;
-  setForm: any;
+  form: OrderFormState;
+  setForm: React.Dispatch<React.SetStateAction<OrderFormState>>;
 }) {
-  const measurementRows: MeasurementItem[] = form?.measurementRows || [];
+  const measurementRows = getMeasurementRows(form);
 
   const addMeasurementRow = () => {
     const newItem: MeasurementItem = {
@@ -33,25 +54,25 @@ export default function MeasurementsTab({
       l: "",
       xl: "",
     };
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
-      measurementRows: [...(current.measurementRows || []), newItem],
+      measurementRows: [...getMeasurementRows(current), newItem],
     }));
   };
 
   const updateMeasurementRow = (id: string, field: keyof MeasurementItem, value: string) => {
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
-      measurementRows: (current.measurementRows || []).map((row: MeasurementItem) =>
+      measurementRows: getMeasurementRows(current).map((row) =>
         row.id === id ? { ...row, [field]: value } : row
       ),
     }));
   };
 
   const removeMeasurementRow = (id: string) => {
-    setForm((current: any) => ({
+    setForm((current) => ({
       ...current,
-      measurementRows: (current.measurementRows || []).filter((row: MeasurementItem) => row.id !== id),
+      measurementRows: getMeasurementRows(current).filter((row) => row.id !== id),
     }));
   };
 
@@ -69,20 +90,23 @@ export default function MeasurementsTab({
           </h3>
         </div>
         <div className="flex items-center gap-3">
-          <button
+          <Button
+            size="sm"
             type="button"
             onClick={addMeasurementRow}
-            className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-all flex items-center gap-1"
+            className="rounded-xl px-3 py-2 text-xs font-semibold transition-all flex items-center gap-1"
           >
             <span>+</span> Add POM
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             type="button"
             onClick={handlePrint}
-            className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 transition-all flex items-center gap-2"
+            className="rounded-xl px-4 py-2 text-xs font-semibold transition-all flex items-center gap-2"
           >
             <span>🖨️</span> Print / Download PDF
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -120,7 +144,8 @@ export default function MeasurementsTab({
                       <tr key={row.id} className="hover:bg-slate-50/50">
                         <td className="p-2 font-mono font-bold text-slate-600">{row.code}</td>
                         <td className="p-2">
-                          <input
+                          <Input
+                            aria-label="Point of measurement"
                             type="text"
                             value={row.pom}
                             onChange={(e) => updateMeasurementRow(row.id, "pom", e.target.value)}
@@ -129,7 +154,8 @@ export default function MeasurementsTab({
                           />
                         </td>
                         <td className="p-2">
-                          <input
+                          <Input
+                            aria-label="Tolerance"
                             type="text"
                             value={row.tolerance}
                             onChange={(e) => updateMeasurementRow(row.id, "tolerance", e.target.value)}
@@ -137,7 +163,8 @@ export default function MeasurementsTab({
                           />
                         </td>
                         <td className="p-2 text-center">
-                          <input
+                          <Input
+                            aria-label="Small size measurement"
                             type="text"
                             value={row.s}
                             onChange={(e) => updateMeasurementRow(row.id, "s", e.target.value)}
@@ -146,7 +173,8 @@ export default function MeasurementsTab({
                           />
                         </td>
                         <td className="p-2 text-center">
-                          <input
+                          <Input
+                            aria-label="Medium size measurement"
                             type="text"
                             value={row.m}
                             onChange={(e) => updateMeasurementRow(row.id, "m", e.target.value)}
@@ -155,7 +183,8 @@ export default function MeasurementsTab({
                           />
                         </td>
                         <td className="p-2 text-center">
-                          <input
+                          <Input
+                            aria-label="Large size measurement"
                             type="text"
                             value={row.l}
                             onChange={(e) => updateMeasurementRow(row.id, "l", e.target.value)}
@@ -164,7 +193,8 @@ export default function MeasurementsTab({
                           />
                         </td>
                         <td className="p-2 text-center">
-                          <input
+                          <Input
+                            aria-label="Extra large size measurement"
                             type="text"
                             value={row.xl}
                             onChange={(e) => updateMeasurementRow(row.id, "xl", e.target.value)}
@@ -173,20 +203,22 @@ export default function MeasurementsTab({
                           />
                         </td>
                         <td className="p-2 text-center print:hidden">
-                          <button
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             type="button"
                             onClick={() => removeMeasurementRow(row.id)}
                             className="text-red-500 hover:text-red-700 font-semibold text-xs"
                           >
                             ✕
-                          </button>
+                          </Button>
                         </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
                       <td colSpan={8} className="p-8 text-center text-slate-400 italic">
-                        No measurement specifications added yet. Click "+ Add POM" to begin.
+                        No measurement specifications added yet. Click &quot;+ Add POM&quot; to begin.
                       </td>
                     </tr>
                   )}

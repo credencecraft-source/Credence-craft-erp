@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 
 export type LookupOption = {
   id: string;
@@ -28,11 +30,7 @@ export default function LookupField({
   dependsOnValue,
   onChange,
 }: LookupFieldProps) {
-  const [search, setSearch] = useState(value);
-
-  useEffect(() => {
-    setSearch(value);
-  }, [value]);
+  const [search, setSearch] = useState(() => value);
 
   const filtered = useMemo(() => {
     if (!search) return options;
@@ -50,21 +48,17 @@ export default function LookupField({
 
   return (
     <div className="space-y-1">
-      <label className="block text-sm font-medium text-slate-700">
-        {label}
-        {required && <span className="text-red-500"> *</span>}
-      </label>
-
-      <input
-        type="text"
+      <Input
+        label={label}
         value={search}
         disabled={disabled}
         placeholder={placeholder ?? `Search ${label}`}
         onChange={(e) => setSearch(e.target.value)}
-        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
+        className="rounded-md"
       />
 
-      <select
+      <Select
+        label={`Select ${label}`}
         value={value}
         required={required}
         disabled={disabled}
@@ -73,18 +67,12 @@ export default function LookupField({
           onChange(e.target.value);
           setSearch(selected?.label ?? "");
         }}
-        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm bg-white"
-      >
-        <option value="">
-          {placeholder ?? `Select ${label}`}
-        </option>
-
-        {filtered.map((item) => (
-          <option key={item.id} value={item.id}>
-            {item.label}
-          </option>
-        ))}
-      </select>
+        options={[
+          { value: "", label: placeholder ?? `Select ${label}` },
+          ...filtered.map((item) => ({ value: item.id, label: item.label })),
+        ]}
+        className="rounded-md"
+      />
     </div>
   );
 }

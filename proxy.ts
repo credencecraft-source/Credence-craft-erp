@@ -1,9 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  PLATFORM_SESSION_COOKIE_NAME,
+  SESSION_COOKIE_NAME,
+  verifyPlatformSessionToken,
+  verifySessionToken,
+} from "@/lib/auth/session-token";
 
 export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isPublicAuthRoute =
+    pathname === "/api/auth" ||
     pathname.startsWith("/api/auth/") ||
+    pathname === "/api/platform/auth" ||
     pathname.startsWith("/api/platform/auth/");
 
   if (isPublicAuthRoute) {
@@ -17,12 +25,35 @@ export function proxy(request: NextRequest) {
     });
   }
 
-  if (!request.cookies.has("cc_session")) {
+  const isPlatformPageRoute =
+    pathname === "/platform" || pathname.startsWith("/platform/");
+  const isPlatformLoginPage = pathname === "/platform" || pathname === "/platform/";
+  const isPlatformApiRoute = pathname.startsWith("/api/platform/");
+  const isPlatformProtectedRoute = isPlatformPageRoute || isPlatformApiRoute;
+  const sessionToken = request.cookies.get(
+    isPlatformProtectedRoute ? PLATFORM_SESSION_COOKIE_NAME : SESSION_COOKIE_NAME,
+  )?.value;
+  const authenticatedUserId = isPlatformProtectedRoute
+    ? verifyPlatformSessionToken(sessionToken)
+    : verifySessionToken(sessionToken);
+  if (!authenticatedUserId) {
+    if (isPlatformLoginPage) {
+      const requestHeaders = new Headers(request.headers);
+      requestHeaders.set("x-current-path", pathname);
+      return NextResponse.next({
+        request: {
+          headers: requestHeaders,
+        },
+      });
+    }
+
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(
+      new URL(isPlatformPageRoute ? "/platform" : "/", request.url),
+    );
   }
 
   const requestHeaders = new Headers(request.headers);
@@ -37,6 +68,8 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    "/platform",
+    "/platform/:path*",
     "/dashboard/:workspaceId/organizations/:organizationId/:path*",
     "/api/:path*",
   ],

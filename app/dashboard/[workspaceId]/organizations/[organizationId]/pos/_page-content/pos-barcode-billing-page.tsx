@@ -1,12 +1,14 @@
 "use client";
 
 import { Printer, ScanLine, Search, X } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
+import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
 
 type StockRecord = {
@@ -50,7 +52,29 @@ type MasterLookupOption = {
   value_id?: string;
   label: string;
 };
-
+type MasterStateOption = {
+  id?: string;
+  value_id?: string;
+  label?: string | null;
+};
+type MasterVendorOption = {
+  label?: string | null;
+};
+type StoredFinanceDocument = {
+  id: string;
+  documentType: string;
+  documentNumber: string;
+  sourceModule: string;
+  sourceRecordId: string;
+  date: string;
+  party: string;
+  amount: number;
+  tax: number;
+  net: number;
+  status: string;
+  paymentStatus: string;
+  archivedYear: number;
+};
 export default function PosBarcodeBillingPage({
   workspaceId,
   organizationId,
@@ -60,6 +84,7 @@ export default function PosBarcodeBillingPage({
 }) {
   const router = useRouter();
   const scannerRef = useRef<HTMLInputElement>(null);
+  const saleRequestKey = useRef("");
   const [scanValue, setScanValue] = useState("");
   const [records, setRecords] = useState<StockRecord[]>([]);
   const [selectedRecord, setSelectedRecord] = useState<StockRecord | null>(
@@ -70,8 +95,8 @@ export default function PosBarcodeBillingPage({
   const [invoiceDate, setInvoiceDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
-  const [taxMode, setTaxMode] = useState<"LOCAL" | "INTERSTATE">("LOCAL");
-  const [otherCharges, setOtherCharges] = useState("0");
+  const [taxMode] = useState<"LOCAL" | "INTERSTATE">("LOCAL");
+  const otherCharges = "0";
   const [gstOptions, setGstOptions] = useState<GstOption[]>([]);
   const [vendorOptions, setVendorOptions] = useState<string[]>([]);
   const [vendorQuickCreate, setVendorQuickCreate] = useState("");
@@ -85,13 +110,14 @@ export default function PosBarcodeBillingPage({
   } | null>(null);
   const [invoiceNumber, setInvoiceNumber] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [savingInvoice, setSavingInvoice] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     scannerRef.current?.focus();
     Promise.all([
       fetch(
-        `/api/inventory/stock/fg-sku?organizationId=${encodeURIComponent(organizationId)}`,
+        `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock`,
         { cache: "no-store" },
       ).then((response) => response.json()),
       fetch(
@@ -111,37 +137,58 @@ export default function PosBarcodeBillingPage({
         { cache: "no-store" },
       ).then((response) => response.json()),
     ])
-      .then(([stockData, gstData, taxData, vendorData, stateData]) => {
-        setRecords(Array.isArray(stockData.records) ? stockData.records : []);
-        setGstOptions(Array.isArray(gstData) ? gstData : []);
-        setTaxProfile(taxData.profile ?? null);
-        setVendorOptions(
-          Array.isArray(vendorData)
-            ? Array.from(
-                new Set(
-                  vendorData
-                    .map((item: { label?: string | null }) =>
-                      String(item.label ?? "").trim(),
-                    )
-                    .filter(Boolean),
-                ),
-              ).sort((left, right) => left.localeCompare(right))
-            : [],
-        );
-        setStateOptions(
-          Array.isArray(stateData)
-            ? stateData
-                .map((item: { id?: string; value_id?: string; label?: string | null }) => ({
-                  id: String(item.id ?? item.value_id ?? ""),
-                  value_id: item.value_id,
-                  label: String(item.label ?? "").trim(),
-                }))
-                .filter((item) => item.id && item.label)
-                .sort((left, right) => left.label.localeCompare(right.label))
-            : [],
-        );
-      })
-      .catch(() => setError("Unable to load finished goods stock records."));
+      .then(
+        ([
+          stockData,
+          gstData,
+          taxData,
+          vendorData,
+          stateData,
+        ]: [
+          { records?: StockRecord[]; error?: string },
+          GstOption[],
+          {
+            profile?: {
+              cgstRate?: number | null;
+              sgstRate?: number | null;
+              igstRate?: number | null;
+            } | null;
+          },
+          MasterVendorOption[],
+          MasterStateOption[],
+        ]) => {
+          if (stockData.error) throw new Error(stockData.error);
+          setRecords(Array.isArray(stockData.records) ? stockData.records : []);
+          setGstOptions(Array.isArray(gstData) ? gstData : []);
+          setTaxProfile(taxData.profile ?? null);
+          setVendorOptions(
+            Array.isArray(vendorData)
+              ? Array.from(
+                  new Set(
+                    vendorData
+                      .map((item) => String(item.label ?? "").trim())
+                      .filter(Boolean),
+                  ),
+                ).sort((left, right) => left.localeCompare(right))
+              : [],
+          );
+          setStateOptions(
+            Array.isArray(stateData)
+              ? stateData
+                  .map((item) => ({
+                    id: String(item.id ?? item.value_id ?? ""),
+                    value_id: item.value_id,
+                    label: String(item.label ?? "").trim(),
+                  }))
+                  .filter((item) => item.id && item.label)
+                  .sort((left, right) => left.label.localeCompare(right.label))
+              : [],
+          );
+        },
+      )
+      .catch((loadError: unknown) => setError(
+        loadError instanceof Error ? loadError.message : "Unable to load General finished-goods stock.",
+      ));
   }, [organizationId]);
 
   const createVendor = async () => {
@@ -160,7 +207,10 @@ export default function PosBarcodeBillingPage({
           fields: { vendor: name, Registered_State: vendorState },
         }),
       });
-      const data = await response.json();
+      const data = (await response.json()) as {
+        error?: string;
+        value?: { label?: string | null };
+      };
       if (!response.ok) {
         throw new Error(data?.error || "Unable to create vendor.");
       }
@@ -192,13 +242,18 @@ export default function PosBarcodeBillingPage({
     setError("");
     try {
       const response = await fetch(
-        `/api/inventory/stock/fg-sku?organizationId=${encodeURIComponent(organizationId)}&barcode=${encodeURIComponent(barcode)}`,
+        `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock?stockId=${encodeURIComponent(barcode)}`,
         { cache: "no-store" },
       );
-      const data = await response.json();
+      const data = (await response.json()) as {
+        error?: string;
+        records?: StockRecord[];
+      };
       if (!response.ok)
         throw new Error(data?.error || "Unable to find this stock barcode.");
-      setSelectedRecord(data.record);
+      const record = data.records?.[0];
+      if (!record) throw new Error("Unable to find this General stock record.");
+      setSelectedRecord(record);
       setScanValue("");
     } catch (lookupError) {
       setError(
@@ -221,7 +276,7 @@ export default function PosBarcodeBillingPage({
     if (!selectedRecord) return;
     const available = Math.max(0, Number(selectedRecord.current_stock));
     if (available < 1) {
-      setError("This SKU has no available stock.");
+    setError("This General stock record has no available units.");
       setSelectedRecord(null);
       return;
     }
@@ -344,87 +399,82 @@ export default function PosBarcodeBillingPage({
   );
   const taxAmount = taxBreakdown.cgst + taxBreakdown.sgst + taxBreakdown.igst;
   const charges = Math.max(0, Number(otherCharges) || 0);
-  const taxRate = subtotal > 0 ? (taxAmount / subtotal) * 100 : 0;
   const grandTotal = subtotal + taxAmount + charges;
   const base = `/dashboard/${workspaceId}/organizations/${organizationId}/pos`;
-  const saveInvoice = () => {
-    const number =
-      invoiceNumber ?? `POS-${new Date().getTime().toString().slice(-8)}`;
-    const savedInvoices = JSON.parse(
-      window.localStorage.getItem(`pos-sales-invoices-${organizationId}`) ??
-        "[]",
-    ) as Array<Record<string, unknown>>;
-    const invoice = {
-      invoiceNumber: number,
-      invoiceDate,
-      customer,
-      lines: billLines.map((line) => ({
-        record: line.record,
-        quantity: line.quantity,
-        rate: line.rate,
-        gstRate: line.gstRate,
-        discountPercent: line.discountPercent,
-        amount: line.quantity * line.rate * (1 - line.discountPercent / 100),
-      })),
-      subtotal,
-      taxRate: Number(taxRate) || 0,
-      taxAmount,
-      taxMode,
-      cgstAmount: taxBreakdown.cgst,
-      sgstAmount: taxBreakdown.sgst,
-      igstAmount: taxBreakdown.igst,
-      otherCharges: charges,
-      grandTotal,
-      savedAt: new Date().toISOString(),
-    };
-    const withoutCurrent = savedInvoices.filter(
-      (item) => item.invoiceNumber !== number,
-    );
-    window.localStorage.setItem(
-      `pos-sales-invoices-${organizationId}`,
-      JSON.stringify([invoice, ...withoutCurrent]),
-    );
-    const financeRecords = JSON.parse(
-      window.localStorage.getItem(`finance-documents-${organizationId}`) ?? "[]",
-    ) as Array<Record<string, unknown>>;
-    const financeRecord = {
-      id: `pos-${number}`,
-      documentType: "Sales Invoice",
-      documentNumber: number,
-      sourceModule: "POS",
-      sourceRecordId: number,
-      date: invoiceDate,
-      party: customer || "Walk-in customer",
-      amount: subtotal,
-      tax: taxAmount,
-      net: grandTotal,
-      status: "Posted",
-      paymentStatus: "Pending",
-      archivedYear: new Date(invoiceDate).getFullYear(),
-    };
-    const withoutExistingFinanceRecord = financeRecords.filter(
-      (item) => item.documentNumber !== number || item.sourceModule !== "POS",
-    );
-    window.localStorage.setItem(
-      `finance-documents-${organizationId}`,
-      JSON.stringify([financeRecord, ...withoutExistingFinanceRecord]),
-    );
-    setInvoiceNumber(number);
-    router.push(`${base}/invoice`);
+  const saveInvoice = async () => {
+    setSavingInvoice(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/pos/sales`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceDate,
+          customer,
+          taxMode,
+          requestKey: saleRequestKey.current || (saleRequestKey.current = crypto.randomUUID()),
+          lines: billLines.map((line) => ({
+            stockId: line.record.id,
+            quantity: String(line.quantity),
+            rate: String(line.rate),
+            gstRate: String(line.gstRate),
+            discountPercent: String(line.discountPercent),
+            hsnCode: line.hsnCode,
+          })),
+        }),
+      });
+      const data = (await response.json()) as {
+        error?: string;
+        invoice?: { id?: string; invoiceNo?: string; subtotal?: string; taxAmount?: string; totalAmount?: string };
+      };
+      if (!response.ok || !data.invoice?.invoiceNo) {
+        throw new Error(data.error || "Unable to post POS invoice.");
+      }
+      saleRequestKey.current = "";
+      try {
+        const financeRecords = JSON.parse(
+          window.localStorage.getItem(`finance-documents-${organizationId}`) ?? "[]",
+        ) as StoredFinanceDocument[];
+        const financeRecord: StoredFinanceDocument = {
+          id: `pos-${data.invoice.id}`,
+          documentType: "Sales Invoice",
+          documentNumber: data.invoice.invoiceNo,
+          sourceModule: "POS",
+          sourceRecordId: data.invoice.id ?? "",
+          date: invoiceDate,
+          party: customer || "Walk-in customer",
+          amount: Number(data.invoice.subtotal ?? subtotal),
+          tax: Number(data.invoice.taxAmount ?? taxAmount),
+          net: Number(data.invoice.totalAmount ?? grandTotal),
+          status: "Posted",
+          paymentStatus: "Pending",
+          archivedYear: new Date(invoiceDate).getFullYear(),
+        };
+        const withoutExistingFinanceRecord = financeRecords.filter(
+          (item) => item.documentNumber !== data.invoice?.invoiceNo || item.sourceModule !== "POS",
+        );
+        window.localStorage.setItem(
+          `finance-documents-${organizationId}`,
+          JSON.stringify([financeRecord, ...withoutExistingFinanceRecord]),
+        );
+      } catch {
+        setError("Invoice posted and stock deducted, but the local finance cache could not be updated.");
+      }
+      setInvoiceNumber(data.invoice.invoiceNo);
+      router.push(`${base}/invoice`);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to post POS invoice.");
+    } finally {
+      setSavingInvoice(false);
+    }
   };
 
   return (
-    <Page as="div" className="min-h-screen max-w-[1600px] py-4">
+    <Page as="div" className="min-w-0 max-w-[1600px]">
       <div className="print:hidden">
         <Section className="flex min-h-[calc(100vh-2rem)] flex-col gap-4">
           <div className="sticky top-0 z-20 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 bg-white/95 pb-4 backdrop-blur">
             <div>
-              <Link
-                href={base}
-                className="text-xs font-semibold text-emerald-700"
-              >
-                &larr; POS
-              </Link>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
@@ -440,14 +490,14 @@ export default function PosBarcodeBillingPage({
                   compact
                 />
               </div>
-              <button
+              <Button
                 type="button"
-                onClick={saveInvoice}
-                disabled={billLines.length === 0}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                onClick={() => void saveInvoice()}
+                disabled={billLines.length === 0 || billLines.some((line) => line.quantity < 1) || savingInvoice}
+                className="rounded-lg px-4 py-2 text-sm font-semibold"
               >
-                Save Invoice
-              </button>
+                  {savingInvoice ? "Posting..." : "Post Invoice"}
+              </Button>
             </div>
           </div>
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(24rem,1fr)]">
@@ -459,29 +509,29 @@ export default function PosBarcodeBillingPage({
                 className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-800"
                 htmlFor="barcode-input"
               >
-                Stock Barcode / Record ID
+                General Stock Record ID
               </label>
               <div className="mt-2 flex gap-2">
                 <div className="relative min-w-0 flex-1">
                   <ScanLine className="pointer-events-none absolute left-3 top-3 h-5 w-5 text-emerald-600" />
-                  <input
+                  <Input
                     ref={scannerRef}
                     id="barcode-input"
                     value={scanValue}
                     onChange={(event) => setScanValue(event.target.value)}
-                    className="w-full rounded-lg border border-emerald-300 bg-white py-3 pl-10 pr-3 text-base outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-200"
-                    placeholder="Scan record ID or enter it manually"
+                    className="rounded-lg border-emerald-300 bg-white py-3 pl-10 pr-3 text-base outline-none focus:border-emerald-600 focus:ring-emerald-200"
+                    placeholder="Scan or enter a General stock record ID"
                     autoComplete="off"
                   />
                 </div>
-                <button
+                <Button
                   type="submit"
                   disabled={loading || !scanValue.trim()}
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  className="rounded-lg px-5 py-3 text-sm font-bold"
                 >
                   <Search className="h-4 w-4" />
                   {loading ? "Finding..." : "Find"}
-                </button>
+                </Button>
               </div>
               {error && (
                 <p className="mt-2 text-sm font-medium text-red-700">{error}</p>
@@ -492,33 +542,35 @@ export default function PosBarcodeBillingPage({
                 className="block text-xs font-bold uppercase tracking-[0.16em] text-slate-600"
                 htmlFor="stock-record-select"
               >
-                Select stock record manually
+                Select General stock manually
               </label>
-              <select
+              <Select
                 id="stock-record-select"
+                aria-label="Select stock record manually"
                 value=""
                 onChange={(event) => chooseRecord(event.target.value)}
-                className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                className="mt-2 rounded-lg px-3 py-2 text-sm text-slate-800"
               >
-                <option value="">Select style, order, or stock record</option>
+                <option value="">Select style, order, or General stock</option>
                 {records.map((record) => (
                   <option key={record.id} value={record.id}>
                     {record.style_name} | {record.order_no} | {record.size || "-"}{" "}
                     | ID: {record.id}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </div>
           <div className="flex min-h-[32rem] flex-1">
             <Card className="flex h-full w-full flex-col border-slate-200 p-5">
               <div className="grid gap-4 md:grid-cols-2">
-                <label className="text-sm font-medium text-slate-700">
-                  Customer
-                  <select
+                <div className="text-sm font-medium text-slate-700">
+                  <label htmlFor="customer-select">Customer</label>
+                  <Select
+                    id="customer-select"
                     value={customer}
                     onChange={(event) => setCustomer(event.target.value)}
-                    className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                    className="mt-2 rounded-md px-3 py-2 text-sm"
                   >
                     <option value="">Walk-in customer</option>
                     {vendorOptions.map((vendor) => (
@@ -526,9 +578,9 @@ export default function PosBarcodeBillingPage({
                         {vendor}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_12rem_auto]">
-                    <input
+                    <Input
                       value={vendorQuickCreate}
                       onChange={(event) => setVendorQuickCreate(event.target.value)}
                       onKeyDown={(event) => {
@@ -537,13 +589,14 @@ export default function PosBarcodeBillingPage({
                           void createVendor();
                         }
                       }}
-                      className="min-w-0 flex-1 rounded-md border border-dashed border-slate-300 px-3 py-2 text-xs"
+                      className="min-w-0 flex-1 rounded-md border-dashed border-slate-300 px-3 py-2 text-xs"
                       placeholder="New vendor name"
+                      aria-label="New vendor name"
                     />
-                    <select
+                    <Select
                       value={vendorState}
                       onChange={(event) => setVendorState(event.target.value)}
-                      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700"
+                      className="rounded-md px-3 py-2 text-xs text-slate-700"
                       aria-label="Registered state"
                     >
                       <option value="">Registered state *</option>
@@ -552,30 +605,32 @@ export default function PosBarcodeBillingPage({
                           {state.label}
                         </option>
                       ))}
-                    </select>
-                    <button
+                    </Select>
+                    <Button
                       type="button"
+                      variant="secondary"
+                      size="sm"
                       onClick={() => void createVendor()}
                       disabled={
                         !vendorQuickCreate.trim() || !vendorState || vendorSubmitting
                       }
-                      className="rounded-md border border-emerald-300 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                      className="min-h-0 rounded-md border-emerald-300 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:border-slate-200 disabled:text-slate-400"
                     >
                       {vendorSubmitting ? "Adding..." : "Add vendor"}
-                    </button>
+                    </Button>
                   </div>
-                </label>
+                </div>
                 <label className="text-sm font-medium text-slate-700">
                   Invoice date
-                  <input
+                  <Input
                     type="date"
                     value={invoiceDate}
                     onChange={(event) => setInvoiceDate(event.target.value)}
-                    className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    className="mt-2 rounded-md px-3 py-2 text-sm"
                   />
                 </label>
               </div>
-              <div className="mt-6 min-h-0 flex-1 overflow-auto rounded-md border border-slate-200">
+              <div className="mt-6 min-h-0 flex-1 overflow-x-hidden overflow-y-auto rounded-md border border-slate-200">
                 <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
                   <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-600">
                     Bill items
@@ -584,7 +639,7 @@ export default function PosBarcodeBillingPage({
                 {billLines.length === 0 ? (
                   <div className="p-10 text-center">
                     <p className="text-sm font-semibold text-slate-700">
-                      Scan or select a stock record to start billing
+                          Scan or select General FG stock to start billing
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
                       The stock record ID is accepted as the barcode.
@@ -608,9 +663,10 @@ export default function PosBarcodeBillingPage({
                         </div>
                         <label className="block text-[11px] font-medium text-slate-500">
                           Qty
-                          <input
+                          <Input
                             type="number"
-                            min="0"
+                            aria-label={`${line.record.style_name} quantity`}
+                            min="1"
                             value={line.quantity}
                             onChange={(event) =>
                               updateLine(
@@ -619,13 +675,14 @@ export default function PosBarcodeBillingPage({
                                 event.target.value,
                               )
                             }
-                            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-right text-sm"
+                            className="mt-1 rounded border-slate-300 px-2 py-1 text-right text-sm"
                           />
                         </label>
                         <label className="block text-[11px] font-medium text-slate-500">
                           Price
-                          <input
+                          <Input
                             type="number"
+                            aria-label={`${line.record.style_name} price`}
                             min="0"
                             step="0.01"
                             value={line.rate}
@@ -636,12 +693,13 @@ export default function PosBarcodeBillingPage({
                                 event.target.value,
                               )
                             }
-                            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-right text-sm"
+                            className="mt-1 rounded border-slate-300 px-2 py-1 text-right text-sm"
                           />
                         </label>
                         <label className="block text-[11px] font-medium text-slate-500">
                           GST %
-                          <select
+                          <Select
+                            aria-label={`${line.record.style_name} GST rate`}
                             value={String(line.gstRate)}
                             onChange={(event) =>
                               updateLine(
@@ -650,7 +708,7 @@ export default function PosBarcodeBillingPage({
                                 event.target.value,
                               )
                             }
-                            className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1 text-right text-sm"
+                            className="mt-1 rounded border-slate-300 px-2 py-1 text-right text-sm"
                           >
                             {gstOptions.length === 0 ? (
                               <option value="0">0</option>
@@ -666,12 +724,13 @@ export default function PosBarcodeBillingPage({
                                 );
                               })
                             )}
-                          </select>
+                          </Select>
                         </label>
                         <label className="block text-[11px] font-medium text-slate-500">
                           Disc %
-                          <input
+                          <Input
                             type="number"
+                            aria-label={`${line.record.style_name} discount percentage`}
                             min="0"
                             max="100"
                             step="0.01"
@@ -683,12 +742,13 @@ export default function PosBarcodeBillingPage({
                                 event.target.value,
                               )
                             }
-                            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-right text-sm"
+                            className="mt-1 rounded border-slate-300 px-2 py-1 text-right text-sm"
                           />
                         </label>
                         <label className="block text-[11px] font-medium text-slate-500">
                           HSN
-                          <input
+                          <Input
+                            aria-label={`${line.record.style_name} HSN code`}
                             value={line.hsnCode}
                             onChange={(event) =>
                               updateLine(
@@ -697,7 +757,7 @@ export default function PosBarcodeBillingPage({
                                 event.target.value,
                               )
                             }
-                            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-right text-sm"
+                            className="mt-1 rounded border-slate-300 px-2 py-1 text-right text-sm"
                             placeholder="HSN"
                           />
                         </label>
@@ -793,14 +853,15 @@ function SalesInvoicePrint({
             Sales invoice ready
           </h2>
         </div>
-        <button
+        <Button
           type="button"
           onClick={onPrint}
-          className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          variant="secondary"
+          className="rounded-lg px-4 py-2 text-sm font-semibold"
         >
           <Printer className="h-4 w-4" />
           Print / Download PDF
-        </button>
+        </Button>
       </div>
       <article className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm print:rounded-none print:border-0 print:p-0 print:shadow-none">
         <div className="flex items-start justify-between gap-4 border-b-2 border-emerald-700 pb-6">
@@ -836,7 +897,8 @@ function SalesInvoicePrint({
             <p className="mt-1 font-semibold text-emerald-700">Pending</p>
           </div>
         </div>
-        <table className="mt-6 w-full text-left text-sm">
+        <div className="mt-6 min-w-0 max-w-full overflow-x-auto print:overflow-visible">
+          <table className="w-full text-left text-sm">
           <thead className="border-b-2 border-slate-200 text-[10px] font-bold uppercase tracking-wide text-slate-500">
             <tr>
               <th className="pb-3">Item / Style</th>
@@ -870,7 +932,8 @@ function SalesInvoicePrint({
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
         <div className="mt-6 flex justify-end border-t-2 border-slate-900 pt-4">
           <div className="w-64 space-y-2 text-sm">
             <div className="flex justify-between text-slate-600">
@@ -949,16 +1012,18 @@ function StockDetailsDialog({
               Barcode is this stock record ID: {record.id}
             </p>
           </div>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={onClose}
             aria-label="Close stock details"
-            className="rounded-md p-1 text-slate-500 hover:bg-slate-100"
+            className="min-h-0 rounded-md p-1"
           >
             <X className="h-5 w-5" />
-          </button>
+          </Button>
         </div>
-        <div className="min-h-0 overflow-auto p-5">
+        <div className="min-h-0 overflow-x-hidden overflow-y-auto p-5">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {details.map(([label, value]) => (
               <div
@@ -976,20 +1041,22 @@ function StockDetailsDialog({
           </div>
         </div>
         <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3">
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="sm"
             onClick={onClose}
-            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+            className="rounded-md px-4 py-2 text-xs font-semibold"
           >
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             onClick={onAdd}
-            className="rounded-md bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800"
+            className="rounded-md px-4 py-2 text-xs font-bold"
           >
             Add to bill
-          </button>
+          </Button>
         </div>
       </div>
     </div>

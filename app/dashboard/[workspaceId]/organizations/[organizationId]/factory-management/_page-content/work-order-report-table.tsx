@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import Card from "@/components/ui/Card";
+import Button from "@/components/ui/Button";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 
 type WorkOrderReport = {
@@ -40,27 +41,51 @@ export default function WorkOrderReportTable() {
   const [visibleFields, setVisibleFields] = useState<WorkOrderField[]>(reportFields.map((field) => field.key));
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [error, setError] = useState("");
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
     let active = true;
-    setError("");
-    void fetch(`/api/factory/work-orders?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" })
-      .then(async (response) => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Unable to load work orders.");
-        return data;
-      })
-      .then((data) => {
-        if (active) setRecords(Array.isArray(data.workOrders) ? data.workOrders : []);
-      })
-      .catch(() => {
-        if (active) {
-          setRecords([]);
-          setError("Unable to load work orders. Please refresh and try again.");
-        }
-      });
+    void Promise.resolve().then(async () => {
+      if (!active) return;
+      setError("");
+      const response = await fetch(`/api/factory/work-orders?organizationId=${encodeURIComponent(organizationId)}&limit=100`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Unable to load work orders.");
+      if (active) {
+        setRecords(Array.isArray(data.workOrders) ? data.workOrders : []);
+        setNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
+      }
+    }).catch(() => {
+      if (active) {
+        setRecords([]);
+        setError("Unable to load work orders. Please refresh and try again.");
+      }
+    });
     return () => { active = false; };
   }, [organizationId]);
+
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    setError("");
+    try {
+      const query = new URLSearchParams({ organizationId, limit: "100", cursor: nextCursor });
+      const response = await fetch(`/api/factory/work-orders?${query.toString()}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Unable to load more work orders.");
+      const page = Array.isArray(data.workOrders) ? data.workOrders as WorkOrderReport[] : [];
+      setRecords((current) => {
+        const ids = new Set(current.map((record) => record.id));
+        return [...current, ...page.filter((record) => !ids.has(record.id))];
+      });
+      setNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load more work orders.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   const reportRows = useMemo(() => records.map((record) => ({
     ...record,
@@ -94,6 +119,7 @@ export default function WorkOrderReportTable() {
         renderCell={(fieldKey, row) => fieldKey === "createdAt" ? new Date(row.createdAt).toLocaleDateString("en-IN") : fieldKey === "totalQty" ? row.totalQty.toLocaleString("en-IN") : String(row[fieldKey as keyof typeof row] ?? "")}
         emptyMessage="No work orders have been created yet."
       />
+      {nextCursor && <div className="mt-4 flex justify-center"><Button type="button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? "Loading..." : "Load more work orders"}</Button></div>}
     </Card>
   );
 }

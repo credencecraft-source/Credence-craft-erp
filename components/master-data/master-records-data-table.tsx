@@ -1,9 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
+import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
+import { ReportGrid } from "@/components/reports/report-grid-display";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 
 type MasterRecord = {
@@ -28,9 +32,34 @@ type MasterRecordsTableProps = {
   updateAction: (formData: FormData) => Promise<void>;
   deleteAction: (formData: FormData) => Promise<void>;
   fields: MasterFieldDefinition[];
-  lookupOptions: Record<string, Array<{ id: string; value_id?: string; label: string; parent_id?: string | null }>>;
+  lookupOptions: Record<string, Array<{ id: string; value_id?: string; label: string; parent_id?: string | null; fields?: Record<string, unknown> }>>;
   childRecords?: ChildRecord[];
 };
+
+const rawMaterialShowAllFieldKeys = new Set([
+  "Category_Type",
+  "Workdrive_Image_ID",
+  "Size_Wise_Concemption",
+  "Size_Wise_Consemption_Master",
+  "Is_this_Specific_for_a_Brand",
+  "Create_open_stock",
+  "Vendor_Wise_Price_List",
+  "Item_Code",
+  "Open_Stock",
+  "Open_Stock_Price",
+  "Brand1",
+  "Buyer_Item_Code",
+]);
+const rawMaterialFieldOrder = ["Category", "Subcategory", "Raw_Material_Name", "Stock_Uom1", "Colour", "Image_Url", "Show_All1"];
+
+function SubmitButton({ children }: { children: string }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" variant="primary" size="sm" disabled={pending}>
+      {pending ? "Saving..." : children}
+    </Button>
+  );
+}
 
 export function MasterRecordsTable({
   records,
@@ -50,19 +79,17 @@ export function MasterRecordsTable({
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createFields, setCreateFields] = useState<Record<string, unknown>>({});
   const [editFields, setEditFields] = useState<Record<string, unknown>>({});
-  const [searchTerm, setSearchTerm] = useState("");
+  const [visibleReportFields, setVisibleReportFields] = useState<string[]>([]);
+  const orderedFields = moduleKey === "raw-material"
+    ? [...fields].sort((first, second) => {
+      const firstOrder = rawMaterialFieldOrder.indexOf(first.key);
+      const secondOrder = rawMaterialFieldOrder.indexOf(second.key);
+      return (firstOrder === -1 ? rawMaterialFieldOrder.length : firstOrder)
+        - (secondOrder === -1 ? rawMaterialFieldOrder.length : secondOrder);
+    })
+    : fields;
 
-  const visibleRecords = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
-    if (!query) return records;
-    return records.filter((record) =>
-      [record.label, record.code, record.description].some((value) =>
-        value?.toLowerCase().includes(query)
-      )
-    );
-  }, [records, searchTerm]);
-
-  const openEditor = (record: MasterRecord) => {
+  const openEditor = useCallback((record: MasterRecord) => {
     setEditingRecord(record);
 
     let extractedFields: Record<string, unknown> = {};
@@ -88,7 +115,7 @@ export function MasterRecordsTable({
     });
 
     setEditFields(extractedFields);
-  };
+  }, [fields]);
 
   const closeEditor = () => {
     setEditingRecord(null);
@@ -124,12 +151,14 @@ export function MasterRecordsTable({
     values: Record<string, unknown>,
     setValues: (values: Record<string, unknown>) => void
   ) => {
+    if (field.readOnly) return null;
+
     const value = values[field.key] ?? field.initialValue;
     if (field.type === "checkbox")
       return (
-        <label key={field.key} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-          <input
-            type="checkbox"
+        <div key={field.key} className={moduleKey === "raw-material" ? "pt-5" : undefined}>
+          <Checkbox
+            label={`${field.label}${field.required ? " *" : ""}`}
             checked={value === true}
             onChange={(event) => {
               if (field.readOnly) return;
@@ -139,14 +168,26 @@ export function MasterRecordsTable({
             disabled={field.readOnly}
             className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:cursor-not-allowed"
           />
-          {field.label}
-        </label>
+        </div>
+      );
+    if (field.type === "image")
+      return (
+        <Input
+          key={field.key}
+          label={field.label}
+          type="file"
+          accept="image/*"
+          name={`field_${field.key}`}
+          hint="PNG, JPG, GIF, or WebP up to 2 MB."
+          onChange={() => undefined}
+        />
       );
     if (field.type === "picklist")
       return (
-        <label key={field.key} className="block space-y-1">
-          <span className="text-xs font-semibold text-slate-700">{field.label}</span>
-          <select
+        <Select
+          key={field.key}
+          label={field.label}
+          required={field.required}
             name={`field_${field.key}`}
             value={String(value ?? "")}
             onChange={(event) => {
@@ -154,20 +195,16 @@ export function MasterRecordsTable({
               setValues({ ...values, [field.key]: event.target.value });
             }}
             disabled={field.readOnly}
-            className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white disabled:bg-slate-100 disabled:cursor-not-allowed"
-          >
-            <option value="">Select {field.label}</option>
-            {field.options?.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
+            options={[
+              { value: "", label: `Select ${field.label}` },
+              ...(field.options?.map((option) => ({ value: option, label: option })) ?? []),
+            ]}
+            className="rounded-lg p-2 text-sm disabled:bg-slate-100"
+          />
       );
     if (field.type === "lookup") {
       const selectedValue = field.multiple && value === undefined && editingRecord
-        ? childRecords.filter((item) => item.parentId === editingRecord.value_id).map((item) => item.label)
+        ? childRecords.filter((item) => item.parentId === editingRecord.id || item.parentId === editingRecord.value_id).map((item) => item.label)
         : value;
       const options = getLookupOptions(field, values);
       if (field.multiple) {
@@ -177,8 +214,72 @@ export function MasterRecordsTable({
             ? [String(selectedValue)]
             : [];
 
+        if (moduleKey === "size-group" && field.key === "Size") {
+          const sizeRows = selectedValues.length > 0 ? selectedValues : [""];
+          return (
+            <fieldset key={field.key} className="col-span-full min-w-0 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <legend className="px-1 text-sm font-semibold text-slate-800">
+                {field.label}{field.required ? " *" : ""}
+              </legend>
+              <div className="flex items-center justify-end border-b border-slate-200 pb-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setValues({ ...values, [field.key]: [...sizeRows, ""] })}
+                >
+                  Add row
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {sizeRows.map((size, index) => {
+                  const otherSelectedSizes = new Set(selectedValues.filter((_, rowIndex) => rowIndex !== index));
+                  const rowOptions = options.filter((option) => option.label === size || !otherSelectedSizes.has(option.label));
+                  return (
+                    <div key={`${field.key}-${index}`} className="grid min-w-0 items-end gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-[5rem_minmax(0,1fr)_auto]">
+                      <div className="space-y-1">
+                        <span className="block text-xs font-semibold text-slate-600">Sl No</span>
+                        <span className="flex h-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-sm font-semibold tabular-nums text-slate-600">{index + 1}</span>
+                      </div>
+                      <Select
+                        label="Size"
+                        value={size}
+                        onChange={(event) => {
+                          const nextValues = [...sizeRows];
+                          nextValues[index] = event.target.value;
+                          setValues({ ...values, [field.key]: nextValues });
+                        }}
+                        options={[
+                          { value: "", label: "Select Size" },
+                          ...rowOptions.map((option) => ({ value: option.label, label: option.label })),
+                        ]}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          const nextValues = sizeRows.filter((_, rowIndex) => rowIndex !== index);
+                          setValues({ ...values, [field.key]: nextValues.length > 0 ? nextValues : [""] });
+                        }}
+                        className="justify-self-end text-red-600 sm:mb-0.5"
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+              {selectedValues.filter(Boolean).map((size, index) => (
+                <input key={`${field.key}-value-${index}`} type="hidden" name={`field_${field.key}`} value={size} />
+              ))}
+              {field.required && <p className="text-[11px] text-slate-500">Add at least one size.</p>}
+            </fieldset>
+          );
+        }
+
         return (
-          <fieldset key={field.key} className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <fieldset key={field.key} className="col-span-full min-w-0 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
             <legend className="px-1 text-xs font-semibold text-slate-700">
               {field.label}
               {field.required ? " *" : ""}
@@ -187,16 +288,16 @@ export function MasterRecordsTable({
               {options.map((option) => {
                 const checked = selectedValues.includes(option.label);
                 return (
-                  <label
+                  <div
                     key={option.id}
-                    className={`flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 text-sm transition-colors ${
+                    className={`flex min-h-10 cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 text-sm transition-colors ${
                       checked
                         ? "border-emerald-500 bg-emerald-50 text-emerald-900"
                         : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                     }`}
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
+                      label={option.label}
                       name={`field_${field.key}`}
                       value={option.label}
                       checked={checked}
@@ -212,8 +313,7 @@ export function MasterRecordsTable({
                       }}
                       className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
                     />
-                    <span>{option.label}</span>
-                  </label>
+                  </div>
                 );
               })}
             </div>
@@ -222,34 +322,43 @@ export function MasterRecordsTable({
           </fieldset>
         );
       }
+      const selectedCategory = moduleKey === "raw-material" && field.key === "Category_Type"
+        ? (lookupOptions["raw-material-category"] ?? []).find((option) => option.label === String(values.Category ?? ""))
+        : undefined;
+      const linkedTypeValue = String(selectedCategory?.fields?.Raw_Material_Type1 ?? "");
+      const linkedType = options.find((option) => [option.label, option.id, option.value_id].some((candidate) => String(candidate ?? "") === linkedTypeValue));
+      const autoSelectedType = linkedType?.label;
+
       return (
-        <label key={field.key} className="block space-y-1">
-          <span className="text-xs font-semibold text-slate-700">
-            {field.label}
-            {field.required ? " *" : ""}
-          </span>
-          <select
+        <div key={field.key}>
+          {autoSelectedType && <input type="hidden" name={`field_${field.key}`} value={autoSelectedType} />}
+          <Select
+            label={field.label}
             required={field.required}
             name={`field_${field.key}`}
-            value={String(selectedValue ?? "")}
+            value={autoSelectedType ?? String(selectedValue ?? "")}
+            disabled={field.readOnly || Boolean(autoSelectedType)}
             onChange={(event) => {
               const nextValue = event.target.value;
               const nextValues = { ...values, [field.key]: nextValue };
               for (const dependentField of fields.filter((candidate) => candidate.dependsOn === field.key)) {
                 nextValues[dependentField.key] = dependentField.multiple ? [] : "";
               }
+              if (moduleKey === "raw-material" && field.key === "Category") {
+                const selectedCategory = (lookupOptions["raw-material-category"] ?? []).find((option) => option.label === nextValue);
+                const categoryType = String(selectedCategory?.fields?.Raw_Material_Type1 ?? "");
+                const matchingType = (lookupOptions["raw-material-type"] ?? []).find((option) => option.label === categoryType);
+                nextValues.Category_Type = matchingType?.label ?? "";
+              }
               setValues(nextValues);
             }}
-            className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white"
-          >
-            <option value="">Select {field.label}</option>
-            {options.map((option) => (
-              <option key={option.id} value={option.label}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            options={[
+              { value: "", label: `Select ${field.label}` },
+              ...options.map((option) => ({ value: option.label, label: option.label })),
+            ]}
+            className="rounded-lg p-2 text-sm"
+          />
+        </div>
       );
     }
     if (field.type === "child-list") {
@@ -261,49 +370,55 @@ export function MasterRecordsTable({
           : [{}];
       const normalizedValues = childValues.length > 0 ? childValues as Array<Record<string, unknown>> : [{}];
       return (
-        <div key={field.key} className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-700">{field.label}</span>
-            <button
-              type="button"
+        <div key={field.key} className="col-span-full min-w-0 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
+            <span className="text-sm font-semibold text-slate-800">{field.label}</span>
+            <Button
+              size="sm"
+              variant="secondary"
                onClick={() => setValues({ ...values, [field.key]: [...normalizedValues, {}] })}
-              className="rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white"
             >
                 Add row
-              </button>
-            </div>
-            <input type="hidden" name={`field_${field.key}`} value={JSON.stringify(normalizedValues.filter((row) => Object.values(row).some((item) => String(item ?? "").trim() !== "")))} />
+              </Button>
+          </div>
+          <input type="hidden" name={`field_${field.key}`} value={JSON.stringify(normalizedValues.filter((row) => Object.values(row).some((item) => String(item ?? "").trim() !== "")))} />
+          <div className="space-y-2">
             {normalizedValues.map((childValue, index) => (
-              <div key={`${field.key}-${index}`} className="grid gap-2 rounded-md border border-slate-200 bg-white p-2 sm:grid-cols-[56px_1fr_auto]">
-                <span className="flex items-center justify-center text-xs font-semibold text-slate-500">{index + 1}</span>
-                <div className="grid gap-2 sm:grid-cols-2">
+              <div key={`${field.key}-${index}`} className="grid min-w-0 items-end gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-[2.5rem_minmax(0,1fr)_auto]">
+                <span className="flex h-10 items-center justify-center self-end text-sm font-semibold tabular-nums text-slate-500">{index + 1}</span>
+                <div className="grid min-w-0 gap-3 sm:grid-cols-2">
                   {childFields.map((childField) => {
                     const childValueForField = childValue[childField.key] ?? "";
+                    const onChange = (nextValue: string) => {
+                      const nextValues = [...normalizedValues];
+                      nextValues[index] = { ...nextValues[index], [childField.key]: nextValue };
+                      setValues({ ...values, [field.key]: nextValues });
+                    };
                     if (childField.type === "lookup") {
-                      return <label key={childField.key} className="space-y-1 text-xs font-semibold text-slate-700"><span>{childField.label}{childField.required ? " *" : ""}</span><select required={childField.required} value={String(childValueForField)} onChange={(event) => { const nextValues = [...normalizedValues]; nextValues[index] = { ...nextValues[index], [childField.key]: event.target.value }; setValues({ ...values, [field.key]: nextValues }); }} className="w-full rounded-lg border border-slate-300 bg-white p-2 text-sm"><option value="">Select {childField.label}</option>{(lookupOptions[childField.lookupModuleKey ?? ""] ?? []).map((option) => <option key={option.id} value={option.label}>{option.label}</option>)}</select></label>;
+                      return <Select key={childField.key} label={childField.label} required={childField.required} value={String(childValueForField)} onChange={(event) => onChange(event.target.value)} options={[{ value: "", label: `Select ${childField.label}` }, ...(lookupOptions[childField.lookupModuleKey ?? ""] ?? []).map((option) => ({ value: option.label, label: option.label }))]} />;
                     }
-                    return <label key={childField.key} className="space-y-1 text-xs font-semibold text-slate-700"><span>{childField.label}{childField.required ? " *" : ""}</span><Input required={childField.required} type={childField.type === "number" || childField.type === "percentage" || childField.type === "decimal" ? "number" : "text"} step={childField.type === "percentage" || childField.type === "decimal" ? "0.01" : undefined} value={String(childValueForField)} onChange={(event) => { const nextValues = [...normalizedValues]; nextValues[index] = { ...nextValues[index], [childField.key]: event.target.value }; setValues({ ...values, [field.key]: nextValues }); }} /></label>;
+                    return <Input key={childField.key} label={childField.label} required={childField.required} type={childField.type === "number" || childField.type === "percentage" || childField.type === "decimal" ? "number" : "text"} step={childField.type === "percentage" || childField.type === "decimal" ? "0.01" : undefined} value={String(childValueForField)} onChange={(event) => onChange(event.target.value)} />;
                   })}
                 </div>
-               <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setValues({ ...values, [field.key]: normalizedValues.filter((_, itemIndex) => itemIndex !== index) })}
-                className="px-2 py-1 text-xs font-medium text-red-600"
-              >
-                Remove
-              </button>
-            </div>
-          ))}
+                  className="justify-self-end text-red-600 sm:mb-0.5"
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+          </div>
         </div>
       );
     }
     return (
-      <label key={field.key} className="block space-y-1">
-        <span className="text-xs font-semibold text-slate-700">
-          {field.label}
-          {field.required ? " *" : ""}
-        </span>
+      <div key={field.key}>
         <Input
+          label={field.label}
           required={field.required}
           type={field.type === "date" ? "date" : field.type === "percentage" || field.type === "number" || field.type === "decimal" ? "number" : "text"}
           step={field.type === "percentage" || field.type === "decimal" ? "0.01" : undefined}
@@ -316,11 +431,11 @@ export function MasterRecordsTable({
             setValues({ ...values, [field.key]: event.target.value });
           }}
         />
-      </label>
+      </div>
     );
   };
 
-  const getFieldValue = (record: MasterRecord, field: MasterFieldDefinition) => {
+  const getFieldValue = useCallback((record: MasterRecord, field: MasterFieldDefinition) => {
     const metadata =
       record.metadata && typeof record.metadata === "object"
         ? (record.metadata as { fields?: Record<string, unknown> })
@@ -331,181 +446,133 @@ export function MasterRecordsTable({
     if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
     if (typeof value === "object") return JSON.stringify(value);
     return String(value);
-  };
+  }, []);
 
-  const openRecordDetail = (record: MasterRecord) => {
+  const reportFields = useMemo(() => [
+    { key: "label", label: "Name" },
+    { key: "code", label: "Code" },
+    ...fields.map((field) => ({ key: field.key, label: field.label })),
+    { key: "description", label: "Description" },
+    { key: "status", label: "Status" },
+    { key: "actions", label: "Actions" },
+  ].filter((field, index, allFields) => allFields.findIndex((item) => item.key === field.key) === index), [fields]);
+
+  const defaultVisibleReportFields = useMemo(
+    () => reportFields
+      .filter((field) => field.key !== "description" || records.some((record) => record.description))
+      .map((field) => field.key),
+    [records, reportFields],
+  );
+
+  const activeVisibleReportFields = visibleReportFields.length > 0
+    ? visibleReportFields
+    : defaultVisibleReportFields;
+
+  const openRecordDetail = useCallback((record: MasterRecord) => {
     if (moduleKey === "article") {
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/articles/${encodeURIComponent(record.value_id)}`);
     }
     if (moduleKey === "gold-seal") {
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/gold-seals/${encodeURIComponent(record.value_id)}`);
     }
-  };
+  }, [moduleKey, organizationId, router, workspaceId]);
+
+  const renderCell = useCallback((fieldKey: string, record: MasterRecord) => {
+    if (fieldKey === "label") return record.label;
+    if (fieldKey === "code") return record.code || "—";
+    if (fieldKey === "description") return record.description || "—";
+    if (fieldKey === "status") return record.is_active ? "Active" : "Pending";
+    if (fieldKey === "actions") {
+      return (
+        <div className="flex items-center gap-1.5">
+          {(moduleKey === "article" || moduleKey === "gold-seal") && (
+            <Button type="button" size="sm" variant="secondary" onClick={() => openRecordDetail(record)}>
+              Open
+            </Button>
+          )}
+          <Button type="button" size="sm" variant="secondary" onClick={() => openEditor(record)}>
+            Edit
+          </Button>
+          <form action={deleteAction}>
+            <input type="hidden" name="workspaceId" value={workspaceId} />
+            <input type="hidden" name="organizationId" value={organizationId} />
+            <input type="hidden" name="moduleKey" value={moduleKey} />
+            <input type="hidden" name="valueId" value={record.value_id} />
+            <Button type="submit" size="sm" variant="danger">
+              Delete
+            </Button>
+          </form>
+        </div>
+      );
+    }
+    const field = fields.find((candidate) => candidate.key === fieldKey);
+    return field ? getFieldValue(record, field) : "—";
+  }, [deleteAction, fields, getFieldValue, moduleKey, openEditor, openRecordDetail, organizationId, workspaceId]);
+
+  const getSearchValue = useCallback((fieldKey: string, record: MasterRecord) => {
+    if (fieldKey === "actions") return "";
+    if (fieldKey === "label") return record.label;
+    if (fieldKey === "code") return record.code ?? "";
+    if (fieldKey === "description") return record.description ?? "";
+    if (fieldKey === "status") return record.is_active ? "Active" : "Pending";
+    const field = fields.find((candidate) => candidate.key === fieldKey);
+    return field ? getFieldValue(record, field) : "";
+  }, [fields, getFieldValue]);
 
   return (
     <div className="space-y-4">
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h3 className="text-base font-bold text-slate-900">Report View</h3>
-          <span className="text-xs text-slate-500">{visibleRecords.length} records</span>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <Input
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search records..."
-            className="w-64"
-          />
-          <Button variant="primary" size="md" onClick={() => setShowCreateModal(true)}>
-            + Add Record
-          </Button>
-        </div>
-      </div>
-
-      {visibleRecords.length === 0 ? (
-        <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-500 shadow-sm">
-          No records found.
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {visibleRecords.map((item) => {
-            const formattedCode = item.code || "—";
-            return (
-              <article
-                key={item.id}
-                onClick={() => openRecordDetail(item)}
-                className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-emerald-500 hover:shadow-md"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-base font-bold text-emerald-700">
-                      {moduleLabel.slice(0, 1).toUpperCase()}
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">{moduleLabel}</p>
-                      <h4 className="mt-0.5 text-base font-bold text-slate-900">{item.label}</h4>
-                    </div>
-                  </div>
-                  <span
-                    className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${
-                      item.is_active
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-amber-100 text-amber-700"
-                    }`}
-                  >
-                    {item.is_active ? "Active" : "Pending"}
-                  </span>
-                </div>
-
-                <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50 px-2.5 py-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Code</span>
-                  <span className="text-sm font-semibold text-slate-800">{formattedCode}</span>
-                </div>
-
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {fields
-                    .filter((field) => !["article", "article_code", "description", "design_by", "designed_date"].includes(field.key))
-                    .slice(0, 4)
-                    .map((field) => {
-                      const value = getFieldValue(item, field);
-                      if (value === "—") return null;
-                      return (
-                        <div key={field.key} className="rounded-xl border border-slate-100 bg-slate-50 px-2.5 py-2">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{field.label}</p>
-                          <p className="mt-1 text-sm font-medium text-slate-700 break-words">{value}</p>
-                        </div>
-                      );
-                    })}
-                </div>
-
-                {item.description ? (
-                  <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-2.5 py-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Description</p>
-                    <p className="mt-1 text-sm text-slate-600">{item.description}</p>
-                  </div>
-                ) : null}
-
-                <div className="mt-4 flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
-                  {moduleKey === "article" || moduleKey === "gold-seal" ? (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openRecordDetail(item);
-                      }}
-                      className="px-2.5 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-lg text-xs font-medium transition-colors"
-                    >
-                      Open
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      openEditor(item);
-                    }}
-                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors"
-                  >
-                    Edit
-                  </button>
-                  <form action={deleteAction}>
-                    <input type="hidden" name="workspaceId" value={workspaceId} />
-                    <input type="hidden" name="organizationId" value={organizationId} />
-                    <input type="hidden" name="moduleKey" value={moduleKey} />
-                    <input type="hidden" name="valueId" value={item.value_id} />
-                    <button
-                      type="submit"
-                      onClick={(event) => event.stopPropagation()}
-                      className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-xs font-medium transition-colors"
-                    >
-                      Delete
-                    </button>
-                  </form>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
+      <ReportGrid
+        title={`${moduleLabel} Report`}
+        records={records}
+        fields={reportFields}
+        visibleFields={activeVisibleReportFields}
+        onVisibleFieldsChange={setVisibleReportFields}
+        storageKey={`master-report-columns-${moduleKey}`}
+        rowIdSelector={(record) => record.id}
+        selectedIds={[]}
+        onRowClick={() => undefined}
+        onNewOrder={() => setShowCreateModal(true)}
+        newActionLabel="+ Add Record"
+        renderCell={renderCell}
+        getSearchValue={getSearchValue}
+        emptyMessage={`No ${moduleLabel.toLowerCase()} records found.`}
+      />
 
       {/* CREATE MODAL */}
       {showCreateModal && (
         <div className="erp-popup-backdrop">
-          <div className="erp-popup-panel w-full max-w-lg space-y-4 p-5">
+          <div className={`erp-popup-panel flex h-[calc(100dvh-1.5rem)] max-h-[56rem] ${moduleKey === "raw-material" ? "w-[min(96vw,72rem)]" : "w-[min(96vw,90rem)]"} max-w-none flex-col space-y-4 p-5`}>
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-bold text-slate-900">Add New {moduleLabel}</h3>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={closeCreateModal}
-                className="text-slate-400 hover:text-slate-600 font-bold text-base"
               >
                 ✕
-              </button>
+              </Button>
             </div>
-            <form action={createAction} className="space-y-4">
+            <form action={createAction} className="flex min-h-0 flex-1 flex-col space-y-4">
               <input type="hidden" name="workspaceId" value={workspaceId} />
               <input type="hidden" name="organizationId" value={organizationId} />
               <input type="hidden" name="moduleKey" value={moduleKey} />
 
-              <div className="max-h-96 overflow-y-auto space-y-3 pr-1">
-                {fields.map((field) => renderField(field, createFields, setCreateFields))}
+              <div className={`grid min-h-0 flex-1 grid-cols-1 content-start gap-x-6 gap-y-4 overflow-y-auto pr-2 ${moduleKey === "raw-material" ? "sm:grid-cols-2" : "sm:grid-cols-2 xl:grid-cols-3"}`}>
+                {orderedFields.map((field) => moduleKey === "raw-material" && rawMaterialShowAllFieldKeys.has(field.key) && createFields.Show_All1 !== true
+                  ? <input key={field.key} type="hidden" name={`field_${field.key}`} value={String(createFields[field.key] ?? "")} />
+                  : renderField(field, createFields, setCreateFields))}
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
+                <Button
                   type="button"
+                  variant="secondary"
+                  size="sm"
                   onClick={closeCreateModal}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors"
                 >
                   Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-medium transition-colors"
-                >
-                  Save Record
-                </button>
+                </Button>
+                <SubmitButton>Save Record</SubmitButton>
               </div>
             </form>
           </div>
@@ -515,41 +582,39 @@ export function MasterRecordsTable({
       {/* EDIT MODAL */}
       {editingRecord && (
         <div className="erp-popup-backdrop">
-          <div className="erp-popup-panel w-full max-w-lg space-y-4 p-5">
+          <div className={`erp-popup-panel ${moduleKey === "raw-material" ? "flex h-[calc(100dvh-1.5rem)] max-h-[56rem] w-[min(96vw,72rem)] max-w-none flex-col" : "w-full max-w-lg"} space-y-4 p-5`}>
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-bold text-slate-900">Edit: {editingRecord.label}</h3>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={closeEditor}
-                className="text-slate-400 hover:text-slate-600 font-bold text-base"
               >
                 ✕
-              </button>
+              </Button>
             </div>
-            <form action={updateAction} className="space-y-4">
+            <form action={updateAction} className={moduleKey === "raw-material" ? "flex min-h-0 flex-1 flex-col space-y-4" : "space-y-4"}>
               <input type="hidden" name="workspaceId" value={workspaceId} />
               <input type="hidden" name="organizationId" value={organizationId} />
               <input type="hidden" name="moduleKey" value={moduleKey} />
               <input type="hidden" name="valueId" value={editingRecord.value_id} />
 
-              <div className="max-h-96 overflow-y-auto space-y-3 pr-1">
-                {fields.map((field) => renderField(field, editFields, setEditFields))}
+              <div className={moduleKey === "raw-material" ? "grid min-h-0 flex-1 grid-cols-1 content-start gap-x-6 gap-y-4 overflow-y-auto pr-2 sm:grid-cols-2" : "max-h-96 space-y-3 overflow-y-auto pr-1"}>
+                {orderedFields.map((field) => moduleKey === "raw-material" && rawMaterialShowAllFieldKeys.has(field.key) && editFields.Show_All1 !== true
+                  ? <input key={field.key} type="hidden" name={`field_${field.key}`} value={String(editFields[field.key] ?? "")} />
+                  : renderField(field, editFields, setEditFields))}
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
+                <Button
                   type="button"
+                  variant="secondary"
+                  size="sm"
                   onClick={closeEditor}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors"
                 >
                   Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-medium transition-colors"
-                >
-                  Save Changes
-                </button>
+                </Button>
+                <SubmitButton>Save Changes</SubmitButton>
               </div>
             </form>
           </div>

@@ -21,8 +21,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ orde
       return NextResponse.json({ error: "Order not found." }, { status: 404 });
     }
     return NextResponse.json({ order });
-  } catch (error: any) {
-    const message = error?.message || "Internal Server Error";
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -44,10 +44,10 @@ export async function PUT(request: Request, { params }: { params: Promise<{ orde
     delete payload.organizationId;
     delete payload.id;
 
-    const order = await updateOrderWithDetails(orderId, organization.id, payload);
+    const order = await updateOrderWithDetails(orderId, organization.id, payload, user.id);
     return NextResponse.json({ ok: true, order });
-  } catch (error: any) {
-    const message = error?.message || "Unable to update order.";
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unable to update order.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

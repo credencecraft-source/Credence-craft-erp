@@ -1,14 +1,16 @@
 "use client";
 
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import Button from "@/components/ui/Button";
 
 type PurchaseOrder = {
   id: string;
   purchaseOrderNo: string;
+  entityName: string;
   vendor: { name: string; email?: string | null };
   status: string;
   poDate: string;
@@ -17,10 +19,11 @@ type PurchaseOrder = {
   lines: Array<{ gst: number | null; hsnCode: string | null; buyingUom: string | null }>;
 };
 
-type PurchaseOrderField = "purchaseOrderNo" | "vendorName" | "poDate" | "deliveryDate" | "status" | "buyingUom" | "gst" | "hsnCode" | "total";
+type PurchaseOrderField = "purchaseOrderNo" | "entityName" | "vendorName" | "poDate" | "deliveryDate" | "status" | "buyingUom" | "gst" | "hsnCode" | "total";
 
 const reportFields: Array<{ key: PurchaseOrderField; label: string }> = [
   { key: "purchaseOrderNo", label: "PO Number" },
+  { key: "entityName", label: "Entity" },
   { key: "vendorName", label: "Vendor" },
   { key: "poDate", label: "PO Date" },
   { key: "deliveryDate", label: "Delivery Date" },
@@ -34,12 +37,27 @@ const reportFields: Array<{ key: PurchaseOrderField; label: string }> = [
 const number = (value: number | null | undefined) => Number(value ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 const date = (value: string | null | undefined) => (value ? new Date(value).toLocaleDateString("en-IN") : "To be confirmed");
 
+async function fetchPurchaseOrderReportPage(organizationId: string, cursor?: string, search = "") {
+  const query = new URLSearchParams({ organizationId, view: "report", limit: "50" });
+  if (cursor) query.set("cursor", cursor);
+  if (search.trim()) query.set("search", search.trim());
+  const response = await fetch(`/api/orders/purchase-orders?${query.toString()}`, { cache: "no-store" });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data?.error || "Unable to load Purchase Orders.");
+  return data as { purchaseOrders?: PurchaseOrder[]; nextCursor?: string | null };
+}
+
 export default function PurchaseOrderReportPage() {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => Boolean(params?.organizationId));
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
   const [error, setError] = useState<{ message: string; linkedReceipts?: Array<{ id: string; receiptNo: string }>; linkedGateEntries?: Array<{ id: string; entryNo: string }> } | null>(null);
+  const [actionError, setActionError] = useState("");
+  const [submittingPurchaseOrderId, setSubmittingPurchaseOrderId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [visibleFields, setVisibleFields] = useState<PurchaseOrderField[]>(reportFields.map((field) => field.key));
 
@@ -47,23 +65,48 @@ export default function PurchaseOrderReportPage() {
   const basePath = `/dashboard/${params?.workspaceId ?? "demo"}/organizations/${organizationId}/order-management/procurement`;
   const purchaseOrderPath = `${basePath}/purchase-order`;
 
-  const loadOrders = async () => {
-    const response = await fetch(`/api/orders/purchase-orders?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data?.error || "Unable to load Purchase Orders.");
-    setOrders((data.purchaseOrders ?? []).map((order: PurchaseOrder) => ({ ...order, status: order.status === "OPEN" ? "DRAFT" : order.status })));
-  };
+  const loadOrders = useCallback(async (cursor?: string, append = false) => {
+    const data = await fetchPurchaseOrderReportPage(organizationId, cursor, searchTerm);
+    const page = (data.purchaseOrders ?? []).map((order: PurchaseOrder) => ({ ...order, status: order.status === "OPEN" ? "DRAFT" : order.status }));
+    setOrders((current) => append ? [...current, ...page] : page);
+    setNextCursor(data.nextCursor ?? null);
+  }, [organizationId, searchTerm]);
 
   useEffect(() => {
-    if (!organizationId) {
-      setLoading(false);
-      return;
-    }
+    if (!organizationId) return;
+    let active = true;
+    const timeout = window.setTimeout(() => {
+      fetchPurchaseOrderReportPage(organizationId, undefined, searchTerm)
+        .then((data) => {
+          if (!active) return;
+          const page = (data.purchaseOrders ?? []).map((order) => ({ ...order, status: order.status === "OPEN" ? "DRAFT" : order.status }));
+          setOrders(page);
+          setNextCursor(data.nextCursor ?? null);
+        })
+        .catch((loadError) => {
+          if (active) setError({ message: loadError instanceof Error ? loadError.message : "Unable to load Purchase Orders." });
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    }, searchTerm ? 250 : 0);
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [organizationId, searchTerm]);
 
-    loadOrders()
-      .catch((loadError) => setError({ message: loadError instanceof Error ? loadError.message : "Unable to load Purchase Orders." }))
-      .finally(() => setLoading(false));
-  }, [organizationId]);
+  const loadMoreOrders = async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      await loadOrders(nextCursor, true);
+    } catch (loadError) {
+      setError({ message: loadError instanceof Error ? loadError.message : "Unable to load more Purchase Orders." });
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const deleteSelectedOrders = async () => {
     if (selectedIds.length === 0) return;
@@ -101,6 +144,32 @@ export default function PurchaseOrderReportPage() {
     }
   };
 
+  const submitOrderForApproval = async (purchaseOrderId: string) => {
+    const purchaseOrder = orders.find((order) => order.id === purchaseOrderId);
+    if (!purchaseOrder || !["DRAFT", "OPEN", "REJECTED"].includes(purchaseOrder.status)) return;
+
+    setSubmittingPurchaseOrderId(purchaseOrderId);
+    setActionError("");
+    try {
+      const response = await fetch(`/api/orders/purchase-orders/${encodeURIComponent(purchaseOrderId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId, action: "submit-approval" }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Unable to submit Purchase Order for approval.");
+
+      setOrders((current) => current.map((order) => order.id === purchaseOrderId
+        ? { ...order, status: "PENDING_APPROVAL" }
+        : order));
+      setSelectedIds((current) => current.filter((id) => id !== purchaseOrderId));
+    } catch (submitError) {
+      setActionError(submitError instanceof Error ? submitError.message : "Unable to submit Purchase Order for approval.");
+    } finally {
+      setSubmittingPurchaseOrderId(null);
+    }
+  };
+
   const reportRows = useMemo(
     () => orders.map((order) => ({
       ...order,
@@ -114,22 +183,6 @@ export default function PurchaseOrderReportPage() {
 
   return (
     <div className="mx-auto max-w-[1500px] space-y-4">
-      <header className="flex items-center gap-3 border-b border-slate-200 pb-4">
-        <button
-          type="button"
-          onClick={() => router.push(basePath)}
-          aria-label="Back to procurement"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </button>
-        <div>
-          <p className="erp-eyebrow">Procurement</p>
-          <h1 className="erp-page-heading mt-1">Purchase Orders</h1>
-          <p className="mt-1 text-xs text-slate-500">Header-level Purchase Order register</p>
-        </div>
-      </header>
-
       {loading ? (
         <div className="erp-surface flex min-h-48 items-center justify-center gap-2 text-xs text-slate-500">
           <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
@@ -168,6 +221,11 @@ export default function PurchaseOrderReportPage() {
         </div>
       ) : (
         <div className="erp-surface overflow-hidden">
+          {actionError ? (
+            <p role="alert" className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+              {actionError}
+            </p>
+          ) : null}
           <ReportGrid
             title="Purchase Orders"
             records={reportRows}
@@ -176,16 +234,38 @@ export default function PurchaseOrderReportPage() {
             onVisibleFieldsChange={(next) => setVisibleFields(next as PurchaseOrderField[])}
             rowIdSelector={(row) => row.id}
             selectedIds={selectedIds}
+            onSearchQueryChange={(query) => {
+              setSearchTerm(query);
+              setLoading(true);
+              setError(null);
+              setOrders([]);
+              setNextCursor(null);
+              setSelectedIds([]);
+            }}
             onRowClick={(recordId) => router.push(`${purchaseOrderPath}/${encodeURIComponent(recordId)}`)}
             onToggleSelectAll={(checked) => setSelectedIds(checked ? reportRows.map((row) => row.id) : [])}
             onToggleRowSelection={(recordId, checked) =>
               setSelectedIds((current) => (checked ? [...new Set([...current, recordId])] : current.filter((id) => id !== recordId)))
             }
             onDeleteSelected={deleteSelectedOrders}
+            onRowAction={(recordId) => void submitOrderForApproval(recordId)}
+            rowActionLabel="Submit for approval"
+            rowActionLabelSelector={(row) => {
+              if (submittingPurchaseOrderId === row.id) return "Submitting...";
+              if (row.status === "PENDING_APPROVAL") return "Pending approval";
+              if (row.status === "APPROVED") return "Approved";
+              if (row.status === "REJECTED") return "Resubmit for approval";
+              return "Submit for approval";
+            }}
+            rowActionDisabledSelector={(row) =>
+              submittingPurchaseOrderId === row.id || !["DRAFT", "OPEN", "REJECTED"].includes(row.status)
+            }
             renderCell={(fieldKey, row) => {
               switch (fieldKey as PurchaseOrderField) {
                 case "purchaseOrderNo":
                   return row.purchaseOrderNo;
+                case "entityName":
+                  return row.entityName || "Missing Entity";
                 case "vendorName":
                   return row.vendorName;
                 case "poDate":
@@ -208,6 +288,14 @@ export default function PurchaseOrderReportPage() {
             }}
             emptyMessage="No Purchase Orders have been generated."
           />
+          {nextCursor && (
+            <div className="flex justify-center border-t border-slate-200 p-3">
+              <Button type="button" variant="secondary" size="sm" disabled={loadingMore} onClick={() => void loadMoreOrders()}>
+                {loadingMore ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                {loadingMore ? "Loading Purchase Orders" : "Load more Purchase Orders"}
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

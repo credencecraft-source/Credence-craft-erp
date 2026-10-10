@@ -20,7 +20,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ p
     const user = await requireSessionUser();
     const organizationId = new URL(request.url).searchParams.get("organizationId") ?? "";
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
-    await deletePurchaseOrder(organization.id, (await params).purchaseOrderId);
+    await deletePurchaseOrder(organization.id, (await params).purchaseOrderId, user.id);
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to delete Purchase Order.";
@@ -42,7 +42,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pur
     const organization = await requireOrganizationContext(user.id, String(body.organizationId ?? ""), ["OWNER", "ADMIN", "MERCHANDISING"]);
     const purchaseOrderId = (await params).purchaseOrderId;
     if (body.action === "submit-approval") {
-      await submitPurchaseOrderForApproval(organization.id, purchaseOrderId, user.full_name || user.email);
+      await submitPurchaseOrderForApproval(organization.id, purchaseOrderId, user.full_name, user.id);
       return NextResponse.json({ ok: true });
     }
     if (body.action === "share-email") {

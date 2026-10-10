@@ -1,7 +1,5 @@
-import { Prisma } from "@prisma/client";
-
 import { prisma } from "@/lib/database/prisma-client";
-import { listGroupedPurchaseOrders } from "./grouped-purchase-order-service";
+import { getGroupedPurchaseOrder } from "./grouped-purchase-order-service";
 
 export type GroupedPurchaseOrderHeaderInput = {
   note?: string | null;
@@ -102,5 +100,5 @@ export async function updateGroupedPurchaseOrderHeader(
     });
   });
 
-  return listGroupedPurchaseOrders(organizationId, [pendingStatus, "PRICE_APPROVED"]).then((orders) => orders.find((item) => item.id === updated.id) ?? updated);
+  return getGroupedPurchaseOrder(organizationId, updated.id);
 }

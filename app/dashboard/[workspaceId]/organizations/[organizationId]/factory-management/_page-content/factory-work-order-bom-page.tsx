@@ -8,7 +8,7 @@ import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 
-const quantity = (value: number) => Number(value || 0).toLocaleString("en-IN");
+const quantity = (value: number | string) => Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 
 type BomLine = {
   id: string;
@@ -18,6 +18,7 @@ type BomLine = {
   workOrderQty: number;
   requiredQty: number;
   totalRequiredQty: number;
+  allocatedQty: number | string;
 };
 
 type WorkOrder = {
@@ -34,7 +35,7 @@ type WorkOrder = {
 function BomReportTable({ lines }: { lines: BomLine[] }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200">
-      <table className="w-full min-w-[680px] text-left text-xs">
+      <table className="w-full min-w-[780px] text-left text-xs">
         <thead className="border-b border-slate-200 bg-slate-50 text-slate-600">
           <tr>
             <th className="p-3 font-semibold">Raw Material</th>
@@ -43,6 +44,7 @@ function BomReportTable({ lines }: { lines: BomLine[] }) {
             <th className="p-3 text-right font-semibold">WO Qty</th>
             <th className="p-3 text-right font-semibold">Required</th>
             <th className="p-3 text-right font-semibold">With Excess</th>
+            <th className="p-3 text-right font-semibold">Allocated Qty</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -54,6 +56,7 @@ function BomReportTable({ lines }: { lines: BomLine[] }) {
               <td className="p-3 text-right text-slate-700">{quantity(line.workOrderQty)}</td>
               <td className="p-3 text-right text-slate-700">{quantity(line.requiredQty)}</td>
               <td className="p-3 text-right font-bold text-sky-700">{quantity(line.totalRequiredQty)}</td>
+              <td className="p-3 text-right font-semibold text-slate-700">{quantity(line.allocatedQty)}</td>
             </tr>
           ))}
         </tbody>

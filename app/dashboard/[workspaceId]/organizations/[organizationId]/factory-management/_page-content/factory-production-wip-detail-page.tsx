@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
 
+import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Checkbox from "@/components/ui/Checkbox";
+import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
+import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
+import Textarea from "@/components/ui/Textarea";
 
 type WipOperation = {
   id: string;
@@ -32,7 +36,7 @@ type WipRecord = {
   processName: string;
   processStatus: string;
   operations: WipOperation[];
-  sizeLines?: Array<{ size: string | null; buyerSize: string | null; quantity: number }>;
+  sizeLines?: Array<{ sourceFinishedGoodsId: string; size: string | null; buyerSize: string | null; quantity: number }>;
   processId?: string;
   nextProcessId?: string | null;
   receivedQty?: number;
@@ -43,7 +47,7 @@ type WipRecord = {
   flowWipQty?: number;
   flowOutIssuedQty?: number;
   flowOutAcceptedQty?: number;
-  incomingTransfers?: Array<{ id: string; issuedQty: number; acceptedQty: number; pendingQty: number; status: string; fromProcessName: string; sizeLines: Array<{ size: string | null; buyer_size?: string | null; issued_qty: number; accepted_qty: number }> }>;
+  incomingTransfers?: Array<{ id: string; issuedQty: number; acceptedQty: number; pendingQty: number; status: string; fromProcessName: string; sizeLines: Array<{ source_finished_goods_id?: string | null; size: string | null; buyer_size?: string | null; issued_qty: number; accepted_qty: number }> }>;
   outgoingTransfers?: Array<{ id: string; issuedQty: number; acceptedQty: number; pendingQty: number; status: string; toProcessId: string; toProcessName: string }>;
 };
 
@@ -52,10 +56,12 @@ const price = (value: number | null) => value === null ? "-" : Number(value).toL
 
 export default function FactoryProductionWipDetailPage() {
   const params = useParams<{ workspaceId: string; organizationId: string; processRecordId: string }>();
-  const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
   const processRecordId = params?.processRecordId ?? "";
   const [records, setRecords] = useState<WipRecord[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [paginationError, setPaginationError] = useState("");
   const [updateRecord, setUpdateRecord] = useState<WipRecord | null>(null);
   const [updateLevel, setUpdateLevel] = useState<"PROCESS" | "OPERATION">("PROCESS");
   const [operationId, setOperationId] = useState("");
@@ -72,28 +78,38 @@ export default function FactoryProductionWipDetailPage() {
   const [transferSizeQuantities, setTransferSizeQuantities] = useState<Record<string, string>>({});
   const [transferMessage, setTransferMessage] = useState("");
   const [savingTransfer, setSavingTransfer] = useState(false);
-  const [acceptTransfer, setAcceptTransfer] = useState<{ id: string; sizeLines: Array<{ size: string | null; buyer_size?: string | null; issued_qty: number; accepted_qty: number }>; operations: WipOperation[] } | null>(null);
+  const [acceptTransfer, setAcceptTransfer] = useState<{ id: string; sizeLines: Array<{ source_finished_goods_id?: string | null; size: string | null; buyer_size?: string | null; issued_qty: number; accepted_qty: number }>; operations: WipOperation[] } | null>(null);
   const [acceptedSizeQuantities, setAcceptedSizeQuantities] = useState<Record<string, string>>({});
   const [grnOperationQuantities, setGrnOperationQuantities] = useState<Record<string, string>>({});
   const [grnOperationBillable, setGrnOperationBillable] = useState<Record<string, boolean>>({});
+  const [savingAccept, setSavingAccept] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  async function refreshRecords() {
+    const query = new URLSearchParams({ organizationId, limit: "100", process: processRecordId });
+    const response = await fetch(`/api/factory/production/wip?${query.toString()}`, { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Unable to refresh process details.");
+    setRecords(Array.isArray(data.workInProgress) ? data.workInProgress : []);
+    setNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
+  }
+
   useEffect(() => {
     let active = true;
-    void fetch(`/api/factory/production/wip?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" })
+    const query = new URLSearchParams({ organizationId, limit: "100", process: processRecordId });
+    void fetch(`/api/factory/production/wip?${query.toString()}`, { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Unable to load process details.");
         return data;
       })
       .then((data) => {
-        const match = Array.isArray(data.workInProgress)
-          ? data.workInProgress.filter((item: WipRecord) => item.processName === processRecordId)
-          : [];
+        const match = Array.isArray(data.workInProgress) ? data.workInProgress : [];
         if (active) {
           if (match.length > 0) setRecords(match);
           else setError("The work-order process could not be found.");
+          setNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
         }
       })
       .catch((loadError) => {
@@ -104,6 +120,24 @@ export default function FactoryProductionWipDetailPage() {
       });
     return () => { active = false; };
   }, [organizationId, processRecordId]);
+
+  async function loadMoreRecords() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    setPaginationError("");
+    try {
+      const query = new URLSearchParams({ organizationId, limit: "100", process: processRecordId, cursor: nextCursor });
+      const response = await fetch(`/api/factory/production/wip?${query.toString()}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Unable to load more work orders.");
+      setRecords((current) => [...current, ...(Array.isArray(data.workInProgress) ? data.workInProgress : [])]);
+      setNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
+    } catch (loadError) {
+      setPaginationError(loadError instanceof Error ? loadError.message : "Unable to load more work orders.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   const openUpdate = (record: WipRecord) => {
     setUpdateRecord(record);
@@ -123,6 +157,7 @@ export default function FactoryProductionWipDetailPage() {
     setUpdateMessage("");
     try {
       const lines = (updateRecord.sizeLines ?? []).map((line, index) => ({
+        sourceFinishedGoodsId: line.sourceFinishedGoodsId,
         size: line.size,
         buyerSize: line.buyerSize,
         quantity: Number(sizeQuantities[`${line.size ?? line.buyerSize ?? "size"}-${index}`] || 0),
@@ -136,7 +171,11 @@ export default function FactoryProductionWipDetailPage() {
       if (!response.ok) throw new Error(data.error || "Unable to save production update.");
       setUpdateRecord(null);
       setUpdateMessage("Production update saved successfully.");
-      setRecords((current) => current.map((record) => record.id === updateRecord.id ? { ...record, completedQty: record.completedQty + Number(data.productionUpdate.completed_qty), pendingQty: Math.max(record.pendingQty - Number(data.productionUpdate.completed_qty), 0) } : record));
+      try {
+        await refreshRecords();
+      } catch {
+        setPaginationError("Production update saved, but balances could not be refreshed. Reload this page to see the latest quantities.");
+      }
     } catch (saveError) {
       setUpdateMessage(saveError instanceof Error ? saveError.message : "Unable to save production update.");
     } finally {
@@ -156,12 +195,17 @@ export default function FactoryProductionWipDetailPage() {
     setSavingTransfer(true);
     setTransferMessage("");
     try {
-      const sizeLines = (transferRecord.sizeLines ?? []).map((line, index) => ({ size: line.size, buyerSize: line.buyerSize, quantity: Number(transferSizeQuantities[`${line.size ?? line.buyerSize ?? "size"}-${index}`] || 0) })).filter((line) => line.quantity > 0);
+      const sizeLines = (transferRecord.sizeLines ?? []).map((line, index) => ({ sourceFinishedGoodsId: line.sourceFinishedGoodsId, size: line.size, buyerSize: line.buyerSize, quantity: Number(transferSizeQuantities[`${line.size ?? line.buyerSize ?? "size"}-${index}`] || 0) })).filter((line) => line.quantity > 0);
       const response = await fetch("/api/factory/production/bundle-transfers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organizationId, action: "ISSUE", workOrderId: transferRecord.workOrderId, fromProcessId: transferRecord.processId, toProcessId: transferRecord.nextProcessId, completedQty: Number(transferQty || 0), sizeLines }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Unable to issue bundle transfer.");
       setTransferRecord(null);
       setTransferMessage("Bundle transfer issued to the next process.");
+      try {
+        await refreshRecords();
+      } catch {
+        setPaginationError("Bundle transfer saved, but balances could not be refreshed. Reload this page to see the latest quantities.");
+      }
     } catch (transferError) {
       setTransferMessage(transferError instanceof Error ? transferError.message : "Unable to issue bundle transfer.");
     } finally {
@@ -170,19 +214,32 @@ export default function FactoryProductionWipDetailPage() {
   }
 
   async function acceptBundleTransfer() {
-    if (!acceptTransfer) return;
-    const sizeLines = acceptTransfer.sizeLines.map((line, index) => ({ size: line.size, buyerSize: line.buyer_size, quantity: Number(acceptedSizeQuantities[`${line.size ?? line.buyer_size ?? "size"}-${index}`] || 0) })).filter((line) => line.quantity > 0);
-    const operationLines = acceptTransfer.operations.map((operation) => ({ operationId: operation.id, operationName: operation.operation, actualMadeQty: Number(grnOperationQuantities[operation.id] || 0), billable: Boolean(grnOperationBillable[operation.id]) })).filter((line) => line.actualMadeQty > 0);
-    const response = await fetch("/api/factory/production/bundle-transfers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organizationId, action: "ACCEPT", transferId: acceptTransfer.id, sizeLines, operationLines }) });
-    const data = await response.json();
-    if (!response.ok) setTransferMessage(data.error || "Unable to accept bundle transfer.");
-    else { setTransferMessage("GRN saved and bundle received."); setAcceptTransfer(null); }
+    if (!acceptTransfer || savingAccept) return;
+    setSavingAccept(true);
+    setTransferMessage("");
+    try {
+      const sizeLines = acceptTransfer.sizeLines.map((line, index) => ({ sourceFinishedGoodsId: line.source_finished_goods_id, size: line.size, buyerSize: line.buyer_size, quantity: Number(acceptedSizeQuantities[`${line.size ?? line.buyer_size ?? "size"}-${index}`] || 0) })).filter((line) => line.quantity > 0);
+      const operationLines = acceptTransfer.operations.map((operation) => ({ operationId: operation.id, operationName: operation.operation, actualMadeQty: Number(grnOperationQuantities[operation.id] || 0), billable: Boolean(grnOperationBillable[operation.id]) })).filter((line) => line.actualMadeQty > 0);
+      const response = await fetch("/api/factory/production/bundle-transfers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organizationId, action: "ACCEPT", transferId: acceptTransfer.id, sizeLines, operationLines }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Unable to accept bundle transfer.");
+      setTransferMessage("GRN saved and bundle received.");
+      setAcceptTransfer(null);
+      try {
+        await refreshRecords();
+      } catch {
+        setPaginationError("GRN saved, but balances could not be refreshed. Reload this page to see the latest quantities.");
+      }
+    } catch (acceptError) {
+      setTransferMessage(acceptError instanceof Error ? acceptError.message : "Unable to accept bundle transfer.");
+    } finally {
+      setSavingAccept(false);
+    }
   }
 
   return (
     <Page as="div">
       <Section className="space-y-6">
-        <Link href={`/dashboard/${workspaceId}/organizations/${organizationId}/factory-management/production/shop-floor/wip`} className="text-xs font-semibold text-emerald-700 hover:text-emerald-800">&larr; Shop Floor WIP</Link>
         {loading && <Card className="p-6 text-sm text-slate-600">Loading process details...</Card>}
         {error && <Card className="border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</Card>}
         {!loading && !error && records.length > 0 && (
@@ -225,13 +282,15 @@ export default function FactoryProductionWipDetailPage() {
                       <div className="text-center"><p className="text-[9px] uppercase text-slate-500">Out</p><p className="mt-1 font-bold text-emerald-700">{quantity(record.flowOutIssuedQty ?? 0)} / {quantity(record.flowOutAcceptedQty ?? 0)}</p><p className="text-[9px] text-slate-500">Issued / accepted</p></div>
                     </div>
                   </div>
-                  {(record.incomingTransfers ?? []).some((transfer) => transfer.pendingQty > 0) && <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs">{(record.incomingTransfers ?? []).filter((transfer) => transfer.pendingQty > 0).map((transfer) => <div key={transfer.id} className="flex items-center justify-between border-b border-sky-100 py-2 last:border-b-0"><span>Pending from {transfer.fromProcessName}: {quantity(transfer.pendingQty)}</span><button type="button" onClick={() => { setAcceptTransfer({ id: transfer.id, sizeLines: transfer.sizeLines, operations: record.operations }); setAcceptedSizeQuantities({}); setGrnOperationQuantities({}); setGrnOperationBillable({}); }} className="rounded bg-sky-600 px-2 py-1 text-[10px] font-semibold text-white">Create GRN</button></div>)}</div>}
+                  {(record.incomingTransfers ?? []).some((transfer) => transfer.pendingQty > 0) && <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs">{(record.incomingTransfers ?? []).filter((transfer) => transfer.pendingQty > 0).map((transfer) => <div key={transfer.id} className="flex items-center justify-between border-b border-sky-100 py-2 last:border-b-0"><span>Pending from {transfer.fromProcessName}: {quantity(transfer.pendingQty)}</span><Button type="button" size="sm" onClick={() => { setAcceptTransfer({ id: transfer.id, sizeLines: transfer.sizeLines, operations: record.operations }); setAcceptedSizeQuantities({}); setGrnOperationQuantities({}); setGrnOperationBillable({}); }} className="min-h-0 rounded bg-sky-600 px-2 py-1 text-[10px] text-white hover:bg-sky-700">Create GRN</Button></div>)}</div>}
                   <details className="mt-4"><summary className="cursor-pointer text-xs font-semibold text-emerald-700">View operations ({record.operations.length})</summary><div className="mt-3 space-y-2">{record.operations.map((operation) => <div key={operation.id} className="flex items-center justify-between border-b border-slate-100 pb-2 text-xs"><span>{operation.operation}</span><span className="font-semibold">{price(operation.actualPrice)}</span></div>)}</div></details>
-                  <button type="button" onClick={() => openUpdate(record)} className="mt-4 w-full rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700">Production Update</button>
-                  <button type="button" onClick={() => openTransfer(record)} disabled={!record.nextProcessId} className="mt-2 w-full rounded-lg border border-sky-300 px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50">Bundle Transfer{record.nextProcessId ? " to next process" : " (last process)"}</button>
+                  <Button type="button" onClick={() => openUpdate(record)} className="mt-4 w-full border-emerald-600 bg-emerald-600 px-3 py-2 text-xs text-white hover:bg-emerald-700">Production Update</Button>
+                  <Button type="button" variant="secondary" onClick={() => openTransfer(record)} disabled={!record.nextProcessId} className="mt-2 w-full border-sky-300 px-3 py-2 text-xs text-sky-700 hover:bg-sky-50">Bundle Transfer{record.nextProcessId ? " to next process" : " (last process)"}</Button>
                 </Card>
               ))}
             </div>
+            {paginationError && <Card role="alert" className="border-red-200 bg-red-50 p-4 text-sm text-red-700">{paginationError}</Card>}
+            {nextCursor && <div className="flex justify-center"><Button type="button" variant="secondary" onClick={() => void loadMoreRecords()} disabled={loadingMore} className="border-slate-300 bg-white text-slate-700 hover:bg-slate-50">{loadingMore ? "Loading..." : "Load more work orders"}</Button></div>}
           </>
         )}
         {updateMessage && <Card className="border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{updateMessage}</Card>}
@@ -239,20 +298,126 @@ export default function FactoryProductionWipDetailPage() {
         {updateRecord && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
             <Card className="max-h-[90vh] w-full max-w-2xl overflow-y-auto border-slate-200 p-6">
-              <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Production Update</p><h2 className="mt-1 text-xl font-bold text-slate-900">{updateRecord.processName} · {updateRecord.workOrderNo}</h2></div><button type="button" onClick={() => setUpdateRecord(null)} className="text-slate-500 hover:text-slate-900">Close</button></div>
+              <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Production Update</p><h2 className="mt-1 text-xl font-bold text-slate-900">{updateRecord.processName} · {updateRecord.workOrderNo}</h2></div><Button type="button" variant="ghost" onClick={() => setUpdateRecord(null)} className="text-slate-500 hover:text-slate-900">Close</Button></div>
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                <label className="text-xs font-semibold text-slate-700">Update Level<select value={updateLevel} onChange={(event) => setUpdateLevel(event.target.value as "PROCESS" | "OPERATION")} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"><option value="PROCESS">Process level</option><option value="OPERATION">Operation level</option></select></label>
-                {updateLevel === "OPERATION" && <label className="text-xs font-semibold text-slate-700">Operation<select value={operationId} onChange={(event) => setOperationId(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"><option value="">Select operation</option>{updateRecord.operations.map((operation) => <option key={operation.id} value={operation.id}>{operation.operation}</option>)}</select></label>}
-                <label className="text-xs font-semibold text-slate-700">Completed Quantity<input type="number" min="0" value={completedQty} onChange={(event) => setCompletedQty(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal" /></label>
+                <Select label="Update Level" value={updateLevel} onChange={(event) => setUpdateLevel(event.target.value as "PROCESS" | "OPERATION")} className="mt-1 rounded-lg border-slate-300 py-2 font-normal"><option value="PROCESS">Process level</option><option value="OPERATION">Operation level</option></Select>
+                {updateLevel === "OPERATION" && <Select label="Operation" value={operationId} onChange={(event) => setOperationId(event.target.value)} className="mt-1 rounded-lg border-slate-300 py-2 font-normal"><option value="">Select operation</option>{updateRecord.operations.map((operation) => <option key={operation.id} value={operation.id}>{operation.operation}</option>)}</Select>}
+                <Input label="Completed Quantity" type="number" min="0" value={completedQty} onChange={(event) => setCompletedQty(event.target.value)} className="mt-1 rounded-lg border-slate-300 py-2 font-normal" />
               </div>
-              {(updateRecord.sizeLines ?? []).length > 0 && <div className="mt-5"><p className="text-xs font-semibold text-slate-700">Size-wise Quantity</p><div className="mt-2 grid gap-2 sm:grid-cols-2">{(updateRecord.sizeLines ?? []).map((line, index) => <label key={`${line.size}-${index}`} className="text-xs text-slate-600">{line.size || line.buyerSize || "Size"}<input type="number" min="0" value={sizeQuantities[`${line.size ?? line.buyerSize ?? "size"}-${index}`] || ""} onChange={(event) => setSizeQuantities((current) => ({ ...current, [`${line.size ?? line.buyerSize ?? "size"}-${index}`]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900" /></label>)}</div></div>}
-              <div className="mt-5 rounded-lg border border-slate-200 p-4"><label className="flex items-center gap-2 text-xs font-semibold text-slate-700"><input type="checkbox" checked={vendorBillable} onChange={(event) => setVendorBillable(event.target.checked)} />Billable to vendor</label>{vendorBillable && <label className="mt-3 block text-xs font-semibold text-slate-700">Vendor Name<input value={vendorName} onChange={(event) => setVendorName(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal" /></label>}<label className="mt-3 block text-xs font-semibold text-slate-700">Employee / Assigned By<input value={employeeName} onChange={(event) => setEmployeeName(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal" /></label><label className="mt-3 block text-xs font-semibold text-slate-700">Remarks<textarea value={remarks} onChange={(event) => setRemarks(event.target.value)} className="mt-1 min-h-20 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal" /></label></div>
-              <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setUpdateRecord(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700">Cancel</button><button type="button" onClick={() => void saveProductionUpdate()} disabled={savingUpdate} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-60">{savingUpdate ? "Saving..." : "Save Production Update"}</button></div>
+              {(updateRecord.sizeLines ?? []).length > 0 && <div className="mt-5"><p className="text-xs font-semibold text-slate-700">Size-wise Quantity</p><div className="mt-2 grid gap-2 sm:grid-cols-2">{(updateRecord.sizeLines ?? []).map((line, index) => <label key={`${line.size}-${index}`} className="text-xs text-slate-600">{line.size || line.buyerSize || "Size"}<Input type="number" min="0" value={sizeQuantities[`${line.size ?? line.buyerSize ?? "size"}-${index}`] || ""} onChange={(event) => setSizeQuantities((current) => ({ ...current, [`${line.size ?? line.buyerSize ?? "size"}-${index}`]: event.target.value }))} className="mt-1 rounded-lg border-slate-300 py-2 text-slate-900" /></label>)}</div></div>}
+              <div className="mt-5 rounded-lg border border-slate-200 p-4"><Checkbox label="Billable to vendor" checked={vendorBillable} onChange={(event) => setVendorBillable(event.target.checked)} className="text-xs font-semibold text-slate-700" />{vendorBillable && <Input label="Vendor Name" value={vendorName} onChange={(event) => setVendorName(event.target.value)} className="mt-3 rounded-lg border-slate-300 py-2 font-normal" />}<Input label="Employee / Assigned By" value={employeeName} onChange={(event) => setEmployeeName(event.target.value)} className="mt-3 rounded-lg border-slate-300 py-2 font-normal" /><Textarea label="Remarks" value={remarks} onChange={(event) => setRemarks(event.target.value)} className="mt-3 min-h-20 rounded-lg border-slate-300 py-2 font-normal" /></div>
+              <div className="mt-5 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setUpdateRecord(null)} className="border-slate-300 text-xs text-slate-700">Cancel</Button><Button type="button" onClick={() => void saveProductionUpdate()} disabled={savingUpdate} size="sm" className="border-emerald-600 bg-emerald-600 text-xs text-white">{savingUpdate ? "Saving..." : "Save Production Update"}</Button></div>
             </Card>
           </div>
         )}
-        {transferRecord && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"><Card className="max-h-[90vh] w-full max-w-xl overflow-y-auto p-6"><div className="flex justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700">Bundle Transfer</p><h2 className="mt-1 text-xl font-bold text-slate-900">{transferRecord.processName} to next process</h2></div><button type="button" onClick={() => setTransferRecord(null)} className="text-slate-500">Close</button></div><label className="mt-5 block text-xs font-semibold text-slate-700">Issued Quantity<input type="number" min="0" value={transferQty} onChange={(event) => setTransferQty(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal" /></label>{(transferRecord.sizeLines ?? []).length > 0 && <div className="mt-4 grid gap-2 sm:grid-cols-2">{(transferRecord.sizeLines ?? []).map((line, index) => <label key={`${line.size}-${index}`} className="text-xs text-slate-600">{line.size || line.buyerSize || "Size"}<input type="number" min="0" value={transferSizeQuantities[`${line.size ?? line.buyerSize ?? "size"}-${index}`] || ""} onChange={(event) => setTransferSizeQuantities((current) => ({ ...current, [`${line.size ?? line.buyerSize ?? "size"}-${index}`]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>)}</div>}<div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setTransferRecord(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold">Cancel</button><button type="button" onClick={() => void saveBundleTransfer()} disabled={savingTransfer} className="rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-60">{savingTransfer ? "Sending..." : "Issue Bundle"}</button></div></Card></div>}
-        {acceptTransfer && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"><Card className="max-h-[90vh] w-full max-w-2xl overflow-y-auto p-6"><div className="flex justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700">GRN Header + Subform</p><h2 className="mt-1 text-xl font-bold text-slate-900">Verify receipt and actual made</h2></div><button type="button" onClick={() => setAcceptTransfer(null)} className="text-slate-500">Close</button></div><div className="mt-5 space-y-3">{acceptTransfer.sizeLines.map((line, index) => <label key={`${line.size}-${index}`} className="block text-xs text-slate-600">{line.size || line.buyer_size || "Size"} · Pending {quantity(line.issued_qty - line.accepted_qty)}<input type="number" min="0" max={line.issued_qty - line.accepted_qty} value={acceptedSizeQuantities[`${line.size ?? line.buyer_size ?? "size"}-${index}`] || ""} onChange={(event) => setAcceptedSizeQuantities((current) => ({ ...current, [`${line.size ?? line.buyer_size ?? "size"}-${index}`]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>)}</div><div className="mt-5 rounded-lg border border-slate-200 p-4"><p className="text-xs font-bold uppercase tracking-wide text-slate-600">Operation Subform</p><div className="mt-3 space-y-3">{acceptTransfer.operations.map((operation) => <div key={operation.id} className="grid gap-2 sm:grid-cols-[1fr_150px_auto] sm:items-end"><label className="text-xs text-slate-600">{operation.operation}<input type="number" min="0" value={grnOperationQuantities[operation.id] || ""} onChange={(event) => setGrnOperationQuantities((current) => ({ ...current, [operation.id]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="Actual made" /></label><span className="text-xs text-slate-500">Budget {price(operation.budgetedPrice)}</span><label className="flex items-center gap-2 pb-2 text-xs font-semibold text-slate-700"><input type="checkbox" checked={Boolean(grnOperationBillable[operation.id])} onChange={(event) => setGrnOperationBillable((current) => ({ ...current, [operation.id]: event.target.checked }))} />Billable</label></div>)}</div></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setAcceptTransfer(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold">Cancel</button><button type="button" onClick={() => void acceptBundleTransfer()} className="rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white">Save GRN</button></div></Card></div>}
+        {transferRecord && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+            <Card className="max-h-[90vh] w-full max-w-xl overflow-y-auto p-6">
+              <div className="flex justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700">Bundle Transfer</p>
+                  <h2 className="mt-1 text-xl font-bold text-slate-900">{transferRecord.processName} to next process</h2>
+                </div>
+                <Button type="button" variant="ghost" onClick={() => setTransferRecord(null)} className="text-slate-500">Close</Button>
+              </div>
+              <Input
+                label="Issued Quantity"
+                type="number"
+                min="0"
+                value={transferQty}
+                onChange={(event) => setTransferQty(event.target.value)}
+                className="mt-5 rounded-lg border-slate-300 py-2 font-normal"
+              />
+              {(transferRecord.sizeLines ?? []).length > 0 && (
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  {(transferRecord.sizeLines ?? []).map((line, index) => (
+                    <label key={`${line.size}-${index}`} className="text-xs text-slate-600">
+                      {line.size || line.buyerSize || "Size"}
+                      <Input
+                        type="number"
+                        min="0"
+                        value={transferSizeQuantities[`${line.size ?? line.buyerSize ?? "size"}-${index}`] || ""}
+                        onChange={(event) => setTransferSizeQuantities((current) => ({ ...current, [`${line.size ?? line.buyerSize ?? "size"}-${index}`]: event.target.value }))}
+                        className="mt-1 rounded-lg border-slate-300 py-2"
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div className="mt-5 flex justify-end gap-2">
+                <Button type="button" variant="secondary" onClick={() => setTransferRecord(null)} className="border-slate-300 text-xs">Cancel</Button>
+                <Button type="button" onClick={() => void saveBundleTransfer()} disabled={savingTransfer} className="border-sky-600 bg-sky-600 text-xs text-white hover:bg-sky-700">
+                  {savingTransfer ? "Sending..." : "Issue Bundle"}
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+        {acceptTransfer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+            <Card className="max-h-[90vh] w-full max-w-2xl overflow-y-auto p-6">
+              <div className="flex justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700">GRN Header + Subform</p>
+                  <h2 className="mt-1 text-xl font-bold text-slate-900">Verify receipt and actual made</h2>
+                </div>
+                <Button type="button" variant="ghost" disabled={savingAccept} onClick={() => setAcceptTransfer(null)} className="text-slate-500 disabled:opacity-50">Close</Button>
+              </div>
+              <div className="mt-5 space-y-3">
+                {acceptTransfer.sizeLines.map((line, index) => (
+                  <label key={`${line.size}-${index}`} className="block text-xs text-slate-600">
+                    {line.size || line.buyer_size || "Size"} · Pending {quantity(line.issued_qty - line.accepted_qty)}
+                    <Input
+                      type="number"
+                      min="0"
+                      max={line.issued_qty - line.accepted_qty}
+                      disabled={savingAccept}
+                      value={acceptedSizeQuantities[`${line.size ?? line.buyer_size ?? "size"}-${index}`] || ""}
+                      onChange={(event) => setAcceptedSizeQuantities((current) => ({ ...current, [`${line.size ?? line.buyer_size ?? "size"}-${index}`]: event.target.value }))}
+                      className="mt-1 rounded-lg border-slate-300 py-2 disabled:bg-slate-100"
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="mt-5 rounded-lg border border-slate-200 p-4">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-600">Operation Subform</p>
+                <div className="mt-3 space-y-3">
+                  {acceptTransfer.operations.map((operation) => (
+                    <div key={operation.id} className="grid gap-2 sm:grid-cols-[1fr_150px_auto] sm:items-end">
+                      <label className="text-xs text-slate-600">
+                        {operation.operation}
+                        <Input
+                          type="number"
+                          min="0"
+                          disabled={savingAccept}
+                          value={grnOperationQuantities[operation.id] || ""}
+                          onChange={(event) => setGrnOperationQuantities((current) => ({ ...current, [operation.id]: event.target.value }))}
+                          className="mt-1 rounded-lg border-slate-300 py-2 disabled:bg-slate-100"
+                          placeholder="Actual made"
+                        />
+                      </label>
+                      <span className="text-xs text-slate-500">Budget {price(operation.budgetedPrice)}</span>
+                      <Checkbox
+                        label="Billable"
+                        disabled={savingAccept}
+                        checked={Boolean(grnOperationBillable[operation.id])}
+                        onChange={(event) => setGrnOperationBillable((current) => ({ ...current, [operation.id]: event.target.checked }))}
+                        className="mb-2"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {transferMessage && <p className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{transferMessage}</p>}
+              <div className="mt-5 flex justify-end gap-2">
+                <Button type="button" variant="secondary" disabled={savingAccept} onClick={() => setAcceptTransfer(null)}>Cancel</Button>
+                <Button type="button" disabled={savingAccept} onClick={() => void acceptBundleTransfer()} className="border-sky-600 bg-sky-600 hover:bg-sky-700 disabled:opacity-60">
+                  {savingAccept ? "Saving GRN..." : "Save GRN"}
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
       </Section>
     </Page>
   );

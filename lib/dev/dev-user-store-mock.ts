@@ -6,8 +6,10 @@ export type DevUser = {
   workspace_id: string;
   profile_name: string;
   full_name: string;
-  email: string;
+  email: string | null;
   email_verified: boolean;
+  mobile_number?: string | null;
+  mobile_verified_at?: Date | null;
   created_at: Date;
   updated_at: Date;
   last_login_at: Date | null;
@@ -121,7 +123,7 @@ function normalizeKey(value: string) {
 }
 
 function hydrateUser(rawUser: Partial<DevUser> | undefined): DevUser | null {
-  if (!rawUser || !rawUser.id || !rawUser.email) {
+  if (!rawUser || !rawUser.id || (!rawUser.email && !rawUser.mobile_number)) {
     return null;
   }
 
@@ -130,8 +132,16 @@ function hydrateUser(rawUser: Partial<DevUser> | undefined): DevUser | null {
     workspace_id: String(rawUser.workspace_id ?? ""),
     profile_name: String(rawUser.profile_name ?? ""),
     full_name: String(rawUser.full_name ?? ""),
-    email: String(rawUser.email),
+    email:
+      rawUser.email &&
+      !String(rawUser.email).endsWith("@mobile.credencecraft.invalid")
+        ? String(rawUser.email)
+        : null,
     email_verified: Boolean(rawUser.email_verified),
+    mobile_number: rawUser.mobile_number ? String(rawUser.mobile_number) : null,
+    mobile_verified_at: rawUser.mobile_verified_at
+      ? new Date(rawUser.mobile_verified_at)
+      : null,
     created_at: rawUser.created_at ? new Date(rawUser.created_at) : new Date(),
     updated_at: rawUser.updated_at ? new Date(rawUser.updated_at) : new Date(),
     last_login_at: rawUser.last_login_at ? new Date(rawUser.last_login_at) : null,
@@ -173,6 +183,9 @@ function writeDevUsers(store: Record<string, DevUser>) {
         created_at: value.created_at.toISOString(),
         updated_at: value.updated_at.toISOString(),
         last_login_at: value.last_login_at ? value.last_login_at.toISOString() : null,
+        mobile_verified_at: value.mobile_verified_at
+          ? value.mobile_verified_at.toISOString()
+          : null,
       },
     ])
   );
@@ -194,9 +207,26 @@ export function getDevUserById(userId: string) {
   return Object.values(store).find((user) => user.id === userId) ?? null;
 }
 
+export function getDevUserByMobileNumber(mobileNumber: string) {
+  const user = getDevUserAccountByMobileNumber(mobileNumber);
+  return user?.mobile_verified_at ? user : null;
+}
+
+export function getDevUserAccountByMobileNumber(mobileNumber: string) {
+  const store = readDevUsers();
+  return Object.values(store).find(
+    (user) => user.mobile_number === mobileNumber,
+  ) ?? null;
+}
+
 export function setDevUser(user: DevUser) {
   const store = readDevUsers();
-  const key = normalizeKey(user.email);
+  for (const [key, storedUser] of Object.entries(store)) {
+    if (storedUser.id === user.id) delete store[key];
+  }
+  const key = user.email
+    ? normalizeKey(user.email)
+    : `mobile:${user.mobile_number ?? user.id}`;
   store[key] = user;
   writeDevUsers(store);
   return user;

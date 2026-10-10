@@ -1,12 +1,22 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import Button from "@/components/ui/Button";
+import Checkbox from "@/components/ui/Checkbox";
+import Modal from "@/components/ui/Modal";
+import Skeleton from "@/components/ui/Skeleton";
 import Table from "@/components/ui/Table";
 import Tabs from "@/components/ui/Tabs";
 import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
+import {
+  filterIndexedReportRecords,
+  type FilterOperator,
+  type IndexedReportRow,
+} from "./report-grid-filtering";
 
-export type FilterOperator = "contains" | "is" | "notContains" | "empty";
+export type { FilterOperator } from "./report-grid-filtering";
 
 interface ReportGridField<T> {
   key: keyof T | string;
@@ -22,7 +32,9 @@ interface ReportGridProps<T> {
   storageKey?: string;
   rowIdSelector: (record: T) => string;
   selectedIds: string[];
+  selectable?: boolean;
   onRowClick: (recordId: string) => void;
+  onRecordClick?: (record: T) => void;
   onToggleSelectAll?: (checked: boolean) => void;
   onToggleRowSelection?: (recordId: string, checked: boolean) => void;
   statusOptions?: readonly string[];
@@ -32,20 +44,39 @@ interface ReportGridProps<T> {
   newActionLabel?: string;
   onDeleteSelected?: () => void;
   deleteSelectedLabel?: string;
-  onCloneOrder?: (recordId: string) => void;
+  onBulkUpload?: () => void;
+  bulkUploadLabel?: string;
+  bulkUploadDisabled?: boolean;
+  onRowAction?: (recordId: string) => void;
+  onSecondaryRowAction?: (recordId: string) => void;
+  rowActionPosition?: "start" | "end";
+  rowActionLabel?: string;
+  rowActionLabelSelector?: (record: T) => string;
+  rowActionDisabledSelector?: (record: T) => boolean;
+  secondaryRowActionLabel?: string;
+  secondaryRowActionLabelSelector?: (record: T) => string;
+  secondaryRowActionDisabledSelector?: (record: T) => boolean;
+  wrapCells?: boolean;
+  toolbarActions?: ReactNode;
+  onSearchQueryChange?: (query: string) => void;
   renderCell: (fieldKey: string, record: T) => React.ReactNode;
+  getSearchValue?: (fieldKey: string, record: T) => string;
+  isLoading?: boolean;
   emptyMessage?: string;
 }
 
-export function ReportGrid<T>({
+function ReportGridImplementation<T>({
   title,
   records,
   fields,
   visibleFields,
   onVisibleFieldsChange,
+  storageKey,
   rowIdSelector,
   selectedIds,
+  selectable = true,
   onRowClick,
+  onRecordClick,
   onToggleSelectAll,
   onToggleRowSelection,
   statusOptions,
@@ -55,11 +86,29 @@ export function ReportGrid<T>({
   newActionLabel = "+ New Order",
   onDeleteSelected,
   deleteSelectedLabel = "Delete Selected",
-  onCloneOrder,
+  onBulkUpload,
+  bulkUploadLabel = "Bulk Upload",
+  bulkUploadDisabled = false,
+  onRowAction,
+  onSecondaryRowAction,
+  rowActionPosition = "end",
+  rowActionLabel = "Action",
+  rowActionLabelSelector,
+  rowActionDisabledSelector,
+  secondaryRowActionLabel = "Action",
+  secondaryRowActionLabelSelector,
+  secondaryRowActionDisabledSelector,
+  wrapCells = false,
+  toolbarActions,
+  onSearchQueryChange,
   renderCell,
+  isLoading = false,
+  getSearchValue,
   emptyMessage = "No records found.",
 }: ReportGridProps<T>) {
   const [searchQuery, setSearchQuery] = useState("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, { operator: FilterOperator; value: string }>>({});
   
   const [showFilterModal, setShowFilterModal] = useState(false);
@@ -67,6 +116,27 @@ export function ReportGrid<T>({
 
   const [showColumnModal, setShowColumnModal] = useState(false);
   const [tempVisibleFields, setTempVisibleFields] = useState<(keyof T | string)[]>([]);
+
+  useEffect(() => {
+    if (!storageKey) return;
+
+    try {
+      const storedFields = JSON.parse(localStorage.getItem(storageKey) ?? "null") as unknown;
+      if (Array.isArray(storedFields)) {
+        const validFields = storedFields.filter((field): field is keyof T | string =>
+          fields.some((definition) => String(definition.key) === String(field)),
+        );
+        if (
+          validFields.length > 0 &&
+          (validFields.length !== visibleFields.length || validFields.some((field, index) => field !== visibleFields[index]))
+        ) {
+          onVisibleFieldsChange(validFields);
+        }
+      }
+    } catch {
+      // Ignore invalid local preferences and keep the report defaults.
+    }
+  }, [fields, onVisibleFieldsChange, storageKey, visibleFields]);
 
   const handleOpenColumnModal = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -83,6 +153,7 @@ export function ReportGrid<T>({
 
   const handleSaveColumns = () => {
     onVisibleFieldsChange(tempVisibleFields);
+    if (storageKey) localStorage.setItem(storageKey, JSON.stringify(tempVisibleFields));
     setShowColumnModal(false);
   };
 
@@ -127,32 +198,70 @@ export function ReportGrid<T>({
     setColumnFilters({});
   };
 
-  const visibleFieldDefinitions = fields.filter((f) => visibleFields.includes(f.key));
-  const allFilteredSelected = records.length > 0 && records.every((r) => selectedIds.includes(rowIdSelector(r)));
+  const visibleFieldDefinitions = useMemo(
+    () => fields.filter((field) => visibleFields.includes(field.key)),
+    [fields, visibleFields],
+  );
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const allFilteredSelected = records.length > 0 && records.every((record) => selectedIdSet.has(rowIdSelector(record)));
   const activeFilterCount = Object.keys(columnFilters).length;
+  const indexedFieldKeys = useMemo(
+    () => [...new Set([
+      ...visibleFieldDefinitions.map((field) => String(field.key)),
+      ...Object.keys(columnFilters),
+    ])],
+    [columnFilters, visibleFieldDefinitions],
+  );
+  const indexedRecords = useMemo(
+    () => records.map<IndexedReportRow<T>>((record) => {
+      const searchableValues: Record<string, string> = {};
+      for (const fieldKey of indexedFieldKeys) {
+        searchableValues[fieldKey] = (
+          getSearchValue?.(fieldKey, record) ?? String(renderCell(fieldKey, record) ?? "")
+        ).toLowerCase();
+      }
+      return {
+        record,
+        searchableText: visibleFieldDefinitions
+          .map((field) => searchableValues[String(field.key)] ?? "")
+          .join(" "),
+        searchableValues,
+      };
+    }),
+    [getSearchValue, indexedFieldKeys, records, renderCell, visibleFieldDefinitions],
+  );
 
-  const filteredRecords = records.filter((record) => {
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      const matchesGlobal = visibleFieldDefinitions.some((field) => {
-        const val = renderCell(String(field.key), record);
-        return String(val ?? "").toLowerCase().includes(query);
-      });
-      if (!matchesGlobal) return false;
-    }
-
-    for (const [fieldKey, filter] of Object.entries(columnFilters)) {
-      const cellVal = String(renderCell(fieldKey, record) ?? "").toLowerCase();
-      const targetVal = filter.value.toLowerCase();
-
-      if (filter.operator === "contains" && !cellVal.includes(targetVal)) return false;
-      if (filter.operator === "is" && cellVal !== targetVal) return false;
-      if (filter.operator === "notContains" && cellVal.includes(targetVal)) return false;
-      if (filter.operator === "empty" && cellVal.trim() !== "") return false;
-    }
-
-    return true;
+  const filteredRecords = useMemo(
+    () => filterIndexedReportRecords(indexedRecords, deferredSearchQuery, columnFilters),
+    [columnFilters, deferredSearchQuery, indexedRecords],
+  );
+  const virtualizeRows = filteredRecords.length > 100;
+  // The virtualizer's imperative API is required for measuring and scrolling large report tables.
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const rowVirtualizer = useVirtualizer({
+    count: virtualizeRows ? filteredRecords.length : 0,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => 40,
+    initialRect: { width: 0, height: 600 },
+    overscan: 8,
   });
+  const virtualRows = virtualizeRows
+    ? rowVirtualizer.getVirtualItems().map(({ index, start, size, key }) => ({ index, start, size, key }))
+    : filteredRecords.map((record, index) => ({
+        index,
+        start: 0,
+        size: 0,
+        key: rowIdSelector(record),
+      }));
+  const topSpacerHeight = virtualizeRows ? (virtualRows[0]?.start ?? 0) : 0;
+  const lastVirtualRow = virtualRows.at(-1);
+  const bottomSpacerHeight = virtualizeRows && lastVirtualRow
+    ? Math.max(0, rowVirtualizer.getTotalSize() - lastVirtualRow.start - lastVirtualRow.size)
+    : 0;
+
+  useEffect(() => {
+    if (virtualizeRows) tableContainerRef.current?.scrollTo({ top: 0 });
+  }, [columnFilters, deferredSearchQuery, virtualizeRows]);
 
   return (
     <div className="space-y-2.5 text-[11px]">
@@ -175,15 +284,19 @@ export function ReportGrid<T>({
           <Input
             placeholder="Search report..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              onSearchQueryChange?.(e.target.value);
+            }}
             className="w-48 h-7 text-[11px] py-1 px-2"
           />
 
           {/* FILTER BUTTON WITH BADGE */}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={openFilterModal}
-            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-medium border border-slate-300 transition-colors flex items-center gap-1.5 relative"
+            className="text-[11px]"
             title="Advanced Filters"
           >
             <span>🔍 Filter</span>
@@ -192,21 +305,36 @@ export function ReportGrid<T>({
                 {activeFilterCount}
               </span>
             )}
-          </button>
+          </Button>
 
           {/* EYE BUTTON */}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleOpenColumnModal}
-            className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-medium border border-slate-300 transition-colors flex items-center justify-center"
+            className="text-[11px]"
             title="Manage Columns"
           >
             👁
-          </button>
+          </Button>
+
+          {toolbarActions}
 
           {onDeleteSelected && selectedIds.length > 0 && (
             <Button variant="danger" size="sm" onClick={onDeleteSelected} className="h-7 px-2.5 text-[11px]">
               {deleteSelectedLabel} ({selectedIds.length})
+            </Button>
+          )}
+
+          {onBulkUpload && selectedIds.length > 0 && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onBulkUpload}
+              disabled={bulkUploadDisabled}
+              className="h-7 px-2.5 text-[11px]"
+            >
+              {bulkUploadDisabled ? "Preparing..." : `${bulkUploadLabel} (${selectedIds.length})`}
             </Button>
           )}
 
@@ -220,88 +348,185 @@ export function ReportGrid<T>({
       </div>
 
       {/* TABLE */}
-      <Table>
-        <thead className="bg-slate-50 text-slate-700 uppercase tracking-wider text-[10px] border-b border-slate-200">
+      <Table
+        aria-busy={isLoading || searchQuery !== deferredSearchQuery}
+        className={virtualizeRows ? "max-h-[70vh] overflow-y-auto" : undefined}
+        containerRef={tableContainerRef}
+      >
+        <thead className={`bg-slate-50 text-slate-700 uppercase tracking-wider text-[10px] border-b border-slate-200 ${virtualizeRows ? "sticky top-0 z-10" : ""}`}>
           <tr>
-            <th className="p-2 w-8 text-center">
-              <input
-                type="checkbox"
-                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
-                checked={allFilteredSelected}
-                onChange={(e) => onToggleSelectAll?.(e.target.checked)}
-              />
-            </th>
+            {selectable && (
+              <th className="p-2 w-8 text-center">
+                <Checkbox
+                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
+                  checked={allFilteredSelected}
+                  onChange={(e) => onToggleSelectAll?.(e.target.checked)}
+                />
+              </th>
+            )}
+            {(onRowAction || onSecondaryRowAction) && rowActionPosition === "start" && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
             {visibleFieldDefinitions.map((field) => (
               <th key={String(field.key)} className="p-2 font-semibold whitespace-nowrap">
                 {field.label}
               </th>
             ))}
-            {onCloneOrder && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
+            {(onRowAction || onSecondaryRowAction) && rowActionPosition === "end" && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200 bg-white text-slate-700 text-[11px]">
-          {filteredRecords.length === 0 ? (
+          {isLoading && filteredRecords.length === 0 ? (
+            Array.from({ length: 6 }, (_, index) => (
+              <tr key={`loading-${index}`}>
+                {selectable && <td className="p-2"><Skeleton className="mx-auto h-3 w-3" /></td>}
+                {(onRowAction || onSecondaryRowAction) && rowActionPosition === "start" && (
+                  <td className="p-2"><Skeleton className="h-6 w-14" /></td>
+                )}
+                {visibleFieldDefinitions.map((field) => (
+                  <td key={`loading-${index}-${String(field.key)}`} className="p-2">
+                    <Skeleton className="h-3 w-24" />
+                  </td>
+                ))}
+                {(onRowAction || onSecondaryRowAction) && rowActionPosition === "end" && (
+                  <td className="p-2"><Skeleton className="h-6 w-14" /></td>
+                )}
+              </tr>
+            ))
+          ) : filteredRecords.length === 0 ? (
             <tr>
-              <td colSpan={visibleFieldDefinitions.length + 1 + (onCloneOrder ? 1 : 0)} className="p-6 text-center text-slate-500">
+              <td colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (onRowAction || onSecondaryRowAction ? 1 : 0)} className="p-6 text-center text-slate-500">
                 {emptyMessage}
               </td>
             </tr>
           ) : (
-            filteredRecords.map((record, index) => {
+            <>
+              {topSpacerHeight > 0 && (
+                <tr aria-hidden="true">
+                  <td
+                    colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (onRowAction || onSecondaryRowAction ? 1 : 0)}
+                    style={{ height: topSpacerHeight, padding: 0, border: 0 }}
+                  />
+                </tr>
+              )}
+              {virtualRows.map(({ index, size, key }) => {
+              const record = filteredRecords[index];
               const recordId = rowIdSelector(record);
-              const isSelected = selectedIds.includes(recordId);
+              const isSelected = selectedIdSet.has(recordId);
               return (
                 <tr
-                  key={recordId}
-                  onClick={() => onRowClick(recordId)}
+                  key={virtualizeRows ? key : recordId}
+                  ref={virtualizeRows ? rowVirtualizer.measureElement : undefined}
+                  data-index={virtualizeRows ? index : undefined}
+                  style={virtualizeRows ? { height: size } : undefined}
+                  onClick={() => { onRecordClick?.(record); onRowClick(recordId); }}
                   className={`cursor-pointer transition-colors ${
                     index % 2 === 0 ? "bg-white" : "bg-slate-50/40"
                   } ${isSelected ? "bg-emerald-50/60" : "hover:bg-slate-100/60"}`}
                 >
-                  <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
-                      checked={isSelected}
-                      onChange={(e) => onToggleRowSelection?.(recordId, e.target.checked)}
-                    />
-                  </td>
+                  {selectable && (
+                    <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
+                        checked={isSelected}
+                        onChange={(e) => onToggleRowSelection?.(recordId, e.target.checked)}
+                      />
+                    </td>
+                  )}
+                  {(onRowAction || onSecondaryRowAction) && rowActionPosition === "start" && (
+                    <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2">
+                        {onRowAction ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onRowAction(recordId)}
+                            disabled={rowActionDisabledSelector?.(record)}
+                            className="text-[10px]"
+                          >
+                            {rowActionLabelSelector?.(record) ?? rowActionLabel}
+                          </Button>
+                        ) : null}
+                        {onSecondaryRowAction ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onSecondaryRowAction(recordId)}
+                            disabled={secondaryRowActionDisabledSelector?.(record)}
+                            className="text-[10px]"
+                          >
+                            {secondaryRowActionLabelSelector?.(record) ?? secondaryRowActionLabel}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </td>
+                  )}
                   {visibleFieldDefinitions.map((field) => (
-                    <td key={`${recordId}-${String(field.key)}`} className="p-2 whitespace-nowrap">
+                    <td
+                      key={`${recordId}-${String(field.key)}`}
+                      className={`p-2 ${
+                        wrapCells
+                          ? "max-w-[16rem] whitespace-normal break-words [overflow-wrap:anywhere]"
+                          : "whitespace-nowrap"
+                      }`}
+                    >
                       {renderCell(String(field.key), record)}
                     </td>
                   ))}
-                  {onCloneOrder && (
+                  {(onRowAction || onSecondaryRowAction) && rowActionPosition === "end" && (
                     <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        type="button"
-                        onClick={() => onCloneOrder(recordId)}
-                        className="rounded-md border border-emerald-200 px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-50"
-                      >
-                        Clone
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {onRowAction ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onRowAction(recordId)}
+                            disabled={rowActionDisabledSelector?.(record)}
+                            className="text-[10px]"
+                          >
+                            {rowActionLabelSelector?.(record) ?? rowActionLabel}
+                          </Button>
+                        ) : null}
+                        {onSecondaryRowAction ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onSecondaryRowAction(recordId)}
+                            disabled={secondaryRowActionDisabledSelector?.(record)}
+                            className="text-[10px]"
+                          >
+                            {secondaryRowActionLabelSelector?.(record) ?? secondaryRowActionLabel}
+                          </Button>
+                        ) : null}
+                      </div>
                     </td>
                   )}
                 </tr>
               );
-            })
+              })}
+              {bottomSpacerHeight > 0 && (
+                <tr aria-hidden="true">
+                  <td
+                    colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (onRowAction || onSecondaryRowAction ? 1 : 0)}
+                    style={{ height: bottomSpacerHeight, padding: 0, border: 0 }}
+                  />
+                </tr>
+              )}
+            </>
           )}
         </tbody>
       </Table>
 
       {/* ADVANCED MULTI-FIELD FILTER MODAL */}
-      {showFilterModal && (
-        <div className="erp-popup-backdrop">
-          <div className="erp-popup-panel w-full max-w-lg space-y-3 p-3.5">
+      <Modal open={showFilterModal} onClose={() => setShowFilterModal(false)} ariaLabelledBy="report-filter-title" size="lg">
+          <div className="space-y-3 p-3.5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <h3 className="text-xs font-bold text-slate-900">Advanced Field Filters</h3>
-              <button
-                type="button"
+              <h3 id="report-filter-title" className="text-xs font-bold text-slate-900">Advanced Field Filters</h3>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setShowFilterModal(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold text-sm"
               >
                 ✕
-              </button>
+              </Button>
             </div>
 
             <div className="grid grid-cols-3 gap-2.5 font-bold text-[10px] text-slate-600 pb-1 border-b border-slate-200 uppercase tracking-wider">
@@ -319,29 +544,29 @@ export function ReportGrid<T>({
                       {field.label}
                     </div>
                     <div>
-                      <select
+                      <Select
                         value={currentFilter.operator}
                         onChange={(e) =>
                           handleTempFilterChange(String(field.key), e.target.value as FilterOperator, currentFilter.value)
                         }
-                        className="w-full border border-slate-300 rounded-md p-1 text-[11px] bg-white h-7"
-                      >
-                        <option value="contains">Contains</option>
-                        <option value="is">Is Exact</option>
-                        <option value="notContains">Does Not Contain</option>
-                        <option value="empty">Is Empty</option>
-                      </select>
+                        options={[
+                          { value: "contains", label: "Contains" },
+                          { value: "is", label: "Is Exact" },
+                          { value: "notContains", label: "Does Not Contain" },
+                          { value: "empty", label: "Is Empty" },
+                        ]}
+                        className="h-7 rounded-md p-1 text-[11px]"
+                      />
                     </div>
                     <div>
                       {currentFilter.operator !== "empty" ? (
-                        <input
-                          type="text"
+                        <Input
                           value={currentFilter.value}
                           onChange={(e) =>
                             handleTempFilterChange(String(field.key), currentFilter.operator, e.target.value)
                           }
                           placeholder="Value..."
-                          className="w-full border border-slate-300 rounded-md p-1 text-[11px] h-7"
+                          className="h-7 rounded-md p-1 text-[11px]"
                         />
                       ) : (
                         <span className="text-[10px] text-slate-400 italic">No value needed</span>
@@ -354,95 +579,93 @@ export function ReportGrid<T>({
 
             <div className="flex items-center justify-between pt-2.5 border-t border-slate-100">
               <div className="flex gap-1.5">
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={clearAllFilters}
-                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-medium"
                 >
                   Clear All
-                </button>
+                </Button>
                 {activeFilterCount > 0 && (
-                  <button
-                    type="button"
+                  <Button
+                    variant="danger"
+                    size="sm"
                     onClick={removeAllAppliedFilters}
-                    className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded-md text-[11px] font-medium"
                   >
                     Remove Active
-                  </button>
+                  </Button>
                 )}
               </div>
               <div className="flex gap-1.5">
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => setShowFilterModal(false)}
-                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-medium"
                 >
                   Cancel
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
                   onClick={applyAllFilters}
-                  className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-md text-[11px] font-medium"
                 >
                   Submit Filters
-                </button>
+                </Button>
               </div>
             </div>
           </div>
-        </div>
-      )}
+      </Modal>
 
       {/* COLUMN MODAL POPUP */}
-      {showColumnModal && (
-        <div className="erp-popup-backdrop">
-          <div className="erp-popup-panel w-full max-w-xs space-y-2 p-3">
+      <Modal open={showColumnModal} onClose={() => setShowColumnModal(false)} ariaLabelledBy="report-columns-title" size="sm">
+          <div className="space-y-2 p-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
-              <h3 className="text-[11px] font-bold text-slate-900">Toggle Columns</h3>
-              <button
-                type="button"
+              <h3 id="report-columns-title" className="text-[11px] font-bold text-slate-900">Toggle Columns</h3>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setShowColumnModal(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold text-xs"
               >
                 ✕
-              </button>
+              </Button>
             </div>
             
             <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
               {fields.map((field) => {
                 const isChecked = tempVisibleFields.includes(field.key);
                 return (
-                  <label key={String(field.key)} className="flex items-center gap-2 cursor-pointer text-[11px] font-medium text-slate-700 select-none hover:bg-slate-50 p-1 rounded">
-                    <input
-                      type="checkbox"
+                  <div key={String(field.key)} className="flex items-center gap-2 cursor-pointer text-[11px] font-medium text-slate-700 select-none hover:bg-slate-50 p-1 rounded">
+                    <Checkbox
                       checked={isChecked}
                       onChange={() => handleTempToggleField(String(field.key))}
                       className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
+                      label={field.label}
                     />
-                    {field.label}
-                  </label>
+                  </div>
                 );
               })}
             </div>
 
             <div className="flex justify-end gap-1 pt-1.5 border-t border-slate-100">
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => setShowColumnModal(false)}
-                className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-medium"
               >
                 Cancel
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
                 onClick={handleSaveColumns}
-                className="px-2 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-[11px] font-medium"
               >
                 Submit
-              </button>
+              </Button>
             </div>
           </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 }
+
+export const ReportGrid = React.memo(ReportGridImplementation) as typeof ReportGridImplementation;

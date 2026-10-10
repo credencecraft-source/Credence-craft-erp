@@ -1,18 +1,20 @@
 import { revalidatePath } from "next/cache";
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { MasterRecordsTable } from "@/components/master-data/master-records-data-table";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
   MASTER_DEFINITIONS,
   createMasterValueForOrganization,
   deleteMasterValue,
   getMasterDefinition,
   getMasterValuesForOrganization,
+  getSizeGroupSizesForOrganization,
+  syncSizeGroupSizes,
   updateMasterValue,
 } from "@/lib/master-data/master-data-constants";
+import type { MasterFieldValues } from "@/lib/master-data/master-data-constants";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 
 function serializeDecimal(value: unknown): unknown {
@@ -35,17 +37,26 @@ function serializeDecimal(value: unknown): unknown {
   return value;
 }
 
-function readFields(formData: FormData, fields: MasterFieldDefinition[]) {
-  return Object.fromEntries(fields.map((field) => {
+async function readFields(formData: FormData, fields: MasterFieldDefinition[]) {
+  const entries = await Promise.all(fields.map(async (field) => {
+    if (field.type === "image") {
+      const file = formData.get(`field_${field.key}`);
+      if (!(file instanceof File) || file.size === 0) return [field.key, null] as const;
+      if (!file.type.startsWith("image/")) throw new Error(`${field.label} must be an image file.`);
+      if (file.size > 2 * 1024 * 1024) throw new Error(`${field.label} must be 2 MB or smaller.`);
+      const bytes = Buffer.from(await file.arrayBuffer()).toString("base64");
+      return [field.key, `data:${file.type};base64,${bytes}`] as const;
+    }
     if (field.multiple) return [field.key, formData.getAll(`field_${field.key}`).map((value) => String(value).trim()).filter(Boolean)];
     const value = formData.get(`field_${field.key}`);
     if (field.type === "checkbox") return [field.key, value === "on"];
     if (field.type === "number" || field.type === "percentage") return [field.key, value ? Number(value) : null];
     return [field.key, String(value ?? "").trim() || null];
   }));
+  return Object.fromEntries(entries);
 }
 
-function getRecordLabel(fields: Record<string, string | number | boolean | null>, definition: { fields: MasterFieldDefinition[]; labelField?: string }) {
+function getRecordLabel(fields: Record<string, unknown>, definition: { fields: MasterFieldDefinition[]; labelField?: string }) {
   const firstValue = fields[definition.labelField ?? definition.fields[0]?.key];
   return String(firstValue ?? "").trim();
 }
@@ -125,11 +136,15 @@ function validateChildValues(
 async function saveChildValues(
   organizationId: string,
   parentId: string,
-  definition: { fields: MasterFieldDefinition[] },
+  definition: { key?: string; fields: MasterFieldDefinition[] },
   formData: FormData,
 ) {
   const childField = definition.fields.find((field) => (field.type === "child-list" && field.childModuleKey) || (field.type === "lookup" && field.multiple && field.lookupModuleKey));
   if (!childField) return;
+  if (definition.key === "size-group") {
+    await syncSizeGroupSizes(organizationId, parentId, readChildValues(formData, childField));
+    return;
+  }
   const { childModuleKey, validatedRows } = validateChildValues(childField, formData);
   if (!childModuleKey) return;
 
@@ -158,11 +173,16 @@ async function createMasterValueAction(formData: FormData) {
   const organizationId = String(formData.get("organizationId") ?? "");
   const moduleKey = String(formData.get("moduleKey") ?? "");
   const definition = getMasterDefinition(moduleKey);
-  const fields = definition ? readFields(formData, definition.fields) : {};
+  let fields: MasterFieldValues = {};
+  try {
+    fields = definition ? await readFields(formData, definition.fields) : {};
+  } catch (error) {
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+  }
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  if (!workspaceId || !organizationId || !moduleKey || !definition) {
+  if (!workspaceId || !organizationId || !moduleKey || !definition || definition.hidden) {
     return;
   }
 
@@ -185,7 +205,7 @@ async function createMasterValueAction(formData: FormData) {
   if (!organization) {
     notFound();
   }
-  await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
+  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const created = await createMasterValueForOrganization(organization.id, moduleKey, {
     label,
@@ -202,6 +222,7 @@ async function createMasterValueAction(formData: FormData) {
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
+  redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=create`);
 }
 
 async function updateMasterValueAction(formData: FormData) {
@@ -212,11 +233,16 @@ async function updateMasterValueAction(formData: FormData) {
   const moduleKey = String(formData.get("moduleKey") ?? "");
   const valueId = String(formData.get("valueId") ?? "");
   const definition = getMasterDefinition(moduleKey);
-  const fields = definition ? readFields(formData, definition.fields) : {};
+  let fields: MasterFieldValues = {};
+  try {
+    fields = definition ? await readFields(formData, definition.fields) : {};
+  } catch (error) {
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+  }
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  if (!workspaceId || !organizationId || !moduleKey || !valueId || !label || !definition || hasMissingRequiredField(fields, definition)) {
+  if (!workspaceId || !organizationId || !moduleKey || !valueId || !label || !definition || definition.hidden || hasMissingRequiredField(fields, definition)) {
     return;
   }
 
@@ -235,7 +261,7 @@ async function updateMasterValueAction(formData: FormData) {
   if (!organization) {
     notFound();
   }
-  await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
+  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const childField = definition.fields.find((field) => (field.type === "child-list" && field.childModuleKey) || (field.type === "lookup" && field.multiple && field.lookupModuleKey));
   try {
@@ -260,6 +286,7 @@ async function updateMasterValueAction(formData: FormData) {
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
+  redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=update`);
 }
 
 async function deleteMasterValueAction(formData: FormData) {
@@ -289,9 +316,10 @@ async function deleteMasterValueAction(formData: FormData) {
   if (!organization) {
     notFound();
   }
-  await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
+  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
-  if (!getMasterDefinition(moduleKey)) {
+  const definition = getMasterDefinition(moduleKey);
+  if (!definition || definition.hidden) {
     notFound();
   }
 
@@ -301,6 +329,7 @@ async function deleteMasterValueAction(formData: FormData) {
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
+  redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=delete`);
 }
 
 export default async function MasterDataEditorPage({
@@ -308,10 +337,10 @@ export default async function MasterDataEditorPage({
   searchParams,
 }: {
   params: Promise<{ workspaceId: string; organizationId: string; moduleKey: string }>;
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; saved?: string }>;
 }) {
   const { workspaceId, organizationId, moduleKey } = await params;
-  const { error } = await searchParams;
+  const { error, saved } = await searchParams;
   const user = await requireSessionUser();
 
   if (!user.workspace_id) {
@@ -328,23 +357,44 @@ export default async function MasterDataEditorPage({
     notFound();
   }
 
+  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
+
   const definition = getMasterDefinition(moduleKey) ?? MASTER_DEFINITIONS.find((candidate) => candidate.key === moduleKey);
 
-  if (!definition) {
+  if (!definition || definition.hidden) {
     notFound();
   }
 
-  const values = await getMasterValuesForOrganization(organization.id, moduleKey, true);
   const lookupKeys = [...new Set(definition.fields.flatMap((field) => [
     ...(field.lookupModuleKey ? [field.lookupModuleKey] : []),
+    ...(field.childModuleKey ? [field.childModuleKey] : []),
     ...(field.childFields ?? []).flatMap((child) => child.lookupModuleKey ? [child.lookupModuleKey] : []),
   ]))];
-  const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true)).map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id }))])));
   const childModuleKey = definition.fields.find((field) => field.type === "child-list")?.childModuleKey
     ?? definition.fields.find((field) => field.type === "lookup" && field.multiple)?.lookupModuleKey;
-  const childRecords = childModuleKey
-    ? (await getMasterValuesForOrganization(organization.id, childModuleKey, true)).map((item) => ({ parentId: item.parent_id, label: item.label, fields: item.fields }))
-    : [];
+  const [values, lookupEntries, sizeGroupLinks] = await Promise.all([
+    getMasterValuesForOrganization(organization.id, moduleKey, true, {
+      includeDummyData: true,
+      includeImageData: false,
+    }),
+    Promise.all(lookupKeys.map(async (lookupKey) => [
+      lookupKey,
+      (await getMasterValuesForOrganization(organization.id, lookupKey, true, {
+        includeDummyData: true,
+        includeImageData: false,
+      }))
+        .map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id, fields: item.fields })),
+    ] as const)),
+    moduleKey === "size-group"
+      ? getSizeGroupSizesForOrganization(organization.id, undefined, true)
+      : Promise.resolve(null),
+  ]);
+  const lookupOptions = Object.fromEntries(lookupEntries);
+  const childRecords = moduleKey === "size-group"
+    ? (sizeGroupLinks ?? []).map((item) => ({ parentId: item.groupId, label: item.size.label, fields: item.size.fields }))
+    : childModuleKey
+      ? (lookupOptions[childModuleKey] ?? []).map((item) => ({ parentId: item.parent_id ?? null, label: item.label, fields: item.fields }))
+      : [];
   const shouldShowMasterHeader = moduleKey !== "article";
 
   return (
@@ -357,19 +407,18 @@ export default async function MasterDataEditorPage({
             <p>{definition.description}</p>
           </div>
 
-          <div>
-            <Link
-              href={`/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data`}
-            >
-              Back to masters
-            </Link>
-          </div>
         </div>
       ) : null}
 
       {error ? (
         <p className="mt-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800" role="alert">
           {error}
+        </p>
+      ) : null}
+
+      {saved ? (
+        <p className="mt-4 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800" role="status">
+          {saved === "create" ? `${definition.label} created successfully.` : saved === "update" ? `${definition.label} updated successfully.` : `${definition.label} deleted successfully.`}
         </p>
       ) : null}
 

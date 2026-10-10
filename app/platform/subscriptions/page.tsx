@@ -1,9 +1,9 @@
-import React from "react";
 import { redirect } from "next/navigation";
-import Button from "@/components/ui/Button";
+import FormSubmitButton from "@/components/ui/FormSubmitButton";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
+import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
 import { listOrganizationClients } from "@/lib/services/platform/client-service";
@@ -18,11 +18,36 @@ import {
 import { listSubscriptionsPage } from "@/lib/services/platform/subscription-service";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 
+type ClientRecord = Awaited<ReturnType<typeof listOrganizationClients>>[number] & {
+  _id?: string;
+  organizationName?: string | null;
+  name?: string | null;
+};
+
+type BusinessTypeRecord = Awaited<ReturnType<typeof listBusinessTypes>>[number] & {
+  _id?: string;
+};
+
+type PlanRecord = Awaited<ReturnType<typeof listPlans>>[number] & {
+  _id?: string;
+  name?: string | null;
+};
+
+type SubscriptionRecord = Awaited<ReturnType<typeof listSubscriptionsPage>>["subscriptions"][number] & {
+  _id?: string;
+  startDate?: Date | string | null;
+  endDate?: Date | string | null;
+  expireDate?: Date | string | null;
+  billingMonths?: number | null;
+  totalAmount?: number | string | null;
+  serviceStatus?: string | null;
+};
+
 interface PageProps {
   searchParams?: Promise<{ error?: string; success?: string; modal?: string; edit?: string; cursor?: string }>;
 }
 
-function formatDateForInput(val: any): string {
+function formatDateForInput(val: Date | string | null | undefined): string {
   if (!val) return "";
   try {
     const str = typeof val === "string" ? val : new Date(val).toISOString();
@@ -43,7 +68,9 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
   const subscriptionPage = await listSubscriptionsPage({ cursor: resolvedSearch.cursor });
   const subscriptions = subscriptionPage.subscriptions;
 
-  const editingSub = editId ? subscriptions.find((s: any) => String(s.id || s._id) === String(editId)) : null;
+  const editingSub = editId
+    ? subscriptions.find((subscription) => String(subscription.id || (subscription as SubscriptionRecord)._id) === String(editId))
+    : null;
 
   async function saveSubscription(formData: FormData) {
     "use server";
@@ -58,18 +85,18 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
     const serviceStatus = String(formData.get("serviceStatus") || "active");
     const billingMonthsValue = String(formData.get("billingMonths") || "");
 
-    const client = clients.find((c: any) => String(c.id || c._id) === organizationId);
-    const organizationName = (client as any)?.organizationName || (client as any)?.organization_name || (client as any)?.name || "Unnamed";
+    const client = clients.find((record) => {
+      const candidate = record as ClientRecord;
+      return String(candidate.id || candidate._id) === organizationId;
+    }) as ClientRecord | undefined;
+    const organizationName = client?.organizationName || client?.organization_name || client?.name || "Unnamed";
 
     try {
-      const payload: any = {
+      const payload: Parameters<typeof createSubscription>[0] = {
         organizationId,
         organizationName,
-        organization_name: organizationName, 
         businessTypeId,
-        business_type_id: businessTypeId,
         planId,
-        plan_id: planId,
         startDate,
         endDate,
         paymentStatus,
@@ -82,8 +109,9 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
       } else {
         await createSubscription(payload);
       }
-    } catch (error: any) {
-      redirect(`/platform/subscriptions?error=${encodeURIComponent(error.message || "Failed to save")}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to save";
+      redirect(`/platform/subscriptions?error=${encodeURIComponent(message || "Failed to save")}`);
     }
 
     redirect(`/platform/subscriptions?success=${encodeURIComponent("Saved successfully.")}`);
@@ -95,21 +123,25 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
     const id = String(formData.get("id") || "");
     try {
       await approveSubscription(id);
-    } catch (error: any) {
-      redirect(`/platform/subscriptions?error=${encodeURIComponent(error.message)}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unable to update subscription status.";
+      redirect(`/platform/subscriptions?error=${encodeURIComponent(message)}`);
     }
     redirect(`/platform/subscriptions?success=${encodeURIComponent("Status updated.")}`);
   }
 
   async function remove(formData: FormData) {
     "use server";
-    await requirePlatformSessionAdmin();
+    const admin = await requirePlatformSessionAdmin();
+    let wasDeleted = false;
     try {
-      await deleteSubscription(String(formData.get("id")));
-    } catch (error: any) {
-      redirect(`/platform/subscriptions?error=${encodeURIComponent(error.message)}`);
+      const result = await deleteSubscription(String(formData.get("id")), admin.id);
+      wasDeleted = result.deleted;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unable to delete subscription.";
+      redirect(`/platform/subscriptions?error=${encodeURIComponent(message)}`);
     }
-    redirect(`/platform/subscriptions?success=${encodeURIComponent("Deleted successfully.")}`);
+    redirect(`/platform/subscriptions?success=${encodeURIComponent(wasDeleted ? "Deleted successfully." : "Subscription was already deleted.")}`);
   }
 
   return (
@@ -139,35 +171,56 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
               <form action={saveSubscription} className="space-y-3">
                 {editId && <input type="hidden" name="id" value={editId} />}
                 
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Organization</label>
-                  <select name="organizationId" required defaultValue={editingSub?.organizationId || editingSub?.organization_id || ""} className="w-full border p-2 text-xs rounded-lg">
+                <Select
+                  label="Organization"
+                  name="organizationId"
+                  required
+                  defaultValue={editingSub?.organizationId || editingSub?.organization_id || ""}
+                  className="rounded-lg px-2 py-2 text-xs"
+                >
                     <option value="">Select...</option>
-                    {clients.map((c: any) => (
-                      <option key={c.id || c._id} value={c.id || c._id}>{c.organizationName || c.organization_name || c.name}</option>
-                    ))}
-                  </select>
-                </div>
+                    {clients.map((record) => {
+                      const client = record as ClientRecord;
+                      const id = client.id || client._id;
+                      return (
+                        <option key={id} value={id}>{client.organizationName || client.organization_name || client.name}</option>
+                      );
+                    })}
+                </Select>
 
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Business Type</label>
-                  <select name="businessTypeId" required defaultValue={editingSub?.businessTypeId || editingSub?.business_type_id || ""} className="w-full border p-2 text-xs rounded-lg">
+                <Select
+                  label="Business Type"
+                  name="businessTypeId"
+                  required
+                  defaultValue={editingSub?.businessTypeId || editingSub?.business_type_id || ""}
+                  className="rounded-lg px-2 py-2 text-xs"
+                >
                     <option value="">Select...</option>
-                    {businessTypes.map((bt: any) => (
-                      <option key={bt.id || bt._id} value={bt.id || bt._id}>{bt.name}</option>
-                    ))}
-                  </select>
-                </div>
+                    {businessTypes.map((businessType) => {
+                      const record = businessType as BusinessTypeRecord;
+                      const id = record.id || record._id;
+                      return (
+                        <option key={id} value={id}>{record.name}</option>
+                      );
+                    })}
+                </Select>
 
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Plan</label>
-                  <select name="planId" required defaultValue={editingSub?.planId || editingSub?.plan_id || ""} className="w-full border p-2 text-xs rounded-lg">
+                <Select
+                  label="Plan"
+                  name="planId"
+                  required
+                  defaultValue={editingSub?.planId || editingSub?.plan_id || ""}
+                  className="rounded-lg px-2 py-2 text-xs"
+                >
                     <option value="">Select...</option>
-                    {plans.map((p: any) => (
-                      <option key={p.id || p._id} value={p.id || p._id}>{(p as any).name || (p as any).plan_name}</option>
-                    ))}
-                  </select>
-                </div>
+                    {plans.map((plan) => {
+                      const record = plan as PlanRecord;
+                      const id = record.id || record._id;
+                      return (
+                        <option key={id} value={id}>{record.name || record.plan_name}</option>
+                      );
+                    })}
+                </Select>
 
                 <div className="grid grid-cols-2 gap-2">
                   <Input 
@@ -175,45 +228,51 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                     name="startDate" 
                     type="date" 
                     required 
-                    defaultValue={formatDateForInput(editingSub?.start_date || (editingSub as any)?.startDate)} 
+                    defaultValue={formatDateForInput(editingSub?.start_date || (editingSub as SubscriptionRecord | null)?.startDate)}
                   />
                   <Input 
                     label="Expire Date" 
                     name="endDate" 
                     type="date" 
                     required 
-                    defaultValue={formatDateForInput(editingSub?.end_date || (editingSub as any)?.endDate || (editingSub as any)?.expireDate)} 
+                    defaultValue={formatDateForInput(editingSub?.end_date || (editingSub as SubscriptionRecord | null)?.endDate || (editingSub as SubscriptionRecord | null)?.expireDate)}
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Billing Term</label>
-                  <select name="billingMonths" defaultValue={(editingSub as any)?.billingMonths || "12"} className="w-full border p-2 text-xs rounded-lg">
+                <Select
+                  label="Billing Term"
+                  name="billingMonths"
+                  defaultValue={(editingSub as SubscriptionRecord | null)?.billingMonths || "12"}
+                  className="rounded-lg px-2 py-2 text-xs"
+                >
                     <option value="6">6 months</option>
                     <option value="12">12 months</option>
-                  </select>
-                </div>
+                </Select>
 
                 <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs font-semibold mb-1">Payment Status</label>
-                    <select name="paymentStatus" defaultValue={(editingSub as any)?.payment_status || (editingSub as any)?.paymentStatus || "pending"} className="w-full border p-2 text-xs rounded-lg">
+                  <Select
+                    label="Payment Status"
+                    name="paymentStatus"
+                    defaultValue={editingSub?.payment_status || editingSub?.paymentStatus || "pending"}
+                    className="rounded-lg px-2 py-2 text-xs"
+                  >
                       <option value="pending">Pending</option>
                       <option value="paid">Paid</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold mb-1">Service Status</label>
-                    <select name="serviceStatus" defaultValue={(editingSub as any)?.service_status || (editingSub as any)?.serviceStatus || "active"} className="w-full border p-2 text-xs rounded-lg">
+                  </Select>
+                  <Select
+                    label="Service Status"
+                    name="serviceStatus"
+                    defaultValue={editingSub?.service_status || (editingSub as SubscriptionRecord | null)?.serviceStatus || "active"}
+                    className="rounded-lg px-2 py-2 text-xs"
+                  >
                       <option value="active">Active</option>
                       <option value="inactive">Inactive</option>
-                    </select>
-                  </div>
+                  </Select>
                 </div>
 
                 <div className="flex justify-end gap-2 pt-2">
                   <a href="/platform/subscriptions" className="px-3 py-2 border text-xs rounded-lg">Cancel</a>
-                  <Button type="submit">Save</Button>
+                  <FormSubmitButton pendingLabel="Saving...">Save</FormSubmitButton>
                 </div>
               </form>
             </Card>
@@ -224,8 +283,11 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
           <Table>
             <thead className="bg-slate-50 text-xs text-slate-500 uppercase">
               <tr>
-                <th className="px-3 py-3">Org Name</th>
+                <th className="px-3 py-3">Organization Name</th>
+                <th className="px-3 py-3">Organization ID</th>
+                <th className="px-3 py-3">Organization Number</th>
                 <th className="px-3 py-3">Plan Name</th>
+                <th className="px-3 py-3">Billable Users</th>
                 <th className="px-3 py-3">Start Date</th>
                 <th className="px-3 py-3">End Date</th>
                 <th className="px-3 py-3">Term</th>
@@ -236,10 +298,14 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
               </tr>
             </thead>
             <tbody className="divide-y text-xs">
-              {subscriptions.map((sub: any) => {
+              {subscriptions.map((subscription) => {
+                const sub = subscription as SubscriptionRecord;
                 const subPlanId = String(sub.planId || sub.plan_id || "").trim();
 
-                const plan = plans.find((p: any) => String(p.id || p._id).trim() === subPlanId);
+                const plan = plans.find((candidate) => {
+                  const record = candidate as PlanRecord;
+                  return String(record.id || record._id).trim() === subPlanId;
+                }) as PlanRecord | undefined;
                 const subId = sub.id || sub._id;
 
                 const startStr = formatDateForInput(sub.start_date || sub.startDate);
@@ -248,9 +314,13 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                 return (
                   <tr key={subId} className="hover:bg-slate-50">
                     <td className="px-3 py-3 font-bold text-slate-900">
-                      {sub.organization_name || sub.organizationName || "—"}
+                      {sub.organizationName || sub.organization_name || "—"}
+                      {sub.organizationMissing && <span className="mt-1 block text-[10px] font-semibold text-rose-700">Organization record missing</span>}
                     </td>
-                    <td className="px-3 py-3">{sub.plan_name || (plan as any)?.name || (plan as any)?.plan_name || "—"}</td>
+                    <td className="max-w-48 break-all px-3 py-3 font-mono text-[10px] text-slate-600">{sub.organizationPublicId || (sub.organizationMissing ? "Unavailable" : "—")}</td>
+                    <td className="whitespace-nowrap px-3 py-3 font-mono tabular-nums text-slate-700">{sub.organizationNumber || (sub.organizationMissing ? "Unavailable" : "—")}</td>
+                    <td className="px-3 py-3">{sub.plan_name || plan?.name || plan?.plan_name || "—"}</td>
+                    <td className="px-3 py-3 tabular-nums">{sub.billed_user_count ?? "—"}</td>
                     <td className="px-3 py-3">{startStr || "—"}</td>
                     <td className="px-3 py-3">{endStr || "—"}</td>
                     <td className="px-3 py-3">{sub.billingMonths ? `${sub.billingMonths} months` : "—"}</td>
@@ -261,13 +331,13 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                       {String(sub.payment_status || sub.paymentStatus || "").toLowerCase() !== "paid" && (
                         <form action={updateStatus} className="inline">
                           <input type="hidden" name="id" value={subId} />
-                          <button type="submit" className="rounded border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">Approve</button>
+                          <FormSubmitButton variant="secondary" size="sm" pendingLabel="Approving..." className="rounded border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs text-emerald-700 hover:bg-emerald-100">Approve</FormSubmitButton>
                         </form>
                       )}
-                      <a href={`/platform/subscriptions?edit=${subId}`} className="text-emerald-600 font-semibold">Edit</a>
-                      <form action={remove} className="inline">
+                      {sub.business_type_id && <a href={`/platform/subscriptions?edit=${subId}`} className="text-emerald-600 font-semibold">Edit</a>}
+                      <form action={remove} className="inline" title={sub.organizationMissing ? "Delete orphaned subscription and record the action in platform audit" : "Delete subscription"}>
                         <input type="hidden" name="id" value={subId} />
-                        <button className="text-red-600 font-semibold">Delete</button>
+                        <FormSubmitButton variant="ghost" size="sm" pendingLabel="Deleting..." className="text-red-600 hover:bg-red-50">Delete</FormSubmitButton>
                       </form>
                     </td>
                   </tr>

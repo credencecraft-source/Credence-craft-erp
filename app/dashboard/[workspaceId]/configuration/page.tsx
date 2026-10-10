@@ -9,6 +9,8 @@ import Section from "@/components/ui/Section";
 import { logoutSession, requireSessionUser } from "@/lib/auth/session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 import { listOrganizationsForUser } from "@/lib/services/organizations/organization-service";
+import Input from "@/components/ui/Input";
+
 
 const isDevBypass = process.env.NODE_ENV !== "production" && (process.env.USE_DEV_USER_STORE === "true" || !process.env.DATABASE_URL);
 
@@ -92,13 +94,13 @@ export default async function WorkspaceConfigurationPage({
 
       await logoutSession();
       redirect("/");
-    } catch (err) {
+    } catch {
       redirect(`/dashboard/${workspaceId}/configuration?error=deletion-failed`);
     }
   }
 
   return (
-    <Page className="max-w-4xl px-4 py-8">
+    <Page className="max-w-4xl">
       <Section className="space-y-6">
         {successMessage && (
           <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900 shadow-xs" role="status">
@@ -108,7 +110,7 @@ export default async function WorkspaceConfigurationPage({
 
         {errorMessage === "has-organizations" && (
           <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 shadow-xs" role="status">
-            <span>Please delete all your active organizations from the workspace home before deleting the workspace.</span>
+            <span>Organization records remain attached to this workspace. Contact platform support to close it while preserving ERP retention and audit controls.</span>
           </div>
         )}
 
@@ -171,7 +173,7 @@ export default async function WorkspaceConfigurationPage({
                 <label className="text-xs font-medium text-slate-700" htmlFor="fullName">
                   Full Name
                 </label>
-                <input
+                <Input
                   id="fullName"
                   name="fullName"
                   defaultValue={user.full_name}
@@ -184,7 +186,7 @@ export default async function WorkspaceConfigurationPage({
                 <label className="text-xs font-medium text-slate-700" htmlFor="profileName">
                   Profile Name
                 </label>
-                <input
+                <Input
                   id="profileName"
                   name="profileName"
                   defaultValue={user.profile_name}
@@ -207,7 +209,7 @@ export default async function WorkspaceConfigurationPage({
           <div className="flex items-center justify-between rounded-xl border border-slate-200/80 bg-white p-4 shadow-xs">
             <div className="overflow-hidden">
               <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Email Address</p>
-              <p className="mt-1 truncate text-sm font-semibold text-slate-800" title={user.email}>{user.email}</p>
+              <p className="mt-1 truncate text-sm font-semibold text-slate-800" title={user.email ?? "Not provided"}>{user.email ?? "Not provided"}</p>
             </div>
             <div className="rounded-lg bg-slate-50 p-2 text-slate-500 shrink-0">
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
@@ -234,7 +236,7 @@ export default async function WorkspaceConfigurationPage({
               <h2 className="text-base font-semibold text-red-900">Delete Workspace</h2>
               <p className="text-xs text-slate-600 max-w-xl">
                 {hasOrganizations
-                  ? `You currently have ${organizations.length} active organization(s). Please delete them from your workspace home before deleting the workspace.`
+                  ? `You currently have ${organizations.length} organization record(s), including any archived organizations. Workspace deletion stays blocked while those records are retained.`
                   : "All organizations have been removed. You can now safely delete your workspace."}
               </p>
             </div>

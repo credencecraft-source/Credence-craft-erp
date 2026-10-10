@@ -5,25 +5,27 @@ import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
-import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { requirePlatformConfigurationAccess } from "@/lib/auth/platform-session-manager";
 import {
   getPlatformEmailConfiguration,
   savePlatformEmailConfiguration,
   sendTestEmail,
 } from "@/lib/services/platform/platform-email-configuration-service";
+import Checkbox from "@/components/ui/Checkbox";
+
 
 export default async function PlatformEmailConfigurationPage({
   searchParams,
 }: {
   searchParams?: Promise<{ error?: string; success?: string }>;
 }) {
-  await requirePlatformSessionAdmin();
+  await requirePlatformConfigurationAccess();
   const configuration = await getPlatformEmailConfiguration();
   const params = (await searchParams) ?? {};
 
   async function saveEmailConfiguration(formData: FormData) {
     "use server";
-    await requirePlatformSessionAdmin();
+    await requirePlatformConfigurationAccess();
     try {
       await savePlatformEmailConfiguration({
         smtpHost: String(formData.get("smtpHost") || ""),
@@ -43,7 +45,7 @@ export default async function PlatformEmailConfigurationPage({
 
   async function sendTestEmailAction(formData: FormData) {
     "use server";
-    await requirePlatformSessionAdmin();
+    await requirePlatformConfigurationAccess();
     try {
       const recipient = String(formData.get("recipient") || "").trim();
       if (!recipient) throw new Error("Enter a test recipient email address.");
@@ -79,7 +81,7 @@ export default async function PlatformEmailConfigurationPage({
                 <Input label="SMTP port" name="smtpPort" required type="number" min={1} max={65535} defaultValue={String(configuration?.smtpPort || 587)} />
               </div>
               <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-700">
-                <input type="checkbox" name="smtpSecure" defaultChecked={configuration?.smtpSecure || false} className="h-4 w-4 accent-emerald-600" />
+                <Checkbox type="checkbox" name="smtpSecure" defaultChecked={configuration?.smtpSecure || false} className="h-4 w-4 accent-emerald-600" />
                 Use secure TLS connection
               </label>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -96,7 +98,7 @@ export default async function PlatformEmailConfigurationPage({
                 <Input label="From name" name="fromName" required defaultValue={configuration?.fromName || "Credence Craft"} placeholder="Credence Craft" />
               </div>
               <label className="flex items-center gap-3 text-xs font-semibold text-slate-700">
-                <input type="checkbox" name="isActive" defaultChecked={configuration?.isActive ?? true} className="h-4 w-4 accent-emerald-600" />
+                <Checkbox type="checkbox" name="isActive" defaultChecked={configuration?.isActive ?? true} className="h-4 w-4 accent-emerald-600" />
                 Enable email delivery for authentication
               </label>
 

@@ -3,7 +3,12 @@ import { OrderShareStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
 import { requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { requireActiveOrganizationEntity } from "@/lib/services/organizations/organization-entity-service";
 import { reserveNextOrderNumber } from "@/lib/services/orders/order-service";
+import { lockOrganizationOrderQuantityLimit } from "@/lib/services/platform/order-quantity-limit-service";
+import { validateMonthlyFormLimits } from "@/lib/services/platform/segment-form-restriction-service";
+
+const PENDING_ORDER_SHARE_PAGE_SIZE = 25;
 
 export async function createOrderShare(input: {
   orderId: string;
@@ -47,8 +52,8 @@ export async function createOrderShare(input: {
   });
 }
 
-export async function listPendingOrderShares(workspaceUserId: string) {
-  return prisma.orderShare.findMany({
+export async function listPendingOrderShares(workspaceUserId: string, cursor?: string) {
+  const rows = await prisma.orderShare.findMany({
     where: {
       status: OrderShareStatus.PENDING,
       target_workspace_user_id: workspaceUserId,
@@ -57,7 +62,25 @@ export async function listPendingOrderShares(workspaceUserId: string) {
       sourceOrder: { select: { orderNo: true, brand: true, orderQty: true, deliveryDate: true } },
       sourceOrganization: { select: { organization_name: true, organization_id: true } },
     },
-    orderBy: { created_at: "desc" },
+    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    take: PENDING_ORDER_SHARE_PAGE_SIZE + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  });
+
+  const hasMore = rows.length > PENDING_ORDER_SHARE_PAGE_SIZE;
+  const shares = rows.slice(0, PENDING_ORDER_SHARE_PAGE_SIZE);
+  return {
+    shares,
+    nextCursor: hasMore ? shares[shares.length - 1]?.id ?? null : null,
+  };
+}
+
+export async function countPendingOrderShares(workspaceUserId: string) {
+  return prisma.orderShare.count({
+    where: {
+      status: OrderShareStatus.PENDING,
+      target_workspace_user_id: workspaceUserId,
+    },
   });
 }
 
@@ -81,13 +104,23 @@ export async function acceptOrderShare(input: {
 
     if (share.target_workspace_user_id !== input.workspaceUserId) throw new Error("This order is not assigned to your buyer account.");
 
+    await lockOrganizationOrderQuantityLimit(transaction, destinationMembership.organization_id);
+    await validateMonthlyFormLimits(
+      destinationMembership.organization_id,
+      "merchandising_orders",
+      Number(share.sourceOrder.orderQty ?? 0),
+      undefined,
+      transaction,
+    );
     const orderNo = await reserveNextOrderNumber(destinationMembership.organization_id, transaction);
     const source = share.sourceOrder;
+    const entity = await requireActiveOrganizationEntity(destinationMembership.organization_id, source.entityName, transaction);
     const order = await transaction.merchandisingOrder.create({
       data: {
         organization_id: destinationMembership.organization_id,
+        entity_id: entity.id,
         orderNo,
-        entityName: source.entityName,
+        entityName: entity.entity_name,
         category: source.category,
         subCategory: source.subCategory,
         season: source.season,

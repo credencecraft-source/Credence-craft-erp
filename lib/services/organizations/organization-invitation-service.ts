@@ -54,18 +54,27 @@ export async function createOrganizationInvitation(input: {
     select: { email: true },
   });
   if (!invitee) throw new Error("The invited workspace user was not found.");
+  if (!invitee.email) {
+    throw new Error("An email address is required for this organization invitation.");
+  }
+  const recipientEmail = invitee.email;
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { organization_name: true },
+  });
+  if (!organization) throw new Error("The organization was not found.");
 
   const invitation = await prisma.$transaction(async (transaction) => {
     const token = randomBytes(32).toString("hex");
     const created = await transaction.organizationInvitation.create({
       data: {
-        id: randomUUID(), token, token_hash: createHash("sha256").update(token).digest("hex"), recipient_email: invitee.email, organization_id: organizationId,
+        id: randomUUID(), token, token_hash: createHash("sha256").update(token).digest("hex"), recipient_email: recipientEmail, organization_id: organizationId,
         invitee_user_id: input.inviteeUserId, invited_by_user_id: input.invitedByUserId,
         role: input.role, expires_at: new Date(Date.now() + INVITATION_DAYS * 86400000),
-      }, include: { organization: { select: { organization_name: true, organization_id: true } } },
+      },
     });
     await transaction.workspaceNotification.create({
-      data: { workspace_user_id: input.inviteeUserId, type: "ORGANIZATION_INVITATION", reference_id: created.id, title: `Invitation to ${created.organization.organization_name}`, body: `You have been invited as ${input.role}.` },
+      data: { workspace_user_id: input.inviteeUserId, type: "ORGANIZATION_INVITATION", reference_id: created.id, title: `Invitation to ${organization.organization_name}`, body: `You have been invited as ${input.role}.` },
     });
     return created;
   });
@@ -73,8 +82,11 @@ export async function createOrganizationInvitation(input: {
 }
 
 export async function listPendingInvitations(userId: string) {
-  await prisma.organizationInvitation.updateMany({ where: { invitee_user_id: userId, status: OrganizationInvitationStatus.PENDING, expires_at: { lte: new Date() } }, data: { status: OrganizationInvitationStatus.EXPIRED } });
-  return prisma.organizationInvitation.findMany({ where: { invitee_user_id: userId, status: OrganizationInvitationStatus.PENDING }, include: { organization: { select: { organization_name: true, organization_id: true } }, invitedBy: { select: { full_name: true } } }, orderBy: { created_at: "desc" } });
+  return prisma.organizationInvitation.findMany({ where: { invitee_user_id: userId, status: OrganizationInvitationStatus.PENDING, expires_at: { gt: new Date() } }, include: { organization: { select: { organization_name: true, organization_id: true } }, invitedBy: { select: { full_name: true } } }, orderBy: { created_at: "desc" } });
+}
+
+export async function countPendingInvitations(userId: string) {
+  return prisma.organizationInvitation.count({ where: { invitee_user_id: userId, status: OrganizationInvitationStatus.PENDING, expires_at: { gt: new Date() } } });
 }
 
 export async function acceptOrganizationInvitation(userId: string, token: string) {

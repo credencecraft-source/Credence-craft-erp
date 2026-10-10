@@ -4,8 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import ProcessTab from "@/app/dashboard/[workspaceId]/organizations/[organizationId]/order-management/merchandising/order/[orderId]/components/ProcessTab";
+import { getProcessRows } from "@/app/dashboard/[workspaceId]/organizations/[organizationId]/order-management/merchandising/order/[orderId]/components/process-tab-state";
+import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
+import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
 
 type WorkOrderTab = "details" | "finishedGoods" | "bom" | "process";
@@ -35,6 +39,42 @@ type WorkOrderBomLine = {
   totalRequiredQty: number;
 };
 
+type WorkOrderProcessOperation = {
+  id?: string;
+  sourceOperationId?: string;
+  operation?: string;
+  slNo?: number;
+  budgetedPrice?: number;
+};
+
+type WorkOrderProcess = {
+  id?: string;
+  processId?: string;
+  processName?: string;
+  slNo?: number;
+  operations?: WorkOrderProcessOperation[];
+};
+
+type OrderProcessOperation = {
+  id?: string;
+  source_operation_template_step_id?: string;
+  sourceOperationId?: string;
+  operation?: string;
+  sl_no?: number;
+  price?: number | string | null;
+};
+
+type OrderProcessStep = {
+  id?: string;
+  process_id?: string;
+  process?: { id?: string; process_name?: string } | null;
+  process_name?: string;
+  sl_no?: number;
+  operation_template_name?: string | null;
+  operationTemplateName?: string | null;
+  operations?: OrderProcessOperation[];
+};
+
 type WorkOrderDetail = {
   id: string;
   workOrderNo: string;
@@ -48,7 +88,7 @@ type WorkOrderDetail = {
   sizeLines: WorkOrderLine[];
   bomLines: WorkOrderBomLine[];
   processController?: {
-    processes?: Array<Record<string, unknown>>;
+    processes?: WorkOrderProcess[];
   } | null;
 };
 
@@ -60,8 +100,17 @@ type OrderRecord = {
   buyer: string | null;
   orderQty: number | null;
   bomItems?: Array<Record<string, unknown>>;
+  process_template_id?: string;
+  finishedGoods?: Array<Record<string, unknown>>;
   processTemplate?: { id?: string; process_name?: string; Process_Template_Name?: string } | null;
-  processSteps?: Array<Record<string, unknown>>;
+  processSteps?: OrderProcessStep[];
+};
+
+const NEXT_WORK_ORDER_STATUSES: Record<string, string[]> = {
+  OPEN: ["IN PRODUCTION"],
+  "IN PRODUCTION": ["READY FOR PACKING"],
+  "READY FOR PACKING": [],
+  CLOSED: [],
 };
 
 export default function FactoryWorkOrderDetailPage() {
@@ -72,6 +121,7 @@ export default function FactoryWorkOrderDetailPage() {
   const workspaceId = params?.workspaceId;
   const workOrderId = params?.workOrderId;
   const orderNo = searchParams.get("orderNo")?.trim();
+  const hasRequiredParams = Boolean(organizationId && orderNo && workOrderId);
 
   const [activeTab, setActiveTab] = useState<WorkOrderTab>("details");
   const [loading, setLoading] = useState(true);
@@ -95,11 +145,7 @@ export default function FactoryWorkOrderDetailPage() {
   });
 
   useEffect(() => {
-    if (!organizationId || !orderNo || !workOrderId) {
-      setError("Work order details could not be loaded.");
-      setLoading(false);
-      return;
-    }
+    if (!organizationId || !orderNo || !workOrderId) return;
 
     let active = true;
     const loadDetails = async () => {
@@ -130,23 +176,23 @@ export default function FactoryWorkOrderDetailPage() {
             status: "OPEN",
             createdAt: new Date().toISOString(),
             sizeLines: [],
-                      bomLines: [],
+            bomLines: [],
           });
 
           if (orderDetails?.id) {
             const orderResponse = await fetch(`/api/orders/${encodeURIComponent(orderDetails.id)}?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" });
             const orderData = await orderResponse.json();
             if (orderResponse.ok) {
-              const sourceOrder = orderData.order ?? null;
+              const sourceOrder = (orderData.order ?? null) as OrderRecord | null;
               const mappedProcessRows = Array.isArray(sourceOrder?.processSteps)
-                ? sourceOrder.processSteps.map((step: any, index: number) => ({
+                ? sourceOrder.processSteps.map((step: OrderProcessStep, index: number) => ({
                     id: step.id,
                     processId: step.process_id ?? step.process?.id,
                     processName: step.process_name ?? step.process?.process_name,
                     operation: step.process_name ?? step.process?.process_name,
                     slNo: step.sl_no ?? index + 1,
                     operationTemplateName: step.operation_template_name ?? step.operationTemplateName ?? null,
-                    operations: Array.isArray(step.operations) ? step.operations.map((operation: any) => ({
+                    operations: Array.isArray(step.operations) ? step.operations.map((operation: OrderProcessOperation) => ({
                       id: operation.id,
                       sourceOperationId: operation.source_operation_template_step_id ?? operation.sourceOperationId,
                       operation: operation.operation,
@@ -158,13 +204,13 @@ export default function FactoryWorkOrderDetailPage() {
 
               setOrderRecord(sourceOrder);
               const workOrderProcessRows = Array.isArray(selectedWorkOrder?.processController?.processes)
-                ? selectedWorkOrder.processController.processes.map((process: Record<string, any>) => ({
+                ? selectedWorkOrder.processController.processes.map((process: WorkOrderProcess) => ({
                     id: process.id,
                     processId: process.processId,
                     processName: process.processName,
                     operation: process.processName,
                     slNo: process.slNo,
-                    operations: Array.isArray(process.operations) ? process.operations.map((operation: Record<string, any>) => ({
+                    operations: Array.isArray(process.operations) ? process.operations.map((operation: WorkOrderProcessOperation) => ({
                       id: operation.id,
                       sourceOperationId: operation.sourceOperationId,
                       operation: operation.operation,
@@ -228,8 +274,13 @@ export default function FactoryWorkOrderDetailPage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Unable to save work order.");
-      setWorkOrder((current) => current ? { ...current, totalQty: Number(data.workOrder.total_qty), status: data.workOrder.status, sizeLines: data.workOrder.sizeLines } : current);
-        setWorkOrder((current) => current ? { ...current, totalQty: Number(data.workOrder.total_qty), status: data.workOrder.status, sizeLines: data.workOrder.sizeLines, bomLines: data.workOrder.bomLines ?? current.bomLines } : current);
+      setWorkOrder((current) => current ? {
+        ...current,
+        totalQty: Number(data.workOrder.total_qty),
+        status: data.workOrder.status,
+        sizeLines: data.workOrder.sizeLines,
+        bomLines: data.workOrder.bomLines ?? current.bomLines,
+      } : current);
       setForm((current) => ({ ...current, totalQty: Number(data.workOrder.total_qty), status: data.workOrder.status }));
       setMessage("Work order updated successfully.");
     } catch (saveError) {
@@ -254,7 +305,7 @@ export default function FactoryWorkOrderDetailPage() {
     }
   }
 
-  if (loading) {
+  if (loading && hasRequiredParams) {
     return (
       <Page as="div">
         <Section className="space-y-6">
@@ -264,11 +315,11 @@ export default function FactoryWorkOrderDetailPage() {
     );
   }
 
-  if (error || !workOrder) {
+  if (!hasRequiredParams || error || !workOrder) {
     return (
       <Page as="div">
         <Section className="space-y-6">
-          <Card className="border-red-200 bg-red-50 p-6 text-sm text-red-700">{error || "Work order not found."}</Card>
+          <Card className="border-red-200 bg-red-50 p-6 text-sm text-red-700">{error || (!hasRequiredParams ? "Work order details could not be loaded." : "Work order not found.")}</Card>
         </Section>
       </Page>
     );
@@ -280,51 +331,58 @@ export default function FactoryWorkOrderDetailPage() {
         <div className="flex flex-col gap-4 border-b border-slate-200 pb-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <button
+              <Button
                 type="button"
                 onClick={() => router.back()}
-                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                variant="secondary"
+                size="sm"
+                className="border-slate-200 text-slate-700 hover:bg-slate-100"
               >
                 ← Back
-              </button>
+              </Button>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-700">Work Order</p>
                 <h1 className="text-xl font-bold text-slate-900">{workOrder.workOrderNo}</h1>
               </div>
             </div>
 
-            <button
+            <Button
               type="button"
               onClick={() => void saveWorkOrder()}
               disabled={saving || deleting}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              size="sm"
+              className="border-emerald-600 bg-emerald-600 text-xs text-white hover:bg-emerald-700"
             >
               {saving ? "Saving..." : "Save Work Order"}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={() => void removeWorkOrder()}
-              disabled={saving || deleting}
-              className="rounded-lg border border-red-200 px-4 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={saving || deleting || workOrder.status !== "OPEN"}
+              variant="danger"
+              size="sm"
+              className="border-red-200 bg-white text-red-700 hover:bg-red-50"
             >
               {deleting ? "Deleting..." : "Delete Work Order"}
-            </button>
+            </Button>
           </div>
 
           <div className="flex gap-2 overflow-x-auto pb-1">
             {tabs.map((tab) => (
-              <button
+              <Button
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                variant={activeTab === tab.id ? "primary" : "secondary"}
+                size="sm"
+                className={`whitespace-nowrap ${
                   activeTab === tab.id
                     ? "bg-emerald-600 text-white"
                     : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                 }`}
               >
                 {tab.label}{"count" in tab && tab.count ? ` (${tab.count})` : ""}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -337,72 +395,69 @@ export default function FactoryWorkOrderDetailPage() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
               <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-700">
                 Order No
-                <input
+                <Input
                   value={form.orderNo}
                   readOnly
-                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-500"
+                  className="rounded-lg border-slate-200 bg-slate-50 py-2 text-sm font-normal text-slate-500"
                 />
               </label>
               <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-700">
                 Article
-                <input
+                <Input
                   value={form.article}
                   readOnly
-                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-500"
+                  className="rounded-lg border-slate-200 bg-slate-50 py-2 text-sm font-normal text-slate-500"
                 />
               </label>
               <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-700">
                 Style Name
-                <input
+                <Input
                   value={form.styleName}
                   readOnly
-                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-500"
+                  className="rounded-lg border-slate-200 bg-slate-50 py-2 text-sm font-normal text-slate-500"
                 />
               </label>
               <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-700">
                 Buyer
-                <input
+                <Input
                   value={form.buyer}
                   readOnly
-                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-500"
+                  className="rounded-lg border-slate-200 bg-slate-50 py-2 text-sm font-normal text-slate-500"
                 />
               </label>
               <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-700">
                 Work Order No
-                <input
+                <Input
                   value={workOrder.workOrderNo}
                   readOnly
-                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-500"
+                  className="rounded-lg border-slate-200 bg-slate-50 py-2 text-sm font-normal text-slate-500"
                 />
               </label>
               <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-700">
                 Status
-                <select
+                <Select
                   value={form.status}
                   onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-800 focus:border-emerald-500 focus:outline-none"
+                  className="rounded-lg border-slate-200 bg-white py-2 text-sm font-normal text-slate-800"
                 >
-                  <option value="OPEN">OPEN</option>
-                  <option value="IN PRODUCTION">IN PRODUCTION</option>
-                  <option value="READY FOR PACKING">READY FOR PACKING</option>
-                  <option value="CLOSED">CLOSED</option>
-                </select>
+                  {[workOrder.status, ...(NEXT_WORK_ORDER_STATUSES[workOrder.status] ?? [])].map((status) => <option key={status} value={status}>{status}</option>)}
+                </Select>
               </label>
               <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-700">
                 Created
-                <input
+                <Input
                   value={new Date(workOrder.createdAt).toLocaleDateString("en-IN")}
                   readOnly
-                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-500"
+                  className="rounded-lg border-slate-200 bg-slate-50 py-2 text-sm font-normal text-slate-500"
                 />
               </label>
               <label className="flex flex-col gap-1.5 text-xs font-semibold text-slate-700">
                 Total Qty
-                <input
+                <Input
                   type="number"
                   value={form.totalQty}
                   readOnly
-                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-500"
+                  className="rounded-lg border-slate-200 bg-slate-50 py-2 text-sm font-normal text-slate-500"
                 />
               </label>
             </div>
@@ -437,10 +492,11 @@ export default function FactoryWorkOrderDetailPage() {
                         <td className="px-3 py-3 font-medium text-slate-700">{line.size || "-"}</td>
                         <td className="px-3 py-3 text-slate-600">{line.buyerSize || "-"}</td>
                         <td className="px-3 py-3 text-right">
-                          <input
+                          <Input
                             type="number"
                             min="0"
                             value={line.quantity ?? 0}
+                            disabled={workOrder.status !== "OPEN"}
                             onChange={(event) => {
                               const quantity = Math.max(Number(event.target.value || 0), 0);
                               setWorkOrder((current) => {
@@ -450,7 +506,7 @@ export default function FactoryWorkOrderDetailPage() {
                               });
                               setForm((current) => ({ ...current, totalQty: workOrder.sizeLines.reduce((total, sizeLine, currentIndex) => total + (currentIndex === index ? quantity : Number(sizeLine.quantity ?? 0)), 0) }));
                             }}
-                            className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold text-slate-900 focus:border-emerald-500 focus:outline-none"
+                            className="w-28 rounded-lg border-slate-200 py-2 text-right text-sm font-semibold text-slate-900 focus:border-emerald-500"
                           />
                         </td>
                       </tr>
@@ -508,7 +564,24 @@ export default function FactoryWorkOrderDetailPage() {
         {activeTab === "process" && (
           <div className="space-y-4">
             {(form.processRows?.length ?? 0) > 0 ? (
-              <ProcessTab form={form} setForm={setForm} organizationId={organizationId} isOrderLoading />
+              <ProcessTab
+                form={form}
+                setForm={(update) =>
+                  setForm((current) => {
+                    const processForm = update({
+                      processTemplateId: current.processTemplateId,
+                      processRows: getProcessRows(current.processRows),
+                    });
+                    return {
+                      ...current,
+                      processTemplateId: processForm.processTemplateId,
+                      processRows: processForm.processRows,
+                    };
+                  })
+                }
+                organizationId={organizationId}
+                isOrderLoading
+              />
             ) : (
               <Card className="border-slate-200 p-5">
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">

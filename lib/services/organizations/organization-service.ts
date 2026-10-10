@@ -1,13 +1,24 @@
 import { randomUUID } from "node:crypto";
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 
 import { normalizeOrganizationInput, validateOrganizationInput } from "./organization-validators";
+import {
+  requirePlatformSessionAdmin,
+  requirePlatformSessionSuperAdmin,
+} from "@/lib/auth/platform-session-manager";
+import { hasOrganizationTrialAccess, startOrganizationTrialOnApproval, startOrganizationTrialOnFirstOpen } from "@/lib/services/platform/organization-trial-service";
+import { ensureDefaultProcessTemplate } from "./organization-process-template-service";
 
 export type OrganizationCreateInput = {
   workspaceUserId: string;
+  verifiedWorkspaceEmail?: string;
+  workspaceUserFullName?: string;
   organizationName: string;
+  organizationEmail?: string;
   gstNumber: string;
+  mobileNo?: string;
   addressLine1?: string;
   addressLine2?: string;
   city?: string;
@@ -25,19 +36,18 @@ export type OrganizationContext = {
 
 export const SYSTEM_ORGANIZATION_ROLES = ["OWNER", "ADMIN", "FINANCE", "MERCHANDISING", "APPROVER", "VIEWER"] as const;
 export type OrganizationRole = string;
-export const ORGANIZATION_PERMISSIONS = ["ORGANIZATION_SETTINGS", "MANAGE_USERS", "MANAGE_ROLES", "VIEW_REPORTS", "MANAGE_MASTER_DATA", "CREATE_ORDERS", "APPROVE_ORDERS", "VIEW_ORDERS"] as const;
+export const ORGANIZATION_PERMISSIONS = ["ORGANIZATION_SETTINGS", "MANAGE_USERS", "MANAGE_ROLES", "VIEW_REPORTS", "MANAGE_MASTER_DATA", "CREATE_ORDERS", "APPROVE_ORDERS", "VIEW_ORDERS", "VIEW_FACTORY_PRODUCTION", "UPDATE_FACTORY_PRODUCTION", "MANAGE_FACTORY_PRODUCTION"] as const;
 export type OrganizationPermission = (typeof ORGANIZATION_PERMISSIONS)[number];
 const INDIAN_STATES = ["Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal", "Andaman and Nicobar Islands", "Chandigarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi"] as const;
 const SYSTEM_ROLE_LABELS: Record<string, string> = { OWNER: "Owner", ADMIN: "Administrator", FINANCE: "Finance", MERCHANDISING: "Merchandising", APPROVER: "Approver", VIEWER: "Viewer" };
 const DEFAULT_ROLE_PERMISSIONS: Record<string, OrganizationPermission[]> = {
   OWNER: [...ORGANIZATION_PERMISSIONS],
-  ADMIN: ["ORGANIZATION_SETTINGS", "MANAGE_USERS", "VIEW_REPORTS", "MANAGE_MASTER_DATA", "CREATE_ORDERS", "VIEW_ORDERS"],
+  ADMIN: ["ORGANIZATION_SETTINGS", "MANAGE_USERS", "VIEW_REPORTS", "MANAGE_MASTER_DATA", "CREATE_ORDERS", "VIEW_ORDERS", "VIEW_FACTORY_PRODUCTION", "UPDATE_FACTORY_PRODUCTION", "MANAGE_FACTORY_PRODUCTION"],
   FINANCE: ["VIEW_REPORTS", "VIEW_ORDERS"],
   MERCHANDISING: ["CREATE_ORDERS", "VIEW_ORDERS", "MANAGE_MASTER_DATA"],
   APPROVER: ["APPROVE_ORDERS", "VIEW_ORDERS"],
   VIEWER: ["VIEW_ORDERS", "VIEW_REPORTS"],
 };
-
 function roleKeyFromLabel(label: string) {
   return label.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 90);
 }
@@ -79,20 +89,31 @@ export async function createOrganizationRole(organizationId: string, workspaceUs
   return { ...role, permissions: validPermissions };
 }
 
-function isMissingTableError(error: unknown) {
+function getDatabaseSchemaError(error: unknown) {
   if (!(error instanceof Error)) {
-    return false;
+    return null;
   }
 
   const message = error.message || "";
-  return message.includes("does not exist") || message.includes("P2021") || message.includes("table") && message.includes("public");
+  if (message.includes("organizations.organization_number") || message.includes("P2022")) {
+    return new Error("Organization schema is out of date. Apply the pending Prisma migration before continuing.");
+  }
+  if (message.includes("P2021") || /table .* does not exist/i.test(message)) {
+    return new Error("Organization database table is not available yet. Run the Prisma migration or sync the database schema before creating organizations.");
+  }
+  return null;
 }
 
-export async function listOrganizationsForUser(workspaceUserId: string) {
+async function findOrganizationsForUser(
+  workspaceUserId: string,
+  activeOnly: boolean,
+  cursor?: string,
+  take?: number,
+) {
   try {
     const organizations = await prisma.organization.findMany({
       where: {
-        is_active: true,
+        ...(activeOnly ? { is_active: true, approval_status: "APPROVED" } : {}),
         memberships: {
           some: {
             workspace_user_id: workspaceUserId,
@@ -100,36 +121,125 @@ export async function listOrganizationsForUser(workspaceUserId: string) {
           },
         },
       },
-      orderBy: {
-        created_at: "desc",
-      },
-      include: {
+      orderBy: [{ created_at: "desc" }, { id: "desc" }],
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      ...(take ? { take } : {}),
+      select: {
+        id: true,
+        organization_number: true,
+        organization_id: true,
+        organization_name: true,
+        gst_number: true,
+        approval_status: true,
+        is_active: true,
         memberships: {
           where: { workspace_user_id: workspaceUserId, is_active: true },
           select: { role: true },
           take: 1,
         },
+        roleDefinitions: { select: { role_key: true, label: true } },
+        rolePermissions: {
+          where: { permission: "ORGANIZATION_SETTINGS" },
+          select: { role: true },
+        },
       },
     });
 
-    return organizations.map(({ memberships, ...organization }) => ({
-      ...organization,
-      membership_role: memberships[0]?.role ?? "VIEWER",
-    }));
+    return organizations.map(({ memberships, roleDefinitions, rolePermissions, ...organization }) => {
+      const role = memberships[0]?.role ?? "VIEWER";
+      const roleLabel = roleDefinitions.find((definition) => definition.role_key === role)?.label
+        ?? role.split("_").map((word) => word.charAt(0) + word.slice(1).toLowerCase()).join(" ");
+      return {
+        ...organization,
+        organization_number: organization.organization_number.toString().padStart(10, "0"),
+        membership_role: role,
+        membership_role_label: roleLabel,
+        can_manage_settings: role === "OWNER" || role === "ADMIN" || rolePermissions.some((item) => item.role === role),
+      };
+    });
   } catch (error) {
-    if (isMissingTableError(error)) {
-      return [];
-    }
-
+    const schemaError = getDatabaseSchemaError(error);
+    if (schemaError) throw schemaError;
     throw error;
   }
+}
+
+export async function listOrganizationsForUser(workspaceUserId: string) {
+  return findOrganizationsForUser(workspaceUserId, false);
+}
+
+export async function countOrganizationsForUser(workspaceUserId: string) {
+  try {
+    return await prisma.organization.count({
+      where: {
+        memberships: {
+          some: { workspace_user_id: workspaceUserId, is_active: true },
+        },
+      },
+    });
+  } catch (error) {
+    const schemaError = getDatabaseSchemaError(error);
+    if (schemaError) throw schemaError;
+    throw error;
+  }
+}
+
+export async function hasOrganizationsForUser(workspaceUserId: string) {
+  return Boolean(await prisma.organizationMembership.findFirst({
+    where: { workspace_user_id: workspaceUserId, is_active: true },
+    select: { id: true },
+  }));
+}
+
+export async function listActiveOrganizationsForUser(workspaceUserId: string) {
+  return findOrganizationsForUser(workspaceUserId, true);
+}
+
+export async function listWorkspaceOrganizationPage(workspaceUserId: string, cursor?: string) {
+  const pageSize = 24;
+  const rowsPromise = findOrganizationsForUser(workspaceUserId, false, cursor, pageSize + 1);
+  const toPage = (rows: Awaited<typeof rowsPromise>) => {
+    const hasMore = rows.length > pageSize;
+    const organizations = rows.slice(0, pageSize);
+    return {
+      organizations,
+      nextCursor: hasMore ? organizations[organizations.length - 1]?.id ?? null : null,
+    };
+  };
+
+  if (cursor) {
+    return { ...toPage(await rowsPromise), totalCount: null, activeCount: null };
+  }
+
+  const statusCountsPromise = prisma.organization.groupBy({
+        by: ["is_active", "approval_status"],
+        where: {
+          memberships: {
+            some: { workspace_user_id: workspaceUserId, is_active: true },
+          },
+        },
+        _count: { _all: true },
+      }).catch((error: unknown) => {
+        const schemaError = getDatabaseSchemaError(error);
+        if (schemaError) throw schemaError;
+        throw error;
+      });
+  const [rows, statusCounts] = await Promise.all([rowsPromise, statusCountsPromise]);
+  const totalCount = statusCounts.reduce((total, item) => total + item._count._all, 0);
+  const activeCount = statusCounts.reduce(
+    (total, item) => total + (item.is_active && item.approval_status === "APPROVED" ? item._count._all : 0),
+    0,
+  );
+  return { ...toPage(rows), totalCount, activeCount };
 }
 
 export async function createOrganization(input: OrganizationCreateInput) {
   try {
     const validated = validateOrganizationInput({
       organizationName: input.organizationName,
+      organizationEmail: input.organizationEmail,
       gstNumber: input.gstNumber,
+      mobileNo: input.mobileNo,
       addressLine1: input.addressLine1,
       addressLine2: input.addressLine2,
       city: input.city,
@@ -138,12 +248,27 @@ export async function createOrganization(input: OrganizationCreateInput) {
       pinCode: input.pinCode,
     });
 
-    return await prisma.$transaction(async (transaction) => {
+    const organization = await prisma.$transaction(async (transaction) => {
+      if (input.verifiedWorkspaceEmail) {
+        await transaction.workspaceUser.update({
+          where: { id: input.workspaceUserId },
+          data: {
+            email: input.verifiedWorkspaceEmail,
+            email_verified: true,
+            ...(input.workspaceUserFullName
+              ? { full_name: input.workspaceUserFullName }
+              : {}),
+          },
+        });
+      }
+
       const organization = await transaction.organization.create({
         data: {
           organization_id: randomUUID(),
           organization_name: validated.organizationName,
+          organization_email: validated.organizationEmail || null,
           gst_number: validated.gstNumber,
+          mobile_number: validated.mobileNo || null,
           address_line_1: validated.addressLine1 || null,
           address_line_2: validated.addressLine2 || null,
           city: validated.city || null,
@@ -188,18 +313,45 @@ export async function createOrganization(input: OrganizationCreateInput) {
         })),
         skipDuplicates: true,
       });
+      await transaction.masterRawMaterialType.createMany({
+        data: [{ organization_id: organization.id, raw_material_type: "Item", is_active: true, sort_order: 0 }],
+        skipDuplicates: true,
+      });
+      await transaction.masterProduct.createMany({
+        data: [{ organization_id: organization.id, product_master_name: "Finished Goods", is_active: true, sort_order: 0 }],
+        skipDuplicates: true,
+      });
+      await transaction.masterEntity.createMany({
+        data: [{ organization_id: organization.id, entity_name: validated.organizationName, is_active: true, sort_order: 0 }],
+        skipDuplicates: true,
+      });
+      const defaultGstRates = [5, 12, 18, 28].map((rate, index) => ({
+        organization_id: organization.id,
+        name: `${rate}%`,
+        gst: rate,
+        cgst_rate: rate / 2,
+        sgst_rate: rate / 2,
+        igst_rate: rate,
+        is_active: true,
+        sort_order: index,
+      }));
+      await transaction.masterGst.createMany({ data: defaultGstRates, skipDuplicates: true });
       await transaction.masterState.createMany({
         data: INDIAN_STATES.map((state, index) => ({ organization_id: organization.id, state, is_active: true, sort_order: index })),
         skipDuplicates: true,
       });
+      await ensureDefaultProcessTemplate(transaction, organization.id);
 
       return organization;
-    });
-  } catch (error) {
-    if (isMissingTableError(error)) {
-      throw new Error("Organization database table is not available yet. Run the Prisma migration or sync the database schema before creating organizations.");
-    }
+    }, { maxWait: 10000, timeout: 30000 });
 
+    return {
+      ...organization,
+      organization_number: organization.organization_number.toString().padStart(10, "0"),
+    };
+  } catch (error) {
+    const schemaError = getDatabaseSchemaError(error);
+    if (schemaError) throw schemaError;
     throw error;
   }
 }
@@ -208,6 +360,7 @@ export async function getOrganizationForUser(workspaceUserId: string, organizati
   return prisma.organization.findFirst({
     where: {
       organization_id: organizationId,
+      is_active: true,
       memberships: {
         some: {
           workspace_user_id: workspaceUserId,
@@ -222,6 +375,40 @@ export async function getOrganizationForUser(workspaceUserId: string, organizati
           modules: true,
         },
       },
+    },
+  });
+}
+
+export async function getOrganizationShellContext(workspaceUserId: string, organizationId: string) {
+  return prisma.organization.findFirst({
+    where: {
+      organization_id: organizationId,
+      is_active: true,
+      memberships: {
+        some: {
+          workspace_user_id: workspaceUserId,
+          is_active: true,
+        },
+      },
+    },
+    select: {
+      id: true,
+      organization_id: true,
+      organization_name: true,
+      gst_number: true,
+      address_line_1: true,
+      address_line_2: true,
+      city: true,
+      state: true,
+      country: true,
+      pin_code: true,
+      created_at: true,
+      approval_status: true,
+      pricing_mode: true,
+      platform_version_id: true,
+      trial_enabled: true,
+      trial_started_at: true,
+      trial_ends_at: true,
     },
   });
 }
@@ -240,37 +427,94 @@ export async function getOrganizationByPublicId(organizationId: string) {
   });
 }
 
-export async function deleteOrganization(organizationId: string, workspaceUserId: string) {
-  const organization = await prisma.organization.findFirst({
-    where: {
-      id: organizationId,
-      memberships: {
-        some: {
-          workspace_user_id: workspaceUserId,
-          is_active: true,
+async function deleteOrganizationDependencies(transaction: Prisma.TransactionClient, organizationId: string) {
+  await transaction.factoryDailyProductionReportLine.deleteMany({
+    where: { report: { organization_id: organizationId } },
+  });
+  await transaction.factoryGrn.deleteMany({ where: { organization_id: organizationId } });
+  await transaction.factoryBundleTransfer.deleteMany({ where: { organization_id: organizationId } });
+  await transaction.workOrderProcessControllerProcess.deleteMany({
+    where: { controller: { workOrder: { organization_id: organizationId } } },
+  });
+  await transaction.workOrderProcessController.deleteMany({
+    where: { workOrder: { organization_id: organizationId } },
+  });
+  await transaction.orderProcessControllerProcess.deleteMany({
+    where: { controller: { order: { organization_id: organizationId } } },
+  });
+  await transaction.orderProcessController.deleteMany({
+    where: { order: { organization_id: organizationId } },
+  });
+  await transaction.merchandisingOrderProcessStep.deleteMany({
+    where: { order: { organization_id: organizationId } },
+  });
+}
+
+async function permanentlyDeleteOrganization(transaction: Prisma.TransactionClient, organizationId: string) {
+  await transaction.$executeRaw`SELECT set_config('app.skip_organization_audit', 'true', true)`;
+  await deleteOrganizationDependencies(transaction, organizationId);
+  await transaction.organization.delete({ where: { id: organizationId } });
+}
+
+export async function archiveOrganization(
+  organizationId: string,
+  workspaceUserId: string,
+  confirmationName: string,
+) {
+  return prisma.$transaction(async (transaction) => {
+    const organization = await transaction.organization.findFirst({
+      where: {
+        id: organizationId,
+        memberships: {
+          some: { workspace_user_id: workspaceUserId, role: "OWNER", is_active: true },
         },
       },
-    },
+      select: { id: true, organization_id: true, organization_name: true, approval_status: true },
+    });
+
+    if (!organization) throw new Error("Organization not found or owner access required.");
+    if (organization.organization_name !== confirmationName) {
+      throw new Error("Organization name confirmation did not match.");
+    }
+    if (organization.approval_status === "ARCHIVED") {
+      throw new Error("Organization is already archived.");
+    }
+
+    await transaction.$executeRaw`SELECT set_config('app.user_id', ${workspaceUserId}, true)`;
+    const updated = await transaction.organization.updateMany({
+      where: { id: organization.id, approval_status: organization.approval_status },
+      data: { approval_status: "ARCHIVED", archived_at: new Date(), is_active: false },
+    });
+    if (updated.count !== 1) throw new Error("Organization changed during archival. Refresh and try again.");
+
+    return { archived: true, organizationId: organization.organization_id };
   });
+}
 
-  if (!organization) {
-    throw new Error("Organization not found.");
-  }
+export async function restoreOrganization(organizationId: string, workspaceUserId: string) {
+  return prisma.$transaction(async (transaction) => {
+    const organization = await transaction.organization.findFirst({
+      where: {
+        id: organizationId,
+        approval_status: "ARCHIVED",
+        memberships: {
+          some: { workspace_user_id: workspaceUserId, role: "OWNER", is_active: true },
+        },
+      },
+      select: { id: true, organization_id: true },
+    });
 
-  const membership = await requireOrganizationAccess(workspaceUserId, organizationId, ["OWNER"]);
-  const orgToDelete = await prisma.organization.findUnique({
-    where: { id: membership.organization_id },
+    if (!organization) throw new Error("Archived organization not found or owner access required.");
+
+    await transaction.$executeRaw`SELECT set_config('app.user_id', ${workspaceUserId}, true)`;
+    const updated = await transaction.organization.updateMany({
+      where: { id: organization.id, approval_status: "ARCHIVED" },
+      data: { approval_status: "PENDING_APPROVAL", archived_at: null, is_active: false },
+    });
+    if (updated.count !== 1) throw new Error("Organization changed during restoration. Refresh and try again.");
+
+    return { restored: true, organizationId: organization.organization_id };
   });
-
-  if (!orgToDelete) {
-    throw new Error("Organization not found.");
-  }
-
-  await prisma.organization.delete({
-    where: { id: orgToDelete.id },
-  });
-
-  return { deleted: true, organizationId: organization.organization_id };
 }
 
 export async function listOrganizationMembers(organizationId: string, workspaceUserId: string) {
@@ -361,6 +605,7 @@ export async function requireOrganizationAccess(
         { organization_id: organizationId },
         { organization: { organization_id: organizationId } },
       ],
+      organization: { is_active: true },
       workspace_user_id: workspaceUserId,
       is_active: true,
     },
@@ -385,10 +630,12 @@ export async function requireOrganizationContext(
   workspaceUserId: string,
   publicOrganizationId: string,
   allowedRoles?: string[],
+  options: { allowExpiredTrial?: boolean } = {},
 ): Promise<OrganizationContext> {
   const organization = await prisma.organization.findFirst({
     where: {
       organization_id: publicOrganizationId,
+      is_active: true,
       memberships: {
         some: {
           workspace_user_id: workspaceUserId,
@@ -411,6 +658,11 @@ export async function requireOrganizationContext(
   const membership = organization?.memberships[0];
   if (!organization || !membership) {
     throw new Error("Access denied: organization not found or membership is inactive.");
+  }
+
+  await startOrganizationTrialOnFirstOpen(organization.id, workspaceUserId);
+  if (!options.allowExpiredTrial && !await hasOrganizationTrialAccess(organization.id)) {
+    throw new Error("This organization's trial has ended. Activate a subscription or contact the platform administrator.");
   }
 
   if (allowedRoles && !allowedRoles.includes(membership.role)) {
@@ -486,35 +738,154 @@ export async function deleteOrganizationRole(organizationId: string, workspaceUs
   if (role.is_system || role.role_key === "OWNER") throw new Error("Built-in roles cannot be deleted.");
   const [memberCount, invitationCount] = await Promise.all([
     prisma.organizationMembership.count({ where: { organization_id: membership.organization_id, role: roleKey, is_active: true } }),
-    prisma.organizationInvitation.count({ where: { organization_id: membership.organization_id, role: roleKey, status: "PENDING" } }),
+    prisma.organizationInvitation.count({ where: { organization_id: membership.organization_id, role: roleKey, status: "PENDING", expires_at: { gt: new Date() } } }),
   ]);
   if (memberCount > 0 || invitationCount > 0) throw new Error("Reassign members and cancel pending invitations before deleting this role.");
   await prisma.organizationRoleDefinition.delete({ where: { id: role.id } });
   return { deleted: true, role: roleKey };
 }
 
+import { normalizeSystemStatusKey } from "@/lib/auth/validation-rules";
+
 export async function updateOrganizationApprovalStatus(organizationId: string, approvalStatus: string) {
-  const normalizedStatus = approvalStatus.toUpperCase();
+  const result = await updateOrganizationApprovalStatusWithTransition(organizationId, approvalStatus);
+  return result.organization;
+}
+
+export async function updateOrganizationApprovalStatusWithTransition(organizationId: string, approvalStatus: string) {
+  const normalizedStatus = normalizeSystemStatusKey(approvalStatus);
   if (!["PENDING_APPROVAL", "APPROVED", "REJECTED"].includes(normalizedStatus)) {
     throw new Error("Select a valid organization approval status.");
   }
-
-  return prisma.organization.update({
+  const platformAdmin = await requirePlatformSessionAdmin();
+  const existingOrganization = await prisma.organization.findUnique({
     where: { id: organizationId },
-    data: {
-      approval_status: normalizedStatus,
-      is_active: normalizedStatus === "APPROVED",
-    },
+    select: { approval_status: true },
   });
+  if (!existingOrganization) throw new Error("Organization not found.");
+
+  const organization = await prisma.$transaction(async (transaction) => {
+    const updated = await transaction.organization.updateMany({
+      where: {
+        id: organizationId,
+        approval_status: { not: "ARCHIVED" },
+        ...(normalizedStatus === "APPROVED" ? {
+          OR: [
+            { platform_version_id: null },
+            { platformVersion: { is: { is_active: true } } },
+          ],
+        } : {}),
+      },
+      data: {
+        approval_status: normalizedStatus,
+        is_active: normalizedStatus === "APPROVED",
+      },
+    });
+    if (updated.count !== 1) {
+      const existing = await transaction.organization.findUnique({
+        where: { id: organizationId },
+        select: {
+          id: true,
+          approval_status: true,
+          platform_version_id: true,
+          platformVersion: { select: { is_active: true } },
+        },
+      });
+      if (!existing) throw new Error("Organization not found.");
+      if (existing.approval_status === "ARCHIVED") {
+        throw new Error("Restore the organization from its workspace before changing its approval status.");
+      }
+      if (normalizedStatus === "APPROVED" && existing.platform_version_id && !existing.platformVersion?.is_active) {
+        throw new Error("Assign an active platform version before approving this organization.");
+      }
+      throw new Error("Restore the organization from its workspace before changing its approval status.");
+    }
+    if (normalizedStatus === "APPROVED") {
+      await startOrganizationTrialOnApproval(transaction, organizationId, platformAdmin.id);
+    }
+    const organization = await transaction.organization.findUnique({ where: { id: organizationId } });
+    if (!organization) throw new Error("Organization not found.");
+    return organization;
+  });
+  return {
+    organization,
+    approvedNow: normalizedStatus === "APPROVED" && existingOrganization.approval_status !== "APPROVED",
+  };
+}
+
+export const ORGANIZATION_DELETE_RETENTION_DAYS = 90;
+
+export function getOrganizationDeletionEligibility(archivedAt: Date | null, now = new Date()) {
+  const eligibleAt = archivedAt
+    ? new Date(archivedAt.getTime() + ORGANIZATION_DELETE_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+    : null;
+
+  return { eligibleAt, isEligible: eligibleAt !== null && now >= eligibleAt };
 }
 
 export async function deleteOrganizationFromPlatform(organizationId: string) {
-  const organization = await prisma.organization.findUnique({
-    where: { id: organizationId },
-    select: { id: true },
+  await requirePlatformSessionSuperAdmin();
+
+  await prisma.$transaction(async (transaction) => {
+    const organization = await transaction.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, approval_status: true, archived_at: true },
+    });
+
+    if (!organization) throw new Error("Organization not found.");
+    if (organization.approval_status !== "ARCHIVED") {
+      throw new Error("Only archived organizations can be deleted.");
+    }
+
+    const eligibility = getOrganizationDeletionEligibility(organization.archived_at);
+    if (!eligibility.isEligible) {
+      if (!organization.archived_at) {
+        throw new Error("The archive date is unavailable. Restore and re-archive the organization to start the 90-day retention period.");
+      }
+      throw new Error("Organizations can only be deleted 90 days after archiving.");
+    }
+
+    await permanentlyDeleteOrganization(transaction, organization.id);
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 20000,
+    timeout: 150000,
   });
+}
 
-  if (!organization) throw new Error("Organization not found.");
+export async function forceDeleteOrganizationFromPlatform(organizationId: string, confirmationName: string) {
+  const platformAdmin = await requirePlatformSessionSuperAdmin();
 
-  await prisma.organization.delete({ where: { id: organization.id } });
+  await prisma.$transaction(async (transaction) => {
+    const organization = await transaction.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, organization_name: true, approval_status: true, archived_at: true },
+    });
+
+    if (!organization) throw new Error("Organization not found.");
+    if (organization.organization_name !== confirmationName) {
+      throw new Error("Organization name confirmation did not match.");
+    }
+
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: platformAdmin.id,
+        action: "ORGANIZATION_FORCE_DELETED",
+        entity_type: "Organization",
+        entity_id: organization.id,
+        details: {
+          organizationName: organization.organization_name,
+          approvalStatus: organization.approval_status,
+          archivedAt: organization.archived_at?.toISOString() ?? null,
+          bypassedRetention: true,
+        },
+      },
+    });
+
+    await permanentlyDeleteOrganization(transaction, organization.id);
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 20000,
+    timeout: 150000,
+  });
 }

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
+import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
-import { createMasterValueForOrganization, getMasterValuesForOrganization, getMasterDefinition } from "@/lib/master-data/master-data-constants";
+import { createMasterValueForOrganization, getMasterDefinition, getMasterValuesForOrganization, getSizeGroupSizesForOrganization, syncSizeGroupSizes } from "@/lib/master-data/master-data-constants";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-registry";
 
 export async function GET(
@@ -12,9 +13,13 @@ export async function GET(
     const { organizationId, moduleKey } = await context.params;
     const { searchParams } = new URL(request.url);
     const includeInactive = searchParams.get("includeInactive") !== "false";
+    const includeDummyData = moduleKey === "vendor" && searchParams.get("includeDummyData") === "true";
+    const entityId = moduleKey === "location" ? searchParams.get("entityId") || undefined : undefined;
     const search = searchParams.get("search") || undefined;
+    const exactSearch = searchParams.get("exact") === "true";
     const requestedLimit = Number(searchParams.get("limit") || 100);
-    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 200) : 100;
+    const maximumLimit = moduleKey === "order-lookups" ? 500 : 200;
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), maximumLimit) : 100;
 
     if (!organizationId) {
       return NextResponse.json({ error: "Organization ID is required" }, { status: 400 });
@@ -35,7 +40,7 @@ export async function GET(
       const lookupValues = await Promise.all(
         lookupKeys.map(async (key) => [
           key,
-          await getMasterValuesForOrganization(organization.id, key, includeInactive, { limit }),
+          await getMasterValuesForOrganization(organization.id, key, includeInactive, { limit, includeDummyData: true }),
         ] as const),
       );
       const masterOptions = Object.fromEntries(lookupValues);
@@ -44,10 +49,19 @@ export async function GET(
       const brands = masterOptions.brand;
       const articles = masterOptions.article;
       const colors = masterOptions.color;
-      const sizes = masterOptions.size;
+      const sizeLinks = await getSizeGroupSizesForOrganization(organization.id, undefined, true);
+      const sizesByGroup = new Map<string, typeof sizeLinks>();
+      for (const link of sizeLinks) {
+        const groupSizes = sizesByGroup.get(link.groupId) ?? [];
+        groupSizes.push(link);
+        sizesByGroup.set(link.groupId, groupSizes);
+      }
       const sizeGroups = masterOptions["size-group"].map((group) => ({
         ...group,
-        sizes: sizes.filter((size) => size.parent_id === group.value_id || size.parent_id === group.id),
+        sizes: [
+          ...(sizesByGroup.get(group.value_id) ?? []),
+          ...(group.id === group.value_id ? [] : sizesByGroup.get(group.id) ?? []),
+        ].map((link) => link.size),
       }));
       const enrichedMasterOptions = { ...masterOptions, "size-group": sizeGroups };
 
@@ -63,30 +77,72 @@ export async function GET(
       });
     }
 
-    const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, { search, limit });
+    const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, { search, limit, exactSearch, includeDummyData, entityId });
+    if (moduleKey === "size-group") {
+      const sizeLinks = await getSizeGroupSizesForOrganization(organization.id, values.map((group) => group.id));
+      const sizesByGroup = new Map<string, typeof sizeLinks[number][]>();
+      for (const link of sizeLinks) {
+        if (!includeInactive && !link.size.is_active) continue;
+        const groupSizes = sizesByGroup.get(link.groupId) ?? [];
+        groupSizes.push(link);
+        sizesByGroup.set(link.groupId, groupSizes);
+      }
+
+      return NextResponse.json(values.map((group) => ({
+        ...group,
+        sizes: (sizesByGroup.get(group.id) ?? []).map((link) => link.size),
+      })));
+    }
     if (moduleKey === "process-template") {
-      const steps = await getMasterValuesForOrganization(organization.id, "process-template-step", includeInactive, { limit: 500 });
-      const operationTemplates = await getMasterValuesForOrganization(organization.id, "operation-template", includeInactive, { limit: 500 });
-      const operationSteps = await getMasterValuesForOrganization(organization.id, "operation-template-step", includeInactive, { limit: 500 });
+      const [steps, operationTemplates, operationSteps] = await Promise.all([
+        getMasterValuesForOrganization(organization.id, "process-template-step", includeInactive, { limit: 500 }),
+        getMasterValuesForOrganization(organization.id, "operation-template", includeInactive, { limit: 500 }),
+        getMasterValuesForOrganization(organization.id, "operation-template-step", includeInactive, { limit: 500 }),
+      ]);
+      const byParentId = <T extends { parent_id: string | null }>(items: T[]) => {
+        const groups = new Map<string, T[]>();
+        for (const item of items) {
+          if (!item.parent_id) continue;
+          const group = groups.get(item.parent_id) ?? [];
+          group.push(item);
+          groups.set(item.parent_id, group);
+        }
+        return groups;
+      };
+      const stepsByTemplate = byParentId(steps);
+      const operationsByTemplate = byParentId(operationSteps);
+      const operationTemplatesByProcess = new Map<string, typeof operationTemplates>();
+      const operationTemplatesByLabel = new Map(operationTemplates.map((item) => [item.label, item]));
+      for (const item of operationTemplates) {
+        const processName = String(item.fields?.Process ?? "").trim();
+        const matching = operationTemplatesByProcess.get(processName) ?? [];
+        matching.push(item);
+        operationTemplatesByProcess.set(processName, matching);
+      }
+      const sortByNumberField = <T extends { fields?: Record<string, unknown> }>(items: T[], field: string) =>
+        [...items].sort((left, right) => Number(left.fields?.[field] ?? 0) - Number(right.fields?.[field] ?? 0));
+      const sortedOperationTemplatesByProcess = new Map(
+        [...operationTemplatesByProcess].map(([processName, items]) => [
+          processName,
+          sortByNumberField(items, "Sort_Order"),
+        ]),
+      );
+      const sortedOperationsByTemplate = new Map(
+        [...operationsByTemplate].map(([templateId, items]) => [templateId, sortByNumberField(items, "Sl_No")]),
+      );
 
       return NextResponse.json(values.map((template) => ({
         ...template,
-        steps: steps
-          .filter((step) => step.parent_id === template.id)
-          .sort((left, right) => Number(left.fields?.Sl_No ?? 0) - Number(right.fields?.Sl_No ?? 0))
+        steps: sortByNumberField(stepsByTemplate.get(template.id) ?? [], "Sl_No")
           .map((step) => {
             const processName = String(step.fields?.Process ?? step.label).trim();
             const legacyOperationTemplateName = String(step.fields?.Operation_Template ?? "").trim();
-            const matchingOperationTemplates = operationTemplates
-              .filter((item) => String(item.fields?.Process ?? "").trim() === processName)
-              .sort((left, right) => Number(left.fields?.Sort_Order ?? 0) - Number(right.fields?.Sort_Order ?? 0));
-            const operationTemplate = matchingOperationTemplates[0]
-              ?? operationTemplates.find((item) => item.label === legacyOperationTemplateName);
+            const matchingOperationTemplates = sortedOperationTemplatesByProcess.get(processName) ?? [];
+            const operationTemplate = operationTemplatesByLabel.get(legacyOperationTemplateName)
+              ?? matchingOperationTemplates[0];
             const operationTemplateName = operationTemplate?.label ?? legacyOperationTemplateName;
             const mapOperations = (selectedOperationTemplate: typeof operationTemplate) => selectedOperationTemplate
-              ? operationSteps
-                  .filter((operationStep) => operationStep.parent_id === selectedOperationTemplate.id)
-                  .sort((left, right) => Number(left.fields?.Sl_No ?? 0) - Number(right.fields?.Sl_No ?? 0))
+              ? (sortedOperationsByTemplate.get(selectedOperationTemplate.id) ?? [])
                   .map((operationStep) => ({
                     id: operationStep.id,
                     valueId: operationStep.value_id,
@@ -101,6 +157,8 @@ export async function GET(
               valueId: step.value_id,
               slNo: Number(step.fields?.Sl_No ?? 0),
               processName,
+              isReturnableProcess: step.fields?.Is_Returnable_Process === true,
+              blockByProcessName: String(step.fields?.Block_By ?? "").trim() || null,
               operationTemplateName: operationTemplateName || null,
               operationTemplateId: operationTemplate?.id ?? null,
               operationTemplates: matchingOperationTemplates.map((candidate) => ({
@@ -115,9 +173,12 @@ export async function GET(
       })));
     }
     return NextResponse.json(values);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error fetching master data:", error);
-    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+    if (isDatabaseUnavailableError(error)) {
+      return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
+    return NextResponse.json({ error: "Unable to load master data. Please try again." }, { status: 500 });
   }
 }
 
@@ -177,11 +238,14 @@ export async function POST(
       description: description ? String(description).trim() : null,
       parentValueId: parentId || null,
       fields,
+      createOnly: body.createOnly === true,
     });
 
     const multiLookupField = definition.fields.find((field) => field.type === "lookup" && field.multiple && field.lookupModuleKey);
     const selectedValues = multiLookupField ? fields[multiLookupField.key] : [];
-    if (multiLookupField?.lookupModuleKey && Array.isArray(selectedValues)) {
+    if (masterKey === "size-group" && Array.isArray(selectedValues)) {
+      await syncSizeGroupSizes(organization.id, newMasterValue.id, selectedValues);
+    } else if (multiLookupField?.lookupModuleKey && Array.isArray(selectedValues)) {
       for (const selectedValue of [...new Set(selectedValues.map((value: unknown) => String(value).trim()).filter(Boolean))]) {
         await createMasterValueForOrganization(organization.id, multiLookupField.lookupModuleKey, {
           label: selectedValue,
@@ -192,8 +256,8 @@ export async function POST(
     }
 
     return NextResponse.json(newMasterValue, { status: 201 });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error creating master value:", error);
-    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Internal Server Error" }, { status: 500 });
   }
 }

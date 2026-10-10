@@ -1,5 +1,6 @@
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import nodemailer from "nodemailer";
+import type { PlatformEmailConfiguration } from "@prisma/client";
 
 import { decryptSecret, encryptSecret } from "@/lib/auth/secret-cryptography";
 import { prisma } from "@/lib/database/prisma-client";
@@ -7,7 +8,7 @@ import { prisma } from "@/lib/database/prisma-client";
 const CONFIGURATION_ID = "default";
 const OTP_TTL_MINUTES = 10;
 const MAX_OTP_ATTEMPTS = 5;
-export type OtpPurpose = "AUTH" | "SUPPORT";
+export type OtpPurpose = "AUTH" | "SUPPORT" | "ORGANIZATION_EMAIL" | "MOBILE_LOGIN";
 
 type EmailConfigurationInput = {
   smtpHost: string;
@@ -26,7 +27,7 @@ function otpHash(email: string, code: string) {
   return createHmac("sha256", secret).update(`${email}:${code}`).digest("hex");
 }
 
-function normalizeConfiguration(configuration: any) {
+function normalizeConfiguration(configuration: PlatformEmailConfiguration | null) {
   if (!configuration) return null;
   return {
     id: configuration.id,
@@ -157,20 +158,43 @@ export async function issueEmailOtp(email: string, purpose: OtpPurpose = "AUTH")
 
 export async function verifyEmailOtp(email: string, code: string, purpose: OtpPurpose = "AUTH") {
   const normalizedEmail = email.trim().toLowerCase();
+  const now = new Date();
   const challenge = await prisma.otpChallenge.findFirst({
-    where: { email: normalizedEmail, purpose, consumed_at: null, expires_at: { gt: new Date() } },
+    where: {
+      email: normalizedEmail,
+      purpose,
+      consumed_at: null,
+      expires_at: { gt: now },
+      attempts: { lt: MAX_OTP_ATTEMPTS },
+    },
     orderBy: { created_at: "desc" },
   });
-  if (!challenge || challenge.attempts >= MAX_OTP_ATTEMPTS) return false;
+  if (!challenge) return false;
 
   const expected = Buffer.from(challenge.code_hash);
   const actual = Buffer.from(otpHash(normalizedEmail, code.trim()));
   const valid = expected.length === actual.length && timingSafeEqual(expected, actual);
   if (!valid) {
-    await prisma.otpChallenge.update({ where: { id: challenge.id }, data: { attempts: { increment: 1 } } });
+    await prisma.otpChallenge.updateMany({
+      where: {
+        id: challenge.id,
+        consumed_at: null,
+        expires_at: { gt: now },
+        attempts: { lt: MAX_OTP_ATTEMPTS },
+      },
+      data: { attempts: { increment: 1 } },
+    });
     return false;
   }
 
-  await prisma.otpChallenge.update({ where: { id: challenge.id }, data: { consumed_at: new Date() } });
-  return true;
+  const consumed = await prisma.otpChallenge.updateMany({
+    where: {
+      id: challenge.id,
+      consumed_at: null,
+      expires_at: { gt: now },
+      attempts: { lt: MAX_OTP_ATTEMPTS },
+    },
+    data: { consumed_at: now },
+  });
+  return consumed.count === 1;
 }

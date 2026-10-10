@@ -1,29 +1,34 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
+import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
-import { createVersion, deleteVersion, listVersions } from "@/lib/services/platform/version-service";
+import PlatformVersionsList from "@/app/platform/versions/_components/platform-versions-list";
+import { PLATFORM_VERSION_TYPE_OPTIONS } from "@/lib/constants/platform-version-types";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { createVersion, deleteVersion, duplicateVersion, listVersions } from "@/lib/services/platform/version-service";
 
 export default async function PlatformVersionsPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ error?: string }>;
+  searchParams?: Promise<{ error?: string; success?: string }>;
 }) {
   const [versions, params] = await Promise.all([
     listVersions(),
-    searchParams ?? Promise.resolve({ error: undefined } as { error?: string }),
+    searchParams ?? Promise.resolve({ error: undefined, success: undefined } as { error?: string; success?: string }),
   ]);
 
   async function createAction(formData: FormData) {
     "use server";
+    await requirePlatformSessionAdmin();
     try {
       await createVersion({
         versionName: String(formData.get("versionName") || ""),
         description: String(formData.get("description") || ""),
+        versionType: String(formData.get("versionType") || ""),
       });
     } catch (error) {
       redirect(`/platform/versions?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to create version.")}`);
@@ -33,6 +38,7 @@ export default async function PlatformVersionsPage({
 
   async function deleteAction(formData: FormData) {
     "use server";
+    await requirePlatformSessionAdmin();
     try {
       await deleteVersion(String(formData.get("id") || ""));
     } catch (error) {
@@ -41,41 +47,73 @@ export default async function PlatformVersionsPage({
     redirect("/platform/versions");
   }
 
+  async function duplicateAction(formData: FormData) {
+    "use server";
+    await requirePlatformSessionAdmin();
+    try {
+      await duplicateVersion(String(formData.get("id") || ""));
+    } catch (error) {
+      redirect(`/platform/versions?error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to duplicate version.")}`);
+    }
+    redirect("/platform/versions?success=Version%20duplicated.");
+  }
+
   return (
-    <Page className="max-w-6xl">
+    <Page className="max-w-7xl">
       <Section className="space-y-6">
         <div>
           <p className="erp-eyebrow">Platform Catalog</p>
-          <h1 className="text-2xl font-bold text-slate-900">Versions</h1>
-          <p className="text-sm text-slate-600">Create release or commercial versions such as 2025, 2026, A, or B and configure their business-type segments.</p>
+          <h1 className="erp-page-heading">Versions</h1>
+          <p className="mt-1 max-w-3xl text-sm text-[var(--erp-muted)]">
+            Create release or commercial versions such as 2025, 2026, A, or B, then configure their business-type segments.
+          </p>
         </div>
 
-        {params.error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{params.error}</p>}
+        {params.error && (
+          <p role="alert" className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-4 text-sm text-[var(--erp-danger)]">
+            {params.error}
+          </p>
+        )}
+        {params.success && (
+          <p role="status" className="rounded-xl border border-[var(--erp-brand-soft)] bg-[var(--erp-brand-soft)] p-4 text-sm font-medium text-[var(--erp-brand)]">
+            {params.success}
+          </p>
+        )}
 
-        <Card className="p-6">
-          <form action={createAction} className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
+        <Card className="space-y-5">
+          <div>
+            <h2 className="text-lg font-semibold text-[var(--erp-text)]">Create a version</h2>
+            <p className="mt-1 text-sm text-[var(--erp-muted)]">
+              New versions start with all active business types. Configure their segments after creation.
+            </p>
+          </div>
+          <form action={createAction} className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] md:items-end">
             <Input label="Version name" name="versionName" required placeholder="2026" />
+            <Select
+              label="Version type"
+              name="versionType"
+              required
+              defaultValue="REGULAR_PRICE"
+              options={PLATFORM_VERSION_TYPE_OPTIONS}
+            />
             <Input label="Description" name="description" placeholder="Optional release notes" />
             <Button type="submit">Create version</Button>
           </form>
-          <p className="mt-3 text-xs text-slate-500">Every new version starts with all active business types. Configure its segments from the version detail page.</p>
         </Card>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          {versions.map((version) => (
-            <div key={version.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-4">
-                <div><p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Version</p><h2 className="mt-1 text-xl font-bold text-slate-900">{version.version_name}</h2><p className="mt-1 text-sm text-slate-500">{version.description || "No description"}</p></div>
-                <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">{version._count.businessTypes} business types</span>
-              </div>
-              <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4">
-                <Link href={`/platform/versions/${version.id}`} className="text-sm font-semibold text-emerald-700 hover:text-emerald-900">Open configuration</Link>
-                <form action={deleteAction}><input type="hidden" name="id" value={version.id} /><button type="submit" className="text-xs font-semibold text-rose-600 hover:underline">Delete</button></form>
-              </div>
-            </div>
-          ))}
-          {versions.length === 0 && <Card className="p-8 text-center text-sm text-slate-500 md:col-span-2">No versions created yet.</Card>}
-        </div>
+        <PlatformVersionsList
+          versions={versions.map((version, index) => ({
+            id: version.id,
+            version_name: version.version_name,
+            version_type: version.version_type,
+            description: version.description,
+            businessTypeCount: version._count.businessTypes,
+            organizationCount: version._count.organizations,
+            sortOrder: index + 1,
+          }))}
+          deleteAction={deleteAction}
+          duplicateAction={duplicateAction}
+        />
       </Section>
     </Page>
   );

@@ -1,17 +1,22 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
-import { calculateBomRows, calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
-import { getEffectivePlansForOrganization } from "@/lib/services/platform/subscription-service";
-
-async function validateOrderQuantityLimit(organizationId: string, orderQty: number) {
-  const effectivePlans = await getEffectivePlansForOrganization(organizationId);
-  const orderManagementPlan = effectivePlans.find(({ businessType }) => businessType.name.trim().toLowerCase() === "order management");
-  const maxOrderQty = orderManagementPlan?.plan?.max_order_qty;
-
-  if (maxOrderQty !== null && maxOrderQty !== undefined && orderQty > maxOrderQty) {
-    throw new Error(`Your current ${orderManagementPlan?.plan?.plan_name || "plan"} allows up to ${maxOrderQty.toLocaleString("en-IN")} order quantity. Please upgrade your plan.`);
-  }
-}
+import {
+  calculateBomRows,
+  calculateFinishedGoodsRows,
+  type CalculatedFinishedGoodsQuantity,
+} from "@/lib/services/orders/order-quantity-calculations";
+import { findDuplicateBomMaterialNames } from "@/lib/services/orders/bom-row-validation";
+import {
+  getEffectiveSegmentFormRestriction,
+  validateMonthlyFormLimits,
+  validateRestrictedFormFields,
+} from "@/lib/services/platform/segment-form-restriction-service";
+import { lockOrganizationOrderQuantityLimit } from "@/lib/services/platform/order-quantity-limit-service";
+import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
+import { requireActiveOrganizationEntity } from "@/lib/services/organizations/organization-entity-service";
+import { assertNoDummyMasterReferences, getSizeGroupSizesForOrganization } from "@/lib/master-data/master-data-constants";
+import { buildVariantOrderInput, type VariantCreateRequest, type VariantSourceOrder } from "@/lib/services/orders/order-variant-input";
+import { createPreparedVariantToken, readPreparedVariantToken } from "@/lib/services/orders/order-variant-preparation";
 
 export type OrderStatus =
   | "Draft"
@@ -96,6 +101,10 @@ export type CreateOrderInput = {
   bomRows?: BomRow[];
 };
 
+type CreateOrderOptions = {
+  processSnapshot?: VariantSourceOrder["processSteps"];
+};
+
 export type OrderPageCursor = {
   createdAt: string;
   id: string;
@@ -126,14 +135,51 @@ export async function reserveNextOrderNumber(
   organizationId: string,
   database: Prisma.TransactionClient | typeof prisma = prisma,
 ) {
-  const counter = await database.organizationOrderCounter.upsert({
+  const upsertArgs = {
     where: { organization_id: organizationId },
     create: { organization_id: organizationId, current_value: 1 },
     update: { current_value: { increment: 1 } },
     select: { current_value: true },
-  });
+  };
+  let counter;
+
+  try {
+    counter = await database.organizationOrderCounter.upsert(upsertArgs);
+  } catch (error) {
+    const errorCode = typeof error === "object" && error !== null && "code" in error
+      ? error.code
+      : null;
+    const errorMessage = error instanceof Error ? error.message : "";
+    const isClosedTransactionError = errorMessage.includes("Transaction API error: Transaction not found")
+      || (errorCode === "P2028" && /transaction.*(?:closed|expired|not found|invalid)/i.test(errorMessage));
+
+    if (database === prisma || !isClosedTransactionError) {
+      throw error;
+    }
+
+    counter = await prisma.organizationOrderCounter.upsert(upsertArgs);
+  }
 
   return `OD-${counter.current_value}`;
+}
+
+export async function reserveNextOrderNumbers(
+  organizationId: string,
+  count: number,
+  database: Prisma.TransactionClient | typeof prisma = prisma,
+) {
+  if (!Number.isSafeInteger(count) || count < 1) {
+    throw new Error("Order number count must be a positive integer.");
+  }
+
+  const counter = await database.organizationOrderCounter.upsert({
+    where: { organization_id: organizationId },
+    create: { organization_id: organizationId, current_value: count },
+    update: { current_value: { increment: count } },
+    select: { current_value: true },
+  });
+  const firstNumber = counter.current_value - count + 1;
+  return Array.from({ length: count }, (_, index) => `OD-${firstNumber + index}`);
 }
 
 export async function listOrders(organizationId: string, limit = 100) {
@@ -143,7 +189,7 @@ export async function listOrders(organizationId: string, limit = 100) {
 
 export async function listOrdersPage(
   organizationId: string,
-  options: { cursor?: string; limit?: number } = {},
+  options: { cursor?: string; limit?: number; status?: string } = {},
 ) {
   const cursor = decodeOrderCursor(options.cursor);
   const take = Math.min(Math.max(options.limit ?? 100, 1), 100);
@@ -151,6 +197,7 @@ export async function listOrdersPage(
   const orders = await prisma.merchandisingOrder.findMany({
     where: {
       organization_id: organizationId,
+      ...(options.status ? { finalStatus: options.status } : {}),
       ...(cursor
         ? {
             OR: [
@@ -160,7 +207,27 @@ export async function listOrdersPage(
           }
         : {}),
     },
-    include: { finishedGoods: true, bomItems: true },
+    select: {
+      id: true,
+      orderNo: true,
+      entityName: true,
+      entity_id: true,
+      category: true,
+      subCategory: true,
+      season: true,
+      article: true,
+      styleName: true,
+      colors: true,
+      buyer: true,
+      brand: true,
+      sizeGroup: true,
+      orderQty: true,
+      deliveryDate: true,
+      finalStatus: true,
+      processStatus: true,
+      sourceStatus: true,
+      created_at: true,
+    },
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
     take: take + 1,
   });
@@ -168,10 +235,21 @@ export async function listOrdersPage(
   const hasNextPage = orders.length > take;
   const pageOrders = hasNextPage ? orders.slice(0, take) : orders;
   const lastOrder = pageOrders.at(-1);
+  const articleNames = [...new Set(pageOrders
+    .map((order) => order.article?.trim())
+    .filter((article): article is string => Boolean(article)))];
+  const articleRows = articleNames.length > 0
+    ? await prisma.masterArticle.findMany({
+        where: { organization_id: organizationId, article: { in: articleNames } },
+        select: { article: true, article_code: true },
+      })
+    : [];
+  const articleCodes = new Map(articleRows.map((article) => [article.article, article.article_code]));
 
   return {
     orders: pageOrders.map((order) => ({
       ...order,
+      articleCode: articleCodes.get(order.article?.trim() ?? "") ?? null,
       deliveryDate: toDateOnly(order.deliveryDate),
     })),
     nextCursor: hasNextPage && lastOrder
@@ -195,15 +273,90 @@ export async function listOrdersLegacy(organizationId: string) {
 export async function getOrderById(id: string, organizationId: string) {
   return prisma.merchandisingOrder.findFirst({
     where: { id, organization_id: organizationId },
-    include: {
-      finishedGoods: true,
-      bomItems: true,
+    select: {
+      id: true,
+      organization_id: true,
+      entity_id: true,
+      orderNo: true,
+      entityName: true,
+      category: true,
+      subCategory: true,
+      season: true,
+      article: true,
+      styleName: true,
+      colors: true,
+      buyer: true,
+      brand: true,
+      sizeGroup: true,
+      haveSizeRatio: true,
+      ratioOrderQty: true,
+      orderQty: true,
+      deliveryDate: true,
+      finalStatus: true,
+      processStatus: true,
+      sourceStatus: true,
+      process_template_id: true,
+      created_at: true,
+      updated_at: true,
+      finishedGoods: {
+        select: {
+          id: true,
+          buyerSize: true,
+          size: true,
+          beforeExcessQty: true,
+          excess: true,
+          excessQty: true,
+          totalQty: true,
+          buyerPoPrice: true,
+          exchangePrice: true,
+          priceInInr: true,
+        },
+      },
+      bomItems: {
+        select: {
+          id: true,
+          categoryType: true,
+          category: true,
+          subCategory: true,
+          rawMaterialName: true,
+          stockUom: true,
+          size: true,
+          orderQty: true,
+          buyerConsumption: true,
+          buyerPrice: true,
+          internalConsumption: true,
+          internalPrice: true,
+          valuePerGarmentRm: true,
+          consumption: true,
+          requiredQty: true,
+          itemWiseExcessPercentage: true,
+          itemWiseExcessQty: true,
+          totalRequiredQty: true,
+        },
+      },
       processTemplate: { select: { id: true, value_id: true, process_name: true } },
       processSteps: {
         orderBy: { sl_no: "asc" },
-        include: {
+        select: {
+          id: true,
+          order_id: true,
+          source_template_step_id: true,
+          process_id: true,
+          process_name: true,
+          sl_no: true,
+          cost: true,
           process: { select: { id: true, value_id: true, process_name: true } },
-          operations: { orderBy: { sl_no: "asc" } },
+          operations: {
+            orderBy: { sl_no: "asc" },
+            select: {
+              id: true,
+              order_process_step_id: true,
+              source_operation_template_step_id: true,
+              operation: true,
+              sl_no: true,
+              price: true,
+            },
+          },
         },
       },
     },
@@ -312,6 +465,189 @@ async function replaceOrderProcessSteps(
   return template;
 }
 
+async function createOrderProcessSteps(
+  orderId: string,
+  template: NonNullable<Awaited<ReturnType<typeof findProcessTemplate>>>,
+  inputRows: ProcessRow[],
+  transaction: Prisma.TransactionClient,
+) {
+  const operationRowsBySlNo = new Map<number, Array<{
+    source_operation_template_step_id: string;
+    operation: string;
+    sl_no: number;
+    price: number;
+  }>>();
+  const stepData = template.steps.map((step) => {
+    const inputRow = inputRows.find((row) =>
+      row.processId === step.id
+      || row.processId === step.process_id
+      || (String(row.processName ?? "").trim() === step.process.process_name && Number(row.slNo ?? 0) === step.sl_no),
+    );
+    const operationTemplate = step.process.operationTemplates.find((candidate) =>
+      candidate.id === inputRow?.operationTemplateId
+      || candidate.value_id === inputRow?.operationTemplateId
+      || candidate.operation_template_name === inputRow?.operationTemplateName,
+    ) ?? step.process.operationTemplates[0] ?? step.operationTemplate;
+    const operationRows = (operationTemplate?.operations ?? []).map((operation) => {
+      const inputOperation = inputRow?.operations?.find((row) =>
+        row.sourceOperationId === operation.id
+        || row.id === operation.id
+        || (String(row.operation ?? "").trim() === operation.operation && Number(row.slNo ?? 0) === operation.sl_no),
+      );
+      const rawPrice = inputOperation?.price;
+      const price = rawPrice === undefined || rawPrice === null || rawPrice === ""
+        ? Number(operation.price)
+        : Number(rawPrice);
+      if (!Number.isFinite(price) || price < 0) {
+        throw new Error(`Operation price must be a valid non-negative number for ${operation.operation}.`);
+      }
+      return {
+        source_operation_template_step_id: operation.id,
+        operation: operation.operation,
+        sl_no: operation.sl_no,
+        price,
+      };
+    });
+    operationRowsBySlNo.set(step.sl_no, operationRows);
+
+    return {
+      order_id: orderId,
+      source_template_step_id: step.id,
+      process_id: step.process_id,
+      process_name: step.process.process_name,
+      sl_no: step.sl_no,
+      cost: operationRows.length > 0 ? operationRows.reduce((total, operation) => total + operation.price, 0) : null,
+    };
+  });
+
+  const createdSteps = await transaction.merchandisingOrderProcessStep.createManyAndReturn({
+    data: stepData,
+    select: { id: true, sl_no: true },
+  });
+  const stepDataBySlNo = new Map(stepData.map((step) => [step.sl_no, step]));
+  const operationData = createdSteps.flatMap((step) =>
+    (operationRowsBySlNo.get(step.sl_no) ?? []).map((operation) => ({
+      ...operation,
+      order_process_step_id: step.id,
+    })),
+  );
+  if (operationData.length > 0) {
+    await transaction.merchandisingOrderProcessOperation.createMany({ data: operationData });
+  }
+
+  return createdSteps.map((step) => ({
+    id: step.id,
+    sl_no: step.sl_no,
+    process_id: stepDataBySlNo.get(step.sl_no)?.process_id ?? "",
+    process_name: stepDataBySlNo.get(step.sl_no)?.process_name ?? "",
+    operations: operationRowsBySlNo.get(step.sl_no) ?? [],
+  }));
+}
+
+async function createOrderProcessStepsFromSnapshot(
+  orderId: string,
+  processSnapshot: VariantSourceOrder["processSteps"],
+  transaction: Prisma.TransactionClient,
+) {
+  const operationRowsBySlNo = new Map<number, Array<{
+    source_operation_template_step_id: string | null;
+    operation: string;
+    sl_no: number;
+    price: number;
+  }>>();
+  const stepData = processSnapshot.map((step) => {
+    const operationRows = step.operations.map((operation) => {
+      const price = Number(operation.price);
+      if (!Number.isFinite(price) || price < 0) {
+        throw new Error(`Operation price must be a valid non-negative number for ${operation.operation}.`);
+      }
+      return {
+        source_operation_template_step_id: operation.source_operation_template_step_id,
+        operation: operation.operation,
+        sl_no: operation.sl_no,
+        price,
+      };
+    });
+    operationRowsBySlNo.set(step.sl_no, operationRows);
+    return {
+      order_id: orderId,
+      source_template_step_id: step.source_template_step_id,
+      process_id: step.process_id,
+      process_name: step.process_name,
+      sl_no: step.sl_no,
+      cost: operationRows.length > 0 ? operationRows.reduce((total, operation) => total + operation.price, 0) : null,
+    };
+  });
+
+  if (stepData.length === 0) return [];
+  const createdSteps = await transaction.merchandisingOrderProcessStep.createManyAndReturn({
+    data: stepData,
+    select: { id: true, process_id: true, process_name: true, sl_no: true },
+  });
+  const operationData = createdSteps.flatMap((step) =>
+    (operationRowsBySlNo.get(step.sl_no) ?? []).map((operation) => ({
+      ...operation,
+      order_process_step_id: step.id,
+    })),
+  );
+  if (operationData.length > 0) {
+    await transaction.merchandisingOrderProcessOperation.createMany({ data: operationData });
+  }
+
+  return createdSteps.map((step) => ({
+    ...step,
+    operations: operationRowsBySlNo.get(step.sl_no) ?? [],
+  }));
+}
+
+async function createOrderProcessController(
+  orderId: string,
+  processTemplateId: string | null | undefined,
+  processSteps: Array<{
+    process_id: string;
+    process_name: string;
+    sl_no: number;
+    operations: Array<{
+      source_operation_template_step_id: string | null;
+      operation: string;
+      sl_no: number;
+      price: number;
+    }>;
+  }>,
+  orderQty: number,
+  transaction: Prisma.TransactionClient,
+) {
+  if (!processTemplateId || processSteps.length === 0) return null;
+
+  const controller = await transaction.orderProcessController.create({
+    data: { order_id: orderId, process_template_id: processTemplateId },
+  });
+  const createdProcesses = await transaction.orderProcessControllerProcess.createManyAndReturn({
+    data: processSteps.map((step) => ({
+      controller_id: controller.id,
+      process_id: step.process_id,
+      process_name: step.process_name,
+      sl_no: step.sl_no,
+      order_qty: orderQty,
+    })),
+    select: { id: true, sl_no: true },
+  });
+  const processStepsBySlNo = new Map(processSteps.map((step) => [step.sl_no, step]));
+  const operationData = createdProcesses.flatMap((process) =>
+    (processStepsBySlNo.get(process.sl_no)?.operations ?? []).map((operation) => ({
+      process_id: process.id,
+      source_operation_id: operation.source_operation_template_step_id,
+      operation: operation.operation,
+      sl_no: operation.sl_no,
+      budgeted_price: operation.price,
+    })),
+  );
+  if (operationData.length > 0) {
+    await transaction.orderProcessControllerOperation.createMany({ data: operationData });
+  }
+  return controller;
+}
+
 async function syncOrderProcessController(
   orderId: string,
   processTemplateId: string | null | undefined,
@@ -404,7 +740,7 @@ export async function getOrderByOrderNo(orderNo: string, organizationId: string)
   });
 }
 
-export async function deleteOrders(orderIds: string[], organizationId: string) {
+export async function deleteOrders(orderIds: string[], organizationId: string, userId?: string) {
   const ids = [...new Set(orderIds.filter(Boolean))];
   if (ids.length === 0) return { deletedCount: 0 };
 
@@ -431,6 +767,17 @@ export async function deleteOrders(orderIds: string[], organizationId: string) {
         organization_id: organizationId,
       },
     });
+
+    if (result.count > 0) {
+      await createAuditEvent({
+        organizationId,
+        userId,
+        module: "Order Management",
+        action: "DELETE",
+        entityType: "MerchandisingOrder",
+        details: { deleted_count: result.count, order_ids: ids },
+      });
+    }
 
     return { deletedCount: result.count };
   } catch (error) {
@@ -495,7 +842,7 @@ export async function listBomItemsPage(
       itemWiseExcessQty: true,
       totalRequiredQty: true,
       created_at: true,
-      order: { select: { orderNo: true, styleName: true, brand: true, buyer: true } },
+      order: { select: { orderNo: true, styleName: true, brand: true, buyer: true, entity_id: true, entityName: true } },
     },
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
     take: take + 1,
@@ -510,7 +857,9 @@ export async function listBomItemsPage(
     id: item.id,
     orderId: item.order_id,
     orderNo: item.order.orderNo,
-    orderQty: item.orderQty,
+    entityId: item.order.entity_id,
+    entityName: item.order.entityName ?? "Missing Entity",
+    orderQty: item.orderQty?.toString() ?? null,
     styleName: item.order.styleName,
     brand: item.order.brand,
     buyer: item.order.buyer,
@@ -520,16 +869,16 @@ export async function listBomItemsPage(
     rawMaterialName: item.rawMaterialName,
     stockUom: item.stockUom,
     size: item.size,
-    consumption: item.consumption,
-    buyerConsumption: item.buyerConsumption,
-    buyerPrice: item.buyerPrice,
-    internalConsumption: item.internalConsumption,
-    internalPrice: item.internalPrice,
-    valuePerGarmentRm: item.valuePerGarmentRm,
-    requiredQty: item.requiredQty,
-    itemWiseExcessPercentage: item.itemWiseExcessPercentage,
-    itemWiseExcessQty: item.itemWiseExcessQty,
-    totalRequiredQty: item.totalRequiredQty,
+    consumption: item.consumption?.toString() ?? null,
+    buyerConsumption: item.buyerConsumption?.toString() ?? null,
+    buyerPrice: item.buyerPrice?.toString() ?? null,
+    internalConsumption: item.internalConsumption?.toString() ?? null,
+    internalPrice: item.internalPrice?.toString() ?? null,
+    valuePerGarmentRm: item.valuePerGarmentRm?.toString() ?? null,
+    requiredQty: item.requiredQty?.toString() ?? null,
+    itemWiseExcessPercentage: item.itemWiseExcessPercentage?.toString() ?? null,
+    itemWiseExcessQty: item.itemWiseExcessQty?.toString() ?? null,
+    totalRequiredQty: item.totalRequiredQty?.toString() ?? null,
     })),
     nextCursor: hasNextPage && lastItem
       ? encodeOrderCursor({ createdAt: lastItem.created_at.toISOString(), id: lastItem.id })
@@ -537,26 +886,54 @@ export async function listBomItemsPage(
   };
 }
 
-export async function createOrder(organizationId: string, input: CreateOrderInput) {
+export async function createOrder(
+  organizationId: string,
+  input: CreateOrderInput,
+  userId?: string,
+  options: CreateOrderOptions = {},
+) {
   if (!organizationId) {
     throw new Error("Organization is required to create an order.");
   }
 
-  const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : null;
-  const calculatedOrderQty = Array.isArray(input.rows)
-    ? calculateFinishedGoodsRows(input.rows).orderQty
-    : Number(input.orderQty ?? 0);
-  await validateOrderQuantityLimit(organizationId, calculatedOrderQty);
+  await assertNoDummyMasterReferences(organizationId, input as unknown as Record<string, unknown>);
 
-  return prisma.$transaction(async (transaction) => {
+  const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : null;
+  const calculatedFinishedGoods = Array.isArray(input.rows) ? calculateFinishedGoodsRows(input.rows) : null;
+  const calculatedOrderQty = calculatedFinishedGoods?.orderQty ?? Number(input.orderQty ?? 0);
+  const formRestriction = await getEffectiveSegmentFormRestriction(organizationId, "merchandising_orders");
+  await validateRestrictedFormFields(organizationId, "merchandising_orders", input as unknown as Record<string, unknown>, formRestriction);
+
+  const createdOrder = await prisma.$transaction(async (transaction) => {
+    await lockOrganizationOrderQuantityLimit(transaction, organizationId);
+    await validateMonthlyFormLimits(organizationId, "merchandising_orders", calculatedOrderQty, undefined, transaction, formRestriction);
+    const entity = await requireActiveOrganizationEntity(organizationId, input.entityName, transaction);
     const orderNo = await reserveNextOrderNumber(organizationId, transaction);
-    const processTemplate = await findProcessTemplate(organizationId, input.processTemplateId, transaction);
+    const processTemplate = options.processSnapshot
+      ? null
+      : await findProcessTemplate(organizationId, input.processTemplateId, transaction);
+    const activeProcessTemplateId = options.processSnapshot
+      ? input.processTemplateId
+        ? (await transaction.masterProcessTemplate.findFirst({
+            where: {
+              organization_id: organizationId,
+              OR: [{ id: input.processTemplateId }, { value_id: input.processTemplateId }],
+              is_active: true,
+            },
+            select: { id: true },
+          }))?.id ?? null
+        : null
+      : processTemplate?.id ?? null;
+    if (options.processSnapshot && input.processTemplateId && !activeProcessTemplateId) {
+      throw new Error("The selected process template is not active or does not belong to this organization.");
+    }
 
     const createdOrder = await transaction.merchandisingOrder.create({
       data: {
         organization: { connect: { id: organizationId } },
+        entity: { connect: { organization_id_id: { organization_id: organizationId, id: entity.id } } },
         orderNo,
-        entityName: input.entityName ?? null,
+        entityName: entity.entity_name,
         category: input.category ?? null,
         subCategory: input.subCategory ?? null,
         season: input.season ?? null,
@@ -568,33 +945,183 @@ export async function createOrder(organizationId: string, input: CreateOrderInpu
         sizeGroup: input.sizeGroup ?? null,
         haveSizeRatio: input.haveSizeRatio ?? false,
         ratioOrderQty: input.ratioOrderQty !== undefined && input.ratioOrderQty !== null ? Number(input.ratioOrderQty) : null,
-        orderQty: input.orderQty !== undefined && input.orderQty !== null ? Number(input.orderQty) : null,
+        orderQty: calculatedFinishedGoods?.orderQty
+          ?? (input.orderQty !== undefined && input.orderQty !== null ? Number(input.orderQty) : null),
         deliveryDate,
         finalStatus: input.finalStatus ?? "Draft",
         processStatus: input.processStatus ?? null,
-        ...(processTemplate ? { processTemplate: { connect: { id: processTemplate.id } } } : {}),
+        ...(activeProcessTemplateId ? { processTemplate: { connect: { id: activeProcessTemplateId } } } : {}),
       },
     });
 
-    if (Array.isArray(input.rows)) {
-      const calculatedFinishedGoods = calculateFinishedGoodsRows(input.rows);
-      await transaction.merchandisingOrder.update({
-        where: { id: createdOrder.id },
-        data: { orderQty: calculatedFinishedGoods.orderQty },
-      });
-      await updateFinishedGoodsForOrder(createdOrder.id, organizationId, input.rows, transaction);
+    if (calculatedFinishedGoods) {
+      await createFinishedGoodsForOrder(createdOrder.id, calculatedFinishedGoods.rows, transaction);
+    }
     if (Array.isArray(input.bomRows)) {
-        await updateBomItemsForOrder(createdOrder.id, organizationId, input.bomRows, calculatedFinishedGoods.rows, calculatedFinishedGoods.orderQty, transaction);
-      }
-    } else if (Array.isArray(input.bomRows)) {
-      await updateBomItemsForOrder(createdOrder.id, organizationId, input.bomRows, [], Number(createdOrder.orderQty ?? 0), transaction);
+      await createBomItemsForOrder(
+        createdOrder.id,
+        input.bomRows,
+        calculatedFinishedGoods?.rows ?? [],
+        calculatedFinishedGoods?.orderQty ?? Number(createdOrder.orderQty ?? 0),
+        transaction,
+      );
     }
 
-    await replaceOrderProcessSteps(createdOrder.id, organizationId, processTemplate?.id, transaction, input.processRows ?? []);
-    await syncOrderProcessController(createdOrder.id, processTemplate?.id, Number(createdOrder.orderQty ?? 0), transaction);
+    if (activeProcessTemplateId) {
+      const processSteps = options.processSnapshot
+        ? await createOrderProcessStepsFromSnapshot(createdOrder.id, options.processSnapshot, transaction)
+        : await createOrderProcessSteps(createdOrder.id, processTemplate!, input.processRows ?? [], transaction);
+      await createOrderProcessController(
+        createdOrder.id,
+        activeProcessTemplateId,
+        processSteps,
+        Number(createdOrder.orderQty ?? 0),
+        transaction,
+      );
+    }
 
     return createdOrder;
   }, { maxWait: 10000, timeout: 30000 });
+
+  await createAuditEvent({
+    organizationId,
+    userId,
+    module: "Order Management",
+    action: "CREATE",
+    entityType: "MerchandisingOrder",
+    entityId: createdOrder.id,
+    details: { order_no: createdOrder.orderNo, status: createdOrder.finalStatus },
+  });
+
+  return createdOrder;
+}
+
+export async function prepareVariantOrder(
+  organizationId: string,
+  sourceOrderId: string,
+  userId: string,
+) {
+  const source = await getOrderById(sourceOrderId, organizationId);
+  if (!source) throw new Error("Source order not found.");
+
+  const allowedSizes = [...new Set(source.finishedGoods
+    .map((row) => String(row.size || row.buyerSize || "").trim())
+    .filter(Boolean))];
+
+  if (allowedSizes.length === 0 && source.sizeGroup) {
+    const sizeGroup = await prisma.masterSizeGroup.findFirst({
+      where: {
+        organization_id: organizationId,
+        OR: [
+          { id: source.sizeGroup },
+          { value_id: source.sizeGroup },
+          { size_group: source.sizeGroup },
+        ],
+      },
+      select: { id: true },
+    });
+    if (sizeGroup) {
+      const sizeLinks = await getSizeGroupSizesForOrganization(organizationId, [sizeGroup.id]);
+      allowedSizes.push(...sizeLinks.map((link) => link.size.label));
+    }
+  }
+
+  const variantSource: VariantSourceOrder = {
+    entityName: source.entityName,
+    category: source.category,
+    subCategory: source.subCategory,
+    season: source.season,
+    article: source.article,
+    styleName: source.styleName,
+    colors: source.colors,
+    buyer: source.buyer,
+    brand: source.brand,
+    sizeGroup: source.sizeGroup,
+    haveSizeRatio: source.haveSizeRatio,
+    ratioOrderQty: source.ratioOrderQty,
+    deliveryDate: source.deliveryDate,
+    finishedGoods: source.finishedGoods.map((row) => ({
+      buyerSize: row.buyerSize,
+      size: row.size,
+      buyerPoPrice: row.buyerPoPrice,
+      exchangePrice: row.exchangePrice,
+      priceInInr: row.priceInInr,
+    })),
+    bomItems: source.bomItems.map((row) => ({
+      categoryType: row.categoryType,
+      category: row.category,
+      subCategory: row.subCategory,
+      rawMaterialName: row.rawMaterialName,
+      stockUom: row.stockUom,
+      size: row.size,
+      buyerConsumption: row.buyerConsumption,
+      buyerPrice: row.buyerPrice,
+      internalConsumption: row.internalConsumption,
+      internalPrice: row.internalPrice,
+      valuePerGarmentRm: row.valuePerGarmentRm,
+      consumption: row.consumption,
+      requiredQty: row.requiredQty,
+      itemWiseExcessPercentage: row.itemWiseExcessPercentage,
+      itemWiseExcessQty: row.itemWiseExcessQty,
+      totalRequiredQty: row.totalRequiredQty,
+    })),
+    processTemplateId: source.processTemplate?.id ?? null,
+    processSteps: source.processSteps.map((step) => ({
+      source_template_step_id: step.source_template_step_id,
+      process_id: step.process_id,
+      process_name: step.process_name,
+      sl_no: step.sl_no,
+      operations: step.operations.map((operation) => ({
+        id: operation.id,
+        source_operation_template_step_id: operation.source_operation_template_step_id,
+        operation: operation.operation,
+        sl_no: operation.sl_no,
+        price: operation.price,
+      })),
+    })),
+  };
+
+  return {
+    preparedToken: createPreparedVariantToken({
+      userId,
+      organizationId,
+      sourceOrderId,
+      sourceUpdatedAt: source.updated_at.getTime(),
+      source: variantSource,
+      allowedSizes,
+    }),
+    sizes: allowedSizes,
+  };
+}
+
+export async function createVariantOrder(
+  organizationId: string,
+  sourceOrderId: string,
+  request: VariantCreateRequest,
+  userId: string,
+) {
+  const prepared = readPreparedVariantToken(request.preparedToken);
+  if (prepared.userId !== userId
+    || prepared.organizationId !== organizationId
+    || prepared.sourceOrderId !== sourceOrderId) {
+    throw new Error("Variant preparation does not match this user, organization, or source order.");
+  }
+
+  const sourceStillAvailable = await prisma.merchandisingOrder.findFirst({
+    where: { id: sourceOrderId, organization_id: organizationId },
+    select: { updated_at: true },
+  });
+  if (!sourceStillAvailable) throw new Error("Source order not found.");
+  if (sourceStillAvailable.updated_at.getTime() !== prepared.sourceUpdatedAt) {
+    throw new Error("Source order changed while the variant was being prepared. Click Variant again to reload it.");
+  }
+
+  return createOrder(
+    organizationId,
+    buildVariantOrderInput(prepared.source, request, prepared.allowedSizes),
+    userId,
+    { processSnapshot: prepared.source.processSteps },
+  );
 }
 
 export async function updateOrder(
@@ -607,16 +1134,28 @@ export async function updateOrder(
     throw new Error("Order not found");
   }
 
-  const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : undefined;
-  if (input.orderQty !== undefined && input.orderQty !== null) {
-    await validateOrderQuantityLimit(organizationId, Number(input.orderQty));
+  if (order.sourceStatus !== "DEMO") {
+    await assertNoDummyMasterReferences(organizationId, input as unknown as Record<string, unknown>);
   }
 
-  return prisma.merchandisingOrder.update({
-    where: { id: orderId },
-    data: {
+  await validateRestrictedFormFields(organizationId, "merchandising_orders", input as unknown as Record<string, unknown>);
+  const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : undefined;
+
+  return prisma.$transaction(async (transaction) => {
+    await lockOrganizationOrderQuantityLimit(transaction, organizationId);
+    const entity = await requireActiveOrganizationEntity(organizationId, input.entityName ?? order.entity_id ?? order.entityName, transaction);
+    if (order.entity_id && order.entity_id !== entity.id) {
+      throw new Error("Entity cannot be changed after the order is created.");
+    }
+    if (input.orderQty !== undefined && input.orderQty !== null) {
+      await validateMonthlyFormLimits(organizationId, "merchandising_orders", Number(input.orderQty), orderId, transaction);
+    }
+    return transaction.merchandisingOrder.update({
+      where: { id: orderId },
+      data: {
+      entity_id: entity.id,
+      entityName: entity.entity_name,
       ...(input.orderNo !== undefined && { orderNo: input.orderNo }),
-      ...(input.entityName !== undefined && { entityName: input.entityName ?? null }),
       ...(input.category !== undefined && { category: input.category ?? null }),
       ...(input.subCategory !== undefined && { subCategory: input.subCategory ?? null }),
       ...(input.season !== undefined && { season: input.season ?? null }),
@@ -636,7 +1175,8 @@ export async function updateOrder(
       ...(deliveryDate !== undefined && { deliveryDate }),
       ...(input.finalStatus !== undefined && { finalStatus: input.finalStatus }),
       ...(input.processStatus !== undefined && { processStatus: input.processStatus ?? null }),
-    },
+      },
+    });
   });
 }
 
@@ -651,6 +1191,11 @@ export async function updateBomItemsForOrder(
   const order = await database.merchandisingOrder.findFirst({ where: { id: orderId, organization_id: organizationId } });
   if (!order) {
     throw new Error("Order not found");
+  }
+
+  const duplicateMaterials = findDuplicateBomMaterialNames(bomRows ?? []);
+  if (duplicateMaterials.length > 0) {
+    throw new Error(`Duplicate BOM material${duplicateMaterials.length === 1 ? "" : "s"}: ${duplicateMaterials.join(", ")}. Keep one row per material in the order and add its sizes to that row.`);
   }
 
   const existingItems = await database.billOfMaterialItem.findMany({
@@ -705,6 +1250,68 @@ export async function updateBomItemsForOrder(
   }
 }
 
+async function createBomItemsForOrder(
+  orderId: string,
+  bomRows: BomRow[],
+  finishedGoodsRows: CalculatedFinishedGoodsQuantity[],
+  orderQty: number,
+  transaction: Prisma.TransactionClient,
+) {
+  if (bomRows.length === 0) return;
+
+  const duplicateMaterials = findDuplicateBomMaterialNames(bomRows);
+  if (duplicateMaterials.length > 0) {
+    throw new Error(`Duplicate BOM material${duplicateMaterials.length === 1 ? "" : "s"}: ${duplicateMaterials.join(", ")}. Keep one row per material in the order and add its sizes to that row.`);
+  }
+
+  const calculatedRows = calculateBomRows(bomRows, finishedGoodsRows, orderQty);
+  await transaction.billOfMaterialItem.createMany({
+    data: calculatedRows.map((row) => ({
+      order_id: orderId,
+      categoryType: row.categoryType ?? null,
+      category: row.category ?? null,
+      subCategory: row.subCategory ?? null,
+      rawMaterialName: row.rawMaterialName ?? null,
+      stockUom: row.stockUom ?? null,
+      size: row.size ?? null,
+      orderQty: String(row.orderQty),
+      buyerConsumption: row.buyerConsumption ? String(row.buyerConsumption) : null,
+      buyerPrice: row.buyerPrice ? String(row.buyerPrice) : null,
+      internalConsumption: row.internalConsumption ? String(row.internalConsumption) : null,
+      internalPrice: row.internalPrice ? String(row.internalPrice) : null,
+      valuePerGarmentRm: row.valuePerGarmentRm ? String(row.valuePerGarmentRm) : null,
+      consumption: row.consumption ? String(row.consumption) : null,
+      requiredQty: String(row.requiredQty),
+      itemWiseExcessPercentage: String(row.itemWiseExcessPercentage),
+      itemWiseExcessQty: String(row.itemWiseExcessQty),
+      totalRequiredQty: String(row.totalRequiredQty),
+    })),
+  });
+}
+
+async function createFinishedGoodsForOrder(
+  orderId: string,
+  rows: OrderRow[],
+  transaction: Prisma.TransactionClient,
+) {
+  if (rows.length === 0) return;
+
+  await transaction.finishedGoodsSizeWise.createMany({
+    data: rows.map((row) => ({
+      order_id: orderId,
+      buyerSize: row.buyerSize ?? null,
+      size: row.size ?? null,
+      beforeExcessQty: row.beforeExcessQty !== undefined && row.beforeExcessQty !== null ? Number(row.beforeExcessQty) : null,
+      excess: row.excess ? String(row.excess) : null,
+      excessQty: Number(row.excessQty ?? 0),
+      totalQty: Number(row.totalQty ?? 0),
+      buyerPoPrice: row.buyerPoPrice ? String(row.buyerPoPrice) : null,
+      exchangePrice: row.exchangePrice ? String(row.exchangePrice) : null,
+      priceInInr: row.priceInInr ? String(row.priceInInr) : null,
+    })),
+  });
+}
+
 export async function updateFinishedGoodsForOrder(
   orderId: string,
   organizationId: string,
@@ -743,8 +1350,9 @@ export async function updateOrderWithDetails(
   orderId: string,
   organizationId: string,
   input: Partial<CreateOrderInput>,
+  userId?: string,
 ) {
-  return prisma.$transaction(async (transaction) => {
+  const updatedOrder = await prisma.$transaction(async (transaction) => {
     const order = await transaction.merchandisingOrder.findFirst({
       where: { id: orderId, organization_id: organizationId },
     });
@@ -753,17 +1361,41 @@ export async function updateOrderWithDetails(
       throw new Error("Order not found");
     }
 
+    const entity = await requireActiveOrganizationEntity(organizationId, input.entityName ?? order.entity_id ?? order.entityName, transaction);
+    if (order.entity_id && order.entity_id !== entity.id) {
+      throw new Error("Entity cannot be changed after the order is created.");
+    }
+
+    if (order.sourceStatus !== "DEMO") {
+      await assertNoDummyMasterReferences(organizationId, input as unknown as Record<string, unknown>);
+    }
+
+    await lockOrganizationOrderQuantityLimit(transaction, organizationId);
+
+    const changedFormFields: Record<string, unknown> = {};
+    const currentOrder = order as unknown as Record<string, unknown>;
+    for (const field of ["entityName", "category", "subCategory", "season", "article", "styleName", "colors", "buyer", "brand", "sizeGroup", "haveSizeRatio", "ratioOrderQty", "orderQty", "deliveryDate"]) {
+      if (field in input && input[field as keyof CreateOrderInput] !== currentOrder[field]) {
+        changedFormFields[field] = input[field as keyof CreateOrderInput];
+      }
+    }
+    await validateRestrictedFormFields(organizationId, "merchandising_orders", changedFormFields);
+
     const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : undefined;
     const calculatedFinishedGoods = input.rows ? calculateFinishedGoodsRows(input.rows) : null;
-    await validateOrderQuantityLimit(
+    await validateMonthlyFormLimits(
       organizationId,
+      "merchandising_orders",
       calculatedFinishedGoods?.orderQty ?? (input.orderQty !== undefined ? Number(input.orderQty) : Number(order.orderQty ?? 0)),
+      orderId,
+      transaction,
     );
     const updatedOrder = await transaction.merchandisingOrder.update({
       where: { id: orderId },
       data: {
+        entity_id: entity.id,
+        entityName: entity.entity_name,
         ...(input.orderNo !== undefined && { orderNo: input.orderNo }),
-        ...(input.entityName !== undefined && { entityName: input.entityName ?? null }),
         ...(input.category !== undefined && { category: input.category ?? null }),
         ...(input.subCategory !== undefined && { subCategory: input.subCategory ?? null }),
         ...(input.season !== undefined && { season: input.season ?? null }),
@@ -809,8 +1441,185 @@ export async function updateOrderWithDetails(
 
     return updatedOrder;
   }, { maxWait: 10000, timeout: 30000 });
+
+  await createAuditEvent({
+    organizationId,
+    userId,
+    module: "Order Management",
+    action: "UPDATE",
+    entityType: "MerchandisingOrder",
+    entityId: updatedOrder.id,
+    details: { order_no: updatedOrder.orderNo, status: updatedOrder.finalStatus },
+  });
+
+  return updatedOrder;
 }
 
-export async function getArticleOrderSummaries(organizationId: string) {
-  return listOrders(organizationId);
+export async function getArticleOrderSummaries(
+  organizationId: string,
+  filter?: { season: string | null; article: string | null },
+) {
+  const orders = await prisma.merchandisingOrder.findMany({
+    where: {
+      organization_id: organizationId,
+      ...(filter ? { season: filter.season, article: filter.article } : {}),
+    },
+    select: {
+      id: true,
+      orderNo: true,
+      entityName: true,
+      category: true,
+      subCategory: true,
+      season: true,
+      article: true,
+      styleName: true,
+      colors: true,
+      buyer: true,
+      brand: true,
+      sizeGroup: true,
+      orderQty: true,
+      deliveryDate: true,
+      finalStatus: true,
+      processStatus: true,
+      finishedGoods: {
+        select: {
+          id: true,
+          buyerSize: true,
+          size: true,
+          beforeExcessQty: true,
+          excess: true,
+          excessQty: true,
+          totalQty: true,
+        },
+        orderBy: [{ size: "asc" }, { id: "asc" }],
+      },
+      bomItems: {
+        select: {
+          id: true,
+          rawMaterialName: true,
+          categoryType: true,
+          category: true,
+          subCategory: true,
+          size: true,
+          totalRequiredQty: true,
+        },
+        orderBy: [{ rawMaterialName: "asc" }, { id: "asc" }],
+      },
+    },
+    orderBy: [{ season: "asc" }, { article: "asc" }, { orderNo: "asc" }, { id: "asc" }],
+  });
+
+  const grouped = new Map<string, {
+    season: string | null;
+    article: string | null;
+    orderCount: number;
+    totalOrderQty: number;
+    buyers: Set<string>;
+    orderNumbers: string[];
+    orders: Array<Record<string, unknown>>;
+    sizeTotals: Map<string, number>;
+    bomTotals: Map<string, {
+      rawMaterialName: string;
+      categoryType: string | null;
+      category: string | null;
+      subCategory: string | null;
+      size: string | null;
+      totalRequiredQty: number;
+      affectedOrderNumbers: Set<string>;
+    }>;
+  }>();
+
+  for (const order of orders) {
+    const season = order.season?.trim() || null;
+    const article = order.article?.trim() || null;
+    const groupKey = JSON.stringify([season, article]);
+    let summary = grouped.get(groupKey);
+
+    if (!summary) {
+      summary = {
+        season,
+        article,
+        orderCount: 0,
+        totalOrderQty: 0,
+        buyers: new Set<string>(),
+        orderNumbers: [],
+        orders: [],
+        sizeTotals: new Map<string, number>(),
+        bomTotals: new Map(),
+      };
+      grouped.set(groupKey, summary);
+    }
+
+    summary.orderCount += 1;
+    summary.totalOrderQty += Number(order.orderQty ?? 0);
+    if (order.buyer?.trim()) summary.buyers.add(order.buyer.trim());
+    summary.orderNumbers.push(order.orderNo);
+
+    summary.orders.push({
+      id: order.id,
+      orderNo: order.orderNo,
+      entityName: order.entityName,
+      category: order.category,
+      subCategory: order.subCategory,
+      season,
+      article,
+      styleName: order.styleName,
+      colors: order.colors,
+      buyer: order.buyer,
+      brand: order.brand,
+      sizeGroup: order.sizeGroup,
+      orderQty: order.orderQty,
+      deliveryDate: toDateOnly(order.deliveryDate),
+      finalStatus: order.finalStatus,
+      processStatus: order.processStatus,
+      finishedGoods: order.finishedGoods.map((row) => ({
+        id: row.id,
+        buyerSize: row.buyerSize,
+        size: row.size,
+        beforeExcessQty: row.beforeExcessQty,
+        excess: row.excess === null ? null : Number(row.excess),
+        excessQty: row.excessQty,
+        totalQty: row.totalQty,
+      })),
+    });
+
+    for (const row of order.finishedGoods) {
+      const size = row.size?.trim() || "Unassigned Size";
+      summary.sizeTotals.set(size, (summary.sizeTotals.get(size) ?? 0) + Number(row.totalQty ?? 0));
+    }
+
+    for (const item of order.bomItems) {
+      const key = JSON.stringify([item.rawMaterialName, item.categoryType, item.category, item.subCategory, item.size]);
+      let bomItem = summary.bomTotals.get(key);
+      if (!bomItem) {
+        bomItem = {
+          rawMaterialName: item.rawMaterialName ?? "Unassigned Material",
+          categoryType: item.categoryType,
+          category: item.category,
+          subCategory: item.subCategory,
+          size: item.size,
+          totalRequiredQty: 0,
+          affectedOrderNumbers: new Set<string>(),
+        };
+        summary.bomTotals.set(key, bomItem);
+      }
+      bomItem.totalRequiredQty += Number(item.totalRequiredQty ?? 0);
+      bomItem.affectedOrderNumbers.add(order.orderNo);
+    }
+  }
+
+  return [...grouped.values()].map((summary) => ({
+    season: summary.season,
+    article: summary.article,
+    orderCount: summary.orderCount,
+    totalOrderQty: summary.totalOrderQty,
+    buyers: [...summary.buyers].sort(),
+    orderNumbers: summary.orderNumbers,
+    orders: summary.orders,
+    sizes: [...summary.sizeTotals].map(([size, totalQty]) => ({ size, totalQty })),
+    bomItems: [...summary.bomTotals.values()].map((item) => ({
+      ...item,
+      affectedOrderNumbers: [...item.affectedOrderNumbers],
+    })),
+  }));
 }

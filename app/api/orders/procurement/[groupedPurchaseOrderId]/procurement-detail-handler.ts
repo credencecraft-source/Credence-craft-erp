@@ -4,11 +4,27 @@ import { requireSessionUser } from "@/lib/auth/session-manager";
 import {
   approveGroupedPurchaseOrder,
   deleteGroupedPurchaseOrder,
+  getGroupedPurchaseOrder,
   rejectGroupedPurchaseOrder,
   updateGroupedPurchaseOrderPrices,
 } from "@/lib/services/orders/grouped-purchase-order-service";
 import { updateGroupedPurchaseOrderHeader } from "@/lib/services/orders/grouped-purchase-order-header-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ groupedPurchaseOrderId: string }> },
+) {
+  try {
+    const user = await requireSessionUser();
+    const organizationId = new URL(request.url).searchParams.get("organizationId") ?? "";
+    const organization = await requireOrganizationContext(user.id, organizationId);
+    const groupedPurchaseOrder = await getGroupedPurchaseOrder(organization.id, (await params).groupedPurchaseOrderId);
+    return NextResponse.json({ groupedPurchaseOrder });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load Grouped PO." }, { status: 400 });
+  }
+}
 
 export async function DELETE(
   request: Request,
@@ -18,7 +34,7 @@ export async function DELETE(
     const user = await requireSessionUser();
     const organizationId = new URL(request.url).searchParams.get("organizationId") ?? "";
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
-    await deleteGroupedPurchaseOrder(organization.id, (await params).groupedPurchaseOrderId);
+    await deleteGroupedPurchaseOrder(organization.id, (await params).groupedPurchaseOrderId, user.id);
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to delete Grouped PO." }, { status: 400 });
@@ -49,7 +65,7 @@ export async function PUT(
             })),
           );
         }
-        const groupedPurchaseOrder = await approveGroupedPurchaseOrder(organization.id, groupedPurchaseOrderId, user.full_name || user.email);
+        const groupedPurchaseOrder = await approveGroupedPurchaseOrder(organization.id, groupedPurchaseOrderId, user.full_name, user.id);
         return NextResponse.json({ ok: true, groupedPurchaseOrder });
       }
       return NextResponse.json(await rejectGroupedPurchaseOrder(organization.id, groupedPurchaseOrderId, String(body.reason ?? "")));

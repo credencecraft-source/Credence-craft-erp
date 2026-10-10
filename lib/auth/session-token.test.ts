@@ -1,0 +1,64 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  createPlatformSessionToken,
+  createSessionToken,
+  PLATFORM_SESSION_TTL_SECONDS,
+  SESSION_TTL_SECONDS,
+  verifyPlatformSessionToken,
+  verifySessionToken,
+} from "./session-token";
+
+let originalAuthSecret: string | undefined;
+
+beforeEach(() => {
+  originalAuthSecret = process.env.AUTH_SECRET;
+  process.env.AUTH_SECRET = "session-token-test-secret";
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  if (originalAuthSecret === undefined) {
+    delete process.env.AUTH_SECRET;
+  } else {
+    process.env.AUTH_SECRET = originalAuthSecret;
+  }
+});
+
+describe("session token verification", () => {
+  it("accepts a correctly signed, unexpired token", () => {
+    const token = createSessionToken("user-123");
+
+    expect(verifySessionToken(token)).toBe("user-123");
+  });
+
+  it("accepts user identifiers containing dots and rejects malformed or tampered tokens", () => {
+    const token = createSessionToken("user.with.dots");
+    const tamperedToken = `${token.slice(0, -1)}${token.endsWith("0") ? "1" : "0"}`;
+
+    expect(verifySessionToken(token)).toBe("user.with.dots");
+    expect(verifySessionToken(undefined)).toBeNull();
+    expect(verifySessionToken("not-a-session-token")).toBeNull();
+    expect(verifySessionToken(tamperedToken)).toBeNull();
+  });
+
+  it("rejects a token after its expiry", () => {
+    const token = createSessionToken("user-123");
+    vi.setSystemTime(Date.now() + (SESSION_TTL_SECONDS + 1) * 1000);
+
+    expect(verifySessionToken(token)).toBeNull();
+  });
+
+  it("accepts only valid, unexpired platform session tokens", () => {
+    const token = createPlatformSessionToken("admin-123");
+
+    expect(verifyPlatformSessionToken(token)).toBe("admin-123");
+    expect(verifyPlatformSessionToken(createSessionToken("admin-123"))).toBeNull();
+    expect(verifySessionToken(token)).toBeNull();
+
+    vi.setSystemTime(Date.now() + (PLATFORM_SESSION_TTL_SECONDS + 1) * 1000);
+    expect(verifyPlatformSessionToken(token)).toBeNull();
+  });
+});

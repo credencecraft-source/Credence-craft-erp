@@ -1,4 +1,3 @@
-import Link from "next/link";
 import type { ReactNode } from "react";
 
 import Card from "@/components/ui/Card";
@@ -20,8 +19,7 @@ export default async function FactoryManagementStagePage({
   description,
   content,
 }: FactoryManagementStagePageProps) {
-  const { workspaceId, organizationId } = await params;
-  const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/factory-management`;
+  await params;
 
   return (
     <Page as="div">
@@ -37,9 +35,6 @@ export default async function FactoryManagementStagePage({
           <p className="mt-2 text-sm text-slate-600">
             This workspace is connected to the Factory Management navigation and is ready for its operational forms and records.
           </p>
-          <Link href={`${basePath}`} className="mt-5 inline-block text-sm font-semibold text-emerald-700 hover:text-emerald-800">
-            Back to Factory Management -&gt;
-          </Link>
         </Card>}
       </Section>
     </Page>
