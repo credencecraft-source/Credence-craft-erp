@@ -13,10 +13,12 @@ import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager
 import { updateOrganizationApprovalStatusWithTransition } from "@/lib/services/organizations/organization-service";
 import { startOrganizationDummyDataAfterApproval } from "@/lib/services/organizations/organization-dummy-data-service";
 
-export default async function PlatformClientsPage({ searchParams }: { searchParams?: Promise<{ cursor?: string; error?: string; success?: string }> }) {
+export default async function PlatformClientsPage({ searchParams }: { searchParams?: Promise<{ cursor?: string; error?: string; success?: string; status?: string }> }) {
   await ensurePlatformDefaults();
   const query = (await searchParams) ?? {};
-  const page = await listOrganizationClientsPage({ cursor: query.cursor });
+  const statusFilter = query.status === "pending" ? "PENDING_APPROVAL" : query.status === "approved" ? "APPROVED" : undefined;
+  const activeStatus = query.status === "pending" ? "pending" : query.status === "approved" ? "approved" : "all";
+  const page = await listOrganizationClientsPage({ cursor: query.cursor, status: statusFilter });
   const clients = page.clients;
 
   async function approveClient(formData: FormData) {
@@ -57,6 +59,32 @@ export default async function PlatformClientsPage({ searchParams }: { searchPara
         </div>
         {query.error && <p className="rounded-lg bg-red-50 p-3 text-xs text-red-700">{query.error}</p>}
         {query.success && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">{query.success}</p>}
+
+        <div className="flex flex-wrap items-center gap-2">
+          {[
+            { value: "all", label: "All", href: "/platform/organisations" },
+            { value: "pending", label: "Pending", href: "/platform/organisations?status=pending" },
+            { value: "approved", label: "Approved", href: "/platform/organisations?status=approved" },
+          ].map((tab) => {
+            const isActive = activeStatus === tab.value;
+
+            return (
+              <Link
+                key={tab.value}
+                href={tab.href}
+                aria-current={isActive ? "page" : undefined}
+                className={[
+                  "inline-flex items-center rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors",
+                  isActive
+                    ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] text-[var(--erp-brand)]"
+                    : "border-[var(--erp-border)] bg-white text-slate-600 hover:border-[var(--erp-brand)] hover:text-[var(--erp-brand)]",
+                ].join(" ")}
+              >
+                {tab.label}
+              </Link>
+            );
+          })}
+        </div>
 
         <Table>
           <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">

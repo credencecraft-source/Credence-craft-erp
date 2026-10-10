@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
-  prisma: { $transaction: vi.fn() },
+  prisma: { $transaction: vi.fn(), distributionQuotation: { findMany: vi.fn() } },
   transaction: {
     advanceBooking: { findMany: vi.fn() },
     masterVendor: { findFirst: vi.fn() },
@@ -23,6 +23,7 @@ import {
   createDistributionMasterQuotation,
   createDistributionQuotationFromBookings,
   deleteDistributionQuotation,
+  listDistributionQuotations,
   saveDistributionQuotationDraft,
 } from "./quotation-service";
 
@@ -64,6 +65,7 @@ const createdQuotation = {
   lines: [{
     id: "quotation-line-1",
     source_booking_id: "booking-1",
+    sourceBooking: { customer: "End Customer A" },
     booking_no: "BK-1",
     order_no: "ORD-1",
     item_description: "Brand Style",
@@ -94,6 +96,41 @@ describe("distribution quotation persistence", () => {
     mocks.createAuditEvent.mockResolvedValue({});
   });
 
+  it("loads quotation registers from summary fields without fetching detail lines", async () => {
+    mocks.prisma.distributionQuotation.findMany.mockResolvedValue([{
+      id: "quotation-1",
+      quotation_no: "QT-1",
+      quotation_date: new Date("2026-10-07T00:00:00.000Z"),
+      order_no: "ORD-1",
+      customer: "Vendor A",
+      mode: "SINGLE",
+      status: "DRAFT",
+      total_quantity: 30,
+      subtotal: new Prisma.Decimal("12.50"),
+      parent_quotation_id: null,
+      created_at: new Date("2026-10-07T00:00:00.000Z"),
+    }]);
+
+    const result = await listDistributionQuotations("internal-org-1");
+
+    expect(mocks.prisma.distributionQuotation.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "internal-org-1" },
+      select: expect.objectContaining({
+        id: true,
+        quotation_no: true,
+        subtotal: true,
+      }),
+      take: 500,
+    }));
+    expect(mocks.prisma.distributionQuotation.findMany.mock.calls[0][0].select).not.toHaveProperty("lines");
+    expect(result.quotations[0]).toMatchObject({
+      id: "quotation-1",
+      quotationNo: "QT-1",
+      subtotal: "12.50",
+    });
+    expect(result.quotations[0]).not.toHaveProperty("lines");
+  });
+
   it("creates a persisted regular quotation header and booking-derived lines transactionally", async () => {
     const result = await createDistributionQuotationFromBookings(
       "internal-org-1",
@@ -108,6 +145,7 @@ describe("distribution quotation persistence", () => {
       mode: "MULTIPLE",
       status: "DRAFT",
       totalQuantity: 50,
+      lines: [{ bookingNo: "BK-1", endCustomer: "End Customer A" }],
     });
     expect(mocks.transaction.distributionQuotation.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -148,10 +186,10 @@ describe("distribution quotation persistence", () => {
       .rejects.toThrow("already has a quotation");
   });
 
-  it("requires an active quotation vendor from Vendor Master", async () => {
+  it("requires an active Dealer from Vendor Master", async () => {
     mocks.transaction.masterVendor.findFirst.mockResolvedValue(null);
     await expect(createDistributionQuotationFromBookings("internal-org-1", "user-1", ["booking-1"], "inactive-vendor"))
-      .rejects.toThrow("active vendor from Vendor Master");
+      .rejects.toThrow("active Dealer from Vendor Master");
     expect(mocks.transaction.distributionQuotation.create).not.toHaveBeenCalled();
   });
 
@@ -245,7 +283,7 @@ describe("distribution quotation persistence", () => {
       "user-1",
       ["quote-1", "quote-2"],
       "foreign-vendor",
-    )).rejects.toThrow("Select an active vendor from Vendor Master.");
+    )).rejects.toThrow("Select an active Distributor from Vendor Master.");
 
     expect(mocks.transaction.distributionQuotation.create).not.toHaveBeenCalled();
   });

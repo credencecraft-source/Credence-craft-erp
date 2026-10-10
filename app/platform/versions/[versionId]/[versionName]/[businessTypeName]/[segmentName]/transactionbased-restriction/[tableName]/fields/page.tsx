@@ -8,6 +8,11 @@ import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
 import { getVersionDetails } from "@/lib/services/platform/version-service";
+import {
+  getErpBusinessTypeDisplayName,
+  getErpBusinessTypeRouteSegment,
+  isErpBusinessTypeRouteSegment,
+} from "@/components/erp/erp-config-registry";
 
 type TableField = { name: string; type: string; attributes: string };
 type TableMetadata = { modelName: string; tableName: string; idField: string; purpose: string; fields: TableField[] };
@@ -68,17 +73,17 @@ export default async function TransactionBasedRestrictionFieldsPage({
 }) {
   const { versionId, versionName, businessTypeName, segmentName, tableName } = await params;
   const version = await getVersionDetails(versionId);
-  const entry = version?.businessTypes.find((item) => toUrlSegment(item.businessType.name) === businessTypeName);
+  const entry = version?.businessTypes.find((item) => isErpBusinessTypeRouteSegment(item.businessType.name, businessTypeName));
   const assignment = entry?.segments.find((item) => toSegmentUrlSegment(item.segment.name) === segmentName);
   const table = await getTableMetadata(tableName);
 
   if (!version || !entry || !assignment || !table) redirect(`/platform/versions/${versionId}`);
 
-  const formPath = `/platform/versions/${version.id}/${toUrlSegment(version.version_name)}/${toUrlSegment(entry.businessType.name)}/${toSegmentUrlSegment(assignment.segment.name)}/transactionbased-restriction/${table.tableName}`;
+  const formPath = `/platform/versions/${version.id}/${toUrlSegment(version.version_name)}/${getErpBusinessTypeRouteSegment(entry.businessType.name)}/${toSegmentUrlSegment(assignment.segment.name)}/transactionbased-restriction/${table.tableName}`;
   const canonicalPath = `${formPath}/fields`;
   if (
     versionName !== toUrlSegment(version.version_name) ||
-    businessTypeName !== toUrlSegment(entry.businessType.name) ||
+    businessTypeName !== getErpBusinessTypeRouteSegment(entry.businessType.name) ||
     segmentName !== toSegmentUrlSegment(assignment.segment.name) ||
     tableName !== table.tableName
   ) {
@@ -90,7 +95,7 @@ export default async function TransactionBasedRestrictionFieldsPage({
       <Section className="space-y-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="erp-eyebrow">{version.version_name} / {entry.businessType.name} / {assignment.segment.name.toUpperCase()}</p>
+            <p className="erp-eyebrow">{version.version_name} / {getErpBusinessTypeDisplayName(entry.businessType.name)} / {assignment.segment.name.toUpperCase()}</p>
             <h1 className="text-2xl font-bold text-slate-900">{table.tableName} fields</h1>
             <p className="text-sm text-slate-600">{table.modelName} field definitions and database attributes.</p>
           </div>

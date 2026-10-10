@@ -6,6 +6,7 @@ import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { getErpBusinessTypeDisplayName } from "@/components/erp/erp-config-registry";
 import VersionBusinessTypeAudienceTags from "@/app/platform/versions/_components/version-business-type-audience-tags";
 import { listSegments } from "@/lib/services/platform/segment-service";
 import { assignVersionBusinessTypeTag, removeVersionBusinessTypeTag } from "@/lib/services/platform/version-business-type-tag-service";
@@ -61,7 +62,7 @@ export default async function VersionBusinessTypeSegmentsPage({ params }: { para
     <Page className="max-w-5xl">
       <Section className="space-y-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
-          <div><p className="erp-eyebrow">{version.version_name} / Business Type</p><h1 className="text-2xl font-bold text-slate-900">{entry.businessType.name}</h1><p className="text-sm text-slate-600">Configure the segments available for this business type inside version {version.version_name}.</p></div>
+          <div><p className="erp-eyebrow">{version.version_name} / Business Type</p><h1 className="text-2xl font-bold text-slate-900">{getErpBusinessTypeDisplayName(entry.businessType.name)}</h1><p className="text-sm text-slate-600">Configure the segments available for this business type inside version {version.version_name}.</p></div>
           <Link href={`/platform/versions/${version.id}`} className="text-sm font-semibold text-slate-600 hover:text-slate-900">Back to {version.version_name}</Link>
         </div>
 

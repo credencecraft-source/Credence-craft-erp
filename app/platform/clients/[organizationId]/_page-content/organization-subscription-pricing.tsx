@@ -5,6 +5,7 @@ import { BadgePercent } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Tabs, { type Tab } from "@/components/ui/Tabs";
+import { getErpBusinessTypeDisplayName } from "@/components/erp/erp-config-registry";
 
 type SegmentPricing = {
   assignmentId: string;
@@ -40,7 +41,7 @@ export default function OrganizationSubscriptionPricing({
     : businessTypes[0]?.id ?? "";
   const [activeBusinessTypeId, setActiveBusinessTypeId] = useState(initialTab);
   const tabs: Tab[] = businessTypes.map((businessType) => ({
-    label: businessType.name,
+    label: getErpBusinessTypeDisplayName(businessType.name),
     value: businessType.id,
     panelId: `${panelIdPrefix}-panel-${businessType.id}`,
   }));
@@ -59,7 +60,7 @@ export default function OrganizationSubscriptionPricing({
       <section
         id={`${panelIdPrefix}-panel-${activeBusinessType.id}`}
         role="tabpanel"
-        aria-label={`${activeBusinessType.name} segments`}
+        aria-label={`${getErpBusinessTypeDisplayName(activeBusinessType.name)} segments`}
         tabIndex={0}
         className="min-w-0 max-w-full overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
       >

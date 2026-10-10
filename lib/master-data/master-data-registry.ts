@@ -78,7 +78,7 @@ export const MASTER_MODULE_HIERARCHY: Record<string, { label: string; children: 
     },
   },
   distribution: {
-    label: "Distribution",
+    label: "Advance Booking",
     children: {
       dispatch: "Dispatch",
       delivery: "Delivery",

@@ -5,7 +5,24 @@ import { createAuditEvent } from "@/lib/services/organizations/audit-event-servi
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
 
 const quotationInclude = {
-  lines: { orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }] },
+  lines: {
+    orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
+    include: { sourceBooking: { select: { customer: true } } },
+  },
+};
+
+const quotationSummarySelect = {
+  id: true,
+  quotation_no: true,
+  quotation_date: true,
+  order_no: true,
+  customer: true,
+  mode: true,
+  status: true,
+  total_quantity: true,
+  subtotal: true,
+  parent_quotation_id: true,
+  created_at: true,
 };
 
 function isValidDateOnly(value: string) {
@@ -33,6 +50,7 @@ function mapQuotation(record: Prisma.DistributionQuotationGetPayload<{ include: 
     lines: record.lines.map((line) => ({
       id: line.id,
       sourceBookingId: line.source_booking_id,
+      endCustomer: line.sourceBooking.customer ?? "",
       bookingNo: line.booking_no,
       orderNo: line.order_no,
       description: line.item_description,
@@ -45,25 +63,43 @@ function mapQuotation(record: Prisma.DistributionQuotationGetPayload<{ include: 
   };
 }
 
+function mapQuotationSummary(
+  record: Prisma.DistributionQuotationGetPayload<{ select: typeof quotationSummarySelect }>,
+) {
+  return {
+    id: record.id,
+    quotationNo: record.quotation_no,
+    quotationDate: record.quotation_date.toISOString().slice(0, 10),
+    orderNo: record.order_no,
+    customer: record.customer,
+    mode: record.mode,
+    status: record.status,
+    totalQuantity: record.total_quantity,
+    subtotal: record.subtotal.toFixed(2),
+    parentQuotationId: record.parent_quotation_id,
+    createdAt: record.created_at.toISOString(),
+  };
+}
+
 export async function listDistributionQuotations(organizationId: string) {
   const quotations = await prisma.distributionQuotation.findMany({
     where: { organization_id: organizationId },
-    include: quotationInclude,
+    select: quotationSummarySelect,
     orderBy: [{ quotation_date: "desc" }, { created_at: "desc" }],
     take: 500,
   });
-  return { quotations: quotations.map(mapQuotation) };
+  return { quotations: quotations.map(mapQuotationSummary) };
 }
 
 export async function getDistributionQuotation(organizationId: string, quotationId: string) {
   const quotation = await prisma.distributionQuotation.findFirst({
     where: { organization_id: organizationId, id: quotationId },
-    include: { ...quotationInclude, childQuotations: { include: quotationInclude } },
+    include: { ...quotationInclude, childQuotations: { select: quotationSummarySelect } },
   });
   if (!quotation) throw new Error("The quotation was not found in this organization.");
   return {
     quotation: mapQuotation(quotation),
-    children: quotation.childQuotations.map(mapQuotation),
+    children: quotation.childQuotations.map(mapQuotationSummary),
   };
 }
 
@@ -73,7 +109,7 @@ export async function createDistributionQuotationFromBookings(
   bookingIds: string[],
   vendorId: string,
 ) {
-  if (!vendorId.trim()) throw new Error("Select a Vendor Master vendor for the quotation.");
+  if (!vendorId.trim()) throw new Error("Select a Dealer from Vendor Master for the quotation.");
   if (bookingIds.length === 0 || bookingIds.length > 100) {
     throw new Error("Select between one and 100 advance bookings for a quotation.");
   }
@@ -86,7 +122,7 @@ export async function createDistributionQuotationFromBookings(
       where: { organization_id: organizationId, id: vendorId, is_active: true },
       select: { id: true, vendor: true },
     });
-    if (!vendor) throw new Error("Select an active vendor from Vendor Master for the quotation.");
+    if (!vendor) throw new Error("Select an active Dealer from Vendor Master for the quotation.");
 
     const bookings = await transaction.advanceBooking.findMany({
       where: { organization_id: organizationId, id: { in: bookingIds } },
@@ -264,7 +300,7 @@ export async function createDistributionMasterQuotation(
   quotationIds: string[],
   vendorId: string,
 ) {
-  if (!vendorId.trim()) throw new Error("Select a Vendor Master vendor for the sales order.");
+  if (!vendorId.trim()) throw new Error("Select a Distributor from Vendor Master for the sales order.");
   if (quotationIds.length < 2 || quotationIds.length > 100) {
     throw new Error("Select between two and 100 regular quotations for a sales order.");
   }
@@ -276,7 +312,7 @@ export async function createDistributionMasterQuotation(
       where: { organization_id: organizationId, id: vendorId, is_active: true },
       select: { id: true, vendor: true },
     });
-    if (!vendor) throw new Error("Select an active vendor from Vendor Master.");
+    if (!vendor) throw new Error("Select an active Distributor from Vendor Master.");
     const children = await transaction.distributionQuotation.findMany({
       where: {
         organization_id: organizationId,
@@ -284,7 +320,13 @@ export async function createDistributionMasterQuotation(
         parent_quotation_id: null,
         mode: { in: ["SINGLE", "MULTIPLE"] },
       },
-      include: quotationInclude,
+      select: {
+        id: true,
+        quotation_no: true,
+        order_no: true,
+        total_quantity: true,
+        subtotal: true,
+      },
     });
     if (children.length !== quotationIds.length) {
       throw new Error("One or more selected quotations are unavailable or already grouped.");

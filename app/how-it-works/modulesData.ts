@@ -1,5 +1,6 @@
 import {
   ERP_MODULES,
+  getErpBusinessTypeDisplayName,
   getErpModuleForBusinessTypeName,
   type ErpModule,
 } from "@/components/erp/erp-config-registry";
@@ -340,7 +341,7 @@ const moduleContent: Record<string, ModuleContent> = {
     hook: "Know where every dispatch stands before the next delivery window.",
     factoryExample: "A distribution desk tracks the packed garments, route, and promised delivery date for each order.",
     result: "Reduce late dispatches by keeping route, stock, and delivery status together.",
-    toolkitLabel: "DISTRIBUTION TOOLKIT",
+    toolkitLabel: "ADVANCE BOOKING TOOLKIT",
     toolkitSummary: "One view for dispatch readiness and delivery follow-up.",
     toolkit: ["Dispatch planning", "Delivery tracking", "Sales-order visibility", "Route and warehouse coordination"],
     workflows: [
@@ -782,7 +783,7 @@ export function groupHowItWorksModulesByTag(
     );
     const entry = {
       key: erpModule.key,
-      label: businessType.name,
+      label: getErpBusinessTypeDisplayName(businessType.name),
       modules,
     };
     const labels = businessType.tags;

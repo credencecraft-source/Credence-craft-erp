@@ -84,9 +84,11 @@ export async function listOrganizationClients(limit = 100) {
   return page.clients;
 }
 
-export async function listOrganizationClientsPage(options: { cursor?: string; limit?: number } = {}) {
+export async function listOrganizationClientsPage(options: { cursor?: string; limit?: number; status?: "PENDING_APPROVAL" | "APPROVED" } = {}) {
   const take = Math.min(Math.max(options.limit ?? 100, 1), 100);
+  const where = options.status ? { approval_status: options.status } : undefined;
   const [clients, total] = await Promise.all([prisma.organization.findMany({
+    where,
     ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     orderBy: { created_at: "desc" },
     include: {
@@ -132,7 +134,7 @@ export async function listOrganizationClientsPage(options: { cursor?: string; li
       },
     },
     take: take + 1,
-  }), prisma.organization.count()]);
+  }), prisma.organization.count({ where })]);
 
   const hasNextPage = clients.length > take;
   const visibleClients = hasNextPage ? clients.slice(0, take) : clients;

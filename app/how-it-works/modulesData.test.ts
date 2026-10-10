@@ -78,4 +78,12 @@ describe("How It Works module data", () => {
     expect(groups[0].businessTypes[1].modules.map((module) => module.label)).toContain("Procurement");
     expect(groups.flatMap((group) => group.businessTypes).some((businessType) => businessType.label === "Online")).toBe(false);
   });
+
+  it("shows the renamed Advance Booking business type in tagged module guides", () => {
+    const groups = groupHowItWorksModulesByTag([
+      { name: "Distribution", tags: ["Wholesale"] },
+    ]);
+
+    expect(groups[0]?.businessTypes[0]?.label).toBe("Advance Booking");
+  });
 });

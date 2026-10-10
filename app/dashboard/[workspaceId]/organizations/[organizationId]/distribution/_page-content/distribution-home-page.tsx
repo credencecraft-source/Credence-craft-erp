@@ -3,17 +3,17 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
-export default function DistributionHomePage() {
+export default function AdvanceBookingHomePage() {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const workspaceId = params?.workspaceId ?? "";
   const organizationId = params?.organizationId ?? "";
-  const base = `/dashboard/${workspaceId}/organizations/${organizationId}/distribution`;
+  const base = `/dashboard/${workspaceId}/organizations/${organizationId}/advance-booking`;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
       <div>
-        <p className="erp-eyebrow">Distribution</p>
-        <h1 className="mt-2 text-3xl font-bold text-slate-900">Distribution Module</h1>
+        <p className="erp-eyebrow">Advance Booking</p>
+        <h1 className="mt-2 text-3xl font-bold text-slate-900">Advance Booking</h1>
         <p className="mt-2 text-sm text-slate-600">
           Advance booking, sales-order visibility, and quotation creation in one place.
         </p>

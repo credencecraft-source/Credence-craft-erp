@@ -46,7 +46,11 @@ export async function GET(request: Request) {
     if (bookingId) {
       return NextResponse.json(await listAssignableWorkOrders(organization.id, bookingId));
     }
-    return NextResponse.json(await listAdvanceBookings(organization.id));
+    const limit = Number(search.get("limit") ?? 100);
+    return NextResponse.json(await listAdvanceBookings(organization.id, {
+      cursor: search.get("cursor") || undefined,
+      limit: Number.isFinite(limit) ? limit : 100,
+    }));
   } catch (error) {
     return errorResponse(error, "Unable to load advance bookings.");
   }
@@ -66,7 +70,7 @@ export async function POST(request: Request) {
     );
     if (!Array.isArray(body.sizes)) throw new Error("Submit size-wise advance booking quantities.");
     if (body.vendorId !== undefined && body.vendorId !== null && typeof body.vendorId !== "string") {
-      throw new Error("Select a valid optional booking vendor.");
+      throw new Error("Select a valid optional End Customer.");
     }
     const sizes = body.sizes.map((value) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) {

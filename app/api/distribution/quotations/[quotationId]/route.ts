@@ -23,7 +23,7 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json(await getDistributionQuotation(organization.id, quotationId));
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2021", "P2022"].includes(error.code)) {
-      return NextResponse.json({ error: "Distribution Quotations are unavailable until their database migration is deployed." }, { status: 503 });
+      return NextResponse.json({ error: "Advance Booking quotations are unavailable until their database migration is deployed." }, { status: 503 });
     }
     if (isDatabaseUnavailableError(error)) {
       console.error("Unable to load distribution quotation because the database is unavailable.", {
@@ -31,7 +31,7 @@ export async function GET(request: Request, context: RouteContext) {
       });
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load the distribution quotation." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load the Advance Booking quotation." }, { status: 400 });
   }
 }
 
@@ -70,7 +70,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2021" || error.code === "P2022") {
-        return NextResponse.json({ error: "Distribution Quotations are unavailable until their database migration is deployed." }, { status: 503 });
+        return NextResponse.json({ error: "Advance Booking quotations are unavailable until their database migration is deployed." }, { status: 503 });
       }
       if (error.code === "P2002" || error.code === "P2034") {
         return NextResponse.json({ error: "Quotation or booking data changed while saving. Reload and try again." }, { status: 409 });
@@ -84,7 +84,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
     }
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unable to save the distribution quotation." },
+      { error: error instanceof Error ? error.message : "Unable to save the Advance Booking quotation." },
       { status: 400 },
     );
   }
@@ -111,7 +111,7 @@ export async function DELETE(request: Request, context: RouteContext) {
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (["P2021", "P2022"].includes(error.code)) {
-        return NextResponse.json({ error: "Distribution Quotations are unavailable until their database migration is deployed." }, { status: 503 });
+        return NextResponse.json({ error: "Advance Booking quotations are unavailable until their database migration is deployed." }, { status: 503 });
       }
       if (["P2003", "P2034"].includes(error.code)) {
         return NextResponse.json({ error: "Quotation dependencies changed while deleting. Reload and follow the required deletion order." }, { status: 409 });
@@ -124,7 +124,7 @@ export async function DELETE(request: Request, context: RouteContext) {
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
     }
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unable to delete the distribution quotation." },
+      { error: error instanceof Error ? error.message : "Unable to delete the Advance Booking quotation." },
       { status: 400 },
     );
   }

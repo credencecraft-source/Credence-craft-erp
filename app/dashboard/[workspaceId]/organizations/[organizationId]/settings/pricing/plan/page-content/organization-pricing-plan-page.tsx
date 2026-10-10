@@ -4,7 +4,7 @@ import React, { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, CreditCard, LoaderCircle, LockKeyhole, Plus, ShoppingCart, Users } from "lucide-react";
-import { getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
+import { getErpBusinessTypeDisplayName, getErpModuleForBusinessTypeName } from "@/components/erp/erp-config-registry";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
@@ -429,7 +429,7 @@ export default function OrganizationPricingPlanPage({
                     onClick={() => setActiveModule(businessType.name)}
                     className={`min-h-7 px-2 py-1 text-[11px] ${active ? "bg-[var(--erp-brand-soft)]" : ""}`}
                   >
-                    {businessType.name}
+                    {getErpBusinessTypeDisplayName(businessType.name)}
                   </Button>
                 );
               })}

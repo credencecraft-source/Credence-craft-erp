@@ -55,6 +55,7 @@ type BookingRecord = {
   customer: string | null;
   quotationVendor: string | null;
   masterQuotationVendor: string | null;
+  salesOrderNo: string | null;
   brand: string;
   styleName: string;
   deliveryDate: string;
@@ -121,9 +122,9 @@ const bookingReportFields: Array<{ key: BookingReportField; label: string }> = [
   { key: "fulfillmentStatus", label: "Fulfillment Status" },
   { key: "bookingId", label: "Booking ID" },
   { key: "orderNo", label: "Order No" },
-  { key: "customer", label: "Booking Vendor" },
-  { key: "quotationVendor", label: "Quotation Vendor" },
-  { key: "masterQuotationVendor", label: "Sales Order Vendor" },
+  { key: "customer", label: "End Customer" },
+  { key: "quotationVendor", label: "Dealer" },
+  { key: "masterQuotationVendor", label: "Distributor" },
   { key: "brand", label: "Brand" },
   { key: "styleName", label: "Style" },
   { key: "totalBooked", label: "Total Qty" },
@@ -133,6 +134,14 @@ const bookingReportFields: Array<{ key: BookingReportField; label: string }> = [
 
 const fulfillmentReportFields = bookingReportFields.filter(
   ({ key }) => key !== "assignmentStatus" && key !== "fulfillmentStatus",
+);
+
+const advanceBookingReportFields = bookingReportFields.filter(
+  ({ key }) =>
+    key !== "assignmentStatus" &&
+    key !== "fulfillmentStatus" &&
+    key !== "quotationVendor" &&
+    key !== "masterQuotationVendor",
 );
 
 const shipmentTrackingReportFields = [
@@ -153,6 +162,30 @@ function orderBookingReportFields(fields: BookingReportField[]) {
   const selected = new Set(fields);
   return [...bookingReportFields.map(({ key }) => key), "totalAllocated" as const]
     .filter((key) => selected.has(key));
+}
+
+function getBookingRowId(booking: BookingReportRow) {
+  return booking.bookingId;
+}
+
+function renderBookingCell(fieldKey: string, booking: BookingReportRow) {
+  if (fieldKey === "createdAt") return booking.createdAt.slice(0, 10);
+  if (fieldKey === "assignmentStatus") {
+    return (
+      <Badge className={booking.assignmentStatus === "UNASSIGNED" ? "border-red-200 bg-red-50 text-red-800" : ""}>
+        {booking.assignmentStatus.replaceAll("_", " ")}
+      </Badge>
+    );
+  }
+  if (fieldKey === "fulfillmentStatus") {
+    return (
+      <Badge className={booking.fulfillmentStatus === "UNFULFILLED" ? "border-red-200 bg-red-50 text-red-800" : ""}>
+        {booking.fulfillmentStatus.replaceAll("_", " ")}
+      </Badge>
+    );
+  }
+  const value = booking[fieldKey as keyof BookingReportRow];
+  return value === null || value === undefined ? "" : String(value);
 }
 
 const emptySizes = (): Record<string, number> => ({});
@@ -192,6 +225,8 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [bookingsError, setBookingsError] = useState("");
   const [isLoadingBookings, setIsLoadingBookings] = useState(true);
+  const [isLoadingMoreBookings, setIsLoadingMoreBookings] = useState(false);
+  const [nextBookingCursor, setNextBookingCursor] = useState<string | null>(null);
   const [assignmentBooking, setAssignmentBooking] = useState<BookingRecord | null>(null);
   const [assignableWorkOrders, setAssignableWorkOrders] = useState<AssignableWorkOrder[]>([]);
   const [selectedAssignmentWorkOrderId, setSelectedAssignmentWorkOrderId] = useState("");
@@ -205,11 +240,16 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     [...bookingReportFields.map(({ key }) => key), "totalAllocated"],
   );
 
-  const loadBookings = useCallback(async (signal?: AbortSignal) => {
-    setIsLoadingBookings(true);
+  const loadBookings = useCallback(async (
+    signal?: AbortSignal,
+    options: { silent?: boolean; cursor?: string; preservePages?: boolean } = {},
+  ) => {
+    if (options.cursor) setIsLoadingMoreBookings(true);
+    else if (!options.silent) setIsLoadingBookings(true);
     setBookingsError("");
     try {
-      const query = new URLSearchParams({ organizationId });
+      const query = new URLSearchParams({ organizationId, limit: "100" });
+      if (options.cursor) query.set("cursor", options.cursor);
       const response = await fetch(`/api/distribution/advance-bookings?${query}`, {
         cache: "no-store",
         signal,
@@ -218,21 +258,33 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       if (!response.ok || !Array.isArray(data?.bookings)) {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to load advance bookings.");
       }
-      setBookings(data.bookings);
+      setBookings((current) => {
+        if (!options.cursor && !options.silent && !options.preservePages) return data.bookings;
+        const merged = new Map(current.map((booking: BookingRecord) => [booking.id, booking]));
+        for (const booking of data.bookings as BookingRecord[]) merged.set(booking.id, booking);
+        return [...merged.values()];
+      });
+      if (!options.silent && !options.preservePages) {
+        setNextBookingCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
+      }
     } catch (loadError) {
       if (!signal?.aborted) {
         setBookingsError(loadError instanceof Error ? loadError.message : "Unable to load advance bookings.");
       }
     } finally {
-      if (!signal?.aborted) setIsLoadingBookings(false);
+      if (!signal?.aborted) {
+        if (options.cursor) setIsLoadingMoreBookings(false);
+        else if (!options.silent) setIsLoadingBookings(false);
+      }
     }
   }, [organizationId]);
 
   useEffect(() => {
     const controller = new AbortController();
-    const initialLoad = window.setTimeout(() => void loadBookings(controller.signal), 0);
+    void Promise.resolve().then(() => {
+      if (!controller.signal.aborted) void loadBookings(controller.signal);
+    });
     return () => {
-      window.clearTimeout(initialLoad);
       controller.abort();
     };
   }, [loadBookings]);
@@ -306,6 +358,32 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const selectedAssignmentWorkOrder = assignableWorkOrders.find(
     (workOrder) => workOrder.id === selectedAssignmentWorkOrderId,
   ) ?? null;
+  const handleOpenShipmentDetails = useCallback((booking: BookingReportRow) => {
+    router.push(`${pathname}/${encodeURIComponent(booking.id)}`);
+  }, [pathname, router]);
+  const renderShipmentBookingCell = useCallback((fieldKey: string, booking: BookingReportRow) => {
+    if (fieldKey === "bookingId") {
+      return (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-label={`View booking ${booking.bookingId}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            handleOpenShipmentDetails(booking);
+          }}
+        >
+          {booking.bookingId}
+        </Button>
+      );
+    }
+    if (fieldKey === "assignmentStatus") {
+      const isFullyAllocated = booking.totalAllocated >= booking.totalBooked;
+      return <Badge>{isFullyAllocated ? "Stock Available" : "Allocation Pending"}</Badge>;
+    }
+    return renderBookingCell(fieldKey, booking);
+  }, [handleOpenShipmentDetails]);
 
   const loadInitialOrders = useCallback(async (signal?: AbortSignal) => {
     setIsLoadingOrders(true);
@@ -333,11 +411,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
 
   useEffect(() => {
     const controller = new AbortController();
-    const initialLoad = window.setTimeout(() => {
-      void loadInitialOrders(controller.signal);
-    }, 0);
+    void Promise.resolve().then(() => {
+      if (!controller.signal.aborted) void loadInitialOrders(controller.signal);
+    });
     return () => {
-      window.clearTimeout(initialLoad);
       controller.abort();
     };
   }, [loadInitialOrders]);
@@ -373,11 +450,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
 
   useEffect(() => {
     const controller = new AbortController();
-    const initialLoad = window.setTimeout(() => {
-      void loadVendors(controller.signal);
-    }, 0);
+    void Promise.resolve().then(() => {
+      if (!controller.signal.aborted) void loadVendors(controller.signal);
+    });
     return () => {
-      window.clearTimeout(initialLoad);
       controller.abort();
     };
   }, [loadVendors]);
@@ -424,6 +500,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       if (!response.ok || !Array.isArray(data?.orders)) {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to load more organization orders.");
       }
+
       setOrders((current) => {
         const knownIds = new Set(current.map((order) => order.id));
         return [...current, ...data.orders.filter((order: OrderRecord) => !knownIds.has(order.id))];
@@ -434,6 +511,11 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     } finally {
       setIsLoadingMoreOrders(false);
     }
+  }
+
+  async function loadMoreBookings() {
+    if (!nextBookingCursor || isLoadingMoreBookings || isLoadingBookings) return;
+    await loadBookings(undefined, { cursor: nextBookingCursor });
   }
 
   function updateEntry(size: SizeKey, value: string) {
@@ -508,9 +590,13 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       if (!response.ok || !data?.booking) {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to save advance booking.");
       }
-      await loadBookings();
+      const createdBooking = data.booking as BookingRecord;
+      setBookings((current) => [
+        createdBooking,
+        ...current.filter((booking) => booking.id !== createdBooking.id),
+      ]);
       setEntry(emptySizes());
-      setStatus(`Advance booking ${data.booking.bookingId} submitted.`);
+      setStatus(`Advance booking ${createdBooking.bookingId} submitted.`);
       setIsCreating(false);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to save advance booking.");
@@ -567,9 +653,50 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       if (!response.ok || data?.ok !== true) {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to assign this booking.");
       }
-      await loadBookings();
+      const addedQuantity = assignmentBooking.sizes.reduce(
+        (sum, line) => sum + (assignmentQuantities[line.id] ?? 0),
+        0,
+      );
+      const updatedTotalAssigned = assignmentBooking.totalAssigned + addedQuantity;
+      const updatedBooking: BookingRecord = {
+        ...assignmentBooking,
+        totalAssigned: updatedTotalAssigned,
+        totalAllocated: updatedTotalAssigned,
+        totalUnassigned: Math.max(assignmentBooking.totalBooked - updatedTotalAssigned, 0),
+        assignmentStatus: updatedTotalAssigned <= 0
+          ? "UNASSIGNED"
+          : updatedTotalAssigned >= assignmentBooking.totalBooked
+            ? "FULLY_ASSIGNED"
+            : "PARTIALLY_ASSIGNED",
+        sizes: assignmentBooking.sizes.map((line) => {
+          const quantity = assignmentQuantities[line.id] ?? 0;
+          if (quantity <= 0) return line;
+          const assignedQuantity = line.assignedQuantity + quantity;
+          return {
+            ...line,
+            assignedQuantity,
+            unassignedQuantity: Math.max(line.bookedQuantity - assignedQuantity, 0),
+            assignmentStatus: assignedQuantity >= line.bookedQuantity ? "FULLY_ASSIGNED" : "PARTIALLY_ASSIGNED",
+            assignments: [
+              ...line.assignments,
+              {
+                id: `pending-${selectedAssignmentWorkOrder.id}-${line.id}`,
+                workOrderId: selectedAssignmentWorkOrder.id,
+                workOrderNo: selectedAssignmentWorkOrder.workOrderNo,
+                assignedQuantity: quantity,
+                fulfilledQuantity: 0,
+                remainingQuantity: quantity,
+              },
+            ],
+          };
+        }),
+      };
+      setBookings((current) => current.map((booking) =>
+        booking.id === updatedBooking.id ? updatedBooking : booking,
+      ));
       setAssignmentBooking(null);
       setStatus(`Booking ${assignmentBooking.bookingId} assigned to ${selectedAssignmentWorkOrder.workOrderNo}.`);
+      void loadBookings(undefined, { silent: true });
     } catch (saveError) {
       setAssignmentError(saveError instanceof Error ? saveError.message : "Unable to assign this booking.");
     } finally {
@@ -589,7 +716,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     setStatus("");
     if (quotationSelectionError || !selectedQuotationVendorId || isCreatingQuotation) {
       setError(quotationSelectionError || (!selectedQuotationVendorId
-        ? "Select a quotation vendor from Vendor Master."
+        ? "Select a Dealer from Vendor Master."
         : "Wait for the current quotation to finish saving."));
       return;
     }
@@ -610,6 +737,17 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       }
       setSelectedBookingIds([]);
       setIsQuotationVendorModalOpen(false);
+      const createdQuotation = data.quotation as { quotationNo?: string; customer?: string };
+      const quotationNo = createdQuotation.quotationNo ?? null;
+      setBookings((current) => current.map((booking) =>
+        selectedBookings.some((selected) => selected.id === booking.id)
+          ? {
+              ...booking,
+              quotationNo,
+              quotationVendor: createdQuotation.customer ?? booking.quotationVendor,
+            }
+          : booking,
+      ));
       setStatus(
         `${typeof data.quotation.quotationNo === "string" ? `${data.quotation.quotationNo} was` : "Quotation was"} created and saved as a draft. Unit prices default to 0.00.`,
       );
@@ -702,7 +840,8 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       setSelectedBookingIds([]);
       setShowDeleteBookingsConfirmation(false);
       setStatus(`Deleted ${data.deletedBookingNos.length} advance booking${data.deletedBookingNos.length === 1 ? "" : "s"}.`);
-      await loadBookings();
+      const deletedBookingNos = new Set<string>(data.deletedBookingNos);
+      setBookings((current) => current.filter((booking) => !deletedBookingNos.has(booking.bookingId)));
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the selected bookings.");
     } finally {
@@ -715,7 +854,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="erp-eyebrow">
-            {view === "booking" ? "Distribution / Order" : `Distribution / ASN / ${view === "fulfillment" ? "Work Order Tracking" : "Shipment Tracking"}`}
+            {view === "booking" ? "Advance Booking / Order" : `Advance Booking / ASN / ${view === "fulfillment" ? "Work Order Tracking" : "Shipment Tracking"}`}
           </p>
           <h1 className="mt-1 text-3xl font-bold text-slate-900">
             {view === "booking" ? "Advance Booking" : view === "fulfillment" ? "Work Order Tracking" : "Shipment Tracking"}
@@ -776,7 +915,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             <section className="space-y-3">
               <div className="border-b border-slate-200 pb-2">
                 <h2 className="text-base font-semibold text-slate-900">Advance Booking Header</h2>
-                <p className="mt-1 text-sm text-slate-600">Choose an order, optionally assign a booking vendor, then enter quantities by finished-goods size.</p>
+                <p className="mt-1 text-sm text-slate-600">Choose an order, optionally assign an End Customer, then enter quantities by finished-goods size.</p>
               </div>
               <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
                 <Input label="Booking ID" value="Generated when saved" readOnly />
@@ -797,14 +936,14 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   required
                 />
                 <Select
-                  label="Booking Vendor (Optional)"
+                  label="End Customer (Optional)"
                   value={selectedVendorId}
                   onChange={(event) => {
                     setSelectedVendorId(event.target.value);
                     setError("");
                   }}
                   options={[
-                    { label: isLoadingVendors ? "Loading Vendor Master..." : "No booking vendor", value: "" },
+                    { label: isLoadingVendors ? "Loading Vendor Master..." : "No End Customer", value: "" },
                     ...vendors.map((vendor) => ({ label: vendor.label, value: vendor.id })),
                   ]}
                   disabled={isLoadingVendors}
@@ -823,7 +962,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               ) : null}
               {!isLoadingVendors && !vendorsError && vendors.length === 0 ? (
                 <div className="flex flex-wrap items-center gap-3">
-                  <p role="status" className="text-sm text-slate-600">No active booking vendor is available. Booking vendor is optional.</p>
+                  <p role="status" className="text-sm text-slate-600">No active End Customer is available. End Customer is optional.</p>
                 </div>
               ) : null}
               {isLoadingOrders ? (
@@ -927,10 +1066,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3">
               <p role="status" className="text-sm text-slate-600">
                 {isLoadingVendors
-                  ? "Loading optional booking vendors..."
+                  ? "Loading optional End Customers..."
                   : !selectedOrder
                     ? "Select an order to enable saving."
-                    : "Ready to save; booking vendor is optional."}
+                    : "Ready to save; End Customer is optional."}
               </p>
               <div className="flex flex-wrap justify-end gap-3">
                 <Button
@@ -961,11 +1100,12 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
           <ReportGrid
             title={view === "fulfillment" ? "Work Order Tracking Report" : "Advance Bookings"}
             records={workOrderTrackingRows}
-            fields={view === "fulfillment" ? fulfillmentReportFields : bookingReportFields}
+            isLoading={isLoadingBookings}
+            fields={view === "fulfillment" ? fulfillmentReportFields : advanceBookingReportFields}
             visibleFields={visibleReportFields}
             onVisibleFieldsChange={(fields) => setVisibleReportFields(orderBookingReportFields(fields as BookingReportField[]))}
             storageKey={`distribution-booking-report-columns:${organizationId}`}
-            rowIdSelector={(booking) => booking.bookingId}
+            rowIdSelector={getBookingRowId}
             selectedIds={selectedBookingIds}
             selectable={view === "booking"}
             onToggleSelectAll={(checked) => setSelectedBookingIds(checked ? workOrderTrackingRows.map((booking) => booking.bookingId) : [])}
@@ -975,14 +1115,15 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                 : current.filter((id) => id !== bookingId),
             )}
             onRowClick={() => undefined}
-            onRowAction={(bookingId) => {
+            onRowAction={view === "fulfillment" ? (bookingId) => {
               const booking = workOrderTrackingRows.find((record) => record.bookingId === bookingId);
               if (booking) void openAssignment(booking);
-            }}
+            } : undefined}
             rowActionPosition="start"
             rowActionLabel="Assign Work Order"
             rowActionLabelSelector={(booking) => booking.totalUnassigned > 0 ? "Assign Work Order" : "Fully Assigned"}
             rowActionDisabledSelector={(booking) => booking.totalUnassigned <= 0 || isLoadingBookings}
+            rowActionHiddenSelector={(booking) => !booking.salesOrderNo}
             onNewOrder={view === "booking" ? startCreating : undefined}
             newActionLabel="Create Advance Booking"
             toolbarActions={(
@@ -1013,9 +1154,20 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                     {isCreatingQuotation ? "Creating Quotation..." : `Create & Save Quotation${selectedBookingIds.length > 0 ? ` (${selectedBookingIds.length})` : ""}`}
                   </Button>
                 ) : null}
-                <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings()} disabled={isLoadingBookings}>
+                <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings(undefined, { preservePages: true })} disabled={isLoadingBookings}>
                   Refresh bookings
                 </Button>
+                {nextBookingCursor ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void loadMoreBookings()}
+                    disabled={isLoadingBookings || isLoadingMoreBookings}
+                  >
+                    {isLoadingMoreBookings ? "Loading..." : "Load more"}
+                  </Button>
+                ) : null}
               </>
             )}
             emptyMessage={isLoadingBookings
@@ -1025,25 +1177,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   ? "No advance bookings have a quotation yet."
                   : "All quoted bookings are fully assigned. Open Shipment Tracking."
                 : "No unquoted advance bookings are available."}
-            renderCell={(fieldKey, booking) => {
-              if (fieldKey === "createdAt") return booking.createdAt.slice(0, 10);
-              if (fieldKey === "assignmentStatus") {
-                return (
-                  <Badge className={booking.assignmentStatus === "UNASSIGNED" ? "border-red-200 bg-red-50 text-red-800" : ""}>
-                    {booking.assignmentStatus.replaceAll("_", " ")}
-                  </Badge>
-                );
-              }
-              if (fieldKey === "fulfillmentStatus") {
-                return (
-                  <Badge className={booking.fulfillmentStatus === "UNFULFILLED" ? "border-red-200 bg-red-50 text-red-800" : ""}>
-                    {booking.fulfillmentStatus.replaceAll("_", " ")}
-                  </Badge>
-                );
-              }
-              const value = booking[fieldKey as keyof BookingReportRow];
-              return value === null || value === undefined ? "" : String(value);
-            }}
+            renderCell={renderBookingCell}
           />
         </Card> : null}
         {view === "shipment" ? (
@@ -1051,11 +1185,12 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             <ReportGrid
               title="Shipment Tracking"
               records={shipmentTrackingRows}
+              isLoading={isLoadingBookings}
               fields={shipmentTrackingReportFields}
               visibleFields={visibleReportFields}
               onVisibleFieldsChange={(fields) => setVisibleReportFields(orderBookingReportFields(fields as BookingReportField[]))}
               storageKey={`distribution-shipment-tracking-report-columns:v2:${organizationId}`}
-              rowIdSelector={(booking) => booking.bookingId}
+              rowIdSelector={getBookingRowId}
               selectedIds={selectedBookingIds}
               selectable
               onToggleSelectAll={(checked) => setSelectedBookingIds(checked ? shipmentTrackingRows.map((booking) => booking.bookingId) : [])}
@@ -1064,7 +1199,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   ? current.includes(bookingId) ? current : [...current, bookingId]
                   : current.filter((id) => id !== bookingId),
               )}
-              onRecordClick={(booking) => router.push(`${pathname}/${encodeURIComponent(booking.id)}`)}
+              onRecordClick={handleOpenShipmentDetails}
               onRowClick={() => undefined}
               toolbarActions={(
                 <>
@@ -1089,46 +1224,26 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   >
                     Request FG Quantity{selectedShipmentBookings.length > 0 ? ` (${selectedShipmentBookings.length})` : ""}
                   </Button>
-                  <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings()} disabled={isLoadingBookings}>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings(undefined, { preservePages: true })} disabled={isLoadingBookings}>
                     Refresh bookings
                   </Button>
+                  {nextBookingCursor ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void loadMoreBookings()}
+                      disabled={isLoadingBookings || isLoadingMoreBookings}
+                    >
+                      {isLoadingMoreBookings ? "Loading..." : "Load more"}
+                    </Button>
+                  ) : null}
                 </>
               )}
               emptyMessage={isLoadingBookings
                 ? "Loading shipment tracking..."
                 : "No quoted bookings are fully assigned to work orders yet."}
-              renderCell={(fieldKey, booking) => {
-                if (fieldKey === "bookingId") {
-                  return (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`View booking ${booking.bookingId}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        router.push(`${pathname}/${encodeURIComponent(booking.id)}`);
-                      }}
-                    >
-                      {booking.bookingId}
-                    </Button>
-                  );
-                }
-                if (fieldKey === "createdAt") return booking.createdAt.slice(0, 10);
-                if (fieldKey === "assignmentStatus") {
-                  const isFullyAllocated = booking.totalAllocated >= booking.totalBooked;
-                  return <Badge>{isFullyAllocated ? "Stock Available" : "Allocation Pending"}</Badge>;
-                }
-                if (fieldKey === "fulfillmentStatus") {
-                  return (
-                    <Badge className={booking.fulfillmentStatus === "UNFULFILLED" ? "border-red-200 bg-red-50 text-red-800" : ""}>
-                      {booking.fulfillmentStatus.replaceAll("_", " ")}
-                    </Badge>
-                  );
-                }
-                const value = booking[fieldKey as keyof BookingReportRow];
-                return value === null || value === undefined ? "" : String(value);
-              }}
+              renderCell={renderShipmentBookingCell}
             />
           </Card>
         ) : null}
@@ -1223,10 +1338,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         >
           <header className="space-y-1">
             <h2 id="quotation-vendor-title" className="text-lg font-semibold text-slate-900">Create Quotation</h2>
-            <p className="text-sm text-slate-600">Select the quotation vendor independently of the optional booking vendor.</p>
+            <p className="text-sm text-slate-600">Select the Dealer independently of the optional End Customer.</p>
           </header>
           <Select
-            label="Quotation Vendor"
+            label="Dealer"
             required
             value={selectedQuotationVendorId}
             onChange={(event) => {
@@ -1234,7 +1349,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               setError("");
             }}
             options={[
-              { label: isLoadingVendors ? "Loading vendors..." : "Select a quotation vendor", value: "" },
+              { label: isLoadingVendors ? "Loading vendors..." : "Select a Dealer", value: "" },
               ...vendors.map((vendor) => ({ label: vendor.label, value: vendor.id })),
             ]}
             disabled={isLoadingVendors || isCreatingQuotation || vendors.length === 0}

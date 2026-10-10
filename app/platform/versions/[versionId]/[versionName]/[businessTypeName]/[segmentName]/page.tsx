@@ -5,6 +5,11 @@ import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { getVersionDetails } from "@/lib/services/platform/version-service";
+import {
+  getErpBusinessTypeDisplayName,
+  getErpBusinessTypeRouteSegment,
+  isErpBusinessTypeRouteSegment,
+} from "@/components/erp/erp-config-registry";
 
 function toUrlSegment(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -21,27 +26,27 @@ export default async function VersionBusinessTypeSegmentPage({
 }) {
   const { versionId, versionName, businessTypeName, segmentName } = await params;
   const version = await getVersionDetails(versionId);
-  const entry = version?.businessTypes.find((item) => toUrlSegment(item.businessType.name) === businessTypeName);
+  const entry = version?.businessTypes.find((item) => isErpBusinessTypeRouteSegment(item.businessType.name, businessTypeName));
   const assignment = entry?.segments.find((item) => toSegmentUrlSegment(item.segment.name) === segmentName);
 
   if (!version || !entry || !assignment) redirect(`/platform/versions/${versionId}`);
-  if (versionName !== toUrlSegment(version.version_name) || businessTypeName !== toUrlSegment(entry.businessType.name) || segmentName !== toSegmentUrlSegment(assignment.segment.name)) {
+  if (versionName !== toUrlSegment(version.version_name) || businessTypeName !== getErpBusinessTypeRouteSegment(entry.businessType.name) || segmentName !== toSegmentUrlSegment(assignment.segment.name)) {
     redirect(`/platform/versions/${version.id}`);
   }
 
-  const canonicalPath = `/platform/versions/${version.id}/${toUrlSegment(version.version_name)}/${toUrlSegment(entry.businessType.name)}/${toSegmentUrlSegment(assignment.segment.name)}`;
+  const canonicalPath = `/platform/versions/${version.id}/${toUrlSegment(version.version_name)}/${getErpBusinessTypeRouteSegment(entry.businessType.name)}/${toSegmentUrlSegment(assignment.segment.name)}`;
 
   return (
     <Page className="max-w-6xl">
       <Section className="space-y-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="erp-eyebrow">{version.version_name} / {entry.businessType.name}</p>
+            <p className="erp-eyebrow">{version.version_name} / {getErpBusinessTypeDisplayName(entry.businessType.name)}</p>
             <h1 className="text-2xl font-bold text-slate-900">{assignment.segment.name.toUpperCase()} restrictions</h1>
             <p className="text-sm text-slate-600">Choose the restriction type to configure for this business type segment.</p>
           </div>
           <Link href={canonicalPath.split("/").slice(0, -1).join("/")} className="text-sm font-semibold text-slate-600 hover:text-slate-900">
-            Back to {entry.businessType.name}
+            Back to {getErpBusinessTypeDisplayName(entry.businessType.name)}
           </Link>
         </div>
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { hasOrganizationsForUser } from "@/lib/services/organizations/organization-service";
@@ -15,7 +15,7 @@ export default async function WorkspaceLayout({
   const user = await requireSessionUser();
 
   if (!user.workspace_id || user.workspace_id !== workspaceId) {
-    notFound();
+    redirect(user.workspace_id ? `/dashboard/${user.workspace_id}/home` : "/");
   }
 
   if (!await hasOrganizationsForUser(user.id)) {

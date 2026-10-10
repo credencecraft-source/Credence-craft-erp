@@ -53,14 +53,15 @@ interface ReportGridProps<T> {
   rowActionLabel?: string;
   rowActionLabelSelector?: (record: T) => string;
   rowActionDisabledSelector?: (record: T) => boolean;
+  rowActionHiddenSelector?: (record: T) => boolean;
   secondaryRowActionLabel?: string;
   secondaryRowActionLabelSelector?: (record: T) => string;
   secondaryRowActionDisabledSelector?: (record: T) => boolean;
   wrapCells?: boolean;
   toolbarActions?: ReactNode;
   onSearchQueryChange?: (query: string) => void;
-  renderCell: (fieldKey: string, record: T) => React.ReactNode;
   getSearchValue?: (fieldKey: string, record: T) => string;
+  renderCell: (fieldKey: string, record: T) => React.ReactNode;
   isLoading?: boolean;
   emptyMessage?: string;
 }
@@ -95,15 +96,16 @@ function ReportGridImplementation<T>({
   rowActionLabel = "Action",
   rowActionLabelSelector,
   rowActionDisabledSelector,
+  rowActionHiddenSelector,
   secondaryRowActionLabel = "Action",
   secondaryRowActionLabelSelector,
   secondaryRowActionDisabledSelector,
   wrapCells = false,
   toolbarActions,
   onSearchQueryChange,
+  getSearchValue,
   renderCell,
   isLoading = false,
-  getSearchValue,
   emptyMessage = "No records found.",
 }: ReportGridProps<T>) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -434,7 +436,7 @@ function ReportGridImplementation<T>({
                   {(onRowAction || onSecondaryRowAction) && rowActionPosition === "start" && (
                     <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-2">
-                        {onRowAction ? (
+                        {onRowAction && !rowActionHiddenSelector?.(record) ? (
                           <Button
                             variant="secondary"
                             size="sm"
@@ -474,7 +476,7 @@ function ReportGridImplementation<T>({
                   {(onRowAction || onSecondaryRowAction) && rowActionPosition === "end" && (
                     <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-2">
-                        {onRowAction ? (
+                        {onRowAction && !rowActionHiddenSelector?.(record) ? (
                           <Button
                             variant="secondary"
                             size="sm"

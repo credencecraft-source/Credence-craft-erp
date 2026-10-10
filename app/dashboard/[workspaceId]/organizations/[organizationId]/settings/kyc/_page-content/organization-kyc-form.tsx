@@ -75,7 +75,7 @@ const BUSINESS_ROLE_PRESENTATION = {
   },
   DISTRIBUTION_WHOLESALE_RETAIL: {
     label: "I don't own a factory or brand",
-    description: "I run a distribution, wholesale, or retail business.",
+    description: "I run an advance booking, wholesale, or retail business.",
   },
 } satisfies Record<
   (typeof ORGANIZATION_KYC_BUSINESS_ROLES)[number],

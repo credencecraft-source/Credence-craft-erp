@@ -11,6 +11,11 @@ import VersionBusinessTypeAudienceTags from "@/app/platform/versions/_components
 import { listPlatformTags } from "@/lib/services/platform/platform-tag-service";
 import { assignVersionBusinessTypeTag, removeVersionBusinessTypeTag } from "@/lib/services/platform/version-business-type-tag-service";
 import { getVersionDetails, setVersionBusinessTypeSegmentActive, setVersionBusinessTypeSegmentPrice } from "@/lib/services/platform/version-service";
+import {
+  getErpBusinessTypeDisplayName,
+  getErpBusinessTypeRouteSegment,
+  isErpBusinessTypeRouteSegment,
+} from "@/components/erp/erp-config-registry";
 
 function toUrlSegment(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -27,12 +32,12 @@ export default async function ModuleBasedBusinessTypePage({
 }) {
   const { versionId, businessTypeName } = await params;
   const [version, platformTags] = await Promise.all([getVersionDetails(versionId), listPlatformTags()]);
-  const entry = version?.businessTypes.find((item) => item.businessType && toUrlSegment(item.businessType.name) === businessTypeName);
+  const entry = version?.businessTypes.find((item) => item.businessType && isErpBusinessTypeRouteSegment(item.businessType.name, businessTypeName));
 
   if (!version || !entry) redirect(`/platform/versions/${versionId}/module-based`);
 
-  const modulePath = `/platform/versions/${version.id}/module-based/${toUrlSegment(entry.businessType.name)}`;
-  const existingRestrictionPath = `/platform/versions/${version.id}/${toUrlSegment(version.version_name)}/${toUrlSegment(entry.businessType.name)}`;
+  const modulePath = `/platform/versions/${version.id}/module-based/${getErpBusinessTypeRouteSegment(entry.businessType.name)}`;
+  const existingRestrictionPath = `/platform/versions/${version.id}/${toUrlSegment(version.version_name)}/${getErpBusinessTypeRouteSegment(entry.businessType.name)}`;
   const versionBusinessTypeId = entry.id;
   const enabledSegmentCount = entry.segments.filter((assignment) => assignment.is_active).length;
 
@@ -74,7 +79,7 @@ export default async function ModuleBasedBusinessTypePage({
     <Page className="max-w-5xl">
       <Section className="space-y-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
-          <div><p className="erp-eyebrow">{version.version_name} / Module-based</p><h1 className="text-2xl font-bold text-slate-900">{entry.businessType.name}</h1><p className="text-sm text-slate-600">Configure the segments and pricing access for this business type inside version {version.version_name}.</p></div>
+          <div><p className="erp-eyebrow">{version.version_name} / Module-based</p><h1 className="text-2xl font-bold text-slate-900">{getErpBusinessTypeDisplayName(entry.businessType.name)}</h1><p className="text-sm text-slate-600">Configure the segments and pricing access for this business type inside version {version.version_name}.</p></div>
           <Link href={`/platform/versions/${version.id}/module-based`} className="text-sm font-semibold text-slate-600 hover:text-slate-900">Back to module-based</Link>
         </div>
 

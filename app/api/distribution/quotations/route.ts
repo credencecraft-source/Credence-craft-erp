@@ -12,7 +12,7 @@ import { requireOrganizationContext } from "@/lib/services/organizations/organiz
 function quotationErrorResponse(error: unknown, fallback: string) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2021" || error.code === "P2022") {
-      return NextResponse.json({ error: "Distribution Quotations are unavailable until their database migration is deployed." }, { status: 503 });
+      return NextResponse.json({ error: "Advance Booking quotations are unavailable until their database migration is deployed." }, { status: 503 });
     }
     if (error.code === "P2002" || error.code === "P2034") {
       return NextResponse.json({ error: "Quotation or booking data changed while saving. Reload and try again." }, { status: 409 });
@@ -36,7 +36,7 @@ export async function GET(request: Request) {
     );
     return NextResponse.json(await listDistributionQuotations(organization.id));
   } catch (error) {
-    return quotationErrorResponse(error, "Unable to load distribution quotations.");
+    return quotationErrorResponse(error, "Unable to load Advance Booking quotations.");
   }
 }
 
@@ -52,11 +52,11 @@ export async function POST(request: Request) {
     );
     if (!Array.isArray(body.bookingIds) || body.bookingIds.some((id) => typeof id !== "string") ||
         typeof body.vendorId !== "string" || !body.vendorId.trim()) {
-      throw new Error("Select advance bookings and a Vendor Master quotation vendor.");
+      throw new Error("Select advance bookings and a Dealer from Vendor Master.");
     }
     const quotation = await createDistributionQuotationFromBookings(organization.id, user.id, body.bookingIds, body.vendorId.trim());
     return NextResponse.json({ quotation }, { status: 201 });
   } catch (error) {
-    return quotationErrorResponse(error, "Unable to create the distribution quotation.");
+    return quotationErrorResponse(error, "Unable to create the Advance Booking quotation.");
   }
 }

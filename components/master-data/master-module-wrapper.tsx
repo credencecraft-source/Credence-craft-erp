@@ -33,6 +33,7 @@ import {
 
 import {
   ERP_MODULES,
+  getErpBusinessTypeDisplayName,
   getErpModuleForBusinessTypeName,
   type ErpModule,
   type SubModuleOption,
@@ -241,7 +242,7 @@ export function MasterModuleWrapper({
 
         return [{
           key: businessType.id,
-          label: businessType.name,
+          label: getErpBusinessTypeDisplayName(businessType.name),
           moduleKey: linkedModule.key,
           pathSegment: linkedModule.pathSegment,
           children: linkedModule.children,

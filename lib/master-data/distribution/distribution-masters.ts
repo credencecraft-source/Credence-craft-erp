@@ -1,7 +1,7 @@
 import { createMaster, lookup, text } from "@/lib/master-data/master-data-models";
 
 export const DISTRIBUTION_MASTER_DEFINITIONS = [
-  createMaster("warehouse", "Warehouse", "Storage and dispatch location used for distribution operations.", [
+  createMaster("warehouse", "Warehouse", "Storage and dispatch location used by Advance Booking workflows.", [
     text("Warehouse_Name", "Warehouse Name", { required: true, unique: true }),
     lookup("Warehouse_Type", "Warehouse Type", "warehouse-type", { required: true }),
     lookup("Location", "Location", "location"),
@@ -16,7 +16,7 @@ export const DISTRIBUTION_MASTER_DEFINITIONS = [
     text("Contact_Person", "Contact Person"),
     text("Phone_Number", "Phone Number"),
   ], { labelField: "Partner_Name", moduleGroup: "distribution", moduleSubGroup: "delivery", moduleOrder: 1 }),
-  createMaster("sales-channel", "Sales Channel", "Customer-facing or order channels used for distribution handoff.", [
+  createMaster("sales-channel", "Sales Channel", "Customer-facing or order channels used for Advance Booking fulfillment.", [
     text("Channel_Name", "Channel Name", { required: true, unique: true }),
     text("Channel_Code", "Channel Code"),
   ], { labelField: "Channel_Name", moduleGroup: "distribution", moduleSubGroup: "sales-order", moduleOrder: 1 }),

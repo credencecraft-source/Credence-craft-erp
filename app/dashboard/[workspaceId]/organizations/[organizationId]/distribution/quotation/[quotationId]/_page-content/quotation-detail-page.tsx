@@ -78,8 +78,7 @@ export default function QuotationDetailPage() {
   }, [organizationId, quotationId]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadQuotation(), 0);
-    return () => window.clearTimeout(timer);
+    void Promise.resolve().then(loadQuotation);
   }, [loadQuotation]);
 
   const displayedTotal = useMemo(() => {
@@ -136,7 +135,7 @@ export default function QuotationDetailPage() {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to delete quotation.");
       }
       const listPath = quotation.mode === "MASTER" ? "sales-order" : "quotation";
-      router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/${listPath}`);
+      router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/${listPath}`);
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Unable to delete quotation.");
       setShowDeleteConfirmation(false);
@@ -151,7 +150,7 @@ export default function QuotationDetailPage() {
       : quotation?.mode === "MASTER"
         ? "sales-order"
         : "quotation";
-    router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/${destination}`);
+    router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/${destination}`);
   }
 
   return (
@@ -159,12 +158,12 @@ export default function QuotationDetailPage() {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="erp-eyebrow">
-            Distribution / {quotation?.mode === "MASTER" ? "Sales Order" : "Quotation"}
+            Advance Booking / {quotation?.mode === "MASTER" ? "Sales Order" : "Quotation"}
           </p>
           <h1 className="mt-2 text-3xl font-bold text-slate-900">
             {quotation?.quotationNo ?? "Quotation Draft"}
           </h1>
-          {quotation ? <p className="mt-2 text-sm text-slate-600">{quotation.customer} · {quotation.orderNo}</p> : null}
+          {quotation ? <p className="mt-2 text-sm text-slate-600">{quotation.mode === "MASTER" ? "Distributor" : "Dealer"}: {quotation.customer} · {quotation.orderNo}</p> : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="secondary" onClick={returnToQuotationContext}>
@@ -203,13 +202,13 @@ export default function QuotationDetailPage() {
                 <h2 className="text-base font-semibold text-slate-900">
                   {quotation.mode === "MASTER" ? "Sales Order Header" : "Quotation Header"}
                 </h2>
-                <p className="mt-1 text-sm text-slate-600">Database-backed draft · Vendor and source orders are inherited from the selected bookings.</p>
+                <p className="mt-1 text-sm text-slate-600">Database-backed draft · {quotation.mode === "MASTER" ? "Distributor" : "Dealer"} and source orders are inherited from the selected bookings.</p>
               </div>
               <Badge>{quotation.status}</Badge>
             </div>
             <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-4">
               <Input label={quotation.mode === "MASTER" ? "Sales Order No" : "Quotation No"} value={quotation.quotationNo} readOnly />
-              <Input label="Vendor" value={quotation.customer} readOnly />
+              <Input label={quotation.mode === "MASTER" ? "Distributor" : "Dealer"} value={quotation.customer} readOnly />
               <Input label="Source Order(s)" value={quotation.orderNo} readOnly />
               <Input label={quotation.mode === "MASTER" ? "Sales Order Date" : "Quotation Date"} type="date" value={quotationDate} onChange={(event) => setQuotationDate(event.target.value)} disabled={quotation.mode === "MASTER" || quotation.status !== "DRAFT"} />
               <Input label="Valid Until" type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} disabled={quotation.mode === "MASTER" || quotation.status !== "DRAFT"} />
@@ -239,7 +238,7 @@ export default function QuotationDetailPage() {
                 <thead className="bg-[var(--erp-surface-soft)] text-left text-xs font-semibold uppercase text-slate-600">
                   <tr>
                     <th scope="col" className="px-4 py-3">Quotation No</th>
-                    <th scope="col" className="px-4 py-3">Vendor</th>
+                    <th scope="col" className="px-4 py-3">Dealer</th>
                     <th scope="col" className="px-4 py-3">Date</th>
                     <th scope="col" className="px-4 py-3 text-right">Total Qty (PCS)</th>
                     <th scope="col" className="px-4 py-3 text-right">Value</th>
@@ -247,7 +246,7 @@ export default function QuotationDetailPage() {
                 </thead>
                 <tbody className="divide-y divide-[var(--erp-border)] text-sm text-slate-700">
                   {children.map((child) => {
-                    const childQuotationPath = `/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/quotation/${encodeURIComponent(child.id)}`;
+                    const childQuotationPath = `/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/quotation/${encodeURIComponent(child.id)}`;
                     return (
                     <tr
                       key={child.id}
@@ -287,10 +286,10 @@ export default function QuotationDetailPage() {
                 <h2 className="text-base font-semibold text-slate-900">Quotation Subform</h2>
                 <p className="mt-1 text-sm text-slate-600">Each selected Advance Booking is one quotation line. The booking quantity is the sum of its booked sizes.</p>
               </div>
-              <Table tableClassName="min-w-[52rem]">
+              <Table tableClassName="min-w-[60rem]">
                 <thead className="bg-[var(--erp-surface-soft)] text-left text-xs font-semibold uppercase text-slate-600">
                   <tr>
-                    <th className="px-3 py-2">Advance Booking</th><th className="px-3 py-2">Order</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Booking Qty</th><th className="px-3 py-2">Unit Price</th><th className="px-3 py-2">Line Total</th>
+                    <th className="px-3 py-2">Advance Booking</th><th className="px-3 py-2">End Customer</th><th className="px-3 py-2">Order</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Booking Qty</th><th className="px-3 py-2">Unit Price</th><th className="px-3 py-2">Line Total</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--erp-border)] text-sm text-slate-700">
@@ -299,6 +298,7 @@ export default function QuotationDetailPage() {
                     return (
                       <tr key={line.id}>
                         <td className="px-3 py-2">{line.bookingNo}</td>
+                        <td className="px-3 py-2">{line.endCustomer || "—"}</td>
                         <td className="px-3 py-2">{line.orderNo}</td>
                         <td className="px-3 py-2">{line.description || "—"}</td>
                         <td className="px-3 py-2">{line.quantity}</td>

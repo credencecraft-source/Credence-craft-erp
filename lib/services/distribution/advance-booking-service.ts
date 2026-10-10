@@ -41,6 +41,7 @@ const bookingInclude = {
           vendor: { select: { vendor: true } },
           parentQuotation: {
             select: {
+              quotation_no: true,
               customer: true,
               vendor: { select: { vendor: true } },
             },
@@ -107,6 +108,7 @@ function mapBooking(record: Prisma.AdvanceBookingGetPayload<{ include: typeof bo
     vendorId: record.vendor_id,
     customer: record.customer ?? "",
     quotationNo: record.quotationLines[0]?.quotation.quotation_no ?? null,
+    salesOrderNo: record.quotationLines[0]?.quotation.parentQuotation?.quotation_no ?? null,
     quotationVendor: record.quotationLines[0]?.quotation.vendor?.vendor ?? record.quotationLines[0]?.quotation.customer ?? null,
     masterQuotationVendor: record.quotationLines[0]?.quotation.parentQuotation?.vendor?.vendor ??
       record.quotationLines[0]?.quotation.parentQuotation?.customer ?? null,
@@ -125,14 +127,63 @@ function mapBooking(record: Prisma.AdvanceBookingGetPayload<{ include: typeof bo
   };
 }
 
-export async function listAdvanceBookings(organizationId: string) {
+function encodeBookingCursor(value: { createdAt: string; id: string }) {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function decodeBookingCursor(value: string | undefined) {
+  if (!value) return null;
+  if (value.length > 512) {
+    throw new Error("The booking page cursor is invalid. Refresh the booking register.");
+  }
+  let decoded: { createdAt?: unknown; id?: unknown };
+  try {
+    decoded = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as { createdAt?: unknown; id?: unknown };
+  } catch {
+    throw new Error("The booking page cursor is invalid. Refresh the booking register.");
+  }
+  if (typeof decoded.createdAt !== "string" || typeof decoded.id !== "string" || !decoded.id.trim()) {
+    throw new Error("The booking page cursor is invalid. Refresh the booking register.");
+  }
+  const createdAt = new Date(decoded.createdAt);
+  if (!Number.isFinite(createdAt.getTime())) {
+    throw new Error("The booking page cursor is invalid. Refresh the booking register.");
+  }
+  return { createdAt, id: decoded.id };
+}
+
+export async function listAdvanceBookings(
+  organizationId: string,
+  options: { cursor?: string; limit?: number } = {},
+) {
+  const requestedLimit = options.limit ?? 100;
+  const take = Math.min(Math.max(Number.isFinite(requestedLimit) ? Math.trunc(requestedLimit) : 100, 1), 200);
+  const cursor = decodeBookingCursor(options.cursor);
   const rows = await prisma.advanceBooking.findMany({
-    where: { organization_id: organizationId },
+    where: {
+      organization_id: organizationId,
+      ...(cursor
+        ? {
+            OR: [
+              { created_at: { lt: cursor.createdAt } },
+              { created_at: cursor.createdAt, id: { lt: cursor.id } },
+            ],
+          }
+        : {}),
+    },
     include: bookingInclude,
-    orderBy: [{ created_at: "desc" }, { booking_no: "desc" }],
-    take: 500,
+    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    take: take + 1,
   });
-  return { bookings: rows.map(mapBooking) };
+  const hasNextPage = rows.length > take;
+  const pageRows = hasNextPage ? rows.slice(0, take) : rows;
+  const lastRow = pageRows.at(-1);
+  return {
+    bookings: pageRows.map(mapBooking),
+    nextCursor: hasNextPage && lastRow
+      ? encodeBookingCursor({ createdAt: lastRow.created_at.toISOString(), id: lastRow.id })
+      : null,
+  };
 }
 
 export async function getAdvanceBookingById(organizationId: string, bookingId: string) {
@@ -172,7 +223,7 @@ async function createBookingInTransaction(
       select: { id: true, vendor: true },
     })
     : null;
-  if (input.vendorId && !vendor) throw new Error("Select an active customer from Vendor Master.");
+  if (input.vendorId && !vendor) throw new Error("Select an active End Customer from Vendor Master.");
 
   const capacityBySize = new Map<string, number>();
   for (const row of order.finishedGoods) {
@@ -364,9 +415,22 @@ async function assignBookingInTransaction(
 ) {
   const booking = await transaction.advanceBooking.findFirst({
     where: { id: bookingId, organization_id: organizationId },
-    include: { sizeLines: { include: { assignments: { select: { assigned_quantity: true } } } } },
+    include: {
+      quotationLines: {
+        select: {
+          quotation: {
+            select: { parentQuotation: { select: { quotation_no: true } } },
+          },
+        },
+        take: 1,
+      },
+      sizeLines: { include: { assignments: { select: { assigned_quantity: true } } } },
+    },
   });
   if (!booking) throw new Error("Advance booking was not found in this organization.");
+  if (!booking.quotationLines[0]?.quotation.parentQuotation) {
+    throw new Error("Create a Sales Order before assigning this advance booking to a work order.");
+  }
   const workOrder = await transaction.factoryWorkOrder.findFirst({
     where: { id: input.workOrderId, organization_id: organizationId, order_id: booking.order_id },
     include: { sizeLines: { include: { bookingAssignments: { select: { assigned_quantity: true } } } } },
@@ -378,11 +442,17 @@ async function assignBookingInTransaction(
 
   const bookingLines = new Map(booking.sizeLines.map((line) => [line.id, line]));
   const seen = new Set<string>();
-  const normalized: Array<{
+  const workOrderLineBySize = new Map(
+    workOrder.sizeLines.map((line) => [
+      normalizedSize(line.size || line.buyer_size),
+      line,
+    ]),
+  );
+  const assignmentPairs: Array<{ bookingSizeLineId: string; workOrderSizeLineId: string }> = [];
+  const validatedLines: Array<{
     bookingLine: (typeof booking.sizeLines)[number];
     workOrderLine: (typeof workOrder.sizeLines)[number] | null;
     quantity: number;
-    existingForPair?: { assigned_quantity: number } | null;
   }> = [];
   for (const line of input.lines) {
     if (!Number.isSafeInteger(line.assignedQuantity) || line.assignedQuantity < 0 || line.assignedQuantity > 2147483647) {
@@ -392,22 +462,12 @@ async function assignBookingInTransaction(
     seen.add(line.bookingSizeLineId);
     const bookingLine = bookingLines.get(line.bookingSizeLineId);
     if (!bookingLine) throw new Error("A selected booking size does not belong to this booking.");
-    const workOrderLine = workOrder.sizeLines.find(
-      (candidate) => normalizedSize(candidate.size || candidate.buyer_size) === normalizedSize(bookingLine.size),
-    );
+    const workOrderLine = workOrderLineBySize.get(normalizedSize(bookingLine.size)) ?? null;
     if (!workOrderLine) {
       if (line.assignedQuantity > 0) throw new Error(`Work order ${workOrder.work_order_no} has no ${bookingLine.size} size line.`);
-      normalized.push({ bookingLine, workOrderLine: null, quantity: 0 });
+      validatedLines.push({ bookingLine, workOrderLine: null, quantity: 0 });
       continue;
     }
-    const existingForPair = await transaction.advanceBookingWorkOrderAssignment.findFirst({
-      where: {
-        organization_id: organizationId,
-        booking_size_line_id: bookingLine.id,
-        work_order_size_line_id: workOrderLine.id,
-      },
-      select: { assigned_quantity: true },
-    });
     const alreadyAssigned = bookingLine.assignments.reduce((sum, assignment) => sum + assignment.assigned_quantity, 0);
     const bookingRemaining = Math.max(bookingLine.booked_quantity - alreadyAssigned, 0);
     const workOrderAlreadyAssigned = workOrderLine.bookingAssignments.reduce((sum, assignment) => sum + assignment.assigned_quantity, 0);
@@ -419,8 +479,43 @@ async function assignBookingInTransaction(
     if (quantity > workOrderRemaining) {
       throw new Error(`Size ${bookingLine.size} quantity exceeds work order ${workOrder.work_order_no}'s available assignment balance of ${workOrderRemaining}.`);
     }
-    normalized.push({ bookingLine, workOrderLine, quantity, existingForPair });
+    if (quantity > 0) {
+      assignmentPairs.push({
+        bookingSizeLineId: bookingLine.id,
+        workOrderSizeLineId: workOrderLine.id,
+      });
+    }
+    validatedLines.push({ bookingLine, workOrderLine, quantity });
   }
+
+  const existingAssignments = assignmentPairs.length > 0
+    ? await transaction.advanceBookingWorkOrderAssignment.findMany({
+        where: {
+          organization_id: organizationId,
+          OR: assignmentPairs.map((pair) => ({
+            booking_size_line_id: pair.bookingSizeLineId,
+            work_order_size_line_id: pair.workOrderSizeLineId,
+          })),
+        },
+        select: {
+          booking_size_line_id: true,
+          work_order_size_line_id: true,
+          assigned_quantity: true,
+        },
+      })
+    : [];
+  const existingAssignmentByPair = new Map(
+    existingAssignments.map((assignment) => [
+      JSON.stringify([assignment.booking_size_line_id, assignment.work_order_size_line_id]),
+      assignment,
+    ]),
+  );
+  const normalized = validatedLines.map((line) => ({
+    ...line,
+    existingForPair: line.workOrderLine
+      ? existingAssignmentByPair.get(JSON.stringify([line.bookingLine.id, line.workOrderLine.id])) ?? null
+      : null,
+  }));
 
   const positiveLines = normalized.filter((line) => line.quantity > 0 && line.workOrderLine);
   if (positiveLines.length === 0) throw new Error("Enter a positive assignment quantity for at least one size.");

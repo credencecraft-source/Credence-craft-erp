@@ -1,6 +1,7 @@
 export type DistributionQuotationLine = {
   id: string;
   sourceBookingId: string;
+  endCustomer: string;
   bookingNo: string;
   orderNo: string;
   description: string;

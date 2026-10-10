@@ -7,10 +7,10 @@ import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { getVersionDetails, setVersionBusinessTypeFree } from "@/lib/services/platform/version-service";
-
-function toUrlSegment(value: string) {
-  return encodeURIComponent(value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""));
-}
+import {
+  getErpBusinessTypeDisplayName,
+  getErpBusinessTypeRouteSegment,
+} from "@/components/erp/erp-config-registry";
 
 export default async function VersionModuleBasedRestrictionPage({
   params,
@@ -47,9 +47,9 @@ export default async function VersionModuleBasedRestrictionPage({
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {selectedVersion.businessTypes.map((entry) => (
             <Card key={entry.id} className={`p-5 ${entry.is_free ? "border-emerald-200 bg-emerald-50/40" : "border-slate-200"}`}>
-              <Link href={`/platform/versions/${selectedVersion.id}/module-based/${toUrlSegment(entry.businessType.name)}`} className="block transition-colors hover:text-emerald-700">
+              <Link href={`/platform/versions/${selectedVersion.id}/module-based/${getErpBusinessTypeRouteSegment(entry.businessType.name)}`} className="block transition-colors hover:text-emerald-700">
                 <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Business Type</p>
-                <h2 className="mt-2 text-lg font-bold text-slate-900">{entry.businessType.name}</h2>
+                <h2 className="mt-2 text-lg font-bold text-slate-900">{getErpBusinessTypeDisplayName(entry.businessType.name)}</h2>
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {entry.tags.map((tag) => <span key={tag.id} className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-800">{tag.platformTag.label}</span>)}
                   {entry.tags.length === 0 && <span className="text-xs text-slate-400">No audience tags</span>}

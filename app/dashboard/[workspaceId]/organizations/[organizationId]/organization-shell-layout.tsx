@@ -17,6 +17,7 @@ import {
   type DummyDataWizardStep,
 } from "@/lib/services/organizations/organization-dummy-data-service";
 import { listActiveBusinessTypes } from "@/lib/services/platform/business-type-service";
+import { getErpBusinessTypeDisplayName } from "@/components/erp/erp-config-registry";
 import { requireSessionUser } from "@/lib/auth/session-manager"; // Fixed typo (removed trailing 's')
 import {
   hasOrganizationTrialAccess,
@@ -197,7 +198,7 @@ export default async function OrganizationShellLayout({
     ...businessType,
     name: businessType.name.trim().toLowerCase() === "settings"
       ? "Admin"
-      : businessType.name,
+      : getErpBusinessTypeDisplayName(businessType.name),
   }));
 
   if (isOrganizationSettingsRoute) {

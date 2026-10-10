@@ -78,18 +78,17 @@ export default function ShipmentTrackingDetailsPage() {
   }, [params.bookingId, params.organizationId]);
 
   useEffect(() => {
-    const initialLoad = window.setTimeout(() => void loadBooking(), 0);
-    return () => window.clearTimeout(initialLoad);
+    void Promise.resolve().then(loadBooking);
   }, [loadBooking]);
 
-  const shipmentPath = `/dashboard/${params.workspaceId}/organizations/${params.organizationId}/distribution/shipment-tracking`;
+  const shipmentPath = `/dashboard/${params.workspaceId}/organizations/${params.organizationId}/advance-booking/shipment-tracking`;
 
   return (
     <Page as="div">
       <Section>
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="erp-eyebrow">Distribution / ASN / Shipment Tracking</p>
+            <p className="erp-eyebrow">Advance Booking / ASN / Shipment Tracking</p>
             <h1 className="mt-1 text-2xl font-bold text-slate-900">Shipment Details</h1>
           </div>
           <Button type="button" variant="secondary" onClick={() => router.push(shipmentPath)}>
@@ -117,9 +116,9 @@ export default function ShipmentTrackingDetailsPage() {
               <dl className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div><dt className="text-sm text-slate-600">Order No</dt><dd className="mt-1 text-sm font-medium text-slate-900">{booking.orderNo}</dd></div>
                 <div><dt className="text-sm text-slate-600">Quotation No</dt><dd className="mt-1 text-sm font-medium text-slate-900">{booking.quotationNo || "-"}</dd></div>
-                <div><dt className="text-sm text-slate-600">Booking Vendor</dt><dd className="mt-1 text-sm font-medium text-slate-900">{booking.customer || "-"}</dd></div>
-                <div><dt className="text-sm text-slate-600">Quotation Vendor</dt><dd className="mt-1 text-sm font-medium text-slate-900">{booking.quotationVendor || "-"}</dd></div>
-                <div><dt className="text-sm text-slate-600">Sales Order Vendor</dt><dd className="mt-1 text-sm font-medium text-slate-900">{booking.masterQuotationVendor || "-"}</dd></div>
+                <div><dt className="text-sm text-slate-600">End Customer</dt><dd className="mt-1 text-sm font-medium text-slate-900">{booking.customer || "-"}</dd></div>
+                <div><dt className="text-sm text-slate-600">Dealer</dt><dd className="mt-1 text-sm font-medium text-slate-900">{booking.quotationVendor || "-"}</dd></div>
+                <div><dt className="text-sm text-slate-600">Distributor</dt><dd className="mt-1 text-sm font-medium text-slate-900">{booking.masterQuotationVendor || "-"}</dd></div>
                 <div><dt className="text-sm text-slate-600">Brand</dt><dd className="mt-1 text-sm font-medium text-slate-900">{booking.brand || "-"}</dd></div>
                 <div><dt className="text-sm text-slate-600">Style</dt><dd className="mt-1 text-sm font-medium text-slate-900">{booking.styleName || "-"}</dd></div>
                 <div><dt className="text-sm text-slate-600">Delivery Date</dt><dd className="mt-1 text-sm font-medium text-slate-900">{booking.deliveryDate || "-"}</dd></div>

@@ -20,14 +20,14 @@ export async function POST(request: Request) {
       throw new Error("Select regular quotations to create a sales order.");
     }
     if (typeof body.vendorId !== "string" || !body.vendorId.trim()) {
-      throw new Error("Select a Vendor Master vendor for the sales order.");
+      throw new Error("Select a Distributor from Vendor Master for the sales order.");
     }
     const quotation = await createDistributionMasterQuotation(organization.id, user.id, body.quotationIds, body.vendorId);
     return NextResponse.json({ quotation }, { status: 201 });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (["P2021", "P2022"].includes(error.code)) {
-        return NextResponse.json({ error: "Distribution Quotations are unavailable until their database migration is deployed." }, { status: 503 });
+        return NextResponse.json({ error: "Advance Booking quotations are unavailable until their database migration is deployed." }, { status: 503 });
       }
       if (["P2002", "P2034"].includes(error.code)) {
         return NextResponse.json({ error: "Quotation data changed while saving. Reload and try again." }, { status: 409 });

@@ -66,6 +66,7 @@ export const ERP_MODULES: ErpModule[] = [
           { key: "order", label: "Order", pathSegment: "order" },
           { key: "bulk-order-creation", label: "Bulk Order", pathSegment: "bulk-order-creation" },
           { key: "bom", label: "BOM", pathSegment: "bom" },
+          { key: "style-health", label: "Style Health", pathSegment: "style-health" },
           { key: "order-summary", label: "Order Summary", pathSegment: "order-summary" },
         ],
       },
@@ -114,6 +115,12 @@ export const ERP_MODULES: ErpModule[] = [
         label: "Production",
         pathSegment: "production",
         children: [
+          {
+            key: "style-status",
+            label: "Style Status",
+            pathSegment: "style-status",
+            href: "/factory-management/style-status",
+          },
           { key: "shop-floor", label: "Shop Floor", pathSegment: "shop-floor" },
           { key: "dpr-report", label: "DPR Report", pathSegment: "dpr-report" },
         ],
@@ -192,6 +199,12 @@ export const ERP_MODULES: ErpModule[] = [
         label: "Stock",
         pathSegment: "stock",
         children: [
+          {
+            key: "inventory-status",
+            label: "Inventory Status",
+            pathSegment: "inventory-status",
+            href: "/inventory-management/stock/inventory-status",
+          },
           { key: "rm-stock", label: "RM Stock", pathSegment: "rm-stock" },
           { key: "fg-stock", label: "FG Stock", pathSegment: "fg-stock" },
         ],
@@ -209,45 +222,45 @@ export const ERP_MODULES: ErpModule[] = [
   },
   {
     key: "distribution",
-    label: "Distribution",
-    pathSegment: "distribution",
+    label: "Advance Booking",
+    pathSegment: "advance-booking",
     children: [
       {
         key: "quotation",
         label: "Quotation",
-        href: "/distribution",
+        href: "/advance-booking",
         children: [
           {
             key: "advance-booking",
             label: "Advance Booking",
-            href: "/distribution/order/advance-booking",
+            href: "/advance-booking/order/advance-booking",
           },
           {
             key: "quotation",
             label: "Quotation",
-            href: "/distribution/quotation",
+            href: "/advance-booking/quotation",
           },
           {
             key: "master-quotation",
             label: "Sales Order",
-            href: "/distribution/sales-order",
+            href: "/advance-booking/sales-order",
           },
         ],
       },
       {
         key: "asn",
         label: "ASN",
-        href: "/distribution",
+        href: "/advance-booking",
         children: [
           {
             key: "fulfillment",
             label: "Work Order Tracking",
-            href: "/distribution/fulfillment",
+            href: "/advance-booking/fulfillment",
           },
           {
             key: "shipment-tracking",
             label: "Shipment Tracking",
-            href: "/distribution/shipment-tracking",
+            href: "/advance-booking/shipment-tracking",
           },
         ],
       },
@@ -305,6 +318,7 @@ export const ERP_MODULES: ErpModule[] = [
     pathSegment: "admin",
     children: [
       { key: "master-data", label: "Masters", pathSegment: "master-data" },
+      { key: "integrations", label: "Integrations", pathSegment: "integrations" },
     ],
   },
 ];
@@ -322,6 +336,7 @@ const BUSINESS_TYPE_MODULE_ALIASES: Record<string, string> = {
   "finance-management": "finance-management",
   "inventory-management": "inventory-management",
   "distribution": "distribution",
+  "advance-booking": "distribution",
   "security-management": "security-management",
   "security": "security-management",
   "settings": "settings",
@@ -330,6 +345,23 @@ const BUSINESS_TYPE_MODULE_ALIASES: Record<string, string> = {
   "approvals": "approvals",
   "approval": "approvals",
 };
+
+export function getErpBusinessTypeDisplayName(name: string) {
+  return name.trim().toLowerCase() === "distribution" ? "Advance Booking" : name;
+}
+
+export function getErpBusinessTypeRouteSegment(name: string) {
+  return getErpBusinessTypeDisplayName(name)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+export function isErpBusinessTypeRouteSegment(name: string, segment: string) {
+  const rawSegment = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return rawSegment === segment || getErpBusinessTypeRouteSegment(name) === segment;
+}
 
 export function getErpModuleForBusinessTypeName(name: string) {
   const normalizedName = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");

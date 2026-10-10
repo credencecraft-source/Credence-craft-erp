@@ -6,5 +6,5 @@ export default async function LegacyMasterQuotationPage({
   params: Promise<{ workspaceId: string; organizationId: string }>;
 }) {
   const { workspaceId, organizationId } = await params;
-  redirect(`/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/distribution/sales-order`);
+  redirect(`/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/advance-booking/sales-order`);
 }

@@ -13,9 +13,10 @@ import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
+import { getErpBusinessTypeDisplayName } from "@/components/erp/erp-config-registry";
 
 function getBusinessTypeLabel(name: string) {
-  return name.trim().toLowerCase() === "settings" ? "Admin" : name;
+  return name.trim().toLowerCase() === "settings" ? "Admin" : getErpBusinessTypeDisplayName(name);
 }
 
 export default async function BusinessTypesPage({

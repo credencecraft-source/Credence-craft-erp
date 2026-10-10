@@ -1,5 +1,5 @@
 import MerchandisingOrdersPage from "./_page-content/merchandising-order-list-page";
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { listOrdersPage } from "@/lib/services/orders/order-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
@@ -11,7 +11,9 @@ export default async function Page({
 }) {
   const { workspaceId, organizationId } = await params;
   const user = await requireSessionUser();
-  if (!user.workspace_id || user.workspace_id !== workspaceId) notFound();
+  if (!user.workspace_id || user.workspace_id !== workspaceId) {
+    redirect(user.workspace_id ? `/dashboard/${user.workspace_id}/home` : "/");
+  }
 
   const organization = await requireOrganizationContext(
     user.id,

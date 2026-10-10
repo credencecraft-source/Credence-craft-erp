@@ -9,6 +9,11 @@ import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { getVersionDetails } from "@/lib/services/platform/version-service";
+import {
+  getErpBusinessTypeDisplayName,
+  getErpBusinessTypeRouteSegment,
+  isErpBusinessTypeRouteSegment,
+} from "@/components/erp/erp-config-registry";
 import { getSegmentFormRestriction, upsertSegmentFormRestriction } from "@/lib/services/platform/segment-form-restriction-service";
 import Input from "@/components/ui/Input";
 import Checkbox from "@/components/ui/Checkbox";
@@ -84,7 +89,7 @@ export default async function TransactionBasedRestrictionTablePage({
   const { versionId, versionName, businessTypeName, segmentName, tableName } = await params;
   const query = (await searchParams) ?? {};
   const version = await getVersionDetails(versionId);
-  const entry = version?.businessTypes.find((item) => toUrlSegment(item.businessType.name) === businessTypeName);
+  const entry = version?.businessTypes.find((item) => isErpBusinessTypeRouteSegment(item.businessType.name, businessTypeName));
   const assignment = entry?.segments.find((item) => toSegmentUrlSegment(item.segment.name) === segmentName);
   const table = await getTableMetadata(tableName);
 
@@ -93,10 +98,10 @@ export default async function TransactionBasedRestrictionTablePage({
   const selectedAssignment = assignment;
   const selectedTable = table;
 
-  const canonicalPath = `/platform/versions/${version.id}/${toUrlSegment(version.version_name)}/${toUrlSegment(entry.businessType.name)}/${toSegmentUrlSegment(assignment.segment.name)}/transactionbased-restriction`;
+  const canonicalPath = `/platform/versions/${version.id}/${toUrlSegment(version.version_name)}/${getErpBusinessTypeRouteSegment(entry.businessType.name)}/${toSegmentUrlSegment(assignment.segment.name)}/transactionbased-restriction`;
   if (
     versionName !== toUrlSegment(version.version_name) ||
-    businessTypeName !== toUrlSegment(entry.businessType.name) ||
+    businessTypeName !== getErpBusinessTypeRouteSegment(entry.businessType.name) ||
     segmentName !== toSegmentUrlSegment(assignment.segment.name) ||
     tableName !== table.tableName
   ) {
@@ -138,7 +143,7 @@ export default async function TransactionBasedRestrictionTablePage({
       <Section className="space-y-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="erp-eyebrow">{version.version_name} / {entry.businessType.name} / {assignment.segment.name.toUpperCase()}</p>
+            <p className="erp-eyebrow">{version.version_name} / {getErpBusinessTypeDisplayName(entry.businessType.name)} / {assignment.segment.name.toUpperCase()}</p>
             <h1 className="text-2xl font-bold text-slate-900">{table.tableName}</h1>
             <p className="text-sm text-slate-600">{table.modelName} form-level fields and database definition.</p>
           </div>

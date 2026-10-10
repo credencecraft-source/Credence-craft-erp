@@ -21,13 +21,23 @@ type QuotationField = keyof Pick<
 const fields: Array<{ key: QuotationField; label: string }> = [
   { key: "quotationNo", label: "Quotation No" },
   { key: "orderNo", label: "Order No" },
-  { key: "customer", label: "Vendor" },
+  { key: "customer", label: "Dealer" },
   { key: "mode", label: "Type" },
   { key: "status", label: "Status" },
   { key: "totalQuantity", label: "Total Qty" },
   { key: "subtotal", label: "Subtotal" },
   { key: "createdAt", label: "Created Date" },
 ];
+
+function getQuotationRowId(quotation: DistributionQuotationSummary) {
+  return quotation.id;
+}
+
+function renderQuotationCell(fieldKey: string, quotation: DistributionQuotationSummary) {
+  if (fieldKey === "createdAt") return quotation.createdAt.slice(0, 10);
+  const value = quotation[fieldKey as keyof DistributionQuotationSummary];
+  return value === null || value === undefined ? "" : String(value);
+}
 
 export default function QuotationListPage() {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
@@ -64,8 +74,7 @@ export default function QuotationListPage() {
   }, [organizationId]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadQuotations(), 0);
-    return () => window.clearTimeout(timer);
+    void Promise.resolve().then(loadQuotations);
   }, [loadQuotations]);
 
   useEffect(() => {
@@ -90,7 +99,7 @@ export default function QuotationListPage() {
           .sort((left: VendorOption, right: VendorOption) => left.label.localeCompare(right.label));
         setVendors(options);
         setSelectedVendorId((current) => options.some((vendor: VendorOption) => vendor.id === current) ? current : "");
-        if (options.length === 0) setVendorError("Add an active vendor in Vendor Master before creating a sales order.");
+        if (options.length === 0) setVendorError("Add an active Distributor in Vendor Master before creating a sales order.");
       } catch (loadError) {
         if (!controller.signal.aborted) {
           setVendorError(loadError instanceof Error ? loadError.message : "Unable to load Vendor Master.");
@@ -99,11 +108,8 @@ export default function QuotationListPage() {
         if (!controller.signal.aborted) setIsLoadingVendors(false);
       }
     };
-    const timer = window.setTimeout(() => void loadVendors(), 0);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
+    void Promise.resolve().then(loadVendors);
+    return () => controller.abort();
   }, [organizationId]);
 
   const regularQuotations = useMemo(
@@ -133,7 +139,7 @@ export default function QuotationListPage() {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to create sales order.");
       }
       setIsSalesOrderModalOpen(false);
-      router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/sales-order/${encodeURIComponent(data.quotation.id)}`);
+      router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/sales-order/${encodeURIComponent(data.quotation.id)}`);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "Unable to create sales order.");
     } finally {
@@ -142,19 +148,19 @@ export default function QuotationListPage() {
   }
 
   function openQuotation(id: string) {
-    router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/quotation/${encodeURIComponent(id)}`);
+    router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/quotation/${encodeURIComponent(id)}`);
   }
 
   return (
     <div className="w-full min-w-0 space-y-4 p-4 md:p-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="erp-eyebrow">Distribution / Quotation</p>
+          <p className="erp-eyebrow">Advance Booking / Quotation</p>
           <h1 className="mt-2 text-3xl font-bold text-slate-900">Quotations</h1>
           <p className="mt-2 text-sm text-slate-600">Database-backed quotation headers and booking-derived detail lines.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="secondary" onClick={() => router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/sales-order`)}>
+          <Button type="button" variant="secondary" onClick={() => router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/sales-order`)}>
             Sales Orders
           </Button>
           <Button type="button" variant="secondary" onClick={() => void loadQuotations()} disabled={isLoading}>
@@ -171,11 +177,12 @@ export default function QuotationListPage() {
         <ReportGrid
           title="Quotation Register"
           records={regularQuotations}
+          isLoading={isLoading}
           fields={fields}
           visibleFields={visibleFields}
           onVisibleFieldsChange={(next) => setVisibleFields(next as QuotationField[])}
           storageKey={`distribution-quotation-report-columns:${organizationId}`}
-          rowIdSelector={(quotation) => quotation.id}
+          rowIdSelector={getQuotationRowId}
           selectedIds={selectedIds}
           onToggleSelectAll={(checked) => setSelectedIds(checked ? regularQuotations.map((quotation) => quotation.id) : [])}
           onToggleRowSelection={(id, checked) => setSelectedIds((current) =>
@@ -200,11 +207,7 @@ export default function QuotationListPage() {
             </Button>
           )}
           emptyMessage={isLoading ? "Loading quotations..." : "No ungrouped regular quotations are available. Create one from selected advance bookings."}
-          renderCell={(fieldKey, quotation) => {
-            if (fieldKey === "createdAt") return quotation.createdAt.slice(0, 10);
-            const value = quotation[fieldKey as keyof DistributionQuotationSummary];
-            return value === null || value === undefined ? "" : String(value);
-          }}
+          renderCell={renderQuotationCell}
         />
       </Card>
       <Modal
@@ -225,16 +228,16 @@ export default function QuotationListPage() {
         >
           <div>
             <h2 id="sales-order-vendor-title" className="text-lg font-semibold text-slate-900">Create Sales Order</h2>
-            <p className="mt-1 text-sm text-slate-600">Choose the Vendor Master vendor for this quotation header.</p>
+            <p className="mt-1 text-sm text-slate-600">Choose a Distributor from Vendor Master for this sales order.</p>
           </div>
           <Select
-            label="Sales Order Vendor"
+            label="Distributor"
             required
             value={selectedVendorId}
             onChange={(event) => setSelectedVendorId(event.target.value)}
             disabled={isLoadingVendors || isCreatingSalesOrder || vendors.length === 0}
           >
-            <option value="">{isLoadingVendors ? "Loading vendors..." : "Select a vendor"}</option>
+            <option value="">{isLoadingVendors ? "Loading vendors..." : "Select a Distributor"}</option>
             {vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.label}</option>)}
           </Select>
           {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}

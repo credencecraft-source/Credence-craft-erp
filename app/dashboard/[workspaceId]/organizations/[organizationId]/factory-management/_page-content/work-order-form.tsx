@@ -14,6 +14,7 @@ type AllocationResponse = { order: { orderNo: string; styleName: string | null; 
 type RelatedOrder = { id: string; orderNo: string; article: string | null; styleName: string | null; orderQty: number | null };
 type ArticleOption = { id: string; label: string };
 type WorkOrderMode = "" | "single" | "all";
+type WorkOrderLookupMode = "" | "article" | "direct";
 type WorkOrderReport = { id: string; workOrderNo: string; orderNo: string; article: string | null; styleName: string | null; totalQty: number; status: string; createdAt: string; sizeLines: Array<{ size: string; quantity: number }> };
 
 export default function WorkOrderForm({ organizationId, showReport = true }: { workspaceId: string; organizationId: string; showReport?: boolean }) {
@@ -21,8 +22,10 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
   const [articleOptions, setArticleOptions] = useState<ArticleOption[]>([]);
   const [articleOptionsLoading, setArticleOptionsLoading] = useState(true);
   const [orderNo, setOrderNo] = useState("");
+  const [directOrderNo, setDirectOrderNo] = useState("");
   const [relatedOrders, setRelatedOrders] = useState<RelatedOrder[]>([]);
   const [relatedOrdersNextCursor, setRelatedOrdersNextCursor] = useState<string | null>(null);
+  const [lookupMode, setLookupMode] = useState<WorkOrderLookupMode>("direct");
   const [mode, setMode] = useState<WorkOrderMode>("");
   const [allAllocations, setAllAllocations] = useState<AllocationResponse[]>([]);
   const [allQuantities, setAllQuantities] = useState<Record<string, string>>({});
@@ -97,6 +100,26 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
       });
     return () => { active = false; };
   }, [organizationId]);
+
+  function resetLookupSelection(nextLookupMode: WorkOrderLookupMode) {
+    setLookupMode(nextLookupMode);
+    setError("");
+    setMessage("");
+    setMode("");
+    setAllocation(null);
+    setOrderNo("");
+    setDirectOrderNo("");
+    setRelatedOrders([]);
+    setRelatedOrdersNextCursor(null);
+    setAllAllocations([]);
+    setAllQuantities({});
+    setSelectedOrderNos([]);
+    setAllocationNextCursor(null);
+    setQuantities({});
+    if (nextLookupMode === "article") {
+      setArticleNo("");
+    }
+  }
 
   async function loadArticles(event: FormEvent) {
     event.preventDefault();
@@ -203,20 +226,23 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
 
   async function loadOrder(selectedOrderNo: string) {
     const requestSequence = ++orderLookupSequence.current;
+    const trimmedOrderNo = selectedOrderNo.trim();
     setError("");
     setMessage("");
-    setOrderNo(selectedOrderNo);
+    setOrderNo(trimmedOrderNo);
+    setDirectOrderNo(trimmedOrderNo);
     setAllocation(null);
-    if (!selectedOrderNo) {
+    if (!trimmedOrderNo) {
       setLoading(false);
       return;
     }
     setLoading(true);
     try {
-      const response = await fetch(`/api/factory/work-orders?organizationId=${encodeURIComponent(organizationId)}&orderNo=${encodeURIComponent(selectedOrderNo)}`, { cache: "no-store" });
+      const response = await fetch(`/api/factory/work-orders?organizationId=${encodeURIComponent(organizationId)}&orderNo=${encodeURIComponent(trimmedOrderNo)}`, { cache: "no-store" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Unable to load order.");
       if (requestSequence === orderLookupSequence.current) {
+        setMode("single");
         setAllocation(data);
         setQuantities(Object.fromEntries(data.sizes.map((size: SizeAllocation) => [size.id, ""])));
       }
@@ -345,80 +371,124 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
       )}
 
       <Card>
-        <form onSubmit={loadArticles} className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <div className="flex-1">
-            <label htmlFor="article-no" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">Article No</label>
+        <div className="space-y-4">
+          <div className="max-w-xl">
+            <label htmlFor="work-order-lookup-mode" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">Choose lookup method</label>
             <Select
-              id="article-no"
-              value={articleNo}
-              disabled={articleOptionsLoading || articleOptions.length === 0}
+              id="work-order-lookup-mode"
+              value={lookupMode}
               onChange={(event) => {
-                orderLookupSequence.current += 1;
-                setLoading(false);
-                setArticleNo(event.target.value);
-                setRelatedOrders([]);
-                setRelatedOrdersNextCursor(null);
-                setMode("");
-                setAllocation(null);
-                setOrderNo("");
-                setAllAllocations([]);
-                setAllQuantities({});
-                setSelectedOrderNos([]);
-                setAllocationNextCursor(null);
+                const nextMode = event.target.value as WorkOrderLookupMode;
+                if (nextMode === "article" || nextMode === "direct") resetLookupSelection(nextMode);
+                else setLookupMode("");
               }}
+              disabled={loading}
               className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-              required
             >
-              <option value="">{articleOptionsLoading ? "Loading articles..." : articleOptions.length > 0 ? "Select an article" : "No articles found"}</option>
-              {articleOptions.map((article) => <option key={article.id} value={article.label}>{article.label}</option>)}
+              <option value="">Choose work order lookup</option>
+              <option value="article">Article wise</option>
+              <option value="direct">Direct Order Number wise</option>
             </Select>
           </div>
-          <Button type="submit" disabled={loading || !articleNo}>{loading ? "Searching..." : "Find orders"}</Button>
-        </form>
-        {relatedOrders.length > 0 && (
-          <div className="mt-4 space-y-4">
-            <div className="max-w-xl">
-              <label htmlFor="work-order-scope" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">Work Order Creation</label>
-              <Select
-                id="work-order-scope"
-                value={mode}
-                onChange={(event) => {
-                  const nextMode = event.target.value as WorkOrderMode;
-                  if (nextMode === "all") void loadAllOrders();
-                  else {
+
+          {lookupMode === "article" && (
+            <form onSubmit={loadArticles} className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="flex-1">
+                <label htmlFor="article-no" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">Article No</label>
+                <Select
+                  id="article-no"
+                  value={articleNo}
+                  disabled={articleOptionsLoading || articleOptions.length === 0}
+                  onChange={(event) => {
                     orderLookupSequence.current += 1;
-                    setMode("single");
-                    setAllAllocations([]);
+                    setLoading(false);
+                    setArticleNo(event.target.value);
+                    setRelatedOrders([]);
+                    setRelatedOrdersNextCursor(null);
+                    setMode("");
                     setAllocation(null);
                     setOrderNo("");
-                  }
-                }}
-                disabled={loading}
-                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-              >
-                <option value="">Select work order creation</option>
-                <option value="single">Create single work order</option>
-                <option value="all">Create work orders for all</option>
-              </Select>
+                    setAllAllocations([]);
+                    setAllQuantities({});
+                    setSelectedOrderNos([]);
+                    setAllocationNextCursor(null);
+                  }}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                  required
+                >
+                  <option value="">{articleOptionsLoading ? "Loading articles..." : articleOptions.length > 0 ? "Select an article" : "No articles found"}</option>
+                  {articleOptions.map((article) => <option key={article.id} value={article.label}>{article.label}</option>)}
+                </Select>
+              </div>
+              <Button type="submit" disabled={loading || !articleNo}>{loading ? "Searching..." : "Find orders"}</Button>
+            </form>
+          )}
+
+          {lookupMode === "direct" && (
+            <div className="max-w-xl">
+              <label htmlFor="direct-order-no" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">Direct Order No</label>
+              <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                <Input
+                  id="direct-order-no"
+                  value={directOrderNo}
+                  onChange={(event) => setDirectOrderNo(event.target.value)}
+                  placeholder="Enter order number"
+                  disabled={loading}
+                  className="flex-1"
+                />
+                <Button type="button" onClick={() => void loadOrder(directOrderNo)} disabled={loading || !directOrderNo.trim()}>
+                  {loading ? "Loading..." : "Load order"}
+                </Button>
+              </div>
             </div>
-            {mode === "single" && (
+          )}
+
+          {lookupMode === "article" && relatedOrders.length > 0 && (
+            <div className="space-y-4">
               <div className="max-w-xl">
-                <label htmlFor="related-order-no" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">Related Order No</label>
+                <label htmlFor="work-order-scope" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">Work Order Creation</label>
                 <Select
-                  id="related-order-no"
-                  value={orderNo}
-                  onChange={(event) => void loadOrder(event.target.value)}
+                  id="work-order-scope"
+                  value={mode}
+                  onChange={(event) => {
+                    const nextMode = event.target.value as WorkOrderMode;
+                    if (nextMode === "all") void loadAllOrders();
+                    else {
+                      orderLookupSequence.current += 1;
+                      setMode("single");
+                      setAllAllocations([]);
+                      setAllocation(null);
+                      setOrderNo("");
+                      setDirectOrderNo("");
+                    }
+                  }}
                   disabled={loading}
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
                 >
-                  <option value="">Select an order</option>
-                  {relatedOrders.map((order) => <option key={order.id} value={order.orderNo}>{order.orderNo}{order.styleName ? ` - ${order.styleName}` : ""}{order.orderQty ? ` (${order.orderQty.toLocaleString("en-IN")})` : ""}</option>)}
+                  <option value="">Select work order creation</option>
+                  <option value="single">Create single work order</option>
+                  <option value="all">Create work orders for all</option>
                 </Select>
-                {relatedOrdersNextCursor && <Button type="button" className="mt-2" onClick={() => void loadMoreRelatedOrders()} disabled={loading}>{loading ? "Loading..." : "Load more matching orders"}</Button>}
               </div>
-            )}
-          </div>
-        )}
+              {mode === "single" && (
+                <div className="max-w-xl">
+                  <label htmlFor="related-order-no" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">Related Order No</label>
+                  <Select
+                    id="related-order-no"
+                    value={orderNo}
+                    onChange={(event) => void loadOrder(event.target.value)}
+                    disabled={loading}
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                  >
+                    <option value="">Select an order</option>
+                    {relatedOrders.map((order) => <option key={order.id} value={order.orderNo}>{order.orderNo}{order.styleName ? ` - ${order.styleName}` : ""}{order.orderQty ? ` (${order.orderQty.toLocaleString("en-IN")})` : ""}</option>)}
+                  </Select>
+                  {relatedOrdersNextCursor && <Button type="button" className="mt-2" onClick={() => void loadMoreRelatedOrders()} disabled={loading}>{loading ? "Loading..." : "Load more matching orders"}</Button>}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </Card>
 
       {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}

@@ -56,7 +56,10 @@ describe("advance-booking route", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
-    expect(mocks.listAdvanceBookings).toHaveBeenCalledWith("internal-org-1");
+    expect(mocks.listAdvanceBookings).toHaveBeenCalledWith("internal-org-1", {
+      cursor: undefined,
+      limit: 100,
+    });
   });
 
   it("loads one booking detail by internal record ID within the authorized organization", async () => {
