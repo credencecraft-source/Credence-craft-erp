@@ -21,49 +21,24 @@ const NAV_SECTIONS: Array<{ title: string; items: NavigationItem[] }> = [
     title: "Organisations",
     items: [
       { label: "Organisations", href: "/platform/organisations" },
-    ],
-  },
-  {
-    title: "Leads",
-    items: [
-      { label: "Leads", href: "/platform/leads" },
-    ],
-  },
-  {
-    title: "Workspace",
-    items: [
+      { label: "Subscriptions", href: "/platform/subscriptions" },
       { label: "Workspace Users", href: "/platform/workspace-users" },
     ],
   },
   {
-    title: "Databases",
+    title: "CMO",
     items: [
-      { label: "Databases", href: "/platform/databases" },
+      { label: "Leads", href: "/platform/leads" },
+      { label: "Campaigns", href: "/platform/campaigns" },
     ],
   },
   {
-    title: "Plan",
-    items: [
-      { label: "Dashboard", href: "/platform/plan/dashboard" },
-    ],
-  },
-  {
-    title: "Segments",
-    items: [
-      { label: "Segments", href: "/platform/segments" },
-      { label: "Tags", href: "/platform/tags" },
-    ],
-  },
-  {
-    title: "Module Master",
+    title: "Masters",
     items: [
       { label: "Business Types", href: "/platform/business-types" },
-    ],
-  },
-  {
-    title: "Subscriptions",
-    items: [
-      { label: "Subscriptions", href: "/platform/subscriptions" },
+      { label: "Segments", href: "/platform/segments" },
+      { label: "Tags", href: "/platform/tags" },
+      { label: "Plans", href: "/platform/plan/dashboard" },
     ],
   },
   {
@@ -80,6 +55,8 @@ const NAV_SECTIONS: Array<{ title: string; items: NavigationItem[] }> = [
         label: "Mobile OTP (MSG91)",
         href: "/platform/settings/mobile-otp",
       },
+      { label: "Databases", href: "/platform/databases" },
+      { label: "WhatsApp API", href: "/platform/whatsapp" },
       { label: "Platform access", href: "/platform/settings/access" },
     ],
   },
@@ -169,20 +146,21 @@ export default function PlatformRootLayoutClient({
       return canAccessSupport;
     }
 
-    if (section.title === "Workspace") {
-      return canAccessWorkspace;
-    }
-
-    if (["Leads", "Subscriptions"].includes(section.title)) {
+    if (section.title === "CMO") {
       return canAccessLeadsAndSubscriptions;
     }
-
+    if (section.title === "Subscriptions") {
+      return canAccessConfiguration;
+    }
+    if (section.title === "Masters" && isSuperAdminView) {
+      return false;
+    }
     return (
-      (!isSuperAdminView || !["Databases", "Plan", "Support"].includes(section.title)) &&
+      (!isSuperAdminView || section.title !== "Support") &&
       (isSuperAdminView && section.title === "Settings"
         ? true
         : canAccessConfiguration ||
-          !["Databases", "Plan", "Segments", "Module Master", "Settings"].includes(section.title))
+          !["Masters", "Settings"].includes(section.title))
     );
   });
 
@@ -203,6 +181,10 @@ export default function PlatformRootLayoutClient({
         {visibleSections.map((section) => {
           const items = section.items
             .filter((item) => item.href !== "/platform/settings/access" || canManageAccounts)
+            .filter((item) => item.href !== "/platform/whatsapp" || canAccessConfiguration)
+            .filter((item) => item.href !== "/platform/subscriptions" || canAccessConfiguration)
+            .filter((item) => item.href !== "/platform/workspace-users" || canAccessWorkspace)
+            .filter((item) => item.href !== "/platform/plan/dashboard" || !isSuperAdminView)
             .filter((item) => !isSuperAdminView || section.title !== "Settings" || item.href === "/platform/settings/access");
           const isCurrentSection = items.some((item) =>
             pathname === item.href || pathname.startsWith(`${item.href}/`),

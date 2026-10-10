@@ -16,8 +16,10 @@ export default async function PlatformLeadsPage() {
     listPlatformLeads(),
     listPlatformLeadAppLogins(),
   ]);
-  const leads = leadRows.map((lead) => ({
+  const leads = leadRows.map(({ campaignEntries, ...lead }) => ({
     ...lead,
+    campaign_date: campaignEntries[0]?.campaign.campaign_date.toISOString() ?? null,
+    last_campaign_date: campaignEntries[0]?.added_at.toISOString() ?? null,
     created_at: lead.created_at.toISOString(),
     updated_at: lead.updated_at.toISOString(),
     recordType: "THIRD_PARTY" as const,

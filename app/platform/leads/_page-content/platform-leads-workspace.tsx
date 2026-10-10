@@ -33,6 +33,8 @@ type PlatformLead = {
   nature_of_business: string | null;
   created_at: string;
   updated_at: string;
+  campaign_date: string | null;
+  last_campaign_date: string | null;
   recordType: "THIRD_PARTY" | "APP_LOGIN";
   last_login_at?: string;
   workspaceUserId?: string;
@@ -46,6 +48,8 @@ const LEAD_FIELDS = [
   { key: "city", label: "City" },
   { key: "source", label: "Source" },
   { key: "stage", label: "Stage" },
+  { key: "campaign_date", label: "Campaign date" },
+  { key: "last_campaign_date", label: "Last campaign date" },
   { key: "stage_action", label: "Change status" },
   { key: "last_login_at", label: "Last login" },
 ];
@@ -63,6 +67,12 @@ type LeadTicket = {
   callback_time: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type PlatformCampaignOption = {
+  id: string;
+  name: string;
+  campaign_date: string;
 };
 
 function LeadEditor({
@@ -284,6 +294,13 @@ export default function PlatformLeadsWorkspace({
   const [movingSelectedLeads, setMovingSelectedLeads] = useState(false);
   const [stageMovementMessage, setStageMovementMessage] = useState("");
   const [stageMovementError, setStageMovementError] = useState("");
+  const [campaignDialogOpen, setCampaignDialogOpen] = useState(false);
+  const [campaignOptions, setCampaignOptions] = useState<PlatformCampaignOption[]>([]);
+  const [campaignOptionsLoading, setCampaignOptionsLoading] = useState(false);
+  const [selectedCampaignId, setSelectedCampaignId] = useState("");
+  const [addingToCampaign, setAddingToCampaign] = useState(false);
+  const [campaignError, setCampaignError] = useState("");
+  const [campaignMessage, setCampaignMessage] = useState("");
   const [bulkStageDialogOpen, setBulkStageDialogOpen] = useState(false);
   const [bulkTargetStage, setBulkTargetStage] = useState("");
   const [statusLeadId, setStatusLeadId] = useState<string | null>(null);
@@ -346,6 +363,8 @@ export default function PlatformLeadsWorkspace({
         ...user,
         id: `app-login:${user.id}`,
         nature_of_business: null,
+        campaign_date: null,
+        last_campaign_date: null,
         created_at: user.last_login_at,
         updated_at: user.last_login_at,
         recordType: "APP_LOGIN" as const,
@@ -585,9 +604,16 @@ export default function PlatformLeadsWorkspace({
   }
 
   function handleSaved(lead: PlatformLead, movedToThirdParty = false) {
+    const existingLead = leads.find((item) => item.id === lead.id);
     setLeadOverrides((current) => ({
       ...current,
-      [lead.id]: { ...lead, recordType: "THIRD_PARTY" },
+      [lead.id]: {
+        ...existingLead,
+        ...lead,
+        campaign_date: lead.campaign_date ?? existingLead?.campaign_date ?? null,
+        last_campaign_date: lead.last_campaign_date ?? existingLead?.last_campaign_date ?? null,
+        recordType: "THIRD_PARTY",
+      },
     }));
     setNewLead(false);
     if (movedToThirdParty) {
@@ -595,6 +621,61 @@ export default function PlatformLeadsWorkspace({
       setStageFilter("ALL");
     }
     window.history.pushState(null, "", `/platform/leads?leadId=${encodeURIComponent(lead.id)}`);
+  }
+
+  async function openCampaignDialog() {
+    setCampaignDialogOpen(true);
+    setCampaignOptions([]);
+    setCampaignError("");
+    setCampaignMessage("");
+    setCampaignOptionsLoading(true);
+    try {
+      const response = await fetch("/api/platform/campaigns");
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to load campaigns.");
+      const options = payload.campaigns as PlatformCampaignOption[];
+      setCampaignOptions(options);
+      setSelectedCampaignId((current) =>
+        options.some((campaign) => campaign.id === current)
+          ? current
+          : options[0]?.id ?? "",
+      );
+    } catch (error) {
+      setCampaignError(error instanceof Error ? error.message : "Unable to load campaigns.");
+    } finally {
+      setCampaignOptionsLoading(false);
+    }
+  }
+
+  async function addSelectedLeadsToCampaign(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedCampaignId || selectedLeadIds.length === 0 || addingToCampaign) return;
+    setAddingToCampaign(true);
+    setCampaignError("");
+    try {
+      const response = await fetch(`/api/platform/campaigns/${encodeURIComponent(selectedCampaignId)}/leads`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds: selectedLeadIds }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to add leads to campaign.");
+      const { addedCount, alreadyAddedCount } = payload as {
+        addedCount: number;
+        alreadyAddedCount: number;
+      };
+      setCampaignMessage(
+        `${addedCount} lead${addedCount === 1 ? "" : "s"} added to the campaign${alreadyAddedCount ? `; ${alreadyAddedCount} already assigned` : ""}.`,
+      );
+      setSelectedLeadIds([]);
+      setLeadOverrides({});
+      setCampaignDialogOpen(false);
+      router.refresh();
+    } catch (error) {
+      setCampaignError(error instanceof Error ? error.message : "Unable to add leads to campaign.");
+    } finally {
+      setAddingToCampaign(false);
+    }
   }
 
   async function uploadWorkbook(event: React.ChangeEvent<HTMLInputElement>) {
@@ -861,6 +942,17 @@ export default function PlatformLeadsWorkspace({
               <>
                 <Button
                   type="button"
+                  variant="primary"
+                  size="sm"
+                  disabled={selectedLeadIds.length === 0 || movingSelectedLeads || addingToCampaign}
+                  onClick={() => void openCampaignDialog()}
+                  title="Add selected leads to a campaign"
+                  className="h-7 px-2 text-[11px]"
+                >
+                  Add to campaign{selectedLeadIds.length ? ` (${selectedLeadIds.length})` : ""}
+                </Button>
+                <Button
+                  type="button"
                   variant="secondary"
                   size="sm"
                   disabled={selectedLeadIds.length === 0 || movingSelectedLeads}
@@ -942,6 +1034,9 @@ export default function PlatformLeadsWorkspace({
             emptyMessage={activeTab === "APP_LOGIN" ? "No workspace accounts have logged in yet." : "No leads match this category."}
             renderCell={(fieldKey, lead) => {
               if (fieldKey === "last_login_at") return lead.last_login_at ? new Date(lead.last_login_at).toLocaleString() : "—";
+              if (fieldKey === "campaign_date" || fieldKey === "last_campaign_date") {
+                return lead[fieldKey] ? new Date(lead[fieldKey]).toLocaleDateString() : "—";
+              }
               if (fieldKey === "stage_action" && lead.recordType !== "APP_LOGIN") {
                 return (
                   <Button
@@ -965,6 +1060,7 @@ export default function PlatformLeadsWorkspace({
           />
           {stageMovementMessage && <p role="status" className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">{stageMovementMessage}</p>}
           {stageMovementError && <p role="alert" className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{stageMovementError}</p>}
+          {campaignMessage && <p role="status" className="mt-2 rounded-lg border border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] px-3 py-2 text-xs text-[var(--erp-brand)]">{campaignMessage}</p>}
         </div>
         {activeTab !== "APP_LOGIN" && (newLead || activeSelectedLead) && (
           <LeadEditor
@@ -978,6 +1074,67 @@ export default function PlatformLeadsWorkspace({
           />
         )}
       </div>
+      <Modal
+        open={campaignDialogOpen}
+        onClose={() => {
+          if (!addingToCampaign) {
+            setCampaignDialogOpen(false);
+            setCampaignError("");
+          }
+        }}
+        ariaLabel="Add selected leads to a campaign"
+        ariaLabelledBy="add-leads-to-campaign-title"
+        size="sm"
+      >
+        <form onSubmit={addSelectedLeadsToCampaign} className="space-y-4 p-5">
+          <div>
+            <h2 id="add-leads-to-campaign-title" className="text-lg font-bold text-slate-900">
+              Add {selectedLeadIds.length} selected lead{selectedLeadIds.length === 1 ? "" : "s"} to campaign
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">Customer details and stage will be shown in the campaign.</p>
+          </div>
+          {campaignOptionsLoading ? (
+            <p role="status" className="text-sm text-slate-600">Loading campaigns…</p>
+          ) : campaignOptions.length > 0 ? (
+            <Select
+              label="Campaign"
+              required
+              value={selectedCampaignId}
+              disabled={addingToCampaign}
+              onChange={(event) => setSelectedCampaignId(event.target.value)}
+              options={campaignOptions.map((campaign) => ({
+                label: `${campaign.name} · ${new Date(campaign.campaign_date).toLocaleDateString()}`,
+                value: campaign.id,
+              }))}
+            />
+          ) : !campaignError ? (
+            <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <p className="text-sm text-slate-700">Create a campaign before adding these leads.</p>
+              <Button type="button" variant="secondary" onClick={() => router.push("/platform/campaigns")}>
+                Open Campaigns
+              </Button>
+            </div>
+          ) : null}
+          {campaignError && <p role="alert" className="rounded-lg border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">{campaignError}</p>}
+          <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={addingToCampaign}
+              onClick={() => setCampaignDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={addingToCampaign || campaignOptionsLoading || !selectedCampaignId}
+            >
+              {addingToCampaign ? "Adding…" : "Add to campaign"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
       <Modal
         open={bulkStageDialogOpen}
         onClose={() => {

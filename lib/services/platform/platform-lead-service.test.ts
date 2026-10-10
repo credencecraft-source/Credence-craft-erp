@@ -322,6 +322,16 @@ describe("platform lead management", () => {
     expect(requirePlatformSessionAdminMock).toHaveBeenCalledOnce();
     expect(findLeadsMock).toHaveBeenCalledWith({
       orderBy: [{ updated_at: "desc" }, { name: "asc" }],
+      include: {
+        campaignEntries: {
+          orderBy: { added_at: "desc" },
+          take: 1,
+          select: {
+            added_at: true,
+            campaign: { select: { campaign_date: true } },
+          },
+        },
+      },
     });
   });
 

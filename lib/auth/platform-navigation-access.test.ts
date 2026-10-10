@@ -18,7 +18,7 @@ describe("getPlatformNavigationAccess", () => {
       expected: {
         canAccessConfiguration: false,
         canAccessLeadsAndSubscriptions: true,
-        canAccessWorkspace: true,
+        canAccessWorkspace: false,
         canAccessSupport: false,
       },
     },

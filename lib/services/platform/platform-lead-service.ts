@@ -83,6 +83,16 @@ export async function listPlatformLeads() {
   await requirePlatformSessionAdmin();
   return prisma.platformLead.findMany({
     orderBy: [{ updated_at: "desc" }, { name: "asc" }],
+    include: {
+      campaignEntries: {
+        orderBy: { added_at: "desc" },
+        take: 1,
+        select: {
+          added_at: true,
+          campaign: { select: { campaign_date: true } },
+        },
+      },
+    },
   });
 }
 

@@ -415,9 +415,104 @@ model PlatformLead {
   created_at          DateTime        @default(now())
   updated_at          DateTime        @updatedAt
   supportTickets      SupportTicket[]
+  campaignEntries     PlatformCampaignLead[]
+  whatsappRecipients  PlatformWhatsAppCampaignMessageRecipient[]
 
   @@index([updated_at])
   @@map("platform_leads")
+}
+
+model PlatformCampaign {
+  id            String                 @id @default(cuid())
+  name          String                 @db.VarChar(255)
+  campaign_date DateTime               @db.Date
+  created_at    DateTime               @default(now())
+  updated_at    DateTime               @updatedAt
+  leads         PlatformCampaignLead[]
+  whatsappMessages PlatformWhatsAppCampaignMessage[]
+
+  @@index([campaign_date])
+  @@map("platform_campaigns")
+}
+
+model PlatformCampaignLead {
+  campaign_id String
+  lead_id     String
+  added_at    DateTime         @default(now())
+  campaign    PlatformCampaign @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
+  lead        PlatformLead     @relation(fields: [lead_id], references: [id], onDelete: Cascade)
+
+  @@id([campaign_id, lead_id])
+  @@index([lead_id, added_at])
+  @@map("platform_campaign_leads")
+}
+
+model PlatformWhatsAppConfiguration {
+  id                   String   @id @default("default") @db.VarChar(50)
+  api_key_encrypted    String?  @db.VarChar(4000)
+  namespace            String   @default("decc5535_5d4b_402c_9592_3165bf9c35e4") @db.VarChar(255)
+  callback_token_hash  String?  @db.VarChar(64)
+  updated_at           DateTime @updatedAt
+
+  @@map("platform_whatsapp_configurations")
+}
+
+model PlatformWhatsAppTemplate {
+  id                    String                           @id @default(cuid())
+  template_name         String                           @db.VarChar(255)
+  sample_template_text  String                           @db.VarChar(5000)
+  integrated_number     String                           @db.VarChar(20)
+  image_url             String?                          @db.VarChar(2048)
+  language_code         String                           @default("en") @db.VarChar(20)
+  is_active             Boolean                          @default(false)
+  created_at            DateTime                         @default(now())
+  updated_at            DateTime                         @updatedAt
+  campaignMessages      PlatformWhatsAppCampaignMessage[]
+
+  @@unique([template_name, language_code])
+  @@index([is_active, template_name])
+  @@map("platform_whatsapp_templates")
+}
+
+model PlatformWhatsAppCampaignMessage {
+  id                  String                                  @id @default(cuid())
+  campaign_id         String
+  template_id         String
+  scheduled_at        DateTime
+  status              String                                  @default("SCHEDULED") @db.VarChar(30)
+  provider_request_id String?                                 @db.VarChar(255)
+  failure_summary     String?                                 @db.VarChar(500)
+  created_by_admin_id String?
+  created_at          DateTime                                @default(now())
+  submitted_at        DateTime?
+  updated_at          DateTime                                @updatedAt
+  campaign            PlatformCampaign                        @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
+  template            PlatformWhatsAppTemplate                @relation(fields: [template_id], references: [id], onDelete: Restrict)
+  recipients          PlatformWhatsAppCampaignMessageRecipient[]
+
+  @@index([status, scheduled_at])
+  @@index([campaign_id, created_at])
+  @@map("platform_whatsapp_campaign_messages")
+}
+
+model PlatformWhatsAppCampaignMessageRecipient {
+  id                    String                        @id @default(cuid())
+  campaign_message_id   String
+  lead_id               String?
+  customer_name         String                        @db.VarChar(255)
+  phone_number          String                        @db.VarChar(20)
+  status                String                        @default("PENDING") @db.VarChar(30)
+  provider_message_id   String?                       @db.VarChar(255)
+  failure_summary       String?                       @db.VarChar(500)
+  delivered_at          DateTime?
+  updated_at            DateTime                      @updatedAt
+  campaignMessage       PlatformWhatsAppCampaignMessage @relation(fields: [campaign_message_id], references: [id], onDelete: Cascade)
+  lead                  PlatformLead?                 @relation(fields: [lead_id], references: [id], onDelete: SetNull)
+
+  @@unique([campaign_message_id, lead_id], map: "wa_campaign_recipient_lead_key")
+  @@index([provider_message_id, status], map: "wa_campaign_recipient_provider_status_idx")
+  @@index([campaign_message_id, status], map: "wa_campaign_recipient_status_idx")
+  @@map("platform_whatsapp_campaign_message_recipients")
 }
 
 model PlatformEmailConfiguration {

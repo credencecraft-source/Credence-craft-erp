@@ -4,7 +4,7 @@ export function getPlatformNavigationAccess(teamRole: PlatformNavigationTeamRole
   return {
     canAccessConfiguration: teamRole === null,
     canAccessLeadsAndSubscriptions: teamRole === "CMO",
-    canAccessWorkspace: teamRole !== "CTO",
+    canAccessWorkspace: teamRole === null,
     canAccessSupport: teamRole === "CTO",
   };
 }
