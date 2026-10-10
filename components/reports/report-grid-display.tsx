@@ -60,6 +60,7 @@ interface ReportGridProps<T> {
   toolbarActions?: ReactNode;
   onSearchQueryChange?: (query: string) => void;
   renderCell: (fieldKey: string, record: T) => React.ReactNode;
+  getSearchValue?: (fieldKey: string, record: T) => string;
   isLoading?: boolean;
   emptyMessage?: string;
 }
@@ -102,6 +103,7 @@ function ReportGridImplementation<T>({
   onSearchQueryChange,
   renderCell,
   isLoading = false,
+  getSearchValue,
   emptyMessage = "No records found.",
 }: ReportGridProps<T>) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -214,7 +216,9 @@ function ReportGridImplementation<T>({
     () => records.map<IndexedReportRow<T>>((record) => {
       const searchableValues: Record<string, string> = {};
       for (const fieldKey of indexedFieldKeys) {
-        searchableValues[fieldKey] = String(renderCell(fieldKey, record) ?? "").toLowerCase();
+        searchableValues[fieldKey] = (
+          getSearchValue?.(fieldKey, record) ?? String(renderCell(fieldKey, record) ?? "")
+        ).toLowerCase();
       }
       return {
         record,
@@ -224,7 +228,7 @@ function ReportGridImplementation<T>({
         searchableValues,
       };
     }),
-    [indexedFieldKeys, records, renderCell, visibleFieldDefinitions],
+    [getSearchValue, indexedFieldKeys, records, renderCell, visibleFieldDefinitions],
   );
 
   const filteredRecords = useMemo(
