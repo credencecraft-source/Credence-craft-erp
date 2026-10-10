@@ -421,5 +421,16 @@ describe("master image data projection", () => {
 
     expect(values[0].fields).not.toHaveProperty("Image_Url");
     expect(JSON.stringify(values)).not.toContain("large-image-data");
+    const query = models.masterRawMaterial.findMany.mock.calls.at(-1)?.[0] as {
+      select?: Record<string, boolean>;
+    };
+    expect(query.select).toBeDefined();
+    expect(query.select).not.toHaveProperty("image_url");
+    expect(query.select).toMatchObject({
+      id: true,
+      organization_id: true,
+      raw_material_name: true,
+      raw_material_category_id: true,
+    });
   });
 });

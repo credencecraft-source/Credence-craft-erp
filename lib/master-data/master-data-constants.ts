@@ -278,6 +278,21 @@ export async function getMasterValuesForOrganization(
     where: { organization_id: organizationId, status: "ACTIVE" },
     select: { id: true },
   });
+  const select = moduleKey === "raw-material" && options.includeImageData === false
+    ? Object.fromEntries([
+        ...new Set([
+          "id",
+          "value_id",
+          "organization_id",
+          "is_active",
+          "sort_order",
+          "legacy_metadata",
+          ...Object.entries(fieldColumns[moduleKey] ?? {})
+            .filter(([fieldKey, column]) => fieldKey !== "Image_Url" && !column.startsWith("legacy_metadata."))
+            .map(([, column]) => column),
+        ]),
+      ].map((column) => [column, true]))
+    : undefined;
   const fetchedRows = await delegate.findMany({
     where: {
       organization_id: organizationId,
@@ -297,6 +312,7 @@ export async function getMasterValuesForOrganization(
     },
     orderBy: [{ sort_order: "asc" }, { [labelFields[moduleKey]]: "asc" }],
     take: limit + (dummyBatch && !options.includeDummyData ? 20 : 0),
+    ...(select ? { select } : {}),
   });
   const rows = fetchedRows
     .filter((row) => options.includeDummyData || !dummyBatch || !belongsToDummyBatch(row, dummyBatch.id))
