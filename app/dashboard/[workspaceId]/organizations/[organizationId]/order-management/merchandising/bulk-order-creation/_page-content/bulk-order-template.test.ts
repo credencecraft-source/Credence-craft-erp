@@ -61,6 +61,14 @@ describe("bulk order template parser", () => {
     expect(parsed.order?.rows).toBeUndefined();
   });
 
+  it("accepts legacy Article headers in previously downloaded templates", () => {
+    const legacyHeader = BULK_ORDER_COLUMNS.map((column) =>
+      column === "Article" ? "Finished Goods Item" : column);
+    const [parsed] = parseBulkOrderRows([legacyHeader, validOrder]);
+
+    expect(parsed.order?.article).toBe("ART-100");
+  });
+
   it("reports row-level errors for missing fields and keeps validating legacy BOM quantity columns", () => {
     const invalidOrder = [...legacyOrder];
     invalidOrder[7] = "";

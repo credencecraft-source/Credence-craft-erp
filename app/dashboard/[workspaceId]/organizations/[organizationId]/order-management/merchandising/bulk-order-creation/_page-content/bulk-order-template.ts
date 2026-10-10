@@ -217,6 +217,10 @@ function getHeaderIndexes(headerRow: unknown[] | undefined, requiredHeaders: rea
     const normalized = cellText(header).toLocaleLowerCase();
     if (normalized && !headerIndexes.has(normalized)) headerIndexes.set(normalized, index);
   });
+  const articleIndex = headerIndexes.get("article");
+  const legacyArticleIndex = headerIndexes.get("finished goods item");
+  if (articleIndex === undefined && legacyArticleIndex !== undefined) headerIndexes.set("article", legacyArticleIndex);
+  if (legacyArticleIndex === undefined && articleIndex !== undefined) headerIndexes.set("finished goods item", articleIndex);
   const missingHeaders = requiredHeaders.filter((header) => !headerIndexes.has(header.toLocaleLowerCase()));
   if (missingHeaders.length > 0) {
     throw new Error(`Template columns are missing: ${missingHeaders.join(", ")}.`);

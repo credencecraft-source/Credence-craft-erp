@@ -5,6 +5,7 @@ const prismaCounterMock = vi.hoisted(() => ({
   upsert: vi.fn(),
   orderFindMany: vi.fn(),
   articleFindMany: vi.fn(),
+  articleVariantFindMany: vi.fn(),
   bomItemFindMany: vi.fn(),
 }));
 
@@ -18,6 +19,9 @@ vi.mock("@/lib/database/prisma-client", () => ({
     },
     masterArticle: {
       findMany: prismaCounterMock.articleFindMany,
+    },
+    masterArticleVariant: {
+      findMany: prismaCounterMock.articleVariantFindMany,
     },
     billOfMaterialItem: {
       findMany: prismaCounterMock.bomItemFindMany,
@@ -122,16 +126,55 @@ describe("reserveNextOrderNumbers", () => {
         },
       ]);
       prismaCounterMock.articleFindMany.mockResolvedValue([
-        { article: "Jacket", article_code: "Ar-1" },
+        { id: "article-id", article: "Jacket", article_code: "Ar-1" },
       ]);
+      prismaCounterMock.articleVariantFindMany.mockResolvedValue([]);
 
       const page = await listOrdersPage("org-1");
 
       expect(prismaCounterMock.articleFindMany).toHaveBeenCalledWith({
         where: { organization_id: "org-1", article: { in: ["Jacket"] } },
-        select: { article: true, article_code: true },
+        select: { id: true, article: true, article_code: true },
       });
       expect(page.orders[0]).toMatchObject({ article: "Jacket", articleCode: "Ar-1" });
+    });
+
+    it("adds the tenant-scoped color variant code to the separate order report fields", async () => {
+      prismaCounterMock.orderFindMany.mockResolvedValue([
+        {
+          id: "order-1",
+          article: "Jacket",
+          colors: "Navy",
+          created_at: new Date("2026-10-01T00:00:00.000Z"),
+          deliveryDate: null,
+        },
+      ]);
+      prismaCounterMock.articleFindMany.mockResolvedValue([
+        { id: "article-id", article: "Jacket", article_code: "AR4" },
+      ]);
+      prismaCounterMock.articleVariantFindMany.mockResolvedValue([
+        { article_id: "article-id", variant_code: "AR4-02", color: { organization_id: "org-1", colors: "Navy" } },
+      ]);
+
+      const page = await listOrdersPage("org-1");
+
+      expect(prismaCounterMock.articleVariantFindMany).toHaveBeenCalledWith({
+        where: {
+          organization_id: "org-1",
+          article_id: { in: ["article-id"] },
+          color: { organization_id: "org-1" },
+        },
+        select: {
+          article_id: true,
+          variant_code: true,
+          color: { select: { organization_id: true, colors: true } },
+        },
+      });
+      expect(page.orders[0]).toMatchObject({
+        article: "Jacket",
+        articleCode: "AR4",
+        variantCode: "AR4-02",
+      });
     });
   });
 

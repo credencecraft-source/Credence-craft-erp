@@ -83,6 +83,8 @@ model Organization {
   masterBuyers                  MasterBuyer[]
   masterSeasons                 MasterSeason[]
   masterArticles                MasterArticle[]
+  masterArticleVariants               MasterArticleVariant[]
+  masterArticleSizes            MasterArticleSize[]
   masterGoldSeals               MasterGoldSeal[]
   masterGoldSealVariants        MasterGoldSealVariant[]
   masterColors                  MasterColor[]
@@ -866,6 +868,7 @@ model MasterCategory {
   product_master         MasterProduct?      @relation(fields: [product_master_id], references: [id], onDelete: SetNull)
   category_type          MasterCategoryType? @relation(fields: [category_type_id], references: [id])
   subcategories          MasterSubCategory[]
+  articles               MasterArticle[]
 
   @@unique([organization_id, category_name])
   @@index([organization_id, is_active])
@@ -886,6 +889,7 @@ model MasterSubCategory {
   updated_at      DateTime        @updatedAt
   organization    Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   category        MasterCategory? @relation(fields: [category_id], references: [id])
+  articles        MasterArticle[]
 
   @@unique([organization_id, sub_category])
   @@index([organization_id, is_active])
@@ -996,6 +1000,11 @@ model MasterArticle {
   organization_id String
   article         String       @db.VarChar(255)
   article_code    String?      @db.VarChar(100)
+  product_master_id String?
+  category_id       String?
+  sub_category_id   String?
+  size_group_id     String?
+  default_price     Decimal?               @db.Decimal(18, 4)
   design_by       String?      @db.VarChar(255)
   designed_date   DateTime?
   is_active       Boolean      @default(false)
@@ -1004,11 +1013,61 @@ model MasterArticle {
   created_at      DateTime     @default(now())
   updated_at      DateTime     @updatedAt
   organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  product_master    MasterProduct?         @relation(fields: [product_master_id], references: [id], onDelete: SetNull)
+  category          MasterCategory?        @relation(fields: [category_id], references: [id], onDelete: SetNull)
+  sub_category      MasterSubCategory?     @relation(fields: [sub_category_id], references: [id], onDelete: SetNull)
+  size_group        MasterSizeGroup?       @relation(fields: [size_group_id], references: [id], onDelete: Restrict)
+  variants          MasterArticleVariant[]
+  sizes             MasterArticleSize[]
 
   @@unique([organization_id, article])
   @@unique([organization_id, article_code])
   @@index([organization_id, is_active])
+  @@index([organization_id, product_master_id])
+  @@index([organization_id, category_id])
+  @@index([organization_id, sub_category_id])
+  @@index([organization_id, size_group_id])
   @@map("master_articles")
+}
+
+model MasterArticleVariant {
+  id              String        @id @default(cuid())
+  value_id        String        @unique @default(uuid())
+  organization_id String
+  article_id      String
+  color_id        String
+  variant         String        @db.VarChar(255)
+  variant_code    String?       @db.VarChar(100)
+  sku             String?       @db.VarChar(100)
+  price_override  Decimal?      @db.Decimal(18, 4)
+  is_active       Boolean       @default(true)
+  sort_order      Int           @default(0)
+  created_at      DateTime      @default(now())
+  updated_at      DateTime      @updatedAt
+  organization    Organization  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  article         MasterArticle @relation(fields: [article_id], references: [id], onDelete: Cascade)
+  color           MasterColor   @relation(fields: [color_id], references: [id], onDelete: Restrict)
+
+  @@unique([organization_id, article_id, color_id])
+  @@unique([organization_id, variant_code])
+  @@unique([organization_id, sku])
+  @@index([organization_id, article_id, is_active])
+  @@map("master_article_variants")
+}
+
+model MasterArticleSize {
+  id              String           @id @default(cuid())
+  organization_id String
+  article_id      String
+  size_id         String
+  created_at      DateTime         @default(now())
+  organization    Organization     @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  article         MasterArticle    @relation(fields: [article_id], references: [id], onDelete: Cascade)
+  size            MasterSize       @relation(fields: [size_id], references: [id], onDelete: Restrict)
+
+  @@unique([organization_id, article_id, size_id])
+  @@index([organization_id, article_id])
+  @@map("master_article_sizes")
 }
 
 model MasterGoldSeal {
@@ -1073,6 +1132,7 @@ model MasterColor {
   updated_at      DateTime            @updatedAt
   organization    Organization        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   raw_materials   MasterRawMaterial[]
+  article_variants MasterArticleVariant[]
 
   @@unique([organization_id, colors])
   @@index([organization_id, is_active])
@@ -1097,6 +1157,7 @@ model MasterSizeGroup {
   measurement_chart    MasterMeasurementChart? @relation(fields: [measurement_chart_id], references: [id])
   sizes                MasterSize[]
   size_links           MasterSizeGroupSize[]
+  articles             MasterArticle[]
 
   @@unique([organization_id, size_group])
   @@index([organization_id, is_active])
@@ -1118,6 +1179,7 @@ model MasterSize {
   organization    Organization     @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   size_group      MasterSizeGroup? @relation(fields: [size_group_id], references: [id])
   group_links     MasterSizeGroupSize[]
+  article_sizes   MasterArticleSize[]
 
   @@unique([organization_id, size])
   @@index([organization_id, is_active])
@@ -1329,6 +1391,7 @@ model MasterProduct {
   updated_at          DateTime     @updatedAt
   organization        Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   categories          MasterCategory[]
+  articles            MasterArticle[]
 
   @@unique([organization_id, product_master_name])
   @@index([organization_id, is_active])

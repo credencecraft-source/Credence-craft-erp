@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/cron/platform-whatsapp-campaigns",
-      "schedule": "* * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }

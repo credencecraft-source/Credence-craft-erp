@@ -2612,6 +2612,22 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
           order_id: { in: sampleOrderIds },
         },
       };
+      const assignedSampleWorkOrders = await transaction.advanceBookingWorkOrderAssignment.findMany({
+        where: {
+          organization_id: organization.id,
+          workOrder: {
+            organization_id: organization.id,
+            order_id: { in: sampleOrderIds },
+          },
+        },
+        select: { id: true },
+        take: 1,
+      });
+      if (assignedSampleWorkOrders.length > 0) {
+        throw new Error(
+          "Cannot delete the demo data because a sample work order is assigned to an advance booking. Remove or reassign the booking assignment, then try again.",
+        );
+      }
       await transaction.factoryDailyProductionReportLine.deleteMany({ where: sampleWorkOrderWhere });
       await transaction.factoryGrn.deleteMany({
         where: { organization_id: organization.id, ...sampleWorkOrderWhere },
@@ -2829,7 +2845,12 @@ export async function deleteOrganizationDummyData(userId: string, routeOrganizat
     }, { maxWait: 10000, timeout: 30000 });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
-      throw new Error("A real organization record still references a demo master. Update that record before deleting the dummy dataset.");
+        if (error.message.includes("advance_booking_work_order_assignments_work_order_fkey")) {
+          throw new Error(
+            "Cannot delete the demo data because a sample work order is assigned to an advance booking. Remove or reassign the booking assignment, then try again.",
+          );
+        }
+        throw new Error("A real organization record still references a demo master. Update that record before deleting the dummy dataset.");
     }
     throw error;
   }

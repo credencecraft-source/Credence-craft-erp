@@ -63,7 +63,7 @@ describe("variant order input", () => {
 
     expect(input).toMatchObject({
       entityName: "Factory",
-      article: "A-100",
+      article: undefined,
       styleName: "New style",
       colors: "Red",
       sizeGroup: "Alpha",

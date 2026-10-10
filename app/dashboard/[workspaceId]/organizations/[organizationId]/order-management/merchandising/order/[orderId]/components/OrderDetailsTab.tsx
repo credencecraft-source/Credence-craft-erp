@@ -213,15 +213,17 @@ export default function OrderDetailsTab({
             "Select brand"
           )}
         </div>
-        <div className="w-full">
-          {renderMasterSelect(
-            "Article",
-            form.article,
-            (val) => handleChange("article", val),
-            "article",
-            "Select article"
-          )}
-        </div>
+        {!isCreateMode && (
+          <div className="w-full">
+            {renderMasterSelect(
+              "Article",
+              form.article,
+              (val) => handleChange("article", val),
+              "article",
+              "Select article"
+            )}
+          </div>
+        )}
         <label className="flex flex-col gap-1.5">
           <span className="text-xs font-semibold text-slate-700">Delivery Date *</span>
           <Input

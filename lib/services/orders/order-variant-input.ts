@@ -166,7 +166,7 @@ export function buildVariantOrderInput(
     category: source.category ?? undefined,
     subCategory: source.subCategory ?? undefined,
     season: source.season ?? undefined,
-    article: source.article ?? undefined,
+    article: undefined,
     styleName,
     colors,
     buyer: source.buyer ?? undefined,

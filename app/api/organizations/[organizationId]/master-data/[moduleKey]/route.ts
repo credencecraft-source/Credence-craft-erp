@@ -50,18 +50,9 @@ export async function GET(
       const articles = masterOptions.article;
       const colors = masterOptions.color;
       const sizeLinks = await getSizeGroupSizesForOrganization(organization.id, undefined, true);
-      const sizesByGroup = new Map<string, typeof sizeLinks>();
-      for (const link of sizeLinks) {
-        const groupSizes = sizesByGroup.get(link.groupId) ?? [];
-        groupSizes.push(link);
-        sizesByGroup.set(link.groupId, groupSizes);
-      }
       const sizeGroups = masterOptions["size-group"].map((group) => ({
         ...group,
-        sizes: [
-          ...(sizesByGroup.get(group.value_id) ?? []),
-          ...(group.id === group.value_id ? [] : sizesByGroup.get(group.id) ?? []),
-        ].map((link) => link.size),
+        sizes: sizeLinks.filter((link) => link.groupId === group.value_id || link.groupId === group.id).map((link) => link.size),
       }));
       const enrichedMasterOptions = { ...masterOptions, "size-group": sizeGroups };
 
@@ -94,55 +85,28 @@ export async function GET(
       })));
     }
     if (moduleKey === "process-template") {
-      const [steps, operationTemplates, operationSteps] = await Promise.all([
-        getMasterValuesForOrganization(organization.id, "process-template-step", includeInactive, { limit: 500 }),
-        getMasterValuesForOrganization(organization.id, "operation-template", includeInactive, { limit: 500 }),
-        getMasterValuesForOrganization(organization.id, "operation-template-step", includeInactive, { limit: 500 }),
-      ]);
-      const byParentId = <T extends { parent_id: string | null }>(items: T[]) => {
-        const groups = new Map<string, T[]>();
-        for (const item of items) {
-          if (!item.parent_id) continue;
-          const group = groups.get(item.parent_id) ?? [];
-          group.push(item);
-          groups.set(item.parent_id, group);
-        }
-        return groups;
-      };
-      const stepsByTemplate = byParentId(steps);
-      const operationsByTemplate = byParentId(operationSteps);
-      const operationTemplatesByProcess = new Map<string, typeof operationTemplates>();
-      const operationTemplatesByLabel = new Map(operationTemplates.map((item) => [item.label, item]));
-      for (const item of operationTemplates) {
-        const processName = String(item.fields?.Process ?? "").trim();
-        const matching = operationTemplatesByProcess.get(processName) ?? [];
-        matching.push(item);
-        operationTemplatesByProcess.set(processName, matching);
-      }
-      const sortByNumberField = <T extends { fields?: Record<string, unknown> }>(items: T[], field: string) =>
-        [...items].sort((left, right) => Number(left.fields?.[field] ?? 0) - Number(right.fields?.[field] ?? 0));
-      const sortedOperationTemplatesByProcess = new Map(
-        [...operationTemplatesByProcess].map(([processName, items]) => [
-          processName,
-          sortByNumberField(items, "Sort_Order"),
-        ]),
-      );
-      const sortedOperationsByTemplate = new Map(
-        [...operationsByTemplate].map(([templateId, items]) => [templateId, sortByNumberField(items, "Sl_No")]),
-      );
+      const steps = await getMasterValuesForOrganization(organization.id, "process-template-step", includeInactive, { limit: 500 });
+      const operationTemplates = await getMasterValuesForOrganization(organization.id, "operation-template", includeInactive, { limit: 500 });
+      const operationSteps = await getMasterValuesForOrganization(organization.id, "operation-template-step", includeInactive, { limit: 500 });
 
       return NextResponse.json(values.map((template) => ({
         ...template,
-        steps: sortByNumberField(stepsByTemplate.get(template.id) ?? [], "Sl_No")
+        steps: steps
+          .filter((step) => step.parent_id === template.id)
+          .sort((left, right) => Number(left.fields?.Sl_No ?? 0) - Number(right.fields?.Sl_No ?? 0))
           .map((step) => {
             const processName = String(step.fields?.Process ?? step.label).trim();
             const legacyOperationTemplateName = String(step.fields?.Operation_Template ?? "").trim();
-            const matchingOperationTemplates = sortedOperationTemplatesByProcess.get(processName) ?? [];
-            const operationTemplate = operationTemplatesByLabel.get(legacyOperationTemplateName)
+            const matchingOperationTemplates = operationTemplates
+              .filter((item) => String(item.fields?.Process ?? "").trim() === processName)
+              .sort((left, right) => Number(left.fields?.Sort_Order ?? 0) - Number(right.fields?.Sort_Order ?? 0));
+            const operationTemplate = operationTemplates.find((item) => item.label === legacyOperationTemplateName)
               ?? matchingOperationTemplates[0];
             const operationTemplateName = operationTemplate?.label ?? legacyOperationTemplateName;
             const mapOperations = (selectedOperationTemplate: typeof operationTemplate) => selectedOperationTemplate
-              ? (sortedOperationsByTemplate.get(selectedOperationTemplate.id) ?? [])
+              ? operationSteps
+                  .filter((operationStep) => operationStep.parent_id === selectedOperationTemplate.id)
+                  .sort((left, right) => Number(left.fields?.Sl_No ?? 0) - Number(right.fields?.Sl_No ?? 0))
                   .map((operationStep) => ({
                     id: operationStep.id,
                     valueId: operationStep.value_id,
@@ -239,6 +203,9 @@ export async function POST(
       parentValueId: parentId || null,
       fields,
       createOnly: body.createOnly === true,
+      ...(masterKey === "size" && typeof body.sizeGroupId === "string" && body.sizeGroupId.trim()
+        ? { sizeGroupId: body.sizeGroupId.trim() }
+        : {}),
     });
 
     const multiLookupField = definition.fields.find((field) => field.type === "lookup" && field.multiple && field.lookupModuleKey);

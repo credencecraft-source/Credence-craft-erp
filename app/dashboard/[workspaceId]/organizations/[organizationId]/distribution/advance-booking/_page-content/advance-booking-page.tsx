@@ -1501,7 +1501,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               Delete selected advance bookings?
             </h2>
             <p id="advance-booking-delete-description" className="text-sm text-slate-600">
-              {selectedReportBookings.length} booking record(s) and their size rows will be permanently deleted. Remove any quotation first; bookings assigned to work orders cannot be deleted.
+              {selectedReportBookings.length} booking record(s) and their size rows will be permanently deleted. Remove any quotation first. Unfulfilled work-order assignments will be removed automatically; reverse inventory fulfillment before deleting a booking with received goods.
             </p>
           </header>
           {error ? <p role="alert" className="text-sm text-red-700">{error}</p> : null}

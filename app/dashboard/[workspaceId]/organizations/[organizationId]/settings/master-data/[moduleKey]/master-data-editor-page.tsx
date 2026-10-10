@@ -21,8 +21,10 @@ function serializeDecimal(value: unknown): unknown {
   if (value === null || value === undefined) {
     return value;
   }
-  if (typeof value === "object" && value !== null && "toNumber" in value && typeof (value as { toNumber: () => number }).toNumber === "function") {
-    return (value as { toNumber: () => number }).toNumber();
+  if (typeof value === "object" && value !== null && "toNumber" in value && "toString" in value
+    && typeof (value as { toNumber: () => number }).toNumber === "function"
+    && typeof (value as { toString: () => string }).toString === "function") {
+    return (value as { toString: () => string }).toString();
   }
   if (Array.isArray(value)) {
     return value.map(serializeDecimal);
@@ -66,9 +68,10 @@ function readChildValues(formData: FormData, field: MasterFieldDefinition) {
   const rawValue = String(formData.get(`field_${field.key}`) ?? "[]");
   try {
     const parsed = JSON.parse(rawValue);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) throw new Error("not an array");
+    return parsed;
   } catch {
-    return [];
+    throw new Error(`${field.label} data is invalid. Refresh the page and try again.`);
   }
 }
 
@@ -107,15 +110,17 @@ function validateChildValues(
   const slNumbers = new Set<number>();
   const hasSlNo = childFields.some((child) => child.key === "Sl_No");
   const processNames = new Set<string>();
-  const validatedRows: Array<{ label: string; fields: Record<string, unknown> }> = [];
+  const validatedRows: Array<{ id?: string; label: string; fields: Record<string, unknown> }> = [];
 
   for (const rawValue of selectedValues) {
     const row = rawValue && typeof rawValue === "object" ? rawValue as Record<string, unknown> : {};
     const fields = Object.fromEntries(childFields.map((child) => {
       const value = row[child.key];
-      if (child.type === "number" || child.type === "percentage" || child.type === "decimal") return [child.key, value === "" || value === null || value === undefined ? null : Number(value)];
+      if (child.type === "decimal") return [child.key, value === "" || value === null || value === undefined ? null : String(value).trim()];
+      if (child.type === "number" || child.type === "percentage") return [child.key, value === "" || value === null || value === undefined ? null : Number(value)];
       return [child.key, value === null || value === undefined ? "" : String(value).trim()];
     }));
+    if (!Object.values(fields).some((value) => value !== null && value !== undefined && String(value).trim() !== "")) continue;
     const missingRequired = childFields.some((child) => child.required && (fields[child.key] === null || fields[child.key] === undefined || String(fields[child.key]).trim() === ""));
     if (missingRequired) throw new Error(`${childField.label} has an incomplete row.`);
     const labelField = childFields.find((child) => child.type === "lookup") ?? childFields[0];
@@ -124,10 +129,15 @@ function validateChildValues(
     const slNo = Number(fields.Sl_No);
     if (hasSlNo && (!Number.isInteger(slNo) || slNo <= 0)) throw new Error(`${childField.label} Sl No must be a positive whole number.`);
     if (hasSlNo && slNumbers.has(slNo)) throw new Error(`${childField.label} cannot contain duplicate Sl No values.`);
-    if (processNames.has(label)) throw new Error(`${childField.label} cannot contain the same process more than once.`);
+    if (processNames.has(label)) {
+      throw new Error(childField.childModuleKey === "article-variant"
+        ? "Each color can only be added once to a finished goods style."
+        : `${childField.label} cannot contain the same process more than once.`);
+    }
     if (hasSlNo) slNumbers.add(slNo);
     processNames.add(label);
-    validatedRows.push({ label, fields });
+    const id = typeof row.id === "string" ? row.id : undefined;
+    validatedRows.push({ ...(id ? { id } : {}), label, fields });
   }
 
   return { childModuleKey: childField.childModuleKey ?? childField.lookupModuleKey, validatedRows };
@@ -207,18 +217,41 @@ async function createMasterValueAction(formData: FormData) {
   }
   await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
-  const created = await createMasterValueForOrganization(organization.id, moduleKey, {
-    label,
-    code: code || null,
-    description: description || null,
-    fields,
-  });
-
+  let articleVariants: Array<{ id?: string; fields: Record<string, unknown> }> | undefined;
   try {
-    await saveChildValues(organization.id, created.id, definition, formData);
+    if (moduleKey === "article") {
+      const variantField = definition.fields.find((field) => field.type === "child-list");
+      if (!variantField) throw new Error("Article variant fields are not configured.");
+      articleVariants = validateChildValues(variantField, formData).validatedRows
+        .map(({ id, fields: variantFields }) => ({ ...(id ? { id } : {}), fields: variantFields }));
+    }
   } catch (error) {
-    await deleteMasterValue(organization.id, created.id);
     masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+  }
+
+  let created;
+  try {
+    created = await createMasterValueForOrganization(organization.id, moduleKey, {
+      label,
+      code: code || null,
+      description: description || null,
+      fields,
+      ...(articleVariants ? { articleVariants } : {}),
+      ...(moduleKey === "article" ? {
+        articleSizes: Array.isArray(fields.Sizes) ? fields.Sizes.map(String) : [],
+      } : {}),
+    });
+  } catch (error) {
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+  }
+
+  if (moduleKey !== "article") {
+    try {
+      await saveChildValues(organization.id, created.id, definition, formData);
+    } catch (error) {
+      await deleteMasterValue(organization.id, created.id);
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+    }
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
@@ -264,20 +297,35 @@ async function updateMasterValueAction(formData: FormData) {
   await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const childField = definition.fields.find((field) => (field.type === "child-list" && field.childModuleKey) || (field.type === "lookup" && field.multiple && field.lookupModuleKey));
+  let articleVariants: Array<{ id?: string; fields: Record<string, unknown> }> | undefined;
   try {
-    if (childField) validateChildValues(childField, formData);
+    if (childField) {
+      const validated = validateChildValues(childField, formData);
+      if (moduleKey === "article") {
+        articleVariants = validated.validatedRows.map(({ id, fields: variantFields }) => ({ ...(id ? { id } : {}), fields: variantFields }));
+      }
+    }
   } catch (error) {
     masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
   }
 
-  const updated = await updateMasterValue(organization.id, valueId, {
-    label,
-    code: code || null,
-    description: description || null,
-    fields,
-  });
+  let updated;
+  try {
+    updated = await updateMasterValue(organization.id, valueId, {
+      label,
+      code: code || null,
+      description: description || null,
+      fields,
+      ...(articleVariants ? { articleVariants } : {}),
+      ...(moduleKey === "article" ? {
+        articleSizes: Array.isArray(fields.Sizes) ? fields.Sizes.map(String) : [],
+      } : {}),
+    });
+  } catch (error) {
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+  }
 
-  if (updated) {
+  if (updated && moduleKey !== "article") {
     try {
       await saveChildValues(organization.id, updated.id, definition, formData);
     } catch (error) {
@@ -365,35 +413,31 @@ export default async function MasterDataEditorPage({
     notFound();
   }
 
+  const values = await getMasterValuesForOrganization(organization.id, moduleKey, true, { includeDummyData: true });
   const lookupKeys = [...new Set(definition.fields.flatMap((field) => [
     ...(field.lookupModuleKey ? [field.lookupModuleKey] : []),
-    ...(field.childModuleKey ? [field.childModuleKey] : []),
     ...(field.childFields ?? []).flatMap((child) => child.lookupModuleKey ? [child.lookupModuleKey] : []),
   ]))];
+  const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => {
+    if (lookupKey === "article-size") {
+      const sizeLinks = await getSizeGroupSizesForOrganization(organization.id, undefined, true);
+      return [lookupKey, sizeLinks.map(({ groupId, size }) => ({
+        id: `${groupId}:${size.id}`,
+        value_id: size.value_id,
+        label: size.label,
+        parent_id: groupId,
+        fields: size.fields,
+      }))];
+    }
+    return [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true, { includeDummyData: true }))
+      .map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id, fields: item.fields }))];
+  })));
   const childModuleKey = definition.fields.find((field) => field.type === "child-list")?.childModuleKey
     ?? definition.fields.find((field) => field.type === "lookup" && field.multiple)?.lookupModuleKey;
-  const [values, lookupEntries, sizeGroupLinks] = await Promise.all([
-    getMasterValuesForOrganization(organization.id, moduleKey, true, {
-      includeDummyData: true,
-      includeImageData: false,
-    }),
-    Promise.all(lookupKeys.map(async (lookupKey) => [
-      lookupKey,
-      (await getMasterValuesForOrganization(organization.id, lookupKey, true, {
-        includeDummyData: true,
-        includeImageData: false,
-      }))
-        .map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id, fields: item.fields })),
-    ] as const)),
-    moduleKey === "size-group"
-      ? getSizeGroupSizesForOrganization(organization.id, undefined, true)
-      : Promise.resolve(null),
-  ]);
-  const lookupOptions = Object.fromEntries(lookupEntries);
   const childRecords = moduleKey === "size-group"
-    ? (sizeGroupLinks ?? []).map((item) => ({ parentId: item.groupId, label: item.size.label, fields: item.size.fields }))
+    ? (await getSizeGroupSizesForOrganization(organization.id, undefined, true)).map((item) => ({ parentId: item.groupId, label: item.size.label, fields: item.size.fields }))
     : childModuleKey
-      ? (lookupOptions[childModuleKey] ?? []).map((item) => ({ parentId: item.parent_id ?? null, label: item.label, fields: item.fields }))
+      ? (await getMasterValuesForOrganization(organization.id, childModuleKey, true, { includeDummyData: true })).map((item) => ({ id: item.id, parentId: item.parent_id, label: item.label, fields: serializeDecimal(item.fields) as Record<string, unknown> }))
       : [];
   const shouldShowMasterHeader = moduleKey !== "article";
 

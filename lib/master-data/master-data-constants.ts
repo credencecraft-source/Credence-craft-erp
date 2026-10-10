@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/database/prisma-client";
 import { enforceInventoryLocationLimit } from "@/lib/services/platform/inventory-location-restriction-service";
+import { syncFinishedGoodsSizes } from "@/lib/services/master-data/finished-goods-size-service";
+import { parseFinishedGoodsPrice, syncFinishedGoodsVariants, type FinishedGoodsVariantInput } from "@/lib/services/master-data/finished-goods-variant-service";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 export { getMasterDefinition, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
 
@@ -34,7 +36,7 @@ async function isActiveDummyMaster(organizationId: string, record: MasterRow) {
 const delegates = {
   entity: prisma.masterEntity, location: prisma.masterLocation, "category-type": prisma.masterCategoryType, category: prisma.masterCategory, "sub-category": prisma.masterSubCategory,
   brand: prisma.masterBrand, "pre-order-checklist": prisma.masterPreOrderChecklist, "currency-type": prisma.masterCurrencyType, buyer: prisma.masterBuyer,
-  season: prisma.masterSeason, article: prisma.masterArticle, "gold-seal": prisma.masterGoldSeal, "gold-seal-variant": prisma.masterGoldSealVariant, color: prisma.masterColor, "size-group": prisma.masterSizeGroup, size: prisma.masterSize,
+  season: prisma.masterSeason, article: prisma.masterArticle, "article-variant": prisma.masterArticleVariant, "gold-seal": prisma.masterGoldSeal, "gold-seal-variant": prisma.masterGoldSealVariant, color: prisma.masterColor, "size-group": prisma.masterSizeGroup, size: prisma.masterSize,
   uom: prisma.masterUom, "stock-uom-convert": prisma.masterStockUomConvert, "raw-material": prisma.masterRawMaterial, vendor: prisma.masterVendor, "gst-type": prisma.masterGstType, gst: prisma.masterGst,
   hsn: prisma.masterHsn, state: prisma.masterState, "measurement-chart": prisma.masterMeasurementChart, "size-wise-consumption": prisma.masterSizeWiseConsumption,
   "product-master": prisma.masterProduct, "process-master": prisma.masterProcess, operation: prisma.masterOperation, "process-template": prisma.masterProcessTemplate, "process-template-step": prisma.masterProcessTemplateStep, "operation-template": prisma.masterOperationTemplate, "operation-template-step": prisma.masterOperationTemplateStep, merchandiser: prisma.masterMerchandiser, status: prisma.masterStatus,
@@ -44,7 +46,7 @@ const delegates = {
 
 const labelFields: Record<string, string> = {
   entity: "entity_name", location: "location_name", "category-type": "category_type", category: "category_name", "sub-category": "sub_category", brand: "brand",
-  "pre-order-checklist": "pre_order_checklist", "currency-type": "currency_type", buyer: "buyer_name", season: "season", article: "article", "gold-seal": "gold_seal", "gold-seal-variant": "variant", color: "colors",
+  "pre-order-checklist": "pre_order_checklist", "currency-type": "currency_type", buyer: "buyer_name", season: "season", article: "article", "article-variant": "variant", "gold-seal": "gold_seal", "gold-seal-variant": "variant", color: "colors",
   "size-group": "size_group", size: "size", uom: "uom", "stock-uom-convert": "name", "raw-material": "raw_material_name", vendor: "vendor", "gst-type": "gst_type", gst: "name",
   hsn: "hsn_code", state: "state", "measurement-chart": "measurement_chart", "size-wise-consumption": "bom_template_name", "product-master": "product_master_name",
   "process-master": "process_name", operation: "operation_name", "process-template": "process_name", "process-template-step": "process_name", "operation-template": "operation_template_name", "operation-template-step": "operation", merchandiser: "merchandiser", status: "status", "order-volume": "order_volume",
@@ -60,12 +62,13 @@ const fieldColumns: Record<string, Record<string, string>> = {
   brand: { Brand: "brand", Maximum_Allowed_Excess: "maximum_allowed_excess", Auto_add_Excess_to_RM: "auto_add_excess_to_rm", Pre_Order_Checklist1: "pre_order_checklist_id", Status: "status" },
   buyer: { Buyer_Name: "buyer_name", Buyer_Email: "buyer_email", Currency_Type: "currency_type_id", Status: "status" },
   season: { season: "season" },
-  article: { article: "article", article_code: "article_code", design_by: "design_by", designed_date: "designed_date" },
+  article: { article: "article", article_code: "article_code", Product_Master: "product_master_id", Category: "category_id", Subcategory: "sub_category_id", Size_Group: "size_group_id", default_price: "default_price", design_by: "design_by", designed_date: "designed_date" },
+  "article-variant": { variant: "variant", color: "color_id", variant_code: "variant_code", sku: "sku", price_override: "price_override" },
   "gold-seal": { gold_seal: "gold_seal", gold_seal_code: "gold_seal_code", design_by: "design_by", designed_date: "designed_date" },
   "gold-seal-variant": { variant: "variant", variant_code: "variant_code", color: "color", size: "size", sku: "sku", barcode: "barcode" },
   color: { Colors: "colors", Status: "status" },
   "size-group": { Brand1: "brand_id", Size_Group: "size_group", Measurement_Chart1: "measurement_chart_id" },
-  size: { Size: "size", Size_Group_ID: "size_group_id", status: "status" }, uom: { uom: "uom" }, "stock-uom-convert": { Name: "name", How_Many: "how_many" }, vendor: { vendor: "vendor", Gst_Number: "gst_number", Registered_State: "registered_state_id", Is_this_Current_Store: "is_current_store" }, state: { State: "state" },
+  size: { Size: "size", Size_Group_ID: "size_group_id", status: "status" }, uom: { uom: "uom" }, "stock-uom-convert": { Name: "name", How_Many: "how_many" }, vendor: { vendor: "vendor", Contact_Person: "legacy_metadata.contact_person", Contact_Phone: "legacy_metadata.contact_phone", Contact_Email: "legacy_metadata.contact_email", Gst_Number: "gst_number", Registered_State: "registered_state_id", Is_this_Current_Store: "is_current_store" }, state: { State: "state" },
   gst: { Name: "name", Gst: "gst", Cgst_Rate: "cgst_rate", Sgst_Rate: "sgst_rate", Igst_Rate: "igst_rate", GST_TYPELOOKUP1: "gst_type_id", Zoho_Books_Tax_ID: "zoho_books_tax_id" }, hsn: { Hsn_Code: "hsn_code" },
   "pre-order-checklist": { Pre_Order_Checklist: "pre_order_checklist" }, "currency-type": { Currency_Type: "currency_type" }, "gst-type": { GST_TYPE: "gst_type" },
   "measurement-chart": { Measurement_Chart: "measurement_chart" }, "size-wise-consumption": { Bom_Template_Name: "bom_template_name" },
@@ -78,6 +81,8 @@ const fieldColumns: Record<string, Record<string, string>> = {
 };
 
 const parentColumns: Record<string, string> = {
+  "article-variant": "article_id",
+  category: "product_master_id",
   "sub-category": "category_id",
   "raw-material-category": "raw_material_type_id",
   "raw-material-sub-category": "raw_material_category_id",
@@ -107,11 +112,11 @@ function typedValue(field: MasterFieldDefinition, value: unknown) {
 async function nextArticleCode(organizationId: string, database: MasterDelegate = delegates.article) {
   const existing = await database.findMany({ where: { organization_id: organizationId }, select: { article_code: true }, orderBy: { sort_order: "asc" } });
   const numbers = existing
-    .map((item) => /^AR-(\d+)$/i.exec(String(item.article_code ?? "")))
+    .map((item) => /^AR-?(\d+)$/i.exec(String(item.article_code ?? "")))
     .map((match) => Number(match?.[1]))
     .filter((value) => Number.isSafeInteger(value));
   const nextNumber = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
-  return `Ar-${nextNumber}`;
+  return `AR${nextNumber}`;
 }
 
 async function nextGoldSealCode(organizationId: string, database: MasterDelegate = delegates["gold-seal"]) {
@@ -121,6 +126,24 @@ async function nextGoldSealCode(organizationId: string, database: MasterDelegate
     .filter((value) => Number.isFinite(value));
   const nextNumber = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
   return `GS-${nextNumber}`;
+}
+
+async function hydrateArticleMetrics(organizationId: string, row: MasterRow) {
+  const articleName = String(row.article ?? "").trim();
+  if (!articleName) {
+    return { running_order_qty: 0, running_order_variants: 0 };
+  }
+
+  const matchedOrders = await prisma.merchandisingOrder.findMany({
+    where: { organization_id: organizationId, article: articleName },
+    select: { orderNo: true, orderQty: true },
+  });
+
+  const totalQty = matchedOrders.reduce((sum, order) => sum + Number(order.orderQty ?? 0), 0);
+  return {
+    running_order_qty: totalQty,
+    running_order_variants: matchedOrders.length,
+  };
 }
 
 async function resolveLookupId(organizationId: string, moduleKey: string, value: unknown) {
@@ -173,6 +196,7 @@ async function buildData(
   };
 
   for (const field of definition.fields) {
+    if (moduleKey === "article" && field.key === "Sizes") continue;
     const relationField = fieldColumns[moduleKey]?.[field.key];
     if (!relationField || relationField === labelFields[moduleKey]) continue;
     const legacyMetadataKey = relationField.startsWith("legacy_metadata.")
@@ -219,7 +243,11 @@ async function buildData(
       }
     }
 
-    const val = typedValue(field, fields[field.key]);
+    const val = moduleKey === "article" && field.key === "default_price"
+      ? fields[field.key] === null || fields[field.key] === undefined || fields[field.key] === ""
+        ? null
+        : parseFinishedGoodsPrice(fields[field.key], "Default price")
+      : typedValue(field, fields[field.key]);
     if (val !== null) {
       if (legacyMetadataKey) {
         legacyMetadata[legacyMetadataKey] = val;
@@ -227,35 +255,60 @@ async function buildData(
       } else {
         data[relationField] = val;
       }
+    } else if (moduleKey === "article" && ["Product_Master", "Category", "Subcategory", "Size_Group", "default_price"].includes(field.key)) {
+      data[relationField] = null;
     }
   }
 
   if (hasLegacyMetadataUpdates) data.legacy_metadata = legacyMetadata;
+  if (moduleKey === "article") {
+    const categoryId = data.category_id;
+    const productMasterId = data.product_master_id;
+    const subCategoryId = data.sub_category_id;
+    if (categoryId) {
+      const category = await prisma.masterCategory.findFirst({
+        where: { organization_id: organizationId, id: String(categoryId) },
+        select: { product_master_id: true },
+      });
+      if (!category || (productMasterId && category.product_master_id !== productMasterId)) {
+        throw new Error("Finished Goods Category must belong to the selected Finished Goods Type.");
+      }
+    }
+    if (subCategoryId) {
+      if (!categoryId) {
+        throw new Error("Select a Finished Goods Category before selecting a subcategory.");
+      }
+      const subCategory = await prisma.masterSubCategory.findFirst({
+        where: { organization_id: organizationId, id: String(subCategoryId), category_id: String(categoryId) },
+        select: { id: true },
+      });
+      if (!subCategory) {
+        throw new Error("Finished Goods Subcategory must belong to the selected category.");
+      }
+    }
+  }
   return data;
 }
 
-async function rowFields(
-  moduleKey: string,
-  row: MasterRow,
-  definition: NonNullable<ReturnType<typeof getMasterDefinition>>,
-  articleMetrics?: Map<string, { running_order_qty: number; running_order_variants: number }>,
-  includeImageData = true,
-) {
+async function rowFields(moduleKey: string, row: MasterRow, definition: NonNullable<ReturnType<typeof getMasterDefinition>>) {
   const fields: MasterFieldValues = {};
   for (const field of definition.fields) {
-    if (field.type === "image" && !includeImageData) continue;
-    if (moduleKey === "article" && (field.key === "running_order_qty" || field.key === "running_order_variants")) {
-      const metrics = articleMetrics?.get(String(row.article ?? "")) ?? { running_order_qty: 0, running_order_variants: 0 };
-      fields[field.key] = field.key === "running_order_qty" ? metrics.running_order_qty : metrics.running_order_variants;
-      continue;
-    }
     const column = fieldColumns[moduleKey]?.[field.key];
     if (!column) continue;
-    const value = valueForMasterField(row, column);
+    let value = valueForMasterField(row, column);
+    if (field.key === "running_order_qty" || field.key === "running_order_variants") {
+      if (moduleKey === "article") {
+        const metrics = await hydrateArticleMetrics(row.organization_id as string, row);
+        value = field.key === "running_order_qty" ? metrics.running_order_qty : metrics.running_order_variants;
+      }
+    }
     fields[field.key] = value === null || value === undefined
       ? null
       : field.type === "date"
         ? value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10)
+        : field.type === "decimal" && ((moduleKey === "article" && field.key === "default_price")
+          || (moduleKey === "article-variant" && field.key === "price_override"))
+          ? String(value)
         : ["number", "percentage", "decimal"].includes(field.type)
           ? Number(value)
           : (value as MasterFieldValues[string]);
@@ -267,7 +320,7 @@ export async function getMasterValuesForOrganization(
   organizationId: string,
   moduleKey: string,
   includeInactive = false,
-  options: { search?: string; limit?: number; exactSearch?: boolean; includeDummyData?: boolean; entityId?: string; includeImageData?: boolean } = {},
+  options: { search?: string; limit?: number; exactSearch?: boolean; includeDummyData?: boolean; entityId?: string; articleCode?: string } = {},
 ) {
   const definition = getMasterDefinition(moduleKey);
   const delegate = delegates[moduleKey];
@@ -278,24 +331,10 @@ export async function getMasterValuesForOrganization(
     where: { organization_id: organizationId, status: "ACTIVE" },
     select: { id: true },
   });
-  const select = moduleKey === "raw-material" && options.includeImageData === false
-    ? Object.fromEntries([
-        ...new Set([
-          "id",
-          "value_id",
-          "organization_id",
-          "is_active",
-          "sort_order",
-          "legacy_metadata",
-          ...Object.entries(fieldColumns[moduleKey] ?? {})
-            .filter(([fieldKey, column]) => fieldKey !== "Image_Url" && !column.startsWith("legacy_metadata."))
-            .map(([, column]) => column),
-        ]),
-      ].map((column) => [column, true]))
-    : undefined;
   const fetchedRows = await delegate.findMany({
     where: {
       organization_id: organizationId,
+      ...(moduleKey === "article" && options.articleCode ? { article_code: options.articleCode } : {}),
       ...(moduleKey === "location" && options.entityId ? { entity_id: options.entityId } : {}),
       ...(includeInactive ? {} : { is_active: true }),
       ...(search && labelFields[moduleKey]
@@ -312,31 +351,10 @@ export async function getMasterValuesForOrganization(
     },
     orderBy: [{ sort_order: "asc" }, { [labelFields[moduleKey]]: "asc" }],
     take: limit + (dummyBatch && !options.includeDummyData ? 20 : 0),
-    ...(select ? { select } : {}),
   });
   const rows = fetchedRows
     .filter((row) => options.includeDummyData || !dummyBatch || !belongsToDummyBatch(row, dummyBatch.id))
     .slice(0, limit);
-  const articleNames = moduleKey === "article"
-    ? [...new Set(rows.map((row) => String(row.article ?? "").trim()).filter(Boolean))]
-    : [];
-  const articleMetrics = new Map<string, { running_order_qty: number; running_order_variants: number }>();
-  if (articleNames.length > 0) {
-    const groupedOrders = await prisma.merchandisingOrder.groupBy({
-      by: ["article"],
-      where: { organization_id: organizationId, article: { in: articleNames } },
-      _sum: { orderQty: true },
-      _count: { _all: true },
-    });
-    for (const group of groupedOrders) {
-      if (group.article) {
-        articleMetrics.set(group.article, {
-          running_order_qty: Number(group._sum.orderQty ?? 0),
-          running_order_variants: group._count._all,
-        });
-      }
-    }
-  }
   const lookupKeys = definition.fields
     .filter((field) => field.type === "lookup" && field.lookupModuleKey)
     .map((field) => field.lookupModuleKey as string);
@@ -361,13 +379,70 @@ export async function getMasterValuesForOrganization(
     lookupCache.set(lookupModuleKey, labels);
   }));
 
+  const articleVariants = moduleKey === "article" && rows.length > 0
+    ? await prisma.masterArticleVariant.findMany({
+        where: {
+          organization_id: organizationId,
+          article_id: { in: rows.map((row) => row.id) },
+          ...(includeInactive ? {} : { is_active: true }),
+          color: { organization_id: organizationId, ...(includeInactive ? {} : { is_active: true }) },
+        },
+        select: {
+          id: true,
+          article_id: true,
+          variant: true,
+          variant_code: true,
+          sku: true,
+          price_override: true,
+          color: { select: { organization_id: true, colors: true } },
+        },
+        orderBy: [{ sort_order: "asc" }, { variant: "asc" }],
+      })
+    : [];
+  const variantsByArticle = new Map<string, typeof articleVariants>();
+  for (const variant of articleVariants) {
+    if (variant.color.organization_id !== organizationId) continue;
+    const articleVariantsForStyle = variantsByArticle.get(variant.article_id) ?? [];
+    articleVariantsForStyle.push(variant);
+    variantsByArticle.set(variant.article_id, articleVariantsForStyle);
+  }
+  const articleSizes = moduleKey === "article" && rows.length > 0
+    ? await prisma.masterArticleSize.findMany({
+        where: {
+          organization_id: organizationId,
+          article_id: { in: rows.map((row) => row.id) },
+          size: { organization_id: organizationId, ...(includeInactive ? {} : { is_active: true }) },
+        },
+        select: { article_id: true, size: { select: { organization_id: true, size: true, is_active: true } } },
+        orderBy: [{ article_id: "asc" }, { created_at: "asc" }],
+      })
+    : [];
+  const sizesByArticle = new Map<string, string[]>();
+  for (const articleSize of articleSizes) {
+    if (articleSize.size.organization_id !== organizationId) continue;
+    const sizes = sizesByArticle.get(articleSize.article_id) ?? [];
+    sizes.push(articleSize.size.size);
+    sizesByArticle.set(articleSize.article_id, sizes);
+  }
+
   const hydratedRows = await Promise.all(rows.map(async (row) => {
-    const fields = await rowFields(moduleKey, row, definition, articleMetrics, options.includeImageData !== false);
+    const fields = await rowFields(moduleKey, row, definition);
     for (const field of definition.fields.filter((item) => item.type === "lookup")) {
       const related = fields[field.key] && field.lookupModuleKey
         ? lookupCache.get(field.lookupModuleKey)?.get(String(fields[field.key]))
         : null;
       fields[field.key] = related ?? fields[field.key] ?? null;
+    }
+    if (moduleKey === "article") {
+      fields.variants = (variantsByArticle.get(row.id) ?? []).map((variant) => ({
+        id: variant.id,
+        variant: variant.variant,
+        color: variant.color.colors,
+        variant_code: variant.variant_code,
+        sku: variant.sku,
+        price_override: variant.price_override?.toString() ?? null,
+      }));
+      fields.Sizes = sizesByArticle.get(row.id) ?? [];
     }
     return {
       id: row.id,
@@ -479,8 +554,8 @@ export async function getSizeGroupSizesForOrganization(
     : [];
   const dummyGroupIds = new Set(dummyGroups.filter((group) => belongsToDummyBatch(group, dummyBatch!.id)).map((group) => group.id));
 
-  return links.filter((link) => includeDummyData || !dummyBatch
-    || (!dummyGroupIds.has(link.size_group_id) && !belongsToDummyBatch(link.size, dummyBatch.id))).map((link) => ({
+  return links.filter((link) => link.size.organization_id === organizationId && (includeDummyData || !dummyBatch
+    || (!dummyGroupIds.has(link.size_group_id) && !belongsToDummyBatch(link.size, dummyBatch.id)))).map((link) => ({
     groupId: link.size_group_id,
     size: {
       id: link.size.id,
@@ -527,7 +602,7 @@ export async function syncSizeGroupSizes(organizationId: string, sizeGroupId: st
   });
 }
 
-export async function createMasterValueForOrganization(organizationId: string, moduleKey: string, input: { label: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; parentValueId?: string | null; createOnly?: boolean }) {
+export async function createMasterValueForOrganization(organizationId: string, moduleKey: string, input: { label: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; parentValueId?: string | null; createOnly?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; sizeGroupId?: string }) {
   const definition = getMasterDefinition(moduleKey);
   const delegate = delegates[moduleKey];
   if (!definition || !delegate) throw new Error("Master module is not available.");
@@ -537,6 +612,19 @@ export async function createMasterValueForOrganization(organizationId: string, m
       (transaction as unknown as Record<string, MasterDelegate>)[`master${moduleKey.split("-").map((part) => part[0].toUpperCase() + part.slice(1)).join("")}`] ?? delegate;
 
     const data = await buildData(organizationId, moduleKey, input.fields ?? {}, input.label.trim());
+    const sizeGroup = moduleKey === "size" && input.sizeGroupId
+      ? await transaction.masterSizeGroup.findFirst({
+          where: {
+            organization_id: organizationId,
+            OR: [{ id: input.sizeGroupId }, { value_id: input.sizeGroupId }],
+            is_active: true,
+          },
+          select: { id: true },
+        })
+      : null;
+    if (moduleKey === "size" && input.sizeGroupId && !sizeGroup) {
+      throw new Error("Select an active Size Group belonging to this organization.");
+    }
 
     if (moduleKey === "location") {
       await enforceInventoryLocationLimit(transaction, organizationId, input.label.trim());
@@ -605,6 +693,38 @@ export async function createMasterValueForOrganization(organizationId: string, m
     } else {
       created = await transactionDelegate.create({ data });
     }
+    if (sizeGroup) {
+      const existingSizeGroupLink = await transaction.masterSizeGroupSize.findFirst({
+        where: {
+          organization_id: organizationId,
+          size_group_id: sizeGroup.id,
+          size_id: created.id,
+        },
+        select: { id: true },
+      });
+      if (!existingSizeGroupLink) {
+        await transaction.masterSizeGroupSize.create({
+          data: {
+            organization_id: organizationId,
+            size_group_id: sizeGroup.id,
+            size_id: created.id,
+          },
+        });
+      }
+    }
+
+    if (moduleKey === "article" && "articleVariants" in input && input.articleVariants) {
+      await syncFinishedGoodsVariants(transaction, organizationId, created.id, input.articleVariants);
+    }
+    if (moduleKey === "article" && input.articleSizes) {
+      await syncFinishedGoodsSizes(
+        transaction,
+        organizationId,
+        created.id,
+        typeof created.size_group_id === "string" ? created.size_group_id : null,
+        input.articleSizes,
+      );
+    }
 
     await transaction.approvalRequest.deleteMany({
       where: { organization_id: organizationId, entity_ref_id: created.value_id },
@@ -624,15 +744,50 @@ export async function createMasterValueForOrganization(organizationId: string, m
     });
 
     return created;
-  });
+  }, moduleKey === "article" ? { timeout: 15_000 } : undefined);
 }
 
-export async function updateMasterValue(organizationId: string, valueId: string, input: { label?: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; is_active?: boolean }) {
+export async function updateMasterValue(organizationId: string, valueId: string, input: { label?: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; is_active?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[] }) {
   for (const [moduleKey, delegate] of Object.entries(delegates)) {
     const existing = await delegate.findFirst({ where: { organization_id: organizationId, OR: [{ id: valueId }, { value_id: valueId }] } });
     if (existing) {
       if (await isActiveDummyMaster(organizationId, existing)) {
         throw new Error("Demo master values are managed by the Dummy Data batch and cannot be edited individually.");
+      }
+      if (moduleKey === "article" && (input.articleVariants || input.articleSizes)) {
+        const articleVariants = input.articleVariants;
+        const articleSizes = input.articleSizes;
+        return prisma.$transaction(async (transaction) => {
+          const currentArticle = await transaction.masterArticle.findFirst({
+            where: { organization_id: organizationId, id: existing.id },
+          });
+          if (!currentArticle) return null;
+          const data = input.fields
+            ? await buildData(
+                organizationId,
+                moduleKey,
+                input.fields,
+                input.label?.trim() || String(existing[labelFields[moduleKey]]),
+                existing.legacy_metadata,
+              )
+            : {};
+          delete data.organization_id;
+          if (input.is_active !== undefined) data.is_active = input.is_active;
+          const updated = await transaction.masterArticle.update({ where: { id: existing.id }, data });
+          if (articleVariants) {
+            await syncFinishedGoodsVariants(transaction, organizationId, existing.id, articleVariants);
+          }
+          if (articleSizes) {
+            await syncFinishedGoodsSizes(
+              transaction,
+              organizationId,
+              existing.id,
+              typeof updated.size_group_id === "string" ? updated.size_group_id : null,
+              articleSizes,
+            );
+          }
+          return updated;
+        }, { timeout: 15_000 });
       }
       const data = input.fields
         ? await buildData(

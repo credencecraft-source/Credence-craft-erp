@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Modal from "@/components/ui/Modal";
+import ArticleBasedOrderDialog from "@/components/erp/article-based-order-dialog";
 import MerchandisingOrderVariantDialog from "@/components/erp/merchandising-order-variant-dialog";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 
@@ -18,6 +19,7 @@ type OrderRecord = {
   season?: string | null;
   article?: string | null;
   articleCode?: string | null;
+  variantCode?: string | null;
   styleName?: string | null;
   colors?: string | null;
   buyer?: string | null;
@@ -37,6 +39,8 @@ type FilterableOrderField =
   | "subCategory"
   | "season"
   | "article"
+  | "articleCode"
+  | "variantCode"
   | "styleName"
   | "colors"
   | "buyer"
@@ -57,7 +61,9 @@ const reportFilterFields: Array<{
   { key: "category", label: "Product Category" },
   { key: "subCategory", label: "Product Sub Category" },
   { key: "season", label: "Season" },
-  { key: "article", label: "Article" },
+  { key: "articleCode", label: "Article Code" },
+  { key: "variantCode", label: "Variant Code" },
+  { key: "article", label: "Article Name" },
   { key: "styleName", label: "Style Name" },
   { key: "colors", label: "Colors" },
   { key: "buyer", label: "Buyer" },
@@ -85,9 +91,6 @@ const ORDERS_PAGE_SIZE = 25;
 function renderOrderCell(fieldKey: string, order: OrderRecord) {
   const value = order[fieldKey as keyof OrderRecord];
   if (fieldKey === "sourceStatus" && value === "DEMO") return "Dummy Data";
-  if (fieldKey === "article" && order.articleCode) {
-    return `${order.articleCode} ${order.article ?? ""}`.trim();
-  }
   return value !== null && value !== undefined ? String(value) : "";
 }
 
@@ -117,6 +120,8 @@ export default function MerchandisingOrdersPage({
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [isPreparingBulkWorkbook, setIsPreparingBulkWorkbook] = useState(false);
   const [bulkWorkbookError, setBulkWorkbookError] = useState("");
+  const [showArticleOrderDialog, setShowArticleOrderDialog] = useState(false);
+  const [articleOrderSuccess, setArticleOrderSuccess] = useState("");
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showVariantDialog, setShowVariantDialog] = useState(false);
@@ -491,6 +496,11 @@ export default function MerchandisingOrdersPage({
             {variantSuccessMessage}
           </p>
         )}
+        {articleOrderSuccess && (
+          <p role="status" className="mb-3 rounded-md border border-[var(--erp-success)] bg-[var(--erp-surface)] px-3 py-2 text-xs font-medium text-[var(--erp-success)]">
+            {articleOrderSuccess}
+          </p>
+        )}
         {variantCreateError && !showVariantDialog && (
           <p role="alert" className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-800">
             Order creation failed: {variantCreateError}
@@ -518,6 +528,20 @@ export default function MerchandisingOrdersPage({
           selectedStatus={selectedStatus}
           onStatusChange={handleStatusChange}
           onNewOrder={handleNewOrder}
+          toolbarActions={(
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-7 px-2.5 text-[11px]"
+              onClick={() => {
+                setArticleOrderSuccess("");
+                setShowArticleOrderDialog(true);
+              }}
+            >
+              Create Order from Article
+            </Button>
+          )}
           onDeleteSelected={handleOpenDeleteConfirmation}
           onBulkUpload={handleBulkUpload}
           bulkUploadLabel="Bulk Upload"
@@ -534,6 +558,22 @@ export default function MerchandisingOrdersPage({
           </div>
         )}
       </Card>
+
+      <ArticleBasedOrderDialog
+        key={organizationId}
+        open={showArticleOrderDialog}
+        organizationId={organizationId}
+        onClose={() => setShowArticleOrderDialog(false)}
+        onCreated={(orderNumbers) => {
+          setShowArticleOrderDialog(false);
+          setArticleOrderSuccess(
+            orderNumbers.length > 0
+              ? `Created ${orderNumbers.length} Article order${orderNumbers.length === 1 ? "" : "s"}: ${orderNumbers.join(", ")}.`
+              : "Article orders created successfully.",
+          );
+          void loadOrders(undefined, true);
+        }}
+      />
 
       <MerchandisingOrderVariantDialog
         open={showVariantDialog}

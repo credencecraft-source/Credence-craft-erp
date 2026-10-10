@@ -327,7 +327,17 @@ export async function deleteAdvanceBookings(
     const bookings = await transaction.advanceBooking.findMany({
       where: { organization_id: organizationId, id: { in: bookingIds } },
       include: {
-        sizeLines: { include: { assignments: { select: { id: true } } } },
+        sizeLines: {
+          include: {
+            assignments: {
+              select: {
+                id: true,
+                grnAllocations: { select: { id: true } },
+                finishedGoodsStockReceipts: { select: { id: true } },
+              },
+            },
+          },
+        },
         quotationLines: { select: { quotation: { select: { quotation_no: true } } } },
       },
     });
@@ -339,8 +349,30 @@ export async function deleteAdvanceBookings(
       if (booking.quotationLines.length > 0) {
         throw new Error(`Delete quotation ${booking.quotationLines[0].quotation.quotation_no} before deleting booking ${booking.booking_no}.`);
       }
-      if (booking.sizeLines.some((line) => line.assignments.length > 0)) {
-        throw new Error(`Booking ${booking.booking_no} has work-order assignments. Reverse its fulfillment and remove its assignments before deleting the booking.`);
+      const hasFulfilledAssignment = booking.sizeLines.some((line) =>
+        line.assignments.some((assignment) =>
+          assignment.grnAllocations.length > 0 || assignment.finishedGoodsStockReceipts.length > 0,
+        ),
+      );
+      if (hasFulfilledAssignment) {
+        throw new Error(`Booking ${booking.booking_no} has fulfilled work-order assignments. Reverse or remove its inventory fulfillment before deleting the booking.`);
+      }
+    }
+
+    const sizeLineIds = bookings.flatMap((booking) => booking.sizeLines.map((line) => line.id));
+    const assignmentIds = bookings.flatMap((booking) =>
+      booking.sizeLines.flatMap((line) => line.assignments.map((assignment) => assignment.id)),
+    );
+    if (assignmentIds.length > 0) {
+      const removedAssignments = await transaction.advanceBookingWorkOrderAssignment.deleteMany({
+        where: {
+          organization_id: organizationId,
+          id: { in: assignmentIds },
+          booking_size_line_id: { in: sizeLineIds },
+        },
+      });
+      if (removedAssignments.count !== assignmentIds.length) {
+        throw new Error("Work-order assignments changed while deleting the bookings. Reload and try again.");
       }
     }
 
@@ -362,6 +394,10 @@ export async function deleteAdvanceBookings(
           booking_no: booking.booking_no,
           size_count: booking.sizeLines.length,
           total_quantity: booking.sizeLines.reduce((sum, line) => sum + line.booked_quantity, 0),
+          unassigned_work_order_count: booking.sizeLines.reduce(
+            (sum, line) => sum + line.assignments.length,
+            0,
+          ),
         },
       }, transaction);
     }

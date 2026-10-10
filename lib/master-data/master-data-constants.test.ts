@@ -10,12 +10,11 @@ const { prismaMock, models } = vi.hoisted(() => {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     findFirst: vi.fn().mockResolvedValue(null),
     findMany: vi.fn().mockResolvedValue([]),
-    groupBy: vi.fn().mockResolvedValue([]),
     update: vi.fn().mockResolvedValue({ id: "updated-id" }),
     upsert: vi.fn().mockResolvedValue({ id: "upserted-id" }),
   });
   const modelNames = [
-    "masterArticle", "masterBrand", "masterBuyer", "masterCategory", "masterCategoryType", "masterColor",
+    "masterArticle", "masterArticleVariant", "masterArticleSize", "masterBrand", "masterBuyer", "masterCategory", "masterCategoryType", "masterColor",
     "masterCurrencyType", "masterEntity", "masterGoldSeal", "masterGoldSealVariant", "masterGst", "masterGstType",
     "masterHsn", "masterLocation", "masterMeasurementChart", "masterMerchandiser", "masterOperation",
     "masterOperationTemplate", "masterOperationTemplateStep", "masterOrderVolume", "masterPreOrderChecklist",
@@ -23,7 +22,6 @@ const { prismaMock, models } = vi.hoisted(() => {
     "masterRawMaterialCategory", "masterRawMaterialSubCategory", "masterRawMaterialType", "masterSeason",
     "masterSize", "masterSizeGroup", "masterSizeGroupSize", "masterState", "masterStatus", "masterStockUomConvert",
     "masterSubCategory", "masterUom", "masterVendor", "masterSizeWiseConsumption",
-    "merchandisingOrder",
   ];
   const models = Object.fromEntries(modelNames.map((name) => [name, delegate()])) as Record<string, ReturnType<typeof delegate>>;
   const organizationDummyDataBatch = delegate();
@@ -103,32 +101,6 @@ describe("raw material creation", () => {
       },
     });
 
-    describe("article creation", () => {
-      it("assigns the next organization article code in the requested format", async () => {
-        models.masterArticle.findMany.mockResolvedValue([
-          { article_code: "AR-1" },
-          { article_code: "AR-6" },
-          { article_code: "AR-DEMO-17" },
-        ] as never);
-
-        await createMasterValueForOrganization("org-id", "article", {
-          label: "Winter Jacket",
-        });
-
-        expect(models.masterArticle.findMany).toHaveBeenCalledWith(expect.objectContaining({
-          where: { organization_id: "org-id" },
-          select: { article_code: true },
-        }));
-        expect(models.masterArticle.create).toHaveBeenCalledWith({
-          data: expect.objectContaining({
-            organization_id: "org-id",
-            article: "Winter Jacket",
-            article_code: "Ar-7",
-          }),
-        });
-      });
-    });
-
     expect(models.masterRawMaterial.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         organization_id: "org-id",
@@ -146,6 +118,232 @@ describe("raw material creation", () => {
     const createData = models.masterRawMaterial.create.mock.calls[0][0].data;
     expect(createData).not.toHaveProperty("brand");
     expect(createData).not.toHaveProperty("colour");
+  });
+});
+
+describe("article creation", () => {
+  it("looks up article codes within the organization", async () => {
+    await getMasterValuesForOrganization("org-id", "article", true, { articleCode: "AR-7BA58SCH-01" });
+
+    expect(models.masterArticle.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-id", article_code: "AR-7BA58SCH-01" },
+    }));
+  });
+
+  it("assigns the next organization article code in the requested format", async () => {
+    models.masterArticle.findMany.mockResolvedValue([
+      { article_code: "AR-1" },
+      { article_code: "AR6" },
+      { article_code: "AR-DEMO-17" },
+    ] as never);
+
+    await createMasterValueForOrganization("org-id", "article", {
+      label: "Winter Jacket",
+    });
+
+    expect(models.masterArticle.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-id" },
+      select: { article_code: true },
+    }));
+    expect(models.masterArticle.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organization_id: "org-id",
+        article: "Winter Jacket",
+        article_code: "AR7",
+      }),
+    });
+  });
+
+  it("starts the Article code sequence at AR1", async () => {
+    models.masterArticle.findMany.mockResolvedValue([] as never);
+
+    await createMasterValueForOrganization("org-id", "article", {
+      label: "Summer Shirt",
+    });
+
+    expect(models.masterArticle.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organization_id: "org-id",
+        article: "Summer Shirt",
+        article_code: "AR1",
+      }),
+    });
+  });
+
+  it("creates the parent style, color variants, and chosen group sizes in one transaction", async () => {
+    let transactionStarted = false;
+    models.masterSizeGroup.findFirst.mockImplementation(async () => {
+      expect(transactionStarted).toBe(true);
+      return { id: "size-group-id", legacy_metadata: null } as never;
+    });
+    models.masterArticle.findFirst.mockImplementation(async ({ where }) => (
+      "id" in where
+        ? { id: "style-id", article_code: "AR1", size_group_id: "size-group-id" }
+        : null
+    ) as never);
+    models.masterArticle.create.mockResolvedValue({
+      id: "style-id",
+      value_id: "style-value-id",
+      organization_id: "org-id",
+      size_group_id: "size-group-id",
+    } as never);
+    models.masterColor.findFirst.mockResolvedValue({
+      id: "blue-id",
+      colors: "Blue",
+      legacy_metadata: null,
+    } as never);
+    models.masterSizeGroupSize.findMany.mockResolvedValue([{
+      organization_id: "org-id",
+      size_group_id: "size-group-id",
+      size_id: "size-id",
+      size: {
+        id: "size-id",
+        value_id: "size-value-id",
+        organization_id: "org-id",
+        size: "S",
+        legacy_metadata: null,
+      },
+    }] as never);
+    (prismaMock.$transaction as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => {
+        transactionStarted = true;
+        return callback(prismaMock as Record<string, unknown>);
+      },
+    );
+
+    await createMasterValueForOrganization("org-id", "article", {
+      label: "ApplePrinter",
+      fields: {
+        article: "ApplePrinter",
+        Size_Group: "size-group-id",
+        default_price: "10.1234",
+      },
+      articleVariants: [{
+        fields: { color: "blue-id", sku: "APPLE-BLUE", price_override: "11.1234" },
+      }],
+      articleSizes: ["S"],
+    });
+
+    const articleData = models.masterArticle.create.mock.calls[0][0].data;
+    const variantData = models.masterArticleVariant.create.mock.calls[0][0].data;
+    expect(String(articleData.default_price)).toBe("10.1234");
+    expect(variantData).toMatchObject({
+      organization_id: "org-id",
+      article_id: "style-id",
+      color_id: "blue-id",
+      sku: "APPLE-BLUE",
+    });
+    expect(String(variantData.price_override)).toBe("11.1234");
+    expect(models.masterArticleSize.createMany).toHaveBeenCalledWith({
+      data: [{ organization_id: "org-id", article_id: "style-id", size_id: "size-id" }],
+    });
+    expect(models.masterSizeGroup.findFirst).toHaveBeenCalledTimes(2);
+    expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 15_000 });
+  });
+
+  it("uses the longer transaction timeout when updating Article sizes", async () => {
+    (prismaMock.$transaction as ReturnType<typeof vi.fn>).mockReset().mockImplementation(
+      (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback(prismaMock as Record<string, unknown>),
+    );
+    for (const model of Object.values(models)) {
+      model.findFirst.mockReset().mockResolvedValue(null);
+    }
+    models.masterArticle.findFirst.mockReset();
+    models.masterArticle.findFirst.mockImplementation(async ({ where }) => (
+      "id" in where
+        ? { id: "style-id", size_group_id: "size-group-id" }
+        : {
+            id: "style-id",
+            value_id: "style-value-id",
+            organization_id: "org-id",
+            article: "ApplePrinter",
+            is_active: true,
+            sort_order: 0,
+            size_group_id: "size-group-id",
+          }
+    ) as never);
+    models.masterArticle.update.mockReset().mockResolvedValueOnce({ id: "style-id", size_group_id: "size-group-id" } as never);
+    models.masterSizeGroup.findFirst.mockReset().mockResolvedValue({ id: "size-group-id", legacy_metadata: null } as never);
+
+    await updateMasterValue("org-id", "style-id", { articleSizes: [] });
+
+    expect(models.masterArticle.findFirst).toHaveBeenCalled();
+    expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 15_000 });
+    expect(models.masterSizeGroup.findFirst).toHaveBeenCalledWith({
+      where: { organization_id: "org-id", id: "size-group-id" },
+      select: { id: true, legacy_metadata: true },
+    });
+  });
+});
+
+describe("quick-created sizes", () => {
+  it("links a new size to an active Size Group in the same organization", async () => {
+    models.masterSizeGroup.findFirst.mockResolvedValueOnce({ id: "group-id" } as never);
+
+    await createMasterValueForOrganization("org-id", "size", {
+      label: "XXL",
+      fields: { Size: "XXL" },
+      sizeGroupId: "group-value-id",
+    });
+
+    expect(models.masterSizeGroup.findFirst).toHaveBeenCalledWith({
+      where: {
+        organization_id: "org-id",
+        OR: [{ id: "group-value-id" }, { value_id: "group-value-id" }],
+        is_active: true,
+      },
+      select: { id: true },
+    });
+    expect(models.masterSizeGroupSize.create).toHaveBeenCalledWith({
+      data: {
+        organization_id: "org-id",
+        size_group_id: "group-id",
+        size_id: "created-id",
+      },
+    });
+  });
+
+  it("rejects linking a size to a Size Group outside the organization", async () => {
+    models.masterSizeGroup.findFirst.mockResolvedValue(null);
+
+    await expect(createMasterValueForOrganization("org-id", "size", {
+      label: "XXL",
+      fields: { Size: "XXL" },
+      sizeGroupId: "foreign-group-id",
+    })).rejects.toThrow("Select an active Size Group belonging to this organization.");
+
+    expect(models.masterSize.create).not.toHaveBeenCalled();
+    expect(models.masterSizeGroupSize.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("vendor contact details", () => {
+  it("stores contact fields in the vendor legacy metadata", async () => {
+    models.masterState.findFirst.mockResolvedValueOnce({ id: "state-id" } as never);
+
+    await createMasterValueForOrganization("org-id", "vendor", {
+      label: "Example Vendor",
+      fields: {
+        vendor: "Example Vendor",
+        Contact_Person: "Jamie Example",
+        Contact_Phone: "9876543210",
+        Contact_Email: "jamie@example.test",
+        Registered_State: "state-id",
+      },
+    });
+
+    expect(models.masterVendor.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organization_id: "org-id",
+        vendor: "Example Vendor",
+        registered_state_id: "state-id",
+        legacy_metadata: {
+          contact_person: "Jamie Example",
+          contact_phone: "9876543210",
+          contact_email: "jamie@example.test",
+        },
+      }),
+    });
   });
 });
 
@@ -363,74 +561,5 @@ describe("dummy master isolation", () => {
 
     expect(models.masterCategory.update).not.toHaveBeenCalled();
     expect(models.masterCategory.delete).not.toHaveBeenCalled();
-  });
-});
-
-describe("article order metrics", () => {
-  it("loads order quantity and variant count with one organization-scoped aggregate", async () => {
-    models.masterArticle.findMany.mockResolvedValue([{
-      id: "article-id",
-      value_id: "article-value-id",
-      organization_id: "org-id",
-      article: "Winter Jacket",
-      article_code: "AR-1",
-      design_by: null,
-      designed_date: null,
-      is_active: true,
-      sort_order: 0,
-    }] as never);
-    models.merchandisingOrder.groupBy.mockResolvedValue([{
-      article: "Winter Jacket",
-      _sum: { orderQty: 150 },
-      _count: { _all: 2 },
-    }] as never);
-
-    const values = await getMasterValuesForOrganization("org-id", "article", true, { includeDummyData: true });
-
-    expect(values[0].fields).toMatchObject({
-      running_order_qty: 150,
-      running_order_variants: 2,
-    });
-    expect(models.merchandisingOrder.groupBy).toHaveBeenCalledWith({
-      by: ["article"],
-      where: { organization_id: "org-id", article: { in: ["Winter Jacket"] } },
-      _sum: { orderQty: true },
-      _count: { _all: true },
-    });
-    expect(models.merchandisingOrder.findMany).not.toHaveBeenCalled();
-  });
-
-});
-
-describe("master image data projection", () => {
-  it("can omit image fields from master editor and lookup payloads", async () => {
-    models.masterRawMaterial.findMany.mockResolvedValue([{
-      id: "raw-material-id",
-      value_id: "raw-material-value-id",
-      organization_id: "org-id",
-      raw_material_name: "Cotton",
-      image_url: "data:image/png;base64,large-image-data",
-      is_active: true,
-      sort_order: 0,
-    }] as never);
-
-    const values = await getMasterValuesForOrganization("org-id", "raw-material", true, {
-      includeDummyData: true,
-      includeImageData: false,
-    });
-
-    expect(values[0].fields).not.toHaveProperty("Image_Url");
-    expect(JSON.stringify(values)).not.toContain("large-image-data");
-    const query = models.masterRawMaterial.findMany.mock.calls.at(-1)?.[0] as {
-      select?: Record<string, boolean>;
-    };
-    expect(query.select).toBeDefined();
-    expect(query.select).not.toHaveProperty("image_url");
-    expect(query.select).toMatchObject({
-      id: true,
-      organization_id: true,
-      raw_material_name: true,
-      raw_material_category_id: true,
-    });
   });
 });

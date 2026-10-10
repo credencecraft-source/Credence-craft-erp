@@ -49,6 +49,7 @@ const { prismaMock, transactionMock, permissionMock, orderNumbersMock, groupedPu
     factoryDailyProductionReportLine: delegate(),
     factoryGrn: delegate(),
     factoryWorkOrder: delegate(),
+    advanceBookingWorkOrderAssignment: delegate(),
     workOrderProcessController: delegate(),
     finishedGoodsSizeWise: delegate(),
     billOfMaterialItem: delegate(),
@@ -172,6 +173,7 @@ beforeEach(() => {
     (callback: (transaction: typeof transactionMock) => Promise<unknown>) => callback(transactionMock),
   );
   transactionMock.rawMaterialStockBooking.findMany.mockResolvedValue([]);
+  transactionMock.advanceBookingWorkOrderAssignment.findMany.mockResolvedValue([]);
   transactionMock.groupedPurchaseOrder.findMany.mockResolvedValue([]);
   transactionMock.masterPurchaseOrder.findMany.mockResolvedValue([]);
   prismaMock.organization.findFirst.mockResolvedValue(organization);
@@ -1480,7 +1482,7 @@ describe("organization dummy data service", () => {
     }));
   });
 
-  it("deletes sample-linked production records without dependency checks", async () => {
+  it("deletes sample-linked production records after confirming no advance-booking assignments", async () => {
     transactionMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
       id: "batch-id",
       status: "ACTIVE",
@@ -1501,9 +1503,40 @@ describe("organization dummy data service", () => {
     expect(transactionMock.factoryWorkOrder.deleteMany).toHaveBeenCalledWith({
       where: { organization_id: organization.id, order_id: { in: ["demo-order-id"] } },
     });
+    expect(transactionMock.advanceBookingWorkOrderAssignment.findMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: organization.id,
+        workOrder: {
+          organization_id: organization.id,
+          order_id: { in: ["demo-order-id"] },
+        },
+      },
+      select: { id: true },
+      take: 1,
+    });
     expect(transactionMock.merchandisingOrder.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: ["demo-order-id"] }, organization_id: organization.id },
     });
+  });
+
+  it("blocks dummy cleanup when a sample work order is assigned to an advance booking", async () => {
+    transactionMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "ACTIVE",
+      sample_order_id: "demo-order-id",
+      master_record_ids: [],
+    });
+    transactionMock.advanceBookingWorkOrderAssignment.findMany.mockResolvedValue([{ id: "assignment-id" }]);
+
+    await expect(deleteOrganizationDummyData("user-id", "public-org-id"))
+      .rejects.toThrow(
+        "Cannot delete the demo data because a sample work order is assigned to an advance booking. Remove or reassign the booking assignment, then try again.",
+      );
+
+    expect(transactionMock.factoryDailyProductionReportLine.deleteMany).not.toHaveBeenCalled();
+    expect(transactionMock.factoryWorkOrder.deleteMany).not.toHaveBeenCalled();
+    expect(transactionMock.merchandisingOrder.deleteMany).not.toHaveBeenCalled();
+    expect(transactionMock.organizationDummyDataBatch.update).not.toHaveBeenCalled();
   });
 
   it("deletes sample purchase orders before removing vendor masters still tied to grouped orders", async () => {

@@ -269,7 +269,7 @@ export default function MerchandisingOrderDetailsPage() {
           ...(variantFrom
             ? {
                 orderNo: "",
-                article: order.article || "",
+                article: "",
                 styleName: variantStyleName || order.styleName || "",
                 colors: variantColors || order.colors || "",
                 orderQty: calculateFinishedGoodsRows(variantRows).orderQty,

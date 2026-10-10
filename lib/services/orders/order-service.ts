@@ -105,6 +105,13 @@ type CreateOrderOptions = {
   processSnapshot?: VariantSourceOrder["processSteps"];
 };
 
+type PreparedCreateOrder = {
+  input: CreateOrderInput;
+  deliveryDate: Date | null;
+  calculatedFinishedGoods: ReturnType<typeof calculateFinishedGoodsRows> | null;
+  calculatedOrderQty: number;
+};
+
 export type OrderPageCursor = {
   createdAt: string;
   id: string;
@@ -241,15 +248,42 @@ export async function listOrdersPage(
   const articleRows = articleNames.length > 0
     ? await prisma.masterArticle.findMany({
         where: { organization_id: organizationId, article: { in: articleNames } },
-        select: { article: true, article_code: true },
+        select: { id: true, article: true, article_code: true },
       })
     : [];
   const articleCodes = new Map(articleRows.map((article) => [article.article, article.article_code]));
+  const articleIdsByName = new Map(articleRows.map((article) => [article.article, article.id]));
+  const articleIds = [...new Set(articleRows.map((article) => article.id))];
+  const articleVariants = articleIds.length > 0
+    ? await prisma.masterArticleVariant.findMany({
+        where: {
+          organization_id: organizationId,
+          article_id: { in: articleIds },
+          color: { organization_id: organizationId },
+        },
+        select: {
+          article_id: true,
+          variant_code: true,
+          color: { select: { organization_id: true, colors: true } },
+        },
+      })
+    : [];
+  const variantCodes = new Map(articleVariants
+    .filter((variant) => variant.color.organization_id === organizationId && variant.variant_code)
+    .map((variant) => [
+      `${variant.article_id}:${variant.color.colors.trim().toLocaleLowerCase()}`,
+      variant.variant_code,
+    ]));
 
   return {
     orders: pageOrders.map((order) => ({
       ...order,
       articleCode: articleCodes.get(order.article?.trim() ?? "") ?? null,
+      variantCode: (() => {
+        const articleId = articleIdsByName.get(order.article?.trim() ?? "");
+        const color = order.colors?.trim().toLocaleLowerCase();
+        return articleId && color ? variantCodes.get(`${articleId}:${color}`) ?? null : null;
+      })(),
       deliveryDate: toDateOnly(order.deliveryDate),
     })),
     nextCursor: hasNextPage && lastOrder
@@ -886,6 +920,121 @@ export async function listBomItemsPage(
   };
 }
 
+async function createOrderWithinTransaction(
+  transaction: Prisma.TransactionClient,
+  organizationId: string,
+  prepared: PreparedCreateOrder,
+  formRestriction: Awaited<ReturnType<typeof getEffectiveSegmentFormRestriction>>,
+  options: CreateOrderOptions = {},
+) {
+  const { input, deliveryDate, calculatedFinishedGoods, calculatedOrderQty } = prepared;
+  await lockOrganizationOrderQuantityLimit(transaction, organizationId);
+  await validateMonthlyFormLimits(organizationId, "merchandising_orders", calculatedOrderQty, undefined, transaction, formRestriction);
+  const entity = await requireActiveOrganizationEntity(organizationId, input.entityName, transaction);
+  const orderNo = await reserveNextOrderNumber(organizationId, transaction);
+  const processTemplate = options.processSnapshot
+    ? null
+    : await findProcessTemplate(organizationId, input.processTemplateId, transaction);
+  const activeProcessTemplateId = options.processSnapshot
+    ? input.processTemplateId
+      ? (await transaction.masterProcessTemplate.findFirst({
+          where: {
+            organization_id: organizationId,
+            OR: [{ id: input.processTemplateId }, { value_id: input.processTemplateId }],
+            is_active: true,
+          },
+          select: { id: true },
+        }))?.id ?? null
+      : null
+    : processTemplate?.id ?? null;
+  if (options.processSnapshot && input.processTemplateId && !activeProcessTemplateId) {
+    throw new Error("The selected process template is not active or does not belong to this organization.");
+  }
+
+  const createdOrder = await transaction.merchandisingOrder.create({
+    data: {
+      organization: { connect: { id: organizationId } },
+      entity: { connect: { organization_id_id: { organization_id: organizationId, id: entity.id } } },
+      orderNo,
+      entityName: entity.entity_name,
+      category: input.category ?? null,
+      subCategory: input.subCategory ?? null,
+      season: input.season ?? null,
+      article: input.article ?? null,
+      styleName: input.styleName ?? null,
+      colors: input.colors ?? null,
+      buyer: input.buyer ?? null,
+      brand: input.brand ?? null,
+      sizeGroup: input.sizeGroup ?? null,
+      haveSizeRatio: input.haveSizeRatio ?? false,
+      ratioOrderQty: input.ratioOrderQty !== undefined && input.ratioOrderQty !== null ? Number(input.ratioOrderQty) : null,
+      orderQty: calculatedFinishedGoods?.orderQty
+        ?? (input.orderQty !== undefined && input.orderQty !== null ? Number(input.orderQty) : null),
+      deliveryDate,
+      finalStatus: input.finalStatus ?? "Draft",
+      processStatus: input.processStatus ?? null,
+      ...(activeProcessTemplateId ? { processTemplate: { connect: { id: activeProcessTemplateId } } } : {}),
+    },
+  });
+
+  if (calculatedFinishedGoods) {
+    await createFinishedGoodsForOrder(createdOrder.id, calculatedFinishedGoods.rows, transaction);
+  }
+  if (Array.isArray(input.bomRows)) {
+    await createBomItemsForOrder(
+      createdOrder.id,
+      input.bomRows,
+      calculatedFinishedGoods?.rows ?? [],
+      calculatedFinishedGoods?.orderQty ?? Number(createdOrder.orderQty ?? 0),
+      transaction,
+    );
+  }
+
+  if (activeProcessTemplateId) {
+    const processSteps = options.processSnapshot
+      ? await createOrderProcessStepsFromSnapshot(createdOrder.id, options.processSnapshot, transaction)
+      : await createOrderProcessSteps(createdOrder.id, processTemplate!, input.processRows ?? [], transaction);
+    await createOrderProcessController(
+      createdOrder.id,
+      activeProcessTemplateId,
+      processSteps,
+      Number(createdOrder.orderQty ?? 0),
+      transaction,
+    );
+  }
+
+  return createdOrder;
+}
+
+function toPreparedCreateOrder(input: CreateOrderInput): PreparedCreateOrder {
+  const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : null;
+  const calculatedFinishedGoods = Array.isArray(input.rows) ? calculateFinishedGoodsRows(input.rows) : null;
+  return {
+    input,
+    deliveryDate,
+    calculatedFinishedGoods,
+    calculatedOrderQty: calculatedFinishedGoods?.orderQty ?? Number(input.orderQty ?? 0),
+  };
+}
+
+async function createOrderAuditEvents(
+  organizationId: string,
+  userId: string | undefined,
+  orders: Array<{ id: string; orderNo: string; finalStatus: string }>,
+) {
+  for (const order of orders) {
+    await createAuditEvent({
+      organizationId,
+      userId,
+      module: "Order Management",
+      action: "CREATE",
+      entityType: "MerchandisingOrder",
+      entityId: order.id,
+      details: { order_no: order.orderNo, status: order.finalStatus },
+    });
+  }
+}
+
 export async function createOrder(
   organizationId: string,
   input: CreateOrderInput,
@@ -897,103 +1046,45 @@ export async function createOrder(
   }
 
   await assertNoDummyMasterReferences(organizationId, input as unknown as Record<string, unknown>);
-
-  const deliveryDate = input.deliveryDate ? new Date(input.deliveryDate) : null;
-  const calculatedFinishedGoods = Array.isArray(input.rows) ? calculateFinishedGoodsRows(input.rows) : null;
-  const calculatedOrderQty = calculatedFinishedGoods?.orderQty ?? Number(input.orderQty ?? 0);
+  const prepared = toPreparedCreateOrder(input);
   const formRestriction = await getEffectiveSegmentFormRestriction(organizationId, "merchandising_orders");
   await validateRestrictedFormFields(organizationId, "merchandising_orders", input as unknown as Record<string, unknown>, formRestriction);
 
-  const createdOrder = await prisma.$transaction(async (transaction) => {
-    await lockOrganizationOrderQuantityLimit(transaction, organizationId);
-    await validateMonthlyFormLimits(organizationId, "merchandising_orders", calculatedOrderQty, undefined, transaction, formRestriction);
-    const entity = await requireActiveOrganizationEntity(organizationId, input.entityName, transaction);
-    const orderNo = await reserveNextOrderNumber(organizationId, transaction);
-    const processTemplate = options.processSnapshot
-      ? null
-      : await findProcessTemplate(organizationId, input.processTemplateId, transaction);
-    const activeProcessTemplateId = options.processSnapshot
-      ? input.processTemplateId
-        ? (await transaction.masterProcessTemplate.findFirst({
-            where: {
-              organization_id: organizationId,
-              OR: [{ id: input.processTemplateId }, { value_id: input.processTemplateId }],
-              is_active: true,
-            },
-            select: { id: true },
-          }))?.id ?? null
-        : null
-      : processTemplate?.id ?? null;
-    if (options.processSnapshot && input.processTemplateId && !activeProcessTemplateId) {
-      throw new Error("The selected process template is not active or does not belong to this organization.");
-    }
+  const createdOrder = await prisma.$transaction((transaction) =>
+    createOrderWithinTransaction(transaction, organizationId, prepared, formRestriction, options),
+  { maxWait: 10000, timeout: 30000 });
 
-    const createdOrder = await transaction.merchandisingOrder.create({
-      data: {
-        organization: { connect: { id: organizationId } },
-        entity: { connect: { organization_id_id: { organization_id: organizationId, id: entity.id } } },
-        orderNo,
-        entityName: entity.entity_name,
-        category: input.category ?? null,
-        subCategory: input.subCategory ?? null,
-        season: input.season ?? null,
-        article: input.article ?? null,
-        styleName: input.styleName ?? null,
-        colors: input.colors ?? null,
-        buyer: input.buyer ?? null,
-        brand: input.brand ?? null,
-        sizeGroup: input.sizeGroup ?? null,
-        haveSizeRatio: input.haveSizeRatio ?? false,
-        ratioOrderQty: input.ratioOrderQty !== undefined && input.ratioOrderQty !== null ? Number(input.ratioOrderQty) : null,
-        orderQty: calculatedFinishedGoods?.orderQty
-          ?? (input.orderQty !== undefined && input.orderQty !== null ? Number(input.orderQty) : null),
-        deliveryDate,
-        finalStatus: input.finalStatus ?? "Draft",
-        processStatus: input.processStatus ?? null,
-        ...(activeProcessTemplateId ? { processTemplate: { connect: { id: activeProcessTemplateId } } } : {}),
-      },
-    });
-
-    if (calculatedFinishedGoods) {
-      await createFinishedGoodsForOrder(createdOrder.id, calculatedFinishedGoods.rows, transaction);
-    }
-    if (Array.isArray(input.bomRows)) {
-      await createBomItemsForOrder(
-        createdOrder.id,
-        input.bomRows,
-        calculatedFinishedGoods?.rows ?? [],
-        calculatedFinishedGoods?.orderQty ?? Number(createdOrder.orderQty ?? 0),
-        transaction,
-      );
-    }
-
-    if (activeProcessTemplateId) {
-      const processSteps = options.processSnapshot
-        ? await createOrderProcessStepsFromSnapshot(createdOrder.id, options.processSnapshot, transaction)
-        : await createOrderProcessSteps(createdOrder.id, processTemplate!, input.processRows ?? [], transaction);
-      await createOrderProcessController(
-        createdOrder.id,
-        activeProcessTemplateId,
-        processSteps,
-        Number(createdOrder.orderQty ?? 0),
-        transaction,
-      );
-    }
-
-    return createdOrder;
-  }, { maxWait: 10000, timeout: 30000 });
-
-  await createAuditEvent({
-    organizationId,
-    userId,
-    module: "Order Management",
-    action: "CREATE",
-    entityType: "MerchandisingOrder",
-    entityId: createdOrder.id,
-    details: { order_no: createdOrder.orderNo, status: createdOrder.finalStatus },
-  });
+  await createOrderAuditEvents(organizationId, userId, [createdOrder]);
 
   return createdOrder;
+}
+
+export async function createOrdersAtomically(
+  organizationId: string,
+  inputs: CreateOrderInput[],
+  userId?: string,
+) {
+  if (!organizationId) throw new Error("Organization is required to create orders.");
+  if (inputs.length === 0 || inputs.length > 100) throw new Error("Select between 1 and 100 colors to create orders.");
+
+  const formRestriction = await getEffectiveSegmentFormRestriction(organizationId, "merchandising_orders");
+  const preparedOrders: PreparedCreateOrder[] = [];
+  for (const input of inputs) {
+    await assertNoDummyMasterReferences(organizationId, input as unknown as Record<string, unknown>);
+    await validateRestrictedFormFields(organizationId, "merchandising_orders", input as unknown as Record<string, unknown>, formRestriction);
+    preparedOrders.push(toPreparedCreateOrder(input));
+  }
+
+  const createdOrders = await prisma.$transaction(async (transaction) => {
+    const orders = [];
+    for (const prepared of preparedOrders) {
+      orders.push(await createOrderWithinTransaction(transaction, organizationId, prepared, formRestriction));
+    }
+    return orders;
+  }, { maxWait: 10000, timeout: Math.max(30000, inputs.length * 1000) });
+
+  await createOrderAuditEvents(organizationId, userId, createdOrders);
+  return createdOrders;
 }
 
 export async function prepareVariantOrder(

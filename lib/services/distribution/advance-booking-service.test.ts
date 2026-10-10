@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
     advanceBookingSizeLine: { findMany: vi.fn() },
     advanceBooking: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
     factoryWorkOrder: { findFirst: vi.fn() },
-    advanceBookingWorkOrderAssignment: { findMany: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
+    advanceBookingWorkOrderAssignment: { findMany: vi.fn(), updateMany: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
   },
   createAuditEvent: vi.fn(),
   reserveProcurementDocumentNumber: vi.fn(),
@@ -43,6 +43,7 @@ describe("advance-booking persistence", () => {
     });
     mocks.transaction.masterVendor.findFirst.mockResolvedValue({ id: "vendor-1", vendor: "Customer" });
     mocks.transaction.advanceBookingSizeLine.findMany.mockResolvedValue([]);
+    mocks.transaction.advanceBookingWorkOrderAssignment.deleteMany.mockResolvedValue({ count: 1 });
     mocks.reserveProcurementDocumentNumber.mockResolvedValue("BK-1");
     mocks.transaction.advanceBooking.create.mockResolvedValue({
       id: "booking-record-1",
@@ -170,7 +171,11 @@ describe("advance-booking persistence", () => {
     mocks.transaction.advanceBooking.findMany.mockResolvedValue([{
       id: "booking-record-1",
       booking_no: "BK-1",
-      sizeLines: [{ id: "size-1", size: "M", booked_quantity: 30, assignments: [] }],
+      sizeLines: [{ id: "size-1", size: "M", booked_quantity: 30, assignments: [{
+        id: "assignment-1",
+        grnAllocations: [],
+        finishedGoodsStockReceipts: [],
+      }] }],
       quotationLines: [],
     }]);
 
@@ -183,13 +188,23 @@ describe("advance-booking persistence", () => {
     expect(mocks.transaction.advanceBooking.deleteMany).toHaveBeenCalledWith({
       where: { organization_id: "internal-org-1", id: { in: ["booking-record-1"] } },
     });
+    expect(mocks.transaction.advanceBookingWorkOrderAssignment.deleteMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: "internal-org-1",
+        id: { in: ["assignment-1"] },
+        booking_size_line_id: { in: ["size-1"] },
+      },
+    });
+    expect(mocks.transaction.advanceBookingWorkOrderAssignment.deleteMany.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.transaction.advanceBooking.deleteMany.mock.invocationCallOrder[0]);
     expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "DELETE_ADVANCE_BOOKING",
       entityId: "booking-record-1",
+      details: expect.objectContaining({ unassigned_work_order_count: 1 }),
     }), mocks.transaction);
   });
 
-  it("blocks booking deletion while a quotation or work-order assignment references it", async () => {
+  it("blocks booking deletion while a quotation references it", async () => {
     mocks.transaction.advanceBooking.findMany.mockResolvedValue([{
       id: "booking-record-1",
       booking_no: "BK-1",
@@ -210,16 +225,35 @@ describe("advance-booking persistence", () => {
     await expect(deleteAdvanceBookings("internal-org-1", "user-1", ["booking-record-1"]))
       .rejects.toThrow("Delete quotation QT-1 before deleting booking BK-1");
 
-    mocks.transaction.advanceBooking.findMany.mockResolvedValue([{
-      id: "booking-record-1",
-      booking_no: "BK-1",
-      sizeLines: [{ id: "size-1", size: "M", booked_quantity: 30, assignments: [{ id: "assignment-1" }] }],
-      quotationLines: [],
-    }]);
-    await expect(deleteAdvanceBookings("internal-org-1", "user-1", ["booking-record-1"]))
-      .rejects.toThrow("has work-order assignments");
     expect(mocks.transaction.advanceBooking.deleteMany).not.toHaveBeenCalled();
   });
+
+  it.each(["grnAllocations", "finishedGoodsStockReceipts"] as const)(
+    "does not delete a booking with %s fulfillment",
+    async (fulfillmentRelation) => {
+      const assignment: {
+        id: string;
+        grnAllocations: Array<{ id: string }>;
+        finishedGoodsStockReceipts: Array<{ id: string }>;
+      } = {
+        id: "assignment-1",
+        grnAllocations: [],
+        finishedGoodsStockReceipts: [],
+      };
+      assignment[fulfillmentRelation] = [{ id: "fulfillment-id" }];
+      mocks.transaction.advanceBooking.findMany.mockResolvedValue([{
+        id: "booking-record-1",
+        booking_no: "BK-1",
+        sizeLines: [{ id: "size-1", size: "M", booked_quantity: 30, assignments: [assignment] }],
+        quotationLines: [],
+      }]);
+
+      await expect(deleteAdvanceBookings("internal-org-1", "user-1", ["booking-record-1"]))
+        .rejects.toThrow("has fulfilled work-order assignments");
+      expect(mocks.transaction.advanceBookingWorkOrderAssignment.deleteMany).not.toHaveBeenCalled();
+      expect(mocks.transaction.advanceBooking.deleteMany).not.toHaveBeenCalled();
+    },
+  );
 
   it("identifies quotations on saved bookings so registers can hide them and fulfillment can retain them", async () => {
     const bookingRow = {
