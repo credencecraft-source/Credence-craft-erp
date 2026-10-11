@@ -1,23 +1,37 @@
-import { forwardRef, useId, type InputHTMLAttributes } from "react";
+import { forwardRef, useId, type ChangeEvent, type InputHTMLAttributes } from "react";
 
 import { cn } from "@/lib/utilities/utility-helpers";
+import { normalizeUppercase, type TextCase } from "@/lib/utilities/text-case";
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   hint?: string;
   error?: string;
+  textCase?: TextCase;
 }
 
 const Input = forwardRef<HTMLInputElement, InputProps>(function Input({
   label,
   hint,
   error,
+  textCase = "uppercase",
   className = "",
   id,
+  onChange,
+  type,
+  disabled,
+  readOnly,
   ...props
 }, ref) {
   const generatedId = useId();
   const inputId = id ?? generatedId;
+  const shouldNormalizeText = textCase === "uppercase" && (type === undefined || type === "text" || type === "search");
+  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    if (shouldNormalizeText && !disabled && !readOnly) {
+      event.currentTarget.value = normalizeUppercase(event.currentTarget.value);
+    }
+    onChange?.(event);
+  };
 
   return (
     <div className="space-y-1">
@@ -30,7 +44,17 @@ const Input = forwardRef<HTMLInputElement, InputProps>(function Input({
       <input
         ref={ref}
         id={inputId}
+        type={type}
+        disabled={disabled}
+        readOnly={readOnly}
         {...props}
+        {...(shouldNormalizeText && typeof props.value === "string"
+          ? { value: normalizeUppercase(props.value) }
+          : {})}
+        {...(shouldNormalizeText && typeof props.defaultValue === "string"
+          ? { defaultValue: normalizeUppercase(props.defaultValue) }
+          : {})}
+        onChange={handleChange}
         suppressHydrationWarning
         aria-invalid={error ? true : props["aria-invalid"]}
         aria-describedby={[props["aria-describedby"], hint ? `${inputId}-hint` : "", error ? `${inputId}-error` : ""].filter(Boolean).join(" ") || undefined}
