@@ -94,9 +94,14 @@ export default function ArticleBasedOrderDialog({
   const isLoading = open && !lookups && !error;
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || lookups) return;
     const controller = new AbortController();
-    void fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups?includeInactive=false&limit=500`, {
+    const query = new URLSearchParams({
+      includeInactive: "false",
+      limit: "500",
+      keys: "article,entity,buyer,season,size-group",
+    });
+    void fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups?${query.toString()}`, {
       cache: "no-store",
       signal: controller.signal,
     })
@@ -113,7 +118,7 @@ export default function ArticleBasedOrderDialog({
         setError(loadError instanceof Error ? loadError.message : "Unable to load Article order options.");
       });
     return () => controller.abort();
-  }, [open, organizationId]);
+  }, [lookups, open, organizationId]);
 
   const selectedArticle = useMemo(
     () => lookups?.articles.find((article) => article.value_id === selectedArticleId || article.id === selectedArticleId) ?? null,
@@ -205,14 +210,19 @@ export default function ArticleBasedOrderDialog({
     }
   };
 
+  const handleClose = () => {
+    setError("");
+    onClose();
+  };
+
   return (
-    <Modal open={open} onClose={isSubmitting ? () => undefined : onClose} ariaLabelledBy="article-order-dialog-title" size="xl" className="space-y-5 p-6">
+    <Modal open={open} onClose={isSubmitting ? () => undefined : handleClose} ariaLabelledBy="article-order-dialog-title" size="xl" className="space-y-5 p-6">
       <div className="flex items-start justify-between gap-4 border-b border-[var(--erp-border)] pb-4">
         <div>
           <h2 id="article-order-dialog-title" className="text-lg font-semibold text-[var(--erp-text)]">Create Orders from Article</h2>
           <p className="mt-1 text-sm text-[var(--erp-text-muted)]">Each selected color creates a separate order with its own size quantities.</p>
         </div>
-        <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={isSubmitting} aria-label="Close Article order dialog">Close</Button>
+        <Button type="button" variant="ghost" size="sm" onClick={handleClose} disabled={isSubmitting} aria-label="Close Article order dialog">Close</Button>
       </div>
 
       {error && <p role="alert" className="rounded-lg border border-[var(--erp-error-border)] bg-[var(--erp-error-bg)] px-3 py-2 text-sm text-[var(--erp-error-text)]">{error}</p>}
@@ -314,7 +324,7 @@ export default function ArticleBasedOrderDialog({
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--erp-border)] pt-4">
         <p className="text-xs text-[var(--erp-text-muted)]">{selectedVariants.length} color order{selectedVariants.length === 1 ? "" : "s"} will be created.</p>
         <div className="flex gap-2">
-          <Button type="button" variant="secondary" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
+          <Button type="button" variant="secondary" onClick={handleClose} disabled={isSubmitting}>Cancel</Button>
           <Button type="button" variant="primary" onClick={() => void handleSubmit()} disabled={isLoading || !lookups || isSubmitting}>
             {isSubmitting ? "Creating orders..." : "Create Color Orders"}
           </Button>

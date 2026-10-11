@@ -133,6 +133,29 @@ describe("article creation", () => {
     }));
   });
 
+  it("skips running-order aggregation for article lookup lists when excluded", async () => {
+    const merchandisingOrder = (prismaMock as Record<string, unknown>).merchandisingOrder as {
+      findMany: ReturnType<typeof vi.fn>;
+    };
+    models.masterArticle.findMany.mockResolvedValueOnce([{
+      id: "article-id",
+      value_id: "article-value-id",
+      organization_id: "org-id",
+      article: "Shirt",
+      article_code: "SH-01",
+      is_active: true,
+    }] as never);
+
+    const articles = await getMasterValuesForOrganization("org-id", "article", false, {
+      includeArticleMetrics: false,
+    });
+
+    expect(articles).toHaveLength(1);
+    expect(articles[0].fields).not.toHaveProperty("running_order_qty");
+    expect(articles[0].fields).not.toHaveProperty("running_order_variants");
+    expect(merchandisingOrder.findMany).not.toHaveBeenCalled();
+  });
+
   it("assigns the next organization article code in the requested format", async () => {
     models.masterArticle.findMany.mockResolvedValue([
       { article_code: "AR-1" },

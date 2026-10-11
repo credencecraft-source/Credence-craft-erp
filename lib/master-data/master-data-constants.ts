@@ -316,11 +316,21 @@ async function buildData(
   return data;
 }
 
-async function rowFields(moduleKey: string, row: MasterRow, definition: NonNullable<ReturnType<typeof getMasterDefinition>>) {
+async function rowFields(
+  moduleKey: string,
+  row: MasterRow,
+  definition: NonNullable<ReturnType<typeof getMasterDefinition>>,
+  includeArticleMetrics = true,
+) {
   const fields: MasterFieldValues = {};
   for (const field of definition.fields) {
     const column = fieldColumns[moduleKey]?.[field.key];
     if (!column) continue;
+    if (moduleKey === "article"
+      && (field.key === "running_order_qty" || field.key === "running_order_variants")
+      && !includeArticleMetrics) {
+      continue;
+    }
     let value = valueForMasterField(row, column);
     if (field.key === "running_order_qty" || field.key === "running_order_variants") {
       if (moduleKey === "article") {
@@ -346,7 +356,15 @@ export async function getMasterValuesForOrganization(
   organizationId: string,
   moduleKey: string,
   includeInactive = false,
-  options: { search?: string; limit?: number; exactSearch?: boolean; includeDummyData?: boolean; entityId?: string; articleCode?: string } = {},
+  options: {
+    search?: string;
+    limit?: number;
+    exactSearch?: boolean;
+    includeDummyData?: boolean;
+    entityId?: string;
+    articleCode?: string;
+    includeArticleMetrics?: boolean;
+  } = {},
 ) {
   const definition = getMasterDefinition(moduleKey);
   const delegate = delegates[moduleKey];
@@ -452,7 +470,7 @@ export async function getMasterValuesForOrganization(
   }
 
   const hydratedRows = await Promise.all(rows.map(async (row) => {
-    const fields = await rowFields(moduleKey, row, definition);
+    const fields = await rowFields(moduleKey, row, definition, options.includeArticleMetrics);
     for (const field of definition.fields.filter((item) => item.type === "lookup")) {
       const related = fields[field.key] && field.lookupModuleKey
         ? lookupCache.get(field.lookupModuleKey)?.get(String(fields[field.key]))

@@ -1,23 +1,36 @@
-import { useId, type TextareaHTMLAttributes } from "react";
+import { useId, type ChangeEvent, type TextareaHTMLAttributes } from "react";
 
 import { cn } from "@/lib/utilities/utility-helpers";
+import { normalizeUppercase, type TextCase } from "@/lib/utilities/text-case";
 
 interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
   hint?: string;
   error?: string;
+  textCase?: TextCase;
 }
 
 export default function Textarea({
   label,
   hint,
   error,
+  textCase = "uppercase",
   className = "",
   id,
+  onChange,
+  disabled,
+  readOnly,
   ...props
 }: TextareaProps) {
   const generatedId = useId();
   const textareaId = id ?? generatedId;
+  const shouldNormalizeText = textCase === "uppercase";
+  const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
+    if (shouldNormalizeText && !disabled && !readOnly) {
+      event.currentTarget.value = normalizeUppercase(event.currentTarget.value);
+    }
+    onChange?.(event);
+  };
 
   return (
     <div className="space-y-1">
@@ -29,7 +42,16 @@ export default function Textarea({
 
       <textarea
         id={textareaId}
+        disabled={disabled}
+        readOnly={readOnly}
         {...props}
+        {...(shouldNormalizeText && typeof props.value === "string"
+          ? { value: normalizeUppercase(props.value) }
+          : {})}
+        {...(shouldNormalizeText && typeof props.defaultValue === "string"
+          ? { defaultValue: normalizeUppercase(props.defaultValue) }
+          : {})}
+        onChange={handleChange}
         suppressHydrationWarning
         aria-invalid={error ? true : props["aria-invalid"]}
         aria-describedby={[props["aria-describedby"], hint ? `${textareaId}-hint` : "", error ? `${textareaId}-error` : ""].filter(Boolean).join(" ") || undefined}

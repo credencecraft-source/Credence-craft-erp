@@ -343,15 +343,15 @@ const moduleContent: Record<string, ModuleContent> = {
     result: "Reduce late dispatches by keeping route, stock, and delivery status together.",
     toolkitLabel: "ADVANCE BOOKING TOOLKIT",
     toolkitSummary: "One view for dispatch readiness and delivery follow-up.",
-    toolkit: ["Dispatch planning", "Delivery tracking", "Sales-order visibility", "Route and warehouse coordination"],
+    toolkit: ["Dispatch planning", "Delivery tracking", "Sales-order visibility", "Dispatch location coordination"],
     workflows: [
       {
         key: "dispatch",
         label: "Dispatch",
         title: "Move ready goods to the next customer handoff",
-        description: "Keep the order, warehouse, and dispatch window aligned before release.",
+        description: "Keep the order, dispatch location, and dispatch window aligned before release.",
         steps: [
-          { title: "Check readiness", detail: "Verify the packed quantity, warehouse, and customer destination." },
+          { title: "Check readiness", detail: "Verify the packed quantity, dispatch location, and customer destination." },
           { title: "Plan the dispatch", detail: "Assign the route, vehicle or partner, and required dispatch notes." },
           { title: "Release the load", detail: "Record the dispatch and leave a traceable handoff for the delivery team." },
         ],

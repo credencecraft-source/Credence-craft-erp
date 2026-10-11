@@ -38,12 +38,6 @@ export const MASTER_DATA_CATEGORIES = [
     description: "Sizes, size groups, and their measurement charts.",
   },
   {
-    id: "warehouses",
-    title: "Warehouse",
-    routeSegment: "WAREHOUSE",
-    description: "Warehouses and warehouse types.",
-  },
-  {
     id: "other",
     title: "Others",
     routeSegment: "OTHERS",
@@ -92,7 +86,6 @@ const vendorsAndContactsMasterKeys = new Set(["vendor", "buyer", "merchandiser"]
 const taxAndGstMasterKeys = new Set(["gst", "gst-type", "hsn", "state"]);
 const sizeMasterKeys = new Set(["size", "size-group", "measurement-chart"]);
 const sizeMasterOrder = ["size", "size-group", "measurement-chart"];
-const warehouseMasterKeys = new Set(["warehouse", "warehouse-type"]);
 
 function normalizeCategoryRoute(value: string) {
   return value
@@ -159,17 +152,12 @@ export function getMastersForCategory(
     ));
   }
 
-  if (category.id === "warehouses") {
-    return masters.filter((master) => warehouseMasterKeys.has(master.key));
-  }
-
   return masters.filter((master) => (
     !rawMaterialMasterKeys.has(master.key) &&
     !finishedGoodsMasterKeys.has(master.key) &&
     !processAndOperationsMasterKeys.has(master.key) &&
     !vendorsAndContactsMasterKeys.has(master.key) &&
     !taxAndGstMasterKeys.has(master.key) &&
-    !sizeMasterKeys.has(master.key) &&
-    !warehouseMasterKeys.has(master.key)
+    !sizeMasterKeys.has(master.key)
   ));
 }

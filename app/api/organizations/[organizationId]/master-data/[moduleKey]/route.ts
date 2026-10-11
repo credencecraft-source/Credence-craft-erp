@@ -36,11 +36,23 @@ export async function GET(
     }
 
     if (moduleKey === "order-lookups") {
-      const lookupKeys = ["article", "entity", "category", "sub-category", "season", "color", "buyer", "brand", "size-group", "size", "raw-material-type", "raw-material-category", "raw-material-sub-category", "raw-material"];
+      const allLookupKeys = ["article", "entity", "category", "sub-category", "season", "color", "buyer", "brand", "size-group", "size", "raw-material-type", "raw-material-category", "raw-material-sub-category", "raw-material"];
+      const requestedKeys = searchParams.get("keys")?.split(",").map((key) => key.trim()).filter(Boolean);
+      const invalidKeys = requestedKeys?.filter((key) => !allLookupKeys.includes(key));
+      if (invalidKeys?.length) {
+        return NextResponse.json({ error: "One or more requested order lookup keys are invalid." }, { status: 400 });
+      }
+      const lookupKeys = requestedKeys?.length
+        ? allLookupKeys.filter((key) => requestedKeys.includes(key))
+        : allLookupKeys;
       const lookupValues = await Promise.all(
         lookupKeys.map(async (key) => [
           key,
-          await getMasterValuesForOrganization(organization.id, key, includeInactive, { limit, includeDummyData: true }),
+          await getMasterValuesForOrganization(organization.id, key, includeInactive, {
+            limit,
+            includeDummyData: true,
+            ...(requestedKeys?.length && key === "article" ? { includeArticleMetrics: false } : {}),
+          }),
         ] as const),
       );
       const masterOptions = Object.fromEntries(lookupValues);
@@ -49,10 +61,19 @@ export async function GET(
       const brands = masterOptions.brand;
       const articles = masterOptions.article;
       const colors = masterOptions.color;
-      const sizeLinks = await getSizeGroupSizesForOrganization(organization.id, undefined, true);
-      const sizeGroups = masterOptions["size-group"].map((group) => ({
+      const sizeGroupOptions = masterOptions["size-group"] ?? [];
+      const sizeLinks = sizeGroupOptions.length
+        ? await getSizeGroupSizesForOrganization(organization.id, sizeGroupOptions.map((group) => group.id), true)
+        : [];
+      const sizesByGroup = new Map<string, typeof sizeLinks>();
+      for (const link of sizeLinks) {
+        const groupSizes = sizesByGroup.get(link.groupId) ?? [];
+        groupSizes.push(link);
+        sizesByGroup.set(link.groupId, groupSizes);
+      }
+      const sizeGroups = sizeGroupOptions.map((group) => ({
         ...group,
-        sizes: sizeLinks.filter((link) => link.groupId === group.value_id || link.groupId === group.id).map((link) => link.size),
+        sizes: (sizesByGroup.get(group.id) ?? []).map((link) => link.size),
       }));
       const enrichedMasterOptions = { ...masterOptions, "size-group": sizeGroups };
 

@@ -27,7 +27,7 @@ const AttachmentsTab = React.lazy(() => import("./components/Attachments"));
 type TabType = "details" | "finishedGoods" | "bom" | "costing" | "techPack" | "measurements" | "process" | "attachments";
 type MasterDataOption = {
   id?: string;
-  label?: string;
+  label: string;
   value_id?: string;
   name?: string;
   code?: string | null;
@@ -55,11 +55,11 @@ const getOptionalNullableString = (record: Record<string, unknown>, key: string)
   typeof record[key] === "string" || record[key] === null ? record[key] : undefined;
 
 const parseMasterDataOption = (value: unknown): MasterDataOption | null => {
-  if (!isRecord(value)) return null;
+  if (!isRecord(value) || typeof value.label !== "string") return null;
 
   return {
     id: getOptionalString(value, "id"),
-    label: getOptionalString(value, "label"),
+    label: value.label,
     value_id: getOptionalString(value, "value_id"),
     name: getOptionalString(value, "name"),
     code: getOptionalNullableString(value, "code"),

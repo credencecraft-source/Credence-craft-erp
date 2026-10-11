@@ -80,7 +80,7 @@ describe("organization master-data lookup route", () => {
       return [];
     });
     mocks.getSizeGroupSizesForOrganization.mockResolvedValue([{
-      groupId: "group-value-id",
+      groupId: "group-id",
       size: { id: "size-id", value_id: "size-value-id", label: "M", fields: {} },
     }]);
   });
@@ -96,8 +96,37 @@ describe("organization master-data lookup route", () => {
     expect(body.masterOptions["size-group"][0].sizes).toEqual([
       { id: "size-id", value_id: "size-value-id", label: "M", fields: {} },
     ]);
-    expect(mocks.getSizeGroupSizesForOrganization).toHaveBeenCalledWith("internal-org-1", undefined, true);
+    expect(mocks.getSizeGroupSizesForOrganization).toHaveBeenCalledWith("internal-org-1", ["group-id"], true);
     expect(mocks.getMasterValuesForOrganization).toHaveBeenCalledTimes(14);
+  });
+
+  it("loads only the requested Article-order lookup lists", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/master-data/order-lookups?includeInactive=false&limit=500&keys=article,entity,buyer,season,size-group"),
+      contextFor("order-lookups"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(Object.keys(body.masterOptions).sort()).toEqual(["article", "buyer", "entity", "season", "size-group"]);
+    expect(mocks.getMasterValuesForOrganization).toHaveBeenCalledTimes(5);
+    expect(mocks.getMasterValuesForOrganization).toHaveBeenCalledWith(
+      "internal-org-1",
+      "article",
+      false,
+      { limit: 500, includeDummyData: true, includeArticleMetrics: false },
+    );
+    expect(mocks.getSizeGroupSizesForOrganization).toHaveBeenCalledWith("internal-org-1", ["group-id"], true);
+  });
+
+  it("rejects unknown requested order lookup keys", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/master-data/order-lookups?keys=article,unknown"),
+      contextFor("order-lookups"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.getMasterValuesForOrganization).not.toHaveBeenCalled();
   });
 
   it("loads process-template relations in parallel and preserves ordered operation results", async () => {

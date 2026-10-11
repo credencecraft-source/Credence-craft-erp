@@ -1,16 +1,6 @@
-import { createMaster, lookup, text } from "@/lib/master-data/master-data-models";
+import { createMaster, text } from "@/lib/master-data/master-data-models";
 
 export const DISTRIBUTION_MASTER_DEFINITIONS = [
-  createMaster("warehouse", "Warehouse", "Storage and dispatch location used by Advance Booking workflows.", [
-    text("Warehouse_Name", "Warehouse Name", { required: true, unique: true }),
-    lookup("Warehouse_Type", "Warehouse Type", "warehouse-type", { required: true }),
-    lookup("Location", "Location", "location"),
-    text("Incharge_Name", "Incharge Name"),
-    text("Phone_Number", "Phone Number"),
-  ], { labelField: "Warehouse_Name", moduleGroup: "distribution", moduleSubGroup: "dispatch", moduleOrder: 1 }),
-  createMaster("warehouse-type", "Warehouse Type", "Modes or categories of storage locations used for dispatch planning.", [
-    text("Warehouse_Type", "Warehouse Type", { required: true, unique: true }),
-  ], { labelField: "Warehouse_Type", moduleGroup: "distribution", moduleSubGroup: "dispatch", moduleOrder: 2 }),
   createMaster("delivery-partner", "Delivery Partner", "Third-party or internal delivery partners used for dispatch execution.", [
     text("Partner_Name", "Partner Name", { required: true, unique: true }),
     text("Contact_Person", "Contact Person"),

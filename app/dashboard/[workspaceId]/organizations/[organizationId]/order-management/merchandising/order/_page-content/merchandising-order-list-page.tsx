@@ -9,6 +9,7 @@ import Modal from "@/components/ui/Modal";
 import ArticleBasedOrderDialog from "@/components/erp/article-based-order-dialog";
 import MerchandisingOrderVariantDialog from "@/components/erp/merchandising-order-variant-dialog";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import { normalizeUppercase } from "@/lib/utilities/text-case";
 
 type OrderRecord = {
   id: string;
@@ -87,11 +88,11 @@ const dsStatusOptions = [
 ] as const;
 
 const ORDERS_PAGE_SIZE = 25;
-
 function renderOrderCell(fieldKey: string, order: OrderRecord) {
   const value = order[fieldKey as keyof OrderRecord];
-  if (fieldKey === "sourceStatus" && value === "DEMO") return "Dummy Data";
-  return value !== null && value !== undefined ? String(value) : "";
+  if (fieldKey === "sourceStatus" && value === "DEMO") return "DUMMY DATA";
+  if (value === null || value === undefined) return "";
+  return normalizeUppercase(String(value));
 }
 
 function getOrderRowId(order: OrderRecord) {

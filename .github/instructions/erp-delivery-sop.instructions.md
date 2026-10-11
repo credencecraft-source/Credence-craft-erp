@@ -36,6 +36,7 @@ applyTo: "**/*.{ts,tsx,prisma,sql,css,md}"
 - Authenticate first, authorize the route organization second, validate input third, then execute the domain operation.
 - Put authorization, validation, invariants, and transactions in the service or repository boundary. The UI and route handler are not security boundaries.
 - Scope every Prisma operation to the authorized internal organization ID and verify related IDs belong to that organization.
+- Normalize user-entered text to uppercase with the shared helper in shared text controls and again at persistence boundaries; preserve passwords and other deliberately case-sensitive credentials.
 - Use explicit lifecycle transitions, database constraints, atomic counters, Decimal arithmetic, and safe audit events.
 - Reuse shared UI and reporting primitives. Include loading, error, empty, disabled, and confirmation states.
 

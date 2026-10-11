@@ -6,12 +6,16 @@ import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import Input from "@/components/ui/Input";
 import Checkbox from "@/components/ui/Checkbox";
+import {
+  filterMasterOptionsByParent,
+  findMasterSelectionOption,
+} from "@/lib/master-data/master-data-selection";
 
 import type { OrderFormState } from "./order-form-types";
 
 type OrderMasterOption = {
   id?: string;
-  label?: string;
+  label: string;
   value_id?: string;
   code?: string | null;
   is_active?: boolean;
@@ -117,25 +121,23 @@ export default function OrderDetailsTab({
       options = options.filter((option) => {
         if (option.is_dummy) return true;
         const relatedBrand = option.fields?.Brand1 ?? option.brand_id ?? option.brandId ?? option.brand;
-        return relatedBrand === form.brand || brandIds.has(relatedBrand);
+        const selectedBrand = findMasterSelectionOption(getMasterList("brand"), form.brand);
+        return relatedBrand === form.brand
+          || brandIds.has(relatedBrand)
+          || relatedBrand === selectedBrand?.label;
       });
     }
 
     if (parentField && parentValue) {
-      const parentOption = Object.values(masterOptions)
-        .flat()
-        .find((option) => option.label === parentValue);
-      
-      if (parentOption) {
-        options = options.filter(
-          (option) => option.parentValueId === parentOption.id || option.parent_id === parentOption.id
-        );
-      } else {
-        options = [];
-      }
+      options = filterMasterOptionsByParent(
+        options,
+        Object.values(masterOptions).flat(),
+        parentValue,
+      );
     }
 
-    if (value && !options.some((opt) => opt.label === value || opt.id === value)) {
+    const selectedOption = findMasterSelectionOption(options, value);
+    if (value && !selectedOption) {
       options = [{ id: "current-legacy", label: value, code: null, is_active: true }, ...options];
     }
 
@@ -158,7 +160,7 @@ export default function OrderDetailsTab({
         <Select
           required={required}
           disabled={disabled}
-          value={value ?? ""}
+          value={selectedOption?.label ?? value ?? ""}
           onChange={(event) => onChange(event.target.value)}
           className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none"
         >

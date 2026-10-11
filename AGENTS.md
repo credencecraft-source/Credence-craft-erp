@@ -52,6 +52,12 @@ These are persistent project governance requirements for all future human, AI, a
 - Every delete/destructive action must use the shared `destructive` button/action variant and a confirmation step appropriate to the operation. Do not render raw delete buttons or icon-only delete actions. Preserve server-side authorization, dependency checks, and audit behavior for destructive business operations.
 - Keep shared component structure, tokens, and variants stable across platform and organization pages. A screen-specific override may handle layout or state only; it must not establish a competing visual language.
 
+## User-Entered Text
+
+- Use the shared `Input` and `Textarea` controls for text entry; they apply centralized uppercase normalization while typing, pasting, and rendering prefilled text.
+- Preserve password fields and other deliberately case-sensitive credentials. Use `textCase="preserve"` only when changing case would break a technical value.
+- Apply the same `normalizeUppercase` helper at server-side persistence boundaries for user-entered text, including API, import, and background-job entry points; UI normalization alone is not a data-integrity boundary.
+
 ## Implementation Verification Gate
 
 - For every implementation, proactively verify the local runtime before handoff: run the read-only Prisma migration-status check when a database is involved, then reuse an already-running development server if it responds at the expected local URL instead of trying to launch a duplicate. Open the affected route in the browser and exercise the changed workflow; reload to verify persistence when applicable.

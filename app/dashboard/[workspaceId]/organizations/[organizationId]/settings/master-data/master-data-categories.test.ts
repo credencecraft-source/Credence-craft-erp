@@ -76,14 +76,11 @@ describe("master data categories", () => {
     expect(taxMasters.map((master) => master.key).sort()).toEqual(["gst", "gst-type", "hsn", "state"]);
   });
 
-  it("groups warehouses and warehouse types together", () => {
-    const category = getMasterDataCategory("WAREHOUSE");
-
-    expect(category?.id).toBe("warehouses");
-    expect(getMastersForCategory(visibleMasters, category!).map((master) => master.key)).toEqual([
-      "warehouse",
-      "warehouse-type",
-    ]);
+  it("does not expose warehouse masters in the catalog", () => {
+    expect(getMasterDataCategory("WAREHOUSE")).toBeUndefined();
+    expect(visibleMasters.map((master) => master.key)).not.toEqual(
+      expect.arrayContaining(["warehouse", "warehouse-type"]),
+    );
   });
 
   it("labels the product master and its entry field as Finished Goods Type", () => {
