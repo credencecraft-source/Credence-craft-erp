@@ -30,21 +30,45 @@ export default function ContactMasterExcelActions({
   const router = useRouter();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
+  const [downloadError, setDownloadError] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
   const [fatalError, setFatalError] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
-  const downloadWorkbook = (includeContacts: boolean) => {
-    const workbookData = createContactWorkbook(includeContacts ? contacts : []);
-    const blob = new Blob([workbookData], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = objectUrl;
-    anchor.download = `unified-contact-master${includeContacts ? "" : "-template"}.xlsx`;
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  const downloadWorkbook = async (includeContacts: boolean) => {
+    setDownloadError("");
+    setIsGenerating(true);
+    try {
+      let exportContacts = contacts;
+      if (includeContacts) {
+        const response = await fetch(endpoint, { cache: "no-store" });
+        const result: unknown = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            typeof result === "object" && result !== null && "error" in result
+              ? String(result.error)
+              : "Unable to load all contacts for export.",
+          );
+        }
+        if (!Array.isArray(result)) throw new Error("Unable to load all contacts for export.");
+        exportContacts = result as ContactWorkbookRecord[];
+      }
+      const workbookData = await createContactWorkbook(includeContacts ? exportContacts : []);
+      const blob = new Blob([workbookData], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = `unified-contact-master${includeContacts ? "" : "-template"}.xlsx`;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch {
+      setDownloadError("Unable to create the contact Excel workbook. Please try again.");
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const importWorkbook = () => {
@@ -88,11 +112,12 @@ export default function ContactMasterExcelActions({
           type="button"
           size="sm"
           variant="secondary"
-          onClick={() => downloadWorkbook(true)}
+          onClick={() => void downloadWorkbook(true)}
+          disabled={isGenerating}
           aria-label="Download Unified Contact Master Excel workbook"
         >
           <Download aria-hidden="true" className="mr-1.5 h-4 w-4" />
-          Download Excel
+          {isGenerating ? "Preparing..." : "Download Excel"}
         </Button>
         <Button
           type="button"
@@ -110,6 +135,7 @@ export default function ContactMasterExcelActions({
           Upload Excel
         </Button>
       </div>
+      {downloadError ? <p className="text-sm text-slate-700" role="alert">{downloadError}</p> : null}
 
       <Modal open={isOpen} onClose={() => setIsOpen(false)} ariaLabel="Import Unified Contact Master Excel workbook" size="md">
         <div className="space-y-4 p-6">
@@ -153,7 +179,7 @@ export default function ContactMasterExcelActions({
             </div>
           ) : null}
           <div className="flex flex-wrap justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={() => downloadWorkbook(false)}>
+            <Button type="button" variant="secondary" onClick={() => void downloadWorkbook(false)} disabled={isGenerating}>
               <Download aria-hidden="true" className="mr-1.5 h-4 w-4" />
               Blank template
             </Button>

@@ -1,13 +1,20 @@
 import { normalizeUppercase } from "@/lib/utilities/text-case";
 
-const GST_STATE_CODES = new Set([
+export const CONTACT_GST_STATE_CODES = [
   "01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
   "11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
   "21", "22", "23", "24", "25", "26", "27", "28", "29", "30",
   "31", "32", "33", "34", "35", "36", "37", "38", "97", "99",
-]);
+] as const;
+const GST_STATE_CODES = new Set<string>(CONTACT_GST_STATE_CODES);
 const GSTIN_PATTERN = /^([0-9]{2})([A-Z]{5}[0-9]{4}[A-Z])([0-9A-Z])Z([0-9A-Z])$/;
 const GST_BASE36 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+export const CONTACT_GST_REGISTRATION_TYPES = [
+  "REGULAR", "COMPOSITION", "SEZ_DEVELOPER", "SEZ_UNIT",
+  "INPUT_SERVICE_DISTRIBUTOR", "TAX_DEDUCTOR", "TAX_COLLECTOR",
+  "NON_RESIDENT", "OIDAR", "OTHER",
+] as const;
+export const CONTACT_GST_REGISTRATION_STATUSES = ["ACTIVE", "SUSPENDED", "CANCELLED"] as const;
 
 export type ContactAddressInput = {
   id?: string;
@@ -113,12 +120,8 @@ export function normalizeAndValidateGstin(value: unknown) {
 function parseRegistration(value: unknown): ContactTaxRegistrationInput {
   const row = requireRecord(value, "Tax registration");
   const { gstin } = normalizeAndValidateGstin(row.gstin);
-  const registrationTypes = new Set([
-    "REGULAR", "COMPOSITION", "SEZ_DEVELOPER", "SEZ_UNIT",
-    "INPUT_SERVICE_DISTRIBUTOR", "TAX_DEDUCTOR", "TAX_COLLECTOR",
-    "NON_RESIDENT", "OIDAR", "OTHER",
-  ]);
-  const statuses = new Set(["ACTIVE", "SUSPENDED", "CANCELLED"]);
+  const registrationTypes = new Set<string>(CONTACT_GST_REGISTRATION_TYPES);
+  const statuses = new Set<string>(CONTACT_GST_REGISTRATION_STATUSES);
   const registrationType = cleanText(row.registrationType ?? "REGULAR", "Registration type", 40, true) ?? "";
   const status = cleanText(row.status ?? "ACTIVE", "Registration status", 20, true) ?? "";
   if (!registrationTypes.has(registrationType) || !statuses.has(status)) {

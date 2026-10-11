@@ -3,30 +3,27 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Download, FileSpreadsheet, Upload } from "lucide-react";
-import * as XLSX from "xlsx";
 
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
+import {
+  createMasterRecordsTemplateWorkbook,
+  type MasterWorkbookChildRecord,
+  type MasterWorkbookLookupOption,
+  type MasterWorkbookRecord,
+} from "@/lib/master-data/master-records-template-workbook";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-models";
 import type { MasterRecordsImportResult } from "@/lib/master-data/master-records-workbook";
 
-type MasterLookupOption = { id: string; value_id?: string; label: string };
-type MasterRecord = {
-  id: string;
-  value_id: string;
-  label: string;
-  code: string | null;
-  description: string | null;
-  metadata?: unknown;
-};
-type ChildRecord = { id?: string; parentId: string | null; label: string; fields?: Record<string, unknown> };
+type MasterRecord = MasterWorkbookRecord & { label: string; value_id: string };
+type ChildRecord = MasterWorkbookChildRecord & { id?: string };
 export type MasterRecordsImportAction = (formData: FormData) => Promise<MasterRecordsImportResult>;
 
 type MasterRecordsExcelActionsProps = {
   records: MasterRecord[];
   fields: MasterFieldDefinition[];
-  lookupOptions: Record<string, MasterLookupOption[]>;
+  lookupOptions: Record<string, MasterWorkbookLookupOption[]>;
   childRecords: ChildRecord[];
   moduleKey: string;
   moduleLabel: string;
@@ -34,57 +31,6 @@ type MasterRecordsExcelActionsProps = {
   organizationId: string;
   importAction: MasterRecordsImportAction;
 };
-
-function recordFields(record: MasterRecord) {
-  if (!record.metadata || typeof record.metadata !== "object") return {};
-  const metadata = record.metadata as Record<string, unknown>;
-  return metadata.fields && typeof metadata.fields === "object"
-    ? metadata.fields as Record<string, unknown>
-    : {};
-}
-
-function optionLabel(value: unknown, options: MasterLookupOption[] = []) {
-  const key = String(value ?? "");
-  const match = options.find((option) =>
-    [option.id, option.value_id, option.label].some((candidate) =>
-      candidate !== undefined && String(candidate).toLocaleLowerCase() === key.toLocaleLowerCase(),
-    ),
-  );
-  return match?.label ?? key;
-}
-
-function exportFieldValue(
-  field: MasterFieldDefinition,
-  value: unknown,
-  lookupOptions: Record<string, MasterLookupOption[]>,
-  children: ChildRecord[],
-) {
-  if (field.type === "image" && typeof value === "string" && value.startsWith("data:")) return "";
-  if (field.type === "child-list") {
-    return JSON.stringify(children.map((child) => Object.fromEntries(
-      (field.childFields ?? []).map((childField) => [
-        childField.label,
-        childField.type === "lookup"
-          ? optionLabel(child.fields?.[childField.key], lookupOptions[childField.lookupModuleKey ?? ""])
-          : child.fields?.[childField.key] ?? "",
-      ]),
-    )));
-  }
-
-  const normalizedValue = value === null || value === undefined || value === ""
-    ? field.multiple && children.length ? children.map((child) => child.label) : value
-    : value;
-  if (normalizedValue === null || normalizedValue === undefined || normalizedValue === "") return "";
-  if (field.type === "lookup" && field.lookupModuleKey) {
-    const options = lookupOptions[field.lookupModuleKey] ?? [];
-    return Array.isArray(normalizedValue)
-      ? normalizedValue.map((item) => optionLabel(item, options)).join("; ")
-      : optionLabel(normalizedValue, options);
-  }
-  if (Array.isArray(normalizedValue)) return normalizedValue.join("; ");
-  if (typeof normalizedValue === "object") return JSON.stringify(normalizedValue);
-  return normalizedValue;
-}
 
 export function MasterRecordsExcelActions({
   records,
@@ -100,53 +46,36 @@ export function MasterRecordsExcelActions({
   const router = useRouter();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [result, setResult] = useState<MasterRecordsImportResult | null>(null);
+  const [downloadError, setDownloadError] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
-  const downloadWorkbook = (includeRecords = true) => {
-    const headers = [
-      ...fields.filter((field) => !field.readOnly).map((field) => field.label),
-      "Master Code",
-      "Description",
-    ];
-    const rows = includeRecords ? records.map((record) => {
-      const values = recordFields(record);
-      return [
-        ...fields.filter((field) => !field.readOnly).map((field) => {
-          const relatedChildren = childRecords.filter((child) => child.parentId === record.id);
-          return exportFieldValue(
-            field,
-            values[field.key],
-            lookupOptions,
-            relatedChildren,
-          );
-        }),
-        record.code ?? "",
-        record.description ?? "",
-      ];
-    }) : [];
-    const workbook = XLSX.utils.book_new();
-    const dataSheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-    XLSX.utils.book_append_sheet(workbook, dataSheet, "Data");
-    const instructions = XLSX.utils.aoa_to_sheet([
-      ["Master Data Import Instructions"],
-      ["Use the Data sheet and keep its header names unchanged."],
-      ["Imports create new records only. Existing matching records are not overwritten."],
-      ["Each row saves independently. Review the import result for rejected rows."],
-      ["For child-list columns, provide a JSON array of objects using the child field labels as keys."],
-      ["Multiple lookup values may be separated with semicolons."],
-      ["Text values are normalized to uppercase when saved."],
-      ["Use Download blank template in the upload dialog to start without existing records."],
-    ]);
-    XLSX.utils.book_append_sheet(workbook, instructions, "Instructions");
-    const bytes = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
-    const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${moduleKey}-master${includeRecords ? "" : "-template"}.xlsx`;
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const downloadWorkbook = async (includeRecords = true) => {
+    setDownloadError("");
+    setIsGenerating(true);
+    try {
+      const workbookData = await createMasterRecordsTemplateWorkbook({
+        records: includeRecords ? records : [],
+        fields,
+        lookupOptions,
+        childRecords,
+        moduleLabel,
+      });
+      const blob = new Blob([workbookData], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${moduleKey}-master${includeRecords ? "" : "-template"}.xlsx`;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setDownloadError("Unable to create the Excel workbook. Please try again.");
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const importSelectedWorkbook = () => {
@@ -175,12 +104,13 @@ export function MasterRecordsExcelActions({
           type="button"
           size="sm"
           variant="secondary"
-          onClick={() => downloadWorkbook(true)}
+          onClick={() => void downloadWorkbook(true)}
+          disabled={isGenerating}
           aria-label={`Download ${moduleLabel} Excel workbook`}
           title={`Download ${moduleLabel} Excel workbook`}
         >
           <Download aria-hidden="true" className="mr-1.5 h-4 w-4" />
-          Download Excel
+          {isGenerating ? "Preparing..." : "Download Excel"}
         </Button>
         <Button
           type="button"
@@ -198,6 +128,7 @@ export function MasterRecordsExcelActions({
           Upload Excel
         </Button>
       </div>
+      {downloadError ? <p className="text-sm text-slate-700" role="alert">{downloadError}</p> : null}
 
       <Modal open={isOpen} onClose={() => setIsOpen(false)} ariaLabel={`Import ${moduleLabel} Excel workbook`} size="md">
         <div className="space-y-4 p-6">
@@ -240,7 +171,7 @@ export function MasterRecordsExcelActions({
             </div>
           ) : null}
           <div className="flex flex-wrap justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={() => downloadWorkbook(false)}>
+            <Button type="button" variant="secondary" onClick={() => void downloadWorkbook(false)} disabled={isGenerating}>
               <Download aria-hidden="true" className="mr-1.5 h-4 w-4" />
               Download blank template
             </Button>

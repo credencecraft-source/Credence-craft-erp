@@ -60,7 +60,8 @@ declare module "xlsx-populate" {
     addSheet(name: string): Sheet;
     definedName(name: string): string | undefined;
     definedName(name: string, refersTo: string | Range): Workbook;
-    outputAsync(options?: { type: "nodebuffer" }): Promise<Buffer>;
+    outputAsync(options: { type: "arraybuffer" }): Promise<ArrayBuffer>;
+    outputAsync(options: { type: "nodebuffer" }): Promise<Buffer>;
   }
 
   const XlsxPopulate: {
