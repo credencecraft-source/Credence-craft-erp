@@ -46,13 +46,6 @@ type EsslConfiguration = {
   isActive: boolean;
 };
 
-function moduleId(moduleKey: string, organizationId: string) {
-  return prisma.masterModule.findUnique({
-    where: { organization_id_module_key: { organization_id: organizationId, module_key: moduleKey } },
-    select: { id: true },
-  });
-}
-
 async function ensureModule(
   transaction: Prisma.TransactionClient,
   organizationId: string,
@@ -560,7 +553,7 @@ export async function receiveEsslPush(token: string, payload: string) {
   const organizationId = configuration.module.organization_id;
   const payloadDigest = createHash("sha256").update(payload).digest("hex");
   await prisma.$transaction(async (transaction) => {
-    const module = await ensureModule(
+    const masterModule = await ensureModule(
       transaction,
       organizationId,
       MODULES.attendance,
@@ -571,7 +564,7 @@ export async function receiveEsslPush(token: string, payload: string) {
       where: { id },
       create: {
         id,
-        module_id: module.id,
+        module_id: masterModule.id,
         label: `ESSL push ${receivedAt}`,
         code: payloadDigest.slice(0, 100),
         metadata: {

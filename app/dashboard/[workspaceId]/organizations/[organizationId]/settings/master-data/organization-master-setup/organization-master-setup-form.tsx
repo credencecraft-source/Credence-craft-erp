@@ -1,30 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
-import { Trash2 } from "lucide-react";
+import { Download, LoaderCircle, Trash2, Upload } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
+import type { OrganizationMasterSetupField } from "@/lib/master-data/organization-master-setup-stages";
 
-type Field = {
-  key: string;
-  label: string;
-  type: string;
-  required?: boolean;
-  readOnly?: boolean;
-  lookupModuleKey?: string;
-  multiple?: boolean;
-};
+type Field = OrganizationMasterSetupField;
 type Definition = {
   key: string;
   label: string;
   fields: Field[];
   labelField?: string;
+  canDelete?: boolean;
 };
 type LookupOption = { id: string; label: string };
 type Stage = {
@@ -104,18 +98,125 @@ function initialBulkInputs(
 
 function SubmitButton({
   activeStage,
+  workbookUploaded,
 }: {
   activeStage: "independent" | "related" | "third";
+  workbookUploaded: boolean;
 }) {
   const { pending } = useFormStatus();
   return (
-    <Button type="submit" size="lg" disabled={pending}>
+    <Button type="submit" name="workbookUpload" value={workbookUploaded ? "1" : "0"} size="lg" disabled={pending}>
       {pending
         ? "Saving..."
+        : workbookUploaded
+          ? "Create Uploaded Masters"
         : activeStage === "third"
           ? "Save and Complete"
           : "Save and Create Master"}
     </Button>
+  );
+}
+
+function SectionSubmitButton({ moduleKey, label }: { moduleKey: string; label: string }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button
+      className="ml-auto shrink-0"
+      type="submit"
+      name="setupModule"
+      value={moduleKey}
+      variant="secondary"
+      disabled={pending}
+    >
+      {pending ? "Saving..." : `Create ${label} Master`}
+    </Button>
+  );
+}
+
+function DeleteSectionSubmitButton({ label, disabled }: { label: string; disabled: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" variant="destructive" disabled={disabled || pending}>
+      <Trash2 size={16} aria-hidden="true" />
+      {pending ? "Deleting..." : `Delete all ${label} values`}
+    </Button>
+  );
+}
+
+function DeleteSectionAction({
+  action,
+  workspaceId,
+  organizationId,
+  stage,
+  moduleKey,
+  label,
+}: {
+  action: (formData: FormData) => void | Promise<void>;
+  workspaceId: string;
+  organizationId: string;
+  stage: "independent" | "related" | "third";
+  moduleKey: string;
+  label: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const requiredConfirmation = `DELETE ${label.toLocaleUpperCase()}`;
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="destructive"
+        onClick={() => {
+          setConfirmation("");
+          setOpen(true);
+        }}
+      >
+        <Trash2 size={16} aria-hidden="true" />
+        Delete all values
+      </Button>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        ariaLabelledBy={`delete-${moduleKey}-title`}
+        ariaDescribedBy={`delete-${moduleKey}-description`}
+        variant="danger"
+        size="md"
+      >
+        <div className="space-y-4 p-6">
+          <div>
+            <h2 id={`delete-${moduleKey}-title`} className="text-lg font-bold text-slate-900">
+              Delete all {label} values?
+            </h2>
+            <p id={`delete-${moduleKey}-description`} className="mt-2 text-sm text-slate-600">
+              This permanently removes every saved value in this section. Values referenced by other records cannot be deleted, and demo-batch values must be removed with their batch.
+            </p>
+          </div>
+          <form action={action} className="space-y-4">
+            <input type="hidden" name="workspaceId" value={workspaceId} />
+            <input type="hidden" name="organizationId" value={organizationId} />
+            <input type="hidden" name="step" value={stage} />
+            <input type="hidden" name="moduleKey" value={moduleKey} />
+            <Input
+              label={`Type ${requiredConfirmation} to confirm`}
+              name="confirmation"
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.target.value)}
+              autoComplete="off"
+            />
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <DeleteSectionSubmitButton
+                label={label}
+                disabled={confirmation !== requiredConfirmation}
+              />
+            </div>
+          </form>
+        </div>
+      </Modal>
+    </>
   );
 }
 
@@ -212,26 +313,93 @@ function MultiLookupField({
 
 export default function OrganizationMasterSetupForm({
   action,
+  deleteSectionAction,
   workspaceId,
   organizationId,
   stage,
   activeStage,
 }: {
   action: (formData: FormData) => void | Promise<void>;
+  deleteSectionAction: (formData: FormData) => void | Promise<void>;
   workspaceId: string;
   organizationId: string;
   stage: Stage;
   activeStage: "independent" | "related" | "third";
 }) {
-  const visibleDefinitions = stage.definitions.filter(
-    (definition) => definition.key !== "entity" && definition.key !== "product-master",
-  );
+  const visibleDefinitions = stage.definitions;
   const [records, setRecords] = useState<SetupRecord[]>(() =>
     initialRecords(visibleDefinitions, stage.existing),
   );
   const [bulkInputs, setBulkInputs] = useState<Record<string, string>>(() =>
     initialBulkInputs(visibleDefinitions, stage.existing),
   );
+  const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false);
+  const [isReadingWorkbook, setIsReadingWorkbook] = useState(false);
+  const [workbookName, setWorkbookName] = useState("");
+  const [workbookError, setWorkbookError] = useState("");
+  const [workbookUploaded, setWorkbookUploaded] = useState(false);
+  const workbookInputRef = useRef<HTMLInputElement>(null);
+  const dependencyLabels = [...new Set(stage.definitions.flatMap((definition) =>
+    definition.fields
+      .filter((field) => field.type === "lookup" && field.required && field.lookupModuleKey)
+      .filter((field) => field.lookupModuleKey && !(stage.lookupOptions[field.lookupModuleKey] ?? []).length)
+      .map((field) => field.label),
+  ))];
+  const workbookCounts = records.reduce<Record<string, number>>((counts, record) => ({
+    ...counts,
+    [record.moduleKey]: (counts[record.moduleKey] ?? 0) + 1,
+  }), {});
+  const handleDownloadTemplate = async () => {
+    if (isDownloadingTemplate) return;
+    setWorkbookError("");
+    setIsDownloadingTemplate(true);
+    try {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/organization-master-setup-template?step=${activeStage}&workspaceId=${encodeURIComponent(workspaceId)}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message = typeof data === "object" && data !== null && "error" in data && typeof data.error === "string"
+          ? data.error
+          : "Unable to create the Excel template.";
+        throw new Error(message);
+      }
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `organization-master-setup-${activeStage}.xlsx`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (error) {
+      setWorkbookError(error instanceof Error ? error.message : "Unable to create the Excel template.");
+    } finally {
+      setIsDownloadingTemplate(false);
+    }
+  };
+  const handleWorkbookChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setWorkbookError("");
+    setIsReadingWorkbook(true);
+    try {
+      const { parseOrganizationMasterSetupWorkbook } = await import("./organization-master-setup-workbook");
+      const importedRecords = await parseOrganizationMasterSetupWorkbook(
+        file,
+        stage.definitions,
+        stage.lookupOptions,
+      );
+      setRecords(importedRecords);
+      setBulkInputs({});
+      setWorkbookName(file.name);
+      setWorkbookUploaded(true);
+    } catch (error) {
+      setWorkbookError(error instanceof Error ? error.message : "Unable to read this Excel workbook.");
+    } finally {
+      setIsReadingWorkbook(false);
+    }
+  };
   const updateRecord = (index: number, update: Partial<SetupRecord>) =>
     setRecords((current) =>
       current.map((record, recordIndex) =>
@@ -267,7 +435,7 @@ export default function OrganizationMasterSetupForm({
           records: [
             ...records,
             ...(activeStage === "independent"
-              ? ["color", "currency-type", "merchandiser", "pre-order-checklist", "process-master", "raw-material-type", "size"].flatMap((moduleKey) =>
+              ? ["color", "currency-type", "entity", "merchandiser", "pre-order-checklist", "process-master", "product-master", "raw-material-type", "size"].flatMap((moduleKey) =>
                   (bulkInputs[moduleKey] ?? "")
                     .split(",")
                     .map((value) => value.trim())
@@ -319,6 +487,48 @@ export default function OrganizationMasterSetupForm({
           <p className="text-xs text-slate-600">Operation and material setup</p>
         </Link>
       </div>
+      <Card className="space-y-4">
+        <div>
+          <h2 className="text-base font-bold text-slate-900">Excel template for this step</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Download one workbook with a sheet for each master section. Fill in rows, upload it, review the imported sections, then create the masters.
+          </p>
+          {dependencyLabels.length > 0 ? (
+            <p className="mt-2 text-sm text-slate-600" role="status">
+              Some required lookup lists are empty ({dependencyLabels.join(", ")}). Complete and save the earlier step, then download a fresh template before uploading related masters.
+            </p>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="button" variant="secondary" onClick={handleDownloadTemplate} disabled={isDownloadingTemplate}>
+            {isDownloadingTemplate ? <LoaderCircle size={16} className="animate-spin" aria-hidden="true" /> : <Download size={16} aria-hidden="true" />}
+            {isDownloadingTemplate ? "Preparing template..." : "Download Excel Template"}
+          </Button>
+          <Input
+            ref={workbookInputRef}
+            className="sr-only"
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            onChange={handleWorkbookChange}
+            aria-label="Upload completed organization master setup workbook"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => workbookInputRef.current?.click()}
+            disabled={isReadingWorkbook}
+          >
+            {isReadingWorkbook ? <LoaderCircle size={16} className="animate-spin" aria-hidden="true" /> : <Upload size={16} aria-hidden="true" />}
+            {isReadingWorkbook ? "Reading workbook..." : "Upload Excel Workbook"}
+          </Button>
+          {workbookName ? (
+            <p className="text-sm text-slate-600" role="status">
+              {workbookName} · {Object.values(workbookCounts).reduce((total, count) => total + count, 0)} records across {Object.keys(workbookCounts).length} sections
+            </p>
+          ) : null}
+        </div>
+        {workbookError ? <p className="text-sm text-slate-700" role="alert">{workbookError}</p> : null}
+      </Card>
       {visibleDefinitions.length === 0 ? (
         <Card>
           <p className="text-sm text-slate-600">
@@ -351,14 +561,26 @@ export default function OrganizationMasterSetupForm({
           );
           return (
             <Card key={definition.key} className="space-y-2">
-              <div>
-                <h2 className="text-base font-bold text-slate-900">
-                  {definition.label}
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Existing records:{" "}
-                  {stage.existing[definition.key]?.length ?? 0}
-                </p>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">
+                    {definition.label}
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Existing records:{" "}
+                    {stage.existing[definition.key]?.length ?? 0}
+                  </p>
+                </div>
+                {definition.canDelete ? (
+                  <DeleteSectionAction
+                    action={deleteSectionAction}
+                    workspaceId={workspaceId}
+                    organizationId={organizationId}
+                    stage={activeStage}
+                    moduleKey={definition.key}
+                    label={definition.label}
+                  />
+                ) : null}
               </div>
               {(stage.existing[definition.key] ?? []).length > 0 ? (
                 <div className="flex flex-wrap gap-2">
@@ -541,15 +763,7 @@ export default function OrganizationMasterSetupForm({
                       }
                     />
                   </div>
-                  <Button
-                    className="ml-auto shrink-0"
-                    type="submit"
-                    name="setupModule"
-                    value={definition.key}
-                    variant="secondary"
-                  >
-                    Create {definition.label} Master
-                  </Button>
+                  <SectionSubmitButton moduleKey={definition.key} label={definition.label} />
                 </div>
               ) : (
                 <Button
@@ -565,7 +779,7 @@ export default function OrganizationMasterSetupForm({
         })
       )}
       <div className="flex justify-end">
-        <SubmitButton activeStage={activeStage} />
+        <SubmitButton activeStage={activeStage} workbookUploaded={workbookUploaded} />
       </div>
     </form>
   );

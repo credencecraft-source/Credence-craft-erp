@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { prismaMock, transactionMock } = vi.hoisted(() => {
+const { prismaMock, transactionMock, createMasterValueMock, deleteAllMasterValuesMock } = vi.hoisted(() => {
   const delegate = (name: string) => {
     let sequence = 0;
     return {
@@ -24,12 +24,24 @@ const { prismaMock, transactionMock } = vi.hoisted(() => {
     masterSubCategory: delegate("subcategory"),
   };
   const prismaMock = { $transaction: vi.fn() };
-  return { prismaMock, transactionMock };
+  const createMasterValueMock = vi.fn();
+  const deleteAllMasterValuesMock = vi.fn();
+  return { prismaMock, transactionMock, createMasterValueMock, deleteAllMasterValuesMock };
 });
 
 vi.mock("@/lib/database/prisma-client", () => ({ prisma: prismaMock }));
+vi.mock("@/lib/master-data/master-data-constants", () => ({
+  createMasterValueForOrganization: createMasterValueMock,
+  deleteAllMasterValuesForOrganization: deleteAllMasterValuesMock,
+  getMasterValuesForOrganization: vi.fn(),
+}));
 
-import { createOrganizationMerchandisingStarterMasters } from "./organization-master-setup-service";
+import {
+  createOrganizationMasterSetupStage,
+  createOrganizationMerchandisingStarterMasters,
+  deleteOrganizationMasterSetupSection,
+  ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS,
+} from "./organization-master-setup-service";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -106,5 +118,40 @@ describe("createOrganizationMerchandisingStarterMasters", () => {
 
     await expect(createOrganizationMerchandisingStarterMasters("org-id"))
       .rejects.toThrow('Size group "Shirt S-XXL" already exists with a different parent or brand.');
+  });
+});
+
+
+describe("createOrganizationMasterSetupStage", () => {
+  it("allows creating Finished Goods Category records from the related-masters stage", async () => {
+    await createOrganizationMasterSetupStage("org-id", [{
+      moduleKey: "category",
+      label: "Shirt",
+      fields: { Product_Master: "finished-goods-id" },
+    }]);
+
+    expect(ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS.has("category")).toBe(false);
+    expect(createMasterValueMock).toHaveBeenCalledWith("org-id", "category", {
+      label: "Shirt",
+      fields: { Product_Master: "finished-goods-id" },
+    });
+  });
+
+  describe("deleteOrganizationMasterSetupSection", () => {
+    it("delegates an allowed related master deletion to the atomic organization-scoped helper", async () => {
+      deleteAllMasterValuesMock.mockResolvedValue({ deletedCount: 4 });
+
+      await expect(deleteOrganizationMasterSetupSection("org-id", "user-id", "category"))
+        .resolves.toEqual({ deletedCount: 4 });
+
+      expect(deleteAllMasterValuesMock).toHaveBeenCalledWith("org-id", "user-id", "category");
+    });
+
+    it("rejects a master outside the setup steps", async () => {
+      await expect(deleteOrganizationMasterSetupSection("org-id", "user-id", "article"))
+        .rejects.toThrow("This master section is not available for bulk deletion.");
+
+      expect(deleteAllMasterValuesMock).not.toHaveBeenCalled();
+    });
   });
 });

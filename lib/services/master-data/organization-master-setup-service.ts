@@ -1,18 +1,15 @@
 import { prisma } from "@/lib/database/prisma-client";
-import { createMasterValueForOrganization, getMasterValuesForOrganization } from "@/lib/master-data/master-data-constants";
+import { createMasterValueForOrganization, deleteAllMasterValuesForOrganization, getMasterValuesForOrganization } from "@/lib/master-data/master-data-constants";
 import { getMasterDefinition } from "@/lib/master-data/master-data-registry";
+import { getOrganizationMasterSetupDefinitions, ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS } from "@/lib/master-data/organization-master-setup-stages";
+
+export { ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS } from "@/lib/master-data/organization-master-setup-stages";
 
 export type OrganizationMasterSetupRecord = {
   moduleKey: string;
   label: string;
   fields: Record<string, string | number | boolean | null | string[]>;
 };
-
-export const ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS = new Set([
-  "article", "category-type", "gold-seal", "gold-seal-variant", "gst", "gst-type", "hsn",
-  "measurement-chart", "operation", "operation-template", "raw-material", "raw-material-type",
-  "season", "size-wise-consumption", "state", "category",
-]);
 
 type ActiveMaster = { id: string; is_active: boolean };
 
@@ -201,5 +198,23 @@ export async function createOrganizationMasterSetupStage(
         });
       }
     }
+
   }
+}
+
+export async function deleteOrganizationMasterSetupSection(
+  organizationId: string,
+  userId: string,
+  moduleKey: string,
+) {
+  if (!organizationId || !userId) throw new Error("Organization and user are required.");
+  const setupKeys = new Set(
+    (["independent", "related", "third"] as const)
+      .flatMap((stage) => getOrganizationMasterSetupDefinitions(stage))
+      .map((definition) => definition.key),
+  );
+  if (!setupKeys.has(moduleKey)) {
+    throw new Error("This master section is not available for bulk deletion.");
+  }
+  return deleteAllMasterValuesForOrganization(organizationId, userId, moduleKey);
 }

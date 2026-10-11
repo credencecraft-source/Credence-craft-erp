@@ -15,6 +15,7 @@ type MasterDelegate = {
   create(args: MasterQuery): Promise<MasterRow>;
   update(args: MasterQuery): Promise<MasterRow>;
   delete(args: MasterQuery): Promise<MasterRow>;
+  deleteMany(args: MasterQuery): Promise<{ count: number }>;
   count(args: MasterQuery): Promise<number>;
   upsert(args: MasterQuery): Promise<MasterRow>;
 };
@@ -43,6 +44,31 @@ const delegates = {
   "order-volume": prisma.masterOrderVolume,
   "raw-material-type": prisma.masterRawMaterialType, "raw-material-category": prisma.masterRawMaterialCategory, "raw-material-sub-category": prisma.masterRawMaterialSubCategory,
 } as unknown as Record<string, MasterDelegate>;
+
+const transactionDelegateNames: Record<string, string> = {
+  entity: "masterEntity",
+  location: "masterLocation",
+  category: "masterCategory",
+  "sub-category": "masterSubCategory",
+  brand: "masterBrand",
+  "pre-order-checklist": "masterPreOrderChecklist",
+  "currency-type": "masterCurrencyType",
+  buyer: "masterBuyer",
+  season: "masterSeason",
+  color: "masterColor",
+  "size-group": "masterSizeGroup",
+  size: "masterSize",
+  "product-master": "masterProduct",
+  "process-master": "masterProcess",
+  "process-template": "masterProcessTemplate",
+  merchandiser: "masterMerchandiser",
+  "order-volume": "masterOrderVolume",
+  "raw-material-sub-category": "masterRawMaterialSubCategory",
+};
+
+export function isMasterSectionBulkDeletable(moduleKey: string) {
+  return Boolean(transactionDelegateNames[moduleKey] && delegates[moduleKey]);
+}
 
 const labelFields: Record<string, string> = {
   entity: "entity_name", location: "location_name", "category-type": "category_type", category: "category_name", "sub-category": "sub_category", brand: "brand",
@@ -838,6 +864,80 @@ export async function deleteMasterValue(organizationId: string, valueId: string)
     }
   }
   return { record: null };
+}
+
+export async function deleteAllMasterValuesForOrganization(
+  organizationId: string,
+  userId: string,
+  moduleKey: string,
+) {
+  const delegateName = transactionDelegateNames[moduleKey];
+  if (!organizationId || !userId || !delegateName || !isMasterSectionBulkDeletable(moduleKey)) {
+    throw new Error("This master section is not available for bulk deletion.");
+  }
+  const label = getMasterDefinition(moduleKey)?.label.toLowerCase() ?? "master";
+
+  try {
+    return await prisma.$transaction(async (transaction) => {
+      const transactionDelegates = transaction as unknown as Record<string, MasterDelegate>;
+      const delegate = transactionDelegates[delegateName];
+      if (!delegate) throw new Error("Bulk deletion is not configured for this master section.");
+      const records = await delegate.findMany({
+        where: { organization_id: organizationId },
+        select: { id: true, value_id: true, legacy_metadata: true },
+      });
+      if (records.length === 0) return { deletedCount: 0 };
+
+      const batch = await transaction.organizationDummyDataBatch.findFirst({
+        where: { organization_id: organizationId, status: "ACTIVE" },
+        select: { id: true },
+      });
+      if (batch && records.some((record) => belongsToDummyBatch(record, batch.id))) {
+        throw new Error("Demo master values can only be removed by deleting the complete Dummy Data batch.");
+      }
+
+      await transaction.approvalRequest.deleteMany({
+        where: {
+          organization_id: organizationId,
+          entity_ref_id: { in: records.map((record) => record.value_id) },
+        },
+      });
+      const result = await delegate.deleteMany({
+        where: { organization_id: organizationId, id: { in: records.map((record) => record.id) } },
+      });
+      if (result.count !== records.length) {
+        throw new Error("The master section changed while it was being deleted. Refresh and try again.");
+      }
+      await transaction.auditEvent.create({
+        data: {
+          organization_id: organizationId,
+          user_id: userId,
+          module: "master-data",
+          action: "DELETE_ALL",
+          entity_type: moduleKey,
+          details: { moduleKey, deletedCount: result.count },
+        },
+      });
+      return { deletedCount: result.count };
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("Demo master values")
+    ) {
+      throw error;
+    }
+    const errorCode = typeof error === "object" && error !== null && "code" in error ? error.code : null;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (
+      errorCode === "P2003" ||
+      errorMessage.includes("violates foreign key constraint") ||
+      errorMessage.includes("violates RESTRICT setting of foreign key constraint")
+    ) {
+      throw new Error(`The ${label} values are in use by other records. Remove those dependencies before deleting this section.`);
+    }
+    throw error;
+  }
 }
 
 export async function listApprovalRequestsForOrganization(organizationId: string) {

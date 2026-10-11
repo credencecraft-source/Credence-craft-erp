@@ -42,11 +42,14 @@ vi.mock("@/lib/database/prisma-client", () => ({ prisma: prismaMock }));
 import {
   assertNoDummyMasterReferences,
   createMasterValueForOrganization,
+  deleteAllMasterValuesForOrganization,
   deleteMasterValue,
   getMasterValuesForOrganization,
   getSizeGroupSizesForOrganization,
+  isMasterSectionBulkDeletable,
   updateMasterValue,
 } from "./master-data-constants";
+import { getOrganizationMasterSetupDefinitions } from "./organization-master-setup-stages";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -433,6 +436,94 @@ describe("dummy master isolation", () => {
     const result = await getMasterValuesForOrganization("org-id", "category");
 
     expect(result.map((item) => item.label)).toEqual(["Real Category"]);
+  });
+
+  describe("bulk master deletion", () => {
+    it("deletes all values for the organization and clears approval requests atomically", async () => {
+      models.masterColor.findMany.mockResolvedValue([
+        { id: "color-1", value_id: "color-value-1", legacy_metadata: null },
+        { id: "color-2", value_id: "color-value-2", legacy_metadata: null },
+      ] as never);
+      models.masterColor.deleteMany.mockResolvedValue({ count: 2 });
+
+      await expect(deleteAllMasterValuesForOrganization("org-id", "user-id", "color"))
+        .resolves.toEqual({ deletedCount: 2 });
+
+      expect(models.masterColor.findMany).toHaveBeenCalledWith({
+        where: { organization_id: "org-id" },
+        select: { id: true, value_id: true, legacy_metadata: true },
+      });
+      expect(models.masterColor.deleteMany).toHaveBeenCalledWith({
+        where: { organization_id: "org-id", id: { in: ["color-1", "color-2"] } },
+      });
+      expect(models.approvalRequest.deleteMany).toHaveBeenCalledWith({
+        where: { organization_id: "org-id", entity_ref_id: { in: ["color-value-1", "color-value-2"] } },
+      });
+      expect(models.auditEvent.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          organization_id: "org-id",
+          user_id: "user-id",
+          action: "DELETE_ALL",
+          entity_type: "color",
+          details: { moduleKey: "color", deletedCount: 2 },
+        }),
+      });
+    });
+
+    it("blocks deleting any values while the section contains active dummy-batch data", async () => {
+      (prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({ id: "demo-batch-id" });
+      models.masterColor.findMany.mockResolvedValue([
+        { id: "regular-color", value_id: "regular-value", legacy_metadata: null },
+        { id: "demo-color", value_id: "demo-value", legacy_metadata: { dummyDataBatchId: "demo-batch-id" } },
+      ] as never);
+
+      await expect(deleteAllMasterValuesForOrganization("org-id", "user-id", "color"))
+        .rejects.toThrow("Demo master values can only be removed by deleting the complete Dummy Data batch.");
+
+      expect(models.masterColor.deleteMany).not.toHaveBeenCalled();
+      expect(models.approvalRequest.deleteMany).not.toHaveBeenCalled();
+      expect(models.auditEvent.create).not.toHaveBeenCalled();
+    });
+
+    it("does not audit or retain partial deletion when references block the section", async () => {
+      models.masterSize.findMany.mockResolvedValue([
+        { id: "size-1", value_id: "size-value-1", legacy_metadata: null },
+        { id: "size-2", value_id: "size-value-2", legacy_metadata: null },
+      ] as never);
+      models.masterSize.deleteMany.mockRejectedValueOnce({ code: "P2003" });
+
+      await expect(deleteAllMasterValuesForOrganization("org-id", "user-id", "size"))
+        .rejects.toThrow("The size values are in use by other records.");
+
+      expect(prismaMock.$transaction).toHaveBeenCalledOnce();
+      expect(models.auditEvent.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects unconfigured master keys without querying organization data", async () => {
+      await expect(deleteAllMasterValuesForOrganization("org-id", "user-id", "article"))
+        .rejects.toThrow("This master section is not available for bulk deletion.");
+
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("supports every persisted master exposed in the three setup steps", async () => {
+      (prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue(null);
+      for (const model of Object.values(models)) {
+        model.findMany.mockResolvedValue([]);
+      }
+      const setupKeys = [...new Set((["independent", "related", "third"] as const)
+        .flatMap((stage) => getOrganizationMasterSetupDefinitions(stage))
+        .map((definition) => definition.key))]
+        .filter(isMasterSectionBulkDeletable);
+
+      for (const moduleKey of setupKeys) {
+        await expect(deleteAllMasterValuesForOrganization("org-id", "user-id", moduleKey))
+          .resolves.toEqual({ deletedCount: 0 });
+      }
+
+      expect(prismaMock.$transaction).toHaveBeenCalledTimes(setupKeys.length);
+      expect(isMasterSectionBulkDeletable("delivery-partner")).toBe(false);
+    });
   });
 
   it("shows batch-tagged values in the master management list when requested", async () => {
