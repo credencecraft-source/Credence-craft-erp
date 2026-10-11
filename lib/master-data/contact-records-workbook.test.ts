@@ -139,14 +139,14 @@ describe("contact master workbook", () => {
       name: "Contacts",
       rows: [
         [
-          "Contact Code (system-generated; do not edit)", "Legal Name *", "Display Name", "Email", "Phone", "Roles *",
+          "Legal Name *", "Display Name", "Email", "Phone", "Roles *",
           "GSTIN", "GST Registered Legal Name", "GST Registration Type", "GST Registration Status",
           "Address Label", "Address Use", "Address Line 1", "Address Line 2", "City", "State", "State Code",
           "PIN Code", "Country Code", "Default Billing", "Default Shipping", "Account Holder Name", "Account Number",
           "IFSC Code", "Bank Name", "Branch", "Default Bank Account",
         ],
         [
-          "", "Example Textiles", "Example", "ops@example.com", "9876543210", "CUSTOMER; VENDOR",
+          "Example Textiles", "Example", "ops@example.com", "9876543210", "CUSTOMER; VENDOR",
           "27AAPFU0939F1ZV", "Example Textiles", "REGULAR", "ACTIVE",
           "Head Office", "BOTH", "1 Market Road", "", "Mumbai", "Maharashtra", "27",
           "400001", "IN", "", "", "Example Textiles", "12345678",
@@ -182,6 +182,7 @@ describe("contact master workbook", () => {
         isDefault: true,
       }],
     });
+    expect(result.contacts[0].input).not.toHaveProperty("code");
   });
 
   it("rejects a primary GSTIN whose state does not match the address", async () => {
@@ -247,21 +248,22 @@ describe("contact master workbook", () => {
       raw: false,
     });
     expect(contactRows.filter((row) => row.some((value) => value !== ""))).toHaveLength(2);
-    expect(contactRows[1][0]).toBe("CT1");
-    expect(contactRows[1][6]).toBe("27AAPFU0939F1ZV");
-    expect(contactRows[1][12]).toBe("1 Market Road");
-    expect(contactRows[1][22]).toBe("");
+    expect(contactRows[0]).not.toContain("Contact Code");
+    expect(contactRows[1][0]).toBe("Example Textiles");
+    expect(contactRows[1][5]).toBe("27AAPFU0939F1ZV");
+    expect(contactRows[1][11]).toBe("1 Market Road");
+    expect(contactRows[1][21]).toBe("");
 
     const populatedWorkbook = await XlsxPopulate.fromDataAsync(populatedBytes);
-    expect(populatedWorkbook.sheet("Contacts").range("I2:I201").dataValidation()).toMatchObject({
+    expect(populatedWorkbook.sheet("Contacts").range("H2:H201").dataValidation()).toMatchObject({
       type: "list",
       formula1: `"${CONTACT_GST_REGISTRATION_TYPES.join(",")}"`,
     });
-    expect(populatedWorkbook.sheet("Contacts").range("F2:F201").dataValidation()).toMatchObject({
+    expect(populatedWorkbook.sheet("Contacts").range("E2:E201").dataValidation()).toMatchObject({
       type: "list",
       formula1: '"CUSTOMER,VENDOR,AGENT,DISTRIBUTOR,DEALER"',
     });
-    expect(populatedWorkbook.sheet("Contacts").range("L2:L201").dataValidation()).toMatchObject({
+    expect(populatedWorkbook.sheet("Contacts").range("K2:K201").dataValidation()).toMatchObject({
       type: "list",
       formula1: '"BILLING,SHIPPING,BOTH"',
     });
@@ -278,9 +280,9 @@ describe("contact master workbook", () => {
     expect(templateRows[0]).toContain("Legal Name *");
     expect(templateRows[0]).toContain("GSTIN");
     expect(templateRows[0]).toContain("Account Number");
-    expect(templateRows[0]).toContain("Contact Code (system-generated; do not edit)");
+    expect(templateRows[0]).not.toContain("Contact Code");
     expect(templateRows.slice(1).every((row) => row.every((value) => value === ""))).toBe(true);
-    expect(populatedTemplateWorkbook.sheet("Contacts").range("I2:I201").dataValidation()).toMatchObject({
+    expect(populatedTemplateWorkbook.sheet("Contacts").range("H2:H201").dataValidation()).toMatchObject({
       type: "list",
       formula1: `"${CONTACT_GST_REGISTRATION_TYPES.join(",")}"`,
     });

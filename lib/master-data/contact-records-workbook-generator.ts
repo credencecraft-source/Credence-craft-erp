@@ -9,7 +9,6 @@ import type { ContactWorkbookRecord } from "@/lib/master-data/contact-records-wo
 
 const CONTACT_TEMPLATE_ROWS = 200;
 const CONTACT_COLUMNS = [
-  "Contact Code (system-generated; do not edit)",
   "Legal Name *",
   "Display Name",
   "Email",
@@ -71,7 +70,6 @@ function contactRow(contact: ContactWorkbookRecord) {
   const bank = contact.bank_accounts.find((account) => account.is_default) ?? contact.bank_accounts[0];
 
   return [
-    contact.code,
     contact.legal_name,
     contact.display_name ?? "",
     contact.email ?? "",
@@ -102,8 +100,8 @@ function contactRow(contact: ContactWorkbookRecord) {
 }
 
 function populateSheet(sheet: Sheet, rows: unknown[][]) {
-  sheet.range(`A1:AA${rows.length}`).value(rows);
-  sheet.range("A1:AA1").style({ bold: true });
+  sheet.range(`A1:Z${rows.length}`).value(rows);
+  sheet.range("A1:Z1").style({ bold: true });
   sheet.freezePanes(1, 0);
   CONTACT_COLUMNS.forEach((header, index) => {
     const column = columnName(index);
@@ -135,32 +133,32 @@ export async function createContactWorkbook(records: ContactWorkbookRecord[], _c
   ])];
   const rolesFormula = quoteList(roles);
   if (rolesFormula.length <= 255) {
-    contactsSheet.range(`F2:F${lastTemplateRow}`).dataValidation({
+    contactsSheet.range(`E2:E${lastTemplateRow}`).dataValidation({
       type: "list",
       allowBlank: true,
       showErrorMessage: false,
       formula1: rolesFormula,
     });
   }
-  contactsSheet.range(`I2:I${lastTemplateRow}`).dataValidation({
+  contactsSheet.range(`H2:H${lastTemplateRow}`).dataValidation({
     type: "list",
     allowBlank: true,
     showErrorMessage: false,
     formula1: quoteList(CONTACT_GST_REGISTRATION_TYPES),
   });
-  contactsSheet.range(`J2:J${lastTemplateRow}`).dataValidation({
+  contactsSheet.range(`I2:I${lastTemplateRow}`).dataValidation({
     type: "list",
     allowBlank: true,
     showErrorMessage: false,
     formula1: quoteList(CONTACT_GST_REGISTRATION_STATUSES),
   });
-  contactsSheet.range(`L2:L${lastTemplateRow}`).dataValidation({
+  contactsSheet.range(`K2:K${lastTemplateRow}`).dataValidation({
     type: "list",
     allowBlank: true,
     showErrorMessage: false,
     formula1: quoteList(["BILLING", "SHIPPING", "BOTH"]),
   });
-  for (const column of ["Q", "T", "U", "AA"]) {
+  for (const column of ["P", "S", "T", "Z"]) {
     contactsSheet.range(`${column}2:${column}${lastTemplateRow}`).dataValidation({
       type: "list",
       allowBlank: true,
