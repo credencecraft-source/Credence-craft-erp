@@ -7,7 +7,11 @@ import { Download, FileSpreadsheet, Upload } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
-import { parseContactWorkbook, type ContactWorkbookRecord } from "@/lib/master-data/contact-records-workbook-parser";
+import {
+  parseContactWorkbook,
+  type ContactWorkbookImportResult,
+  type ContactWorkbookRecord,
+} from "@/lib/master-data/contact-records-workbook-parser";
 
 type ContactMasterExcelActionsProps = {
   contacts: ContactWorkbookRecord[];
@@ -25,6 +29,7 @@ export default function ContactMasterExcelActions({
 }: ContactMasterExcelActionsProps) {
   const router = useRouter();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [validatedImport, setValidatedImport] = useState<ContactWorkbookImportResult | null>(null);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [downloadError, setDownloadError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -76,37 +81,49 @@ export default function ContactMasterExcelActions({
     }
   };
 
-  const importWorkbook = () => {
+  const validateWorkbook = () => {
     if (!selectedFile) return;
+    setValidatedImport(null);
     setSummary(null);
     setFatalError("");
     startTransition(async () => {
       try {
         const parsed = await parseContactWorkbook(selectedFile);
-        const failures = [...parsed.failures];
-        let created = 0;
-        for (const { contactKey, input } of parsed.contacts) {
-          try {
-            const response = await fetch(endpoint, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify(input),
-            });
-            const result = await response.json() as { error?: string };
-            if (!response.ok) throw new Error(result.error ?? "Unable to create contact.");
-            created += 1;
-          } catch (error) {
-            failures.push({
-              contactKey,
-              message: error instanceof Error ? error.message : "Unable to create contact.",
-            });
-          }
-        }
-        setSummary({ created, failures: failures.slice(0, 100) });
-        if (created > 0) router.refresh();
+        setValidatedImport(parsed);
       } catch (error) {
         setFatalError(error instanceof Error ? error.message : "The contact workbook could not be imported.");
       }
+    });
+  };
+
+  const createValidatedContacts = () => {
+    if (!validatedImport?.contacts.length) return;
+    setSummary(null);
+    startTransition(async () => {
+      const failures = [...validatedImport.failures];
+      const retryableContacts: ContactWorkbookImportResult["contacts"] = [];
+      let created = 0;
+      for (const { contactKey, input } of validatedImport.contacts) {
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(input),
+          });
+          const result = await response.json() as { error?: string };
+          if (!response.ok) throw new Error(result.error ?? "Unable to create contact.");
+          created += 1;
+        } catch (error) {
+          retryableContacts.push({ contactKey, input });
+          failures.push({
+            contactKey,
+            message: error instanceof Error ? error.message : "Unable to create contact.",
+          });
+        }
+      }
+      setSummary({ created, failures: failures.slice(0, 100) });
+      setValidatedImport({ ...validatedImport, contacts: retryableContacts });
+      if (created > 0) router.refresh();
     });
   };
 
@@ -130,6 +147,7 @@ export default function ContactMasterExcelActions({
           variant="secondary"
           onClick={() => {
             setSelectedFile(null);
+            setValidatedImport(null);
             setSummary(null);
             setFatalError("");
             setIsOpen(true);
@@ -147,7 +165,7 @@ export default function ContactMasterExcelActions({
           <div>
             <h2 className="text-base font-semibold">Import Unified Contact Master</h2>
             <p className="mt-2 text-sm text-slate-600">
-              Use the single-sheet template with one contact per row. Enter the contact, primary GST registration, address, and bank details in that row; add any extra GST registrations, addresses, or bank accounts after import from the contact page. Contact Codes are assigned automatically. Uploads add new contacts only, and full bank account numbers are never included in exports.
+              Use the single-sheet template with one contact per row. Validate first to normalize role capitalization, spaces, hyphens, and separators; spelling is not guessed, and roles must match an active role code. Review row errors before creating contacts. Contact Codes are generated on save, and full bank account numbers are never included in exports.
             </p>
           </div>
           <Input
@@ -158,6 +176,7 @@ export default function ContactMasterExcelActions({
             }}
             onChange={(event) => {
               setSelectedFile(event.currentTarget.files?.[0] ?? null);
+              setValidatedImport(null);
               setSummary(null);
               setFatalError("");
             }}
@@ -170,6 +189,36 @@ export default function ContactMasterExcelActions({
             </p>
           ) : null}
           {fatalError ? <p className="text-sm text-slate-700" role="alert">{fatalError}</p> : null}
+          {validatedImport ? (
+            <div className="space-y-2 text-sm" role="status">
+              <p>
+                Validation found {validatedImport.contacts.length} valid contact{validatedImport.contacts.length === 1 ? "" : "s"}
+                {" "}and {validatedImport.failures.length} row{validatedImport.failures.length === 1 ? "" : "s"} with errors.
+              </p>
+              {validatedImport.corrections.length ? (
+                <div>
+                  <p className="font-medium">Role values will be normalized:</p>
+                  <ul className="max-h-24 list-disc space-y-1 overflow-y-auto pl-5">
+                    {validatedImport.corrections.slice(0, 10).map((correction, index) => (
+                      <li key={`${correction.contactKey}-${index}`}>
+                        {correction.contactKey}: {correction.original} -&gt; {correction.corrected}
+                      </li>
+                    ))}
+                  </ul>
+                  {validatedImport.corrections.length > 10 ? (
+                    <p>{validatedImport.corrections.length - 10} additional corrections.</p>
+                  ) : null}
+                </div>
+              ) : null}
+              {validatedImport.failures.length ? (
+                <ul className="max-h-32 list-disc space-y-1 overflow-y-auto pl-5" role="alert">
+                  {validatedImport.failures.slice(0, 10).map((failure, index) => (
+                    <li key={`${failure.contactKey}-${index}`}>{failure.contactKey}: {failure.message}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
           {summary ? (
             <div className="space-y-2 text-sm" role={summary.failures.length ? "alert" : "status"}>
               <p>Created {summary.created} contact{summary.created === 1 ? "" : "s"}; {summary.failures.length} row{summary.failures.length === 1 ? "" : "s"} failed.</p>
@@ -191,9 +240,20 @@ export default function ContactMasterExcelActions({
             <Button type="button" variant="secondary" onClick={() => setIsOpen(false)} disabled={isPending}>
               Close
             </Button>
-            <Button type="button" variant="primary" onClick={importWorkbook} disabled={!selectedFile || isPending}>
-              {isPending ? "Importing..." : "Import new contacts"}
-            </Button>
+            {!validatedImport ? (
+              <Button type="button" variant="primary" onClick={validateWorkbook} disabled={!selectedFile || isPending}>
+                {isPending ? "Validating..." : "Validate & auto-correct"}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="primary"
+                onClick={createValidatedContacts}
+                disabled={!validatedImport.contacts.length || isPending}
+              >
+                {isPending ? "Creating..." : `Create ${validatedImport.contacts.length} valid contact${validatedImport.contacts.length === 1 ? "" : "s"}`}
+              </Button>
+            )}
           </div>
         </div>
       </Modal>

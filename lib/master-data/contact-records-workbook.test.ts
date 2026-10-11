@@ -146,7 +146,7 @@ describe("contact master workbook", () => {
           "IFSC Code", "Bank Name", "Branch", "Default Bank Account",
         ],
         [
-          "Example Textiles", "Example", "ops@example.com", "9876543210", "CUSTOMER; VENDOR",
+          "Example Textiles", "Example", "ops@example.com", "9876543210", "customer / vendor",
           "27AAPFU0939F1ZV", "Example Textiles", "REGULAR", "ACTIVE",
           "Head Office", "BOTH", "1 Market Road", "", "Mumbai", "Maharashtra", "27",
           "400001", "IN", "", "", "Example Textiles", "12345678",
@@ -158,6 +158,10 @@ describe("contact master workbook", () => {
     expect(result.failures).toEqual([]);
     expect(result.contacts).toHaveLength(1);
     expect(result.contacts[0].contactKey).toBe("ROW-2");
+    expect(result.corrections).toEqual([
+      { contactKey: "ROW-2", field: "Roles", original: "customer", corrected: "CUSTOMER" },
+      { contactKey: "ROW-2", field: "Roles", original: "vendor", corrected: "VENDOR" },
+    ]);
     expect(result.contacts[0].input).toMatchObject({
       legalName: "EXAMPLE TEXTILES",
       displayName: "EXAMPLE",

@@ -5,6 +5,7 @@ import {
   type ContactAddressInput,
   type ContactInput,
 } from "@/lib/services/master-data/contact-master-validation";
+import { normalizeUppercase } from "@/lib/utilities/text-case";
 
 const MAX_WORKBOOK_BYTES = 10 * 1024 * 1024;
 const MAX_CONTACT_ROWS = 200;
@@ -54,6 +55,7 @@ export type ContactWorkbookRecord = {
 export type ContactWorkbookImportResult = {
   contacts: Array<{ contactKey: string; input: ContactInput }>;
   failures: Array<{ contactKey: string; message: string }>;
+  corrections: Array<{ contactKey: string; field: string; original: string; corrected: string }>;
 };
 
 type SheetRow = Record<string, unknown>;
@@ -119,6 +121,13 @@ function nonBlankRows(rows: SheetRow[]) {
   return rows.filter((row) => Object.values(row).some((value) => String(value ?? "").trim()));
 }
 
+function normalizeRole(role: string) {
+  return normalizeUppercase(role.trim())
+    .replace(/[\s-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+}
+
 function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImportResult {
   const rows = nonBlankRows(readSheet(workbook, ["Contacts"]));
   if (!rows.length) throw new Error("Enter at least one contact name and role on the Contacts sheet.");
@@ -126,6 +135,7 @@ function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImpor
 
   const contacts: ContactWorkbookImportResult["contacts"] = [];
   const failures: ContactWorkbookImportResult["failures"] = [];
+  const corrections: ContactWorkbookImportResult["corrections"] = [];
   for (const [index, row] of rows.entries()) {
     const contactKey = `ROW-${index + 2}`;
     const importReference = field(row, "Import Ref (auto - do not edit)") || field(row, "Contact Key");
@@ -156,8 +166,16 @@ function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImpor
       "Branch", "Default Bank Account",
     ].some((label) => field(row, label) !== "");
     const usage = (field(row, "Address Use") || "BOTH").toUpperCase();
+    const roleCorrections: ContactWorkbookImportResult["corrections"] = [];
 
     try {
+      const roles = field(row, "Roles").split(/[;,/|]+/).map((role) => role.trim()).filter(Boolean).map((role) => {
+        const corrected = normalizeRole(role);
+        if (corrected !== role) {
+          roleCorrections.push({ contactKey, field: "Roles", original: role, corrected });
+        }
+        return corrected;
+      });
       const taxRegistrations = gstin ? [{
         gstin,
         legalName: field(row, "GST Registered Legal Name") || legalName,
@@ -193,12 +211,13 @@ function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImpor
         email: field(row, "Email") || null,
         phone: field(row, "Phone") || null,
         isActive: true,
-        roles: field(row, "Roles").split(/[;,]/).map((role) => role.trim()).filter(Boolean),
+        roles,
         taxRegistrations,
         addresses,
         bankAccounts,
       }) as ContactInput;
       contacts.push({ contactKey, input });
+      corrections.push(...roleCorrections);
     } catch (error) {
       failures.push({
         contactKey,
@@ -207,7 +226,7 @@ function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImpor
     }
   }
 
-  return { contacts, failures };
+  return { contacts, failures, corrections };
 }
 
 export async function parseContactWorkbook(file: File): Promise<ContactWorkbookImportResult> {
@@ -352,5 +371,5 @@ export async function parseContactWorkbook(file: File): Promise<ContactWorkbookI
       });
     }
   }
-  return { contacts: readyContacts, failures };
+  return { contacts: readyContacts, failures, corrections: [] };
 }
