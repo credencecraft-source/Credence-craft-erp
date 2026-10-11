@@ -319,6 +319,15 @@ export const ERP_MODULES: ErpModule[] = [
     children: [
       { key: "master-data", label: "Masters", pathSegment: "master-data" },
       { key: "integrations", label: "Integrations", pathSegment: "integrations" },
+      {
+        key: "migration",
+        label: "Migration",
+        pathSegment: "migration",
+        children: [
+          { key: "excel", label: "Via Excel", pathSegment: "excel" },
+          { key: "direct", label: "Direct", pathSegment: "direct" },
+        ],
+      },
     ],
   },
 ];

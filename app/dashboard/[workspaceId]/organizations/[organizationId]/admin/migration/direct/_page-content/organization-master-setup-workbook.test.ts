@@ -10,7 +10,14 @@ vi.mock("@/lib/master-data/master-data-constants", () => ({
   getMasterValuesForOrganization: getMasterValuesMock,
 }));
 
-import { getOrganizationMasterSetupDefinitions, getOrganizationMasterSetupFields, getOrganizationMasterSetupSheetName } from "@/lib/master-data/organization-master-setup-stages";
+import {
+  createOrganizationMasterSetupUploadLookupReference,
+  getOrganizationMasterSetupDefinitions,
+  getOrganizationMasterSetupFields,
+  getOrganizationMasterSetupSheetName,
+  getOrganizationMasterSetupWorkbookDefinitions,
+  ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN,
+} from "@/lib/master-data/organization-master-setup-stages";
 import { createOrganizationMasterSetupWorkbook } from "@/lib/services/master-data/organization-master-setup-workbook-service";
 import { parseOrganizationMasterSetupWorkbook } from "./organization-master-setup-workbook";
 
@@ -22,7 +29,9 @@ describe("organization master setup Excel workbooks", () => {
 
     expect(independent).toContain("product-master");
     expect(related).toContain("category");
-    expect(production).toContain("sub-category");
+    expect(related).toContain("sub-category");
+    expect(related).toContain("raw-material-sub-category");
+    expect(production).not.toContain("sub-category");
     expect(getOrganizationMasterSetupFields(
       getOrganizationMasterSetupDefinitions("related").find((definition) => definition.key === "category")!,
     ).find((field) => field.key === "Product_Master")).toMatchObject({
@@ -30,7 +39,7 @@ describe("organization master setup Excel workbooks", () => {
       lookupModuleKey: "product-master",
     });
     expect(getOrganizationMasterSetupFields(
-      getOrganizationMasterSetupDefinitions("third").find((definition) => definition.key === "sub-category")!,
+      getOrganizationMasterSetupDefinitions("related").find((definition) => definition.key === "sub-category")!,
     ).find((field) => field.key === "category")).toMatchObject({
       required: true,
       lookupModuleKey: "category",
@@ -44,7 +53,7 @@ describe("organization master setup Excel workbooks", () => {
 
     const buffer = await createOrganizationMasterSetupWorkbook("org-id", "related");
     const workbook = XLSX.read(new Uint8Array(buffer), { type: "array" });
-    const definitions = getOrganizationMasterSetupDefinitions("related");
+    const definitions = getOrganizationMasterSetupWorkbookDefinitions("related");
     const categoryDefinitionIndex = definitions.findIndex((definition) => definition.key === "category");
     const categorySheetName = getOrganizationMasterSetupSheetName(categoryDefinitionIndex, "Finished Goods Category");
     const categoryRows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[categorySheetName], {
@@ -55,7 +64,20 @@ describe("organization master setup Excel workbooks", () => {
     expect(workbook.SheetNames[0]).toBe("Instructions");
     expect(workbook.SheetNames).toContain(categorySheetName);
     expect(workbook.SheetNames).toContain("Lookup Values");
-    expect(categoryRows[0]).toEqual(["Finished Goods Type", "Finished Goods Category Name"]);
+    expect(categoryRows[0]).toEqual([
+      "Finished Goods Type",
+      "Finished Goods Category Name",
+      "Subcategories (comma-separated)",
+    ]);
+    expect(workbook.SheetNames).not.toContain("Sub Category");
+    const rawCategoryIndex = definitions.findIndex((definition) => definition.key === "raw-material-category");
+    const rawCategorySheetName = getOrganizationMasterSetupSheetName(rawCategoryIndex, "Raw Material Category");
+    const rawCategoryRows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[rawCategorySheetName], {
+      header: 1,
+      defval: "",
+    });
+    expect(rawCategoryRows[0]).toContain("Subcategories (comma-separated)");
+    expect(workbook.SheetNames).not.toContain("Raw Material Sub Category");
     expect(XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets["Lookup Values"], { header: 1 })[1]).toContain("Finished Goods");
 
     const populatedWorkbook = await XlsxPopulate.fromDataAsync(new Uint8Array(buffer));
@@ -97,6 +119,67 @@ describe("organization master setup Excel workbooks", () => {
       moduleKey: "category",
       label: "Shirt",
       fields: { Product_Master: "finished-goods-id" },
+    });
+  });
+
+  it("parses finished-goods and raw-material subcategories from their category rows", async () => {
+    const definitions = getOrganizationMasterSetupDefinitions("related").map((definition) => ({
+      key: definition.key,
+      label: definition.label,
+      labelField: definition.labelField,
+      fields: getOrganizationMasterSetupFields(definition),
+    }));
+    const workbook = XLSX.utils.book_new();
+    for (const definition of definitions) {
+      const relation = ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN[
+        definition.key as keyof typeof ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN
+      ];
+      if (!relation) continue;
+      const fields = definition.fields.filter((field) => !field.readOnly);
+      const rows: unknown[][] = [[
+        ...fields.map((field) => field.label),
+        relation.columnLabel,
+      ]];
+      if (definition.key === "category") rows.push(["Finished Goods", "Shirt", "Full Sleeve, Half Sleeve"]);
+      if (definition.key === "raw-material-category") rows.push(["ITEM", "Fabric", "", "Cotton, Linen"]);
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), definition.label);
+    }
+    const file = Object.assign(
+      new Blob([XLSX.write(workbook, { type: "array", bookType: "xlsx" })]),
+      { name: "related-step.xlsx" },
+    ) as File;
+    const records = await parseOrganizationMasterSetupWorkbook(file, definitions, {
+      "product-master": [{ id: "finished-goods-id", label: "Finished Goods" }],
+      "raw-material-type": [{ id: "item-type-id", label: "ITEM" }],
+    });
+
+    expect(records).toContainEqual({
+      moduleKey: "sub-category",
+      label: "Full Sleeve",
+      fields: {
+        category: createOrganizationMasterSetupUploadLookupReference("category", "Shirt"),
+      },
+    });
+    expect(records).toContainEqual({
+      moduleKey: "sub-category",
+      label: "Half Sleeve",
+      fields: {
+        category: createOrganizationMasterSetupUploadLookupReference("category", "Shirt"),
+      },
+    });
+    expect(records).toContainEqual({
+      moduleKey: "raw-material-sub-category",
+      label: "Cotton",
+      fields: {
+        Raw_Material_Category1: createOrganizationMasterSetupUploadLookupReference("raw-material-category", "Fabric"),
+      },
+    });
+    expect(records).toContainEqual({
+      moduleKey: "raw-material-sub-category",
+      label: "Linen",
+      fields: {
+        Raw_Material_Category1: createOrganizationMasterSetupUploadLookupReference("raw-material-category", "Fabric"),
+      },
     });
   });
 

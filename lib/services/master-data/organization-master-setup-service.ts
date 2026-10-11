@@ -1,7 +1,13 @@
 import { prisma } from "@/lib/database/prisma-client";
 import { createMasterValueForOrganization, deleteAllMasterValuesForOrganization, getMasterValuesForOrganization } from "@/lib/master-data/master-data-constants";
 import { getMasterDefinition } from "@/lib/master-data/master-data-registry";
-import { getOrganizationMasterSetupDefinitions, ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS } from "@/lib/master-data/organization-master-setup-stages";
+import {
+  getOrganizationMasterSetupDefinitions,
+  ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS,
+  ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN,
+  ORGANIZATION_MASTER_SETUP_UPLOAD_LOOKUP_PREFIX,
+  parseOrganizationMasterSetupUploadLookupReference,
+} from "@/lib/master-data/organization-master-setup-stages";
 
 export { ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS } from "@/lib/master-data/organization-master-setup-stages";
 
@@ -173,7 +179,19 @@ export async function createOrganizationMasterSetupStage(
   organizationId: string,
   records: OrganizationMasterSetupRecord[],
 ) {
-  for (const record of records) {
+  const childRelations = new Map<string, { parentModuleKey: string; parentFieldKey: string }>(
+    Object.entries(ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN).map(([parentModuleKey, relation]) => [
+      relation.childModuleKey,
+      { parentModuleKey, parentFieldKey: relation.childParentFieldKey },
+    ]),
+  );
+  const createdParents = new Map<string, string>();
+  const orderedRecords = records
+    .map((record, index) => ({ record, index }))
+    .sort((left, right) => Number(childRelations.has(left.record.moduleKey))
+      - Number(childRelations.has(right.record.moduleKey)) || left.index - right.index);
+
+  for (const { record } of orderedRecords) {
     const definition = getMasterDefinition(record.moduleKey);
     if (!definition || definition.hidden || ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS.has(record.moduleKey)) {
       throw new Error("One of the selected master types is not available.");
@@ -182,10 +200,33 @@ export async function createOrganizationMasterSetupStage(
     const label = record.label.trim();
     if (!label) continue;
 
+    const fields = { ...record.fields };
+    for (const [fieldKey, value] of Object.entries(fields)) {
+      if (typeof value !== "string" || !value.startsWith(ORGANIZATION_MASTER_SETUP_UPLOAD_LOOKUP_PREFIX)) {
+        continue;
+      }
+      const relation = childRelations.get(record.moduleKey);
+      const reference = parseOrganizationMasterSetupUploadLookupReference(value);
+      if (!relation || fieldKey !== relation.parentFieldKey || reference?.moduleKey !== relation.parentModuleKey) {
+        throw new Error("The workbook contains an invalid inline subcategory relationship.");
+      }
+      const parentId = createdParents.get(`${reference.moduleKey}:${reference.normalizedLabel}`);
+      if (!parentId) {
+        throw new Error(`Create the "${reference.moduleKey === "category" ? "Finished Goods" : "Raw Material"} Category" in this workbook before its subcategories.`);
+      }
+      fields[fieldKey] = parentId;
+    }
+
     const created = await createMasterValueForOrganization(organizationId, record.moduleKey, {
       label,
-      fields: record.fields,
+      fields,
     });
+    if (Object.hasOwn(ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN, record.moduleKey)) {
+      if (typeof created.id !== "string" || !created.id) {
+        throw new Error("The category created for the workbook could not be resolved.");
+      }
+      createdParents.set(`${record.moduleKey}:${label.toLocaleLowerCase()}`, created.id);
+    }
     if (record.moduleKey === "process-template") {
       const processIds = Array.isArray(record.fields.Process) ? record.fields.Process.map(String).filter(Boolean) : [];
       const processOptions = await getMasterValuesForOrganization(organizationId, "process-master", true);

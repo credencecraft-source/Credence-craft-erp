@@ -1,5 +1,9 @@
 import type { OrganizationMasterSetupField } from "@/lib/master-data/organization-master-setup-stages";
-import { getOrganizationMasterSetupSheetName } from "@/lib/master-data/organization-master-setup-stages";
+import {
+  createOrganizationMasterSetupUploadLookupReference,
+  getOrganizationMasterSetupSheetName,
+  ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN,
+} from "@/lib/master-data/organization-master-setup-stages";
 
 type Definition = {
   key: string;
@@ -137,6 +141,9 @@ export async function parseOrganizationMasterSetupWorkbook(
     });
     const headers = rows[0]?.map(normalizeHeader) ?? [];
     const fields = definition.fields.filter((field) => !field.readOnly);
+    const inlineChildren = ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN[
+      definition.key as keyof typeof ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN
+    ];
     const fieldIndexes = new Map<string, number>();
     headers.forEach((header, index) => {
       if (header && !fieldIndexes.has(header)) fieldIndexes.set(header, index);
@@ -179,6 +186,27 @@ export async function parseOrganizationMasterSetupWorkbook(
         }
       }
       records.push({ moduleKey: definition.key, label, fields: values });
+      if (inlineChildren) {
+        const childColumnIndex = fieldIndexes.get(normalizeHeader(inlineChildren.columnLabel));
+        const childNames = childColumnIndex === undefined
+          ? []
+          : splitMultipleValues(String(row[childColumnIndex] ?? "").trim());
+        for (const childLabel of childNames) {
+          if (childLabel.length > 500) {
+            throw new Error(`"${definition.label}" sheet, row ${spreadsheetRow}: subcategory names cannot exceed 500 characters.`);
+          }
+          records.push({
+            moduleKey: inlineChildren.childModuleKey,
+            label: childLabel,
+            fields: {
+              [inlineChildren.childParentFieldKey]: createOrganizationMasterSetupUploadLookupReference(
+                definition.key,
+                label,
+              ),
+            },
+          });
+        }
+      }
       if (records.length > MAX_TOTAL_WORKBOOK_ROWS) {
         throw new Error(`A workbook upload cannot contain more than ${MAX_TOTAL_WORKBOOK_ROWS} records in total.`);
       }

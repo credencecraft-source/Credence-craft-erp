@@ -51,7 +51,7 @@ export default async function MasterDataListPage({
     <Page as="div">
       <Section className="space-y-6">
         <Link
-          href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/organization-master-setup`}
+          href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/migration`}
           className="inline-flex rounded-lg text-sm font-semibold text-[var(--erp-brand)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
         >
           Organization Master Setup — create related masters together

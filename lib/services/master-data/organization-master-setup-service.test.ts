@@ -43,6 +43,7 @@ import {
   deleteOrganizationMasterSetupSection,
   ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS,
 } from "./organization-master-setup-service";
+import { createOrganizationMasterSetupUploadLookupReference } from "@/lib/master-data/organization-master-setup-stages";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -125,6 +126,7 @@ describe("createOrganizationMerchandisingStarterMasters", () => {
 
 describe("createOrganizationMasterSetupStage", () => {
   it("allows creating Finished Goods Category records from the related-masters stage", async () => {
+    createMasterValueMock.mockResolvedValue({ id: "category-id" });
     await createOrganizationMasterSetupStage("org-id", [{
       moduleKey: "category",
       label: "Shirt",
@@ -136,6 +138,52 @@ describe("createOrganizationMasterSetupStage", () => {
       label: "Shirt",
       fields: { Product_Master: "finished-goods-id" },
     });
+  });
+
+  it("creates category parents before resolving inline finished-goods and raw-material subcategories", async () => {
+    createMasterValueMock.mockImplementation(async (_organizationId, moduleKey: string, input: { label: string }) => ({
+      id: `${moduleKey}:${input.label}`,
+    }));
+    await createOrganizationMasterSetupStage("org-id", [
+      {
+        moduleKey: "raw-material-sub-category",
+        label: "Cotton",
+        fields: {
+          Raw_Material_Category1: createOrganizationMasterSetupUploadLookupReference(
+            "raw-material-category",
+            "Fabric",
+          ),
+        },
+      },
+      {
+        moduleKey: "sub-category",
+        label: "Full Sleeve",
+        fields: {
+          category: createOrganizationMasterSetupUploadLookupReference("category", "Shirt"),
+        },
+      },
+      {
+        moduleKey: "category",
+        label: "Shirt",
+        fields: { Product_Master: "finished-goods-id" },
+      },
+      {
+        moduleKey: "raw-material-category",
+        label: "Fabric",
+        fields: { Raw_Material_Type1: "item-type-id" },
+      },
+    ]);
+
+    expect(createMasterValueMock.mock.calls.map(([organizationId, moduleKey, input]) => [
+      organizationId,
+      moduleKey,
+      input,
+    ])).toEqual([
+      ["org-id", "category", { label: "Shirt", fields: { Product_Master: "finished-goods-id" } }],
+      ["org-id", "raw-material-category", { label: "Fabric", fields: { Raw_Material_Type1: "item-type-id" } }],
+      ["org-id", "raw-material-sub-category", { label: "Cotton", fields: { Raw_Material_Category1: "raw-material-category:Fabric" } }],
+      ["org-id", "sub-category", { label: "Full Sleeve", fields: { category: "category:Shirt" } }],
+    ]);
   });
 
   describe("createOrganizationMasterSetupSection", () => {

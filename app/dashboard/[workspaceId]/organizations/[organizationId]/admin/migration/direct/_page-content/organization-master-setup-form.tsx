@@ -11,6 +11,7 @@ import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import type { OrganizationMasterSetupField } from "@/lib/master-data/organization-master-setup-stages";
+import type { OrganizationMasterSetupMode } from "./organization-master-setup-page";
 
 type Field = OrganizationMasterSetupField;
 type Definition = {
@@ -104,12 +105,12 @@ function SubmitButton({
   const { pending } = useFormStatus();
   return (
     <Button type="submit" name="workbookUpload" value="1" size="lg" disabled={!workbookUploaded || pending}>
-      {pending ? "Saving..." : "Create Uploaded Masters"}
+      {pending ? "Importing..." : "Proceed"}
     </Button>
   );
 }
 
-function SectionSubmitButton({ moduleKey, label }: { moduleKey: string; label: string }) {
+function SectionSubmitButton({ moduleKey, label, disabled = false }: { moduleKey: string; label: string; disabled?: boolean }) {
   const { pending } = useFormStatus();
   return (
     <Button
@@ -118,7 +119,7 @@ function SectionSubmitButton({ moduleKey, label }: { moduleKey: string; label: s
       name="setupModule"
       value={moduleKey}
       variant="secondary"
-      disabled={pending}
+      disabled={pending || disabled}
     >
       {pending ? "Saving..." : `Create ${label} Master`}
     </Button>
@@ -310,6 +311,7 @@ export default function OrganizationMasterSetupForm({
   organizationId,
   stage,
   activeStage,
+  mode,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   deleteSectionAction: (formData: FormData) => void | Promise<void>;
@@ -317,6 +319,7 @@ export default function OrganizationMasterSetupForm({
   organizationId: string;
   stage: Stage;
   activeStage: "independent" | "related" | "third";
+  mode: OrganizationMasterSetupMode;
 }) {
   const visibleDefinitions = stage.definitions;
   const [records, setRecords] = useState<SetupRecord[]>(() =>
@@ -329,7 +332,7 @@ export default function OrganizationMasterSetupForm({
   const [isReadingWorkbook, setIsReadingWorkbook] = useState(false);
   const [workbookName, setWorkbookName] = useState("");
   const [workbookError, setWorkbookError] = useState("");
-  const [workbookUploaded, setWorkbookUploaded] = useState(false);
+  const [uploadedRecords, setUploadedRecords] = useState<SetupRecord[] | null>(null);
   const workbookInputRef = useRef<HTMLInputElement>(null);
   const dependencyLabels = [...new Set(stage.definitions.flatMap((definition) =>
     definition.fields
@@ -337,10 +340,27 @@ export default function OrganizationMasterSetupForm({
       .filter((field) => field.lookupModuleKey && !(stage.lookupOptions[field.lookupModuleKey] ?? []).length)
       .map((field) => field.label),
   ))];
-  const workbookCounts = records.reduce<Record<string, number>>((counts, record) => ({
+  const workbookCounts = (uploadedRecords ?? []).reduce<Record<string, number>>((counts, record) => ({
     ...counts,
     [record.moduleKey]: (counts[record.moduleKey] ?? 0) + 1,
   }), {});
+  const setupRecords = uploadedRecords ?? [
+    ...records,
+    ...(activeStage === "independent"
+      ? ["color", "currency-type", "entity", "merchandiser", "pre-order-checklist", "process-master", "product-master", "raw-material-type", "size"].flatMap((moduleKey) =>
+          (bulkInputs[moduleKey] ?? "")
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean)
+            .map((value) => ({
+              moduleKey,
+              label: value,
+              fields: moduleKey === "size" ? { Size: value } : {},
+            })),
+        )
+      : []),
+  ].filter((record) => record.label.trim());
+  const setupPath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/migration/${mode}`;
   const handleDownloadTemplate = async () => {
     if (isDownloadingTemplate) return;
     setWorkbookError("");
@@ -374,6 +394,8 @@ export default function OrganizationMasterSetupForm({
     event.target.value = "";
     if (!file) return;
     setWorkbookError("");
+    setUploadedRecords(null);
+    setWorkbookName("");
     setIsReadingWorkbook(true);
     try {
       const { parseOrganizationMasterSetupWorkbook } = await import("./organization-master-setup-workbook");
@@ -382,10 +404,8 @@ export default function OrganizationMasterSetupForm({
         stage.definitions,
         stage.lookupOptions,
       );
-      setRecords(importedRecords);
-      setBulkInputs({});
+      setUploadedRecords(importedRecords);
       setWorkbookName(file.name);
-      setWorkbookUploaded(true);
     } catch (error) {
       setWorkbookError(error instanceof Error ? error.message : "Unable to read this Excel workbook.");
     } finally {
@@ -424,29 +444,15 @@ export default function OrganizationMasterSetupForm({
         name="setup"
         value={JSON.stringify({
           stage: activeStage,
-          records: [
-            ...records,
-            ...(activeStage === "independent"
-              ? ["color", "currency-type", "entity", "merchandiser", "pre-order-checklist", "process-master", "product-master", "raw-material-type", "size"].flatMap((moduleKey) =>
-                  (bulkInputs[moduleKey] ?? "")
-                    .split(",")
-                    .map((value) => value.trim())
-                    .filter(Boolean)
-                    .map((value) => ({
-                      moduleKey,
-                      label: value,
-                      fields: moduleKey === "size" ? { Size: value } : {},
-                    })),
-                )
-              : []),
-          ].filter((record) => record.label.trim()),
+          records: setupRecords,
         })}
       />
       <input type="hidden" name="workspaceId" value={workspaceId} />
       <input type="hidden" name="organizationId" value={organizationId} />
+      <input type="hidden" name="migrationMode" value={mode} />
       <div className="grid gap-2 md:grid-cols-3" aria-label="Onboarding steps">
         <Link
-          href={`/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data/organization-master-setup`}
+          href={setupPath}
           aria-current={activeStage === "independent" ? "step" : undefined}
           className={`rounded-lg border px-4 py-3 transition-colors hover:border-emerald-400 ${activeStage === "independent" ? "border-emerald-500 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}
         >
@@ -457,7 +463,7 @@ export default function OrganizationMasterSetupForm({
           <p className="text-xs text-slate-600">Independent masters</p>
         </Link>
         <Link
-          href={`/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data/organization-master-setup?step=related`}
+          href={`${setupPath}?step=related`}
           aria-current={activeStage === "related" ? "step" : undefined}
           className={`rounded-lg border px-4 py-3 transition-colors hover:border-emerald-400 ${activeStage === "related" ? "border-emerald-500 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}
         >
@@ -468,7 +474,7 @@ export default function OrganizationMasterSetupForm({
           <p className="text-xs text-slate-600">Masters using lookups</p>
         </Link>
         <Link
-          href={`/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data/organization-master-setup?step=third`}
+          href={`${setupPath}?step=third`}
           aria-current={activeStage === "third" ? "step" : undefined}
           className={`rounded-lg border px-4 py-3 transition-colors hover:border-emerald-400 ${activeStage === "third" ? "border-emerald-500 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}
         >
@@ -483,7 +489,7 @@ export default function OrganizationMasterSetupForm({
         <div>
           <h2 className="text-base font-bold text-slate-900">Excel template for this step</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Download one workbook with a sheet for each master section. Fill in rows, upload it, review the imported sections, then create the masters.
+            Download one workbook with a sheet for each master section. Upload a completed workbook to validate its filled sheets, then proceed to import those records.
           </p>
           {dependencyLabels.length > 0 ? (
             <p className="mt-2 text-sm text-slate-600" role="status">
@@ -513,21 +519,34 @@ export default function OrganizationMasterSetupForm({
             {isReadingWorkbook ? <LoaderCircle size={16} className="animate-spin" aria-hidden="true" /> : <Upload size={16} aria-hidden="true" />}
             {isReadingWorkbook ? "Reading workbook..." : "Upload Excel Workbook"}
           </Button>
-          {workbookName ? (
-            <p className="text-sm text-slate-600" role="status">
-              {workbookName} · {Object.values(workbookCounts).reduce((total, count) => total + count, 0)} records across {Object.keys(workbookCounts).length} sections
-            </p>
-          ) : null}
         </div>
+        {workbookName && uploadedRecords ? (
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm font-semibold text-[var(--erp-text)]" role="status">
+                {workbookName} validated. {uploadedRecords.length} records are ready to import.
+              </p>
+              <p className="text-xs text-[var(--erp-text-muted)]">
+                {Object.entries(workbookCounts)
+                  .map(([moduleKey, count]) => `${stage.definitions.find((definition) => definition.key === moduleKey)?.label ?? moduleKey}: ${count}`)
+                  .join(" · ")}
+              </p>
+              <p className="text-xs text-[var(--erp-text-muted)]">
+                Proceed to import these values directly into their master sections.
+              </p>
+            </div>
+            <SubmitButton workbookUploaded />
+          </div>
+        ) : null}
         {workbookError ? <p className="text-sm text-slate-700" role="alert">{workbookError}</p> : null}
       </Card>
-      {visibleDefinitions.length === 0 ? (
+      {mode === "direct" && visibleDefinitions.length === 0 ? (
         <Card>
           <p className="text-sm text-slate-600">
             No master types are available for this step.
           </p>
         </Card>
-      ) : (
+      ) : mode === "direct" ? (
         visibleDefinitions.map((definition) => {
           const labelField = definition.labelField ?? definition.fields[0]?.key;
           const editableFields = definition.fields
@@ -755,7 +774,11 @@ export default function OrganizationMasterSetupForm({
                       }
                     />
                   </div>
-                  <SectionSubmitButton moduleKey={definition.key} label={definition.label} />
+                  <SectionSubmitButton
+                    moduleKey={definition.key}
+                    label={definition.label}
+                    disabled={uploadedRecords !== null}
+                  />
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -766,16 +789,17 @@ export default function OrganizationMasterSetupForm({
                   >
                     Add {definition.label}
                   </Button>
-                  <SectionSubmitButton moduleKey={definition.key} label={definition.label} />
+                  <SectionSubmitButton
+                    moduleKey={definition.key}
+                    label={definition.label}
+                    disabled={uploadedRecords !== null}
+                  />
                 </div>
               )}
             </Card>
           );
         })
-      )}
-      <div className="flex justify-end">
-        <SubmitButton workbookUploaded={workbookUploaded} />
-      </div>
+      ) : null}
     </form>
   );
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ERP_MODULES,
   getErpBusinessTypeDisplayName,
   getErpBusinessTypeRouteSegment,
   getErpModuleForBusinessTypeName,
@@ -18,5 +19,21 @@ describe("Advance Booking module naming", () => {
     expect(getErpBusinessTypeRouteSegment("Distribution")).toBe("advance-booking");
     expect(isErpBusinessTypeRouteSegment("Distribution", "advance-booking")).toBe(true);
     expect(isErpBusinessTypeRouteSegment("Distribution", "distribution")).toBe(true);
+  });
+});
+
+describe("Admin module navigation", () => {
+  it("places Excel and Direct migration options beneath Admin > Migration", () => {
+    const admin = ERP_MODULES.find((module) => module.key === "admin");
+    const migration = admin?.children.find((child) => child.key === "migration");
+
+    expect(migration).toMatchObject({
+      label: "Migration",
+      pathSegment: "migration",
+    });
+    expect(migration?.children).toEqual([
+      { key: "excel", label: "Via Excel", pathSegment: "excel" },
+      { key: "direct", label: "Direct", pathSegment: "direct" },
+    ]);
   });
 });

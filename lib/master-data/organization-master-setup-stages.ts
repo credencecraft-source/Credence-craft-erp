@@ -2,6 +2,38 @@ import type { MasterDefinition } from "@/lib/master-data/master-data-registry";
 import { MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
 
 export type OrganizationMasterSetupStage = "independent" | "related" | "third";
+export const ORGANIZATION_MASTER_SETUP_UPLOAD_LOOKUP_PREFIX = "__setup_upload_lookup__:";
+export const ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN = {
+  category: {
+    childModuleKey: "sub-category",
+    childParentFieldKey: "category",
+    columnLabel: "Subcategories (comma-separated)",
+  },
+  "raw-material-category": {
+    childModuleKey: "raw-material-sub-category",
+    childParentFieldKey: "Raw_Material_Category1",
+    columnLabel: "Subcategories (comma-separated)",
+  },
+} as const;
+
+export function createOrganizationMasterSetupUploadLookupReference(moduleKey: string, label: string) {
+  return `${ORGANIZATION_MASTER_SETUP_UPLOAD_LOOKUP_PREFIX}${encodeURIComponent(moduleKey)}:${encodeURIComponent(label.trim().toLocaleLowerCase())}`;
+}
+
+export function parseOrganizationMasterSetupUploadLookupReference(value: string) {
+  if (!value.startsWith(ORGANIZATION_MASTER_SETUP_UPLOAD_LOOKUP_PREFIX)) return null;
+  const reference = value.slice(ORGANIZATION_MASTER_SETUP_UPLOAD_LOOKUP_PREFIX.length);
+  const separator = reference.indexOf(":");
+  if (separator < 0) return null;
+  try {
+    return {
+      moduleKey: decodeURIComponent(reference.slice(0, separator)),
+      normalizedLabel: decodeURIComponent(reference.slice(separator + 1)),
+    };
+  } catch {
+    return null;
+  }
+}
 
 export type OrganizationMasterSetupField = {
   key: string;
@@ -22,9 +54,7 @@ export const ORGANIZATION_MASTER_SETUP_EXCLUDED_KEYS = new Set([
 
 const THIRD_STAGE_KEYS = new Set([
   "operation",
-  "raw-material-sub-category",
   "size-group",
-  "sub-category",
 ]);
 
 function isRelatedMaster(definition: MasterDefinition) {
@@ -49,6 +79,13 @@ export function getOrganizationMasterSetupDefinitions(stage: OrganizationMasterS
     );
   }
   return definitions.filter((definition) => THIRD_STAGE_KEYS.has(definition.key));
+}
+
+export function getOrganizationMasterSetupWorkbookDefinitions(stage: OrganizationMasterSetupStage) {
+  return getOrganizationMasterSetupDefinitions(stage).filter(
+    (definition) => !Object.values(ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN)
+      .some((relation) => relation.childModuleKey === definition.key),
+  );
 }
 
 export function getOrganizationMasterSetupFields(

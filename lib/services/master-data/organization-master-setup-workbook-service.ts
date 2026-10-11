@@ -2,9 +2,10 @@ import XlsxPopulate from "xlsx-populate";
 
 import { getMasterValuesForOrganization } from "@/lib/master-data/master-data-constants";
 import {
-  getOrganizationMasterSetupDefinitions,
+  getOrganizationMasterSetupWorkbookDefinitions,
   getOrganizationMasterSetupFields,
   getOrganizationMasterSetupSheetName,
+  ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN,
   type OrganizationMasterSetupStage,
 } from "@/lib/master-data/organization-master-setup-stages";
 
@@ -31,7 +32,7 @@ export async function createOrganizationMasterSetupWorkbook(
   organizationId: string,
   stage: OrganizationMasterSetupStage,
 ) {
-  const definitions = getOrganizationMasterSetupDefinitions(stage);
+  const definitions = getOrganizationMasterSetupWorkbookDefinitions(stage);
   if (!definitions.length) {
     throw new Error("No masters are available for this setup step.");
   }
@@ -58,7 +59,7 @@ export async function createOrganizationMasterSetupWorkbook(
   instructions.cell("A3").value("Step");
   instructions.cell("B3").value(stage === "independent" ? "1 - Onboarding" : stage === "related" ? "2 - Related Masters" : "3 - Production Masters");
   instructions.cell("A4").value("How to use");
-  instructions.cell("B4").value("Enter one master record per row on its named sheet. Leave unused rows blank, then upload this .xlsx file on the same setup step.");
+  instructions.cell("B4").value("Enter one master record per row on its named sheet. On Finished Goods Category and Raw Material Category sheets, enter one or more comma-separated subcategories in the Subcategories column to create them with their category.");
   instructions.cell("A5").value("Related values");
   instructions.cell("B5").value("Lookup columns contain active values already saved for this organization. Complete and save the earlier step, then download a fresh template to refresh its dropdowns.");
   instructions.cell("A6").value("Multiple selections");
@@ -88,7 +89,13 @@ export async function createOrganizationMasterSetupWorkbook(
     );
     const fields = getOrganizationMasterSetupFields(definition)
       .filter((field) => !field.readOnly);
-    const headers = fields.map((field) => field.label);
+    const inlineChildren = ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN[
+      definition.key as keyof typeof ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN
+    ];
+    const headers = [
+      ...fields.map((field) => field.label),
+      ...(inlineChildren ? [inlineChildren.columnLabel] : []),
+    ];
     const lastColumn = columnName(headers.length);
     sheet.range(`A1:${lastColumn}1`).value([headers]);
     sheet.range(`A1:${lastColumn}1`).style({ bold: true, fill: "E2F3EC" });
