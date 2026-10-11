@@ -7,11 +7,7 @@ import { Download, FileSpreadsheet, Upload } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
-import {
-  createContactWorkbook,
-  parseContactWorkbook,
-  type ContactWorkbookRecord,
-} from "@/lib/master-data/contact-records-workbook";
+import { parseContactWorkbook, type ContactWorkbookRecord } from "@/lib/master-data/contact-records-workbook-parser";
 
 type ContactMasterExcelActionsProps = {
   contacts: ContactWorkbookRecord[];
@@ -42,22 +38,31 @@ export default function ContactMasterExcelActions({
     try {
       let exportContacts = contacts;
       if (includeContacts) {
-        const response = await fetch(endpoint, { cache: "no-store" });
-        const result: unknown = await response.json();
-        if (!response.ok) {
-          throw new Error(
-            typeof result === "object" && result !== null && "error" in result
-              ? String(result.error)
-              : "Unable to load all contacts for export.",
-          );
+        const allContacts: ContactWorkbookRecord[] = [];
+        const pageSize = 200;
+        for (let offset = 0; ; offset += pageSize) {
+          const response = await fetch(`${endpoint}?limit=${pageSize}&offset=${offset}`, { cache: "no-store" });
+          const result: unknown = await response.json();
+          if (!response.ok) {
+            throw new Error(
+              typeof result === "object" && result !== null && "error" in result
+                ? String(result.error)
+                : "Unable to load all contacts for export.",
+            );
+          }
+          if (!Array.isArray(result)) throw new Error("Unable to load all contacts for export.");
+          allContacts.push(...result as ContactWorkbookRecord[]);
+          if (result.length < pageSize) break;
         }
-        if (!Array.isArray(result)) throw new Error("Unable to load all contacts for export.");
-        exportContacts = result as ContactWorkbookRecord[];
+        exportContacts = allContacts;
       }
-      const workbookData = await createContactWorkbook(includeContacts ? exportContacts : []);
-      const blob = new Blob([workbookData], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      const workbookResponse = await fetch(`${endpoint}/workbook`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ contacts: includeContacts ? exportContacts : [] }),
       });
+      if (!workbookResponse.ok) throw new Error("Unable to create contact workbook.");
+      const blob = await workbookResponse.blob();
       const objectUrl = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = objectUrl;
@@ -142,7 +147,7 @@ export default function ContactMasterExcelActions({
           <div>
             <h2 className="text-base font-semibold">Import Unified Contact Master</h2>
             <p className="mt-2 text-sm text-slate-600">
-              Use the four-sheet contact workbook. Imports create new contacts only; exported contact codes are reference-only. Bank account numbers are not included in exports.
+              Download the blank template, fill in contact details, and upload it here. The Import Ref is generated for linking related sheets; do not change it. The system assigns each Contact Code and sets new contacts to Active. Uploads add new contacts only; use the contact screen to edit existing contacts. Full bank account numbers are never exported.
             </p>
           </div>
           <Input
@@ -181,13 +186,13 @@ export default function ContactMasterExcelActions({
           <div className="flex flex-wrap justify-end gap-2">
             <Button type="button" variant="secondary" onClick={() => void downloadWorkbook(false)} disabled={isGenerating}>
               <Download aria-hidden="true" className="mr-1.5 h-4 w-4" />
-              Blank template
+              Download new-contact template
             </Button>
             <Button type="button" variant="secondary" onClick={() => setIsOpen(false)} disabled={isPending}>
               Close
             </Button>
             <Button type="button" variant="primary" onClick={importWorkbook} disabled={!selectedFile || isPending}>
-              {isPending ? "Importing..." : "Import workbook"}
+              {isPending ? "Importing..." : "Import new contacts"}
             </Button>
           </div>
         </div>

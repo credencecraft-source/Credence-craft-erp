@@ -65,7 +65,19 @@ export async function GET(
   try {
     const auth = await authorizedContext(organizationPublicId);
     if (!auth.authorized) return auth.response;
-    const search = new URL(request.url).searchParams.get("search") ?? undefined;
+    const searchParams = new URL(request.url).searchParams;
+    const search = searchParams.get("search") ?? undefined;
+    const rawLimit = searchParams.get("limit");
+    const rawOffset = searchParams.get("offset");
+    if (rawLimit !== null || rawOffset !== null) {
+      const limit = rawLimit === null ? 200 : Number(rawLimit);
+      const offset = rawOffset === null ? 0 : Number(rawOffset);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200
+        || !Number.isSafeInteger(offset) || offset < 0) {
+        return NextResponse.json({ error: "Contact list pagination is invalid." }, { status: 400 });
+      }
+      return NextResponse.json(await listContacts(auth.organizationId, search, undefined, { skip: offset, take: limit }));
+    }
     return NextResponse.json(await listContacts(auth.organizationId, search));
   } catch (error) {
     return handleError(error, "list");

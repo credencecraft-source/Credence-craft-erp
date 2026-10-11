@@ -7,11 +7,10 @@ import { Download, FileSpreadsheet, Upload } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
-import {
-  createMasterRecordsTemplateWorkbook,
-  type MasterWorkbookChildRecord,
-  type MasterWorkbookLookupOption,
-  type MasterWorkbookRecord,
+import type {
+  MasterWorkbookChildRecord,
+  MasterWorkbookLookupOption,
+  MasterWorkbookRecord,
 } from "@/lib/master-data/master-records-template-workbook";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-models";
 import type { MasterRecordsImportResult } from "@/lib/master-data/master-records-workbook";
@@ -55,13 +54,20 @@ export function MasterRecordsExcelActions({
     setDownloadError("");
     setIsGenerating(true);
     try {
-      const workbookData = await createMasterRecordsTemplateWorkbook({
-        records: includeRecords ? records : [],
-        fields,
-        lookupOptions,
-        childRecords,
-        moduleLabel,
+      const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(moduleKey)}/workbook`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          includeRecords,
+          records: includeRecords ? records : [],
+          fields,
+          lookupOptions,
+          childRecords,
+          moduleLabel,
+        }),
       });
+      if (!response.ok) throw new Error("Unable to create workbook.");
+      const workbookData = await response.arrayBuffer();
       const blob = new Blob([workbookData], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });

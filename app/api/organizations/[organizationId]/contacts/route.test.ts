@@ -69,6 +69,26 @@ describe("organization contact master API", () => {
     expect(mocks.listContacts).not.toHaveBeenCalled();
   });
 
+  it("supports authorized bounded pagination for complete workbook exports", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/contacts?limit=200&offset=400"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.listContacts).toHaveBeenCalledWith("internal-org-1", undefined, undefined, { skip: 400, take: 200 });
+  });
+
+  it("rejects invalid contact pagination", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/contacts?limit=500&offset=-1"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.listContacts).not.toHaveBeenCalled();
+  });
+
   it("creates contacts using the authorized internal organization ID", async () => {
     const response = await POST(
       new Request("http://localhost/api/organizations/public-org/contacts", {

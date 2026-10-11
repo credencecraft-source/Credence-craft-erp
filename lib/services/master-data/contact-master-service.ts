@@ -424,7 +424,12 @@ const contactSelect = {
   },
 };
 
-export async function listContacts(organizationId: string, search?: string, database: ContactDatabase = prisma) {
+export async function listContacts(
+  organizationId: string,
+  search?: string,
+  database: ContactDatabase = prisma,
+  pagination: { skip?: number; take?: number } = {},
+) {
   const cleanSearch = search?.trim().slice(0, 100);
   const contacts = await database.contact.findMany({
     where: {
@@ -440,7 +445,8 @@ export async function listContacts(organizationId: string, search?: string, data
     },
     select: contactSelect,
     orderBy: [{ legal_name: "asc" }, { id: "asc" }],
-    take: 200,
+    skip: pagination.skip ?? 0,
+    take: Math.min(Math.max(pagination.take ?? 200, 1), 200),
   });
   return contacts.map(publicContact);
 }

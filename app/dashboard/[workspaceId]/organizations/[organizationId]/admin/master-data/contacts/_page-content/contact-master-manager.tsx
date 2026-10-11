@@ -9,7 +9,7 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import ContactMasterExcelActions from "@/components/master-data/contact-master-excel-actions";
 import { ReportGrid } from "@/components/reports/report-grid-display";
-import type { ContactWorkbookRecord } from "@/lib/master-data/contact-records-workbook";
+import type { ContactWorkbookRecord } from "@/lib/master-data/contact-records-workbook-parser";
 
 type ContactRecord = ContactWorkbookRecord;
 
