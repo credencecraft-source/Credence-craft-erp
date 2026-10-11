@@ -8,6 +8,7 @@ import {
   parseContactWorkbook,
   type ContactWorkbookRecord,
 } from "@/lib/master-data/contact-records-workbook-parser";
+import { CONTACT_GST_REGISTRATION_TYPES } from "@/lib/services/master-data/contact-master-validation";
 
 function workbookFile(sheets: Array<{ name: string; rows: unknown[][] }>) {
   const workbook = XLSX.utils.book_new();
@@ -51,7 +52,6 @@ describe("contact master workbook", () => {
     ]);
 
     const result = await parseContactWorkbook(file);
-    console.log(result.failures);
     expect(result.failures).toEqual([]);
     expect(result.contacts).toHaveLength(1);
     expect(result.contacts[0].contactKey).toBe("NEW-001");
@@ -121,25 +121,83 @@ describe("contact master workbook", () => {
     expect(maskedBankNumber.failures[0].message).toContain("full Account Number");
   });
 
-  it("does not accept a supplied backend Contact Code or inactive status from a workbook", async () => {
+  it("rejects populated contact exports so they cannot be re-imported as new records", async () => {
     const result = await parseContactWorkbook(workbookFile([{
       name: "Contacts",
       rows: [
-        ["Import Ref (auto - do not edit)", "Legal Name", "Roles", "Contact Code", "Active"],
-        ["NEW-003", "New Contact", "VENDOR", "CT999", "FALSE"],
+        ["Contact Code (system-generated; do not edit)", "Legal Name *", "Roles *"],
+        ["CT999", "New Contact", "VENDOR"],
+      ],
+    }]));
+
+    expect(result.contacts).toEqual([]);
+    expect(result.failures[0].message).toContain("Use the blank template");
+  });
+
+  it("imports a complete contact row from the single-sheet template", async () => {
+    const result = await parseContactWorkbook(workbookFile([{
+      name: "Contacts",
+      rows: [
+        [
+          "Contact Code (system-generated; do not edit)", "Legal Name *", "Display Name", "Email", "Phone", "Roles *",
+          "GSTIN", "GST Registered Legal Name", "GST Registration Type", "GST Registration Status",
+          "Address Label", "Address Use", "Address Line 1", "Address Line 2", "City", "State", "State Code",
+          "PIN Code", "Country Code", "Default Billing", "Default Shipping", "Account Holder Name", "Account Number",
+          "IFSC Code", "Bank Name", "Branch", "Default Bank Account",
+        ],
+        [
+          "", "Example Textiles", "Example", "ops@example.com", "9876543210", "CUSTOMER; VENDOR",
+          "27AAPFU0939F1ZV", "Example Textiles", "REGULAR", "ACTIVE",
+          "Head Office", "BOTH", "1 Market Road", "", "Mumbai", "Maharashtra", "27",
+          "400001", "IN", "", "", "Example Textiles", "12345678",
+          "HDFC0001234", "HDFC Bank", "Mumbai", "",
+        ],
       ],
     }]));
 
     expect(result.failures).toEqual([]);
+    expect(result.contacts).toHaveLength(1);
+    expect(result.contacts[0].contactKey).toBe("ROW-2");
     expect(result.contacts[0].input).toMatchObject({
-      legalName: "NEW CONTACT",
-      roles: ["VENDOR"],
-      isActive: true,
+      legalName: "EXAMPLE TEXTILES",
+      displayName: "EXAMPLE",
+      roles: ["CUSTOMER", "VENDOR"],
+      taxRegistrations: [{
+        gstin: "27AAPFU0939F1ZV",
+        legalName: "EXAMPLE TEXTILES",
+        registrationType: "REGULAR",
+        status: "ACTIVE",
+      }],
+      addresses: [{
+        taxRegistrationGstin: "27AAPFU0939F1ZV",
+        usage: "BOTH",
+        stateCode: "27",
+        isDefaultBilling: true,
+        isDefaultShipping: true,
+      }],
+      bankAccounts: [{
+        accountHolderName: "EXAMPLE TEXTILES",
+        accountNumber: "12345678",
+        ifscCode: "HDFC0001234",
+        isDefault: true,
+      }],
     });
-    expect(result.contacts[0].input).not.toHaveProperty("code");
   });
 
-  it("never exports full bank account numbers and provides dropdowns in populated and blank templates", async () => {
+  it("rejects a primary GSTIN whose state does not match the address", async () => {
+    const result = await parseContactWorkbook(workbookFile([{
+      name: "Contacts",
+      rows: [
+        ["Legal Name *", "Roles *", "GSTIN", "Address Use", "Address Line 1", "City", "State", "State Code", "PIN Code"],
+        ["Example Textiles", "VENDOR", "27AAPFU0939F1ZV", "BOTH", "1 Market Road", "Mumbai", "Maharashtra", "29", "400001"],
+      ],
+    }]));
+
+    expect(result.contacts).toEqual([]);
+    expect(result.failures[0].message).toContain("Address state code must match");
+  });
+
+  it("exports only one worksheet, keeps account numbers masked, and provides inline dropdowns", async () => {
     const contact: ContactWorkbookRecord = {
       id: "contact-id",
       code: "CT1",
@@ -149,8 +207,27 @@ describe("contact master workbook", () => {
       phone: null,
       is_active: true,
       roles: [{ role_code: "VENDOR" }],
-      tax_registrations: [],
-      addresses: [],
+      tax_registrations: [{
+        gstin: "27AAPFU0939F1ZV",
+        legal_name: "Example Textiles",
+        registration_type: "REGULAR",
+        status: "ACTIVE",
+      }],
+      addresses: [{
+        id: "address-id",
+        tax_registration: { gstin: "27AAPFU0939F1ZV" },
+        label: "Head Office",
+        usage: "BOTH",
+        address_line_1: "1 Market Road",
+        address_line_2: null,
+        city: "Mumbai",
+        state_name: "Maharashtra",
+        state_code: "27",
+        postal_code: "400001",
+        country_code: "IN",
+        is_default_billing: true,
+        is_default_shipping: true,
+      }],
       bank_accounts: [{
         id: "bank-id",
         account_holder_name: "Example Textiles",
@@ -163,59 +240,49 @@ describe("contact master workbook", () => {
     };
     const populatedBytes = await createContactWorkbook([contact]);
     const workbook = XLSX.read(populatedBytes, { type: "array" });
-    const bankRows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets["Bank Accounts"], {
+    expect(workbook.SheetNames).toEqual(["Contacts"]);
+    const contactRows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets.Contacts, {
       header: 1,
       defval: "",
       raw: false,
     });
-    expect(bankRows[1][2]).toBe("");
+    expect(contactRows.filter((row) => row.some((value) => value !== ""))).toHaveLength(2);
+    expect(contactRows[1][0]).toBe("CT1");
+    expect(contactRows[1][6]).toBe("27AAPFU0939F1ZV");
+    expect(contactRows[1][12]).toBe("1 Market Road");
+    expect(contactRows[1][22]).toBe("");
 
     const populatedWorkbook = await XlsxPopulate.fromDataAsync(populatedBytes);
-    expect(populatedWorkbook.sheet("Contacts").range("F2:F501").dataValidation()).toMatchObject({
+    expect(populatedWorkbook.sheet("Contacts").range("I2:I201").dataValidation()).toMatchObject({
       type: "list",
-      formula1: "ContactRoles",
+      formula1: `"${CONTACT_GST_REGISTRATION_TYPES.join(",")}"`,
     });
-    expect(populatedWorkbook.sheet("GST Registrations").range("D2:D501").dataValidation()).toMatchObject({
+    expect(populatedWorkbook.sheet("Contacts").range("F2:F201").dataValidation()).toMatchObject({
       type: "list",
-      formula1: "RegistrationTypes",
+      formula1: '"CUSTOMER,VENDOR,AGENT,DISTRIBUTOR,DEALER"',
     });
-    expect(populatedWorkbook.sheet("Addresses").range("D2:D501").dataValidation()).toMatchObject({
+    expect(populatedWorkbook.sheet("Contacts").range("L2:L201").dataValidation()).toMatchObject({
       type: "list",
-      formula1: "AddressUsages",
-    });
-    expect(populatedWorkbook.sheet("Contacts").range("A1:F1").value()).toEqual([[
-      "Import Ref (auto - do not edit)", "Legal Name", "Display Name", "Email", "Phone", "Roles",
-    ]]);
-    expect(populatedWorkbook.sheet("Contacts").cell("A2").value()).toBe("EXPORTED-00001");
-    expect(populatedWorkbook.sheet("Contacts").range("A2:F2").value()).toEqual([[
-      "EXPORTED-00001", "Example Textiles", undefined, undefined, undefined, "VENDOR",
-    ]]);
-    expect(populatedWorkbook.sheet("Addresses").range("K2:K501").dataValidation()).toMatchObject({
-      type: "list",
-      formula1: "CountryCodes",
-    });
-    expect(populatedWorkbook.sheet("Bank Accounts").range("A2:A501").dataValidation()).toMatchObject({
-      type: "list",
-      formula1: "ImportReferences",
+      formula1: '"BILLING,SHIPPING,BOTH"',
     });
 
     const templateBytes = await createContactWorkbook([]);
     const templateWorkbook = XLSX.read(templateBytes, { type: "array" });
     const populatedTemplateWorkbook = await XlsxPopulate.fromDataAsync(templateBytes);
-    const contactsRows = XLSX.utils.sheet_to_json<unknown[]>(templateWorkbook.Sheets.Contacts, {
+    const templateRows = XLSX.utils.sheet_to_json<unknown[]>(templateWorkbook.Sheets.Contacts, {
       header: 1,
       defval: "",
     });
-    expect(contactsRows).toHaveLength(501);
-    expect(contactsRows[0]).toContain("Import Ref (auto - do not edit)");
-    expect(contactsRows[0]).not.toContain("Contact Code");
-    expect(contactsRows[0]).not.toContain("Active");
-    expect(contactsRows[1][0]).toBe("NEW-001");
-    expect(contactsRows[200][0]).toBe("NEW-200");
-    expect(contactsRows.slice(1).every((row) => row.slice(1).every((value) => value === ""))).toBe(true);
-    expect(populatedTemplateWorkbook.sheet("Contacts").range("F2:F501").dataValidation()).toMatchObject({
+    expect(templateWorkbook.SheetNames).toEqual(["Contacts"]);
+    expect(templateRows).toHaveLength(201);
+    expect(templateRows[0]).toContain("Legal Name *");
+    expect(templateRows[0]).toContain("GSTIN");
+    expect(templateRows[0]).toContain("Account Number");
+    expect(templateRows[0]).toContain("Contact Code (system-generated; do not edit)");
+    expect(templateRows.slice(1).every((row) => row.every((value) => value === ""))).toBe(true);
+    expect(populatedTemplateWorkbook.sheet("Contacts").range("I2:I201").dataValidation()).toMatchObject({
       type: "list",
-      formula1: "ContactRoles",
+      formula1: `"${CONTACT_GST_REGISTRATION_TYPES.join(",")}"`,
     });
     const templateFile = new File([templateBytes], "contacts.xlsx");
     await expect(parseContactWorkbook(templateFile)).rejects.toThrow("Enter at least one contact name and role");

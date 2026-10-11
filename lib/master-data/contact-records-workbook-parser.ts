@@ -59,7 +59,11 @@ export type ContactWorkbookImportResult = {
 type SheetRow = Record<string, unknown>;
 
 function normalizeHeader(value: unknown) {
-  return String(value ?? "").trim().toLocaleLowerCase();
+  return String(value ?? "")
+    .trim()
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .replace(/\s*\*\s*$/, "")
+    .toLocaleLowerCase();
 }
 
 function readSheet(workbook: XLSX.WorkBook, names: string[]) {
@@ -115,6 +119,97 @@ function nonBlankRows(rows: SheetRow[]) {
   return rows.filter((row) => Object.values(row).some((value) => String(value ?? "").trim()));
 }
 
+function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImportResult {
+  const rows = nonBlankRows(readSheet(workbook, ["Contacts"]));
+  if (!rows.length) throw new Error("Enter at least one contact name and role on the Contacts sheet.");
+  if (rows.length > MAX_CONTACT_ROWS) throw new Error(`A workbook may contain at most ${MAX_CONTACT_ROWS} contacts.`);
+
+  const contacts: ContactWorkbookImportResult["contacts"] = [];
+  const failures: ContactWorkbookImportResult["failures"] = [];
+  for (const [index, row] of rows.entries()) {
+    const contactKey = `ROW-${index + 2}`;
+    const importReference = field(row, "Import Ref (auto - do not edit)") || field(row, "Contact Key");
+    if (importReference && !/^NEW-[A-Z0-9_-]{1,56}$/i.test(importReference)) {
+      failures.push({
+        contactKey,
+        message: "This workbook contains an existing-contact reference. Use the blank template to upload new contacts.",
+      });
+      continue;
+    }
+    if (field(row, "Contact Code")) {
+      failures.push({
+        contactKey,
+        message: "This row contains a system-generated Contact Code and cannot be imported. Use the blank template to add new contacts.",
+      });
+      continue;
+    }
+
+    const legalName = field(row, "Legal Name");
+    const gstin = field(row, "GSTIN");
+    const addressPresent = [
+      "Address Label", "Address Use", "Address Line 1", "Address Line 2",
+      "City", "State", "State Code", "PIN Code", "Country Code",
+      "Default Billing", "Default Shipping",
+    ].some((label) => field(row, label) !== "");
+    const bankPresent = [
+      "Account Holder Name", "Account Number", "IFSC Code", "Bank Name",
+      "Branch", "Default Bank Account",
+    ].some((label) => field(row, label) !== "");
+    const usage = (field(row, "Address Use") || "BOTH").toUpperCase();
+
+    try {
+      const taxRegistrations = gstin ? [{
+        gstin,
+        legalName: field(row, "GST Registered Legal Name") || legalName,
+        registrationType: field(row, "GST Registration Type") || "REGULAR",
+        status: field(row, "GST Registration Status") || "ACTIVE",
+      }] : [];
+      const addresses = addressPresent ? [{
+        taxRegistrationGstin: gstin || null,
+        label: field(row, "Address Label") || null,
+        usage,
+        addressLine1: field(row, "Address Line 1"),
+        addressLine2: field(row, "Address Line 2") || null,
+        city: field(row, "City"),
+        stateName: field(row, "State"),
+        stateCode: field(row, "State Code") || null,
+        postalCode: field(row, "PIN Code"),
+        countryCode: field(row, "Country Code") || "IN",
+        isDefaultBilling: booleanField(row, "Default Billing", usage !== "SHIPPING"),
+        isDefaultShipping: booleanField(row, "Default Shipping", usage !== "BILLING"),
+      }] : [];
+      const accountNumber = field(row, "Account Number");
+      const bankAccounts = bankPresent ? [{
+        accountHolderName: field(row, "Account Holder Name"),
+        accountNumber,
+        ifscCode: field(row, "IFSC Code"),
+        bankName: field(row, "Bank Name"),
+        branch: field(row, "Branch") || null,
+        isDefault: booleanField(row, "Default Bank Account", true),
+      }] : [];
+      const input = parseContactInput({
+        legalName,
+        displayName: field(row, "Display Name") || null,
+        email: field(row, "Email") || null,
+        phone: field(row, "Phone") || null,
+        isActive: true,
+        roles: field(row, "Roles").split(/[;,]/).map((role) => role.trim()).filter(Boolean),
+        taxRegistrations,
+        addresses,
+        bankAccounts,
+      }) as ContactInput;
+      contacts.push({ contactKey, input });
+    } catch (error) {
+      failures.push({
+        contactKey,
+        message: error instanceof Error ? error.message : "Contact details are invalid.",
+      });
+    }
+  }
+
+  return { contacts, failures };
+}
+
 export async function parseContactWorkbook(file: File): Promise<ContactWorkbookImportResult> {
   if (!/\.xlsx$/i.test(file.name)) throw new Error("Choose an .xlsx contact workbook.");
   if (file.size === 0 || file.size > MAX_WORKBOOK_BYTES) throw new Error("Contact workbooks must be between 1 byte and 10 MB.");
@@ -125,6 +220,8 @@ export async function parseContactWorkbook(file: File): Promise<ContactWorkbookI
   } catch {
     throw new Error("The Excel workbook could not be read. Download a fresh template and try again.");
   }
+
+  if (workbook.SheetNames.length <= 1) return parseSingleSheetContacts(workbook);
 
   const contactRows = readSheet(workbook, ["Contacts"])
     .map((row, index) => ({ row, rowIndex: index }))

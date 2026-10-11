@@ -147,7 +147,7 @@ export default function ContactMasterExcelActions({
           <div>
             <h2 className="text-base font-semibold">Import Unified Contact Master</h2>
             <p className="mt-2 text-sm text-slate-600">
-              Download the blank template, fill in contact details, and upload it here. The Import Ref is generated for linking related sheets; do not change it. The system assigns each Contact Code and sets new contacts to Active. Uploads add new contacts only; use the contact screen to edit existing contacts. Full bank account numbers are never exported.
+              Use the single-sheet template with one contact per row. Enter the contact, primary GST registration, address, and bank details in that row; add any extra GST registrations, addresses, or bank accounts after import from the contact page. Contact Codes are assigned automatically. Uploads add new contacts only, and full bank account numbers are never included in exports.
             </p>
           </div>
           <Input
@@ -186,7 +186,7 @@ export default function ContactMasterExcelActions({
           <div className="flex flex-wrap justify-end gap-2">
             <Button type="button" variant="secondary" onClick={() => void downloadWorkbook(false)} disabled={isGenerating}>
               <Download aria-hidden="true" className="mr-1.5 h-4 w-4" />
-              Download new-contact template
+              Download single-sheet template
             </Button>
             <Button type="button" variant="secondary" onClick={() => setIsOpen(false)} disabled={isPending}>
               Close
