@@ -43,7 +43,8 @@ async function CategoryMasterListingPage({
 
   const masters = MASTER_DEFINITIONS.filter((master) => !master.hidden)
     .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
-  const categoryMasters = getMastersForCategory(masters, category);
+  const categoryMasters = getMastersForCategory(masters, category)
+    .filter((master) => category.id !== "vendors-and-contacts" || !["vendor", "buyer"].includes(master.key));
 
   return (
     <Page as="div">
@@ -61,6 +62,20 @@ async function CategoryMasterListingPage({
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {category.id === "vendors-and-contacts" ? (
+            <Link
+              href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/contacts`}
+              className="group block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+            >
+              <Card className="flex min-h-28 items-start justify-between gap-4 rounded-2xl p-4 transition group-hover:border-[var(--erp-brand)]">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold text-[var(--erp-text)] group-hover:text-[var(--erp-brand)]">Unified Contact Master</h2>
+                  <p className="mt-1.5 text-xs leading-5 text-slate-600">Manage shared customers, vendors, agents, distributors, dealers, tax registrations, addresses, and bank accounts.</p>
+                </div>
+                <ArrowUpRight aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-slate-400 transition group-hover:text-[var(--erp-brand)]" />
+              </Card>
+            </Link>
+          ) : null}
           {categoryMasters.map((master) => (
             <Link
               key={master.key}

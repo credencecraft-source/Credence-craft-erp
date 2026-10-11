@@ -99,6 +99,12 @@ model Organization {
   masterRawMaterialSubCats      MasterRawMaterialSubCategory[]
   generalPurchaseOrderRequests  GeneralPurchaseOrderRequest[]
   masterVendors                 MasterVendor[]
+  contacts                      Contact[]
+  contactCodeCounter            ContactCodeCounter?
+  contactRoleAssignments        ContactRoleAssignment[]
+  contactTaxRegistrations       ContactTaxRegistration[]
+  contactAddresses              ContactAddress[]
+  contactBankAccounts           ContactBankAccount[]
   masterStates                  MasterState[]
   masterGstTypes                MasterGstType[]
   masterGsts                    MasterGst[]
@@ -960,6 +966,7 @@ model MasterBuyer {
   id               String              @id @default(cuid())
   value_id         String              @unique @default(uuid())
   organization_id  String
+  contact_id       String?
   buyer_name       String              @db.VarChar(255)
   buyer_email      String?             @db.VarChar(255)
   currency_type_id String?
@@ -970,9 +977,11 @@ model MasterBuyer {
   created_at       DateTime            @default(now())
   updated_at       DateTime            @updatedAt
   organization     Organization        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  contact          Contact?            @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Restrict)
   currency_type    MasterCurrencyType? @relation(fields: [currency_type_id], references: [id])
 
   @@unique([organization_id, buyer_name])
+  @@unique([organization_id, contact_id])
   @@index([organization_id, is_active])
   @@map("master_buyers")
 }
@@ -1245,6 +1254,7 @@ model MasterVendor {
   id                    String                 @id @default(cuid())
   value_id              String                 @unique @default(uuid())
   organization_id       String
+  contact_id            String?
   vendor                String                 @db.VarChar(255)
   gst_number            String?                @db.VarChar(50)
   registered_state      String?                @db.VarChar(100)
@@ -1256,6 +1266,7 @@ model MasterVendor {
   created_at            DateTime               @default(now())
   updated_at            DateTime               @updatedAt
   organization          Organization           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  contact               Contact?               @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Restrict)
   registeredState       MasterState?           @relation(fields: [registered_state_id], references: [id], onDelete: SetNull)
   groupedPurchaseOrders GroupedPurchaseOrder[]
   masterPurchaseOrders  MasterPurchaseOrder[]
@@ -1265,6 +1276,7 @@ model MasterVendor {
   distributionQuotations       DistributionQuotation[]
 
   @@unique([organization_id, id])
+  @@unique([organization_id, contact_id])
   @@index([organization_id, is_active])
   @@map("master_vendors")
 }

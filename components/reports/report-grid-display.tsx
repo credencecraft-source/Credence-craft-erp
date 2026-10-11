@@ -282,7 +282,7 @@ function ReportGridImplementation<T>({
           <p className="text-[10px] text-slate-500">{filteredRecords.length} records available</p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
           <Input
             placeholder="Search report..."
             value={searchQuery}

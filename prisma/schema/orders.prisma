@@ -1,6 +1,8 @@
 model MerchandisingOrder {
   id                        String                          @id @default(cuid())
   organization_id           String                          @map("organization_id")
+  contact_id                String?
+  counterparty_role_code    String?                         @db.VarChar(40)
   entity_id                 String?
   orderNo                   String                          @db.VarChar(100)
   entityName                String?                         @db.VarChar(255)
@@ -24,6 +26,8 @@ model MerchandisingOrder {
   created_at                DateTime                        @default(now()) @map("created_at")
   updated_at                DateTime                        @updatedAt @map("updated_at")
   organization              Organization                    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  contact                   Contact?                        @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Restrict)
+  counterpartyRole          ContactRoleAssignment?           @relation(fields: [organization_id, contact_id, counterparty_role_code], references: [organization_id, contact_id, role_code], onDelete: Restrict)
   entity                    MasterEntity?                   @relation("MerchandisingOrderEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
   processTemplate           MasterProcessTemplate?          @relation(fields: [process_template_id], references: [id], onDelete: SetNull)
   processSteps              MerchandisingOrderProcessStep[]
@@ -42,6 +46,7 @@ model MerchandisingOrder {
   @@unique([organization_id, id])
   @@index([organization_id, entity_id, created_at])
   @@index([organization_id, created_at])
+  @@index([organization_id, contact_id])
   @@map("merchandising_orders")
 }
 
@@ -386,6 +391,8 @@ model PurchaseOrder {
   organization_id   String
   entity_id         String?
   vendor_id         String
+  contact_id        String?
+  counterparty_role_code String?            @db.VarChar(40)
   purchase_order_no String                @db.VarChar(100)
   display_no        Int?
   status            String                @default("DRAFT") @db.VarChar(50)
@@ -401,6 +408,8 @@ model PurchaseOrder {
   organization      Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   entity            MasterEntity?         @relation("PurchaseOrderEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
   vendor            MasterVendor          @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
+  contact           Contact?              @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Restrict)
+  counterpartyRole  ContactRoleAssignment? @relation(fields: [organization_id, contact_id, counterparty_role_code], references: [organization_id, contact_id, role_code], onDelete: Restrict)
   sources           PurchaseOrderSource[]
   lines             PurchaseOrderLine[]
   inventoryReceipts InventoryReceipt[]
@@ -411,6 +420,7 @@ model PurchaseOrder {
   @@unique([organization_id, display_no])
   @@index([organization_id, status, created_at])
   @@index([organization_id, vendor_id])
+  @@index([organization_id, contact_id])
   @@index([organization_id, entity_id])
   @@map("purchase_orders")
 }

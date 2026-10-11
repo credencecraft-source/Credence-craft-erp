@@ -9,7 +9,12 @@ import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import { MasterRecordsExcelActions, type MasterRecordsImportAction } from "@/components/master-data/master-records-excel-actions";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
+import {
+  filterMasterOptionsByParent,
+  getMasterSelectionLabel,
+} from "@/lib/master-data/master-data-selection";
 
 type MasterLookupOption = { id: string; value_id?: string; label: string; parent_id?: string | null; fields?: Record<string, unknown>; sizes?: MasterLookupOption[] };
 type QuickMasterTarget = { fieldKey: string; variantIndex?: number; childFieldKey?: string };
@@ -41,6 +46,7 @@ type MasterRecordsTableProps = {
   createAction: (formData: FormData) => Promise<void>;
   updateAction: (formData: FormData) => Promise<void>;
   deleteAction: (formData: FormData) => Promise<void>;
+  importAction: MasterRecordsImportAction;
   fields: MasterFieldDefinition[];
   lookupOptions: Record<string, MasterLookupOption[]>;
   childRecords?: ChildRecord[];
@@ -80,6 +86,7 @@ export function MasterRecordsTable({
   createAction,
   updateAction,
   deleteAction,
+  importAction,
   fields,
   lookupOptions,
   childRecords = [],
@@ -463,18 +470,9 @@ export function MasterRecordsTable({
 
     const parentField = fields.find((candidate) => candidate.key === field.dependsOn);
     const parentOptions = articleLookupOptions[parentField?.lookupModuleKey ?? ""] ?? [];
-    const parentValue = String(values[field.dependsOn] ?? "");
-    const parentOption = parentOptions.find((option) => option.label === parentValue);
+    const parentValue = values[field.dependsOn];
     if (moduleKey === "article" && field.key === "Sizes" && !parentValue) return [];
-    if (!parentValue) return options;
-    if (!parentOption) return [];
-
-    const parentIds = new Set(
-      [parentOption.id, parentOption.value_id]
-        .filter(Boolean)
-        .map((value) => String(value)),
-    );
-    return options.filter((option) => option.parent_id && parentIds.has(String(option.parent_id)));
+    return filterMasterOptionsByParent(options, parentOptions, parentValue);
   };
 
   const renderField = (
@@ -540,11 +538,12 @@ export function MasterRecordsTable({
         : value;
       const options = getLookupOptions(field, values);
       if (field.multiple) {
-        const selectedValues = Array.isArray(selectedValue)
+        const rawSelectedValues = Array.isArray(selectedValue)
           ? selectedValue.map(String)
           : selectedValue
             ? [String(selectedValue)]
             : [];
+        const selectedValues = rawSelectedValues.map((selected) => getMasterSelectionLabel(options, selected));
 
         if (moduleKey === "size-group" && field.key === "Size") {
           const sizeRows = selectedValues.length > 0 ? selectedValues : [""];
@@ -685,7 +684,7 @@ export function MasterRecordsTable({
             label={field.label}
             required={field.required}
             name={`field_${field.key}`}
-            value={autoSelectedType ?? String(selectedValue ?? "")}
+            value={autoSelectedType ?? getMasterSelectionLabel(options, selectedValue)}
             disabled={field.readOnly || Boolean(autoSelectedType)}
             onChange={(event) => {
               const nextValue = event.target.value;
@@ -766,7 +765,10 @@ export function MasterRecordsTable({
                           <Select
                             label={childField.label}
                             required={childField.required}
-                            value={String(childValueForField)}
+                            value={getMasterSelectionLabel(
+                              articleLookupOptions[childField.lookupModuleKey ?? ""] ?? [],
+                              childValueForField,
+                            )}
                             onChange={(event) => onChange(event.target.value)}
                             options={[
                               { value: "", label: `Select ${childField.label}` },
@@ -868,6 +870,19 @@ export function MasterRecordsTable({
         visibleFields={activeVisibleReportFields}
         onVisibleFieldsChange={setVisibleReportFields}
         storageKey={`master-report-columns-${moduleKey}`}
+        toolbarActions={(
+          <MasterRecordsExcelActions
+            records={records}
+            fields={fields}
+            lookupOptions={lookupOptions}
+            childRecords={childRecords}
+            moduleKey={moduleKey}
+            moduleLabel={moduleLabel}
+            workspaceId={workspaceId}
+            organizationId={organizationId}
+            importAction={importAction}
+          />
+        )}
         rowIdSelector={(record) => record.id}
         selectedIds={[]}
         onRowClick={() => undefined}

@@ -14,6 +14,13 @@ import {
   syncSizeGroupSizes,
   updateMasterValue,
 } from "@/lib/master-data/master-data-constants";
+import {
+  parseMasterRecordsWorkbook,
+  validateMasterWorkbookLookupValues,
+  type MasterRecordsImportResult,
+  type MasterWorkbookLookupOption,
+  type ParsedMasterWorkbookRow,
+} from "@/lib/master-data/master-records-workbook";
 import type { MasterFieldValues } from "@/lib/master-data/master-data-constants";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 
@@ -174,6 +181,63 @@ async function saveChildValues(
 function masterDataErrorRedirect(workspaceId: string, organizationId: string, moduleKey: string, error: unknown): never {
   const message = error instanceof Error ? error.message : "Unable to save master data.";
   redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent(message)}`);
+}
+
+function createWorkbookLookupResolver(organizationId: string) {
+  const optionCache = new Map<string, Promise<MasterWorkbookLookupOption[]>>();
+  const exactOptionCache = new Map<string, Promise<MasterWorkbookLookupOption[]>>();
+
+  const getOptions = (moduleKey: string) => {
+    const cached = optionCache.get(moduleKey);
+    if (cached) return cached;
+    const options = moduleKey === "article-size"
+      ? getSizeGroupSizesForOrganization(organizationId).then((items) => items
+          .filter((item) => item.size.is_active)
+          .map((item) => ({
+            id: item.size.id,
+            value_id: item.size.value_id,
+            label: item.size.label,
+            parent_id: item.groupId,
+          })))
+      : getMasterValuesForOrganization(organizationId, moduleKey, false, { limit: 500 })
+          .then((items) => items.map((item) => ({
+            id: item.id,
+            value_id: item.value_id,
+            label: item.label,
+            parent_id: item.parent_id,
+          })));
+    optionCache.set(moduleKey, options);
+    return options;
+  };
+
+  return async (moduleKey: string, value: string) => {
+    const search = String(value ?? "").trim().toLocaleLowerCase();
+    if (!search) return [];
+    const listed = (await getOptions(moduleKey)).filter((option) =>
+      [option.id, option.value_id, option.label].some((candidate) =>
+        candidate !== undefined && String(candidate).toLocaleLowerCase() === search,
+      ),
+    );
+    if (listed.length) return listed;
+    if (moduleKey === "article-size") return [];
+
+    const cacheKey = `${moduleKey}\u0000${search}`;
+    let exactSearch = exactOptionCache.get(cacheKey);
+    if (!exactSearch) {
+      exactSearch = getMasterValuesForOrganization(organizationId, moduleKey, false, {
+        search: String(value),
+        exactSearch: true,
+        limit: 2,
+      }).then((items) => items.map((item) => ({
+        id: item.id,
+        value_id: item.value_id,
+        label: item.label,
+        parent_id: item.parent_id,
+      })));
+      exactOptionCache.set(cacheKey, exactSearch);
+    }
+    return exactSearch;
+  };
 }
 
 async function createMasterValueAction(formData: FormData) {
@@ -380,6 +444,135 @@ async function deleteMasterValueAction(formData: FormData) {
   redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=delete`);
 }
 
+async function importMasterValuesAction(formData: FormData): Promise<MasterRecordsImportResult> {
+  "use server";
+
+  const workspaceId = String(formData.get("workspaceId") ?? "");
+  const organizationId = String(formData.get("organizationId") ?? "");
+  const moduleKey = String(formData.get("moduleKey") ?? "");
+  const definition = getMasterDefinition(moduleKey);
+
+  if (!workspaceId || !organizationId || !moduleKey || !definition || definition.hidden) {
+    return { created: 0, failures: [], fatalError: "This master is not available for import." };
+  }
+
+  const user = await requireSessionUser();
+  if (!user.workspace_id) redirect("/");
+  if (user.workspace_id !== workspaceId) notFound();
+
+  const organization = await getOrganizationForUser(user.id, organizationId);
+  if (!organization) notFound();
+  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
+
+  const file = formData.get("workbook");
+  if (!(file instanceof File)) {
+    return { created: 0, failures: [], fatalError: "Choose an Excel workbook to import." };
+  }
+
+  let rows: ParsedMasterWorkbookRow[];
+  try {
+    rows = await parseMasterRecordsWorkbook(file, definition);
+  } catch (error) {
+    return {
+      created: 0,
+      failures: [],
+      fatalError: error instanceof Error ? error.message : "The Excel workbook could not be validated.",
+    };
+  }
+  try {
+    await validateMasterWorkbookLookupValues(
+      definition,
+      rows,
+      createWorkbookLookupResolver(organization.id),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    return {
+      created: 0,
+      failures: [],
+      fatalError: /^Row \d+:/.test(message)
+        ? message
+        : "Unable to validate lookup values for this organization. No records were imported.",
+    };
+  }
+
+  const failures: MasterRecordsImportResult["failures"] = [];
+  let createdCount = 0;
+  for (const row of rows) {
+    let created: Awaited<ReturnType<typeof createMasterValueForOrganization>> | null = null;
+    try {
+      const fields = Object.fromEntries(Object.entries(row.fields).filter(([key]) =>
+        definition.fields.find((field) => field.key === key)?.type !== "child-list",
+      ));
+      if (hasMissingRequiredField(fields, definition)) {
+        throw new Error(`Complete all required ${definition.label.toLowerCase()} fields.`);
+      }
+
+      const childFormData = new FormData();
+      for (const field of definition.fields) {
+        if (field.type === "child-list") {
+          childFormData.set(`field_${field.key}`, JSON.stringify(row.childRows[field.key] ?? []));
+          continue;
+        }
+        const value = fields[field.key];
+        if (field.multiple && Array.isArray(value)) {
+          value.forEach((item) => childFormData.append(`field_${field.key}`, String(item)));
+        } else if (field.type === "checkbox") {
+          childFormData.set(`field_${field.key}`, value === true ? "on" : "");
+        } else {
+          childFormData.set(`field_${field.key}`, value === null || value === undefined ? "" : String(value));
+        }
+      }
+
+      let articleVariants: Array<{ id?: string; fields: Record<string, unknown> }> | undefined;
+      if (moduleKey === "article") {
+        const variantField = definition.fields.find((field) => field.type === "child-list");
+        if (!variantField) throw new Error("Article variant fields are not configured.");
+        articleVariants = validateChildValues(variantField, childFormData).validatedRows
+          .map(({ id, fields: variantFields }) => ({ ...(id ? { id } : {}), fields: variantFields }));
+      }
+
+      const label = getRecordLabel(fields, definition);
+      if (!label) throw new Error("The required record name is missing.");
+      created = await createMasterValueForOrganization(organization.id, moduleKey, {
+        label,
+        code: row.code,
+        description: row.description,
+        fields: fields as MasterFieldValues,
+        createOnly: true,
+        ...(articleVariants ? { articleVariants } : {}),
+        ...(moduleKey === "article" ? {
+          articleSizes: Array.isArray(fields.Sizes) ? fields.Sizes.map(String) : [],
+        } : {}),
+      });
+
+      if (moduleKey !== "article") {
+        await saveChildValues(organization.id, created.id, definition, childFormData);
+      }
+      createdCount += 1;
+    } catch (error) {
+      let message = error instanceof Error ? error.message : "Unable to create this record.";
+      if (created) {
+        try {
+          const cleanup = await deleteMasterValue(organization.id, created.value_id);
+          if (cleanup.error) {
+            message = `${message} The parent record may remain because cleanup was blocked: ${cleanup.error}`;
+          }
+        } catch (cleanupError) {
+          const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error.";
+          message = `${message} The parent record may remain because cleanup failed: ${cleanupMessage}`;
+        }
+      }
+      failures.push({ rowNumber: row.rowNumber, message });
+    }
+  }
+
+  if (createdCount > 0) {
+    revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
+  }
+  return { created: createdCount, failures };
+}
+
 export default async function MasterDataEditorPage({
   params,
   searchParams,
@@ -486,6 +679,7 @@ export default async function MasterDataEditorPage({
         createAction={createMasterValueAction}
         updateAction={updateMasterValueAction}
         deleteAction={deleteMasterValueAction}
+        importAction={importMasterValuesAction}
       />
     </div>
   );
