@@ -100,6 +100,35 @@ describe("organization master setup Excel workbooks", () => {
     });
   });
 
+  it("imports records from present sheets when other step sheets are omitted or use their master label", async () => {
+    const definitions = getOrganizationMasterSetupDefinitions("independent").map((definition) => ({
+      key: definition.key,
+      label: definition.label,
+      labelField: definition.labelField,
+      fields: getOrganizationMasterSetupFields(definition),
+    }));
+    const workbook = XLSX.utils.book_new();
+    const colorIndex = definitions.findIndex((definition) => definition.key === "color");
+    const colorDefinition = definitions[colorIndex];
+    expect(colorDefinition).toBeDefined();
+    const colorFields = colorDefinition.fields.filter((field) => !field.readOnly);
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet([
+        colorFields.map((field) => field.label),
+        ["Navy"],
+      ]),
+      colorDefinition.label,
+    );
+    const file = Object.assign(
+      new Blob([XLSX.write(workbook, { type: "array", bookType: "xlsx" })]),
+      { name: "partial-independent-step.xlsx" },
+    ) as File;
+
+    await expect(parseOrganizationMasterSetupWorkbook(file, definitions, {}))
+      .resolves.toEqual([{ moduleKey: "color", label: "Navy", fields: {} }]);
+  });
+
   it("blocks upload when a required parent master is not available", async () => {
     const definition = getOrganizationMasterSetupDefinitions("related")
       .find((master) => master.key === "category");

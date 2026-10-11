@@ -120,11 +120,16 @@ export async function parseOrganizationMasterSetupWorkbook(
   const records: SetupRecord[] = [];
 
   for (const [definitionIndex, definition] of definitions.entries()) {
-    const sheetName = getOrganizationMasterSetupSheetName(definitionIndex, definition.label);
-    const worksheet = workbook.Sheets[sheetName];
-    if (!worksheet) {
-      throw new Error(`The "${definition.label}" sheet is missing. Download a fresh template for this step.`);
-    }
+    const templateSheetName = getOrganizationMasterSetupSheetName(definitionIndex, definition.label);
+    const sheetName = workbook.Sheets[templateSheetName]
+      ? templateSheetName
+      : workbook.SheetNames.find((name) => {
+          const label = name.replace(/^\d+\s*-\s*/, "");
+          return normalizeHeader(name) === normalizeHeader(definition.label)
+            || normalizeHeader(label) === normalizeHeader(definition.label);
+        });
+    const worksheet = sheetName ? workbook.Sheets[sheetName] : undefined;
+    if (!worksheet) continue;
     const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
       header: 1,
       defval: "",

@@ -202,6 +202,18 @@ export async function createOrganizationMasterSetupStage(
   }
 }
 
+export async function createOrganizationMasterSetupSection(
+  organizationId: string,
+  records: OrganizationMasterSetupRecord[],
+  moduleKey: string,
+) {
+  const sectionRecords = records.filter((record) => record.moduleKey === moduleKey);
+  if (sectionRecords.length === 0) {
+    throw new Error("Enter at least one value for this master.");
+  }
+  return createOrganizationMasterSetupStage(organizationId, sectionRecords);
+}
+
 export async function deleteOrganizationMasterSetupSection(
   organizationId: string,
   userId: string,

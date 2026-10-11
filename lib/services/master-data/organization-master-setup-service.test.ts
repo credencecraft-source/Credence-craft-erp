@@ -37,6 +37,7 @@ vi.mock("@/lib/master-data/master-data-constants", () => ({
 }));
 
 import {
+  createOrganizationMasterSetupSection,
   createOrganizationMasterSetupStage,
   createOrganizationMerchandisingStarterMasters,
   deleteOrganizationMasterSetupSection,
@@ -134,6 +135,29 @@ describe("createOrganizationMasterSetupStage", () => {
     expect(createMasterValueMock).toHaveBeenCalledWith("org-id", "category", {
       label: "Shirt",
       fields: { Product_Master: "finished-goods-id" },
+    });
+  });
+
+  describe("createOrganizationMasterSetupSection", () => {
+    it("creates only records belonging to the selected section", async () => {
+      await createOrganizationMasterSetupSection("org-id", [
+        { moduleKey: "color", label: "Navy", fields: {} },
+        { moduleKey: "size", label: "Large", fields: { Size: "Large" } },
+      ], "color");
+
+      expect(createMasterValueMock).toHaveBeenCalledTimes(1);
+      expect(createMasterValueMock).toHaveBeenCalledWith("org-id", "color", {
+        label: "Navy",
+        fields: {},
+      });
+    });
+
+    it("rejects a selected section that has no values", async () => {
+      await expect(createOrganizationMasterSetupSection("org-id", [
+        { moduleKey: "size", label: "Large", fields: { Size: "Large" } },
+      ], "color")).rejects.toThrow("Enter at least one value for this master.");
+
+      expect(createMasterValueMock).not.toHaveBeenCalled();
     });
   });
 

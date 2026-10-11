@@ -7,21 +7,9 @@ import Section from "@/components/ui/Section";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getMasterValuesForOrganization, isMasterSectionBulkDeletable } from "@/lib/master-data/master-data-constants";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
-import { createOrganizationMasterSetupStage, createOrganizationMerchandisingStarterMasters, deleteOrganizationMasterSetupSection, type OrganizationMasterSetupRecord } from "@/lib/services/master-data/organization-master-setup-service";
+import { createOrganizationMasterSetupSection, createOrganizationMasterSetupStage, createOrganizationMerchandisingStarterMasters, deleteOrganizationMasterSetupSection, type OrganizationMasterSetupRecord } from "@/lib/services/master-data/organization-master-setup-service";
 import { getOrganizationMasterSetupDefinitions, getOrganizationMasterSetupFields, type OrganizationMasterSetupStage } from "@/lib/master-data/organization-master-setup-stages";
 import OrganizationMasterSetupForm from "./organization-master-setup-form";
-
-const BULK_SETUP_MODULE_KEYS = new Set([
-  "color",
-  "currency-type",
-  "entity",
-  "merchandiser",
-  "pre-order-checklist",
-  "process-master",
-  "product-master",
-  "raw-material-type",
-  "size",
-]);
 
 function getSetupPagePath(workspaceId: string, organizationId: string) {
   return `/dashboard/${workspaceId}/organizations/${organizationId}/settings/master-data/organization-master-setup`;
@@ -71,15 +59,18 @@ async function submitOrganizationMasterSetup(formData: FormData) {
   }
   const setupModule = String(formData.get("setupModule") ?? "").trim();
   const isWorkbookUpload = formData.get("workbookUpload") === "1";
+  const allowedKeys = new Set(getOrganizationMasterSetupDefinitions(input.stage).map((definition) => definition.key));
   if (setupModule) {
+    if (!allowedKeys.has(setupModule)) {
+      redirect(`${pagePath}?step=${input.stage}&error=${encodeURIComponent("This master section does not belong to the selected step.")}`);
+    }
     input.records = input.records.filter((record) => record.moduleKey === setupModule);
     if (input.records.length === 0) {
       redirect(`${pagePath}?step=${input.stage}&error=${encodeURIComponent("Enter at least one value for this master.")}`);
     }
   } else if (!isWorkbookUpload) {
-    input.records = input.records.filter((record) => !BULK_SETUP_MODULE_KEYS.has(record.moduleKey));
+    redirect(`${pagePath}?step=${input.stage}&error=${encodeURIComponent("Save values using their section button, or upload a completed workbook.")}`);
   }
-  const allowedKeys = new Set(getOrganizationMasterSetupDefinitions(input.stage).map((definition) => definition.key));
   if (input.records.some((record) => !record || !allowedKeys.has(record.moduleKey))) {
     redirect(`${pagePath}?step=${input.stage}&error=${encodeURIComponent("The workbook contains a master that does not belong to this step.")}`);
   }
@@ -88,7 +79,15 @@ async function submitOrganizationMasterSetup(formData: FormData) {
   const organization = await getOrganizationForUser(user.id, organizationId);
   if (!organization) notFound();
   await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
-  try { await createOrganizationMasterSetupStage(organization.id, input.records); } catch (error) { redirect(`${pagePath}?step=${input.stage}&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to create master records.")}`); }
+  try {
+    if (setupModule) {
+      await createOrganizationMasterSetupSection(organization.id, input.records, setupModule);
+    } else {
+      await createOrganizationMasterSetupStage(organization.id, input.records);
+    }
+  } catch (error) {
+    redirect(`${pagePath}?step=${input.stage}&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to create master records.")}`);
+  }
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data`);
   revalidatePath(pagePath);
   redirect(`${pagePath}?step=${input.stage}&saved=1`);

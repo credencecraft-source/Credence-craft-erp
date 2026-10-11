@@ -97,22 +97,14 @@ function initialBulkInputs(
 }
 
 function SubmitButton({
-  activeStage,
   workbookUploaded,
 }: {
-  activeStage: "independent" | "related" | "third";
   workbookUploaded: boolean;
 }) {
   const { pending } = useFormStatus();
   return (
-    <Button type="submit" name="workbookUpload" value={workbookUploaded ? "1" : "0"} size="lg" disabled={pending}>
-      {pending
-        ? "Saving..."
-        : workbookUploaded
-          ? "Create Uploaded Masters"
-        : activeStage === "third"
-          ? "Save and Complete"
-          : "Save and Create Master"}
+    <Button type="submit" name="workbookUpload" value="1" size="lg" disabled={!workbookUploaded || pending}>
+      {pending ? "Saving..." : "Create Uploaded Masters"}
     </Button>
   );
 }
@@ -766,20 +758,23 @@ export default function OrganizationMasterSetupForm({
                   <SectionSubmitButton moduleKey={definition.key} label={definition.label} />
                 </div>
               ) : (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => addRecord(definition)}
-                >
-                  Add {definition.label}
-                </Button>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => addRecord(definition)}
+                  >
+                    Add {definition.label}
+                  </Button>
+                  <SectionSubmitButton moduleKey={definition.key} label={definition.label} />
+                </div>
               )}
             </Card>
           );
         })
       )}
       <div className="flex justify-end">
-        <SubmitButton activeStage={activeStage} workbookUploaded={workbookUploaded} />
+        <SubmitButton workbookUploaded={workbookUploaded} />
       </div>
     </form>
   );
