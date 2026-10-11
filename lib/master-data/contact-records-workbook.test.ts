@@ -146,7 +146,7 @@ describe("contact master workbook", () => {
           "IFSC Code", "Bank Name", "Branch", "Default Bank Account",
         ],
         [
-          "Example Textiles", "Example", "ops@example.com", "9876543210", "customer / vendor",
+          "Example Textiles", "Example", "ops@example.com", "9876543210", "customer & vendor",
           "27AAPFU0939F1ZV", "Example Textiles", "REGULAR", "ACTIVE",
           "Head Office", "BOTH", "1 Market Road", "", "Mumbai", "Maharashtra", "27",
           "400001", "IN", "", "", "Example Textiles", "12345678",
@@ -200,6 +200,33 @@ describe("contact master workbook", () => {
 
     expect(result.contacts).toEqual([]);
     expect(result.failures[0].message).toContain("Address state code must match");
+  });
+
+  it("allows importing a contact without a role and reports no role-validation error", async () => {
+    const result = await parseContactWorkbook(workbookFile([{
+      name: "Contacts",
+      rows: [
+        ["Legal Name *", "Roles *"],
+        ["Example Textiles", ""],
+      ],
+    }]));
+
+    expect(result.failures).toEqual([]);
+    expect(result.contacts).toHaveLength(1);
+    expect(result.contacts[0].input.roles).toEqual([]);
+  });
+
+  it("allows importing an address without a city", async () => {
+    const result = await parseContactWorkbook(workbookFile([{
+      name: "Contacts",
+      rows: [
+        ["Legal Name *", "GSTIN", "Address Use", "Address Line 1", "State", "State Code", "PIN Code"],
+        ["Example Textiles", "27AAPFU0939F1ZV", "BOTH", "1 Market Road", "Maharashtra", "27", "400001"],
+      ],
+    }]));
+
+    expect(result.failures).toEqual([]);
+    expect(result.contacts[0].input.addresses[0].city).toBe("");
   });
 
   it("exports only one worksheet, keeps account numbers masked, and provides inline dropdowns", async () => {

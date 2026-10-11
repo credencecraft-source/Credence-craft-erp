@@ -107,4 +107,34 @@ describe("contact master numbering", () => {
     });
     expect(mocks.tx.contact.create.mock.calls.map(([args]) => args.data.code)).toEqual(["CT1", "CT2"]);
   });
+
+  it("creates a contact without role assignments when no role is provided", async () => {
+    mocks.tx.contact.findFirst.mockImplementation(() => ({
+      id: "contact-CT1",
+      code: "CT1",
+      legal_name: "ACME APPAREL",
+      display_name: null,
+      email: null,
+      phone: null,
+      is_active: true,
+      created_at: new Date(),
+      updated_at: new Date(),
+      roles: [],
+      tax_registrations: [],
+      addresses: [],
+      bank_accounts: [],
+    }));
+
+    const contact = await createContact("org-1", "user-1", {
+      legalName: "Acme Apparel",
+      roles: [],
+      taxRegistrations: [],
+      addresses: [],
+      bankAccounts: [],
+    });
+
+    expect(contact.code).toBe("CT1");
+    expect(mocks.tx.contactRoleDefinition.findMany).not.toHaveBeenCalled();
+    expect(mocks.tx.contactRoleAssignment.createMany).not.toHaveBeenCalled();
+  });
 });

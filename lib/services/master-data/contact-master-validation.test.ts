@@ -64,6 +64,23 @@ describe("contact master validation", () => {
     expect(contact.addresses?.[0].stateCode).toBe("27");
   });
 
+  it("allows creating a contact before assigning its roles", () => {
+    const contact = parseContactInput(baseContact({ roles: [] }));
+
+    expect(contact.roles).toEqual([]);
+  });
+
+  it("allows an address without a city", () => {
+    const contact = parseContactInput(baseContact({
+      addresses: [{
+        ...baseContact().addresses[0],
+        city: "",
+      }],
+    }));
+
+    expect(contact.addresses?.[0].city).toBe("");
+  });
+
   it("does not require a user-supplied contact code and rejects code changes", () => {
     expect(parseContactInput(baseContact({ code: undefined })).code).toBeUndefined();
     expect(parseContactInput(baseContact()).code).toBeUndefined();

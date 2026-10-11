@@ -133,11 +133,12 @@ async function saveDetails(
   partial: boolean,
 ) {
   if (input.roles !== undefined) {
-    if (input.roles.length === 0) throw new ContactValidationError("Assign at least one role to the contact.");
-    const roles = await tx.contactRoleDefinition.findMany({
-      where: { code: { in: input.roles }, is_active: true },
-      select: { code: true },
-    });
+    const roles = input.roles.length
+      ? await tx.contactRoleDefinition.findMany({
+        where: { code: { in: input.roles }, is_active: true },
+        select: { code: true },
+      })
+      : [];
     if (roles.length !== input.roles.length) {
       throw new ContactValidationError("One or more selected contact roles are not available.");
     }

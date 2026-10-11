@@ -13,7 +13,7 @@ const CONTACT_COLUMNS = [
   "Display Name",
   "Email",
   "Phone",
-  "Roles * (separate with semicolons)",
+  "Roles (optional; separate with semicolons)",
   "GSTIN",
   "GST Registered Legal Name",
   "GST Registration Type",

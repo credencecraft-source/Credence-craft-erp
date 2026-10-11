@@ -123,9 +123,12 @@ function nonBlankRows(rows: SheetRow[]) {
 
 function normalizeRole(role: string) {
   return normalizeUppercase(role.trim())
-    .replace(/[\s-]+/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_|_$/g, "");
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function splitRoles(value: string) {
+  return value.split(/[;,/|&+]+|\s+AND\s+/i).map((role) => role.trim()).filter(Boolean);
 }
 
 function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImportResult {
@@ -169,13 +172,14 @@ function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImpor
     const roleCorrections: ContactWorkbookImportResult["corrections"] = [];
 
     try {
-      const roles = field(row, "Roles").split(/[;,/|]+/).map((role) => role.trim()).filter(Boolean).map((role) => {
+      const roles = splitRoles(field(row, "Roles")).map((role) => {
         const corrected = normalizeRole(role);
         if (corrected !== role) {
           roleCorrections.push({ contactKey, field: "Roles", original: role, corrected });
         }
         return corrected;
       });
+      corrections.push(...roleCorrections);
       const taxRegistrations = gstin ? [{
         gstin,
         legalName: field(row, "GST Registered Legal Name") || legalName,
@@ -217,7 +221,6 @@ function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImpor
         bankAccounts,
       }) as ContactInput;
       contacts.push({ contactKey, input });
-      corrections.push(...roleCorrections);
     } catch (error) {
       failures.push({
         contactKey,

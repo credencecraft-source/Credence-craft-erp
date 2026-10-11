@@ -165,7 +165,7 @@ export default function ContactMasterExcelActions({
           <div>
             <h2 className="text-base font-semibold">Import Unified Contact Master</h2>
             <p className="mt-2 text-sm text-slate-600">
-              Use the single-sheet template with one contact per row. Validate first to normalize role capitalization, spaces, hyphens, and separators; spelling is not guessed, and roles must match an active role code. Review row errors before creating contacts. Contact Codes are generated on save, and full bank account numbers are never included in exports.
+              Use the single-sheet template with one contact per row. Validate first to normalize role capitalization, spaces, hyphens, and separators; spelling is not guessed, and any role entered must match an active role code. Roles are optional and can be assigned later. Review row errors before creating contacts. Contact Codes are generated on save, and full bank account numbers are never included in exports.
             </p>
           </div>
           <Input

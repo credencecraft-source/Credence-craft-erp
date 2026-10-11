@@ -173,7 +173,7 @@ function parseAddress(value: unknown): ContactAddressInput {
     usage,
     addressLine1: cleanText(row.addressLine1, "Address line 1", 200, true) ?? "",
     addressLine2: cleanText(row.addressLine2, "Address line 2", 200),
-    city: cleanText(row.city, "City", 100, true) ?? "",
+    city: cleanText(row.city, "City", 100) ?? "",
     stateName: cleanText(row.stateName, "State", 100, true) ?? "",
     stateCode,
     postalCode,
@@ -282,7 +282,6 @@ export function parseContactInput(value: unknown, partial = false): Partial<Cont
 
   if (!partial) {
     if (!output.legalName) throw new ContactValidationError("Contact legal name is required.");
-    if (!output.roles?.length) throw new ContactValidationError("Assign at least one role to the contact.");
     output.isActive = output.isActive ?? true;
     output.taxRegistrations = output.taxRegistrations ?? [];
     output.addresses = output.addresses ?? [];
