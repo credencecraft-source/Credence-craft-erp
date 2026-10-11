@@ -3,16 +3,24 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, UserRound } from "lucide-react";
+import { Plus } from "lucide-react";
 
+import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import Card from "@/components/ui/Card";
-import Input from "@/components/ui/Input";
-import Table from "@/components/ui/Table";
 import ContactMasterExcelActions from "@/components/master-data/contact-master-excel-actions";
+import { ReportGrid } from "@/components/reports/report-grid-display";
 import type { ContactWorkbookRecord } from "@/lib/master-data/contact-records-workbook";
 
 type ContactRecord = ContactWorkbookRecord;
+
+const CONTACT_REPORT_FIELDS = [
+  { key: "contact", label: "Contact" },
+  { key: "roles", label: "Roles" },
+  { key: "gstins", label: "GSTINs" },
+  { key: "addresses_banks", label: "Addresses / banks" },
+  { key: "status", label: "Status" },
+  { key: "actions", label: "Actions" },
+];
 
 const ROLE_LABELS: Record<string, string> = {
   CUSTOMER: "Customer",
@@ -26,6 +34,7 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
   const router = useRouter();
   const [contacts, setContacts] = useState<ContactRecord[]>([]);
   const [search, setSearch] = useState("");
+  const [visibleFields, setVisibleFields] = useState<string[]>(CONTACT_REPORT_FIELDS.map(({ key }) => key));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -90,74 +99,94 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
       {error ? <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-danger)]" role="alert">{error}</p> : null}
       {notice ? <p className="rounded-xl border border-[var(--erp-success)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-success)]" role="status">{notice}</p> : null}
 
-      <Card className="space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <Input
-              label="Search contacts"
-              value={search}
-              onChange={(event) => setSearch(event.currentTarget.value)}
-              placeholder="Search by code, name, or GSTIN"
-              aria-label="Search contacts by code, name, or GSTIN"
-            />
-          </div>
-          <ContactMasterExcelActions
-            contacts={workbookContacts}
-            endpoint={endpoint}
-          />
-        </div>
-        {loading ? (
-          <p className="py-6 text-center text-sm text-slate-500" role="status">Loading contacts…</p>
-        ) : contacts.length === 0 ? (
-          <div className="py-8 text-center">
-            <UserRound aria-hidden="true" className="mx-auto h-8 w-8 text-slate-400" />
-            <p className="mt-3 text-sm font-medium text-[var(--erp-text)]">{search ? "No matching contacts." : "No contacts yet."}</p>
-            {!search ? <p className="mt-1 text-sm text-slate-500">Create a contact to start assigning business roles and tax registrations.</p> : null}
-          </div>
-        ) : (
-          <Table>
-            <thead className="bg-[var(--erp-surface-soft)] text-xs uppercase tracking-wide text-slate-600">
-              <tr>
-                <th className="px-4 py-3">Contact</th>
-                <th className="px-4 py-3">Roles</th>
-                <th className="px-4 py-3">GSTINs</th>
-                <th className="px-4 py-3">Addresses / banks</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3"><span className="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--erp-border)]">
-              {contacts.map((contact) => (
-                <tr key={contact.id}>
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`${basePath}/${encodeURIComponent(contact.id)}`}
-                      className="rounded font-semibold text-[var(--erp-text)] underline-offset-4 hover:text-[var(--erp-brand)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)]"
+      <ReportGrid
+        title="Contact records"
+        records={contacts}
+        fields={CONTACT_REPORT_FIELDS}
+        visibleFields={visibleFields}
+        onVisibleFieldsChange={(fields) => setVisibleFields(fields.map(String))}
+        storageKey={`contact-master-report-columns-${organizationId}`}
+        rowIdSelector={(contact) => contact.id}
+        selectedIds={[]}
+        selectable={false}
+        onRowClick={(contactId) => router.push(`${basePath}/${encodeURIComponent(contactId)}`)}
+        toolbarActions={<ContactMasterExcelActions contacts={workbookContacts} endpoint={endpoint} />}
+        onSearchQueryChange={setSearch}
+        getSearchValue={(fieldKey, contact) => {
+          switch (fieldKey) {
+            case "contact":
+              return `${contact.code} ${contact.display_name ?? ""} ${contact.legal_name}`;
+            case "roles":
+              return contact.roles.map(({ role_code }) => ROLE_LABELS[role_code] ?? role_code).join(" ");
+            case "gstins":
+              return contact.tax_registrations.map(({ gstin }) => gstin).join(" ");
+            case "addresses_banks":
+              return `${contact.addresses.length} ${contact.bank_accounts.length}`;
+            case "status":
+              return contact.is_active ? "active" : "inactive";
+            default:
+              return "";
+          }
+        }}
+        renderCell={(fieldKey, contact) => {
+          switch (fieldKey) {
+            case "contact":
+              return (
+                <div>
+                  <span className="font-semibold">{contact.display_name || contact.legal_name}</span>
+                  <span className="mt-1 block text-xs text-slate-500">{contact.code}</span>
+                </div>
+              );
+            case "roles":
+              return contact.roles.map(({ role_code }) => ROLE_LABELS[role_code] ?? role_code).join(", ") || "—";
+            case "gstins":
+              return contact.tax_registrations.map(({ gstin }) => gstin).join(", ") || "—";
+            case "addresses_banks":
+              return `${contact.addresses.length} / ${contact.bank_accounts.length}`;
+            case "status":
+              return (
+                <Badge
+                  className={contact.is_active
+                    ? "border-[var(--erp-success)] bg-[var(--erp-success-soft)] text-[var(--erp-success)]"
+                    : "border-[var(--erp-border)] bg-[var(--erp-surface-soft)] text-slate-600"}
+                >
+                  {contact.is_active ? "Active" : "Inactive"}
+                </Badge>
+              );
+            case "actions":
+              return (
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      router.push(`${basePath}/${encodeURIComponent(contact.id)}`);
+                    }}
+                  >
+                    Open
+                  </Button>
+                  {contact.is_active ? (
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void deactivateContact(contact);
+                      }}
                     >
-                      {contact.display_name || contact.legal_name}
-                      <span className="mt-1 block text-xs font-normal text-slate-500">{contact.code}</span>
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-sm">{contact.roles.map(({ role_code }) => ROLE_LABELS[role_code] ?? role_code).join(", ") || "—"}</td>
-                  <td className="px-4 py-3 text-sm">{contact.tax_registrations.map(({ gstin }) => gstin).join(", ") || "—"}</td>
-                  <td className="px-4 py-3 text-sm">{contact.addresses.length} / {contact.bank_accounts.length}</td>
-                  <td className="px-4 py-3">
-                    <span className={contact.is_active ? "rounded-full border border-[var(--erp-success)] bg-[var(--erp-success-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--erp-success)]" : "rounded-full border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] px-2.5 py-1 text-xs font-semibold text-slate-600"}>
-                      {contact.is_active ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="outline" onClick={() => router.push(`${basePath}/${encodeURIComponent(contact.id)}`)}>Open</Button>
-                      {contact.is_active ? <Button size="sm" variant="destructive" onClick={() => void deactivateContact(contact)}>Deactivate</Button> : null}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </Card>
+                      Deactivate
+                    </Button>
+                  ) : null}
+                </div>
+              );
+            default:
+              return "";
+          }
+        }}
+        isLoading={loading}
+        emptyMessage={search ? "No matching contacts." : "No contacts yet. Create a contact to start assigning business roles and tax registrations."}
+      />
     </div>
   );
 }

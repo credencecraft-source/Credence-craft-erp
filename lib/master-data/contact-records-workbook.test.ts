@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import XlsxPopulate from "xlsx-populate";
 
 import { describe, expect, it } from "vitest";
 
@@ -119,7 +120,7 @@ describe("contact master workbook", () => {
     expect(maskedBankNumber.failures[0].message).toContain("full Account Number");
   });
 
-  it("never exports full bank account numbers and provides a blank import template", () => {
+  it("never exports full bank account numbers and provides dropdowns in populated and blank templates", async () => {
     const contact: ContactWorkbookRecord = {
       id: "contact-id",
       code: "CT1",
@@ -141,7 +142,8 @@ describe("contact master workbook", () => {
         is_default: true,
       }],
     };
-    const workbook = XLSX.read(createContactWorkbook([contact]), { type: "array" });
+    const populatedBytes = await createContactWorkbook([contact]);
+    const workbook = XLSX.read(populatedBytes, { type: "array" });
     const bankRows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets["Bank Accounts"], {
       header: 1,
       defval: "",
@@ -150,12 +152,33 @@ describe("contact master workbook", () => {
     expect(bankRows[1][2]).toBe("");
     expect(bankRows[1][3]).toBe("5678");
 
-    const templateWorkbook = XLSX.read(createContactWorkbook([]), { type: "array" });
+    const populatedWorkbook = await XlsxPopulate.fromDataAsync(populatedBytes);
+    expect(populatedWorkbook.sheet("Contacts").range("G2:G501").dataValidation()).toMatchObject({
+      type: "list",
+      formula1: "ContactRoles",
+    });
+    expect(populatedWorkbook.sheet("GST Registrations").range("D2:D501").dataValidation()).toMatchObject({
+      type: "list",
+      formula1: "RegistrationTypes",
+    });
+    expect(populatedWorkbook.sheet("Addresses").range("D2:D501").dataValidation()).toMatchObject({
+      type: "list",
+      formula1: "AddressUsages",
+    });
+
+    const templateBytes = await createContactWorkbook([]);
+    const templateWorkbook = XLSX.read(templateBytes, { type: "array" });
+    const populatedTemplateWorkbook = await XlsxPopulate.fromDataAsync(templateBytes);
     const contactsRows = XLSX.utils.sheet_to_json<unknown[]>(templateWorkbook.Sheets.Contacts, {
       header: 1,
       defval: "",
     });
-    expect(contactsRows).toHaveLength(1);
+    expect(contactsRows).toHaveLength(501);
     expect(contactsRows[0]).toContain("Contact Key");
+    expect(contactsRows.slice(1).every((row) => row.every((value) => value === ""))).toBe(true);
+    expect(populatedTemplateWorkbook.sheet("Contacts").range("G2:G501").dataValidation()).toMatchObject({
+      type: "list",
+      formula1: "ContactRoles",
+    });
   });
 });
