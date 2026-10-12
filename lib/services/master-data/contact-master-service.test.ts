@@ -29,7 +29,7 @@ const mocks = vi.hoisted(() => {
     contactRoleAssignment: { findMany: vi.fn(), createMany: vi.fn() },
     contactTaxRegistration: { findMany: vi.fn() },
     contactAddress: { findMany: vi.fn(), updateMany: vi.fn() },
-    contactBankAccount: { findMany: vi.fn(), updateMany: vi.fn() },
+    contactBankAccount: { findMany: vi.fn(), updateMany: vi.fn(), create: vi.fn(() => ({ id: "bank-1" })) },
     masterVendor: { findFirst: vi.fn() },
     masterBuyer: { findFirst: vi.fn(), count: vi.fn(), create: vi.fn() },
   };
@@ -136,5 +136,33 @@ describe("contact master numbering", () => {
     expect(contact.code).toBe("CT1");
     expect(mocks.tx.contactRoleDefinition.findMany).not.toHaveBeenCalled();
     expect(mocks.tx.contactRoleAssignment.createMany).not.toHaveBeenCalled();
+  });
+
+  it("creates a contact with a blank name and incomplete bank details", async () => {
+    await createContact("org-1", "user-1", {
+      legalName: "",
+      roles: [],
+      taxRegistrations: [],
+      addresses: [],
+      bankAccounts: [{
+        accountHolderName: "",
+        ifscCode: "",
+        bankName: "",
+        isDefault: false,
+      }],
+    });
+
+    expect(mocks.tx.contact.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ legal_name: "" }),
+    }));
+    expect(mocks.tx.contactBankAccount.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        account_number_encrypted: undefined,
+        account_number_last4: "",
+        account_holder_name: "",
+        ifsc_code: "",
+        bank_name: "",
+      }),
+    }));
   });
 });

@@ -87,10 +87,11 @@ import {
 } from "@/lib/services/platform/platform-lead-service";
 import {
   PLATFORM_LEAD_DEAD_STAGES,
+  PLATFORM_LEAD_NOT_INTERESTED_STAGES,
   PLATFORM_LEAD_STAGES,
   PLATFORM_LEAD_THIRD_PARTY_STAGES,
   PLATFORM_LEAD_VERIFIED_INTERESTED_STAGES,
-  PLATFORM_LEAD_VERIFIED_NOT_INTERESTED_STAGES,
+  PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES,
   PLATFORM_LEAD_VERIFIED_STAGES,
 } from "@/lib/services/platform/platform-lead-constants";
 
@@ -111,10 +112,11 @@ describe("platform lead management", () => {
     requirePlatformSessionAdminMock.mockResolvedValue({ id: "admin-1" });
   });
 
-  it("places 3-Dead after Potential Dead in 3rd Party, not the Dead tab", () => {
+  it("places 3-Dead after Potential Dead in Not Interested, not the Dead tab", () => {
     expect(PLATFORM_LEAD_STAGES.indexOf("3-Dead"))
       .toBe(PLATFORM_LEAD_STAGES.indexOf("Potential Dead") + 1);
-    expect(PLATFORM_LEAD_THIRD_PARTY_STAGES).toContain("3-Dead");
+    expect(PLATFORM_LEAD_NOT_INTERESTED_STAGES).toContain("3-Dead");
+    expect(PLATFORM_LEAD_THIRD_PARTY_STAGES).not.toContain("3-Dead");
     expect(PLATFORM_LEAD_DEAD_STAGES).not.toContain("3-Dead");
   });
 
@@ -123,20 +125,43 @@ describe("platform lead management", () => {
       .toBe(PLATFORM_LEAD_STAGES.indexOf("Demo Attended") + 1);
   });
 
-  it("groups verified statuses into interested and not-interested tabs", () => {
+  it("groups call follow-up statuses after Verification and before Interested", () => {
+    expect(PLATFORM_LEAD_STAGES.indexOf("Need To Call"))
+      .toBe(PLATFORM_LEAD_STAGES.indexOf("Verification") + 1);
+    expect(PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES).toEqual([
+      "Need To Call",
+      "Not Picked",
+      "Call Back Later",
+    ]);
+    expect(PLATFORM_LEAD_STAGES.indexOf("Interested For Demo"))
+      .toBe(PLATFORM_LEAD_STAGES.indexOf("Call Back Later") + 1);
+    for (const stage of PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES) {
+      expect(PLATFORM_LEAD_VERIFIED_STAGES).toContain(stage);
+      expect(PLATFORM_LEAD_THIRD_PARTY_STAGES).toContain(stage);
+    }
+  });
+
+  it("keeps not-interested statuses separate from third-party and verified leads", () => {
     expect(PLATFORM_LEAD_VERIFIED_INTERESTED_STAGES).toEqual([
       "Interested For Demo",
       "Demo Booked",
       "Demo Attended",
       "2-Potential",
     ]);
-    expect(PLATFORM_LEAD_VERIFIED_NOT_INTERESTED_STAGES).toEqual([
+    expect(PLATFORM_LEAD_NOT_INTERESTED_STAGES).toEqual([
       "Potential Dead",
       "3-Dead",
       "Testing WhatsApp msg",
     ]);
-    expect(PLATFORM_LEAD_VERIFIED_STAGES).toContain("Verification");
-    expect(PLATFORM_LEAD_VERIFIED_STAGES).toHaveLength(8);
+    expect(PLATFORM_LEAD_VERIFIED_STAGES).toEqual([
+      "Verification",
+      ...PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES,
+      ...PLATFORM_LEAD_VERIFIED_INTERESTED_STAGES,
+    ]);
+    for (const stage of PLATFORM_LEAD_NOT_INTERESTED_STAGES) {
+      expect(PLATFORM_LEAD_VERIFIED_STAGES).not.toContain(stage);
+      expect(PLATFORM_LEAD_THIRD_PARTY_STAGES).not.toContain(stage);
+    }
   });
 
   it("updates a lead status and audits it in a short atomic batch", async () => {
@@ -176,12 +201,15 @@ describe("platform lead management", () => {
     findLeadStagesMock.mockResolvedValue([
       { id: "lead-1", stage: "1-new" },
       { id: "lead-2", stage: "Verification" },
+      { id: "lead-3", stage: "Need To Call" },
+      { id: "lead-4", stage: "Not Picked" },
+      { id: "lead-5", stage: "Call Back Later" },
     ]);
     updateLeadStagesMock.mockResolvedValue({ count: 1 });
-    createAuditEventsMock.mockResolvedValue({ count: 2 });
+    createAuditEventsMock.mockResolvedValue({ count: 5 });
 
-    await expect(movePlatformLeadStages(["lead-1", "lead-2"], "NEXT")).resolves.toEqual({
-      updatedCount: 2,
+    await expect(movePlatformLeadStages(["lead-1", "lead-2", "lead-3", "lead-4", "lead-5"], "NEXT")).resolves.toEqual({
+      updatedCount: 5,
       skippedCount: 0,
     });
     expect(updateLeadStagesMock).toHaveBeenNthCalledWith(1, {
@@ -190,6 +218,18 @@ describe("platform lead management", () => {
     });
     expect(updateLeadStagesMock).toHaveBeenNthCalledWith(2, {
       where: { id: { in: ["lead-2"] }, stage: "Verification" },
+      data: { stage: "Need To Call" },
+    });
+    expect(updateLeadStagesMock).toHaveBeenNthCalledWith(3, {
+      where: { id: { in: ["lead-3"] }, stage: "Need To Call" },
+      data: { stage: "Not Picked" },
+    });
+    expect(updateLeadStagesMock).toHaveBeenNthCalledWith(4, {
+      where: { id: { in: ["lead-4"] }, stage: "Not Picked" },
+      data: { stage: "Call Back Later" },
+    });
+    expect(updateLeadStagesMock).toHaveBeenNthCalledWith(5, {
+      where: { id: { in: ["lead-5"] }, stage: "Call Back Later" },
       data: { stage: "Interested For Demo" },
     });
     expect(createAuditEventsMock).toHaveBeenCalledWith({
@@ -200,7 +240,19 @@ describe("platform lead management", () => {
         }),
         expect.objectContaining({
           entity_id: "lead-2",
-          details: { previousStage: "Verification", stage: "Interested For Demo", direction: "NEXT" },
+          details: { previousStage: "Verification", stage: "Need To Call", direction: "NEXT" },
+        }),
+        expect.objectContaining({
+          entity_id: "lead-3",
+          details: { previousStage: "Need To Call", stage: "Not Picked", direction: "NEXT" },
+        }),
+        expect.objectContaining({
+          entity_id: "lead-4",
+          details: { previousStage: "Not Picked", stage: "Call Back Later", direction: "NEXT" },
+        }),
+        expect.objectContaining({
+          entity_id: "lead-5",
+          details: { previousStage: "Call Back Later", stage: "Interested For Demo", direction: "NEXT" },
         }),
       ],
     });
@@ -221,11 +273,11 @@ describe("platform lead management", () => {
     expect(updateLeadStagesMock).toHaveBeenCalledOnce();
     expect(updateLeadStagesMock).toHaveBeenCalledWith({
       where: { id: { in: ["lead-2"] }, stage: "Interested For Demo" },
-      data: { stage: "Verification" },
+      data: { stage: "Call Back Later" },
     });
   });
 
-  it("moves selected New leads to Interested or Fraud and audits the change", async () => {
+  it("approves selected New leads into Verified and can mark New leads as fraud", async () => {
     findLeadStagesMock.mockResolvedValue([
       { id: "lead-1", stage: "1-new" },
       { id: "lead-2", stage: "1-new" },
@@ -233,24 +285,37 @@ describe("platform lead management", () => {
     updateLeadStagesMock.mockResolvedValue({ count: 2 });
     createAuditEventsMock.mockResolvedValue({ count: 2 });
 
-    await expect(updateNewPlatformLeadStages(["lead-1", "lead-2"], "Interested For Demo"))
+    await expect(updateNewPlatformLeadStages(["lead-1", "lead-2"], "Verification"))
       .resolves.toEqual({ updatedCount: 2 });
     expect(updateLeadStagesMock).toHaveBeenCalledWith({
       where: { id: { in: ["lead-1", "lead-2"] }, stage: "1-new" },
-      data: { stage: "Interested For Demo" },
+      data: { stage: "Verification" },
     });
     expect(createAuditEventsMock).toHaveBeenCalledWith({
       data: expect.arrayContaining([
         expect.objectContaining({
           entity_id: "lead-1",
-          details: { previousStage: "1-new", stage: "Interested For Demo" },
+          details: { previousStage: "1-new", stage: "Verification" },
         }),
       ]),
+    });
+
+    vi.clearAllMocks();
+    requirePlatformSessionAdminMock.mockResolvedValue({ id: "admin-1" });
+    findLeadStagesMock.mockResolvedValue([{ id: "lead-3", stage: "1-new" }]);
+    updateLeadStagesMock.mockResolvedValue({ count: 1 });
+    createAuditEventsMock.mockResolvedValue({ count: 1 });
+
+    await expect(updateNewPlatformLeadStages(["lead-3"], "MARK AS FROUD"))
+      .resolves.toEqual({ updatedCount: 1 });
+    expect(updateLeadStagesMock).toHaveBeenCalledWith({
+      where: { id: { in: ["lead-3"] }, stage: "1-new" },
+      data: { stage: "MARK AS FROUD" },
     });
   });
 
   it("rejects invalid target statuses and leads that are no longer New", async () => {
-    await expect(updateNewPlatformLeadStages(["lead-1"], "Paid"))
+    await expect(updateNewPlatformLeadStages(["lead-1"], "Interested For Demo"))
       .rejects.toThrow("Select a valid status for new leads.");
     findLeadStagesMock.mockResolvedValue([{ id: "lead-1", stage: "Verification" }]);
     await expect(updateNewPlatformLeadStages(["lead-1"], "MARK AS FROUD"))

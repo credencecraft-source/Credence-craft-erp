@@ -179,7 +179,7 @@ export default function WorkOrderGrnCreatePage() {
         <form onSubmit={(event) => void submit(event)} className="space-y-4">
           <Card className="space-y-4">
             <h2 className="text-base font-semibold text-slate-900">Work Order GRN Header</h2>
-            <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <Select
                 label="Work Order No"
                 value={selectedWorkOrderId}
@@ -209,13 +209,15 @@ export default function WorkOrderGrnCreatePage() {
                 required
                 disabled={saving}
               />
-              <Input
-                label="GRN Notes"
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                maxLength={1000}
-                disabled={saving}
-              />
+              <div className="xl:col-span-2">
+                <Input
+                  label="GRN Notes"
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                  maxLength={1000}
+                  disabled={saving}
+                />
+              </div>
             </div>
             {nextCursor ? (
               <Button type="button" variant="secondary" size="sm" disabled={loadingMore || saving} onClick={() => void loadWorkOrders(nextCursor)}>

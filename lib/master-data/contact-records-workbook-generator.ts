@@ -9,7 +9,7 @@ import type { ContactWorkbookRecord } from "@/lib/master-data/contact-records-wo
 
 const CONTACT_TEMPLATE_ROWS = 200;
 const CONTACT_COLUMNS = [
-  "Legal Name *",
+  "Legal Name",
   "Display Name",
   "Email",
   "Phone",

@@ -310,7 +310,7 @@ if ($erpResponse === false || $erpStatus < 200 || $erpStatus >= 300) {
                 <ul className="space-y-2">
                   {data.machines.map((machine) => (
                     <li key={machine.id} className="rounded-lg border border-[var(--erp-border)] p-3">
-                      <form action={saveMachineAction} className="grid min-w-0 gap-3 sm:grid-cols-2">
+                      <form action={saveMachineAction} className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                         <input type="hidden" name="machineId" value={machine.id} />
                         <Input label="Machine serial number" name="serialNumber" required maxLength={100} defaultValue={machine.serialNumber} />
                         <Select label="Entity" name="entityId" required options={entityOptions} defaultValue={machine.entityId} />

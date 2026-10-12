@@ -7,9 +7,9 @@ import {
 } from "@/lib/services/master-data/contact-master-validation";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
 
-const MAX_WORKBOOK_BYTES = 10 * 1024 * 1024;
-const MAX_CONTACT_ROWS = 200;
-const MAX_RELATED_ROWS = 2000;
+const MAX_WORKBOOK_BYTES = 50 * 1024 * 1024;
+export const MAX_CONTACT_ROWS = 100_000;
+const MAX_RELATED_ROWS = 300_000;
 
 export type ContactWorkbookRecord = {
   id: string;
@@ -133,7 +133,7 @@ function splitRoles(value: string) {
 
 function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImportResult {
   const rows = nonBlankRows(readSheet(workbook, ["Contacts"]));
-  if (!rows.length) throw new Error("Enter at least one contact name and role on the Contacts sheet.");
+  if (!rows.length) throw new Error("Enter at least one contact row on the Contacts sheet.");
   if (rows.length > MAX_CONTACT_ROWS) throw new Error(`A workbook may contain at most ${MAX_CONTACT_ROWS} contacts.`);
 
   const contacts: ContactWorkbookImportResult["contacts"] = [];
@@ -234,7 +234,7 @@ function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImpor
 
 export async function parseContactWorkbook(file: File): Promise<ContactWorkbookImportResult> {
   if (!/\.xlsx$/i.test(file.name)) throw new Error("Choose an .xlsx contact workbook.");
-  if (file.size === 0 || file.size > MAX_WORKBOOK_BYTES) throw new Error("Contact workbooks must be between 1 byte and 10 MB.");
+  if (file.size === 0 || file.size > MAX_WORKBOOK_BYTES) throw new Error("Contact workbooks must be between 1 byte and 50 MB.");
 
   let workbook: XLSX.WorkBook;
   try {
@@ -251,7 +251,7 @@ export async function parseContactWorkbook(file: File): Promise<ContactWorkbookI
   const registrationRows = nonBlankRows(readSheet(workbook, ["GST Registrations"]));
   const addressRows = nonBlankRows(readSheet(workbook, ["Addresses"]));
   const bankRows = nonBlankRows(readSheet(workbook, ["Bank Accounts"]));
-  if (!contactRows.length) throw new Error("Enter at least one contact name and role on the Contacts sheet.");
+  if (!contactRows.length) throw new Error("Enter at least one contact row on the Contacts sheet.");
   if (contactRows.length > MAX_CONTACT_ROWS) throw new Error(`A workbook may contain at most ${MAX_CONTACT_ROWS} contacts.`);
   if (registrationRows.length + addressRows.length + bankRows.length > MAX_RELATED_ROWS) {
     throw new Error(`A workbook may contain at most ${MAX_RELATED_ROWS} related rows.`);
@@ -348,7 +348,6 @@ export async function parseContactWorkbook(file: File): Promise<ContactWorkbookI
 
   appendRelated(bankRows, "Bank account", (row) => {
     const accountNumber = field(row, "Account Number");
-    if (!accountNumber) throw new Error("Full Account Number is required for a new bank account.");
     if (/^[•*xX]+/.test(accountNumber)) throw new Error("Enter the full Account Number; masked values cannot be imported.");
     return {
       accountHolderName: field(row, "Account Holder Name"),

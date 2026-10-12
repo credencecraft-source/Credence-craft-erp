@@ -134,10 +134,10 @@ export default async function GoldSealDetailPage({
 
       <section id="create-variant" className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-bold text-slate-900">Create Variant</h2>
-        <form action={createGoldSealVariant} className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <form action={createGoldSealVariant} className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <input type="hidden" name="workspaceId" value={workspaceId} /><input type="hidden" name="organizationId" value={organizationId} /><input type="hidden" name="goldSealValueId" value={goldSeal.value_id} />
           <Field name="variant" label="Variant Name" required /><Field name="variant_code" label="Variant Code" required /><Field name="color" label="Color" /><Field name="size" label="Size" /><Field name="sku" label="SKU" /><Field name="barcode" label="Barcode" />
-          <div className="sm:col-span-2 lg:col-span-3"><Button type="submit" className="rounded-lg px-4 py-2 text-sm font-semibold">Save Variant</Button></div>
+          <div className="sm:col-span-2 xl:col-span-4"><Button type="submit" className="rounded-lg px-4 py-2 text-sm font-semibold">Save Variant</Button></div>
         </form>
       </section>
     </main>

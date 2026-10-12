@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   const transaction = {
-    platformLead: { findUnique: vi.fn() },
+    platformLead: { findUnique: vi.fn(), updateMany: vi.fn() },
     supportTicket: {
       create: vi.fn(),
       findUnique: vi.fn(),
@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => {
     },
     ticketMessage: { create: vi.fn() },
     auditEvent: { create: vi.fn() },
-    platformAuditEvent: { create: vi.fn() },
+    platformAuditEvent: { create: vi.fn(), createMany: vi.fn() },
   };
   return {
     transaction,
@@ -67,6 +67,7 @@ beforeEach(() => {
   mocks.prisma.supportTicket.findUnique.mockResolvedValue({ id: "ticket-id", organization_id: "internal-org-id" });
   mocks.prisma.organization.findFirst.mockResolvedValue({ id: "internal-org-id" });
   mocks.transaction.platformLead.findUnique.mockResolvedValue({ id: "lead-id", name: "Taylor Reed" });
+  mocks.transaction.platformLead.updateMany.mockResolvedValue({ count: 1 });
   mocks.prisma.platformLead.findUnique.mockResolvedValue({ id: "lead-id", name: "Taylor Reed" });
   mocks.prisma.supportTicket.create.mockResolvedValue({ id: "ticket-id" });
   mocks.prisma.platformAuditEvent.create.mockResolvedValue({ id: "audit-id" });
@@ -247,6 +248,70 @@ describe("support ticket access and internal notes", () => {
       callbackTime: "",
     })).rejects.toThrow("Callback date and time are required.");
     expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("schedules a lead callback and moves the lead to Call Back Later atomically", async () => {
+    mocks.transaction.platformLead.findUnique.mockResolvedValue({
+      id: "lead-id",
+      stage: "Need To Call",
+    });
+    mocks.transaction.supportTicket.create.mockResolvedValue({ id: "callback-ticket-id" });
+
+    await createPlatformLeadSupportTicket({
+      leadId: "lead-id",
+      subject: "Callback for Taylor Reed",
+      description: "Call back later at the scheduled date and time.",
+      requestType: "CALLBACK",
+      callbackDate: "2026-10-14",
+      callbackTime: "10:30",
+      markCallBackLater: true,
+    });
+
+    expect(mocks.transaction.platformLead.updateMany).toHaveBeenCalledWith({
+      where: { id: "lead-id", stage: "Need To Call" },
+      data: { stage: "Call Back Later" },
+    });
+    expect(mocks.transaction.supportTicket.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        platform_lead_id: "lead-id",
+        request_type: "CALLBACK",
+        callback_date: "2026-10-14",
+        callback_time: "10:30",
+      }),
+    }));
+    expect(mocks.transaction.platformAuditEvent.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          action: "PLATFORM_LEAD_SUPPORT_TICKET_CREATED",
+          entity_id: "callback-ticket-id",
+        }),
+        expect.objectContaining({
+          action: "PLATFORM_LEAD_STAGE_UPDATED",
+          entity_id: "lead-id",
+          details: { previousStage: "Need To Call", stage: "Call Back Later" },
+        }),
+      ]),
+    });
+    expect(mocks.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function));
+  });
+
+  it("does not schedule callbacks for leads outside the Need To Call group", async () => {
+    mocks.transaction.platformLead.findUnique.mockResolvedValue({
+      id: "lead-id",
+      stage: "Interested For Demo",
+    });
+
+    await expect(createPlatformLeadSupportTicket({
+      leadId: "lead-id",
+      subject: "Callback for Taylor Reed",
+      description: "Call back later at the scheduled date and time.",
+      requestType: "CALLBACK",
+      callbackDate: "2026-10-14",
+      callbackTime: "10:30",
+      markCallBackLater: true,
+    })).rejects.toThrow("Only leads under Need To Call can schedule a callback.");
+    expect(mocks.transaction.supportTicket.create).not.toHaveBeenCalled();
+    expect(mocks.transaction.platformLead.updateMany).not.toHaveBeenCalled();
   });
 
   it("records status changes in the platform audit trail", async () => {

@@ -117,19 +117,20 @@ export function normalizeAndValidateGstin(value: unknown) {
   return { gstin, stateCode: match[1] };
 }
 
-function parseRegistration(value: unknown): ContactTaxRegistrationInput {
+function parseRegistration(value: unknown): ContactTaxRegistrationInput | null {
   const row = requireRecord(value, "Tax registration");
+  if (typeof row.gstin !== "string" || !row.gstin.trim()) return null;
   const { gstin } = normalizeAndValidateGstin(row.gstin);
   const registrationTypes = new Set<string>(CONTACT_GST_REGISTRATION_TYPES);
   const statuses = new Set<string>(CONTACT_GST_REGISTRATION_STATUSES);
-  const registrationType = cleanText(row.registrationType ?? "REGULAR", "Registration type", 40, true) ?? "";
-  const status = cleanText(row.status ?? "ACTIVE", "Registration status", 20, true) ?? "";
+  const registrationType = cleanText(row.registrationType ?? "REGULAR", "Registration type", 40) ?? "REGULAR";
+  const status = cleanText(row.status ?? "ACTIVE", "Registration status", 20) ?? "ACTIVE";
   if (!registrationTypes.has(registrationType) || !statuses.has(status)) {
     throw new ContactValidationError("Tax registration type or status is invalid.");
   }
   return {
     gstin,
-    legalName: cleanText(row.legalName, "Registered legal name", 200, true) ?? "",
+    legalName: cleanText(row.legalName, "Registered legal name", 200) ?? "",
     registrationType,
     status,
   };
@@ -137,20 +138,20 @@ function parseRegistration(value: unknown): ContactTaxRegistrationInput {
 
 function parseAddress(value: unknown): ContactAddressInput {
   const row = requireRecord(value, "Address");
-  const countryCode = cleanText(row.countryCode ?? "IN", "Country code", 2, true) ?? "";
+  const countryCode = cleanText(row.countryCode ?? "IN", "Country code", 2) ?? "IN";
   if (!/^[A-Z]{2}$/.test(countryCode)) throw new ContactValidationError("Country code must be a two-letter ISO code.");
   const stateCode = cleanText(row.stateCode, "State code", 2);
-  const postalCode = cleanText(row.postalCode, "Postal code", 20, true) ?? "";
-  if (countryCode === "IN" && !/^[0-9]{6}$/.test(postalCode)) {
+  const postalCode = cleanText(row.postalCode, "Postal code", 20) ?? "";
+  if (countryCode === "IN" && postalCode && !/^[0-9]{6}$/.test(postalCode)) {
     throw new ContactValidationError("Indian PIN code must contain exactly 6 digits.");
   }
   if (stateCode && !/^[0-9]{2}$/.test(stateCode)) {
     throw new ContactValidationError("Indian GST state code must contain exactly 2 digits.");
   }
-  if (countryCode === "IN" && (!stateCode || !GST_STATE_CODES.has(stateCode))) {
+  if (countryCode === "IN" && stateCode && !GST_STATE_CODES.has(stateCode)) {
     throw new ContactValidationError("Select a valid Indian GST state code for this address.");
   }
-  const usage = cleanText(row.usage, "Address use", 20, true);
+  const usage = cleanText(row.usage ?? "BOTH", "Address use", 20) ?? "BOTH";
   if (usage !== "BILLING" && usage !== "SHIPPING" && usage !== "BOTH") {
     throw new ContactValidationError("Address use must be Billing, Shipping, or Both.");
   }
@@ -171,10 +172,10 @@ function parseAddress(value: unknown): ContactAddressInput {
     taxRegistrationGstin: cleanText(row.taxRegistrationGstin, "Address GSTIN", 15),
     label: cleanText(row.label, "Address label", 80),
     usage,
-    addressLine1: cleanText(row.addressLine1, "Address line 1", 200, true) ?? "",
+    addressLine1: cleanText(row.addressLine1, "Address line 1", 200) ?? "",
     addressLine2: cleanText(row.addressLine2, "Address line 2", 200),
     city: cleanText(row.city, "City", 100) ?? "",
-    stateName: cleanText(row.stateName, "State", 100, true) ?? "",
+    stateName: cleanText(row.stateName, "State", 100) ?? "",
     stateCode,
     postalCode,
     countryCode,
@@ -185,8 +186,8 @@ function parseAddress(value: unknown): ContactAddressInput {
 
 function parseBankAccount(value: unknown): ContactBankAccountInput {
   const row = requireRecord(value, "Bank account");
-  const ifscCode = cleanText(row.ifscCode, "IFSC code", 11, true) ?? "";
-  if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscCode)) {
+  const ifscCode = cleanText(row.ifscCode, "IFSC code", 11) ?? "";
+  if (ifscCode && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscCode)) {
     throw new ContactValidationError("Enter a valid 11-character IFSC code.");
   }
   const accountNumber = cleanText(row.accountNumber, "Account number", 34);
@@ -199,10 +200,10 @@ function parseBankAccount(value: unknown): ContactBankAccountInput {
   }
   return {
     ...(typeof rawId === "string" ? { id: rawId } : {}),
-    accountHolderName: cleanText(row.accountHolderName, "Account holder name", 200, true) ?? "",
+    accountHolderName: cleanText(row.accountHolderName, "Account holder name", 200) ?? "",
     ...(accountNumber ? { accountNumber } : {}),
     ifscCode,
-    bankName: cleanText(row.bankName, "Bank name", 120, true) ?? "",
+    bankName: cleanText(row.bankName, "Bank name", 120) ?? "",
     branch: cleanText(row.branch, "Branch", 120),
     isDefault: cleanBoolean(row.isDefault, "Default bank account"),
   };
@@ -214,7 +215,7 @@ export function parseContactInput(value: unknown, partial = false): Partial<Cont
   if (partial && row.code !== undefined) {
     throw new ContactValidationError("Contact codes are assigned automatically and cannot be changed.");
   }
-  if (row.legalName !== undefined) output.legalName = cleanText(row.legalName, "legalName", 200, true) ?? "";
+  if (row.legalName !== undefined) output.legalName = cleanText(row.legalName, "legalName", 200) ?? "";
   if (row.displayName !== undefined) output.displayName = cleanText(row.displayName, "displayName", 200);
   if (row.email !== undefined) output.email = cleanText(row.email, "email", 255);
   if (row.phone !== undefined) output.phone = cleanText(row.phone, "phone", 40);
@@ -234,7 +235,8 @@ export function parseContactInput(value: unknown, partial = false): Partial<Cont
   const registrations = cleanArray(row.taxRegistrations, "Tax registrations", partial);
   if (registrations) {
     if (registrations.length > 50) throw new ContactValidationError("A contact cannot have more than 50 GST registrations.");
-    output.taxRegistrations = registrations.map(parseRegistration);
+    output.taxRegistrations = registrations.map(parseRegistration)
+      .filter((registration): registration is ContactTaxRegistrationInput => registration !== null);
     const gstins = output.taxRegistrations.map((registration) => registration.gstin);
     if (new Set(gstins).size !== gstins.length) throw new ContactValidationError("A GSTIN can only be added once to a contact.");
   }
@@ -281,7 +283,7 @@ export function parseContactInput(value: unknown, partial = false): Partial<Cont
   }
 
   if (!partial) {
-    if (!output.legalName) throw new ContactValidationError("Contact legal name is required.");
+    output.legalName = cleanText(row.legalName, "legalName", 200) ?? "";
     output.isActive = output.isActive ?? true;
     output.taxRegistrations = output.taxRegistrations ?? [];
     output.addresses = output.addresses ?? [];

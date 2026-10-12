@@ -526,7 +526,7 @@ function GrnAllocationReportContent({
         )}
       </Section>
 
-      {!allocationDetailsOnly && <Modal open={modalOpen} onClose={() => { if (!allocationSaving) closeAllocationModal(); }} ariaLabelledBy="rm-allocation-dialog-title" size="xl" className="p-0">
+      {!allocationDetailsOnly && <Modal open={modalOpen} onClose={() => { if (!allocationSaving) closeAllocationModal(); }} ariaLabelledBy="rm-allocation-dialog-title" size="2xl" className="p-0">
         <form onSubmit={handleSaveAllocation}>
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
             <div>
@@ -545,7 +545,7 @@ function GrnAllocationReportContent({
               </div>
             )}
 
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <Input
                 label="Grouping Purchase Request"
                 value={allocationForm.groupingPurchaseRequest}

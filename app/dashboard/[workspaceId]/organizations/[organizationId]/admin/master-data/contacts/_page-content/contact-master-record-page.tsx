@@ -314,7 +314,7 @@ export default function ContactMasterRecordPage({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="w-full min-w-0 space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <Link href={detailHref} className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--erp-brand)] underline-offset-4 hover:underline">
@@ -330,14 +330,14 @@ export default function ContactMasterRecordPage({
       {error ? <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-danger)]" role="alert">{error}</p> : null}
       {notice ? <p className="rounded-xl border border-[var(--erp-success)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-success)]" role="status">{notice}</p> : null}
 
-      <Card className="max-w-5xl space-y-5">
+      <Card className="w-full max-w-none space-y-5">
         <Tabs tabs={TABS} value={activeTab} onChange={setActiveTab} ariaLabel="Contact sections" scrollable />
         {!editing && contact ? (
           <div role="tabpanel" className="space-y-4">
             {activeTab === "contact" ? (
               <>
                 <h2 className="text-base font-semibold text-[var(--erp-text)]">Contact information</h2>
-                <dl className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <dl className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                   {[
                     ["Contact code", contact.code],
                     ["Legal name", contact.legal_name],
@@ -353,7 +353,7 @@ export default function ContactMasterRecordPage({
               <section className="space-y-4">
                 <h2 className="text-base font-semibold text-[var(--erp-text)]">GST registrations</h2>
                 {contact.tax_registrations.length ? contact.tax_registrations.map((registration) => (
-                  <dl key={registration.gstin} className="grid grid-cols-1 gap-4 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2">
+                  <dl key={registration.gstin} className="grid grid-cols-1 gap-4 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2 xl:grid-cols-4">
                     <DetailField label="GSTIN" value={registration.gstin} />
                     <DetailField label="Registered legal name" value={registration.legal_name} />
                     <DetailField label="Registration type" value={registration.registration_type.replaceAll("_", " ")} />
@@ -372,7 +372,7 @@ export default function ContactMasterRecordPage({
                       {address.is_default_billing ? <span className="rounded-full bg-[var(--erp-brand-soft)] px-3 py-1 text-xs font-semibold text-[var(--erp-brand)]">Default billing</span> : null}
                       {address.is_default_shipping ? <span className="rounded-full bg-[var(--erp-brand-soft)] px-3 py-1 text-xs font-semibold text-[var(--erp-brand)]">Default shipping</span> : null}
                     </div>
-                    <dl className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <dl className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                       <DetailField label="Address label" value={address.label} />
                       <DetailField label="Linked GSTIN" value={address.tax_registration?.gstin} />
                       <DetailField label="Address" value={addressText(address)} />
@@ -386,7 +386,7 @@ export default function ContactMasterRecordPage({
               <section className="space-y-4">
                 <h2 className="text-base font-semibold text-[var(--erp-text)]">Bank accounts</h2>
                 {contact.bank_accounts.length ? contact.bank_accounts.map((account) => (
-                  <dl key={account.id} className="grid grid-cols-1 gap-4 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2">
+                  <dl key={account.id} className="grid grid-cols-1 gap-4 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2 xl:grid-cols-4">
                     <DetailField label="Account holder" value={account.account_holder_name} />
                     <DetailField label="Account number" value={account.account_number_masked} />
                     <DetailField label="IFSC" value={account.ifsc_code} />
@@ -403,7 +403,7 @@ export default function ContactMasterRecordPage({
             {activeTab === "contact" ? (
               <section className="space-y-4">
                 <h2 className="text-base font-semibold text-[var(--erp-text)]">Contact information and business roles</h2>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <div>
                     <Input
                       label="Contact code"
@@ -414,7 +414,7 @@ export default function ContactMasterRecordPage({
                     />
                     {createMode ? <p id="contact-code-hint" className="mt-1 text-xs text-slate-500">Assigned automatically when saved.</p> : null}
                   </div>
-                  <Input label="Legal name" required maxLength={200} value={form.legalName} onChange={(event) => setForm({ ...form, legalName: event.currentTarget.value })} />
+                  <Input label="Legal name" maxLength={200} value={form.legalName} onChange={(event) => setForm({ ...form, legalName: event.currentTarget.value })} />
                   <Input label="Display name" maxLength={200} value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.currentTarget.value })} />
                   <Input label="Email" type="email" maxLength={255} value={form.email} onChange={(event) => setForm({ ...form, email: event.currentTarget.value })} />
                   <Input label="Phone" type="tel" maxLength={40} value={form.phone} onChange={(event) => setForm({ ...form, phone: event.currentTarget.value })} />
@@ -432,12 +432,12 @@ export default function ContactMasterRecordPage({
                   <Button size="sm" variant="secondary" onClick={() => setForm({ ...form, taxRegistrations: [...form.taxRegistrations, { gstin: "", legalName: form.legalName, registrationType: "REGULAR", status: "ACTIVE" }] })}><Plus aria-hidden="true" className="h-4 w-4" /> Add GSTIN</Button>
                 </div>
                 {form.taxRegistrations.map((registration, index) => (
-                  <div key={`${registration.gstin}-${index}`} className="grid grid-cols-1 gap-3 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2">
-                    <Input label="GSTIN" required maxLength={15} value={registration.gstin} onChange={(event) => updateRegistration(index, "gstin", event.currentTarget.value)} />
-                    <Input label="Registered legal name" required maxLength={200} value={registration.legalName} onChange={(event) => updateRegistration(index, "legalName", event.currentTarget.value)} />
+                  <div key={`${registration.gstin}-${index}`} className="grid grid-cols-1 gap-3 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2 xl:grid-cols-4">
+                    <Input label="GSTIN" maxLength={15} value={registration.gstin} onChange={(event) => updateRegistration(index, "gstin", event.currentTarget.value)} />
+                    <div className="md:col-span-2"><Input label="Registered legal name" maxLength={200} value={registration.legalName} onChange={(event) => updateRegistration(index, "legalName", event.currentTarget.value)} /></div>
                     <Select label="Registration type" value={registration.registrationType} onChange={(event) => updateRegistration(index, "registrationType", event.currentTarget.value)}>{["REGULAR", "COMPOSITION", "SEZ_DEVELOPER", "SEZ_UNIT", "INPUT_SERVICE_DISTRIBUTOR", "TAX_DEDUCTOR", "TAX_COLLECTOR", "NON_RESIDENT", "OIDAR", "OTHER"].map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}</Select>
                     <Select label="Status" value={registration.status} onChange={(event) => updateRegistration(index, "status", event.currentTarget.value)}>{["ACTIVE", "SUSPENDED", "CANCELLED"].map((status) => <option key={status} value={status}>{status}</option>)}</Select>
-                    <div className="sm:col-span-2"><Button variant="destructive" size="sm" onClick={() => window.confirm("Remove this GST registration and its linked addresses?") && setForm({ ...form, taxRegistrations: form.taxRegistrations.filter((_, rowIndex) => rowIndex !== index), addresses: form.addresses.filter((address) => address.taxRegistrationGstin !== registration.gstin) })}>Remove GSTIN</Button></div>
+                    <div className="md:col-span-2 xl:col-span-4"><Button variant="destructive" size="sm" onClick={() => window.confirm("Remove this GST registration and its linked addresses?") && setForm({ ...form, taxRegistrations: form.taxRegistrations.filter((_, rowIndex) => rowIndex !== index), addresses: form.addresses.filter((address) => address.taxRegistrationGstin !== registration.gstin) })}>Remove GSTIN</Button></div>
                   </div>
                 ))}
                 {!form.taxRegistrations.length ? <EmptyDetail>Add GST registrations for this contact.</EmptyDetail> : null}
@@ -450,19 +450,19 @@ export default function ContactMasterRecordPage({
                   <Button size="sm" variant="secondary" onClick={() => setForm({ ...form, addresses: [...form.addresses, { taxRegistrationGstin: "", label: "", usage: "BOTH", addressLine1: "", addressLine2: "", city: "", stateName: "", stateCode: "", postalCode: "", countryCode: "IN", isDefaultBilling: false, isDefaultShipping: false }] })}><Plus aria-hidden="true" className="h-4 w-4" /> Add address</Button>
                 </div>
                 {form.addresses.map((address, index) => (
-                  <div key={`${address.id ?? address.label}-${index}`} className="grid grid-cols-1 gap-3 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2">
+                  <div key={`${address.id ?? address.label}-${index}`} className="grid grid-cols-1 gap-3 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2 xl:grid-cols-4">
                     <Input label="Address label" value={address.label} onChange={(event) => updateAddress(index, "label", event.currentTarget.value)} />
                     <Select label="GSTIN" value={address.taxRegistrationGstin} onChange={(event) => updateAddress(index, "taxRegistrationGstin", event.currentTarget.value)}><option value="">No GST registration</option>{form.taxRegistrations.map((registration, rowIndex) => <option key={`${registration.gstin}-${rowIndex}`} value={registration.gstin}>{registration.gstin || "New GST registration"}</option>)}</Select>
                     <Select label="Use" value={address.usage} onChange={(event) => updateAddress(index, "usage", event.currentTarget.value as AddressUsage)}><option value="BOTH">Billing and Shipping</option><option value="BILLING">Billing</option><option value="SHIPPING">Shipping</option></Select>
-                    <Input label="Address line 1" required maxLength={200} value={address.addressLine1} onChange={(event) => updateAddress(index, "addressLine1", event.currentTarget.value)} />
-                    <Input label="Address line 2" maxLength={200} value={address.addressLine2} onChange={(event) => updateAddress(index, "addressLine2", event.currentTarget.value)} />
-                    <Input label="City" required maxLength={100} value={address.city} onChange={(event) => updateAddress(index, "city", event.currentTarget.value)} />
-                    <Input label="State" required maxLength={100} value={address.stateName} onChange={(event) => updateAddress(index, "stateName", event.currentTarget.value)} />
-                    <Input label="GST state code" maxLength={2} required={address.countryCode === "IN"} value={address.stateCode} onChange={(event) => updateAddress(index, "stateCode", event.currentTarget.value)} hint="Must match the linked GSTIN state code." />
-                    <Input label="PIN / postal code" required maxLength={20} textCase="preserve" value={address.postalCode} onChange={(event) => updateAddress(index, "postalCode", event.currentTarget.value)} />
-                    <Input label="Country code" required maxLength={2} value={address.countryCode} onChange={(event) => updateAddress(index, "countryCode", event.currentTarget.value)} />
-                    <div className="flex flex-wrap gap-4 sm:col-span-2"><Checkbox checked={address.isDefaultBilling} onChange={(event) => updateAddress(index, "isDefaultBilling", event.currentTarget.checked)} label="Default billing for this GSTIN" /><Checkbox checked={address.isDefaultShipping} onChange={(event) => updateAddress(index, "isDefaultShipping", event.currentTarget.checked)} label="Default shipping for this GSTIN" /></div>
-                    <div className="sm:col-span-2"><Button variant="destructive" size="sm" onClick={() => window.confirm("Remove this address?") && setForm({ ...form, addresses: form.addresses.filter((_, rowIndex) => rowIndex !== index) })}>Remove address</Button></div>
+                    <div className="md:col-span-2"><Input label="Address line 1" maxLength={200} value={address.addressLine1} onChange={(event) => updateAddress(index, "addressLine1", event.currentTarget.value)} /></div>
+                    <div className="md:col-span-2"><Input label="Address line 2" maxLength={200} value={address.addressLine2} onChange={(event) => updateAddress(index, "addressLine2", event.currentTarget.value)} /></div>
+                    <Input label="City" maxLength={100} value={address.city} onChange={(event) => updateAddress(index, "city", event.currentTarget.value)} />
+                    <Input label="State" maxLength={100} value={address.stateName} onChange={(event) => updateAddress(index, "stateName", event.currentTarget.value)} />
+                    <Input label="GST state code" maxLength={2} value={address.stateCode} onChange={(event) => updateAddress(index, "stateCode", event.currentTarget.value)} hint="Must match the linked GSTIN state code when provided." />
+                    <Input label="PIN / postal code" maxLength={20} textCase="preserve" value={address.postalCode} onChange={(event) => updateAddress(index, "postalCode", event.currentTarget.value)} />
+                    <Input label="Country code" maxLength={2} value={address.countryCode} onChange={(event) => updateAddress(index, "countryCode", event.currentTarget.value)} />
+                    <div className="flex flex-wrap gap-4 md:col-span-2 xl:col-span-4"><Checkbox checked={address.isDefaultBilling} onChange={(event) => updateAddress(index, "isDefaultBilling", event.currentTarget.checked)} label="Default billing for this GSTIN" /><Checkbox checked={address.isDefaultShipping} onChange={(event) => updateAddress(index, "isDefaultShipping", event.currentTarget.checked)} label="Default shipping for this GSTIN" /></div>
+                    <div className="md:col-span-2 xl:col-span-4"><Button variant="destructive" size="sm" onClick={() => window.confirm("Remove this address?") && setForm({ ...form, addresses: form.addresses.filter((_, rowIndex) => rowIndex !== index) })}>Remove address</Button></div>
                   </div>
                 ))}
                 {!form.addresses.length ? <EmptyDetail>Add billing and shipping destinations for this contact.</EmptyDetail> : null}
@@ -475,14 +475,14 @@ export default function ContactMasterRecordPage({
                   <Button size="sm" variant="secondary" onClick={() => setForm({ ...form, bankAccounts: [...form.bankAccounts, { accountHolderName: form.legalName, accountNumber: "", ifscCode: "", bankName: "", branch: "", isDefault: form.bankAccounts.length === 0 }] })}><Plus aria-hidden="true" className="h-4 w-4" /> Add bank account</Button>
                 </div>
                 {form.bankAccounts.map((account, index) => (
-                  <div key={account.id ?? `new-bank-${index}`} className="grid grid-cols-1 gap-3 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2">
-                    <Input label="Account holder name" required maxLength={200} value={account.accountHolderName} onChange={(event) => updateBankAccount(index, "accountHolderName", event.currentTarget.value)} />
-                    <Input label={account.id ? `Account number (${account.accountNumberMasked}; blank keeps saved number)` : "Account number"} required={!account.id} maxLength={34} textCase="preserve" value={account.accountNumber} onChange={(event) => updateBankAccount(index, "accountNumber", event.currentTarget.value)} />
-                    <Input label="IFSC code" required maxLength={11} value={account.ifscCode} onChange={(event) => updateBankAccount(index, "ifscCode", event.currentTarget.value)} />
-                    <Input label="Bank name" required maxLength={120} value={account.bankName} onChange={(event) => updateBankAccount(index, "bankName", event.currentTarget.value)} />
+                  <div key={account.id ?? `new-bank-${index}`} className="grid grid-cols-1 gap-3 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="md:col-span-2"><Input label="Account holder name" maxLength={200} value={account.accountHolderName} onChange={(event) => updateBankAccount(index, "accountHolderName", event.currentTarget.value)} /></div>
+                    <div className="md:col-span-2"><Input label={account.id ? `Account number (${account.accountNumberMasked}; blank keeps saved number)` : "Account number"} maxLength={34} textCase="preserve" value={account.accountNumber} onChange={(event) => updateBankAccount(index, "accountNumber", event.currentTarget.value)} /></div>
+                    <Input label="IFSC code" maxLength={11} value={account.ifscCode} onChange={(event) => updateBankAccount(index, "ifscCode", event.currentTarget.value)} />
+                    <Input label="Bank name" maxLength={120} value={account.bankName} onChange={(event) => updateBankAccount(index, "bankName", event.currentTarget.value)} />
                     <Input label="Branch" maxLength={120} value={account.branch} onChange={(event) => updateBankAccount(index, "branch", event.currentTarget.value)} />
                     <div className="self-end pb-2"><Checkbox checked={account.isDefault} onChange={(event) => updateBankAccount(index, "isDefault", event.currentTarget.checked)} label="Default account" /></div>
-                    <div className="sm:col-span-2"><Button variant="destructive" size="sm" onClick={() => window.confirm("Remove this bank account?") && setForm({ ...form, bankAccounts: form.bankAccounts.filter((_, rowIndex) => rowIndex !== index) })}>Remove bank account</Button></div>
+                    <div className="md:col-span-2 xl:col-span-4"><Button variant="destructive" size="sm" onClick={() => window.confirm("Remove this bank account?") && setForm({ ...form, bankAccounts: form.bankAccounts.filter((_, rowIndex) => rowIndex !== index) })}>Remove bank account</Button></div>
                   </div>
                 ))}
                 {!form.bankAccounts.length ? <EmptyDetail>Add a bank account for this contact.</EmptyDetail> : null}

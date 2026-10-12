@@ -13,12 +13,11 @@ import Textarea from "@/components/ui/Textarea";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import {
   PLATFORM_LEAD_DEAD_STAGES,
+  PLATFORM_LEAD_NOT_INTERESTED_STAGES,
   PLATFORM_LEAD_PAID_STAGES,
   PLATFORM_LEAD_STAGES,
   PLATFORM_LEAD_THIRD_PARTY_STAGES,
-  PLATFORM_LEAD_VERIFIED_INTERESTED_STAGES,
-  PLATFORM_LEAD_VERIFIED_NOT_INTERESTED_STAGES,
-  PLATFORM_LEAD_VERIFIED_STAGES,
+  PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES,
 } from "@/lib/services/platform/platform-lead-constants";
 
 type PlatformLead = {
@@ -50,12 +49,10 @@ const LEAD_FIELDS = [
   { key: "stage", label: "Stage" },
   { key: "campaign_date", label: "Campaign date" },
   { key: "last_campaign_date", label: "Last campaign date" },
-  { key: "stage_action", label: "Change status" },
   { key: "last_login_at", label: "Last login" },
 ];
 
-type LeadTab = "THIRD_PARTY" | "APP_LOGIN" | "DEAD" | "PAID";
-type VerifiedLeadTab = "INTERESTED" | "NOT_INTERESTED";
+type LeadTab = "THIRD_PARTY" | "APP_LOGIN" | "DEAD" | "PAID" | "NOT_INTERESTED";
 type LeadTicket = {
   id: string;
   ticket_number: string;
@@ -287,8 +284,9 @@ export default function PlatformLeadsWorkspace({
   const [ticketsLoadedForLeadId, setTicketsLoadedForLeadId] = useState<string | null>(null);
   const [ticketLoadFailure, setTicketLoadFailure] = useState<{ leadId: string; error: string } | null>(null);
   const [stageFilter, setStageFilter] = useState("ALL");
-  const [verifiedLeadTab, setVerifiedLeadTab] = useState<VerifiedLeadTab | null>(null);
-  const [verifiedStageFilter, setVerifiedStageFilter] = useState("ALL");
+  const [callFollowUpFilter, setCallFollowUpFilter] = useState<
+    "Need To Call" | "Not Picked" | "Call Back Later"
+  >("Need To Call");
   const [activeTab, setActiveTab] = useState<LeadTab>("THIRD_PARTY");
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [movingSelectedLeads, setMovingSelectedLeads] = useState(false);
@@ -313,6 +311,9 @@ export default function PlatformLeadsWorkspace({
   const [ticketDescription, setTicketDescription] = useState("");
   const [ticketSaving, setTicketSaving] = useState(false);
   const [ticketError, setTicketError] = useState("");
+  const [callbackLeadId, setCallbackLeadId] = useState<string | null>(null);
+  const [callbackSaving, setCallbackSaving] = useState(false);
+  const [callbackError, setCallbackError] = useState("");
   const [visibleFields, setVisibleFields] = useState<string[]>(LEAD_FIELDS.map(({ key }) => key));
   const [uploading, setUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState("");
@@ -375,25 +376,21 @@ export default function PlatformLeadsWorkspace({
       ? PLATFORM_LEAD_DEAD_STAGES
       : activeTab === "PAID"
         ? PLATFORM_LEAD_PAID_STAGES
-        : PLATFORM_LEAD_THIRD_PARTY_STAGES;
-    const visibleStages = stageFilter === "VERIFIED"
-      ? verifiedLeadTab === "INTERESTED"
-        ? PLATFORM_LEAD_VERIFIED_INTERESTED_STAGES
-        : verifiedLeadTab === "NOT_INTERESTED"
-          ? PLATFORM_LEAD_VERIFIED_NOT_INTERESTED_STAGES
-          : PLATFORM_LEAD_VERIFIED_STAGES
-      : null;
+        : activeTab === "NOT_INTERESTED"
+          ? PLATFORM_LEAD_NOT_INTERESTED_STAGES
+          : PLATFORM_LEAD_THIRD_PARTY_STAGES;
     return leads
       .filter((lead) => allowedStages.some((stage) => stage === lead.stage))
       .filter((lead) => {
-        if (stageFilter === "VERIFIED") {
-          return visibleStages?.some((stage) => stage === lead.stage) &&
-            (verifiedStageFilter === "ALL" || lead.stage === verifiedStageFilter);
+        if (stageFilter === "NEED_TO_CALL") {
+          return PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES.includes(
+            lead.stage as (typeof PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES)[number],
+          ) && lead.stage === callFollowUpFilter;
         }
         return stageFilter === "ALL" || lead.stage === stageFilter;
       })
       .map((lead) => ({ ...lead, recordType: "THIRD_PARTY" as const }));
-  }, [activeTab, appLogins, leads, stageFilter, verifiedLeadTab, verifiedStageFilter]);
+  }, [activeTab, appLogins, callFollowUpFilter, leads, stageFilter]);
   const leadCountsByStage = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const lead of leads) {
@@ -407,7 +404,9 @@ export default function PlatformLeadsWorkspace({
     ? PLATFORM_LEAD_DEAD_STAGES
     : activeTab === "PAID"
       ? PLATFORM_LEAD_PAID_STAGES
-      : PLATFORM_LEAD_THIRD_PARTY_STAGES;
+      : activeTab === "NOT_INTERESTED"
+        ? PLATFORM_LEAD_NOT_INTERESTED_STAGES
+        : PLATFORM_LEAD_THIRD_PARTY_STAGES;
   const tabs: Array<{ id: LeadTab; label: string; count: number }> = [
     {
       id: "THIRD_PARTY",
@@ -417,13 +416,18 @@ export default function PlatformLeadsWorkspace({
     { id: "APP_LOGIN", label: "App Login", count: appLogins.length },
     {
       id: "DEAD",
-      label: "Dead",
+      label: "Fraud Marked",
       count: countLeadStages(PLATFORM_LEAD_DEAD_STAGES),
     },
     {
       id: "PAID",
       label: "Paid",
       count: countLeadStages(PLATFORM_LEAD_PAID_STAGES),
+    },
+    {
+      id: "NOT_INTERESTED",
+      label: "Not Interested",
+      count: countLeadStages(PLATFORM_LEAD_NOT_INTERESTED_STAGES),
     },
   ];
   const changeVisibleFields = useCallback((next: (string | keyof PlatformLead)[]) => {
@@ -448,6 +452,52 @@ export default function PlatformLeadsWorkspace({
   function openNewLead() {
     setNewLead(true);
     window.history.pushState(null, "", "/platform/leads");
+  }
+
+  function openCallbackScheduler(leadId: string) {
+    setCallbackLeadId(leadId);
+    setCallbackDate("");
+    setCallbackTime("");
+    setCallbackError("");
+  }
+
+  async function scheduleLeadCallback(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!callbackLeadId || callbackSaving) return;
+    const lead = leads.find((item) => item.id === callbackLeadId);
+    if (!lead) {
+      setCallbackError("Lead not found. Refresh the page and try again.");
+      return;
+    }
+
+    setCallbackSaving(true);
+    setCallbackError("");
+    try {
+      const response = await fetch(`/api/platform/leads/${encodeURIComponent(lead.id)}/tickets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject: `Callback · ${lead.name}`,
+          description: `Call back later. Scheduled for ${callbackDate} at ${callbackTime}.`,
+          requestType: "CALLBACK",
+          callbackDate,
+          callbackTime,
+          markCallBackLater: true,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to schedule the callback.");
+      applyLeadStageChanges([{ leadId: lead.id, stage: "Call Back Later" }]);
+      setStageMovementMessage(`Callback scheduled for ${lead.name} on ${callbackDate} at ${callbackTime}.`);
+      setCallbackLeadId(null);
+      setCallbackDate("");
+      setCallbackTime("");
+      router.refresh();
+    } catch (error) {
+      setCallbackError(error instanceof Error ? error.message : "Unable to schedule the callback.");
+    } finally {
+      setCallbackSaving(false);
+    }
   }
 
   async function submitLeadTicket(event: React.FormEvent<HTMLFormElement>) {
@@ -551,8 +601,11 @@ export default function PlatformLeadsWorkspace({
     }
   }
 
-  async function updateSelectedNewLeadStage(stage: "Interested For Demo" | "MARK AS FROUD") {
-    if (selectedLeadIds.length === 0 || movingSelectedLeads) return;
+  async function updateNewLeadStage(
+    stage: "Verification" | "MARK AS FROUD",
+    leadIds: string[] = selectedLeadIds,
+  ) {
+    if (leadIds.length === 0 || movingSelectedLeads) return;
     setMovingSelectedLeads(true);
     setStageMovementMessage("");
     setStageMovementError("");
@@ -560,13 +613,13 @@ export default function PlatformLeadsWorkspace({
       const response = await fetch("/api/platform/leads/stages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadIds: selectedLeadIds, newLeadStage: stage }),
+        body: JSON.stringify({ leadIds, newLeadStage: stage }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Unable to update new leads.");
-      applyLeadStageChanges(selectedLeadIds.map((leadId) => ({ leadId, stage })));
+      applyLeadStageChanges(leadIds.map((leadId) => ({ leadId, stage })));
       setStageMovementMessage(
-        `${payload.updatedCount} lead${payload.updatedCount === 1 ? "" : "s"} moved to ${stage === "Interested For Demo" ? "Interested" : "Mark as Fraud"}.`,
+        `${payload.updatedCount} lead${payload.updatedCount === 1 ? "" : "s"} ${stage === "Verification" ? "approved and moved to Verified" : "moved to Mark as Fraud"}.`,
       );
       setSelectedLeadIds([]);
     } catch (error) {
@@ -576,8 +629,9 @@ export default function PlatformLeadsWorkspace({
     }
   }
 
-  async function updateSelectedLeadStage() {
-    if (selectedLeadIds.length === 0 || movingSelectedLeads || !bulkTargetStage) return;
+  async function updateSelectedLeadStage(stageOverride?: string, leadIds: string[] = selectedLeadIds) {
+    const nextStage = stageOverride ?? bulkTargetStage;
+    if (leadIds.length === 0 || movingSelectedLeads || !nextStage) return;
     setMovingSelectedLeads(true);
     setStageMovementMessage("");
     setStageMovementError("");
@@ -585,13 +639,13 @@ export default function PlatformLeadsWorkspace({
       const response = await fetch("/api/platform/leads/stages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadIds: selectedLeadIds, stage: bulkTargetStage }),
+        body: JSON.stringify({ leadIds, stage: nextStage }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Unable to update lead stages.");
-      applyLeadStageChanges(selectedLeadIds.map((leadId) => ({ leadId, stage: bulkTargetStage })));
+      applyLeadStageChanges(leadIds.map((leadId) => ({ leadId, stage: nextStage })));
       setStageMovementMessage(
-        `${payload.updatedCount} lead${payload.updatedCount === 1 ? "" : "s"} changed to ${bulkTargetStage}${payload.unchangedCount ? `; ${payload.unchangedCount} already had this stage` : ""}.`,
+        `${payload.updatedCount} lead${payload.updatedCount === 1 ? "" : "s"} changed to ${nextStage}${payload.unchangedCount ? `; ${payload.unchangedCount} already had this stage` : ""}.`,
       );
       setSelectedLeadIds([]);
       setBulkStageDialogOpen(false);
@@ -727,8 +781,7 @@ export default function PlatformLeadsWorkspace({
               const nextTab = value as LeadTab;
               setActiveTab(nextTab);
               setStageFilter("ALL");
-              setVerifiedLeadTab(null);
-              setVerifiedStageFilter("ALL");
+              setCallFollowUpFilter("Need To Call");
               setSelectedLeadIds([]);
               setNewLead(false);
               window.history.pushState(null, "", "/platform/leads");
@@ -784,138 +837,61 @@ export default function PlatformLeadsWorkspace({
                 aria-pressed={stageFilter === "ALL"}
                 onClick={() => {
                   setStageFilter("ALL");
-                  setVerifiedLeadTab(null);
-                  setVerifiedStageFilter("ALL");
+                  setCallFollowUpFilter("Need To Call");
                   setSelectedLeadIds([]);
                 }}
               >
                 All
               </Button>
-              {activeTab === "THIRD_PARTY" && (
-                <>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={stageFilter === "1-new" ? "primary" : "secondary"}
-                    aria-pressed={stageFilter === "1-new"}
-                    onClick={() => {
-                      setStageFilter("1-new");
-                      setVerifiedLeadTab(null);
-                      setVerifiedStageFilter("ALL");
-                      setSelectedLeadIds([]);
-                    }}
-                  >
-                    New <span className="text-[10px] opacity-75">({leadCountsByStage["1-new"] ?? 0})</span>
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={stageFilter === "VERIFIED" ? "primary" : "secondary"}
-                    aria-pressed={stageFilter === "VERIFIED"}
-                    onClick={() => {
-                      setStageFilter("VERIFIED");
-                      setVerifiedLeadTab(null);
-                      setVerifiedStageFilter("ALL");
-                      setSelectedLeadIds([]);
-                    }}
-                  >
-                    Verified <span className="text-[10px] opacity-75">({countLeadStages(PLATFORM_LEAD_VERIFIED_STAGES)})</span>
-                  </Button>
-                </>
-              )}
               {stageOptions
                 .filter((stage) =>
-                  activeTab !== "THIRD_PARTY" ||
-                  (stage !== "1-new" &&
-                    !PLATFORM_LEAD_VERIFIED_STAGES.includes(stage as (typeof PLATFORM_LEAD_VERIFIED_STAGES)[number])),
+                  stage !== "Not Picked" && stage !== "Call Back Later",
                 )
                 .map((stage) => (
                   <Button
                     key={stage}
                     type="button"
                     size="sm"
-                    variant={stageFilter === stage ? "primary" : "secondary"}
-                    aria-pressed={stageFilter === stage}
+                    variant={
+                      stageFilter === (stage === "Need To Call" ? "NEED_TO_CALL" : stage)
+                        ? "primary"
+                        : "secondary"
+                    }
+                    aria-pressed={stageFilter === (stage === "Need To Call" ? "NEED_TO_CALL" : stage)}
                     onClick={() => {
-                      setStageFilter(stage);
-                      setVerifiedLeadTab(null);
-                      setVerifiedStageFilter("ALL");
+                      setStageFilter(stage === "Need To Call" ? "NEED_TO_CALL" : stage);
+                      setCallFollowUpFilter("Need To Call");
                       setSelectedLeadIds([]);
                     }}
                   >
-                    {stage} <span className="text-[10px] opacity-75">({leadCountsByStage[stage] ?? 0})</span>
+                    {stage === "1-new" ? "New" : stage === "Verification" ? "Verified" : stage === "2-Potential" ? "Potential" : stage}
+                    <span className="text-[10px] opacity-75">
+                      ({stage === "Need To Call"
+                        ? countLeadStages(PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES)
+                        : leadCountsByStage[stage] ?? 0})
+                    </span>
                   </Button>
                 ))}
             </div>
           )}
-          {activeTab === "THIRD_PARTY" && stageFilter === "VERIFIED" && (
-            <div className="mb-3 space-y-2">
-              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Verified lead interest">
-                {([
-                  {
-                    id: "INTERESTED" as const,
-                    label: "Interested",
-                    stages: PLATFORM_LEAD_VERIFIED_INTERESTED_STAGES,
-                  },
-                  {
-                    id: "NOT_INTERESTED" as const,
-                    label: "Not Interested / Dead",
-                    stages: PLATFORM_LEAD_VERIFIED_NOT_INTERESTED_STAGES,
-                  },
-                ]).map((tab) => (
-                  <Button
-                    key={tab.id}
-                    type="button"
-                    size="sm"
-                    variant={verifiedLeadTab === tab.id ? "primary" : "secondary"}
-                    aria-pressed={verifiedLeadTab === tab.id}
-                    onClick={() => {
-                      setVerifiedLeadTab(tab.id);
-                      setVerifiedStageFilter("ALL");
-                      setSelectedLeadIds([]);
-                    }}
-                  >
-                    {tab.label} <span className="text-[10px] opacity-75">({countLeadStages(tab.stages)})</span>
-                  </Button>
-                ))}
-              </div>
-              {verifiedLeadTab && (
-                <div className="flex flex-wrap gap-1.5" role="group" aria-label={`${verifiedLeadTab === "INTERESTED" ? "Interested" : "Not interested"} lead statuses`}>
-                  {verifiedLeadTab === "NOT_INTERESTED" && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={verifiedStageFilter === "ALL" ? "primary" : "secondary"}
-                      aria-pressed={verifiedStageFilter === "ALL"}
-                      onClick={() => {
-                        setVerifiedStageFilter("ALL");
-                        setSelectedLeadIds([]);
-                      }}
-                    >
-                      All
-                    </Button>
-                  )}
-                  {(verifiedLeadTab === "INTERESTED"
-                    ? PLATFORM_LEAD_VERIFIED_INTERESTED_STAGES
-                    : PLATFORM_LEAD_VERIFIED_NOT_INTERESTED_STAGES
-                  ).map((stage) => (
-                    <Button
-                      key={stage}
-                      type="button"
-                      size="sm"
-                      variant={verifiedStageFilter === stage ? "primary" : "secondary"}
-                      aria-pressed={verifiedStageFilter === stage}
-                      onClick={() => {
-                        setVerifiedStageFilter(stage);
-                        setSelectedLeadIds([]);
-                      }}
-                    >
-                      {stage === "2-Potential" ? "Potential" : stage === "3-Dead" ? "Dead" : stage}
-                      <span className="text-[10px] opacity-75">({leadCountsByStage[stage] ?? 0})</span>
-                    </Button>
-                  ))}
-                </div>
-              )}
+          {activeTab === "THIRD_PARTY" && stageFilter === "NEED_TO_CALL" && (
+            <div className="mb-3 flex flex-wrap gap-1.5" role="group" aria-label="Need To Call statuses">
+              {PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES.map((stage) => (
+                <Button
+                  key={stage}
+                  type="button"
+                  size="sm"
+                  variant={callFollowUpFilter === stage ? "primary" : "secondary"}
+                  aria-pressed={callFollowUpFilter === stage}
+                  onClick={() => {
+                    setCallFollowUpFilter(stage);
+                    setSelectedLeadIds([]);
+                  }}
+                >
+                  {stage}
+                  <span className="text-[10px] opacity-75">({leadCountsByStage[stage] ?? 0})</span>
+                </Button>
+              ))}
             </div>
           )}
           <ReportGrid
@@ -966,29 +942,32 @@ export default function PlatformLeadsWorkspace({
                 >
                   Bulk stage change{selectedLeadIds.length ? ` (${selectedLeadIds.length})` : ""}
                 </Button>
-                {stageFilter === "1-new" ? (
+                {stageFilter === "1-new" ? null : stageFilter === "NEED_TO_CALL" || PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES.includes(
+                  stageFilter as (typeof PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES)[number],
+                ) ? (
                   <>
                     <Button
                       type="button"
                       variant="secondary"
                       size="sm"
                       disabled={selectedLeadIds.length === 0 || movingSelectedLeads}
-                      onClick={() => void updateSelectedNewLeadStage("Interested For Demo")}
-                      title="Mark selected new leads as interested"
+                      onClick={() => void updateSelectedLeadStage("Interested For Demo")}
+                      title="Mark selected leads as interested"
                       className="h-7 px-2 text-[11px]"
                     >
-                      Interested{selectedLeadIds.length ? ` (${selectedLeadIds.length})` : ""}
+                      Mark interested{selectedLeadIds.length ? ` (${selectedLeadIds.length})` : ""}
                     </Button>
                     <Button
                       type="button"
                       variant="secondary"
                       size="sm"
                       disabled={selectedLeadIds.length === 0 || movingSelectedLeads}
-                      onClick={() => void updateSelectedNewLeadStage("MARK AS FROUD")}
-                      title="Mark selected new leads as fraud"
+                      onClick={() => void moveSelectedLeads("PREVIOUS")}
+                      title="Move selected leads to their previous status"
                       className="h-7 px-2 text-[11px]"
                     >
-                      Mark as Fraud{selectedLeadIds.length ? ` (${selectedLeadIds.length})` : ""}
+                      <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                      Move back{selectedLeadIds.length ? ` (${selectedLeadIds.length})` : ""}
                     </Button>
                   </>
                 ) : (
@@ -1023,12 +1002,89 @@ export default function PlatformLeadsWorkspace({
             ) : undefined}
             wrapCells
             onRowClick={openLead}
-            onRowAction={(leadId) => {
-              setTicketLeadId(leadId);
-              setTicketError("");
+            rowActions={(lead) => {
+              if (lead.recordType === "APP_LOGIN") return null;
+              if (lead.stage === "1-new") {
+                return (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="primary"
+                      disabled={movingSelectedLeads}
+                      onClick={() => void updateNewLeadStage("Verification", [lead.id])}
+                      aria-label={`Approve ${lead.name}`}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="destructive"
+                      disabled={movingSelectedLeads}
+                      onClick={() => void updateNewLeadStage("MARK AS FROUD", [lead.id])}
+                      aria-label={`Mark ${lead.name} as fraud`}
+                    >
+                      Mark as Fraud
+                    </Button>
+                  </>
+                );
+              }
+              if (PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES.includes(
+                lead.stage as (typeof PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES)[number],
+              )) {
+                return (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="primary"
+                      disabled={movingSelectedLeads}
+                      onClick={() => void updateSelectedLeadStage("Need To Call", [lead.id])}
+                    >
+                      Need To Call
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={movingSelectedLeads}
+                      onClick={() => void updateSelectedLeadStage("Not Picked", [lead.id])}
+                    >
+                      Not Picked
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="destructive"
+                      disabled={movingSelectedLeads}
+                      onClick={() => void updateSelectedLeadStage("MARK AS FROUD", [lead.id])}
+                    >
+                      Mark as Fraud
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={callbackSaving}
+                      onClick={() => openCallbackScheduler(lead.id)}
+                    >
+                      Call Back Later
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={movingSelectedLeads}
+                      onClick={() => void updateSelectedLeadStage("Potential Dead", [lead.id])}
+                    >
+                      Not Interested
+                    </Button>
+                  </>
+                );
+              }
+              return null;
             }}
-            rowActionLabel="Create ticket"
-            rowActionDisabledSelector={(lead) => lead.recordType === "APP_LOGIN"}
             onNewOrder={activeTab === "THIRD_PARTY" ? openNewLead : undefined}
             newActionLabel="Add lead"
             emptyMessage={activeTab === "APP_LOGIN" ? "No workspace accounts have logged in yet." : "No leads match this category."}
@@ -1037,24 +1093,6 @@ export default function PlatformLeadsWorkspace({
               if (fieldKey === "campaign_date" || fieldKey === "last_campaign_date") {
                 return lead[fieldKey] ? new Date(lead[fieldKey]).toLocaleDateString() : "—";
               }
-              if (fieldKey === "stage_action" && lead.recordType !== "APP_LOGIN") {
-                return (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    disabled={statusSaving}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setStatusLeadId(lead.id);
-                      setStatusError("");
-                    }}
-                  >
-                    Change
-                  </Button>
-                );
-              }
-              if (fieldKey === "stage_action") return "—";
               return lead[fieldKey as keyof PlatformLead] || "—";
             }}
           />
@@ -1230,6 +1268,59 @@ export default function PlatformLeadsWorkspace({
             </Button>
           </div>
         </div>
+      </Modal>
+      <Modal
+        open={Boolean(callbackLeadId)}
+        onClose={() => {
+          if (!callbackSaving) {
+            setCallbackLeadId(null);
+            setCallbackError("");
+          }
+        }}
+        ariaLabel="Schedule lead callback"
+        ariaLabelledBy="lead-callback-title"
+        size="sm"
+      >
+        <form onSubmit={scheduleLeadCallback} className="space-y-4 p-5">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Lead follow-up</p>
+            <h2 id="lead-callback-title" className="mt-1 text-lg font-bold text-slate-900">
+              Call Back Later{callbackLeadId ? ` · ${leads.find((lead) => lead.id === callbackLeadId)?.name ?? ""}` : ""}
+            </h2>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Input
+              label="Callback date"
+              required
+              type="date"
+              value={callbackDate}
+              disabled={callbackSaving}
+              onChange={(event) => setCallbackDate(event.target.value)}
+            />
+            <Input
+              label="Callback time"
+              required
+              type="time"
+              value={callbackTime}
+              disabled={callbackSaving}
+              onChange={(event) => setCallbackTime(event.target.value)}
+            />
+          </div>
+          {callbackError && <p role="alert" className="rounded-lg border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">{callbackError}</p>}
+          <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={callbackSaving}
+              onClick={() => setCallbackLeadId(null)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={callbackSaving || !callbackDate || !callbackTime}>
+              {callbackSaving ? "Scheduling…" : "Schedule callback"}
+            </Button>
+          </div>
+        </form>
       </Modal>
       <Modal
         open={Boolean(ticketLeadId)}

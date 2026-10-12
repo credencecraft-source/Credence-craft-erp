@@ -20,8 +20,17 @@ type ContactMasterExcelActionsProps = {
 
 type ImportSummary = {
   created: number;
+  failureCount: number;
   failures: Array<{ contactKey: string; message: string }>;
 };
+
+type ImportProgress = {
+  created: number;
+  processed: number;
+  total: number;
+};
+
+const IMPORT_BATCH_SIZE = 10;
 
 export default function ContactMasterExcelActions({
   contacts,
@@ -31,6 +40,7 @@ export default function ContactMasterExcelActions({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [validatedImport, setValidatedImport] = useState<ContactWorkbookImportResult | null>(null);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
+  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
   const [downloadError, setDownloadError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [fatalError, setFatalError] = useState("");
@@ -85,6 +95,7 @@ export default function ContactMasterExcelActions({
     if (!selectedFile) return;
     setValidatedImport(null);
     setSummary(null);
+    setImportProgress(null);
     setFatalError("");
     startTransition(async () => {
       try {
@@ -99,29 +110,49 @@ export default function ContactMasterExcelActions({
   const createValidatedContacts = () => {
     if (!validatedImport?.contacts.length) return;
     setSummary(null);
+    setImportProgress({ created: 0, processed: 0, total: validatedImport.contacts.length });
     startTransition(async () => {
       const failures = [...validatedImport.failures];
       const retryableContacts: ContactWorkbookImportResult["contacts"] = [];
       let created = 0;
-      for (const { contactKey, input } of validatedImport.contacts) {
-        try {
-          const response = await fetch(endpoint, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(input),
-          });
-          const result = await response.json() as { error?: string };
-          if (!response.ok) throw new Error(result.error ?? "Unable to create contact.");
-          created += 1;
-        } catch (error) {
-          retryableContacts.push({ contactKey, input });
-          failures.push({
-            contactKey,
-            message: error instanceof Error ? error.message : "Unable to create contact.",
-          });
+      let processed = 0;
+      for (let index = 0; index < validatedImport.contacts.length; index += IMPORT_BATCH_SIZE) {
+        const batch = validatedImport.contacts.slice(index, index + IMPORT_BATCH_SIZE);
+        const results = await Promise.all(batch.map(async ({ contactKey, input }) => {
+          try {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(input),
+            });
+            const result = await response.json() as { error?: string };
+            if (!response.ok) throw new Error(result.error ?? "Unable to create contact.");
+            return { contactKey, input, error: null };
+          } catch (error) {
+            return {
+              contactKey,
+              input,
+              error: error instanceof Error ? error.message : "Unable to create contact.",
+            };
+          }
+        }));
+        for (const result of results) {
+          if (result.error) {
+            retryableContacts.push({ contactKey: result.contactKey, input: result.input });
+            failures.push({ contactKey: result.contactKey, message: result.error });
+          } else {
+            created += 1;
+          }
         }
+        processed += results.length;
+        setImportProgress({ created, processed, total: validatedImport.contacts.length });
       }
-      setSummary({ created, failures: failures.slice(0, 100) });
+      setSummary({
+        created,
+        failureCount: failures.length,
+        failures: failures.slice(0, 100),
+      });
+      setImportProgress(null);
       setValidatedImport({ ...validatedImport, contacts: retryableContacts });
       if (created > 0) router.refresh();
     });
@@ -149,6 +180,7 @@ export default function ContactMasterExcelActions({
             setSelectedFile(null);
             setValidatedImport(null);
             setSummary(null);
+            setImportProgress(null);
             setFatalError("");
             setIsOpen(true);
           }}
@@ -166,6 +198,7 @@ export default function ContactMasterExcelActions({
             <h2 className="text-base font-semibold">Import Unified Contact Master</h2>
             <p className="mt-2 text-sm text-slate-600">
               Use the single-sheet template with one contact per row. Validate first to normalize role capitalization, spaces, hyphens, and separators; spelling is not guessed, and any role entered must match an active role code. Roles are optional and can be assigned later. Review row errors before creating contacts. Contact Codes are generated on save, and full bank account numbers are never included in exports.
+              {" "}Each .xlsx file can contain up to 100,000 contact rows (50 MB maximum); add rows to the template in Excel as needed.
             </p>
           </div>
           <Input
@@ -178,6 +211,7 @@ export default function ContactMasterExcelActions({
               setSelectedFile(event.currentTarget.files?.[0] ?? null);
               setValidatedImport(null);
               setSummary(null);
+              setImportProgress(null);
               setFatalError("");
             }}
             aria-label="Contact Excel workbook file"
@@ -189,6 +223,12 @@ export default function ContactMasterExcelActions({
             </p>
           ) : null}
           {fatalError ? <p className="text-sm text-slate-700" role="alert">{fatalError}</p> : null}
+          {importProgress ? (
+            <p className="text-sm text-slate-600" role="status" aria-live="polite">
+              Inserted {importProgress.created} of {importProgress.total} validated contacts
+              {" "}({importProgress.processed} processed).
+            </p>
+          ) : null}
           {validatedImport ? (
             <div className="space-y-2 text-sm" role="status">
               <p>
@@ -221,7 +261,7 @@ export default function ContactMasterExcelActions({
           ) : null}
           {summary ? (
             <div className="space-y-2 text-sm" role={summary.failures.length ? "alert" : "status"}>
-              <p>Created {summary.created} contact{summary.created === 1 ? "" : "s"}; {summary.failures.length} row{summary.failures.length === 1 ? "" : "s"} failed.</p>
+              <p>Created {summary.created} contact{summary.created === 1 ? "" : "s"}; {summary.failureCount} row{summary.failureCount === 1 ? "" : "s"} failed.</p>
               {summary.failures.length ? (
                 <ul className="max-h-40 list-disc space-y-1 overflow-y-auto pl-5">
                   {summary.failures.slice(0, 10).map((failure, index) => (
@@ -229,7 +269,7 @@ export default function ContactMasterExcelActions({
                   ))}
                 </ul>
               ) : null}
-              {summary.failures.length > 10 ? <p>{summary.failures.length - 10} additional errors are not shown.</p> : null}
+              {summary.failureCount > 10 ? <p>{summary.failureCount - 10} additional errors are not shown.</p> : null}
             </div>
           ) : null}
           <div className="flex flex-wrap justify-end gap-2">

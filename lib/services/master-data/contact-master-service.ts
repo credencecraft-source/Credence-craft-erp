@@ -339,7 +339,6 @@ async function saveDetails(
     for (const account of input.bankAccounts) {
       const existing = account.id ? currentById.get(account.id) : undefined;
       if (account.id && !existing) throw new ContactValidationError("Bank account does not belong to this contact.");
-      if (!account.accountNumber && !existing) throw new ContactValidationError("Account number is required for a new bank account.");
       const data = {
         account_holder_name: account.accountHolderName,
         ifsc_code: account.ifscCode,

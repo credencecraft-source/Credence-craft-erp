@@ -4,6 +4,7 @@ import { prisma } from "@/lib/database/prisma-client";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { normalizeSystemStatusKey } from "@/lib/auth/validation-rules";
 import { requireOrganizationAccess } from "./organization-service";
+import { PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES } from "@/lib/services/platform/platform-lead-constants";
 import {
   AUTOMATIC_TRIAL_EXTENSION_DESCRIPTION_PREFIX,
   LEGACY_TRIAL_EXTENSION_REQUEST_DESCRIPTION,
@@ -176,11 +177,72 @@ export async function createPlatformLeadSupportTicket(input: {
   requestType?: string;
   callbackDate?: string;
   callbackTime?: string;
+  markCallBackLater?: boolean;
 }) {
   const admin = await requirePlatformSessionAdmin();
   const normalized = normalizeTicketInput(input);
   const leadId = input.leadId.trim();
   if (!leadId || leadId.length > 255) throw new Error("Select a valid lead.");
+
+  if (input.markCallBackLater) {
+    if (normalized.request_type !== "CALLBACK") {
+      throw new Error("Call Back Later requires a callback request.");
+    }
+    return prisma.$transaction(async (transaction) => {
+      const lead = await transaction.platformLead.findUnique({
+        where: { id: leadId },
+        select: { id: true, stage: true },
+      });
+      if (!lead) throw new Error("Lead not found.");
+      if (!PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES.includes(
+        lead.stage as (typeof PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES)[number],
+      )) {
+        throw new Error("Only leads under Need To Call can schedule a callback.");
+      }
+      const updatedLead = await transaction.platformLead.updateMany({
+        where: { id: lead.id, stage: lead.stage },
+        data: { stage: "Call Back Later" },
+      });
+      if (updatedLead.count !== 1) {
+        throw new Error("The lead status changed. Refresh and try again.");
+      }
+
+      const ticket = await transaction.supportTicket.create({
+        data: {
+          id: randomUUID(),
+          ticket_number: randomUUID(),
+          organization_id: null,
+          submitted_by_user_id: null,
+          platform_lead_id: lead.id,
+          created_by_platform_admin_id: admin.id,
+          ...normalized,
+        },
+      });
+      await transaction.platformAuditEvent.createMany({
+        data: [
+          {
+            platform_admin_id: admin.id,
+            action: "PLATFORM_LEAD_SUPPORT_TICKET_CREATED",
+            entity_type: "SupportTicket",
+            entity_id: ticket.id,
+            details: {
+              requestType: normalized.request_type,
+              callbackDate: normalized.callback_date,
+              callbackTime: normalized.callback_time,
+            },
+          },
+          {
+            platform_admin_id: admin.id,
+            action: "PLATFORM_LEAD_STAGE_UPDATED",
+            entity_type: "PlatformLead",
+            entity_id: lead.id,
+            details: { previousStage: lead.stage, stage: "Call Back Later" },
+          },
+        ],
+      });
+      return ticket;
+    });
+  }
 
   const lead = await prisma.platformLead.findUnique({
     where: { id: leadId },

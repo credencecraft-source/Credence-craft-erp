@@ -38,6 +38,7 @@ export async function POST(
       requestType: typeof body.requestType === "string" ? body.requestType : undefined,
       callbackDate: typeof body.callbackDate === "string" ? body.callbackDate : undefined,
       callbackTime: typeof body.callbackTime === "string" ? body.callbackTime : undefined,
+      markCallBackLater: body.markCallBackLater === true,
     });
     return NextResponse.json({ ok: true, ticket }, { status: 201 });
   } catch (error) {

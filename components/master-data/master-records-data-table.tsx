@@ -718,24 +718,28 @@ export function MasterRecordsTable({
           : [{}];
       const normalizedValues = childValues.length > 0 ? childValues as Array<Record<string, unknown>> : [{}];
       return (
-        <div key={field.key} className="col-span-full min-w-0 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
-            <span className="text-sm font-semibold text-slate-800">{field.label}</span>
-            <Button
-              size="sm"
-              variant="secondary"
-               onClick={() => setValues({ ...values, [field.key]: [...normalizedValues, {}] })}
-            >
-                Add row
+        <div key={field.key} className={`col-span-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 ${moduleKey === "article" ? "space-y-2 p-3" : "space-y-3 p-4"}`}>
+          <div className={`flex min-w-0 items-center justify-between gap-3 border-b border-slate-200 ${moduleKey === "article" ? "pb-2" : "pb-3"}`}>
+              <div className="min-w-0">
+                <span className={moduleKey === "article" ? "text-xs font-bold uppercase tracking-wide text-slate-700" : "text-sm font-semibold text-slate-800"}>{moduleKey === "article" ? "Color variants" : field.label}</span>
+                {moduleKey === "article" ? <p className="mt-0.5 text-xs text-slate-500">Add a color, SKU, and optional price override for each variant.</p> : null}
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="shrink-0"
+                onClick={() => setValues({ ...values, [field.key]: [...normalizedValues, {}] })}
+              >
+                {moduleKey === "article" ? "Add color" : "Add row"}
               </Button>
           </div>
           <input type="hidden" name={`field_${field.key}`} value={JSON.stringify(normalizedValues.filter((row) => Object.values(row).some((item) => String(item ?? "").trim() !== "")))} />
           <div className="space-y-2">
-            {normalizedValues.map((childValue, index) => (
-              <div key={`${field.key}-${index}`} className="grid min-w-0 items-end gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-[2.5rem_minmax(0,1fr)_auto]">
-                <span className="flex h-10 items-center justify-center self-end text-sm font-semibold tabular-nums text-slate-500">{index + 1}</span>
-                <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-                  {childFields.map((childField) => {
+              {normalizedValues.map((childValue, index) => (
+                <div key={`${field.key}-${index}`} className={`grid min-w-0 rounded-lg border border-slate-200 bg-white sm:grid-cols-[2.5rem_minmax(0,1fr)_auto] ${moduleKey === "article" ? "items-center gap-2 p-2" : "items-end gap-3 p-3"}`}>
+                  <span className={`flex items-center justify-center text-sm font-semibold tabular-nums text-slate-500 ${moduleKey === "article" ? "h-8 self-center" : "h-10 self-end"}`}>{index + 1}</span>
+                  <div className={`grid min-w-0 ${moduleKey === "article" ? "gap-2 sm:grid-cols-2 xl:grid-cols-3" : "gap-3 sm:grid-cols-2"}`}>
+                    {childFields.map((childField) => {
                     const childValueForField = childValue[childField.key] ?? "";
                     if (moduleKey === "article" && childField.key === "variant_code") return null;
                     const onChange = (nextValue: string) => {
@@ -745,23 +749,7 @@ export function MasterRecordsTable({
                     };
                     if (childField.type === "lookup") {
                       return (
-                        <div key={childField.key} className="space-y-1">
-                          {allowQuickCreate && moduleKey === "article" && childField.lookupModuleKey && (
-                            <div className="flex justify-end">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="secondary"
-                                onClick={() => void openQuickMaster(childField.lookupModuleKey as string, {
-                                  fieldKey: field.key,
-                                  variantIndex: index,
-                                  childFieldKey: childField.key,
-                                })}
-                              >
-                                + Add New
-                              </Button>
-                            </div>
-                          )}
+                        <div key={childField.key} className={allowQuickCreate && moduleKey === "article" && childField.lookupModuleKey ? "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2" : "min-w-0"}>
                           <Select
                             label={childField.label}
                             required={childField.required}
@@ -774,19 +762,39 @@ export function MasterRecordsTable({
                               { value: "", label: `Select ${childField.label}` },
                               ...(articleLookupOptions[childField.lookupModuleKey ?? ""] ?? []).map((option) => ({ value: option.label, label: option.label })),
                             ]}
+                            className={moduleKey === "article" ? "h-9 px-2 py-1.5 text-sm" : undefined}
                           />
+                          {allowQuickCreate && moduleKey === "article" && childField.lookupModuleKey && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="mb-0.5 shrink-0 px-2"
+                              onClick={() => void openQuickMaster(childField.lookupModuleKey as string, {
+                                fieldKey: field.key,
+                                variantIndex: index,
+                                childFieldKey: childField.key,
+                              })}
+                            >
+                              + Add
+                            </Button>
+                          )}
                         </div>
                       );
                     }
-                    return <Input key={childField.key} label={childField.label} required={childField.required} type={childField.type === "number" || childField.type === "percentage" || childField.type === "decimal" ? "number" : "text"} step={childField.type === "decimal" ? "0.0001" : childField.type === "percentage" ? "0.01" : undefined} value={String(childValueForField)} onChange={(event) => onChange(event.target.value)} />;
+                    return <Input key={childField.key} label={childField.label} required={childField.required} type={childField.type === "number" || childField.type === "percentage" || childField.type === "decimal" ? "number" : "text"} step={childField.type === "decimal" ? "0.0001" : childField.type === "percentage" ? "0.01" : undefined} value={String(childValueForField)} onChange={(event) => onChange(event.target.value)} className={moduleKey === "article" ? "h-9 px-2 py-1.5 text-sm" : undefined} />;
                   })}
                 </div>
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant={moduleKey === "article" ? "destructive" : "ghost"}
                   size="sm"
-                  onClick={() => setValues({ ...values, [field.key]: normalizedValues.filter((_, itemIndex) => itemIndex !== index) })}
-                  className="justify-self-end text-red-600 sm:mb-0.5"
+                  onClick={() => {
+                    if (moduleKey !== "article" || window.confirm("Remove this article color variant?")) {
+                      setValues({ ...values, [field.key]: normalizedValues.filter((_, itemIndex) => itemIndex !== index) });
+                    }
+                  }}
+                  className={`justify-self-end sm:mb-0.5 ${moduleKey === "article" ? "" : "text-red-600"}`}
                 >
                   Remove
                 </Button>
@@ -940,12 +948,17 @@ export function MasterRecordsTable({
       {/* CREATE MODAL */}
       {showCreateModal && (
         <div className="erp-popup-backdrop">
-          <div className={`erp-popup-panel flex h-[calc(100dvh-1.5rem)] max-h-[56rem] ${moduleKey === "raw-material" ? "w-[min(96vw,72rem)]" : "w-[min(96vw,90rem)]"} max-w-none flex-col space-y-4 p-5`}>
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900">Add New {moduleLabel}</h3>
+          <div className={`erp-popup-panel flex h-[calc(100dvh-1.5rem)] max-h-[56rem] ${moduleKey === "raw-material" ? "w-[min(96vw,72rem)]" : moduleKey === "article" ? "w-[min(96vw,82rem)]" : "w-[min(96vw,90rem)]"} max-w-none flex-col space-y-4 p-5`}>
+            <div className={`flex min-w-0 justify-between gap-4 border-b pb-3 ${moduleKey === "article" ? "items-start border-slate-200" : "items-center border-slate-100"}`}>
+              <div className="min-w-0">
+                {moduleKey === "article" ? <p className="erp-eyebrow">Article master</p> : null}
+                <h3 className={moduleKey === "article" ? "mt-1 text-lg font-semibold text-slate-900" : "text-sm font-bold text-slate-900"}>Add New {moduleLabel}</h3>
+                {moduleKey === "article" ? <p className="mt-1 text-sm text-slate-500">Enter article details and configure its color variants.</p> : null}
+              </div>
               <Button
                 variant="ghost"
                 size="sm"
+                aria-label={`Close add ${moduleLabel} form`}
                 onClick={closeCreateModal}
               >
                 ✕
@@ -956,7 +969,7 @@ export function MasterRecordsTable({
               <input type="hidden" name="organizationId" value={organizationId} />
               <input type="hidden" name="moduleKey" value={moduleKey} />
 
-              <div className={`grid min-h-0 flex-1 grid-cols-1 content-start gap-x-6 gap-y-4 overflow-y-auto pr-2 ${moduleKey === "raw-material" ? "sm:grid-cols-2" : "sm:grid-cols-2 xl:grid-cols-3"}`}>
+              <div className={`grid min-h-0 flex-1 grid-cols-1 content-start gap-x-6 gap-y-4 overflow-y-auto pr-2 ${moduleKey === "raw-material" ? "sm:grid-cols-2" : moduleKey === "article" ? "sm:grid-cols-2 xl:grid-cols-4" : "sm:grid-cols-2 xl:grid-cols-3"}`}>
                 {orderedFields.map((field) => moduleKey === "raw-material" && rawMaterialShowAllFieldKeys.has(field.key) && createFields.Show_All1 !== true
                   ? <input key={field.key} type="hidden" name={`field_${field.key}`} value={String(createFields[field.key] ?? "")} />
                   : renderField(field, createFields, setCreateFields, moduleKey === "article"))}

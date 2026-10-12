@@ -49,6 +49,7 @@ interface ReportGridProps<T> {
   bulkUploadDisabled?: boolean;
   onRowAction?: (recordId: string) => void;
   onSecondaryRowAction?: (recordId: string) => void;
+  rowActions?: (record: T) => ReactNode;
   rowActionPosition?: "start" | "end";
   rowActionLabel?: string;
   rowActionLabelSelector?: (record: T) => string;
@@ -92,6 +93,7 @@ function ReportGridImplementation<T>({
   bulkUploadDisabled = false,
   onRowAction,
   onSecondaryRowAction,
+  rowActions,
   rowActionPosition = "end",
   rowActionLabel = "Action",
   rowActionLabelSelector,
@@ -108,6 +110,7 @@ function ReportGridImplementation<T>({
   isLoading = false,
   emptyMessage = "No records found.",
 }: ReportGridProps<T>) {
+  const hasRowActions = Boolean(onRowAction || onSecondaryRowAction || rowActions);
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const tableContainerRef = useRef<HTMLDivElement>(null);
@@ -366,13 +369,13 @@ function ReportGridImplementation<T>({
                 />
               </th>
             )}
-            {(onRowAction || onSecondaryRowAction) && rowActionPosition === "start" && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
+            {hasRowActions && rowActionPosition === "start" && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
             {visibleFieldDefinitions.map((field) => (
               <th key={String(field.key)} className="p-2 font-semibold whitespace-nowrap">
                 {field.label}
               </th>
             ))}
-            {(onRowAction || onSecondaryRowAction) && rowActionPosition === "end" && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
+            {hasRowActions && rowActionPosition === "end" && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200 bg-white text-slate-700 text-[11px]">
@@ -380,7 +383,7 @@ function ReportGridImplementation<T>({
             Array.from({ length: 6 }, (_, index) => (
               <tr key={`loading-${index}`}>
                 {selectable && <td className="p-2"><Skeleton className="mx-auto h-3 w-3" /></td>}
-                {(onRowAction || onSecondaryRowAction) && rowActionPosition === "start" && (
+                {hasRowActions && rowActionPosition === "start" && (
                   <td className="p-2"><Skeleton className="h-6 w-14" /></td>
                 )}
                 {visibleFieldDefinitions.map((field) => (
@@ -388,14 +391,14 @@ function ReportGridImplementation<T>({
                     <Skeleton className="h-3 w-24" />
                   </td>
                 ))}
-                {(onRowAction || onSecondaryRowAction) && rowActionPosition === "end" && (
+                {hasRowActions && rowActionPosition === "end" && (
                   <td className="p-2"><Skeleton className="h-6 w-14" /></td>
                 )}
               </tr>
             ))
           ) : filteredRecords.length === 0 ? (
             <tr>
-              <td colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (onRowAction || onSecondaryRowAction ? 1 : 0)} className="p-6 text-center text-slate-500">
+              <td colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (hasRowActions ? 1 : 0)} className="p-6 text-center text-slate-500">
                 {emptyMessage}
               </td>
             </tr>
@@ -404,7 +407,7 @@ function ReportGridImplementation<T>({
               {topSpacerHeight > 0 && (
                 <tr aria-hidden="true">
                   <td
-                    colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (onRowAction || onSecondaryRowAction ? 1 : 0)}
+                    colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (hasRowActions ? 1 : 0)}
                     style={{ height: topSpacerHeight, padding: 0, border: 0 }}
                   />
                 </tr>
@@ -433,9 +436,9 @@ function ReportGridImplementation<T>({
                       />
                     </td>
                   )}
-                  {(onRowAction || onSecondaryRowAction) && rowActionPosition === "start" && (
+                  {hasRowActions && rowActionPosition === "start" && (
                     <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         {onRowAction && !rowActionHiddenSelector?.(record) ? (
                           <Button
                             variant="secondary"
@@ -458,6 +461,7 @@ function ReportGridImplementation<T>({
                             {secondaryRowActionLabelSelector?.(record) ?? secondaryRowActionLabel}
                           </Button>
                         ) : null}
+                        {rowActions?.(record)}
                       </div>
                     </td>
                   )}
@@ -473,9 +477,9 @@ function ReportGridImplementation<T>({
                       {renderCell(String(field.key), record)}
                     </td>
                   ))}
-                  {(onRowAction || onSecondaryRowAction) && rowActionPosition === "end" && (
+                  {hasRowActions && rowActionPosition === "end" && (
                     <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         {onRowAction && !rowActionHiddenSelector?.(record) ? (
                           <Button
                             variant="secondary"
@@ -498,6 +502,7 @@ function ReportGridImplementation<T>({
                             {secondaryRowActionLabelSelector?.(record) ?? secondaryRowActionLabel}
                           </Button>
                         ) : null}
+                        {rowActions?.(record)}
                       </div>
                     </td>
                   )}
@@ -507,7 +512,7 @@ function ReportGridImplementation<T>({
               {bottomSpacerHeight > 0 && (
                 <tr aria-hidden="true">
                   <td
-                    colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (onRowAction || onSecondaryRowAction ? 1 : 0)}
+                    colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (hasRowActions ? 1 : 0)}
                     style={{ height: bottomSpacerHeight, padding: 0, border: 0 }}
                   />
                 </tr>

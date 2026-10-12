@@ -81,6 +81,61 @@ describe("contact master validation", () => {
     expect(contact.addresses?.[0].city).toBe("");
   });
 
+  it("allows a contact with every optional section empty", () => {
+    const contact = parseContactInput({
+      legalName: "",
+      roles: [],
+      taxRegistrations: [],
+      addresses: [],
+      bankAccounts: [],
+    });
+
+    expect(contact.legalName).toBe("");
+    expect(contact.roles).toEqual([]);
+    expect(contact.taxRegistrations).toEqual([]);
+    expect(contact.addresses).toEqual([]);
+    expect(contact.bankAccounts).toEqual([]);
+  });
+
+  it("skips GST rows without a GSTIN and accepts incomplete address and bank rows", () => {
+    const contact = parseContactInput({
+      legalName: "",
+      roles: [],
+      taxRegistrations: [{ gstin: "", legalName: "" }],
+      addresses: [{
+        usage: "BOTH",
+        addressLine1: "",
+        city: "",
+        stateName: "",
+        postalCode: "",
+        countryCode: "IN",
+        isDefaultBilling: false,
+        isDefaultShipping: false,
+      }],
+      bankAccounts: [{
+        accountHolderName: "",
+        accountNumber: "",
+        ifscCode: "",
+        bankName: "",
+        isDefault: false,
+      }],
+    });
+
+    expect(contact.taxRegistrations).toEqual([]);
+    expect(contact.addresses?.[0]).toMatchObject({
+      addressLine1: "",
+      city: "",
+      stateName: "",
+      postalCode: "",
+      countryCode: "IN",
+    });
+    expect(contact.bankAccounts?.[0]).toMatchObject({
+      accountHolderName: "",
+      ifscCode: "",
+      bankName: "",
+    });
+  });
+
   it("does not require a user-supplied contact code and rejects code changes", () => {
     expect(parseContactInput(baseContact({ code: undefined })).code).toBeUndefined();
     expect(parseContactInput(baseContact()).code).toBeUndefined();

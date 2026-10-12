@@ -436,8 +436,8 @@ export default function OrganizationKycForm({
         open={open}
         onClose={() => setOpen(false)}
         ariaLabelledBy="organization-kyc-title"
-        size="xl"
-        className="max-w-7xl p-0"
+        size="2xl"
+        className="p-0"
       >
         <form ref={formRef} onSubmit={(event) => event.preventDefault()} className="min-w-0">
           <header className="space-y-5 bg-[var(--erp-brand-hover)] px-6 py-6 text-white sm:px-8">
@@ -546,7 +546,7 @@ export default function OrganizationKycForm({
             </section>
 
             <section className={step === 1 ? "space-y-4" : "hidden"} aria-label="Founder and team">
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 <Input label="Founder name" name="founderName" defaultValue={details.founderName ?? ""} disabled={inputDisabled} />
                 <Input label="Founder designation" name="founderDesignation" placeholder="Founder, Managing Director..." defaultValue={details.founderDesignation ?? ""} disabled={inputDisabled} />
                 <Input label="Total team members" name="teamMemberCount" type="number" min="0" step="1" defaultValue={details.teamMemberCount ?? ""} disabled={inputDisabled} />

@@ -408,13 +408,13 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
         open={manualStockOpen}
         onClose={() => { if (!manualStockSaving) setManualStockOpen(false); }}
         ariaLabelledBy="manual-stock-dialog-title"
-        size="md"
+        size="lg"
       >
         <div className="border-b border-slate-200 px-5 py-4">
           <h2 id="manual-stock-dialog-title" className="text-base font-bold text-slate-950">Add Raw Material Stock</h2>
           <p className="mt-1 text-xs text-slate-500">Stock will be added to the selected location.</p>
         </div>
-        <form onSubmit={submitManualStock} className="space-y-4 p-5">
+        <form onSubmit={submitManualStock} className="grid gap-4 p-5 sm:grid-cols-2">
           {manualOptionsLoading ? <p className="text-sm text-slate-500">Loading materials and locations...</p> : (
             <>
               <Select
@@ -456,11 +456,11 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
               />
             </>
           )}
-          {manualStockError && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{manualStockError}</p>}
+          {manualStockError && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 sm:col-span-2">{manualStockError}</p>}
           {!manualOptionsLoading && (rawMaterialOptions.length === 0 || locationOptions.length === 0) && !manualStockError && (
-            <p className="text-sm text-slate-500">An active raw material and location are required before stock can be added.</p>
+            <p className="text-sm text-slate-500 sm:col-span-2">An active raw material and location are required before stock can be added.</p>
           )}
-          <div className="flex justify-end gap-2 border-t border-slate-200 pt-4">
+          <div className="flex justify-end gap-2 border-t border-slate-200 pt-4 sm:col-span-2">
             <Button type="button" variant="secondary" onClick={() => setManualStockOpen(false)} disabled={manualStockSaving}>Cancel</Button>
             <Button type="submit" disabled={manualStockSaving || manualOptionsLoading || rawMaterialOptions.length === 0 || locationOptions.length === 0}>
               {manualStockSaving ? "Adding..." : "Add Stock"}

@@ -94,7 +94,7 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
   if (!route || loading) return <main className="p-6">Loading tax rules...</main>;
 
   return (
-    <main className="mx-auto max-w-4xl space-y-6 p-6">
+    <main className="mx-auto w-full max-w-7xl space-y-6 p-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Tax Rules</h1>
         <p className="mt-1 text-sm text-slate-600">Configure the default tax regime used across this organization.</p>
@@ -103,7 +103,7 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
       {message && <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{message}</div>}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="grid gap-5 md:grid-cols-2">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
           <label className="space-y-2 text-sm font-medium text-slate-700">
             Country
             <Select
@@ -202,7 +202,7 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
           )}
 
           {profile.taxRegime === "VAT" && (
-            <label className="space-y-2 text-sm font-medium text-slate-700 md:col-span-2">
+            <label className="space-y-2 text-sm font-medium text-slate-700">
               VAT %
               <Input
                 type="number"
@@ -215,7 +215,7 @@ export default function OrganizationTaxRulesPage({ params }: { params: Promise<{
           )}
 
           {profile.taxRegime === "SALES_TAX" && (
-            <label className="space-y-2 text-sm font-medium text-slate-700 md:col-span-2">
+            <label className="space-y-2 text-sm font-medium text-slate-700">
               Sales Tax %
               <Input
                 type="number"

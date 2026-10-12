@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { createContactWorkbook } from "@/lib/master-data/contact-records-workbook-generator";
 import {
+  MAX_CONTACT_ROWS,
   parseContactWorkbook,
   type ContactWorkbookRecord,
 } from "@/lib/master-data/contact-records-workbook-parser";
@@ -19,6 +20,20 @@ function workbookFile(sheets: Array<{ name: string; rows: unknown[][] }>) {
 }
 
 describe("contact master workbook", () => {
+  it("allows importing more than 200 contacts and supports up to 100,000 rows", async () => {
+    const result = await parseContactWorkbook(workbookFile([{
+      name: "Contacts",
+      rows: [
+        ["Legal Name"],
+        ...Array.from({ length: 201 }, (_, index) => [`Contact ${index + 1}`]),
+      ],
+    }]));
+
+    expect(MAX_CONTACT_ROWS).toBe(100_000);
+    expect(result.contacts).toHaveLength(201);
+    expect(result.failures).toEqual([]);
+  });
+
   it("imports related GST, address, and bank sheets by NEW contact key", async () => {
     const file = workbookFile([
       {
@@ -229,6 +244,26 @@ describe("contact master workbook", () => {
     expect(result.contacts[0].input.addresses[0].city).toBe("");
   });
 
+  it("imports a contact with a blank name and incomplete optional sections", async () => {
+    const result = await parseContactWorkbook(workbookFile([{
+      name: "Contacts",
+      rows: [
+        ["Legal Name", "Roles", "GSTIN", "Address Use", "Address Line 1", "City", "State", "PIN Code", "Account Holder Name", "Account Number", "IFSC Code", "Bank Name"],
+        ["", "", "", "BOTH", "", "", "", "", "Example holder", "", "", ""],
+      ],
+    }]));
+
+    expect(result.failures).toEqual([]);
+    expect(result.contacts).toHaveLength(1);
+    expect(result.contacts[0].input).toMatchObject({
+      legalName: "",
+      roles: [],
+      taxRegistrations: [],
+      addresses: [{ addressLine1: "", city: "", stateName: "", postalCode: "" }],
+      bankAccounts: [{ accountHolderName: "EXAMPLE HOLDER", ifscCode: "", bankName: "" }],
+    });
+  });
+
   it("exports only one worksheet, keeps account numbers masked, and provides inline dropdowns", async () => {
     const contact: ContactWorkbookRecord = {
       id: "contact-id",
@@ -308,7 +343,8 @@ describe("contact master workbook", () => {
     });
     expect(templateWorkbook.SheetNames).toEqual(["Contacts"]);
     expect(templateRows).toHaveLength(201);
-    expect(templateRows[0]).toContain("Legal Name *");
+    expect(templateRows[0]).toContain("Legal Name");
+    expect(templateRows[0]).not.toContain("Legal Name *");
     expect(templateRows[0]).toContain("GSTIN");
     expect(templateRows[0]).toContain("Account Number");
     expect(templateRows[0]).not.toContain("Contact Code");
@@ -318,6 +354,6 @@ describe("contact master workbook", () => {
       formula1: `"${CONTACT_GST_REGISTRATION_TYPES.join(",")}"`,
     });
     const templateFile = new File([templateBytes], "contacts.xlsx");
-    await expect(parseContactWorkbook(templateFile)).rejects.toThrow("Enter at least one contact name and role");
+    await expect(parseContactWorkbook(templateFile)).rejects.toThrow("Enter at least one contact row");
   });
 });

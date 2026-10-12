@@ -344,7 +344,7 @@ export async function updateNewPlatformLeadStages(leadIds: string[], stage: stri
   if (ids.length !== leadIds.length || ids.some((id) => id.length > 255)) {
     throw new Error("Select valid leads.");
   }
-  if (stage !== "Interested For Demo" && stage !== "MARK AS FROUD") {
+  if (stage !== "Verification" && stage !== "MARK AS FROUD") {
     throw new Error("Select a valid status for new leads.");
   }
 
