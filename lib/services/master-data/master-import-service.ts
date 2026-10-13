@@ -571,7 +571,8 @@ export async function getMasterImportJob(
   const errorRowCount = countForStatus(MasterImportJobRowStatus.INVALID)
     + countForStatus(MasterImportJobRowStatus.FAILED);
   const createdRowCount = countForStatus(MasterImportJobRowStatus.IMPORTED);
-  const validatedRowCount = unplannedValidatedCount ?? countForStatus(MasterImportJobRowStatus.VALIDATED);
+  const allValidatedRowCount = countForStatus(MasterImportJobRowStatus.VALIDATED);
+  const validatedRowCount = unplannedValidatedCount ?? allValidatedRowCount;
   const totalRowCount = groupedRows.reduce((count, group) => count + group._count._all, 0);
 
   const rows = page.map((row) => {
@@ -651,7 +652,7 @@ export async function getMasterImportJob(
     plans,
     planCount,
     rowCounts: {
-      staged: totalRowCount - errorRowCount - createdRowCount - validatedRowCount,
+      staged: totalRowCount - errorRowCount - createdRowCount - allValidatedRowCount,
       validated: validatedRowCount,
       errors: errorRowCount,
       created: createdRowCount,
@@ -1417,6 +1418,9 @@ export async function validateMasterImportJob(input: {
     }));
   return {
     job: publicJob(result.savedJob),
+    validatedRowNumbers: validationResults
+      .filter(({ validation }) => validation.validationErrors.length === 0)
+      .map(({ row }) => row.row_number),
     progress: {
       totalRows: result.counts.total_rows,
       processedRows: result.counts.processed_rows,
@@ -1433,7 +1437,15 @@ export async function createMasterImportPlans(input: {
   organizationId: string;
   actorUserId: string;
   jobId: string;
+  rowNumbers?: number[];
 }) {
+  if (input.rowNumbers !== undefined
+    && (input.rowNumbers.length < 1
+      || input.rowNumbers.length > MASTER_IMPORT_PLAN_SIZE
+      || new Set(input.rowNumbers).size !== input.rowNumbers.length
+      || input.rowNumbers.some((rowNumber) => !Number.isSafeInteger(rowNumber) || rowNumber < 1))) {
+    throw new MasterImportServiceError("Selected plan rows are invalid.", 400);
+  }
   const createdPlans = await prisma.$transaction(async (transaction) => {
     const now = new Date();
     const lockedJob = await transaction.masterImportJob.updateMany({
@@ -1462,6 +1474,7 @@ export async function createMasterImportPlans(input: {
           job_id: input.jobId,
           status: MasterImportJobRowStatus.VALIDATED,
           plan_number: null,
+          ...(input.rowNumbers ? { row_number: { in: input.rowNumbers } } : {}),
         },
         orderBy: { row_number: "asc" },
         take: MASTER_IMPORT_PLAN_SIZE,

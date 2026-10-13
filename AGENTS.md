@@ -60,6 +60,13 @@ These are persistent project governance requirements for all future human, AI, a
 
 ## Implementation Verification Gate
 
+- Treat production databases and business data as protected and persistent.
+- Git pushes change source history only; deployment can change live behavior.
+- Never run tests, seeds, migrations, or writes against production databases.
+- Never deploy or migrate production without explicit approval and backup confirmation.
+- Preserve existing production rows; prefer additive, reversible, tenant-scoped changes.
+- Automated workflows must target only records created or selected by that action.
+- Never bulk-process historical records without explicit selection and confirmation.
 - For every implementation, proactively verify the local runtime before handoff: run the read-only Prisma migration-status check when a database is involved, then reuse an already-running development server if it responds at the expected local URL instead of trying to launch a duplicate. Open the affected route in the browser and exercise the changed workflow; reload to verify persistence when applicable.
 - If the migration-status check reports pending migrations, do not repeatedly start the app or apply migrations automatically. Verify that the target is a disposable or otherwise approved non-production database before any migration write; if that cannot be established, stop and report the pending migration and the safe environment needed. Never change protected database settings or point validation at production.
 - If a server is already listening but is not responsive or is not the expected application, do not terminate an unknown process. Report the exact blocker and ask for or establish the correct local runtime before claiming browser verification.

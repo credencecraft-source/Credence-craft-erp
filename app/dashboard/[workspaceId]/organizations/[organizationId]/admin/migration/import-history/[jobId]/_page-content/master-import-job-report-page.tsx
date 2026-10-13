@@ -116,6 +116,13 @@ function isImportPlan(value: unknown): value is ImportPlan {
     && value.validatedRowNumbers.every((rowNumber) => typeof rowNumber === "number");
 }
 
+function isImportRow(value: unknown): value is ImportRow {
+  return isRecord(value)
+    && Number.isSafeInteger(value.rowNumber)
+    && typeof value.status === "string"
+    && typeof value.updatedAt === "string";
+}
+
 function readError(payload: unknown, fallback: string) {
   return isRecord(payload) && typeof payload.error === "string" ? payload.error : fallback;
 }
@@ -210,7 +217,7 @@ export default function MasterImportJobReportPage({
   const [notice, setNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [activeOperation, setActiveOperation] = useState<"stage" | "validate" | "commit" | null>(null);
+  const [activeOperation, setActiveOperation] = useState<"stage" | "validate" | "auto-plan" | "commit" | null>(null);
   const [activePlanNumber, setActivePlanNumber] = useState<number | null>(null);
 
   const loadJob = useCallback(async () => {
@@ -322,7 +329,7 @@ export default function MasterImportJobReportPage({
     setActiveOperation(operation);
     setIsProcessing(true);
     setError("");
-    setNotice(operation === "stage" ? "Staging workbook rows on the server..." : "Validating selected rows...");
+    setNotice(operation === "stage" ? "Staging workbook rows on the server..." : "");
     try {
       if (operation === "stage") {
         const response = await fetch(`${endpoint}/stage`, { method: "POST" });
@@ -423,6 +430,100 @@ export default function MasterImportJobReportPage({
         : `Created ${payload.planCount} separate plan${payload.planCount === 1 ? "" : "s"} for ${payload.plannedRowCount} validated records. Each plan contains at most 100 records.`);
     } catch (planError) {
       setError(planError instanceof Error ? planError.message : "Unable to create import plans.");
+    } finally {
+      setIsProcessing(false);
+      setActiveOperation(null);
+    }
+  };
+
+  const autoPlanStagedRows = async () => {
+    if (!job || isProcessing) return;
+    setActiveOperation("auto-plan");
+    setIsProcessing(true);
+    setError("");
+    setNotice("Auto Plan is validating staged records in batches of up to 100...");
+    try {
+      const maxValidationBatches = Math.max(1, Math.ceil(job.totalRows / REPORT_PAGE_SIZE));
+      let validatedRowCount = 0;
+      let batchCount = 0;
+      let createdPlanCount = 0;
+      let plannedRowCount = 0;
+
+      while (true) {
+        const query = new URLSearchParams({
+          limit: String(REPORT_PAGE_SIZE),
+          offset: "0",
+          tab: "staged",
+        });
+        const stagedResponse = await fetch(`${endpoint}?${query}`, { cache: "no-store" });
+        const stagedPayload: unknown = await stagedResponse.json();
+        if (!stagedResponse.ok) {
+          throw new Error(readError(stagedPayload, "Unable to load staged rows for Auto Plan."));
+        }
+        if (!isRecord(stagedPayload) || !Array.isArray(stagedPayload.rows)
+          || !stagedPayload.rows.every(isImportRow)) {
+          throw new Error("Staged rows response is invalid.");
+        }
+        const stagedRows = stagedPayload.rows;
+        if (stagedRows.length === 0) break;
+        if (batchCount >= maxValidationBatches || stagedRows.length > REPORT_PAGE_SIZE
+          || stagedRows.some((row) => !Number.isSafeInteger(row.rowNumber)
+            || row.rowNumber < 1
+            || !["STAGED", "CORRECTED"].includes(row.status))) {
+          throw new Error("Staged row batch is invalid or exceeded the safe Auto Plan limit.");
+        }
+
+        const rowNumbers = stagedRows.map((row) => row.rowNumber);
+        const validationResponse = await fetch(`${endpoint}/validate`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ rowNumbers }),
+        });
+        const validationPayload: unknown = await validationResponse.json();
+        if (!validationResponse.ok) {
+          throw new Error(readError(validationPayload, "Unable to validate staged rows for Auto Plan."));
+        }
+        if (!isRecord(validationPayload) || !isRecord(validationPayload.job)) {
+          throw new Error("Auto Plan validation response is invalid.");
+        }
+        if (!Array.isArray(validationPayload.validatedRowNumbers)
+          || validationPayload.validatedRowNumbers.some((rowNumber) =>
+            !Number.isSafeInteger(rowNumber) || !rowNumbers.includes(Number(rowNumber)))) {
+          throw new Error("Auto Plan validated-row response is invalid.");
+        }
+        setJob(validationPayload.job as ImportJob);
+        const validatedRowNumbers = validationPayload.validatedRowNumbers as number[];
+        validatedRowCount += validatedRowNumbers.length;
+        batchCount += 1;
+        if (validatedRowNumbers.length > 0) {
+          const planResponse = await fetch(`${endpoint}/plans`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ rowNumbers: validatedRowNumbers }),
+          });
+          const planPayload: unknown = await planResponse.json();
+          if (!planResponse.ok) {
+            throw new Error(readError(planPayload, "Unable to create plans from newly validated records."));
+          }
+          if (!isRecord(planPayload) || typeof planPayload.planCount !== "number"
+            || typeof planPayload.plannedRowCount !== "number") {
+            throw new Error("Auto Plan response is invalid.");
+          }
+          createdPlanCount += planPayload.planCount;
+          plannedRowCount += planPayload.plannedRowCount;
+        }
+        setNotice(`Auto Plan processed ${validatedRowCount} newly valid records so far...`);
+      }
+
+      setSelectedValidationRowIds([]);
+      setActiveReportTab("planned");
+      setReportPage(0);
+      setNotice(
+        `Auto Plan validated ${validatedRowCount} staged records and created ${createdPlanCount} plan${createdPlanCount === 1 ? "" : "s"} for ${plannedRowCount} valid records. Older validated rows were not included; invalid records remain in Errors.`,
+      );
+    } catch (autoPlanError) {
+      await loadJob();
+      setError(autoPlanError instanceof Error ? autoPlanError.message : "Unable to complete Auto Plan.");
     } finally {
       setIsProcessing(false);
       setActiveOperation(null);
@@ -621,15 +722,24 @@ export default function MasterImportJobReportPage({
               </Button>
             ) : null}
             {activeReportTab === "staged" ? (
-              <Button
-                type="button"
-                onClick={() => void runOperation("validate", selectedValidationRowNumbers)}
-                disabled={isProcessing || selectedValidationRowNumbers.length === 0}
-              >
-                {isProcessing && activeOperation === "validate"
-                  ? "Validating..."
-                  : `Validate selected (${selectedValidationRowNumbers.length})`}
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  onClick={() => void autoPlanStagedRows()}
+                  disabled={isProcessing || (rowCounts.staged === 0 && rowCounts.validated === 0)}
+                >
+                  {isProcessing && activeOperation === "auto-plan" ? "Auto Planning..." : "Auto Plan"}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => void runOperation("validate", selectedValidationRowNumbers)}
+                  disabled={isProcessing || selectedValidationRowNumbers.length === 0}
+                >
+                  {isProcessing && activeOperation === "validate"
+                    ? "Validating..."
+                    : `Validate selected (${selectedValidationRowNumbers.length})`}
+                </Button>
+              </>
             ) : null}
           </div>
         </header>
@@ -645,11 +755,6 @@ export default function MasterImportJobReportPage({
           <Card className="p-6 text-sm text-[var(--erp-muted)]">
             The workbook is saved on the server. Stage it to parse all rows into temporary import records.
           </Card>
-        ) : null}
-        {activeReportTab === "staged" ? (
-          <p className="rounded-xl border border-[var(--erp-info)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-info)]" role="status">
-        Select staged rows and choose Validate selected. Successfully validated rows move to Validated; only rows in that tab can be selected for import.
-          </p>
         ) : null}
         <Card className="min-w-0 space-y-4 p-4 sm:p-6">
           <Tabs

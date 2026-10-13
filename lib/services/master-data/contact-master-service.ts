@@ -730,17 +730,17 @@ export async function deleteUnusedContacts(
       });
     }
 
-    for (const contact of deletableContacts) {
-      await createAuditEvent({
-        organizationId,
-        userId: actorId,
+    await tx.auditEvent.createMany({
+      data: deletableContacts.map((contact) => ({
+        organization_id: organizationId,
+        user_id: actorId,
         module: "MASTER_DATA",
         action: "CONTACT_DELETED",
-        entityType: "Contact",
-        entityId: contact.id,
+        entity_type: "Contact",
+        entity_id: contact.id,
         details: { code: contact.code, reason: "UNUSED_CONTACT_BULK_DELETE" },
-      }, tx);
-    }
+      })),
+    });
 
     const deleted = await tx.contact.deleteMany({
       where: { organization_id: organizationId, id: { in: deletableIds } },

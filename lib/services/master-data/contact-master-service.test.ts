@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => {
     contactTaxRegistration: { findMany: vi.fn(), deleteMany: vi.fn() },
     contactAddress: { findMany: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
     contactBankAccount: { findMany: vi.fn(), updateMany: vi.fn(), create: vi.fn(() => ({ id: "bank-1" })), deleteMany: vi.fn() },
+    auditEvent: { createMany: vi.fn() },
     masterVendor: { findFirst: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
     masterBuyer: { findFirst: vi.fn(), count: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
     purchaseOrder: { findMany: vi.fn() },
@@ -260,6 +261,13 @@ describe("contact master numbering", () => {
     const result = await deleteUnusedContacts("org-1", "user-1", contactIds);
 
     expect(result).toEqual({ deletedCount: contacts.length, retainedContactCodes: [] });
+    expect(mocks.tx.auditEvent.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({ entity_id: "contact-1", action: "CONTACT_DELETED" }),
+        expect.objectContaining({ entity_id: "contact-101", action: "CONTACT_DELETED" }),
+      ]),
+    });
+    expect(mocks.tx.auditEvent.createMany.mock.calls[0][0].data).toHaveLength(contacts.length);
     expect(mocks.tx.contact.findMany).toHaveBeenCalledWith({
       where: { organization_id: "org-1", id: { in: contactIds } },
       select: { id: true, code: true },
@@ -317,12 +325,17 @@ describe("contact master numbering", () => {
     expect(mocks.tx.contact.deleteMany).toHaveBeenCalledWith({
       where: { organization_id: "org-1", id: { in: ["contact-1"] } },
     });
-    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
-      organizationId: "org-1",
-      userId: "user-1",
-      action: "CONTACT_DELETED",
-      entityId: "contact-1",
-    }), mocks.tx);
+    expect(mocks.tx.auditEvent.createMany).toHaveBeenCalledWith({
+      data: [{
+        organization_id: "org-1",
+        user_id: "user-1",
+        module: "MASTER_DATA",
+        action: "CONTACT_DELETED",
+        entity_type: "Contact",
+        entity_id: "contact-1",
+        details: { code: "CT1", reason: "UNUSED_CONTACT_BULK_DELETE" },
+      }],
+    });
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
   });
 
