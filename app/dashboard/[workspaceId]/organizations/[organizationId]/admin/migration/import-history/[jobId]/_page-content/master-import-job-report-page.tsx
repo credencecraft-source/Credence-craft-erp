@@ -30,7 +30,7 @@ import {
   type ImportReportField,
 } from "@/lib/master-data/master-import-report-format";
 
-const REPORT_PAGE_SIZE = 50;
+const REPORT_PAGE_SIZE = 100;
 
 type ImportJob = {
   id: string;

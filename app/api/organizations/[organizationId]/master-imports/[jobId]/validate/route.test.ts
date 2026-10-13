@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/services/master-data/master-import-service", () => ({
+  MASTER_IMPORT_VALIDATION_BATCH_SIZE: 100,
   validateMasterImportJob: mocks.validateMasterImportJob,
 }));
 vi.mock("../../route-support", () => ({
@@ -47,6 +48,36 @@ describe("master import validation route", () => {
 
   it("rejects validation requests that do not identify selected rows", async () => {
     mocks.parseBoundedJson.mockResolvedValue({ batchSize: 1_000 });
+    const response = await POST(
+      new Request("http://localhost/api/organizations/org-public/master-imports/job-1/validate", { method: "POST" }),
+      { params: Promise.resolve({ organizationId: "org-public", jobId: "job-1" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.validateMasterImportJob).not.toHaveBeenCalled();
+  });
+
+  it("accepts a full safe validation batch of 100 selected rows", async () => {
+    const rowNumbers = Array.from({ length: 100 }, (_, index) => index + 1);
+    mocks.parseBoundedJson.mockResolvedValue({ rowNumbers });
+    const response = await POST(
+      new Request("http://localhost/api/organizations/org-public/master-imports/job-1/validate", { method: "POST" }),
+      { params: Promise.resolve({ organizationId: "org-public", jobId: "job-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.validateMasterImportJob).toHaveBeenCalledWith({
+      organizationId: "org-internal",
+      actorUserId: "user-1",
+      jobId: "job-1",
+      rowNumbers,
+    });
+  });
+
+  it("rejects batches larger than the safe validation limit", async () => {
+    mocks.parseBoundedJson.mockResolvedValue({
+      rowNumbers: Array.from({ length: 101 }, (_, index) => index + 1),
+    });
     const response = await POST(
       new Request("http://localhost/api/organizations/org-public/master-imports/job-1/validate", { method: "POST" }),
       { params: Promise.resolve({ organizationId: "org-public", jobId: "job-1" }) },

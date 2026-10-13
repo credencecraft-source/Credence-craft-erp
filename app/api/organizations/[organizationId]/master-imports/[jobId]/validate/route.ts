@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { validateMasterImportJob } from "@/lib/services/master-data/master-import-service";
+import {
+  MASTER_IMPORT_VALIDATION_BATCH_SIZE,
+  validateMasterImportJob,
+} from "@/lib/services/master-data/master-import-service";
 import {
   authorizeMasterImportRoute,
   masterImportErrorResponse,
@@ -10,7 +13,7 @@ import {
 function isRowNumberList(value: unknown): value is number[] {
   return Array.isArray(value)
     && value.length > 0
-    && value.length <= 1_000
+    && value.length <= MASTER_IMPORT_VALIDATION_BATCH_SIZE
     && value.every((rowNumber: unknown) =>
       typeof rowNumber === "number" && Number.isSafeInteger(rowNumber) && rowNumber > 0)
     && new Set(value).size === value.length;

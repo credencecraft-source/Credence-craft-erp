@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     },
     masterImportJobRow: {
       createMany: vi.fn(),
+      count: vi.fn(),
       findFirst: vi.fn(),
       findMany: vi.fn(),
       groupBy: vi.fn(),
@@ -74,6 +75,7 @@ import {
   getMasterImportJob,
   listMasterImportJobs,
   MASTER_IMPORT_PLAN_SIZE,
+  MASTER_IMPORT_VALIDATION_BATCH_SIZE,
   saveMasterImportRow,
   stageMasterImportJob,
   transitionMasterImportJob,
@@ -130,6 +132,7 @@ describe("master import service", () => {
     vi.clearAllMocks();
     process.env.AUTH_SECRET = "focused-test-secret";
     mocks.prisma.masterImportJob.deleteMany.mockResolvedValue({ count: 0 });
+    mocks.prisma.masterImportJobRow.count.mockResolvedValue(0);
     mocks.prisma.workspaceUser.findMany.mockResolvedValue([]);
     mocks.loadActiveMasterLookupIndex.mockResolvedValue(new Map());
     mocks.createAuditEvent.mockResolvedValue({});
@@ -551,6 +554,7 @@ describe("master import service", () => {
       { status: "FAILED", _count: { _all: 1 } },
       { status: "IMPORTED", _count: { _all: 4 } },
     ]);
+    mocks.prisma.masterImportJobRow.count.mockResolvedValue(3);
 
     const detail = await getMasterImportJob("org-internal", "job-1", {
       skip: 0,
@@ -612,6 +616,56 @@ describe("master import service", () => {
       payload: failurePayload,
     });
     expect(detail.rowCounts.errors).toBe(1);
+  });
+
+  it("hides planned rows from the validated report and count", async () => {
+    mocks.prisma.masterImportJob.findFirst.mockResolvedValue({ ...baseJob });
+    mocks.prisma.masterImportJobRow.findMany.mockResolvedValue([
+      rowRecord("VALIDATED", { Season: "UNPLANNED" }),
+    ]);
+    mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
+      { status: "VALIDATED", _count: { _all: 3 } },
+      { status: "IMPORTED", _count: { _all: 1 } },
+    ]);
+    mocks.prisma.masterImportJobRow.count.mockResolvedValue(1);
+
+    const detail = await getMasterImportJob("org-internal", "job-1", {
+      skip: 0,
+      take: 50,
+      tab: "validated",
+    });
+
+    expect(detail.rows).toHaveLength(1);
+    expect(detail.rowCounts.validated).toBe(1);
+    expect(mocks.prisma.masterImportJobRow.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "org-internal",
+        job_id: "job-1",
+        status: "VALIDATED",
+        plan_number: null,
+      },
+      skip: 0,
+      take: 50,
+    }));
+    expect(mocks.prisma.masterImportJobRow.count).toHaveBeenCalledWith({
+      where: {
+        organization_id: "org-internal",
+        job_id: "job-1",
+        status: "VALIDATED",
+        plan_number: null,
+      },
+    });
+  });
+
+  it("caps one validation transaction at the safe 100-row batch limit", async () => {
+    expect(MASTER_IMPORT_VALIDATION_BATCH_SIZE).toBe(100);
+    await expect(validateMasterImportJob({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+      rowNumbers: Array.from({ length: 101 }, (_, index) => index + 1),
+    })).rejects.toMatchObject({ status: 400 });
+    expect(mocks.prisma.masterImportJob.findFirst).not.toHaveBeenCalled();
   });
 
   it("rejects importing before the required staging and validation stages", async () => {

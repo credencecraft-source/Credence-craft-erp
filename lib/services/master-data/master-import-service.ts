@@ -32,7 +32,8 @@ export const MASTER_IMPORT_MAX_FILE_SIZE = 50 * 1024 * 1024;
 export const MASTER_IMPORT_UPLOAD_CHUNK_BYTES = 1024 * 1024;
 export const MASTER_IMPORT_ROW_PAYLOAD_MAX_BYTES = 128 * 1024;
 export const MASTER_IMPORT_RETENTION_DAYS = 30;
-export const MASTER_IMPORT_REPORT_PAGE_SIZE = 50;
+export const MASTER_IMPORT_REPORT_PAGE_SIZE = 100;
+export const MASTER_IMPORT_VALIDATION_BATCH_SIZE = 100;
 export const MASTER_IMPORT_PLAN_SIZE = 100;
 const MASTER_IMPORT_PLAN_BATCH_SIZE = 25;
 
@@ -528,13 +529,16 @@ export async function getMasterImportJob(
               MasterImportJobRowStatus.INVALID,
               MasterImportJobRowStatus.FAILED,
             ] };
-  const [page, groupedRows] = await Promise.all([
+  const [page, groupedRows, unplannedValidatedCount] = await Promise.all([
     prisma.masterImportJobRow.findMany({
       where: {
         ...organizationJobRows,
         ...(pagination.tab === "planned"
           ? { row_number: 0 }
-          : statusFilter ? { status: statusFilter } : {}),
+          : {
+              ...(statusFilter ? { status: statusFilter } : {}),
+              ...(pagination.tab === "validated" ? { plan_number: null } : {}),
+            }),
       },
       orderBy: { row_number: "asc" },
       ...(pagination.tab === "all" || pagination.tab === "planned"
@@ -553,6 +557,13 @@ export async function getMasterImportJob(
       where: organizationJobRows,
       _count: { _all: true },
     }),
+    prisma.masterImportJobRow.count({
+      where: {
+        ...organizationJobRows,
+        status: MasterImportJobRowStatus.VALIDATED,
+        plan_number: null,
+      },
+    }),
   ]);
 
   const countForStatus = (status: MasterImportJobRowStatus) =>
@@ -560,7 +571,7 @@ export async function getMasterImportJob(
   const errorRowCount = countForStatus(MasterImportJobRowStatus.INVALID)
     + countForStatus(MasterImportJobRowStatus.FAILED);
   const createdRowCount = countForStatus(MasterImportJobRowStatus.IMPORTED);
-  const validatedRowCount = countForStatus(MasterImportJobRowStatus.VALIDATED);
+  const validatedRowCount = unplannedValidatedCount ?? countForStatus(MasterImportJobRowStatus.VALIDATED);
   const totalRowCount = groupedRows.reduce((count, group) => count + group._count._all, 0);
 
   const rows = page.map((row) => {
@@ -1237,7 +1248,7 @@ export async function validateMasterImportJob(input: {
   }
   if (input.rowNumbers !== undefined
     && (input.rowNumbers.length < 1
-      || input.rowNumbers.length > 1_000
+      || input.rowNumbers.length > MASTER_IMPORT_VALIDATION_BATCH_SIZE
       || new Set(input.rowNumbers).size !== input.rowNumbers.length
       || input.rowNumbers.some((rowNumber) => !Number.isSafeInteger(rowNumber) || rowNumber < 1))) {
     throw new MasterImportServiceError("Selected row numbers are invalid.", 400);
