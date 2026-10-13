@@ -3,8 +3,8 @@ import * as XLSX from "xlsx";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
 import type { MasterDefinition, MasterFieldDefinition } from "@/lib/master-data/master-data-models";
 
-const MAX_WORKBOOK_SIZE_BYTES = 10 * 1024 * 1024;
-const MAX_WORKBOOK_ROWS = 1_000;
+export const MAX_MASTER_WORKBOOK_SIZE_BYTES = 50 * 1024 * 1024;
+export const MAX_MASTER_WORKBOOK_ROWS = 100_000;
 const MAX_WORKBOOK_COLUMNS = 100;
 
 export type ParsedMasterWorkbookRow = {
@@ -218,8 +218,8 @@ export async function parseMasterRecordsWorkbook(
   if (!/\.xlsx$/i.test(file.name)) {
     throw new Error("Choose an .xlsx workbook downloaded from this master.");
   }
-  if (file.size === 0 || file.size > MAX_WORKBOOK_SIZE_BYTES) {
-    throw new Error("Excel workbooks must be between 1 byte and 10 MB.");
+  if (file.size === 0 || file.size > MAX_MASTER_WORKBOOK_SIZE_BYTES) {
+    throw new Error("Excel workbooks must be between 1 byte and 50 MiB.");
   }
 
   let workbook: XLSX.WorkBook;
@@ -292,8 +292,8 @@ export async function parseMasterRecordsWorkbook(
     const row = rows[index] ?? [];
     if (isBlankRow(row)) continue;
     dataRowCount += 1;
-    if (dataRowCount > MAX_WORKBOOK_ROWS) {
-      throw new Error(`A workbook may contain at most ${MAX_WORKBOOK_ROWS} data rows.`);
+    if (dataRowCount > MAX_MASTER_WORKBOOK_ROWS) {
+      throw new Error(`A workbook may contain at most ${MAX_MASTER_WORKBOOK_ROWS} data rows.`);
     }
 
     const rowNumber = index + 1;
@@ -402,7 +402,7 @@ export function validateCorrectedMasterWorkbookRows(
   value: unknown,
   definition: MasterDefinition,
 ): ParsedMasterWorkbookRow[] {
-  if (!Array.isArray(value) || value.length > MAX_WORKBOOK_ROWS) {
+  if (!Array.isArray(value) || value.length > MAX_MASTER_WORKBOOK_ROWS) {
     throw new Error("Corrected workbook rows are invalid. Please upload the workbook again.");
   }
   const fields = definition.fields.filter((field) => !field.readOnly);

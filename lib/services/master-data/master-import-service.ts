@@ -37,6 +37,7 @@ export const MASTER_IMPORT_REPORT_PAGE_SIZE = 100;
 export const MASTER_IMPORT_VALIDATION_BATCH_SIZE = 100;
 export const MASTER_IMPORT_PLAN_SIZE = 100;
 const MASTER_IMPORT_PLAN_BATCH_SIZE = 25;
+const MASTER_IMPORT_STAGING_ROW_BATCH_SIZE = 5_000;
 
 const MASTER_IMPORT_UPLOAD_TRANSACTION_MAX_WAIT_MS = 10_000;
 const MASTER_IMPORT_UPLOAD_TRANSACTION_TIMEOUT_MS = 20_000;
@@ -811,7 +812,13 @@ export async function stageMasterImportJob(input: {
   }));
 
   const result = await prisma.$transaction(async (transaction) => {
-    await transaction.masterImportJobRow.createMany({ data: encryptedRows });
+    for (let offset = 0; offset < encryptedRows.length; offset += MASTER_IMPORT_STAGING_ROW_BATCH_SIZE) {
+      const batch = encryptedRows.slice(offset, offset + MASTER_IMPORT_STAGING_ROW_BATCH_SIZE);
+      const inserted = await transaction.masterImportJobRow.createMany({ data: batch });
+      if (inserted.count !== batch.length) {
+        throw new MasterImportServiceError("The workbook could not be fully staged. Refresh and try again.", 409);
+      }
+    }
     const now = new Date();
     const updated = await transaction.masterImportJob.updateMany({
       where: {

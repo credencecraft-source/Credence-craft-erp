@@ -6,6 +6,7 @@ import type { MasterDefinition } from "@/lib/master-data/master-data-models";
 import { getMasterDefinition } from "@/lib/master-data/master-data-registry";
 import {
   getRetryableMasterWorkbookRows,
+  MAX_MASTER_WORKBOOK_ROWS,
   parseMasterRecordsWorkbook,
   validateCorrectedMasterWorkbookRows,
   validateMasterWorkbookLookupValues,
@@ -44,6 +45,17 @@ function workbookFile(rows: unknown[][], name = "sample.xlsx") {
 }
 
 describe("parseMasterRecordsWorkbook", () => {
+  it("accepts the 100,000-row limit and rejects rows beyond it", async () => {
+    expect(MAX_MASTER_WORKBOOK_ROWS).toBe(100_000);
+    const rows = [
+      ["Name"],
+      ...Array.from({ length: MAX_MASTER_WORKBOOK_ROWS + 1 }, (_, index) => [`SAMPLE ${index + 1}`]),
+    ];
+
+    await expect(parseMasterRecordsWorkbook(workbookFile(rows), definition))
+      .rejects.toThrow("A workbook may contain at most 100000 data rows.");
+  }, 30_000);
+
   it("parses configured fields and child rows from an Excel sheet", async () => {
     const file = workbookFile([
       ["Name", "Ratio", "Enabled", "Due Date", "Reference URL", "Steps", "Master Code", "Description"],

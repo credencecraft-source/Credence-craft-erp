@@ -463,6 +463,43 @@ describe("master import service", () => {
     }), mocks.prisma);
   });
 
+  it("inserts large staged workbooks in bounded batches within one transaction", async () => {
+    mocks.prisma.masterImportJob.findFirst
+      .mockResolvedValueOnce({
+        ...baseJob,
+        encrypted_source_file: Buffer.from(encryptSecret(Buffer.from([80, 75, 3, 4]).toString("base64"))),
+      })
+      .mockResolvedValueOnce({ ...baseJob, status: "STAGED", total_rows: 5_001 });
+    mocks.parseMasterRecordsWorkbook.mockResolvedValue({
+      rows: Array.from({ length: 5_001 }, (_, index) => ({
+        rowNumber: index + 2,
+        code: null,
+        description: null,
+        fields: { season_name: `SEASON ${index + 1}` },
+        childRows: {},
+      })),
+      failures: [],
+    });
+    mocks.prisma.masterImportJobRow.createMany
+      .mockResolvedValueOnce({ count: 5_000 })
+      .mockResolvedValueOnce({ count: 1 });
+    mocks.prisma.masterImportJob.updateMany.mockResolvedValue({ count: 1 });
+
+    await stageMasterImportJob({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+    });
+
+    const batches = mocks.prisma.masterImportJobRow.createMany.mock.calls.map(([args]) => args.data);
+    expect(batches.map((batch: unknown[]) => batch.length)).toEqual([5_000, 1]);
+    expect(batches.flat()).toHaveLength(5_001);
+    expect(mocks.prisma.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { maxWait: 10_000, timeout: 120_000 },
+    );
+  });
+
   it("reconstructs and verifies encrypted upload chunks before staging rows", async () => {
     const source = new Uint8Array([80, 75, 3, 4]);
     mocks.prisma.masterImportJob.findFirst
