@@ -82,8 +82,12 @@ type ImportPlan = {
   recordCount: number;
   validatedCount: number;
   importedCount: number;
-  validatedRowNumbers: number[];
+  errorCount: number;
 };
+type ImportPlanCounts = Pick<
+  ImportPlan,
+  "recordCount" | "validatedCount" | "importedCount" | "errorCount"
+>;
 
 const STATUS_LABELS: Record<string, string> = {
   UPLOADING: "Uploading",
@@ -112,8 +116,7 @@ function isImportPlan(value: unknown): value is ImportPlan {
     && typeof value.recordCount === "number"
     && typeof value.validatedCount === "number"
     && typeof value.importedCount === "number"
-    && Array.isArray(value.validatedRowNumbers)
-    && value.validatedRowNumbers.every((rowNumber) => typeof rowNumber === "number");
+    && typeof value.errorCount === "number";
 }
 
 function isImportRow(value: unknown): value is ImportRow {
@@ -197,6 +200,7 @@ export default function MasterImportJobReportPage({
   const [job, setJob] = useState<ImportJob | null>(null);
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [plans, setPlans] = useState<ImportPlan[]>([]);
+  const [planProgressByNumber, setPlanProgressByNumber] = useState<Record<number, ImportPlanCounts>>({});
   const [planCount, setPlanCount] = useState(0);
   const [selectedValidationRowIds, setSelectedValidationRowIds] = useState<string[]>([]);
   const [visibleFields, setVisibleFields] = useState<string[]>([]);
@@ -241,6 +245,7 @@ export default function MasterImportJobReportPage({
       setJob(payload.job as ImportJob);
       setRows(payload.rows as ImportRow[]);
       setPlans(payload.plans);
+      setPlanProgressByNumber({});
       setPlanCount(payload.planCount);
       setRowCounts(payload.rowCounts);
     } catch (loadError) {
@@ -374,34 +379,144 @@ export default function MasterImportJobReportPage({
     }
   };
 
+  const processImportPlan = async (plan: ImportPlan, planIndex: number, totalPlans: number) => {
+    let remainingCount = plan.validatedCount;
+    let hasMoreRows = remainingCount > 0;
+    const maximumBatches = Math.ceil(remainingCount / 25) + 1;
+    let batchCount = 0;
+
+    while (hasMoreRows) {
+      if (batchCount >= maximumBatches) {
+        throw new Error(`Plan ${plan.planNumber} did not finish within the expected number of batches.`);
+      }
+      const response = await fetch(`${endpoint}/plans/${plan.planNumber}/commit`, {
+        method: "POST",
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) throw new Error(readError(payload, `Unable to import plan ${plan.planNumber}.`));
+      const planProgress = isRecord(payload) && isRecord(payload.planProgress)
+        ? payload.planProgress
+        : null;
+      if (!isRecord(payload) || !isRecord(payload.job)
+        || !planProgress
+        || typeof planProgress.hasMore !== "boolean"
+        || !["recordCount", "validatedCount", "importedCount", "errorCount"].every((key) =>
+          Number.isSafeInteger(planProgress[key]) && Number(planProgress[key]) >= 0)) {
+        throw new Error("Plan import progress response is invalid.");
+      }
+
+      const progress = planProgress as {
+        hasMore: boolean;
+        recordCount: number;
+        validatedCount: number;
+        importedCount: number;
+        errorCount: number;
+      };
+      const { hasMore, ...counts } = progress;
+      if (hasMore !== (progress.validatedCount > 0)
+        || (hasMore && progress.validatedCount >= remainingCount)) {
+        throw new Error(`Plan ${plan.planNumber} did not report safe forward progress.`);
+      }
+
+      setJob(payload.job as ImportJob);
+      setPlans((currentPlans) => currentPlans.map((currentPlan) =>
+        currentPlan.planNumber === plan.planNumber
+          ? { ...currentPlan, ...counts }
+          : currentPlan));
+      setPlanProgressByNumber((currentProgress) => ({
+        ...currentProgress,
+        [plan.planNumber]: counts,
+      }));
+      remainingCount = progress.validatedCount;
+      hasMoreRows = hasMore;
+      batchCount += 1;
+      setNotice(
+        `Plan ${plan.planNumber} (${planIndex} of ${totalPlans}) · ${progress.importedCount} of ${progress.recordCount} imported · ${progress.validatedCount} remaining · ${progress.errorCount} need attention.`,
+      );
+    }
+    setNotice(`Plan ${plan.planNumber} completed. Starting the next planned import...`);
+  };
+
   const startImportPlan = async (plan: ImportPlan) => {
-    if (!job || plan.validatedRowNumbers.length === 0 || plan.validatedRowNumbers.length > 100) return;
+    if (!job || plan.validatedCount === 0 || isProcessing) return;
     setActiveOperation("commit");
     setActivePlanNumber(plan.planNumber);
     setIsProcessing(true);
     setError("");
-    setNotice(`Importing plan ${plan.planNumber} (${plan.validatedRowNumbers.length} validated records)...`);
     try {
-      let hasMoreRows = true;
-      for (let batch = 0; batch < 4 && hasMoreRows; batch += 1) {
-        const response = await fetch(`${endpoint}/plans/${plan.planNumber}/commit`, {
-          method: "POST",
-        });
-        const payload: unknown = await response.json();
-        if (!response.ok) throw new Error(readError(payload, `Unable to import plan ${plan.planNumber}.`));
-        if (!isRecord(payload) || !isRecord(payload.job)
-          || !isRecord(payload.planProgress) || typeof payload.planProgress.hasMore !== "boolean") {
-          throw new Error("Plan import progress response is invalid.");
-        }
-        setJob(payload.job as ImportJob);
-        hasMoreRows = payload.planProgress.hasMore;
-      }
-      if (hasMoreRows) throw new Error("Plan import did not finish within the expected number of batches.");
+      await processImportPlan(plan, 1, 1);
       await loadJob();
-      setNotice(`Plan ${plan.planNumber} import finished. Review Errors for rows that need correction.`);
+      setNotice(`Plan ${plan.planNumber} import finished. Review any records needing attention.`);
     } catch (planError) {
       await loadJob();
       setError(planError instanceof Error ? planError.message : `Unable to import plan ${plan.planNumber}.`);
+    } finally {
+      setIsProcessing(false);
+      setActiveOperation(null);
+      setActivePlanNumber(null);
+    }
+  };
+
+  const loadAllPendingPlans = async () => {
+    const allPlans: ImportPlan[] = [];
+    let totalPlanCount: number | null = null;
+    let offset = 0;
+
+    do {
+      const query = new URLSearchParams({
+        limit: String(REPORT_PAGE_SIZE),
+        offset: String(offset),
+        tab: "planned",
+      });
+      const response = await fetch(`${endpoint}?${query}`, { cache: "no-store" });
+      const payload: unknown = await response.json();
+      if (!response.ok) throw new Error(readError(payload, "Unable to load planned imports."));
+      if (!isRecord(payload) || !Array.isArray(payload.plans)
+        || !payload.plans.every(isImportPlan)
+        || typeof payload.planCount !== "number"
+        || !Number.isSafeInteger(payload.planCount) || payload.planCount < 0) {
+        throw new Error("Planned import list response is invalid.");
+      }
+      if (totalPlanCount !== null && payload.planCount !== totalPlanCount) {
+        throw new Error("The planned imports changed while loading. Refresh and retry.");
+      }
+      totalPlanCount = payload.planCount;
+      const pagePlans = payload.plans as ImportPlan[];
+      if (pagePlans.length === 0 && offset < totalPlanCount) {
+        throw new Error("Unable to load every planned import.");
+      }
+      allPlans.push(...pagePlans);
+      offset += pagePlans.length;
+    } while (totalPlanCount !== null && offset < totalPlanCount);
+
+    return allPlans;
+  };
+
+  const autoStartPlannedImports = async () => {
+    if (!job || isProcessing) return;
+    setActiveOperation("commit");
+    setIsProcessing(true);
+    setError("");
+    try {
+      const pendingPlans = (await loadAllPendingPlans())
+        .filter((plan) => plan.validatedCount > 0)
+        .sort((first, second) => first.planNumber - second.planNumber);
+      if (pendingPlans.length === 0) {
+        setNotice("There are no remaining validated records in the planned imports.");
+        return;
+      }
+      for (const [index, plan] of pendingPlans.entries()) {
+        setActivePlanNumber(plan.planNumber);
+        setNotice(`Starting plan ${plan.planNumber} of ${pendingPlans.length}...`);
+        await processImportPlan(plan, index + 1, pendingPlans.length);
+      }
+      await loadJob();
+      setNotice(`All ${pendingPlans.length} planned imports finished. Review any records needing attention.`);
+    } catch (importError) {
+      await loadJob();
+      setError(importError instanceof Error
+        ? importError.message
+        : "Unable to finish the planned imports. Later plans were not started.");
     } finally {
       setIsProcessing(false);
       setActiveOperation(null);
@@ -721,6 +836,17 @@ export default function MasterImportJobReportPage({
                 {isProcessing && activeOperation === "commit" ? "Creating plans..." : "Plan and import"}
               </Button>
             ) : null}
+            {activeReportTab === "planned" ? (
+              <Button
+                type="button"
+                onClick={() => void autoStartPlannedImports()}
+                disabled={isProcessing || planCount === 0}
+              >
+                {isProcessing && activeOperation === "commit"
+                  ? `Importing plan ${activePlanNumber ?? ""}...`
+                  : "Auto start import"}
+              </Button>
+            ) : null}
             {activeReportTab === "staged" ? (
               <>
                 <Button
@@ -775,26 +901,43 @@ export default function MasterImportJobReportPage({
           {activeReportTab === "planned" ? (
             <div className="space-y-4">
               <p className="text-sm text-[var(--erp-muted)]">
-                Each planning action creates separate plans from validated records that are not already planned. Plans contain at most 100 records and import independently.
-                Only validated and imported rows appear here. Any row with a validation or import error appears in Errors.
+                Auto start imports each pending plan in order and moves on only after that plan is finished. Per-plan totals update as rows import; records already imported are skipped, and any row needing attention stays in Errors.
               </p>
-              {plans.map((plan) => (
-                <Card key={plan.planNumber} className="flex flex-wrap items-center justify-between gap-4 p-4">
-                  <div className="min-w-0 space-y-1">
-                    <h3 className="font-semibold text-[var(--erp-text)]">Plan {plan.planNumber}</h3>
-                    <p className="text-sm text-[var(--erp-muted)]">
-                      {plan.recordCount} records · {plan.validatedCount} ready · {plan.importedCount} imported
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    onClick={() => void startImportPlan(plan)}
-                    disabled={isProcessing || plan.validatedCount === 0}
-                  >
-                    {activePlanNumber === plan.planNumber ? "Importing..." : "Start import"}
-                  </Button>
-                </Card>
-              ))}
+              {plans.map((plan) => {
+                const counts = planProgressByNumber[plan.planNumber] ?? plan;
+                return (
+                  <Card key={plan.planNumber} className="flex flex-wrap items-center justify-between gap-4 p-4">
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="font-semibold text-[var(--erp-text)]">Plan {plan.planNumber}</h3>
+                        <Badge className={statusTone(activePlanNumber === plan.planNumber
+                          ? "IMPORTING"
+                          : counts.validatedCount > 0
+                            ? counts.importedCount > 0 ? "IMPORTING" : "VALIDATED"
+                            : counts.errorCount > 0 ? "PARTIAL" : "COMPLETED")}>
+                          {activePlanNumber === plan.planNumber
+                            ? "Importing"
+                            : counts.validatedCount > 0
+                              ? counts.importedCount > 0 ? "In progress" : "Ready"
+                              : counts.errorCount > 0
+                                ? counts.importedCount > 0 ? "Completed with errors" : "Needs attention"
+                                : "Completed"}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-[var(--erp-muted)]" aria-live="polite">
+                        {counts.recordCount} total · {counts.importedCount} imported · {counts.validatedCount} remaining · {counts.errorCount} need attention
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={() => void startImportPlan({ ...plan, ...counts })}
+                      disabled={isProcessing || counts.validatedCount === 0}
+                    >
+                      {activePlanNumber === plan.planNumber ? "Importing..." : "Start import"}
+                    </Button>
+                  </Card>
+                );
+              })}
               {!isLoading && plans.length === 0 ? (
                 <p className="rounded-xl border border-[var(--erp-border)] p-6 text-center text-sm text-[var(--erp-muted)]">
                   No validated records are planned yet. Validate records first, then choose Plan and import.

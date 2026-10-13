@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   commitNextMasterImportRow,
+  getMasterImportPlanProgress,
   getValidatedMasterImportPlanRows,
 } from "@/lib/services/master-data/master-import-service";
 import {
@@ -43,14 +44,17 @@ export async function POST(
         || result.job.status === "COMPLETED" || result.job.status === "FAILED") break;
     }
     if (!result) throw new Error("Selected import plan did not process a row.");
-    const remainingRows = await getValidatedMasterImportPlanRows(
+    const progress = await getMasterImportPlanProgress(
       authorization.context.organizationId,
       jobId,
       planNumber,
     );
     return NextResponse.json({
       ...result,
-      planProgress: { hasMore: remainingRows.length > 0 },
+      planProgress: {
+        ...progress,
+        hasMore: progress.validatedCount > 0,
+      },
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return masterImportErrorResponse(error, "commit plan");

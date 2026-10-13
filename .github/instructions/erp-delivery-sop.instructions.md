@@ -31,6 +31,14 @@ applyTo: "**/*.{ts,tsx,prisma,sql,css,md}"
 - Identify tenant-owned records, source documents, dependent records, business keys, counters, money, tax, stock, and audit requirements.
 - Decide whether the operation is read-only, reversible, transactional, idempotent, approval-controlled, or destructive.
 
+## 2A. Mandatory DATA LOSS Warning Before Schema Or Migration Work
+
+- Before editing `prisma/schema.prisma`, any `prisma/migrations/**` file, raw schema/data migration SQL, or migration/deployment script, stop and show the user a prominent `DATA LOSS WARNING` in plain language. Do not make the schema or migration edit first.
+- State the proposed change and why it is needed; identify existing tables, fields, or records that could be changed or deleted; say whether data loss is expected, not expected based on inspected SQL, or unknown; explain which deployment may run the migration without exposing database settings; and state backup and rollback limitations.
+- Ask for explicit user confirmation before making any schema or migration change. A general request to implement a feature or fix a bug is not migration approval. If the impact is destructive, irreversible, or unknown, do not edit or apply the migration until the user confirms the described impact and mitigation.
+- Use this exact warning structure, filling every field: `DATA LOSS WARNING — Proposed change: [plain-language change]. Existing data at risk: [specific data, none expected with evidence, or unknown]. Production effect: [not accessed; deployment behavior and target still need verification]. Recovery: [verified backup/rollback limits]. May I proceed?`
+- Repeat the data-impact conclusion in the QA handoff. Do not claim existing data is safe merely because tests pass, the migration is additive in appearance, or production was not directly accessed.
+
 ## 3. Implement At The Owning Boundary
 
 - Authenticate first, authorize the route organization second, validate input third, then execute the domain operation.
@@ -56,6 +64,7 @@ applyTo: "**/*.{ts,tsx,prisma,sql,css,md}"
 - Do not defer checks needed to establish the changed slice's security, tenant isolation, authorization, lifecycle, financial, stock, counter, or data-integrity behavior. Run the focused checks relevant to the change before handoff.
 - Before implementing a database-backed change, determine whether it requires a Prisma migration. If it does, the implementation is incomplete until the migration has been applied successfully to a verified disposable or non-production database, Prisma migration status confirms it is applied, and the affected workflow has been verified in the browser against that same migrated environment.
 - For Prisma changes, perform the required schema/client workflow and disposable-database migration verification before handoff. Never use an unverified or production database for validation; if the safe database or browser environment is unavailable, do not claim completion and explicitly report the exact blocked verification and required environment. Schema validation, client generation, mocks, and a successful build do not prove that a migration was applied or the workflow works.
+- Migration-specific QA must inspect both the schema diff and generated SQL for dropped tables/columns, truncation/deletion, data rewrites or backfills, new non-null constraints, changed foreign keys/cascades, and rollback limits. Test only against a verified disposable database; report the migration status and any unverified production deployment behavior. `npm run qa` is not proof that a production database is safe.
 
 ## 5. User-Test Handoff And Confirmation Gate
 
