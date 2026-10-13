@@ -14,7 +14,11 @@ vi.mock("@/lib/services/master-data/master-import-service", () => ({
   },
 }));
 
-import { masterImportErrorResponse } from "./route-support";
+import {
+  masterImportErrorResponse,
+  parseBoundedJson,
+  parseOptionalBoundedJson,
+} from "./route-support";
 
 describe("master import route errors", () => {
   it("reports missing import tables as a safe migration readiness error", async () => {
@@ -23,6 +27,49 @@ describe("master import route errors", () => {
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({
       error: "Master import database migration is pending. Apply the approved migration before using this feature.",
+    });
+  });
+
+  describe("master import bounded JSON parsing", () => {
+    it("accepts an empty stream for optional JSON", async () => {
+      const request = new Request("http://localhost/api/plans", {
+        method: "POST",
+        body: "",
+      });
+
+      await expect(parseOptionalBoundedJson(request, 4 * 1024)).resolves.toBeUndefined();
+    });
+
+    it("accepts a missing stream for optional JSON", async () => {
+      const request = new Request("http://localhost/api/plans", { method: "POST" });
+
+      await expect(parseOptionalBoundedJson(request, 4 * 1024)).resolves.toBeUndefined();
+    });
+
+    it("parses non-empty optional JSON and rejects malformed JSON", async () => {
+      const validRequest = new Request("http://localhost/api/plans", {
+        method: "POST",
+        body: JSON.stringify({ rowNumbers: [4, 9] }),
+      });
+      const invalidRequest = new Request("http://localhost/api/plans", {
+        method: "POST",
+        body: "{",
+      });
+
+      await expect(parseOptionalBoundedJson(validRequest, 4 * 1024))
+        .resolves.toEqual({ rowNumbers: [4, 9] });
+      await expect(parseOptionalBoundedJson(invalidRequest, 4 * 1024))
+        .rejects.toThrow("Request body must contain valid JSON.");
+    });
+
+    it("keeps empty JSON invalid for routes requiring a body", async () => {
+      const request = new Request("http://localhost/api/imports", {
+        method: "POST",
+        body: "",
+      });
+
+      await expect(parseBoundedJson(request, 4 * 1024))
+        .rejects.toThrow("Request body must contain valid JSON.");
     });
   });
 

@@ -66,7 +66,11 @@ export function masterImportErrorResponse(error: unknown, operation: string) {
   return NextResponse.json({ error: "Unable to complete the master import request." }, { status: 500 });
 }
 
-export async function readBoundedRequestBody(request: Request, maximumBytes: number) {
+export async function readBoundedRequestBody(
+  request: Request,
+  maximumBytes: number,
+  allowEmpty = false,
+) {
   const contentLength = request.headers.get("content-length");
   if (contentLength !== null) {
     const declaredSize = Number(contentLength);
@@ -75,7 +79,10 @@ export async function readBoundedRequestBody(request: Request, maximumBytes: num
     }
   }
 
-  if (!request.body) throw new MasterImportServiceError("Workbook upload is empty.", 400);
+  if (!request.body) {
+    if (allowEmpty) return new Uint8Array();
+    throw new MasterImportServiceError("Workbook upload is empty.", 400);
+  }
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
@@ -107,6 +114,17 @@ export async function parseBoundedJson(request: Request, maximumBytes: number) {
   const body = await readBoundedRequestBody(request, maximumBytes);
   try {
     return JSON.parse(new TextDecoder().decode(body)) as unknown;
+  } catch {
+    throw new MasterImportServiceError("Request body must contain valid JSON.", 400);
+  }
+}
+
+export async function parseOptionalBoundedJson(request: Request, maximumBytes: number) {
+  const body = await readBoundedRequestBody(request, maximumBytes, true);
+  const text = new TextDecoder().decode(body);
+  if (text.trim().length === 0) return undefined;
+  try {
+    return JSON.parse(text) as unknown;
   } catch {
     throw new MasterImportServiceError("Request body must contain valid JSON.", 400);
   }
