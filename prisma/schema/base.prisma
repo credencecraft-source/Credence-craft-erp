@@ -224,6 +224,7 @@ model MasterImportJob {
   processed_rows             Int                    @default(0)
   successful_rows            Int                    @default(0)
   failed_rows                Int                    @default(0)
+  next_plan_number            Int                    @default(1)
   checkpoint                 String?                @db.VarChar(120)
   created_by_user_id         String
   updated_by_user_id         String
@@ -252,6 +253,7 @@ model MasterImportJobRow {
   organization_id       String
   job_id                String
   row_number            Int
+  plan_number           Int?
   status                MasterImportJobRowStatus @default(PENDING)
   checkpoint            String?                  @db.VarChar(120)
   encrypted_payload     Bytes
@@ -264,6 +266,7 @@ model MasterImportJobRow {
 
   @@unique([organization_id, job_id, row_number])
   @@index([organization_id, job_id, status, row_number])
+  @@index([organization_id, job_id, plan_number, status, row_number])
   @@map("master_import_job_rows")
 }
 

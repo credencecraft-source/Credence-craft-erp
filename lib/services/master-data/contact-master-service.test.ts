@@ -145,6 +145,21 @@ describe("contact master numbering", () => {
     expect(mocks.tx.contactRoleAssignment.createMany).not.toHaveBeenCalled();
   });
 
+  it("rejects multiple GSTINs before creating a contact", async () => {
+    await expect(createContact("org-1", "user-1", {
+      legalName: "Acme Apparel",
+      roles: ["VENDOR"],
+      taxRegistrations: [
+        { gstin: "27AAPFU0939F1ZV", legalName: "Acme Apparel", registrationType: "REGULAR", status: "ACTIVE" },
+        { gstin: "22AAAAA0000A1ZC", legalName: "Acme Apparel", registrationType: "REGULAR", status: "ACTIVE" },
+      ],
+      addresses: [],
+      bankAccounts: [],
+    })).rejects.toThrow("A contact can have only one GSTIN. Create a separate contact for each additional GSTIN.");
+
+    expect(mocks.tx.contact.create).not.toHaveBeenCalled();
+  });
+
   it("creates a contact with a blank name and incomplete bank details", async () => {
     await createContact("org-1", "user-1", {
       legalName: "",
@@ -224,10 +239,34 @@ describe("contact master numbering", () => {
 
   it("rejects duplicate or oversized selections before opening a transaction", async () => {
     await expect(deactivateContacts("org-1", "user-1", ["contact-1", "contact-1"]))
-      .rejects.toThrow("Select between 1 and 100 unique valid contacts.");
-    await expect(deactivateContacts("org-1", "user-1", Array.from({ length: 101 }, (_, index) => `contact-${index}`)))
-      .rejects.toThrow("Select between 1 and 100 unique valid contacts.");
+      .rejects.toThrow("Select between 1 and 200 unique valid contacts.");
+    await expect(deactivateContacts("org-1", "user-1", Array.from({ length: 201 }, (_, index) => `contact-${index}`)))
+      .rejects.toThrow("Select between 1 and 200 unique valid contacts.");
     expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it("deletes more than 100 selected unused contacts in the same bounded bulk request", async () => {
+    const contacts = Array.from({ length: 101 }, (_, index) => ({
+      id: `contact-${index + 1}`,
+      code: `CT${index + 1}`,
+    }));
+    const contactIds = contacts.map((contact) => contact.id);
+    mocks.tx.contact.findMany.mockResolvedValue(contacts);
+    mocks.tx.purchaseOrder.findMany.mockResolvedValue([]);
+    mocks.tx.merchandisingOrder.findMany.mockResolvedValue([]);
+    mocks.tx.masterVendor.findMany.mockResolvedValue([]);
+    mocks.tx.contact.deleteMany.mockResolvedValue({ count: contacts.length });
+
+    const result = await deleteUnusedContacts("org-1", "user-1", contactIds);
+
+    expect(result).toEqual({ deletedCount: contacts.length, retainedContactCodes: [] });
+    expect(mocks.tx.contact.findMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-1", id: { in: contactIds } },
+      select: { id: true, code: true },
+    });
+    expect(mocks.tx.contact.deleteMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-1", id: { in: contactIds } },
+    });
   });
 
   it("deletes unused contacts and their unreferenced projections while retaining contacts used by orders", async () => {

@@ -258,13 +258,16 @@ export function parseContactInput(value: unknown, partial = false): Partial<Cont
 
   const registrations = cleanArray(row.taxRegistrations, "Tax registrations", partial, "taxRegistrations");
   if (registrations) {
-    if (registrations.length > 50) throw new ContactValidationError("A contact cannot have more than 50 GST registrations.", ["taxRegistrations"]);
     output.taxRegistrations = registrations.map((registration, index) =>
       withFieldPrefix(`taxRegistrations.${index}`, () => parseRegistration(registration)),
     )
       .filter((registration): registration is ContactTaxRegistrationInput => registration !== null);
-    const gstins = output.taxRegistrations.map((registration) => registration.gstin);
-    if (new Set(gstins).size !== gstins.length) throw new ContactValidationError("A GSTIN can only be added once to a contact.", ["taxRegistrations"]);
+    if (output.taxRegistrations.length > 1) {
+      throw new ContactValidationError(
+        "A contact can have only one GSTIN. Create a separate contact for each additional GSTIN.",
+        ["taxRegistrations"],
+      );
+    }
   }
 
   const addresses = cleanArray(row.addresses, "Addresses", partial, "addresses");

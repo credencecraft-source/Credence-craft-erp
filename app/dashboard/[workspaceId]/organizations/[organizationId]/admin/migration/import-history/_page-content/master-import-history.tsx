@@ -7,6 +7,7 @@ import { Download, FileSpreadsheet, RefreshCw, Trash2, Upload } from "lucide-rea
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Page from "@/components/ui/Page";
@@ -131,6 +132,7 @@ export default function MasterImportHistory({
   const [notice, setNotice] = useState("");
   const [activeJob, setActiveJob] = useState<ImportJob | null>(null);
   const [activeRows, setActiveRows] = useState<ImportRow[]>([]);
+  const [selectedValidationRowIds, setSelectedValidationRowIds] = useState<string[]>([]);
   const [isOpeningJob, setIsOpeningJob] = useState(false);
   const [deleteTargetJob, setDeleteTargetJob] = useState<ImportJob | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
@@ -328,6 +330,7 @@ export default function MasterImportHistory({
       }
       setActiveJob(payload.job as ImportJob);
       setActiveRows(payload.rows as ImportRow[]);
+      setSelectedValidationRowIds([]);
     } catch (openError) {
       setError(openError instanceof Error ? openError.message : "Unable to open this import.");
     } finally {
@@ -507,7 +510,7 @@ export default function MasterImportHistory({
       const validateResponse = await fetch(`${endpoint}/${encodeURIComponent(activeJob.id)}/validate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rowNumber, batchSize: 1 }),
+        body: JSON.stringify({ rowNumber }),
       });
       const validateResult: unknown = await validateResponse.json();
       if (!validateResponse.ok) throw new Error(errorMessage(validateResult, "Unable to validate this row."));
@@ -545,7 +548,7 @@ export default function MasterImportHistory({
         const validateResponse = await fetch(`${endpoint}/${encodeURIComponent(activeJob.id)}/validate`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ rowNumber, batchSize: 1 }),
+          body: JSON.stringify({ rowNumber }),
         });
         const validateResult: unknown = await validateResponse.json();
         if (!validateResponse.ok) throw new Error(errorMessage(validateResult, `Unable to validate row ${rowNumber}.`));
@@ -563,28 +566,32 @@ export default function MasterImportHistory({
   };
 
   const validateImport = async () => {
-    if (!activeJob) return;
+    if (!activeJob || selectedValidationRowIds.length === 0) return;
+    const selectedRowNumbers = selectedValidationRowIds.map(Number);
     setIsProcessing(true);
     setError("");
-    setNotice("Validating staged rows and saving progress on the server...");
+    setNotice(`Validating ${selectedRowNumbers.length} selected rows...`);
     try {
-      let hasMore = true;
-      while (hasMore) {
+      for (let index = 0; index < selectedRowNumbers.length; index += 50) {
         const response = await fetch(`${endpoint}/${encodeURIComponent(activeJob.id)}/validate`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ batchSize: 1_000 }),
+          body: JSON.stringify({ rowNumbers: selectedRowNumbers.slice(index, index + 50) }),
         });
         const payload: unknown = await response.json();
         if (!response.ok) throw new Error(errorMessage(payload, "Unable to validate this import."));
-        if (!isRecord(payload) || typeof payload.hasMore !== "boolean" || !isRecord(payload.job)) {
+        if (!isRecord(payload) || !isRecord(payload.job)) {
           throw new Error("Validation progress response is invalid.");
         }
-        hasMore = payload.hasMore;
         setActiveJob(payload.job as ImportJob);
+        const validatedRowIds = selectedRowNumbers.slice(index, index + 50).map(String);
+        setSelectedValidationRowIds((current) =>
+          current.filter((rowId) => !validatedRowIds.includes(rowId)),
+        );
       }
+      setSelectedValidationRowIds([]);
       await openJob(activeJob);
-      setNotice("Validation finished. Review and correct any remaining errors before import.");
+      setNotice("Selected rows were validated. Review the updated row statuses before importing.");
     } catch (validationError) {
       setError(validationError instanceof Error ? validationError.message : "Unable to validate this import.");
     } finally {
@@ -878,9 +885,13 @@ export default function MasterImportHistory({
                   Correct invalid rows
                 </Button>
               ) : null}
-              {activeJob.status === "STAGED" ? (
-                <Button type="button" onClick={() => void validateImport()} disabled={isProcessing}>
-                  {isProcessing ? "Validating..." : "Validate staged rows"}
+              {["STAGED", "VALIDATED", "PARTIAL"].includes(activeJob.status) ? (
+                <Button
+                  type="button"
+                  onClick={() => void validateImport()}
+                  disabled={isProcessing || selectedValidationRowIds.length === 0}
+                >
+                  {isProcessing ? "Validating..." : `Validate selected (${selectedValidationRowIds.length})`}
                 </Button>
               ) : null}
               {activeJob.status === "VALIDATED" ? (
@@ -898,10 +909,25 @@ export default function MasterImportHistory({
               {activeRows.map((row) => {
                 const validationErrors = readRowValidationErrors(row.payload);
                 const errors = validationErrors.map((item) => item.message);
+                const canSelectForValidation = row.status === "STAGED" || row.status === "CORRECTED";
                 return (
                   <section key={row.rowNumber} className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h3 className="text-sm font-semibold text-[var(--erp-text)]">{readRowIdentity(row.payload, row.rowNumber)}</h3>
+                      <div className="flex min-w-0 items-center gap-3">
+                        {canSelectForValidation ? (
+                          <Checkbox
+                            aria-label={`Select workbook row ${row.rowNumber} for validation`}
+                            checked={selectedValidationRowIds.includes(String(row.rowNumber))}
+                            disabled={isProcessing}
+                            onChange={(event) => setSelectedValidationRowIds((current) =>
+                              event.target.checked
+                                ? [...new Set([...current, String(row.rowNumber)])]
+                                : current.filter((id) => id !== String(row.rowNumber)),
+                            )}
+                          />
+                        ) : null}
+                        <h3 className="text-sm font-semibold text-[var(--erp-text)]">{readRowIdentity(row.payload, row.rowNumber)}</h3>
+                      </div>
                       <Badge className={errors.length ? "border-[var(--erp-danger)] bg-[var(--erp-surface)] text-[var(--erp-danger)]" : ""}>
                         {row.status}
                       </Badge>

@@ -67,10 +67,13 @@ vi.mock("@/lib/master-data/master-data-constants", async (importOriginal) => {
 import { decryptSecret, encryptSecret } from "@/lib/auth/secret-cryptography";
 import {
   commitNextMasterImportRow,
+  createMasterImportPlans,
   createMasterImportJob,
   deleteMasterImportJob,
+  getValidatedMasterImportPlanRows,
   getMasterImportJob,
   listMasterImportJobs,
+  MASTER_IMPORT_PLAN_SIZE,
   saveMasterImportRow,
   stageMasterImportJob,
   transitionMasterImportJob,
@@ -113,6 +116,7 @@ function rowRecord(status: string, payload: Record<string, unknown> = { Season: 
     job_id: "job-1",
     row_number: 1,
     status,
+    plan_number: null,
     checkpoint: null,
     encrypted_payload: Buffer.from(encryptSecret(JSON.stringify(payload))),
     updated_by_user_id: "actor-1",
@@ -536,17 +540,78 @@ describe("master import service", () => {
   it("decrypts row payload only in the tenant-scoped authorized detail response", async () => {
     mocks.prisma.masterImportJob.findFirst.mockResolvedValue({
       ...baseJob,
-      rows: [rowRecord("STAGED", { Season: "WINTER", token: "private-value" })],
     });
+    mocks.prisma.masterImportJobRow.findMany.mockResolvedValue([
+      rowRecord("STAGED", { Season: "WINTER", token: "private-value" }),
+    ]);
+    mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
+      { status: "STAGED", _count: { _all: 1 } },
+      { status: "VALIDATED", _count: { _all: 3 } },
+      { status: "INVALID", _count: { _all: 2 } },
+      { status: "FAILED", _count: { _all: 1 } },
+      { status: "IMPORTED", _count: { _all: 4 } },
+    ]);
 
-    const detail = await getMasterImportJob("org-internal", "job-1");
+    const detail = await getMasterImportJob("org-internal", "job-1", {
+      skip: 0,
+      take: 50,
+      tab: "staged",
+    });
 
     expect(mocks.prisma.masterImportJob.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: "org-internal", id: "job-1" },
     }));
     expect(detail.rows[0].payload).toEqual({ Season: "WINTER", token: "private-value" });
+    expect(detail.rowCounts).toEqual({ staged: 1, validated: 3, errors: 3, created: 4 });
+    expect(mocks.prisma.masterImportJobRow.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "org-internal",
+        job_id: "job-1",
+        status: { notIn: ["IMPORTED", "VALIDATED", "INVALID", "FAILED"] },
+      },
+      orderBy: { row_number: "asc" },
+      skip: 0,
+      take: 50,
+    }));
     expect(JSON.stringify(detail)).not.toContain("encrypted_payload");
     expect(JSON.stringify(detail)).not.toContain("encrypted_source_file");
+  });
+
+  it("returns commit-failed rows in the errors report with their actionable reason", async () => {
+    const failurePayload = {
+      Season: "WINTER",
+      validationErrors: [{
+        message: "This row conflicts with an existing master record. Check for a duplicate and retry.",
+        fieldPaths: [],
+      }],
+    };
+    mocks.prisma.masterImportJob.findFirst.mockResolvedValue({ ...baseJob });
+    mocks.prisma.masterImportJobRow.findMany.mockResolvedValue([
+      rowRecord("FAILED", failurePayload),
+    ]);
+    mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
+      { status: "FAILED", _count: { _all: 1 } },
+    ]);
+
+    const detail = await getMasterImportJob("org-internal", "job-1", {
+      skip: 0,
+      take: 50,
+      tab: "errors",
+    });
+
+    expect(mocks.prisma.masterImportJobRow.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "org-internal",
+        job_id: "job-1",
+        status: { in: ["INVALID", "FAILED"] },
+      },
+    }));
+    expect(detail.rows[0]).toMatchObject({
+      rowNumber: 1,
+      status: "FAILED",
+      payload: failurePayload,
+    });
+    expect(detail.rowCounts.errors).toBe(1);
   });
 
   it("rejects importing before the required staging and validation stages", async () => {
@@ -654,15 +719,18 @@ describe("master import service", () => {
     expect(JSON.stringify(row)).not.toContain("sensitive-row");
   });
 
-  it("validates one saved row at a time and persists its validation status", async () => {
+  it("moves a corrected failed row out of its old plan when it validates", async () => {
     mocks.prisma.masterImportJob.findFirst
       .mockResolvedValueOnce({ ...baseJob, status: "STAGED" })
       .mockResolvedValueOnce({ ...baseJob, status: "VALIDATED", total_rows: 1 });
-    mocks.prisma.masterImportJobRow.findMany.mockResolvedValue([rowRecord("STAGED", {
-      rowNumber: 2,
-      fields: { season: "WINTER" },
-      childRows: {},
-    })]);
+    mocks.prisma.masterImportJobRow.findMany.mockResolvedValue([{
+      ...rowRecord("FAILED", {
+        rowNumber: 2,
+        fields: { season: "WINTER" },
+        childRows: {},
+      }),
+      plan_number: 1,
+    }]);
     mocks.prisma.masterImportJobRow.updateMany.mockResolvedValue({ count: 1 });
     mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
       { status: "VALIDATED", _count: { _all: 1 } },
@@ -675,7 +743,6 @@ describe("master import service", () => {
       actorUserId: "actor-1",
       jobId: "job-1",
       rowNumber: 1,
-      batchSize: 1,
     });
 
     expect(mocks.prisma.masterImportJobRow.findMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -688,7 +755,7 @@ describe("master import service", () => {
       take: 1,
     }));
     expect(mocks.prisma.masterImportJobRow.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ status: "VALIDATED", checkpoint: "VALIDATED" }),
+      data: expect.objectContaining({ status: "VALIDATED", plan_number: null, checkpoint: "VALIDATED" }),
     }));
     expect(result).toMatchObject({
       job: { status: "VALIDATED" },
@@ -728,8 +795,12 @@ describe("master import service", () => {
       organizationId: "org-internal",
       actorUserId: "actor-1",
       jobId: "job-1",
-      batchSize: 2,
+      rowNumbers: [1, 2],
     });
+    expect(mocks.prisma.masterImportJobRow.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ row_number: { in: [1, 2] } }),
+      take: 2,
+    }));
     const update = mocks.prisma.masterImportJobRow.updateMany.mock.calls[0][0];
     const savedPayload = JSON.parse(decryptSecret(Buffer.from(update.data.encrypted_payload).toString("utf8")));
 
@@ -744,6 +815,224 @@ describe("master import service", () => {
       expect.objectContaining({ fieldPaths: ["category"] }),
     ]));
     expect(result).toMatchObject({ job: { status: "PARTIAL" }, progress: { failedRows: 1 } });
+  });
+
+  it("requires explicit row selection before validation", async () => {
+    await expect(validateMasterImportJob({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+    })).rejects.toMatchObject({ status: 400 });
+    expect(mocks.prisma.masterImportJob.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("reports persisted plan membership rather than inferring plans from workbook row numbers", async () => {
+    mocks.prisma.masterImportJob.findFirst.mockResolvedValue({
+      ...baseJob,
+      total_rows: 202,
+    });
+    mocks.prisma.masterImportJobRow.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { row_number: 100, plan_number: 1, status: "VALIDATED" },
+        { row_number: 101, plan_number: 1, status: "IMPORTED" },
+        { row_number: 102, plan_number: 2, status: "VALIDATED" },
+      ]);
+    mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
+      { status: "VALIDATED", _count: { _all: 2 } },
+      { status: "IMPORTED", _count: { _all: 1 } },
+      { status: "INVALID", _count: { _all: 1 } },
+      { status: "FAILED", _count: { _all: 2 } },
+    ]);
+
+    const detail = await getMasterImportJob("org-internal", "job-1", {
+      skip: 0,
+      take: 50,
+      tab: "planned",
+    });
+
+    expect(MASTER_IMPORT_PLAN_SIZE).toBe(100);
+    expect(mocks.prisma.masterImportJobRow.findMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: { organization_id: "org-internal", job_id: "job-1", row_number: 0 },
+    }));
+    expect(detail.plans).toEqual([
+      {
+        planNumber: 1,
+        recordCount: 2,
+        validatedCount: 1,
+        importedCount: 1,
+        validatedRowNumbers: [100],
+      },
+      {
+        planNumber: 2,
+        recordCount: 1,
+        validatedCount: 1,
+        importedCount: 0,
+        validatedRowNumbers: [102],
+      },
+    ]);
+    expect(detail.planCount).toBe(2);
+    expect(mocks.prisma.masterImportJobRow.findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: {
+        organization_id: "org-internal",
+        job_id: "job-1",
+        plan_number: { not: null },
+        status: { in: ["VALIDATED", "IMPORTED"] },
+      },
+    }));
+  });
+
+  it("creates separate plans for each planning action and never exceeds 100 rows", async () => {
+    const plannedRows: Array<{ row_number: number; status: string; plan_number: number | null }> = [];
+    let nextPlanNumber = 1;
+    mocks.prisma.masterImportJob.updateMany.mockImplementation(async (args: {
+      data: { next_plan_number?: number };
+    }) => {
+      if (args.data.next_plan_number !== undefined) nextPlanNumber = args.data.next_plan_number;
+      return { count: 1 };
+    });
+    mocks.prisma.masterImportJob.findFirst.mockImplementation(async () => ({
+      id: "job-1",
+      status: "VALIDATED",
+      expires_at: new Date("2026-11-11T12:00:00.000Z"),
+      next_plan_number: nextPlanNumber,
+    }));
+    mocks.prisma.masterImportJobRow.findMany.mockImplementation(async (args: {
+      where: { plan_number: null; status: string };
+      take: number;
+    }) => plannedRows
+      .filter((row) => row.status === args.where.status && row.plan_number === args.where.plan_number)
+      .sort((left, right) => left.row_number - right.row_number)
+      .slice(0, args.take)
+      .map(({ row_number }) => ({ row_number })));
+    mocks.prisma.masterImportJobRow.updateMany.mockImplementation(async (args: {
+      where: { row_number: { in: number[] }; plan_number: null; status: string };
+      data: { plan_number: number };
+    }) => {
+      let count = 0;
+      for (const row of plannedRows) {
+        if (args.where.row_number.in.includes(row.row_number)
+          && row.status === args.where.status && row.plan_number === args.where.plan_number) {
+          row.plan_number = args.data.plan_number;
+          count += 1;
+        }
+      }
+      return { count };
+    });
+
+    for (let rowNumber = 1; rowNumber <= 50; rowNumber += 1) {
+      plannedRows.push({ row_number: rowNumber, status: "VALIDATED", plan_number: null });
+    }
+    await expect(createMasterImportPlans({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+    })).resolves.toMatchObject({
+      plans: [{ planNumber: 1, recordCount: 50 }],
+      planCount: 1,
+      plannedRowCount: 50,
+    });
+
+    for (let rowNumber = 51; rowNumber <= 53; rowNumber += 1) {
+      plannedRows.push({ row_number: rowNumber, status: "VALIDATED", plan_number: null });
+    }
+    await expect(createMasterImportPlans({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+    })).resolves.toMatchObject({
+      plans: [{ planNumber: 2, recordCount: 3 }],
+      planCount: 1,
+      plannedRowCount: 3,
+    });
+
+    expect(plannedRows.filter((row) => row.plan_number === 1)).toHaveLength(50);
+    expect(plannedRows.filter((row) => row.plan_number === 2)).toHaveLength(3);
+    expect(mocks.prisma.masterImportJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-internal", id: "job-1" },
+    }));
+  });
+
+  it("splits a single planning action into plans containing at most 100 records", async () => {
+    const plannedRows = Array.from({ length: 202 }, (_, index) => ({
+      row_number: index + 1,
+      status: "VALIDATED",
+      plan_number: null as number | null,
+    }));
+    let nextPlanNumber = 1;
+    mocks.prisma.masterImportJob.updateMany.mockImplementation(async (args: {
+      data: { next_plan_number?: number };
+    }) => {
+      if (args.data.next_plan_number !== undefined) nextPlanNumber = args.data.next_plan_number;
+      return { count: 1 };
+    });
+    mocks.prisma.masterImportJob.findFirst.mockImplementation(async () => ({
+      id: "job-1",
+      status: "VALIDATED",
+      expires_at: new Date("2026-11-11T12:00:00.000Z"),
+      next_plan_number: nextPlanNumber,
+    }));
+    mocks.prisma.masterImportJobRow.findMany.mockImplementation(async (args: {
+      where: { plan_number: null; status: string };
+      take: number;
+    }) => plannedRows
+      .filter((row) => row.status === args.where.status && row.plan_number === args.where.plan_number)
+      .slice(0, args.take)
+      .map(({ row_number }) => ({ row_number })));
+    mocks.prisma.masterImportJobRow.updateMany.mockImplementation(async (args: {
+      where: { row_number: { in: number[] }; plan_number: null; status: string };
+      data: { plan_number: number };
+    }) => {
+      const rowNumbers = new Set(args.where.row_number.in);
+      const rows = plannedRows.filter((row) => rowNumbers.has(row.row_number)
+        && row.status === args.where.status && row.plan_number === args.where.plan_number);
+      rows.forEach((row) => { row.plan_number = args.data.plan_number; });
+      return { count: rows.length };
+    });
+
+    const result = await createMasterImportPlans({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+    });
+
+    expect(result.plans).toEqual([
+      { planNumber: 1, recordCount: 100 },
+      { planNumber: 2, recordCount: 100 },
+      { planNumber: 3, recordCount: 2 },
+    ]);
+    expect(Math.max(...result.plans.map((plan) => plan.recordCount))).toBe(MASTER_IMPORT_PLAN_SIZE);
+  });
+
+  it("loads only validated rows assigned to the requested tenant-scoped plan", async () => {
+    mocks.prisma.masterImportJob.findFirst.mockResolvedValue({
+      id: "job-1",
+      total_rows: 100,
+      expires_at: new Date("2026-11-11T12:00:00.000Z"),
+    });
+    mocks.prisma.masterImportJobRow.findMany.mockResolvedValue([
+      { row_number: 4 },
+      { row_number: 200 },
+    ]);
+
+    await expect(getValidatedMasterImportPlanRows("org-internal", "job-1", 2))
+      .resolves.toEqual([4, 200]);
+
+    expect(mocks.prisma.masterImportJob.findFirst).toHaveBeenCalledWith({
+      where: { organization_id: "org-internal", id: "job-1" },
+      select: { id: true, expires_at: true },
+    });
+    expect(mocks.prisma.masterImportJobRow.findMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: "org-internal",
+        job_id: "job-1",
+        plan_number: 2,
+        status: "VALIDATED",
+      },
+      orderBy: { row_number: "asc" },
+      take: 25,
+      select: { row_number: true },
+    });
   });
 
   it("commits the business row and checkpoint after changing VALIDATED to IMPORTING", async () => {

@@ -15,7 +15,7 @@ type ContactRecord = ContactWorkbookRecord;
 const CONTACT_REPORT_FIELDS = [
   { key: "contact", label: "Contact" },
   { key: "roles", label: "Roles" },
-  { key: "gstins", label: "GSTINs" },
+  { key: "gstins", label: "GSTIN" },
   { key: "addresses_banks", label: "Addresses / banks" },
   { key: "status", label: "Status" },
   { key: "actions", label: "Actions" },
@@ -50,6 +50,8 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
       const data = await response.json() as ContactRecord[] | { error?: string };
       if (!response.ok) throw new Error(!Array.isArray(data) ? data.error ?? "Unable to load contacts." : "Unable to load contacts.");
       setContacts(data as ContactRecord[]);
+      const loadedContactIds = new Set((data as ContactRecord[]).map((contact) => contact.id));
+      setSelectedIds((current) => current.filter((id) => loadedContactIds.has(id)));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load contacts.");
     } finally {
@@ -96,6 +98,12 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
         body: JSON.stringify({ contactIds: activeIds }),
       });
       const result = await response.json() as { error?: unknown; deactivatedCount?: unknown };
+      if (response.status === 404) {
+        setSelectedIds([]);
+        await loadContacts(search);
+        setNotice("Selection cleared because one or more contacts no longer exist. The contact list was refreshed.");
+        return;
+      }
       if (!response.ok) {
         throw new Error(typeof result.error === "string" ? result.error : "Unable to deactivate selected contacts.");
       }
@@ -128,6 +136,12 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
         deletedCount?: unknown;
         retainedContactCodes?: unknown;
       };
+      if (response.status === 404) {
+        setSelectedIds([]);
+        await loadContacts(search);
+        setNotice("Selection cleared because one or more contacts no longer exist. The contact list was refreshed.");
+        return;
+      }
       if (!response.ok) {
         throw new Error(typeof result.error === "string" ? result.error : "Unable to delete selected contacts.");
       }
@@ -161,7 +175,7 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
           </Link>
           <p className="mt-4 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--erp-brand)]">Master data</p>
           <h1 className="mt-2 text-2xl font-bold text-[var(--erp-text)]">Unified Contact Master</h1>
-          <p className="mt-2 text-sm text-slate-600">One contact can hold multiple business roles, GST registrations, addresses, and bank accounts.</p>
+          <p className="mt-2 text-sm text-slate-600">Each contact has one GSTIN and can hold multiple business roles, addresses, and bank accounts.</p>
         </div>
         <Button onClick={() => router.push(`${basePath}/new`)}><Plus aria-hidden="true" className="h-4 w-4" /> New contact</Button>
       </div>
@@ -193,7 +207,10 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
         deleteSelectedLabel="Deactivate selected"
         onBulkDeleteSelected={() => void deleteUnusedSelectedContacts()}
         bulkDeleteSelectedLabel="Delete unused"
-        onSearchQueryChange={setSearch}
+        onSearchQueryChange={(query) => {
+          setSelectedIds([]);
+          setSearch(query);
+        }}
         getSearchValue={(fieldKey, contact) => {
           switch (fieldKey) {
             case "contact":

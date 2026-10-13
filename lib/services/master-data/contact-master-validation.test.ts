@@ -169,6 +169,16 @@ describe("contact master validation", () => {
     }))).toThrow(/Only one default/);
   });
 
+  it("rejects multiple GSTINs on one contact and directs each GSTIN to a separate contact", () => {
+    expect(() => parseContactInput(baseContact({
+      taxRegistrations: [
+        { gstin: "27AAPFU0939F1ZV", legalName: "Acme", registrationType: "REGULAR", status: "ACTIVE" },
+        { gstin: "22AAAAA0000A1ZC", legalName: "Acme", registrationType: "REGULAR", status: "ACTIVE" },
+      ],
+      addresses: [],
+    }))).toThrow("A contact can have only one GSTIN. Create a separate contact for each additional GSTIN.");
+  });
+
   it("rejects malformed IFSC and duplicate role values", () => {
     expect(() => parseContactInput(baseContact({
       bankAccounts: [{ ...baseContact().bankAccounts[0], ifscCode: "BADIFSC" }],

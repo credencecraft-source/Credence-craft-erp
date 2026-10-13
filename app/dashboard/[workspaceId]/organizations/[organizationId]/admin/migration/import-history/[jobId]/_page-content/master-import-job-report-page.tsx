@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 
@@ -29,6 +29,8 @@ import {
   isImportReportError,
   type ImportReportField,
 } from "@/lib/master-data/master-import-report-format";
+
+const REPORT_PAGE_SIZE = 50;
 
 type ImportJob = {
   id: string;
@@ -73,7 +75,15 @@ const BASE_FIELDS = [
   { key: "validationErrors", label: "Validation errors" },
 ];
 
-type ReportTab = "staged" | "errors" | "created";
+type ReportTab = "staged" | "validated" | "errors" | "created" | "planned";
+type ReportRowCounts = { staged: number; validated: number; errors: number; created: number };
+type ImportPlan = {
+  planNumber: number;
+  recordCount: number;
+  validatedCount: number;
+  importedCount: number;
+  validatedRowNumbers: number[];
+};
 
 const STATUS_LABELS: Record<string, string> = {
   UPLOADING: "Uploading",
@@ -88,6 +98,22 @@ const STATUS_LABELS: Record<string, string> = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isReportRowCounts(value: unknown): value is ReportRowCounts {
+  return isRecord(value)
+    && ["staged", "validated", "errors", "created"].every((key) =>
+      typeof value[key] === "number" && Number.isSafeInteger(value[key]) && value[key] >= 0);
+}
+
+function isImportPlan(value: unknown): value is ImportPlan {
+  return isRecord(value)
+    && typeof value.planNumber === "number"
+    && typeof value.recordCount === "number"
+    && typeof value.validatedCount === "number"
+    && typeof value.importedCount === "number"
+    && Array.isArray(value.validatedRowNumbers)
+    && value.validatedRowNumbers.every((rowNumber) => typeof rowNumber === "number");
 }
 
 function readError(payload: unknown, fallback: string) {
@@ -163,7 +189,9 @@ export default function MasterImportJobReportPage({
   const historyHref = `/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/admin/migration/import-history`;
   const [job, setJob] = useState<ImportJob | null>(null);
   const [rows, setRows] = useState<ImportRow[]>([]);
-  const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
+  const [plans, setPlans] = useState<ImportPlan[]>([]);
+  const [planCount, setPlanCount] = useState(0);
+  const [selectedValidationRowIds, setSelectedValidationRowIds] = useState<string[]>([]);
   const [visibleFields, setVisibleFields] = useState<string[]>([]);
   const [selectedRow, setSelectedRow] = useState<ReportRow | null>(null);
   const [correctionRow, setCorrectionRow] = useState<MasterImportCorrectionRow | null>(null);
@@ -171,34 +199,49 @@ export default function MasterImportJobReportPage({
   const [correctionError, setCorrectionError] = useState("");
   const [isSavingCorrection, setIsSavingCorrection] = useState(false);
   const [activeReportTab, setActiveReportTab] = useState<ReportTab>("staged");
+  const [reportPage, setReportPage] = useState(0);
+  const [rowCounts, setRowCounts] = useState<ReportRowCounts>({
+    staged: 0,
+    validated: 0,
+    errors: 0,
+    created: 0,
+  });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeOperation, setActiveOperation] = useState<"stage" | "validate" | "commit" | null>(null);
-  const stopValidationRequested = useRef(false);
+  const [activePlanNumber, setActivePlanNumber] = useState<number | null>(null);
 
   const loadJob = useCallback(async () => {
+    setIsLoading(true);
     setError("");
     try {
-      const response = await fetch(endpoint, { cache: "no-store" });
+      const query = new URLSearchParams({
+        limit: String(REPORT_PAGE_SIZE),
+        offset: String(reportPage * REPORT_PAGE_SIZE),
+        tab: activeReportTab,
+      });
+      const response = await fetch(`${endpoint}?${query}`, { cache: "no-store" });
       const payload: unknown = await response.json();
       if (!response.ok) throw new Error(readError(payload, "Unable to load this import report."));
-      if (!isRecord(payload) || !isRecord(payload.job) || !Array.isArray(payload.rows)) {
+      if (!isRecord(payload) || !isRecord(payload.job) || !Array.isArray(payload.rows)
+        || !Array.isArray(payload.plans) || !payload.plans.every(isImportPlan)
+        || typeof payload.planCount !== "number"
+        || !isReportRowCounts(payload.rowCounts)) {
         throw new Error("Import report response is invalid.");
       }
       setJob(payload.job as ImportJob);
-      const nextRows = payload.rows as ImportRow[];
-      setRows(nextRows);
-      setSelectedRowIds((selected) => selected.filter((rowId) =>
-        nextRows.some((row) => String(row.rowNumber) === rowId && row.status === "VALIDATED"),
-      ));
+      setRows(payload.rows as ImportRow[]);
+      setPlans(payload.plans);
+      setPlanCount(payload.planCount);
+      setRowCounts(payload.rowCounts);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load this import report.");
     } finally {
       setIsLoading(false);
     }
-  }, [endpoint]);
+  }, [activeReportTab, endpoint, reportPage]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadJob(), 0);
@@ -238,37 +281,48 @@ export default function MasterImportJobReportPage({
     () => reportRows.filter((row) => isImportReportError(row.status, row.validationErrors)),
     [reportRows],
   );
+  const validatedRows = useMemo(
+    () => reportRows.filter((row) => row.status === "VALIDATED"),
+    [reportRows],
+  );
   const createdRows = useMemo(
     () => reportRows.filter((row) => row.status === "IMPORTED"),
     [reportRows],
   );
   const stagedRows = useMemo(
-    () => reportRows.filter((row) =>
-      row.status !== "IMPORTED" && !isImportReportError(row.status, row.validationErrors),
-    ),
+    () => reportRows.filter((row) => ![
+      "VALIDATED",
+      "IMPORTED",
+      "INVALID",
+      "FAILED",
+    ].includes(row.status)),
     [reportRows],
   );
   const activeRows = activeReportTab === "errors"
     ? errorRows
-    : activeReportTab === "created" ? createdRows : stagedRows;
+    : activeReportTab === "created"
+      ? createdRows
+      : activeReportTab === "validated"       ? validatedRows : stagedRows;
+  const activeRowCount = activeReportTab === "planned" ? planCount : rowCounts[activeReportTab];
+  const selectedValidationRowNumbers = selectedValidationRowIds.map(Number);
+  const activeSelectedRowIds = activeReportTab === "staged" ? selectedValidationRowIds : [];
+  const nextPageOffset = reportPage * REPORT_PAGE_SIZE
+    + (activeReportTab === "planned" ? plans.length : rows.length);
 
   const visibleReportFields = visibleFields.length
     ? visibleFields.filter((key) => reportFields.some((field) => field.key === key))
     : reportFields.map((field) => field.key);
 
-  const runOperation = async (operation: "stage" | "validate" | "commit", selectedRowNumbers: number[] = []) => {
+  const runOperation = async (operation: "stage" | "validate", selectedRowNumbers: number[] = []) => {
     if (!job) return;
-    stopValidationRequested.current = false;
+    if (operation === "validate" && selectedRowNumbers.length === 0) {
+      setError("Select at least one staged row to validate.");
+      return;
+    }
     setActiveOperation(operation);
     setIsProcessing(true);
     setError("");
-    setNotice(operation === "stage"
-      ? "Staging workbook rows on the server..."
-      : operation === "validate"
-        ? "Validating rows and saving progress..."
-        : selectedRowNumbers.length
-          ? `Creating ${selectedRowNumbers.length} selected master records with durable checkpoints...`
-          : "Importing rows with durable server checkpoints...");
+    setNotice(operation === "stage" ? "Staging workbook rows on the server..." : "Validating selected rows...");
     try {
       if (operation === "stage") {
         const response = await fetch(`${endpoint}/stage`, { method: "POST" });
@@ -276,104 +330,102 @@ export default function MasterImportJobReportPage({
         if (!response.ok) throw new Error(readError(payload, "Unable to stage this workbook."));
         setNotice("Workbook rows are saved in server staging. Review validation results before starting the import.");
       } else if (operation === "validate") {
-        let hasMore = true;
-        while (hasMore) {
-          if (stopValidationRequested.current) break;
+        for (let index = 0; index < selectedRowNumbers.length; index += REPORT_PAGE_SIZE) {
           const response = await fetch(`${endpoint}/validate`, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ batchSize: 1_000 }),
+            body: JSON.stringify({ rowNumbers: selectedRowNumbers.slice(index, index + REPORT_PAGE_SIZE) }),
           });
           const payload: unknown = await response.json();
           if (!response.ok) throw new Error(readError(payload, "Unable to validate this import."));
-          if (!isRecord(payload) || typeof payload.hasMore !== "boolean") {
+          if (!isRecord(payload) || !isRecord(payload.job)) {
             throw new Error("Validation progress response is invalid.");
           }
-          if (isRecord(payload.job) && isRecord(payload.progress)) {
-            const validatedRows = typeof payload.progress.validatedRows === "number"
-              ? payload.progress.validatedRows
-              : 0;
-            const failedRows = typeof payload.progress.failedRows === "number"
-              ? payload.progress.failedRows
-              : 0;
-            setJob(payload.job as ImportJob);
-            setNotice(`Validation progress: ${validatedRows} of ${job.totalRows} rows validated; ${failedRows} need attention.`);
-          }
-          if (stopValidationRequested.current) {
-            setNotice("Validation stopped. Saved progress is retained; select Validate staged rows to resume.");
-            break;
-          }
-          hasMore = payload.hasMore;
+          setJob(payload.job as ImportJob);
+          const validatedRowIds = selectedRowNumbers
+            .slice(index, index + REPORT_PAGE_SIZE)
+            .map(String);
+          setSelectedValidationRowIds((current) =>
+            current.filter((rowId) => !validatedRowIds.includes(rowId)),
+          );
         }
-        if (!stopValidationRequested.current) {
-          setNotice("Validation finished. Review errors and correct rows from Import History before starting the import.");
-        }
-      } else {
-        if (selectedRowNumbers.length > 0) {
-          let stoppedOnFailure = false;
-          let latestJob = job;
-          for (let index = 0; index < selectedRowNumbers.length; index += 25) {
-            const response = await fetch(`${endpoint}/commit`, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ rowNumbers: selectedRowNumbers.slice(index, index + 25) }),
-            });
-            const payload: unknown = await response.json();
-            if (!response.ok) throw new Error(readError(payload, "Unable to create the selected master records."));
-            if (!isRecord(payload) || !isRecord(payload.job)) {
-              throw new Error("Import progress response is invalid.");
-            }
-            const nextJob = payload.job as ImportJob;
-            latestJob = nextJob;
-            setJob(nextJob);
-            setNotice(`Selected import progress: ${nextJob.processedRows} of ${nextJob.totalRows} rows processed; ${nextJob.failedRows} need attention.`);
-            if (payload.row === null || (isRecord(payload.row) && payload.row.status === "FAILED")) {
-              stoppedOnFailure = true;
-              break;
-            }
-          }
-          const importedCount = latestJob.successfulRows - job.successfulRows;
-          setActiveReportTab(stoppedOnFailure ? "errors" : "created");
-          setNotice(stoppedOnFailure
-            ? importedCount > 0
-              ? `${importedCount} record${importedCount === 1 ? "" : "s"} created before the import stopped. Review the Errors tab.`
-              : "No records were created. The failed row was not saved; review the Errors tab."
-            : `${importedCount} validated record${importedCount === 1 ? "" : "s"} created in the master. Other rows remain unchanged.`);
-        } else {
-          for (;;) {
-            const response = await fetch(`${endpoint}/commit`, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ batchSize: 25 }),
-            });
-            const payload: unknown = await response.json();
-            if (!response.ok) throw new Error(readError(payload, "Unable to import the next row."));
-            if (!isRecord(payload) || !isRecord(payload.job)) {
-              throw new Error("Import progress response is invalid.");
-            }
-            const nextJob = payload.job as ImportJob;
-            setJob(nextJob);
-            setNotice(`Import progress: ${nextJob.processedRows} of ${nextJob.totalRows} processed; ${nextJob.failedRows} need attention.`);
-            if (payload.validationRequired === true || payload.row === null
-              || nextJob.status === "COMPLETED" || nextJob.status === "STAGED") break;
-          }
-          setNotice("Import checkpoint saved. Review the final status and any failed rows.");
-        }
+        setSelectedValidationRowIds([]);
+        setActiveReportTab("validated");
+        setReportPage(0);
+        setNotice("Selected rows were validated. Review the Validated and Errors tabs before importing.");
       }
-      await loadJob();
+      if (operation !== "validate") await loadJob();
     } catch (operationError) {
       const message = operationError instanceof Error
         ? operationError.message
         : "Unable to complete this import action.";
       await loadJob();
       setError(message);
-      if (operation === "validate" && stopValidationRequested.current) {
-        setNotice("Validation paused, but the current batch did not finish cleanly. Review saved progress and retry when ready.");
-      }
     } finally {
       setIsProcessing(false);
       setActiveOperation(null);
-      stopValidationRequested.current = false;
+    }
+  };
+
+  const startImportPlan = async (plan: ImportPlan) => {
+    if (!job || plan.validatedRowNumbers.length === 0 || plan.validatedRowNumbers.length > 100) return;
+    setActiveOperation("commit");
+    setActivePlanNumber(plan.planNumber);
+    setIsProcessing(true);
+    setError("");
+    setNotice(`Importing plan ${plan.planNumber} (${plan.validatedRowNumbers.length} validated records)...`);
+    try {
+      let hasMoreRows = true;
+      for (let batch = 0; batch < 4 && hasMoreRows; batch += 1) {
+        const response = await fetch(`${endpoint}/plans/${plan.planNumber}/commit`, {
+          method: "POST",
+        });
+        const payload: unknown = await response.json();
+        if (!response.ok) throw new Error(readError(payload, `Unable to import plan ${plan.planNumber}.`));
+        if (!isRecord(payload) || !isRecord(payload.job)
+          || !isRecord(payload.planProgress) || typeof payload.planProgress.hasMore !== "boolean") {
+          throw new Error("Plan import progress response is invalid.");
+        }
+        setJob(payload.job as ImportJob);
+        hasMoreRows = payload.planProgress.hasMore;
+      }
+      if (hasMoreRows) throw new Error("Plan import did not finish within the expected number of batches.");
+      await loadJob();
+      setNotice(`Plan ${plan.planNumber} import finished. Review Errors for rows that need correction.`);
+    } catch (planError) {
+      await loadJob();
+      setError(planError instanceof Error ? planError.message : `Unable to import plan ${plan.planNumber}.`);
+    } finally {
+      setIsProcessing(false);
+      setActiveOperation(null);
+      setActivePlanNumber(null);
+    }
+  };
+
+  const createImportPlans = async () => {
+    if (!job) return;
+    setActiveOperation("commit");
+    setIsProcessing(true);
+    setError("");
+    setNotice("Creating separate import plans from validated records...");
+    try {
+      const response = await fetch(`${endpoint}/plans`, { method: "POST" });
+      const payload: unknown = await response.json();
+      if (!response.ok) throw new Error(readError(payload, "Unable to create import plans."));
+      if (!isRecord(payload) || typeof payload.planCount !== "number"
+        || typeof payload.plannedRowCount !== "number") {
+        throw new Error("Import plan response is invalid.");
+      }
+      setActiveReportTab("planned");
+      setReportPage(0);
+      setNotice(payload.planCount === 0
+        ? "There are no new validated records to plan."
+        : `Created ${payload.planCount} separate plan${payload.planCount === 1 ? "" : "s"} for ${payload.plannedRowCount} validated records. Each plan contains at most 100 records.`);
+    } catch (planError) {
+      setError(planError instanceof Error ? planError.message : "Unable to create import plans.");
+    } finally {
+      setIsProcessing(false);
+      setActiveOperation(null);
     }
   };
 
@@ -405,14 +457,15 @@ export default function MasterImportJobReportPage({
       const fields = currentModule?.fields ?? [];
       const fieldErrors = new Map<string, string[]>();
       const linkedPaths = new Map<string, string[]>();
+      const hasFieldPaths = fieldPaths.length > 0;
       for (const field of fields) {
         const paths = field.type === "child-list"
           ? fieldPaths.filter((path) => path.startsWith(`${field.key}.`))
           : fieldPaths.includes(field.key) ? [field.key] : [];
-        if (!paths.length) continue;
+        if (hasFieldPaths && !paths.length) continue;
         linkedPaths.set(field.key, paths);
         fieldErrors.set(field.key, rowErrors
-          .filter((item) => item.fieldPaths.some((path) => paths.includes(path)))
+          .filter((item) => !hasFieldPaths || item.fieldPaths.some((path) => paths.includes(path)))
           .map((item) => item.message));
       }
       const payloadFields = isRecord(payload.fields) ? payload.fields : {};
@@ -514,7 +567,7 @@ export default function MasterImportJobReportPage({
       const validateResponse = await fetch(`${endpoint}/validate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rowNumber: sourceRow.rowNumber, batchSize: 1 }),
+        body: JSON.stringify({ rowNumber: sourceRow.rowNumber }),
       });
       const validateResult: unknown = await validateResponse.json();
       if (!validateResponse.ok) throw new Error(readError(validateResult, "Unable to validate this corrected row."));
@@ -531,15 +584,6 @@ export default function MasterImportJobReportPage({
 
   const moduleLabel = currentModule?.label ?? job?.moduleKey ?? "Master data";
   const canStage = job?.status === "UPLOADED";
-  const canValidate = job?.status === "STAGED";
-  const hasValidatedRows = rows.some((row) => row.status === "VALIDATED");
-  const selectedValidatedRowNumbers = selectedRowIds
-    .map(Number)
-    .filter((rowNumber) => reportRows.some((row) => row.id === String(rowNumber) && row.status === "VALIDATED"));
-  const canImport = hasValidatedRows
-    && (job?.status === "STAGED" || job?.status === "VALIDATED"
-      || job?.status === "IMPORTING" || job?.status === "PARTIAL");
-
   return (
     <Page>
       <Section>
@@ -567,40 +611,24 @@ export default function MasterImportJobReportPage({
                 {isProcessing ? "Staging..." : "Stage workbook"}
               </Button>
             ) : null}
-            {canValidate ? (
-              <Button type="button" onClick={() => void runOperation("validate")} disabled={isProcessing}>
-                {isProcessing ? "Validating..." : "Validate staged rows"}
-              </Button>
-            ) : null}
-            {activeOperation === "validate" ? (
+            {activeReportTab === "validated" ? (
               <Button
                 type="button"
-                variant="secondary"
-                onClick={() => {
-                  stopValidationRequested.current = true;
-                  setNotice("Stop requested. Waiting for this batch to finish; completed rows are saved.");
-                }}
+                onClick={() => void createImportPlans()}
+                disabled={isProcessing || rowCounts.validated === 0}
               >
-                Stop validation
+                {isProcessing && activeOperation === "commit" ? "Creating plans..." : "Plan and import"}
               </Button>
             ) : null}
-            {canImport ? (
+            {activeReportTab === "staged" ? (
               <Button
                 type="button"
-                onClick={() => void runOperation("commit", selectedValidatedRowNumbers)}
-                disabled={isProcessing || (job?.status === "STAGED" && selectedValidatedRowNumbers.length === 0)}
+                onClick={() => void runOperation("validate", selectedValidationRowNumbers)}
+                disabled={isProcessing || selectedValidationRowNumbers.length === 0}
               >
-                {isProcessing
-                  ? "Importing..."
-                  : selectedValidatedRowNumbers.length
-                    ? `Create selected in master (${selectedValidatedRowNumbers.length})`
-                    : job?.status === "STAGED"
-                      ? "Select validated rows to create"
-                      : job?.status === "PARTIAL"
-                        ? "Import validated rows"
-                        : job?.status === "IMPORTING"
-                          ? "Continue import"
-                          : "Start Import"}
+                {isProcessing && activeOperation === "validate"
+                  ? "Validating..."
+                  : `Validate selected (${selectedValidationRowNumbers.length})`}
               </Button>
             ) : null}
           </div>
@@ -618,35 +646,82 @@ export default function MasterImportJobReportPage({
             The workbook is saved on the server. Stage it to parse all rows into temporary import records.
           </Card>
         ) : null}
+        {activeReportTab === "staged" ? (
+          <p className="rounded-xl border border-[var(--erp-info)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-info)]" role="status">
+        Select staged rows and choose Validate selected. Successfully validated rows move to Validated; only rows in that tab can be selected for import.
+          </p>
+        ) : null}
         <Card className="min-w-0 space-y-4 p-4 sm:p-6">
           <Tabs
             ariaLabel="Import record status"
             value={activeReportTab}
-            onChange={setActiveReportTab}
+            onChange={(tab) => {
+              setActiveReportTab(tab);
+              setReportPage(0);
+            }}
             tabs={[
-              { value: "staged", label: `Staged (${stagedRows.length})` },
-              { value: "errors", label: `Errors (${errorRows.length})` },
-              { value: "created", label: `Created (${createdRows.length})` },
+              { value: "staged", label: `Staged (${rowCounts.staged})` },
+              { value: "validated", label: `Validated (${rowCounts.validated})` },
+              { value: "planned", label: `Planned & Import (${planCount})` },
+              { value: "errors", label: `Errors (${rowCounts.errors})` },
+              { value: "created", label: `Created (${rowCounts.created})` },
             ]}
           />
+          {activeReportTab === "planned" ? (
+            <div className="space-y-4">
+              <p className="text-sm text-[var(--erp-muted)]">
+                Each planning action creates separate plans from validated records that are not already planned. Plans contain at most 100 records and import independently.
+                Only validated and imported rows appear here. Any row with a validation or import error appears in Errors.
+              </p>
+              {plans.map((plan) => (
+                <Card key={plan.planNumber} className="flex flex-wrap items-center justify-between gap-4 p-4">
+                  <div className="min-w-0 space-y-1">
+                    <h3 className="font-semibold text-[var(--erp-text)]">Plan {plan.planNumber}</h3>
+                    <p className="text-sm text-[var(--erp-muted)]">
+                      {plan.recordCount} records · {plan.validatedCount} ready · {plan.importedCount} imported
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() => void startImportPlan(plan)}
+                    disabled={isProcessing || plan.validatedCount === 0}
+                  >
+                    {activePlanNumber === plan.planNumber ? "Importing..." : "Start import"}
+                  </Button>
+                </Card>
+              ))}
+              {!isLoading && plans.length === 0 ? (
+                <p className="rounded-xl border border-[var(--erp-border)] p-6 text-center text-sm text-[var(--erp-muted)]">
+                  No validated records are planned yet. Validate records first, then choose Plan and import.
+                </p>
+              ) : null}
+            </div>
+          ) : (
           <ReportGrid
             title={activeReportTab === "errors"
               ? "Rows with errors"
-              : activeReportTab === "created" ? "Created master records" : "Staged workbook records"}
+              : activeReportTab === "created"
+                ? "Created master records"
+                : activeReportTab === "validated"
+                  ? "Validated workbook records"
+                  : "Staged workbook records"}
             records={activeRows}
             fields={reportFields}
             visibleFields={visibleReportFields}
             onVisibleFieldsChange={(fields) => setVisibleFields(fields as string[])}
             storageKey={`master-import-report-${organizationId}-${jobId}-${activeReportTab}`}
             rowIdSelector={(row) => row.id}
-            selectedIds={selectedRowIds}
+            selectedIds={activeSelectedRowIds}
             selectable={activeReportTab === "staged"}
-            rowSelectable={(row) => activeReportTab === "staged" && !isProcessing && row.status === "VALIDATED"}
-            onToggleSelectAll={(checked, ids) => setSelectedRowIds((current) => {
+            rowSelectable={(row) => !isProcessing && (
+              activeReportTab === "staged"
+                && (row.status === "STAGED" || row.status === "CORRECTED")
+            )}
+            onToggleSelectAll={(checked, ids) => setSelectedValidationRowIds((current) => {
               if (checked) return [...new Set([...current, ...ids])];
               return current.filter((id) => !ids.includes(id));
             })}
-            onToggleRowSelection={(rowId, checked) => setSelectedRowIds((current) =>
+            onToggleRowSelection={(rowId, checked) => setSelectedValidationRowIds((current) =>
               checked
                 ? [...new Set([...current, rowId])]
                 : current.filter((id) => id !== rowId),
@@ -672,8 +747,36 @@ export default function MasterImportJobReportPage({
                 ? "No rows with validation or import errors."
                 : activeReportTab === "created"
                   ? "No master records have been created from this workbook yet."
-                  : "No staged workbook rows are available yet."}
+                  : activeReportTab === "validated"
+                    ? "No validated rows are available yet."
+                    : "No staged workbook rows are available yet."}
           />
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-[var(--erp-muted)]">
+            <span>
+              {activeRowCount === 0
+              ? activeReportTab === "planned" ? "No plans" : "No records"
+              : `Showing ${reportPage * REPORT_PAGE_SIZE + 1}-${nextPageOffset} of ${activeRowCount} ${activeReportTab === "planned" ? "plans" : "records"}.`}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setReportPage((page) => Math.max(0, page - 1))}
+                disabled={reportPage === 0 || isLoading}
+              >
+                Previous
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setReportPage((page) => page + 1)}
+                disabled={nextPageOffset >= activeRowCount || isLoading}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
         </Card>
       </Section>
 
@@ -719,7 +822,7 @@ export default function MasterImportJobReportPage({
       <MasterImportCorrection
         open={correctionRow !== null}
         title="Correct import row"
-        description="Only fields linked to this row's validation errors are shown. Save and validate to check your correction."
+        description="Correct the indicated fields, or review editable fields when the error does not identify one. Save and validate before retrying import."
         rows={correctionRow ? [correctionRow] : []}
         fields={[]}
         isPending={isSavingCorrection}

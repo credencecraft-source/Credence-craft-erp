@@ -32,6 +32,9 @@ export const MASTER_IMPORT_MAX_FILE_SIZE = 50 * 1024 * 1024;
 export const MASTER_IMPORT_UPLOAD_CHUNK_BYTES = 1024 * 1024;
 export const MASTER_IMPORT_ROW_PAYLOAD_MAX_BYTES = 128 * 1024;
 export const MASTER_IMPORT_RETENTION_DAYS = 30;
+export const MASTER_IMPORT_REPORT_PAGE_SIZE = 50;
+export const MASTER_IMPORT_PLAN_SIZE = 100;
+const MASTER_IMPORT_PLAN_BATCH_SIZE = 25;
 
 const MASTER_IMPORT_UPLOAD_TRANSACTION_MAX_WAIT_MS = 10_000;
 const MASTER_IMPORT_UPLOAD_TRANSACTION_TIMEOUT_MS = 20_000;
@@ -471,7 +474,15 @@ export async function completeMasterImportFileUpload(input: {
   }, { maxWait: 10_000, timeout: 20_000 });
 }
 
-export async function getMasterImportJob(organizationId: string, jobId: string) {
+export async function getMasterImportJob(
+  organizationId: string,
+  jobId: string,
+  pagination: {
+    skip: number;
+    take?: number;
+    tab: "all" | "staged" | "validated" | "errors" | "created" | "planned";
+  } = { skip: 0, tab: "all" },
+) {
   const job = await prisma.masterImportJob.findFirst({
     where: { organization_id: organizationId, id: jobId },
     select: {
@@ -498,22 +509,61 @@ export async function getMasterImportJob(organizationId: string, jobId: string) 
       completed_at: true,
       failed_at: true,
       expires_at: true,
-      rows: {
-        where: { organization_id: organizationId },
-        orderBy: { row_number: "asc" },
-        select: {
-          row_number: true,
-          status: true,
-          checkpoint: true,
-          encrypted_payload: true,
-          updated_at: true,
-        },
-      },
     },
   });
   if (!job) throw new MasterImportServiceError("Import job not found.", 404);
 
-  const rows = job.rows.map((row) => {
+  const organizationJobRows = { organization_id: organizationId, job_id: jobId };
+  const statusFilter: Prisma.MasterImportJobRowWhereInput["status"] = pagination.tab === "all"
+    ? undefined
+    : pagination.tab === "created"
+      ? MasterImportJobRowStatus.IMPORTED
+      : pagination.tab === "validated"
+        ? MasterImportJobRowStatus.VALIDATED
+        : pagination.tab === "errors"
+          ? { in: [MasterImportJobRowStatus.INVALID, MasterImportJobRowStatus.FAILED] }
+          : { notIn: [
+              MasterImportJobRowStatus.IMPORTED,
+              MasterImportJobRowStatus.VALIDATED,
+              MasterImportJobRowStatus.INVALID,
+              MasterImportJobRowStatus.FAILED,
+            ] };
+  const [page, groupedRows] = await Promise.all([
+    prisma.masterImportJobRow.findMany({
+      where: {
+        ...organizationJobRows,
+        ...(pagination.tab === "planned"
+          ? { row_number: 0 }
+          : statusFilter ? { status: statusFilter } : {}),
+      },
+      orderBy: { row_number: "asc" },
+      ...(pagination.tab === "all" || pagination.tab === "planned"
+        ? {}
+        : { skip: pagination.skip, take: pagination.take }),
+      select: {
+        row_number: true,
+        status: true,
+        checkpoint: true,
+        encrypted_payload: true,
+        updated_at: true,
+      },
+    }),
+    prisma.masterImportJobRow.groupBy({
+      by: ["status"],
+      where: organizationJobRows,
+      _count: { _all: true },
+    }),
+  ]);
+
+  const countForStatus = (status: MasterImportJobRowStatus) =>
+    groupedRows.find((group) => group.status === status)?._count._all ?? 0;
+  const errorRowCount = countForStatus(MasterImportJobRowStatus.INVALID)
+    + countForStatus(MasterImportJobRowStatus.FAILED);
+  const createdRowCount = countForStatus(MasterImportJobRowStatus.IMPORTED);
+  const validatedRowCount = countForStatus(MasterImportJobRowStatus.VALIDATED);
+  const totalRowCount = groupedRows.reduce((count, group) => count + group._count._all, 0);
+
+  const rows = page.map((row) => {
     let payload: unknown;
     try {
       payload = JSON.parse(decryptSecret(Buffer.from(row.encrypted_payload).toString("utf8"))) as unknown;
@@ -529,7 +579,74 @@ export async function getMasterImportJob(organizationId: string, jobId: string) 
     };
   });
 
-  return { job: publicJob(job), rows };
+  let plans: Array<{
+    planNumber: number;
+    recordCount: number;
+    validatedCount: number;
+    importedCount: number;
+    validatedRowNumbers: number[];
+  }> = [];
+  let planCount = 0;
+  if (pagination.tab === "planned") {
+    const planRows = await prisma.masterImportJobRow.findMany({
+      where: {
+        ...organizationJobRows,
+        plan_number: { not: null },
+        status: {
+          in: [
+            MasterImportJobRowStatus.VALIDATED,
+            MasterImportJobRowStatus.IMPORTED,
+          ],
+        },
+      },
+      orderBy: [{ plan_number: "asc" }, { row_number: "asc" }],
+      select: { plan_number: true, row_number: true, status: true },
+    });
+    const groupedPlans = new Map<number, {
+      recordCount: number;
+      validatedCount: number;
+      importedCount: number;
+      validatedRowNumbers: number[];
+    }>();
+    for (const row of planRows) {
+      if (row.plan_number === null) continue;
+      const planNumber = row.plan_number;
+      const plan = groupedPlans.get(planNumber) ?? {
+        recordCount: 0,
+        validatedCount: 0,
+        importedCount: 0,
+        validatedRowNumbers: [],
+      };
+      plan.recordCount += 1;
+      if (row.status === MasterImportJobRowStatus.VALIDATED) {
+        plan.validatedCount += 1;
+        plan.validatedRowNumbers.push(row.row_number);
+      } else if (row.status === MasterImportJobRowStatus.IMPORTED) {
+        plan.importedCount += 1;
+      }
+      groupedPlans.set(planNumber, plan);
+    }
+    const allPlans = [...groupedPlans.entries()].map(([planNumber, plan]) => ({
+      planNumber,
+      ...plan,
+    }));
+    planCount = allPlans.length;
+    plans = allPlans.slice(pagination.skip, pagination.skip + (pagination.take ?? MASTER_IMPORT_REPORT_PAGE_SIZE));
+  }
+
+  return {
+    job: publicJob(job),
+    rows,
+    plans,
+    planCount,
+    rowCounts: {
+      staged: totalRowCount - errorRowCount - createdRowCount - validatedRowCount,
+      validated: validatedRowCount,
+      errors: errorRowCount,
+      created: createdRowCount,
+    },
+    rowOffset: pagination.skip,
+  };
 }
 
 export async function deleteMasterImportJob(input: {
@@ -1105,9 +1222,26 @@ export async function validateMasterImportJob(input: {
   organizationId: string;
   actorUserId: string;
   jobId: string;
-  batchSize?: number;
+  rowNumbers?: number[];
   rowNumber?: number;
 }) {
+  if (input.rowNumber !== undefined && input.rowNumbers !== undefined) {
+    throw new MasterImportServiceError("Select one row-validation request at a time.", 400);
+  }
+  if (input.rowNumber !== undefined
+    && (!Number.isSafeInteger(input.rowNumber) || input.rowNumber < 1)) {
+    throw new MasterImportServiceError("Selected row number is invalid.", 400);
+  }
+  if (input.rowNumber === undefined && input.rowNumbers === undefined) {
+    throw new MasterImportServiceError("Select at least one staged row to validate.", 400);
+  }
+  if (input.rowNumbers !== undefined
+    && (input.rowNumbers.length < 1
+      || input.rowNumbers.length > 1_000
+      || new Set(input.rowNumbers).size !== input.rowNumbers.length
+      || input.rowNumbers.some((rowNumber) => !Number.isSafeInteger(rowNumber) || rowNumber < 1))) {
+    throw new MasterImportServiceError("Selected row numbers are invalid.", 400);
+  }
   const job = await prisma.masterImportJob.findFirst({
     where: { organization_id: input.organizationId, id: input.jobId },
   });
@@ -1122,11 +1256,17 @@ export async function validateMasterImportJob(input: {
       organization_id: input.organizationId,
       job_id: input.jobId,
       status: { in: ["STAGED", "CORRECTED", "FAILED"] },
-      ...(input.rowNumber !== undefined ? { row_number: input.rowNumber } : {}),
+      ...(input.rowNumber !== undefined
+        ? { row_number: input.rowNumber }
+        : input.rowNumbers !== undefined ? { row_number: { in: input.rowNumbers } } : {}),
     },
     orderBy: { row_number: "asc" },
-    take: Math.min(Math.max(input.batchSize ?? 1_000, 1), 1_000),
+    take: input.rowNumbers?.length ?? 1,
   });
+  const requestedRowCount = input.rowNumbers?.length ?? 1;
+  if (rows.length !== requestedRowCount) {
+    throw new MasterImportServiceError("One or more selected rows are no longer awaiting validation.", 409);
+  }
   const importDefinition = getMasterDefinition(job.module_key);
   const lookupIndex = rows.length === 0 || job.module_key === "contact" || !importDefinition
     ? new Map<string, Map<string, ActiveMasterLookupRecord[]>>()
@@ -1172,6 +1312,7 @@ export async function validateMasterImportJob(input: {
           status: validation.validationErrors.length
             ? MasterImportJobRowStatus.INVALID
             : MasterImportJobRowStatus.VALIDATED,
+          plan_number: null,
           checkpoint: validation.validationErrors.length ? "VALIDATION_FAILED" : "VALIDATED",
           encrypted_payload: encryptedPayload,
           updated_by_user_id: input.actorUserId,
@@ -1256,7 +1397,9 @@ export async function validateMasterImportJob(input: {
         organization_id: input.organizationId,
         job_id: input.jobId,
         status: { in: ["STAGED", "CORRECTED", "FAILED"] },
-        ...(input.rowNumber !== undefined ? { row_number: input.rowNumber } : {}),
+        ...(input.rowNumber !== undefined
+          ? { row_number: input.rowNumber }
+          : input.rowNumbers !== undefined ? { row_number: { in: input.rowNumbers } } : {}),
       },
       select: { row_number: true },
       orderBy: { row_number: "asc" },
@@ -1273,6 +1416,129 @@ export async function validateMasterImportJob(input: {
     },
     hasMore,
   };
+}
+
+export async function createMasterImportPlans(input: {
+  organizationId: string;
+  actorUserId: string;
+  jobId: string;
+}) {
+  const createdPlans = await prisma.$transaction(async (transaction) => {
+    const now = new Date();
+    const lockedJob = await transaction.masterImportJob.updateMany({
+      where: { organization_id: input.organizationId, id: input.jobId },
+      data: { updated_at: now, updated_by_user_id: input.actorUserId },
+    });
+    if (lockedJob.count !== 1) throw new MasterImportServiceError("Import job not found.", 404);
+
+    const job = await transaction.masterImportJob.findFirst({
+      where: { organization_id: input.organizationId, id: input.jobId },
+      select: { id: true, status: true, expires_at: true, next_plan_number: true },
+    });
+    if (!job) throw new MasterImportServiceError("Import job not found.", 404);
+    if (job.expires_at <= now) throw new MasterImportServiceError("Import job has expired.", 410);
+    if (job.status === MasterImportJobStatus.UPLOADED || job.status === MasterImportJobStatus.FAILED) {
+      throw new MasterImportServiceError("Stage and validate this import before creating plans.", 409);
+    }
+
+    let nextPlanNumber = job.next_plan_number;
+    const plans: Array<{ planNumber: number; recordCount: number }> = [];
+
+    while (true) {
+      const rows = await transaction.masterImportJobRow.findMany({
+        where: {
+          organization_id: input.organizationId,
+          job_id: input.jobId,
+          status: MasterImportJobRowStatus.VALIDATED,
+          plan_number: null,
+        },
+        orderBy: { row_number: "asc" },
+        take: MASTER_IMPORT_PLAN_SIZE,
+        select: { row_number: true },
+      });
+      if (rows.length === 0) break;
+
+      const assigned = await transaction.masterImportJobRow.updateMany({
+        where: {
+          organization_id: input.organizationId,
+          job_id: input.jobId,
+          row_number: { in: rows.map((row) => row.row_number) },
+          status: MasterImportJobRowStatus.VALIDATED,
+          plan_number: null,
+        },
+        data: {
+          plan_number: nextPlanNumber,
+          updated_by_user_id: input.actorUserId,
+        },
+      });
+      if (assigned.count > 0) {
+        plans.push({ planNumber: nextPlanNumber, recordCount: assigned.count });
+        nextPlanNumber += 1;
+      }
+    }
+
+    if (plans.length > 0) {
+      const counterUpdate = await transaction.masterImportJob.updateMany({
+        where: { organization_id: input.organizationId, id: input.jobId },
+        data: {
+          next_plan_number: nextPlanNumber,
+          updated_at: new Date(),
+          updated_by_user_id: input.actorUserId,
+        },
+      });
+      if (counterUpdate.count !== 1) {
+        throw new MasterImportServiceError("Import plan counter changed; reload and retry.", 409);
+      }
+      await createAuditEvent({
+        organizationId: input.organizationId,
+        userId: input.actorUserId,
+        module: "MASTER_DATA",
+        action: "MASTER_IMPORT_PLANS_CREATED",
+        entityType: "MasterImportJob",
+        entityId: input.jobId,
+        details: { plans },
+      }, transaction);
+    }
+    return plans;
+  }, {
+    maxWait: MASTER_IMPORT_STAGING_TRANSACTION_MAX_WAIT_MS,
+    timeout: MASTER_IMPORT_STAGING_TRANSACTION_TIMEOUT_MS,
+  });
+
+  return {
+    plans: createdPlans,
+    planCount: createdPlans.length,
+    plannedRowCount: createdPlans.reduce((count, plan) => count + plan.recordCount, 0),
+  };
+}
+
+export async function getValidatedMasterImportPlanRows(
+  organizationId: string,
+  jobId: string,
+  planNumber: number,
+) {
+  if (!Number.isSafeInteger(planNumber) || planNumber < 1) {
+    throw new MasterImportServiceError("Import plan number is invalid.", 400);
+  }
+  const job = await prisma.masterImportJob.findFirst({
+    where: { organization_id: organizationId, id: jobId },
+    select: { id: true, expires_at: true },
+  });
+  if (!job) throw new MasterImportServiceError("Import job not found.", 404);
+  if (job.expires_at <= new Date()) throw new MasterImportServiceError("Import job has expired.", 410);
+
+  const rows = await prisma.masterImportJobRow.findMany({
+    where: {
+      organization_id: organizationId,
+      job_id: jobId,
+      plan_number: planNumber,
+      status: MasterImportJobRowStatus.VALIDATED,
+    },
+    orderBy: { row_number: "asc" },
+    take: MASTER_IMPORT_PLAN_BATCH_SIZE,
+    select: { row_number: true },
+  });
+  return rows.map((row) => row.row_number);
 }
 
 export async function commitNextMasterImportRow(input: {

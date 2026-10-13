@@ -156,6 +156,33 @@ describe("contact master workbook", () => {
     });
   });
 
+  it("rejects workbook contacts assigned more than one GSTIN", async () => {
+    const result = await parseContactWorkbook(workbookFile([
+      {
+        name: "Contacts",
+        rows: [
+          ["Import Ref (auto - do not edit)", "Legal Name", "Roles"],
+          ["NEW-001", "Example Textiles", "VENDOR"],
+        ],
+      },
+      {
+        name: "GST Registrations",
+        rows: [
+          ["Import Ref (auto - do not edit)", "GSTIN", "Registered Legal Name"],
+          ["NEW-001", "27AAPFU0939F1ZV", "Example Textiles"],
+          ["NEW-001", "22AAAAA0000A1ZC", "Example Textiles"],
+        ],
+      },
+    ]));
+
+    expect(result.contacts).toEqual([]);
+    expect(result.failures).toEqual([expect.objectContaining({
+      contactKey: "NEW-001",
+      message: "A contact can have only one GSTIN. Create a separate contact for each additional GSTIN.",
+      fieldPaths: ["taxRegistrations"],
+    })]);
+  });
+
   it("blocks existing export references and invalid related bank rows", async () => {
     const existingCode = await parseContactWorkbook(workbookFile([{
       name: "Contacts",

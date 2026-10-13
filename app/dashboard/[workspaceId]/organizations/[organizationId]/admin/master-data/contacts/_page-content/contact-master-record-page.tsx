@@ -103,7 +103,7 @@ const ROLE_OPTIONS: Array<{ code: RoleCode; label: string }> = [
 
 const TABS: Array<{ value: TabId; label: string }> = [
   { value: "contact", label: "Contact & roles" },
-  { value: "gst", label: "GST registrations" },
+  { value: "gst", label: "GST details" },
   { value: "addresses", label: "Addresses" },
   { value: "bank", label: "Bank accounts" },
 ];
@@ -351,7 +351,12 @@ export default function ContactMasterRecordPage({
             ) : null}
             {activeTab === "gst" ? (
               <section className="space-y-4">
-                <h2 className="text-base font-semibold text-[var(--erp-text)]">GST registrations</h2>
+                <h2 className="text-base font-semibold text-[var(--erp-text)]">GST details</h2>
+                {contact.tax_registrations.length > 1 ? (
+                  <p className="rounded-xl border border-[var(--erp-warning)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-warning)]" role="status">
+                    This existing contact has multiple GSTINs. The updated rule allows one GSTIN per contact; remove the extras in Edit before saving.
+                  </p>
+                ) : null}
                 {contact.tax_registrations.length ? contact.tax_registrations.map((registration) => (
                   <dl key={registration.gstin} className="grid grid-cols-1 gap-4 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2 xl:grid-cols-4">
                     <DetailField label="GSTIN" value={registration.gstin} />
@@ -359,7 +364,7 @@ export default function ContactMasterRecordPage({
                     <DetailField label="Registration type" value={registration.registration_type.replaceAll("_", " ")} />
                     <DetailField label="Status" value={registration.status} />
                   </dl>
-                )) : <EmptyDetail>No GST registrations have been added.</EmptyDetail>}
+                )) : <EmptyDetail>No GSTIN is assigned to this contact.</EmptyDetail>}
               </section>
             ) : null}
             {activeTab === "addresses" ? (
@@ -428,9 +433,33 @@ export default function ContactMasterRecordPage({
             {activeTab === "gst" ? (
               <section className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div><h2 className="text-base font-semibold text-[var(--erp-text)]">GST registrations</h2><p className="text-sm text-slate-500">Each GSTIN is a separate registration.</p></div>
-                  <Button size="sm" variant="secondary" onClick={() => setForm({ ...form, taxRegistrations: [...form.taxRegistrations, { gstin: "", legalName: form.legalName, registrationType: "REGULAR", status: "ACTIVE" }] })}><Plus aria-hidden="true" className="h-4 w-4" /> Add GSTIN</Button>
+                  <div>
+                    <h2 className="text-base font-semibold text-[var(--erp-text)]">GST details</h2>
+                    <p className="text-sm text-slate-500">A contact can have at most one GSTIN. Create a separate contact for another GSTIN.</p>
+                  </div>
+                  {form.taxRegistrations.length === 0 ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setForm({
+                        ...form,
+                        taxRegistrations: [{
+                          gstin: "",
+                          legalName: form.legalName,
+                          registrationType: "REGULAR",
+                          status: "ACTIVE",
+                        }],
+                      })}
+                    >
+                      <Plus aria-hidden="true" className="h-4 w-4" /> Add GSTIN
+                    </Button>
+                  ) : null}
                 </div>
+                {form.taxRegistrations.length > 1 ? (
+                  <p className="rounded-xl border border-[var(--erp-warning)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-warning)]" role="alert">
+                    This existing contact has multiple GSTINs. Remove all but one before saving.
+                  </p>
+                ) : null}
                 {form.taxRegistrations.map((registration, index) => (
                   <div key={`${registration.gstin}-${index}`} className="grid grid-cols-1 gap-3 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2 xl:grid-cols-4">
                     <Input label="GSTIN" maxLength={15} value={registration.gstin} onChange={(event) => updateRegistration(index, "gstin", event.currentTarget.value)} />
@@ -440,13 +469,13 @@ export default function ContactMasterRecordPage({
                     <div className="md:col-span-2 xl:col-span-4"><Button variant="destructive" size="sm" onClick={() => window.confirm("Remove this GST registration and its linked addresses?") && setForm({ ...form, taxRegistrations: form.taxRegistrations.filter((_, rowIndex) => rowIndex !== index), addresses: form.addresses.filter((address) => address.taxRegistrationGstin !== registration.gstin) })}>Remove GSTIN</Button></div>
                   </div>
                 ))}
-                {!form.taxRegistrations.length ? <EmptyDetail>Add GST registrations for this contact.</EmptyDetail> : null}
+                {!form.taxRegistrations.length ? <EmptyDetail>No GSTIN is assigned to this contact.</EmptyDetail> : null}
               </section>
             ) : null}
             {activeTab === "addresses" ? (
               <section className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div><h2 className="text-base font-semibold text-[var(--erp-text)]">Billing and shipping addresses</h2><p className="text-sm text-slate-500">Set billing and shipping defaults separately for each GSTIN.</p></div>
+                  <div><h2 className="text-base font-semibold text-[var(--erp-text)]">Billing and shipping addresses</h2><p className="text-sm text-slate-500">Addresses are linked to this contact’s single GSTIN where applicable.</p></div>
                   <Button size="sm" variant="secondary" onClick={() => setForm({ ...form, addresses: [...form.addresses, { taxRegistrationGstin: "", label: "", usage: "BOTH", addressLine1: "", addressLine2: "", city: "", stateName: "", stateCode: "", postalCode: "", countryCode: "IN", isDefaultBilling: false, isDefaultShipping: false }] })}><Plus aria-hidden="true" className="h-4 w-4" /> Add address</Button>
                 </div>
                 {form.addresses.map((address, index) => (
@@ -461,7 +490,7 @@ export default function ContactMasterRecordPage({
                     <Input label="GST state code" maxLength={2} value={address.stateCode} onChange={(event) => updateAddress(index, "stateCode", event.currentTarget.value)} hint="Must match the linked GSTIN state code when provided." />
                     <Input label="PIN / postal code" maxLength={20} textCase="preserve" value={address.postalCode} onChange={(event) => updateAddress(index, "postalCode", event.currentTarget.value)} />
                     <Input label="Country code" maxLength={2} value={address.countryCode} onChange={(event) => updateAddress(index, "countryCode", event.currentTarget.value)} />
-                    <div className="flex flex-wrap gap-4 md:col-span-2 xl:col-span-4"><Checkbox checked={address.isDefaultBilling} onChange={(event) => updateAddress(index, "isDefaultBilling", event.currentTarget.checked)} label="Default billing for this GSTIN" /><Checkbox checked={address.isDefaultShipping} onChange={(event) => updateAddress(index, "isDefaultShipping", event.currentTarget.checked)} label="Default shipping for this GSTIN" /></div>
+                    <div className="flex flex-wrap gap-4 md:col-span-2 xl:col-span-4"><Checkbox checked={address.isDefaultBilling} onChange={(event) => updateAddress(index, "isDefaultBilling", event.currentTarget.checked)} label="Default billing for this contact" /><Checkbox checked={address.isDefaultShipping} onChange={(event) => updateAddress(index, "isDefaultShipping", event.currentTarget.checked)} label="Default shipping for this contact" /></div>
                     <div className="md:col-span-2 xl:col-span-4"><Button variant="destructive" size="sm" onClick={() => window.confirm("Remove this address?") && setForm({ ...form, addresses: form.addresses.filter((_, rowIndex) => rowIndex !== index) })}>Remove address</Button></div>
                   </div>
                 ))}

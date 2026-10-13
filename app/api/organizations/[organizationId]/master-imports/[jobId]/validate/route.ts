@@ -7,6 +7,15 @@ import {
   parseBoundedJson,
 } from "../../route-support";
 
+function isRowNumberList(value: unknown): value is number[] {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.length <= 1_000
+    && value.every((rowNumber: unknown) =>
+      typeof rowNumber === "number" && Number.isSafeInteger(rowNumber) && rowNumber > 0)
+    && new Set(value).size === value.length;
+}
+
 export async function POST(
   request: Request,
   context: { params: Promise<{ organizationId: string; jobId: string }> },
@@ -17,22 +26,24 @@ export async function POST(
     if (!authorization.authorized) return authorization.response;
     const body = await parseBoundedJson(request, 4 * 1024);
     if (typeof body !== "object" || body === null || Array.isArray(body)
-      || Object.keys(body).some((key) => !["rowNumber", "batchSize"].includes(key))) {
+      || Object.keys(body).some((key) => !["rowNumber", "rowNumbers"].includes(key))) {
       return NextResponse.json({ error: "Validation request is invalid." }, { status: 400 });
     }
     const requestBody = body as Record<string, unknown>;
     const rowNumber = requestBody.rowNumber;
-    const batchSize = requestBody.batchSize;
+    const rowNumbers = requestBody.rowNumbers;
     if ((rowNumber !== undefined && (!Number.isSafeInteger(rowNumber) || Number(rowNumber) < 1))
-      || (batchSize !== undefined && (!Number.isSafeInteger(batchSize) || Number(batchSize) < 1 || Number(batchSize) > 1_000))) {
-      return NextResponse.json({ error: "Validation batch or row number is invalid." }, { status: 400 });
+      || (rowNumbers !== undefined && !isRowNumberList(rowNumbers))
+      || (rowNumber !== undefined && rowNumbers !== undefined)
+      || (rowNumber === undefined && rowNumbers === undefined)) {
+      return NextResponse.json({ error: "Select valid staged rows to validate." }, { status: 400 });
     }
     const result = await validateMasterImportJob({
       organizationId: authorization.context.organizationId,
       actorUserId: authorization.context.userId,
       jobId,
       ...(rowNumber !== undefined ? { rowNumber: Number(rowNumber) } : {}),
-      ...(batchSize !== undefined ? { batchSize: Number(batchSize) } : {}),
+      ...(rowNumbers !== undefined ? { rowNumbers } : {}),
     });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

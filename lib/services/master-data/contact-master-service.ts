@@ -16,6 +16,8 @@ import {
   type ContactInput,
 } from "./contact-master-validation";
 
+const MAX_CONTACT_BULK_SELECTION = 200;
+
 type ContactDatabase = typeof prisma;
 type ContactTransaction = Prisma.TransactionClient;
 
@@ -446,7 +448,7 @@ export async function listContacts(
     select: contactSelect,
     orderBy: [{ legal_name: "asc" }, { id: "asc" }],
     skip: pagination.skip ?? 0,
-    take: Math.min(Math.max(pagination.take ?? 200, 1), 200),
+    take: Math.min(Math.max(pagination.take ?? MAX_CONTACT_BULK_SELECTION, 1), MAX_CONTACT_BULK_SELECTION),
   });
   return contacts.map(publicContact);
 }
@@ -623,18 +625,18 @@ export async function deactivateContacts(
 }
 
 function parseContactIds(value: unknown) {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 100) {
-    throw new ContactValidationError("Select between 1 and 100 unique valid contacts.");
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_CONTACT_BULK_SELECTION) {
+    throw new ContactValidationError(`Select between 1 and ${MAX_CONTACT_BULK_SELECTION} unique valid contacts.`);
   }
   const contactIds: string[] = [];
   for (const id of value) {
     if (typeof id !== "string" || id.trim() !== id || id.length === 0 || id.length > 200) {
-      throw new ContactValidationError("Select between 1 and 100 unique valid contacts.");
+      throw new ContactValidationError(`Select between 1 and ${MAX_CONTACT_BULK_SELECTION} unique valid contacts.`);
     }
     contactIds.push(id);
   }
   if (new Set(contactIds).size !== contactIds.length) {
-    throw new ContactValidationError("Select between 1 and 100 unique valid contacts.");
+    throw new ContactValidationError(`Select between 1 and ${MAX_CONTACT_BULK_SELECTION} unique valid contacts.`);
   }
   return contactIds;
 }
