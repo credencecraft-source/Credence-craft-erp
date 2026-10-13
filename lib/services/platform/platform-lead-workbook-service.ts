@@ -2,7 +2,7 @@ import XlsxPopulate from "xlsx-populate";
 
 import { PLATFORM_LEAD_STAGES } from "./platform-lead-constants";
 
-const LEAD_HEADERS = ["Name", "Email", "Mobile", "Company name", "Nature of business", "City", "Source", "Stage"] as const;
+const LEAD_HEADERS = ["Name", "Email", "Mobile", "Company name", "Nature of business", "City", "Source", "Stage", "Added date & time"] as const;
 const MAX_TEMPLATE_ROWS = 501;
 
 type PlatformLeadWorkbookRow = {
@@ -14,6 +14,7 @@ type PlatformLeadWorkbookRow = {
   city: string | null;
   source: string | null;
   stage: string;
+  created_at: Date;
 };
 
 export async function createPlatformLeadsWorkbook(leads: PlatformLeadWorkbookRow[]) {
@@ -21,15 +22,15 @@ export async function createPlatformLeadsWorkbook(leads: PlatformLeadWorkbookRow
   const leadsSheet = workbook.sheet(0).name("Leads");
   const stagesSheet = workbook.addSheet("Stages");
 
-  leadsSheet.range("A1:H1").value([[...LEAD_HEADERS]]);
-  leadsSheet.range("A1:H1").style({ bold: true, fill: "E2F3EC" });
+  leadsSheet.range("A1:I1").value([[...LEAD_HEADERS]]);
+  leadsSheet.range("A1:I1").style({ bold: true, fill: "E2F3EC" });
   leadsSheet.freezePanes(1, 0);
   LEAD_HEADERS.forEach((header, index) => {
     leadsSheet.column(String.fromCharCode(65 + index)).width(Math.max(header.length + 3, 18));
   });
 
   if (leads.length > 0) {
-    leadsSheet.range(`A2:H${leads.length + 1}`).value(
+    leadsSheet.range(`A2:I${leads.length + 1}`).value(
       leads.map((lead) => [
         lead.name,
         lead.email ?? "",
@@ -39,6 +40,7 @@ export async function createPlatformLeadsWorkbook(leads: PlatformLeadWorkbookRow
         lead.city ?? "",
         lead.source ?? "",
         lead.stage,
+        lead.created_at.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
       ]),
     );
   }

@@ -1,0 +1,55 @@
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/auth/session-manager", () => ({ getSessionUser: vi.fn() }));
+vi.mock("@/lib/database/database-errors", () => ({
+  DATABASE_UNAVAILABLE_MESSAGE: "Database unavailable.",
+  isDatabaseUnavailableError: vi.fn(() => false),
+}));
+vi.mock("@/lib/services/master-data/master-import-service", () => ({
+  authorizeMasterImportRequest: vi.fn(),
+  MasterImportServiceError: class MasterImportServiceError extends Error {
+    constructor(message: string, readonly status: number) {
+      super(message);
+    }
+  },
+}));
+
+import { masterImportErrorResponse } from "./route-support";
+
+describe("master import route errors", () => {
+  it("reports missing import tables as a safe migration readiness error", async () => {
+    const response = masterImportErrorResponse({ code: "P2021" }, "list");
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "Master import database migration is pending. Apply the approved migration before using this feature.",
+    });
+  });
+
+  it("reports a retryable upload timeout instead of a generic import error", async () => {
+    const response = masterImportErrorResponse({ code: "P2028" }, "create");
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "The database took too long to start this upload. Please retry.",
+    });
+  });
+
+  it("explains that a timed-out chunk can be resumed safely", async () => {
+    const response = masterImportErrorResponse({ code: "P2028" }, "upload-chunk");
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "This upload paused before saving the next chunk. Resume it to continue; previously saved chunks are retained.",
+    });
+  });
+
+  it("explains that a timed-out staging operation can be retried without reuploading", async () => {
+    const response = masterImportErrorResponse({ code: "P2028" }, "stage");
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "The workbook is saved, but staging timed out. Retry Stage workbook; saved master records were not changed.",
+    });
+  });
+});

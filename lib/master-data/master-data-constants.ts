@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import { enforceInventoryLocationLimit } from "@/lib/services/platform/inventory-location-restriction-service";
 import { syncFinishedGoodsSizes } from "@/lib/services/master-data/finished-goods-size-service";
@@ -6,6 +7,13 @@ import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-da
 export { getMasterDefinition, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
 
 export type MasterFieldValues = Record<string, string | number | boolean | null | string[] | number[] | Record<string, unknown>[]>;
+export type ActiveMasterLookupRecord = {
+  id: string;
+  value_id: string;
+  label: string;
+  parent_id: string | null;
+};
+export type ActiveMasterLookupIndex = Map<string, Map<string, ActiveMasterLookupRecord[]>>;
 
 type MasterRow = { id: string; value_id: string; organization_id: string; is_active: boolean; sort_order: number; [key: string]: unknown };
 type MasterQuery = Record<string, unknown>;
@@ -187,6 +195,112 @@ async function resolveLookupId(organizationId: string, moduleKey: string, value:
     throw new Error("Dummy master values cannot be used by regular organization records.");
   }
   return result.id;
+}
+
+export async function isActiveMasterLookupForOrganization(
+  organizationId: string,
+  moduleKey: string,
+  value: string,
+  parentModuleKey?: string,
+  parentValue?: string,
+) {
+  const delegate = delegates[moduleKey];
+  const labelField = labelFields[moduleKey];
+  if (!delegate || !labelField) return false;
+
+  const where: Record<string, unknown> = {
+    organization_id: organizationId,
+    is_active: true,
+    OR: [
+      { id: value },
+      { value_id: value },
+      { [labelField]: { equals: value, mode: "insensitive" } },
+    ],
+  };
+  if (parentModuleKey && parentValue) {
+    const parentDelegate = delegates[parentModuleKey];
+    const parentLabelField = labelFields[parentModuleKey];
+    const parentColumn = parentColumns[moduleKey];
+    if (!parentDelegate || !parentLabelField || !parentColumn) return false;
+    const parent = await parentDelegate.findFirst({
+      where: {
+        organization_id: organizationId,
+        is_active: true,
+        OR: [
+          { id: parentValue },
+          { value_id: parentValue },
+          { [parentLabelField]: { equals: parentValue, mode: "insensitive" } },
+        ],
+      },
+    });
+    if (!parent || await isActiveDummyMaster(organizationId, parent)) return false;
+    where[parentColumn] = parent.id;
+  }
+  const record = await delegate.findFirst({ where });
+  return Boolean(record && !(await isActiveDummyMaster(organizationId, record)));
+}
+
+export async function loadActiveMasterLookupIndex(
+  organizationId: string,
+  moduleKeys: Iterable<string>,
+): Promise<ActiveMasterLookupIndex> {
+  const keys = [...new Set(moduleKeys)].filter((moduleKey) =>
+    Boolean(delegates[moduleKey] && labelFields[moduleKey]),
+  );
+  if (keys.length === 0) return new Map();
+  const activeDummyBatch = await prisma.organizationDummyDataBatch.findFirst({
+    where: { organization_id: organizationId, status: "ACTIVE" },
+    select: { id: true },
+  });
+  const entries = await Promise.all(keys.map(async (moduleKey) => {
+    const labelField = labelFields[moduleKey];
+    const parentColumn = parentColumns[moduleKey];
+    const records = await delegates[moduleKey].findMany({
+      where: { organization_id: organizationId, is_active: true },
+      select: {
+        id: true,
+        value_id: true,
+        [labelField]: true,
+        legacy_metadata: true,
+        ...(parentColumn ? { [parentColumn]: true } : {}),
+      },
+    });
+    const index = new Map<string, ActiveMasterLookupRecord[]>();
+    for (const record of records) {
+      if (activeDummyBatch && belongsToDummyBatch(record, activeDummyBatch.id)) continue;
+      const entry: ActiveMasterLookupRecord = {
+        id: record.id,
+        value_id: record.value_id,
+        label: String(record[labelField] ?? ""),
+        parent_id: parentColumn && typeof record[parentColumn] === "string"
+          ? record[parentColumn] as string
+          : null,
+      };
+      for (const value of [entry.id, entry.value_id, entry.label]) {
+        const lookupKey = value.toLocaleLowerCase();
+        const matching = index.get(lookupKey) ?? [];
+        matching.push(entry);
+        index.set(lookupKey, matching);
+      }
+    }
+    return [moduleKey, index] as const;
+  }));
+  return new Map(entries);
+}
+
+export function isActiveMasterLookupInIndex(
+  index: ActiveMasterLookupIndex,
+  moduleKey: string,
+  value: string,
+  parentModuleKey?: string,
+  parentValue?: string,
+) {
+  const matches = index.get(moduleKey)?.get(value.toLocaleLowerCase()) ?? [];
+  if (!parentModuleKey || !parentValue) return matches.length > 0;
+  const parents = index.get(parentModuleKey)?.get(parentValue.toLocaleLowerCase()) ?? [];
+  if (parents.length === 0) return false;
+  const parentIds = new Set(parents.map((parent) => parent.id));
+  return matches.some((record) => record.parent_id !== null && parentIds.has(record.parent_id));
 }
 
 function valueForMasterField(row: MasterRow, column: string) {
@@ -646,12 +760,17 @@ export async function syncSizeGroupSizes(organizationId: string, sizeGroupId: st
   });
 }
 
-export async function createMasterValueForOrganization(organizationId: string, moduleKey: string, input: { label: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; parentValueId?: string | null; createOnly?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; sizeGroupId?: string }) {
+export async function createMasterValueForOrganization(
+  organizationId: string,
+  moduleKey: string,
+  input: { label: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; childRows?: Record<string, Record<string, unknown>[]>; parentValueId?: string | null; createOnly?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; sizeGroupId?: string },
+  database: typeof prisma | Prisma.TransactionClient = prisma,
+) {
   const definition = getMasterDefinition(moduleKey);
   const delegate = delegates[moduleKey];
   if (!definition || !delegate) throw new Error("Master module is not available.");
 
-  return prisma.$transaction(async (transaction) => {
+  const createWithinTransaction = async (transaction: Prisma.TransactionClient) => {
     const transactionDelegate =
       (transaction as unknown as Record<string, MasterDelegate>)[`master${moduleKey.split("-").map((part) => part[0].toUpperCase() + part.slice(1)).join("")}`] ?? delegate;
 
@@ -760,6 +879,28 @@ export async function createMasterValueForOrganization(organizationId: string, m
     if (moduleKey === "article" && "articleVariants" in input && input.articleVariants) {
       await syncFinishedGoodsVariants(transaction, organizationId, created.id, input.articleVariants);
     }
+    if (moduleKey !== "article" && input.childRows) {
+      for (const field of definition.fields.filter((candidate) => candidate.type === "child-list")) {
+        const childModuleKey = field.childModuleKey;
+        if (!childModuleKey) throw new Error(`${field.label} child module is not configured.`);
+        for (const childFields of input.childRows[field.key] ?? []) {
+          const childDefinition = getMasterDefinition(childModuleKey);
+          const childLabelField = childDefinition?.labelField
+            ?? childDefinition?.fields.find((childField) => childField.type === "lookup")?.key
+            ?? childDefinition?.fields.find((childField) => !childField.readOnly)?.key;
+          const childLabel = childLabelField ? childFields[childLabelField] : null;
+          if (typeof childLabel !== "string" || !childLabel.trim()) {
+            throw new Error(`${field.label} contains an incomplete child row.`);
+          }
+          await createMasterValueForOrganization(organizationId, childModuleKey, {
+            label: childLabel,
+            fields: childFields as MasterFieldValues,
+            parentValueId: created.id,
+            createOnly: true,
+          }, transaction);
+        }
+      }
+    }
     if (moduleKey === "article" && input.articleSizes) {
       await syncFinishedGoodsSizes(
         transaction,
@@ -768,6 +909,40 @@ export async function createMasterValueForOrganization(organizationId: string, m
         typeof created.size_group_id === "string" ? created.size_group_id : null,
         input.articleSizes,
       );
+    }
+    if (moduleKey === "size-group" && Array.isArray(input.fields?.Size)) {
+      const selectedLabels = [...new Set(input.fields.Size.map((value) => String(value).trim()).filter(Boolean))];
+      const sizes = await transaction.masterSize.findMany({
+        where: {
+          organization_id: organizationId,
+          is_active: true,
+          OR: selectedLabels.flatMap((value) => [{ id: value }, { value_id: value }, { size: value }]),
+        },
+      });
+      const dummyBatch = await transaction.organizationDummyDataBatch.findFirst({
+        where: { organization_id: organizationId, status: "ACTIVE" },
+        select: { id: true },
+      });
+      const selectableSizes = dummyBatch
+        ? sizes.filter((size) => !belongsToDummyBatch(size, dummyBatch.id))
+        : sizes;
+      const sizesByValue = new Map(selectableSizes.flatMap((size) => [
+        [size.id, size],
+        [size.value_id, size],
+        [size.size, size],
+      ]));
+      const selectedSizes = selectedLabels.map((value) => sizesByValue.get(value))
+        .filter((size): size is (typeof sizes)[number] => Boolean(size));
+      if (selectedSizes.length !== selectedLabels.length) {
+        throw new Error("Every selected size must be active and belong to this organization.");
+      }
+      await transaction.masterSizeGroupSize.createMany({
+        data: selectedSizes.map((size) => ({
+          organization_id: organizationId,
+          size_group_id: created.id,
+          size_id: size.id,
+        })),
+      });
     }
 
     await transaction.approvalRequest.deleteMany({
@@ -788,7 +963,12 @@ export async function createMasterValueForOrganization(organizationId: string, m
     });
 
     return created;
-  }, moduleKey === "article" ? { timeout: 15_000 } : undefined);
+  };
+
+  if ("$transaction" in database) {
+    return database.$transaction(createWithinTransaction, moduleKey === "article" ? { timeout: 15_000 } : undefined);
+  }
+  return createWithinTransaction(database);
 }
 
 export async function updateMasterValue(organizationId: string, valueId: string, input: { label?: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; is_active?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[] }) {

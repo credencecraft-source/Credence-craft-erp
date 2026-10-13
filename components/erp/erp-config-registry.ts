@@ -326,6 +326,7 @@ export const ERP_MODULES: ErpModule[] = [
         children: [
           { key: "excel", label: "Via Excel", pathSegment: "excel" },
           { key: "direct", label: "Direct", pathSegment: "direct" },
+          { key: "import-history", label: "Import History", pathSegment: "import-history" },
         ],
       },
     ],

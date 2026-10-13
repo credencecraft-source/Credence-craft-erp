@@ -19,6 +19,19 @@ type SetupRecord = {
   fields: Record<string, string | number | boolean | null | string[]>;
 };
 
+export type OrganizationMasterSetupWorkbookCorrection = {
+  id: string;
+  moduleKey: string;
+  rowNumber: number;
+  values: Record<string, string>;
+  errors: Record<string, string[]>;
+};
+
+export type OrganizationMasterSetupWorkbookParseResult = {
+  records: SetupRecord[];
+  corrections: OrganizationMasterSetupWorkbookCorrection[];
+};
+
 const MAX_WORKBOOK_ROWS = 500;
 const MAX_TOTAL_WORKBOOK_ROWS = 2000;
 const MAX_WORKBOOK_SIZE_BYTES = 10 * 1024 * 1024;
@@ -107,7 +120,19 @@ export async function parseOrganizationMasterSetupWorkbook(
   file: File,
   definitions: Definition[],
   lookupOptions: Record<string, LookupOption[]>,
-): Promise<SetupRecord[]> {
+): Promise<SetupRecord[]>;
+export async function parseOrganizationMasterSetupWorkbook(
+  file: File,
+  definitions: Definition[],
+  lookupOptions: Record<string, LookupOption[]>,
+  collectRowErrors: true,
+): Promise<OrganizationMasterSetupWorkbookParseResult>;
+export async function parseOrganizationMasterSetupWorkbook(
+  file: File,
+  definitions: Definition[],
+  lookupOptions: Record<string, LookupOption[]>,
+  collectRowErrors = false,
+): Promise<SetupRecord[] | OrganizationMasterSetupWorkbookParseResult> {
   if (!/\.xlsx$/i.test(file.name)) {
     throw new Error("Choose an .xlsx workbook downloaded for this setup step.");
   }
@@ -122,6 +147,8 @@ export async function parseOrganizationMasterSetupWorkbook(
     cellFormula: false,
   });
   const records: SetupRecord[] = [];
+  const corrections: OrganizationMasterSetupWorkbookCorrection[] = [];
+  let totalWorkbookRows = 0;
 
   for (const [definitionIndex, definition] of definitions.entries()) {
     const templateSheetName = getOrganizationMasterSetupSheetName(definitionIndex, definition.label);
@@ -164,57 +191,120 @@ export async function parseOrganizationMasterSetupWorkbook(
     for (const [rowIndex, row] of rows.slice(1).entries()) {
       if (row.every((cell) => String(cell ?? "").trim() === "")) continue;
       sheetRecordCount += 1;
+      totalWorkbookRows += 1;
+      if (totalWorkbookRows > MAX_TOTAL_WORKBOOK_ROWS) {
+        throw new Error(`A workbook upload cannot contain more than ${MAX_TOTAL_WORKBOOK_ROWS} rows in total.`);
+      }
       if (sheetRecordCount > MAX_WORKBOOK_ROWS) {
         throw new Error(`The "${definition.label}" sheet cannot contain more than ${MAX_WORKBOOK_ROWS} records.`);
       }
       const spreadsheetRow = rowIndex + 2;
-      const label = String(row[fieldIndexes.get(normalizeHeader(labelField.label))!] ?? "").trim();
-      if (!label) {
-        throw new Error(`"${definition.label}" sheet, row ${spreadsheetRow}: ${labelField.label} is required.`);
-      }
-
-      const values: SetupRecord["fields"] = {};
-      for (const field of fields) {
+      const rawValues = Object.fromEntries(fields.map((field) => {
         const fieldIndex = fieldIndexes.get(normalizeHeader(field.label));
-        const rawValue = fieldIndex === undefined ? "" : row[fieldIndex];
-        const value = parseFieldValue(rawValue, field, lookupOptions, spreadsheetRow);
-        if (field.required && (value === "" || (Array.isArray(value) && value.length === 0))) {
-          throw new Error(`"${definition.label}" sheet, row ${spreadsheetRow}: ${field.label} is required.`);
-        }
-        if (field.key !== labelFieldKey && value !== "") {
-          values[field.key] = value;
-        }
-      }
-      records.push({ moduleKey: definition.key, label, fields: values });
+        return [field.key, String(fieldIndex === undefined ? "" : row[fieldIndex] ?? "").trim()];
+      }));
       if (inlineChildren) {
         const childColumnIndex = fieldIndexes.get(normalizeHeader(inlineChildren.columnLabel));
-        const childNames = childColumnIndex === undefined
-          ? []
-          : splitMultipleValues(String(row[childColumnIndex] ?? "").trim());
-        for (const childLabel of childNames) {
-          if (childLabel.length > 500) {
-            throw new Error(`"${definition.label}" sheet, row ${spreadsheetRow}: subcategory names cannot exceed 500 characters.`);
-          }
-          records.push({
-            moduleKey: inlineChildren.childModuleKey,
-            label: childLabel,
-            fields: {
-              [inlineChildren.childParentFieldKey]: createOrganizationMasterSetupUploadLookupReference(
-                definition.key,
-                label,
-              ),
-            },
-          });
-        }
+        rawValues.__inlineChildren = childColumnIndex === undefined ? "" : String(row[childColumnIndex] ?? "").trim();
       }
-      if (records.length > MAX_TOTAL_WORKBOOK_ROWS) {
-        throw new Error(`A workbook upload cannot contain more than ${MAX_TOTAL_WORKBOOK_ROWS} records in total.`);
+      try {
+        const label = String(row[fieldIndexes.get(normalizeHeader(labelField.label))!] ?? "").trim();
+        if (!label) {
+          throw new Error(`"${definition.label}" sheet, row ${spreadsheetRow}: ${labelField.label} is required.`);
+        }
+
+        const values: SetupRecord["fields"] = {};
+        for (const field of fields) {
+          const value = parseFieldValue(rawValues[field.key], field, lookupOptions, spreadsheetRow);
+          if (field.required && (value === "" || (Array.isArray(value) && value.length === 0))) {
+            throw new Error(`"${definition.label}" sheet, row ${spreadsheetRow}: ${field.label} is required.`);
+          }
+          if (field.key !== labelFieldKey && value !== "") {
+            values[field.key] = value;
+          }
+        }
+
+        const rowRecords: SetupRecord[] = [{ moduleKey: definition.key, label, fields: values }];
+        if (inlineChildren) {
+          const childNames = splitMultipleValues(rawValues.__inlineChildren);
+          for (const childLabel of childNames) {
+            if (childLabel.length > 500) {
+              throw new Error(`"${definition.label}" sheet, row ${spreadsheetRow}: subcategory names cannot exceed 500 characters.`);
+            }
+            rowRecords.push({
+              moduleKey: inlineChildren.childModuleKey,
+              label: childLabel,
+              fields: {
+                [inlineChildren.childParentFieldKey]: createOrganizationMasterSetupUploadLookupReference(
+                  definition.key,
+                  label,
+                ),
+              },
+            });
+          }
+        }
+        if (records.length + rowRecords.length > MAX_TOTAL_WORKBOOK_ROWS) {
+          throw new Error(`A workbook upload cannot contain more than ${MAX_TOTAL_WORKBOOK_ROWS} records in total.`);
+        }
+        records.push(...rowRecords);
+      } catch (error) {
+        if (!collectRowErrors) throw error;
+        const message = error instanceof Error ? error.message : `Row ${spreadsheetRow} is invalid.`;
+        const matchedField = fields.find((field) => message.toLocaleLowerCase().includes(field.label.toLocaleLowerCase()));
+        corrections.push({
+          id: `${definition.key}-${spreadsheetRow}`,
+          moduleKey: definition.key,
+          rowNumber: spreadsheetRow,
+          values: rawValues,
+          errors: matchedField ? { [matchedField.key]: [message] } : { _row: [message] },
+        });
       }
     }
   }
 
-  if (!records.length) {
+  if (!records.length && !corrections.length) {
     throw new Error("No master records were found. Add values to the workbook sheets before uploading.");
+  }
+  return collectRowErrors ? { records, corrections } : records;
+}
+
+export function validateOrganizationMasterSetupWorkbookCorrection(
+  correction: OrganizationMasterSetupWorkbookCorrection,
+  definition: Definition,
+  lookupOptions: Record<string, LookupOption[]>,
+): SetupRecord[] {
+  const fields = definition.fields.filter((field) => !field.readOnly);
+  const labelFieldKey = definition.labelField ?? fields[0]?.key;
+  const labelField = fields.find((field) => field.key === labelFieldKey);
+  if (!labelField) throw new Error("The master name field is not configured.");
+  const label = String(correction.values[labelField.key] ?? "").trim();
+  if (!label) throw new Error(`${labelField.label} is required.`);
+  const values: SetupRecord["fields"] = {};
+  for (const field of fields) {
+    const value = parseFieldValue(correction.values[field.key] ?? "", field, lookupOptions, correction.rowNumber);
+    if (field.required && (value === "" || (Array.isArray(value) && value.length === 0))) {
+      throw new Error(`${field.label} is required.`);
+    }
+    if (field.key !== labelFieldKey && value !== "") values[field.key] = value;
+  }
+  const records: SetupRecord[] = [{ moduleKey: definition.key, label, fields: values }];
+  const inlineChildren = ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN[
+    definition.key as keyof typeof ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN
+  ];
+  if (inlineChildren) {
+    for (const childLabel of splitMultipleValues(correction.values.__inlineChildren ?? "")) {
+      if (childLabel.length > 500) throw new Error("Subcategory names cannot exceed 500 characters.");
+      records.push({
+        moduleKey: inlineChildren.childModuleKey,
+        label: childLabel,
+        fields: {
+          [inlineChildren.childParentFieldKey]: createOrganizationMasterSetupUploadLookupReference(
+            definition.key,
+            label,
+          ),
+        },
+      });
+    }
   }
   return records;
 }

@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import type { MasterDefinition } from "@/lib/master-data/master-data-models";
 import {
+  getRetryableMasterWorkbookRows,
   parseMasterRecordsWorkbook,
+  validateCorrectedMasterWorkbookRows,
   validateMasterWorkbookLookupValues,
   type ParsedMasterWorkbookRow,
 } from "@/lib/master-data/master-records-workbook";
@@ -95,6 +97,46 @@ describe("parseMasterRecordsWorkbook", () => {
 
     await expect(parseMasterRecordsWorkbook(workbookFile([["Name"]]), definition))
       .rejects.toThrow("no data rows to import");
+  });
+
+  it("keeps invalid rows editable and validates their corrected values before retry", async () => {
+    const parsed = await parseMasterRecordsWorkbook(workbookFile([
+      ["Name", "Ratio"],
+      ["valid", "25"],
+      ["invalid", "101"],
+    ]), definition, true);
+
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.failures).toHaveLength(1);
+    expect(parsed.failures[0].row.fields.ratio).toBe("101");
+    expect(parsed.failures[0].message).toContain("Ratio must be between 0 and 100");
+
+    const corrected = validateCorrectedMasterWorkbookRows([{
+      ...parsed.failures[0].row,
+      fields: { ...parsed.failures[0].row.fields, ratio: "75" },
+    }], definition);
+    expect(corrected).toHaveLength(1);
+    expect(corrected[0].fields).toEqual({
+      name: "INVALID",
+      ratio: 75,
+      enabled: false,
+      dueDate: null,
+      referenceUrl: null,
+    });
+  });
+
+  it("only returns failed rows for a partial-success retry", () => {
+    const failedRow = {
+      rowNumber: 3,
+      code: null,
+      description: null,
+      fields: { name: "FAILED" },
+      childRows: {},
+    };
+    expect(getRetryableMasterWorkbookRows([
+      { rowNumber: 2, message: "Created" },
+      { rowNumber: 3, message: "Duplicate name", row: failedRow },
+    ])).toEqual([{ rowNumber: 3, message: "Duplicate name", row: failedRow }]);
   });
 
   it("resolves tenant-validated lookup labels to IDs and enforces parent matching", async () => {

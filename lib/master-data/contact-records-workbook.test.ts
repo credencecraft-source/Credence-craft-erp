@@ -5,11 +5,16 @@ import { describe, expect, it } from "vitest";
 
 import { createContactWorkbook } from "@/lib/master-data/contact-records-workbook-generator";
 import {
+  getRetryableContactImportRows,
   MAX_CONTACT_ROWS,
   parseContactWorkbook,
   type ContactWorkbookRecord,
 } from "@/lib/master-data/contact-records-workbook-parser";
-import { CONTACT_GST_REGISTRATION_TYPES } from "@/lib/services/master-data/contact-master-validation";
+import {
+  CONTACT_GST_REGISTRATION_TYPES,
+  parseContactInput,
+  type ContactInput,
+} from "@/lib/services/master-data/contact-master-validation";
 
 function workbookFile(sheets: Array<{ name: string; rows: unknown[][] }>) {
   const workbook = XLSX.utils.book_new();
@@ -32,6 +37,49 @@ describe("contact master workbook", () => {
     expect(MAX_CONTACT_ROWS).toBe(100_000);
     expect(result.contacts).toHaveLength(201);
     expect(result.failures).toEqual([]);
+  });
+
+  it("retains invalid contact row data for correction and reruns contact validation", async () => {
+    const result = await parseContactWorkbook(workbookFile([{
+      name: "Contacts",
+      rows: [
+        ["Legal Name", "Email", "Phone"],
+        ["", "not-an-email", "123"],
+      ],
+    }]));
+    expect(result.invalidContacts).toHaveLength(1);
+    expect(result.invalidContacts[0].input.legalName).toBe("");
+    expect(result.invalidContacts[0].message).toMatch(/valid email address/i);
+    expect(result.invalidContacts[0].fieldPaths).toEqual(["email"]);
+
+    const corrected = parseContactInput({
+      ...result.invalidContacts[0].input,
+      legalName: "Corrected Contact",
+      email: "contact@example.com",
+      phone: "9876543210",
+    });
+    expect(corrected).toMatchObject({
+      legalName: "CORRECTED CONTACT",
+      email: "CONTACT@EXAMPLE.COM",
+    });
+  });
+
+  it("returns only failed contacts for a retry after partial creation", () => {
+    const baseInput: ContactInput = {
+      legalName: "",
+      isActive: true,
+      roles: [],
+      taxRegistrations: [],
+      addresses: [],
+      bankAccounts: [],
+    };
+    const contacts: Array<{ contactKey: string; input: ContactInput }> = [
+      { contactKey: "NEW-001", input: { ...baseInput, legalName: "ONE" } },
+      { contactKey: "NEW-002", input: { ...baseInput, legalName: "TWO" } },
+    ];
+    expect(getRetryableContactImportRows(contacts, [
+      { contactKey: "NEW-002", message: "Duplicate contact" },
+    ])).toEqual([contacts[1]]);
   });
 
   it("imports related GST, address, and bank sheets by NEW contact key", async () => {
@@ -215,6 +263,11 @@ describe("contact master workbook", () => {
 
     expect(result.contacts).toEqual([]);
     expect(result.failures[0].message).toContain("Address state code must match");
+    expect(result.invalidContacts[0].fieldPaths).toEqual([
+      "addresses.0.stateCode",
+      "addresses.0.taxRegistrationGstin",
+      "taxRegistrations.0.gstin",
+    ]);
   });
 
   it("allows importing a contact without a role and reports no role-validation error", async () => {

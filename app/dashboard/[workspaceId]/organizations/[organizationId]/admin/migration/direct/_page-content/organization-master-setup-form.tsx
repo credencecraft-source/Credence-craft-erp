@@ -10,8 +10,16 @@ import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
+import {
+  MasterImportCorrection,
+  type MasterImportCorrectionRow,
+} from "@/components/master-data/master-import-correction";
 import type { OrganizationMasterSetupField } from "@/lib/master-data/organization-master-setup-stages";
 import type { OrganizationMasterSetupMode } from "./organization-master-setup-page";
+import {
+  validateOrganizationMasterSetupWorkbookCorrection,
+  type OrganizationMasterSetupWorkbookCorrection,
+} from "./organization-master-setup-workbook";
 
 type Field = OrganizationMasterSetupField;
 type Definition = {
@@ -333,6 +341,8 @@ export default function OrganizationMasterSetupForm({
   const [workbookName, setWorkbookName] = useState("");
   const [workbookError, setWorkbookError] = useState("");
   const [uploadedRecords, setUploadedRecords] = useState<SetupRecord[] | null>(null);
+  const [workbookCorrections, setWorkbookCorrections] = useState<OrganizationMasterSetupWorkbookCorrection[]>([]);
+  const [isCorrectionOpen, setIsCorrectionOpen] = useState(false);
   const workbookInputRef = useRef<HTMLInputElement>(null);
   const dependencyLabels = [...new Set(stage.definitions.flatMap((definition) =>
     definition.fields
@@ -395,22 +405,79 @@ export default function OrganizationMasterSetupForm({
     if (!file) return;
     setWorkbookError("");
     setUploadedRecords(null);
+    setWorkbookCorrections([]);
+    setIsCorrectionOpen(false);
     setWorkbookName("");
     setIsReadingWorkbook(true);
     try {
       const { parseOrganizationMasterSetupWorkbook } = await import("./organization-master-setup-workbook");
-      const importedRecords = await parseOrganizationMasterSetupWorkbook(
+      const parsedWorkbook = await parseOrganizationMasterSetupWorkbook(
         file,
         stage.definitions,
         stage.lookupOptions,
+        true,
       );
-      setUploadedRecords(importedRecords);
+      setUploadedRecords(parsedWorkbook.records);
+      setWorkbookCorrections(parsedWorkbook.corrections);
+      setIsCorrectionOpen(parsedWorkbook.corrections.length > 0);
       setWorkbookName(file.name);
     } catch (error) {
       setWorkbookError(error instanceof Error ? error.message : "Unable to read this Excel workbook.");
     } finally {
       setIsReadingWorkbook(false);
     }
+  };
+  const correctionRows: MasterImportCorrectionRow[] = workbookCorrections.map((correction) => {
+    const definition = stage.definitions.find((item) => item.key === correction.moduleKey);
+    return {
+      id: correction.id,
+      identity: `${definition?.label ?? correction.moduleKey}, row ${correction.rowNumber}`,
+      values: correction.values,
+      errors: correction.errors,
+      fields: [
+        ...(definition?.fields.filter((field) => !field.readOnly).map((field) => ({
+          key: field.key,
+          label: field.label,
+        })) ?? []),
+        ...(Object.hasOwn(correction.values, "__inlineChildren")
+          ? [{ key: "__inlineChildren", label: "Subcategories (comma-separated)" }]
+          : []),
+      ],
+    };
+  });
+  const retryCorrectedRows = (rowId?: string) => {
+    const selectedCorrections = rowId
+      ? workbookCorrections.filter((correction) => correction.id === rowId)
+      : workbookCorrections;
+    const untouchedCorrections = rowId
+      ? workbookCorrections.filter((correction) => correction.id !== rowId)
+      : [];
+    const stillInvalid: OrganizationMasterSetupWorkbookCorrection[] = [...untouchedCorrections];
+    const correctedRecords: SetupRecord[] = [];
+    for (const correction of selectedCorrections) {
+      const definition = stage.definitions.find((item) => item.key === correction.moduleKey);
+      if (!definition) {
+        stillInvalid.push({ ...correction, errors: { _row: ["This master section is not available in the selected step."] } });
+        continue;
+      }
+      try {
+        correctedRecords.push(...validateOrganizationMasterSetupWorkbookCorrection(
+          correction,
+          definition,
+          stage.lookupOptions,
+        ));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "This row is invalid.";
+        const matchingField = definition.fields.find((field) => message.toLocaleLowerCase().includes(field.label.toLocaleLowerCase()));
+        stillInvalid.push({
+          ...correction,
+          errors: matchingField ? { [matchingField.key]: [message] } : { _row: [message] },
+        });
+      }
+    }
+    setWorkbookCorrections(stillInvalid);
+    setUploadedRecords((current) => [...(current ?? []), ...correctedRecords]);
+    setIsCorrectionOpen(stillInvalid.length > 0);
   };
   const updateRecord = (index: number, update: Partial<SetupRecord>) =>
     setRecords((current) =>
@@ -524,22 +591,50 @@ export default function OrganizationMasterSetupForm({
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
             <div className="min-w-0 space-y-1">
               <p className="text-sm font-semibold text-[var(--erp-text)]" role="status">
-                {workbookName} validated. {uploadedRecords.length} records are ready to import.
+                {workbookName}: {uploadedRecords.length} valid records and {workbookCorrections.length} rows needing correction.
               </p>
               <p className="text-xs text-[var(--erp-text-muted)]">
                 {Object.entries(workbookCounts)
                   .map(([moduleKey, count]) => `${stage.definitions.find((definition) => definition.key === moduleKey)?.label ?? moduleKey}: ${count}`)
                   .join(" · ")}
               </p>
-              <p className="text-xs text-[var(--erp-text-muted)]">
-                Proceed to import these values directly into their master sections.
-              </p>
+              {workbookCorrections.length ? (
+                <p className="text-xs text-[var(--erp-danger)]" role="alert">
+                  Correct all invalid rows before proceeding. Valid rows will remain ready and will not be resubmitted during correction.
+                </p>
+              ) : (
+                <p className="text-xs text-[var(--erp-text-muted)]">
+                  Proceed to import these values directly into their master sections.
+                </p>
+              )}
             </div>
-            <SubmitButton workbookUploaded />
+            <div className="flex flex-wrap items-center gap-2">
+              {workbookCorrections.length ? (
+                <Button type="button" variant="secondary" onClick={() => setIsCorrectionOpen(true)}>
+                  Correct {workbookCorrections.length} invalid row{workbookCorrections.length === 1 ? "" : "s"}
+                </Button>
+              ) : null}
+              <SubmitButton workbookUploaded={workbookCorrections.length === 0 && uploadedRecords.length > 0} />
+            </div>
           </div>
         ) : null}
         {workbookError ? <p className="text-sm text-slate-700" role="alert">{workbookError}</p> : null}
       </Card>
+      <MasterImportCorrection
+        open={isCorrectionOpen}
+        title="Correct setup workbook rows"
+        description="Correct invalid values here. The workbook template rules and organization lookup validations are rerun before any corrected row is added to the pending import."
+        rows={correctionRows}
+        fields={[]}
+        isPending={isReadingWorkbook}
+        onChange={(rowId, fieldKey, value) => setWorkbookCorrections((current) => current.map((row) => (
+          row.id === rowId ? { ...row, values: { ...row.values, [fieldKey]: value } } : row
+        )))}
+        onValidateRow={retryCorrectedRows}
+        onClose={() => setIsCorrectionOpen(false)}
+        onRetry={retryCorrectedRows}
+        retryLabel="Validate corrections"
+      />
       {mode === "direct" && visibleDefinitions.length === 0 ? (
         <Card>
           <p className="text-sm text-slate-600">

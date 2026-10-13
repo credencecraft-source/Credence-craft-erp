@@ -459,48 +459,59 @@ export async function getContact(organizationId: string, contactId: string, data
   return contact ? publicContact(contact) : null;
 }
 
+async function createContactInTransaction(
+  organizationId: string,
+  actorId: string,
+  value: unknown,
+  tx: ContactTransaction,
+) {
+  const input = parseContactInput(value) as ContactInput;
+  const counter = await tx.contactCodeCounter.upsert({
+    where: { organization_id: organizationId },
+    create: { organization_id: organizationId, current_value: 1 },
+    update: { current_value: { increment: 1 } },
+    select: { current_value: true },
+  });
+  const code = `CT${counter.current_value}`;
+  const contact = await tx.contact.create({
+    data: {
+      organization_id: organizationId,
+      ...buildContactData(input),
+      code,
+      legal_name: input.legalName,
+    },
+    select: { id: true },
+  });
+  await saveDetails(tx, organizationId, contact.id, input, false);
+  await createAuditEvent({
+    organizationId,
+    userId: actorId,
+    module: "MASTER_DATA",
+    action: "CONTACT_CREATED",
+    entityType: "Contact",
+    entityId: contact.id,
+    details: { code, roles: input.roles },
+  }, tx);
+  const saved = await tx.contact.findFirst({
+    where: { organization_id: organizationId, id: contact.id },
+    select: contactSelect,
+  });
+  if (!saved) throw new Error("Created contact could not be loaded.");
+  await syncContactRoleProjections(tx, organizationId, contact.id);
+  return publicContact(saved);
+}
+
 export async function createContact(
   organizationId: string,
   actorId: string,
   value: unknown,
-  database: ContactDatabase = prisma,
+  database: typeof prisma | Prisma.TransactionClient = prisma,
 ) {
-  const input = parseContactInput(value) as ContactInput;
-  return database.$transaction(async (tx) => {
-    const counter = await tx.contactCodeCounter.upsert({
-      where: { organization_id: organizationId },
-      create: { organization_id: organizationId, current_value: 1 },
-      update: { current_value: { increment: 1 } },
-      select: { current_value: true },
-    });
-    const code = `CT${counter.current_value}`;
-    const contact = await tx.contact.create({
-      data: {
-        organization_id: organizationId,
-        ...buildContactData(input),
-        code,
-        legal_name: input.legalName,
-      },
-      select: { id: true },
-    });
-    await saveDetails(tx, organizationId, contact.id, input, false);
-    await createAuditEvent({
-      organizationId,
-      userId: actorId,
-      module: "MASTER_DATA",
-      action: "CONTACT_CREATED",
-      entityType: "Contact",
-      entityId: contact.id,
-      details: { code, roles: input.roles },
-    }, tx);
-    const saved = await tx.contact.findFirst({
-      where: { organization_id: organizationId, id: contact.id },
-      select: contactSelect,
-    });
-    if (!saved) throw new Error("Created contact could not be loaded.");
-    await syncContactRoleProjections(tx, organizationId, contact.id);
-    return publicContact(saved);
-  });
+  if ("$transaction" in database) {
+    return database.$transaction((tx) =>
+      createContactInTransaction(organizationId, actorId, value, tx));
+  }
+  return createContactInTransaction(organizationId, actorId, value, database);
 }
 
 export async function updateContact(
@@ -544,6 +555,34 @@ export async function updateContact(
   });
 }
 
+async function deactivateContactRecord(
+  tx: ContactTransaction,
+  organizationId: string,
+  actorId: string,
+  contact: { id: string; code: string; is_active: boolean },
+) {
+  if (!contact.is_active) return false;
+  await tx.contact.updateMany({
+    where: { organization_id: organizationId, id: contact.id },
+    data: { is_active: false },
+  });
+  await tx.contactRoleAssignment.updateMany({
+    where: { organization_id: organizationId, contact_id: contact.id },
+    data: { is_active: false },
+  });
+  await syncContactRoleProjections(tx, organizationId, contact.id);
+  await createAuditEvent({
+    organizationId,
+    userId: actorId,
+    module: "MASTER_DATA",
+    action: "CONTACT_DEACTIVATED",
+    entityType: "Contact",
+    entityId: contact.id,
+    details: { code: contact.code },
+  }, tx);
+  return true;
+}
+
 export async function deactivateContact(
   organizationId: string,
   actorId: string,
@@ -556,25 +595,157 @@ export async function deactivateContact(
       select: { id: true, code: true, is_active: true },
     });
     if (!contact) return null;
-    if (!contact.is_active) return { deactivated: false };
-    await tx.contact.updateMany({
-      where: { organization_id: organizationId, id: contact.id },
-      data: { is_active: false },
+    return { deactivated: await deactivateContactRecord(tx, organizationId, actorId, contact) };
+  });
+}
+
+export async function deactivateContacts(
+  organizationId: string,
+  actorId: string,
+  value: unknown,
+  database: ContactDatabase = prisma,
+) {
+  const contactIds = parseContactIds(value);
+
+  return database.$transaction(async (tx) => {
+    const contacts = await tx.contact.findMany({
+      where: { organization_id: organizationId, id: { in: contactIds } },
+      select: { id: true, code: true, is_active: true },
     });
-    await tx.contactRoleAssignment.updateMany({
-      where: { organization_id: organizationId, contact_id: contactId },
-      data: { is_active: false },
+    if (contacts.length !== contactIds.length) return null;
+
+    let deactivatedCount = 0;
+    for (const contact of contacts) {
+      if (await deactivateContactRecord(tx, organizationId, actorId, contact)) deactivatedCount += 1;
+    }
+    return { deactivatedCount };
+  });
+}
+
+function parseContactIds(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 100) {
+    throw new ContactValidationError("Select between 1 and 100 unique valid contacts.");
+  }
+  const contactIds: string[] = [];
+  for (const id of value) {
+    if (typeof id !== "string" || id.trim() !== id || id.length === 0 || id.length > 200) {
+      throw new ContactValidationError("Select between 1 and 100 unique valid contacts.");
+    }
+    contactIds.push(id);
+  }
+  if (new Set(contactIds).size !== contactIds.length) {
+    throw new ContactValidationError("Select between 1 and 100 unique valid contacts.");
+  }
+  return contactIds;
+}
+
+export async function deleteUnusedContacts(
+  organizationId: string,
+  actorId: string,
+  value: unknown,
+  database: ContactDatabase = prisma,
+) {
+  const contactIds = parseContactIds(value);
+
+  return database.$transaction(async (tx) => {
+    const contacts = await tx.contact.findMany({
+      where: { organization_id: organizationId, id: { in: contactIds } },
+      select: { id: true, code: true },
     });
-    await syncContactRoleProjections(tx, organizationId, contactId);
-    await createAuditEvent({
-      organizationId,
-      userId: actorId,
-      module: "MASTER_DATA",
-      action: "CONTACT_DEACTIVATED",
-      entityType: "Contact",
-      entityId: contactId,
-      details: { code: contact.code },
-    }, tx);
-    return { deactivated: true };
+    if (contacts.length !== contactIds.length) return null;
+
+    const [purchaseOrders, salesOrders, vendors] = await Promise.all([
+      tx.purchaseOrder.findMany({
+        where: { organization_id: organizationId, contact_id: { in: contactIds } },
+        select: { contact_id: true },
+        distinct: ["contact_id"],
+      }),
+      tx.merchandisingOrder.findMany({
+        where: { organization_id: organizationId, contact_id: { in: contactIds } },
+        select: { contact_id: true },
+        distinct: ["contact_id"],
+      }),
+      tx.masterVendor.findMany({
+        where: { organization_id: organizationId, contact_id: { in: contactIds } },
+        select: {
+          id: true,
+          contact_id: true,
+          _count: {
+            select: {
+              groupedPurchaseOrders: true,
+              masterPurchaseOrders: true,
+              purchaseOrders: true,
+              rawMaterialStockBookings: true,
+              generalPurchaseOrderRequests: true,
+              distributionQuotations: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    const usedContactIds = new Set<string>();
+    for (const order of [...purchaseOrders, ...salesOrders]) {
+      if (order.contact_id) usedContactIds.add(order.contact_id);
+    }
+    for (const vendor of vendors) {
+      const isVendorUsed = Object.values(vendor._count).some((count) => count > 0);
+      if (isVendorUsed && vendor.contact_id) usedContactIds.add(vendor.contact_id);
+    }
+
+    const deletableContacts = contacts.filter((contact) => !usedContactIds.has(contact.id));
+    const retainedContactCodes = contacts
+      .filter((contact) => usedContactIds.has(contact.id))
+      .map((contact) => contact.code);
+
+    if (deletableContacts.length === 0) {
+      return { deletedCount: 0, retainedContactCodes };
+    }
+
+    const deletableIds = deletableContacts.map((contact) => contact.id);
+    const deletableVendorIds = vendors
+      .filter((vendor) => vendor.contact_id && deletableIds.includes(vendor.contact_id))
+      .map((vendor) => vendor.id);
+
+    await tx.contactAddress.deleteMany({
+      where: { organization_id: organizationId, contact_id: { in: deletableIds } },
+    });
+    await tx.contactTaxRegistration.deleteMany({
+      where: { organization_id: organizationId, contact_id: { in: deletableIds } },
+    });
+    await tx.contactRoleAssignment.deleteMany({
+      where: { organization_id: organizationId, contact_id: { in: deletableIds } },
+    });
+    await tx.contactBankAccount.deleteMany({
+      where: { organization_id: organizationId, contact_id: { in: deletableIds } },
+    });
+    await tx.masterBuyer.deleteMany({
+      where: { organization_id: organizationId, contact_id: { in: deletableIds } },
+    });
+    if (deletableVendorIds.length > 0) {
+      await tx.masterVendor.deleteMany({
+        where: { organization_id: organizationId, id: { in: deletableVendorIds } },
+      });
+    }
+
+    for (const contact of deletableContacts) {
+      await createAuditEvent({
+        organizationId,
+        userId: actorId,
+        module: "MASTER_DATA",
+        action: "CONTACT_DELETED",
+        entityType: "Contact",
+        entityId: contact.id,
+        details: { code: contact.code, reason: "UNUSED_CONTACT_BULK_DELETE" },
+      }, tx);
+    }
+
+    const deleted = await tx.contact.deleteMany({
+      where: { organization_id: organizationId, id: { in: deletableIds } },
+    });
+    if (deleted.count !== deletableIds.length) {
+      throw new Error("Not all selected unused contacts could be deleted.");
+    }
+    return { deletedCount: deleted.count, retainedContactCodes };
   });
 }

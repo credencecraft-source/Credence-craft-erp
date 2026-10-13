@@ -16,6 +16,7 @@ import {
 } from "@/lib/master-data/master-data-constants";
 import {
   parseMasterRecordsWorkbook,
+  validateCorrectedMasterWorkbookRows,
   validateMasterWorkbookLookupValues,
   type MasterRecordsImportResult,
   type MasterWorkbookLookupOption,
@@ -464,39 +465,91 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
   if (!organization) notFound();
   await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
-  const file = formData.get("workbook");
-  if (!(file instanceof File)) {
-    return { created: 0, failures: [], fatalError: "Choose an Excel workbook to import." };
-  }
-
   let rows: ParsedMasterWorkbookRow[];
-  try {
-    rows = await parseMasterRecordsWorkbook(file, definition);
-  } catch (error) {
-    return {
-      created: 0,
-      failures: [],
-      fatalError: error instanceof Error ? error.message : "The Excel workbook could not be validated.",
-    };
+  let parseFailures: MasterRecordsImportResult["failures"] = [];
+  const correctedRowsValue = formData.get("correctedRows");
+  if (typeof correctedRowsValue === "string") {
+    if (correctedRowsValue.length > 5_000_000) {
+      return { created: 0, failures: [], fatalError: "The corrected rows exceed the allowed size." };
+    }
+    try {
+      const correctedRows: unknown = JSON.parse(correctedRowsValue);
+      if (!Array.isArray(correctedRows) || correctedRows.length > 500) {
+        throw new Error("Corrected workbook rows are invalid.");
+      }
+      rows = [];
+      for (const correctedRow of correctedRows) {
+        try {
+          rows.push(...validateCorrectedMasterWorkbookRows([correctedRow], definition));
+        } catch (error) {
+          const rowNumber = typeof correctedRow === "object" && correctedRow !== null
+            && "rowNumber" in correctedRow && Number.isInteger(correctedRow.rowNumber)
+            ? Number(correctedRow.rowNumber)
+            : 0;
+          if (rowNumber < 2) throw error;
+          parseFailures.push({
+            rowNumber,
+            message: error instanceof Error ? error.message : "This corrected row is invalid.",
+            row: correctedRow as ParsedMasterWorkbookRow,
+          });
+        }
+      }
+    } catch (error) {
+      return {
+        created: 0,
+        failures: [],
+        fatalError: error instanceof Error ? error.message : "The corrected rows could not be validated.",
+      };
+    }
+  } else {
+    const file = formData.get("workbook");
+    if (!(file instanceof File)) {
+      return { created: 0, failures: [], fatalError: "Choose an Excel workbook to import." };
+    }
+    try {
+      const parsedWorkbook = await parseMasterRecordsWorkbook(file, definition, true);
+      rows = parsedWorkbook.rows;
+      parseFailures = parsedWorkbook.failures;
+    } catch (error) {
+      return {
+        created: 0,
+        failures: [],
+        fatalError: error instanceof Error ? error.message : "The Excel workbook could not be validated.",
+      };
+    }
   }
-  try {
-    await validateMasterWorkbookLookupValues(
-      definition,
-      rows,
-      createWorkbookLookupResolver(organization.id),
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
+  const sourceRows = new Map([
+    ...rows.map((row) => [row.rowNumber, structuredClone(row)] as const),
+    ...parseFailures.flatMap((failure) => failure.row ? [[failure.rowNumber, structuredClone(failure.row)] as const] : []),
+  ]);
+  const failures: MasterRecordsImportResult["failures"] = [...parseFailures];
+  const lookupValidRows: ParsedMasterWorkbookRow[] = [];
+  for (const row of rows) {
+    try {
+      await validateMasterWorkbookLookupValues(
+        definition,
+        [row],
+        createWorkbookLookupResolver(organization.id),
+      );
+      lookupValidRows.push(row);
+    } catch (error) {
+      failures.push({
+        rowNumber: row.rowNumber,
+        message: error instanceof Error ? error.message : "Unable to validate this row's lookup values.",
+        row: sourceRows.get(row.rowNumber),
+      });
+    }
+  }
+  rows = lookupValidRows;
+
+  if (formData.get("validateOnly") === "true") {
     return {
       created: 0,
-      failures: [],
-      fatalError: /^Row \d+:/.test(message)
-        ? message
-        : "Unable to validate lookup values for this organization. No records were imported.",
+      failures,
+      validatedRowNumbers: rows.map((row) => row.rowNumber),
     };
   }
 
-  const failures: MasterRecordsImportResult["failures"] = [];
   let createdCount = 0;
   for (const row of rows) {
     let created: Awaited<ReturnType<typeof createMasterValueForOrganization>> | null = null;
@@ -563,7 +616,7 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
           message = `${message} The parent record may remain because cleanup failed: ${cleanupMessage}`;
         }
       }
-      failures.push({ rowNumber: row.rowNumber, message });
+      failures.push({ rowNumber: row.rowNumber, message, row: sourceRows.get(row.rowNumber) });
     }
   }
 

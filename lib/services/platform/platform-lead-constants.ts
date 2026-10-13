@@ -8,20 +8,12 @@ export const PLATFORM_LEAD_STAGES = [
   "Demo Booked",
   "Demo Attended",
   "2-Potential",
-  "Potential Dead",
   "3-Dead",
   "Paid",
-  "Testing WhatsApp msg",
   "MARK AS FROUD",
-  "Froud Verfication",
-  "Hello blocked",
 ] as const;
 
-export const PLATFORM_LEAD_DEAD_STAGES = [
-  "MARK AS FROUD",
-  "Froud Verfication",
-  "Hello blocked",
-] as const;
+export const PLATFORM_LEAD_DEAD_STAGES = ["MARK AS FROUD"] as const;
 
 export const PLATFORM_LEAD_PAID_STAGES = ["Paid"] as const;
 
@@ -38,11 +30,7 @@ export const PLATFORM_LEAD_VERIFIED_INTERESTED_STAGES = [
   "2-Potential",
 ] as const;
 
-export const PLATFORM_LEAD_NOT_INTERESTED_STAGES = [
-  "Potential Dead",
-  "3-Dead",
-  "Testing WhatsApp msg",
-] as const;
+export const PLATFORM_LEAD_NOT_INTERESTED_STAGES = ["3-Dead"] as const;
 
 export const PLATFORM_LEAD_VERIFIED_STAGES = [
   "Verification",

@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 
 import {
+  ContactValidationError,
   parseContactInput,
   type ContactAddressInput,
   type ContactInput,
@@ -54,9 +55,18 @@ export type ContactWorkbookRecord = {
 
 export type ContactWorkbookImportResult = {
   contacts: Array<{ contactKey: string; input: ContactInput }>;
-  failures: Array<{ contactKey: string; message: string }>;
+  failures: Array<{ contactKey: string; message: string; fieldPaths?: string[] }>;
   corrections: Array<{ contactKey: string; field: string; original: string; corrected: string }>;
+  invalidContacts: Array<{ contactKey: string; input: ContactInput; message: string; fieldPaths: string[] }>;
 };
+
+export function getRetryableContactImportRows(
+  contacts: ContactWorkbookImportResult["contacts"],
+  failures: ContactWorkbookImportResult["failures"],
+) {
+  const failedKeys = new Set(failures.map((failure) => failure.contactKey));
+  return contacts.filter((contact) => failedKeys.has(contact.contactKey));
+}
 
 type SheetRow = Record<string, unknown>;
 
@@ -97,13 +107,13 @@ function booleanField(row: SheetRow, label: string, defaultValue = false) {
   if (!value) return defaultValue;
   if (/^(true|yes|1|active)$/i.test(value)) return true;
   if (/^(false|no|0|inactive)$/i.test(value)) return false;
-  throw new Error(`${label} must be TRUE or FALSE.`);
+  throw new ContactValidationError(`${label} must be TRUE or FALSE.`);
 }
 
 function addressUsage(row: SheetRow): ContactAddressInput["usage"] {
   const usage = field(row, "Use").toUpperCase();
   if (usage !== "BILLING" && usage !== "SHIPPING" && usage !== "BOTH") {
-    throw new Error("Use must be BILLING, SHIPPING, or BOTH.");
+    throw new ContactValidationError("Use must be BILLING, SHIPPING, or BOTH.", ["usage"]);
   }
   return usage;
 }
@@ -139,6 +149,7 @@ function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImpor
   const contacts: ContactWorkbookImportResult["contacts"] = [];
   const failures: ContactWorkbookImportResult["failures"] = [];
   const corrections: ContactWorkbookImportResult["corrections"] = [];
+  const invalidContacts: ContactWorkbookImportResult["invalidContacts"] = [];
   for (const [index, row] of rows.entries()) {
     const contactKey = `ROW-${index + 2}`;
     const importReference = field(row, "Import Ref (auto - do not edit)") || field(row, "Contact Key");
@@ -171,6 +182,7 @@ function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImpor
     const usage = (field(row, "Address Use") || "BOTH").toUpperCase();
     const roleCorrections: ContactWorkbookImportResult["corrections"] = [];
 
+    let candidateInput: ContactInput | null = null;
     try {
       const roles = splitRoles(field(row, "Roles")).map((role) => {
         const corrected = normalizeRole(role);
@@ -209,7 +221,7 @@ function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImpor
         branch: field(row, "Branch") || null,
         isDefault: booleanField(row, "Default Bank Account", true),
       }] : [];
-      const input = parseContactInput({
+      candidateInput = {
         legalName,
         displayName: field(row, "Display Name") || null,
         email: field(row, "Email") || null,
@@ -219,17 +231,26 @@ function parseSingleSheetContacts(workbook: XLSX.WorkBook): ContactWorkbookImpor
         taxRegistrations,
         addresses,
         bankAccounts,
-      }) as ContactInput;
+      } as ContactInput;
+      const input = parseContactInput(candidateInput) as ContactInput;
       contacts.push({ contactKey, input });
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Contact details are invalid.";
       failures.push({
         contactKey,
-        message: error instanceof Error ? error.message : "Contact details are invalid.",
+        message,
+        fieldPaths: error instanceof ContactValidationError ? error.fieldPaths : [],
+      });
+      if (candidateInput) invalidContacts.push({
+        contactKey,
+        input: candidateInput,
+        message,
+        fieldPaths: error instanceof ContactValidationError ? error.fieldPaths : [],
       });
     }
   }
 
-  return { contacts, failures, corrections };
+  return { contacts, failures, corrections, invalidContacts };
 }
 
 export async function parseContactWorkbook(file: File): Promise<ContactWorkbookImportResult> {
@@ -259,6 +280,7 @@ export async function parseContactWorkbook(file: File): Promise<ContactWorkbookI
 
   const failures: ContactWorkbookImportResult["failures"] = [];
   const contactsByKey = new Map<string, ContactInput>();
+  const candidatesByKey = new Map<string, ContactInput>();
   for (const { row, rowIndex } of contactRows) {
     const key = contactKey(row) || `NEW-${String(rowIndex + 1).padStart(3, "0")}`;
     if (!/^NEW-[A-Z0-9_-]{1,56}$/.test(key)) {
@@ -270,8 +292,7 @@ export async function parseContactWorkbook(file: File): Promise<ContactWorkbookI
       continue;
     }
     const roles = field(row, "Roles").split(/[;,]/).map((role) => role.trim()).filter(Boolean);
-    try {
-      const parsed = parseContactInput({
+    const candidate: ContactInput = {
         legalName: field(row, "Legal Name"),
         displayName: field(row, "Display Name") || null,
         email: field(row, "Email") || null,
@@ -281,12 +302,17 @@ export async function parseContactWorkbook(file: File): Promise<ContactWorkbookI
         taxRegistrations: [],
         addresses: [],
         bankAccounts: [],
-      }) as ContactInput;
+      };
+    try {
+      const parsed = parseContactInput(candidate) as ContactInput;
       contactsByKey.set(key, parsed);
+      candidatesByKey.set(key, parsed);
     } catch (error) {
+      candidatesByKey.set(key, candidate);
       failures.push({
         contactKey: key,
         message: error instanceof Error ? error.message : "Contact details are invalid.",
+        fieldPaths: error instanceof ContactValidationError ? error.fieldPaths : [],
       });
     }
   }
@@ -295,6 +321,7 @@ export async function parseContactWorkbook(file: File): Promise<ContactWorkbookI
   const appendRelated = <T>(
     rows: SheetRow[],
     kind: string,
+    collection: "taxRegistrations" | "addresses" | "bankAccounts",
     create: (row: SheetRow) => T,
     append: (contact: ContactInput, value: T) => void,
   ) => {
@@ -312,15 +339,19 @@ export async function parseContactWorkbook(file: File): Promise<ContactWorkbookI
         append(contact, create(row));
       } catch (error) {
         invalidKeys.add(key);
+        const fieldPaths = error instanceof ContactValidationError
+          ? error.fieldPaths.map((path) => `${collection}.${contact[collection].length}.${path}`)
+          : [];
         failures.push({
           contactKey: key,
           message: error instanceof Error ? error.message : `${kind} row is invalid.`,
+          fieldPaths,
         });
       }
     }
   };
 
-  appendRelated(registrationRows, "GST registration", (row) => ({
+  appendRelated(registrationRows, "GST registration", "taxRegistrations", (row) => ({
     gstin: field(row, "GSTIN"),
     legalName: field(row, "Registered Legal Name"),
     registrationType: field(row, "Registration Type") || "REGULAR",
@@ -329,7 +360,7 @@ export async function parseContactWorkbook(file: File): Promise<ContactWorkbookI
     contact.taxRegistrations.push(registration);
   });
 
-  appendRelated(addressRows, "Address", (row) => ({
+  appendRelated(addressRows, "Address", "addresses", (row) => ({
     taxRegistrationGstin: field(row, "GSTIN") || null,
     label: field(row, "Label") || null,
     usage: addressUsage(row),
@@ -346,9 +377,11 @@ export async function parseContactWorkbook(file: File): Promise<ContactWorkbookI
     contact.addresses.push(address);
   });
 
-  appendRelated(bankRows, "Bank account", (row) => {
+  appendRelated(bankRows, "Bank account", "bankAccounts", (row) => {
     const accountNumber = field(row, "Account Number");
-    if (/^[•*xX]+/.test(accountNumber)) throw new Error("Enter the full Account Number; masked values cannot be imported.");
+    if (/^[•*xX]+/.test(accountNumber)) {
+      throw new ContactValidationError("Enter the full Account Number; masked values cannot be imported.", ["accountNumber"]);
+    }
     return {
       accountHolderName: field(row, "Account Holder Name"),
       accountNumber,
@@ -367,11 +400,24 @@ export async function parseContactWorkbook(file: File): Promise<ContactWorkbookI
     try {
       readyContacts.push({ contactKey: key, input: parseContactInput(contact) as ContactInput });
     } catch (error) {
+      invalidKeys.add(key);
       failures.push({
         contactKey: key,
         message: error instanceof Error ? error.message : "Contact details are invalid.",
+        fieldPaths: error instanceof ContactValidationError ? error.fieldPaths : [],
       });
     }
   }
-  return { contacts: readyContacts, failures, corrections: [] };
+  const invalidContacts = [...invalidKeys].flatMap((key) => {
+    const input = candidatesByKey.get(key);
+    if (!input) return [];
+    const failure = failures.find((item) => item.contactKey === key);
+    return [{
+      contactKey: key,
+      input,
+      message: failure?.message ?? "Contact details are invalid.",
+      fieldPaths: failure?.fieldPaths ?? [],
+    }];
+  });
+  return { contacts: readyContacts, failures, corrections: [], invalidContacts };
 }

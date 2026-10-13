@@ -26,6 +26,7 @@ export default async function PlatformLeadsPage() {
   }));
   const appLogins = appLoginRows.map((user) => ({
     ...user,
+    created_at: user.created_at.toISOString(),
     last_login_at: user.last_login_at?.toISOString() ?? "",
   }));
 

@@ -47,6 +47,8 @@ import {
   getMasterValuesForOrganization,
   getSizeGroupSizesForOrganization,
   isMasterSectionBulkDeletable,
+  isActiveMasterLookupInIndex,
+  loadActiveMasterLookupIndex,
   updateMasterValue,
 } from "./master-data-constants";
 import { getOrganizationMasterSetupDefinitions } from "./organization-master-setup-stages";
@@ -70,6 +72,42 @@ describe("create-only master insertion", () => {
 
     expect(models.masterColor.update).not.toHaveBeenCalled();
     expect(models.masterColor.create).not.toHaveBeenCalled();
+  });
+
+  describe("active master lookup cache", () => {
+    it("loads organization-scoped active values once and resolves dependent lookups in memory", async () => {
+      (prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> })
+        .findFirst.mockResolvedValue({ id: "dummy-batch" });
+      models.masterCategory.findMany.mockResolvedValue([
+        { id: "category-1", value_id: "category-value-1", category_name: "APPAREL", legacy_metadata: null },
+        {
+          id: "category-demo",
+          value_id: "category-value-demo",
+          category_name: "DEMO",
+          legacy_metadata: { dummyDataBatchId: "dummy-batch" },
+        },
+      ] as never);
+      models.masterSubCategory.findMany.mockResolvedValue([
+        {
+          id: "subcategory-1",
+          value_id: "subcategory-value-1",
+          sub_category: "TOPS",
+          category_id: "category-1",
+          legacy_metadata: null,
+        },
+      ] as never);
+
+      const index = await loadActiveMasterLookupIndex("org-id", ["category", "sub-category"]);
+
+      expect(models.masterCategory.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { organization_id: "org-id", is_active: true },
+      }));
+      expect(models.masterSubCategory.findMany).toHaveBeenCalledTimes(1);
+      expect(isActiveMasterLookupInIndex(index, "category", "category-value-1")).toBe(true);
+      expect(isActiveMasterLookupInIndex(index, "category", "demo")).toBe(false);
+      expect(isActiveMasterLookupInIndex(index, "sub-category", "TOPS", "category", "APPAREL")).toBe(true);
+      expect(isActiveMasterLookupInIndex(index, "sub-category", "TOPS", "category", "missing")).toBe(false);
+    });
   });
 });
 

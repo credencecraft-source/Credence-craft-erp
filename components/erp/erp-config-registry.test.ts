@@ -23,7 +23,7 @@ describe("Advance Booking module naming", () => {
 });
 
 describe("Admin module navigation", () => {
-  it("places Excel and Direct migration options beneath Admin > Migration", () => {
+  it("places Excel, Direct, and Import History beneath Admin > Migration", () => {
     const admin = ERP_MODULES.find((module) => module.key === "admin");
     const migration = admin?.children.find((child) => child.key === "migration");
 
@@ -34,6 +34,7 @@ describe("Admin module navigation", () => {
     expect(migration?.children).toEqual([
       { key: "excel", label: "Via Excel", pathSegment: "excel" },
       { key: "direct", label: "Direct", pathSegment: "direct" },
+      { key: "import-history", label: "Import History", pathSegment: "import-history" },
     ]);
   });
 });

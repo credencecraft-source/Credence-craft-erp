@@ -1,28 +1,28 @@
 model FactoryWorkOrder {
-  id                         String                             @id @default(cuid())
-  organization_id            String
-  order_id                   String
-  work_order_no              String                             @db.VarChar(100)
-  order_no                   String                             @db.VarChar(100)
-  total_qty                  Int
-  status                     String                             @default("OPEN") @db.VarChar(50)
-  created_at                 DateTime                           @default(now())
-  updated_at                 DateTime                           @updatedAt
-  organization               Organization                       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  order                      MerchandisingOrder                 @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  sizeLines                  FactoryWorkOrderSizeLine[]
-  bomLines                   FactoryWorkOrderBomLine[]
-  rawMaterialOutwardRequests RawMaterialOutwardRequest[]
-  processController          WorkOrderProcessController?
-  productionUpdates          FactoryProductionUpdate[]
-  bundleTransfers            FactoryBundleTransfer[]
-  grns                       FactoryGrn[]
-  dailyProductionReportLines FactoryDailyProductionReportLine[]
-  shopFloorBatches           BatchMaster[]
-  shopFloorProcessLogs       ShopFloorProcessLog[]
-  shopFloorTransfers         ShopFloorTransfer[]
-  inventoryGrns              WorkOrderInventoryGrn[]
-  advanceBookingAssignments AdvanceBookingWorkOrderAssignment[]
+  id                                  String                               @id @default(cuid())
+  organization_id                     String
+  order_id                            String
+  work_order_no                       String                               @db.VarChar(100)
+  order_no                            String                               @db.VarChar(100)
+  total_qty                           Int
+  status                              String                               @default("OPEN") @db.VarChar(50)
+  created_at                          DateTime                             @default(now())
+  updated_at                          DateTime                             @updatedAt
+  organization                        Organization                         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  order                               MerchandisingOrder                   @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  sizeLines                           FactoryWorkOrderSizeLine[]
+  bomLines                            FactoryWorkOrderBomLine[]
+  rawMaterialOutwardRequests          RawMaterialOutwardRequest[]
+  processController                   WorkOrderProcessController?
+  productionUpdates                   FactoryProductionUpdate[]
+  bundleTransfers                     FactoryBundleTransfer[]
+  grns                                FactoryGrn[]
+  dailyProductionReportLines          FactoryDailyProductionReportLine[]
+  shopFloorBatches                    BatchMaster[]
+  shopFloorProcessLogs                ShopFloorProcessLog[]
+  shopFloorTransfers                  ShopFloorTransfer[]
+  inventoryGrns                       WorkOrderInventoryGrn[]
+  advanceBookingAssignments           AdvanceBookingWorkOrderAssignment[]
   finishedGoodsGeneralStockReceipts   FinishedGoodsGeneralStockReceipt[]
   finishedGoodsAllocatedStockReceipts FinishedGoodsAllocatedStockReceipt[]
 
@@ -34,17 +34,17 @@ model FactoryWorkOrder {
 }
 
 model FactoryWorkOrderSizeLine {
-  id                       String                @id @default(cuid())
+  id                       String                              @id @default(cuid())
   work_order_id            String
   source_finished_goods_id String
-  size                     String?               @db.VarChar(100)
-  buyer_size               String?               @db.VarChar(100)
+  size                     String?                             @db.VarChar(100)
+  buyer_size               String?                             @db.VarChar(100)
   quantity                 Int
-  created_at               DateTime              @default(now())
-  workOrder                FactoryWorkOrder      @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
-  sourceFinishedGoods      FinishedGoodsSizeWise @relation(fields: [source_finished_goods_id], references: [id], onDelete: Cascade)
+  created_at               DateTime                            @default(now())
+  workOrder                FactoryWorkOrder                    @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
+  sourceFinishedGoods      FinishedGoodsSizeWise               @relation(fields: [source_finished_goods_id], references: [id], onDelete: Cascade)
   inventoryGrnLines        WorkOrderInventoryGrnLine[]
-  bookingAssignments      AdvanceBookingWorkOrderAssignment[]
+  bookingAssignments       AdvanceBookingWorkOrderAssignment[]
 
   @@unique([work_order_id, id])
   @@unique([work_order_id, source_finished_goods_id])
@@ -53,25 +53,25 @@ model FactoryWorkOrderSizeLine {
 }
 
 model FactoryWorkOrderBomLine {
-  id                          String             @id @default(cuid())
+  id                          String                          @id @default(cuid())
   work_order_id               String
   source_bom_item_id          String
-  category_type               String?            @db.VarChar(255)
-  category                    String?            @db.VarChar(255)
-  sub_category                String?            @db.VarChar(255)
-  raw_material_name           String?            @db.VarChar(255)
-  size                        String?            @db.VarChar(100)
-  work_order_qty              Decimal            @db.Decimal(12, 2)
-  internal_consumption        Decimal?           @db.Decimal(12, 4)
-  internal_price              Decimal?           @db.Decimal(12, 4)
-  required_qty                Decimal            @db.Decimal(12, 2)
-  item_wise_excess_percentage Decimal?           @db.Decimal(12, 2)
-  item_wise_excess_qty        Decimal            @db.Decimal(12, 2)
-  total_required_qty          Decimal            @db.Decimal(12, 2)
-  created_at                  DateTime           @default(now())
-  updated_at                  DateTime           @updatedAt
-  workOrder                   FactoryWorkOrder   @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
-  sourceBomItem               BillOfMaterialItem @relation(fields: [source_bom_item_id], references: [id], onDelete: Restrict)
+  category_type               String?                         @db.VarChar(255)
+  category                    String?                         @db.VarChar(255)
+  sub_category                String?                         @db.VarChar(255)
+  raw_material_name           String?                         @db.VarChar(255)
+  size                        String?                         @db.VarChar(100)
+  work_order_qty              Decimal                         @db.Decimal(12, 2)
+  internal_consumption        Decimal?                        @db.Decimal(12, 4)
+  internal_price              Decimal?                        @db.Decimal(12, 4)
+  required_qty                Decimal                         @db.Decimal(12, 2)
+  item_wise_excess_percentage Decimal?                        @db.Decimal(12, 2)
+  item_wise_excess_qty        Decimal                         @db.Decimal(12, 2)
+  total_required_qty          Decimal                         @db.Decimal(12, 2)
+  created_at                  DateTime                        @default(now())
+  updated_at                  DateTime                        @updatedAt
+  workOrder                   FactoryWorkOrder                @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
+  sourceBomItem               BillOfMaterialItem              @relation(fields: [source_bom_item_id], references: [id], onDelete: Restrict)
   outwardRequestLines         RawMaterialOutwardRequestLine[]
 
   @@unique([work_order_id, source_bom_item_id])
@@ -168,14 +168,14 @@ model FactoryProductionUpdate {
 }
 
 model FactoryProductionUpdateSizeLine {
-  id                   String                  @id @default(cuid())
-  production_update_id String
+  id                       String                  @id @default(cuid())
+  production_update_id     String
   source_finished_goods_id String?
-  size                 String?                 @db.VarChar(100)
-  buyer_size           String?                 @db.VarChar(100)
-  quantity             Int
-  productionUpdate     FactoryProductionUpdate @relation(fields: [production_update_id], references: [id], onDelete: Cascade)
-  sourceFinishedGoods  FinishedGoodsSizeWise? @relation(fields: [source_finished_goods_id], references: [id], onDelete: SetNull)
+  size                     String?                 @db.VarChar(100)
+  buyer_size               String?                 @db.VarChar(100)
+  quantity                 Int
+  productionUpdate         FactoryProductionUpdate @relation(fields: [production_update_id], references: [id], onDelete: Cascade)
+  sourceFinishedGoods      FinishedGoodsSizeWise?  @relation(fields: [source_finished_goods_id], references: [id], onDelete: SetNull)
 
   @@index([production_update_id])
   @@index([source_finished_goods_id])
@@ -208,15 +208,15 @@ model FactoryBundleTransfer {
 }
 
 model FactoryBundleTransferSizeLine {
-  id                 String                @id @default(cuid())
-  bundle_transfer_id String
+  id                       String                 @id @default(cuid())
+  bundle_transfer_id       String
   source_finished_goods_id String?
-  size               String?               @db.VarChar(100)
-  buyer_size         String?               @db.VarChar(100)
-  issued_qty         Int                   @default(0)
-  accepted_qty       Int                   @default(0)
-  bundleTransfer     FactoryBundleTransfer @relation(fields: [bundle_transfer_id], references: [id], onDelete: Cascade)
-  sourceFinishedGoods FinishedGoodsSizeWise? @relation(fields: [source_finished_goods_id], references: [id], onDelete: SetNull)
+  size                     String?                @db.VarChar(100)
+  buyer_size               String?                @db.VarChar(100)
+  issued_qty               Int                    @default(0)
+  accepted_qty             Int                    @default(0)
+  bundleTransfer           FactoryBundleTransfer  @relation(fields: [bundle_transfer_id], references: [id], onDelete: Cascade)
+  sourceFinishedGoods      FinishedGoodsSizeWise? @relation(fields: [source_finished_goods_id], references: [id], onDelete: SetNull)
 
   @@index([bundle_transfer_id])
   @@index([source_finished_goods_id])
@@ -277,20 +277,20 @@ model FactoryGrnLine {
 }
 
 model WorkOrderInventoryGrn {
-  id              String                        @id @default(cuid())
+  id              String                      @id @default(cuid())
   organization_id String
   work_order_id   String
-  grn_no          String                        @db.VarChar(100)
-  grn_date        DateTime                      @db.Date
-  status          String                        @default("PENDING_VERIFICATION") @db.VarChar(30)
-  submitted_by    String                        @db.VarChar(255)
-  verified_by     String?                       @db.VarChar(255)
+  grn_no          String                      @db.VarChar(100)
+  grn_date        DateTime                    @db.Date
+  status          String                      @default("PENDING_VERIFICATION") @db.VarChar(30)
+  submitted_by    String                      @db.VarChar(255)
+  verified_by     String?                     @db.VarChar(255)
   verified_at     DateTime?
-  notes           String?                       @db.VarChar(1000)
-  created_at      DateTime                      @default(now())
-  updated_at      DateTime                      @updatedAt
-  organization    Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  workOrder       FactoryWorkOrder              @relation(fields: [organization_id, work_order_id], references: [organization_id, id], onDelete: Restrict)
+  notes           String?                     @db.VarChar(1000)
+  created_at      DateTime                    @default(now())
+  updated_at      DateTime                    @updatedAt
+  organization    Organization                @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  workOrder       FactoryWorkOrder            @relation(fields: [organization_id, work_order_id], references: [organization_id, id], onDelete: Restrict)
   lines           WorkOrderInventoryGrnLine[]
 
   @@unique([id, work_order_id])
@@ -301,12 +301,12 @@ model WorkOrderInventoryGrn {
 }
 
 model WorkOrderInventoryGrnLine {
-  id                         String                    @id @default(cuid())
+  id                         String                                   @id @default(cuid())
   grn_id                     String
   work_order_id              String
   work_order_size_line_id    String
-  size                       String?                   @db.VarChar(100)
-  buyer_size                 String?                   @db.VarChar(100)
+  size                       String?                                  @db.VarChar(100)
+  buyer_size                 String?                                  @db.VarChar(100)
   ordered_quantity           Int
   available_quantity         Int
   received_quantity          Int
@@ -315,9 +315,9 @@ model WorkOrderInventoryGrnLine {
   rejected_quantity          Int?
   advance_booked_quantity    Int?
   general_inventory_quantity Int?
-  created_at                 DateTime                  @default(now())
-  grn                        WorkOrderInventoryGrn     @relation(fields: [grn_id, work_order_id], references: [id, work_order_id], onDelete: Cascade)
-  workOrderSizeLine          FactoryWorkOrderSizeLine  @relation(fields: [work_order_id, work_order_size_line_id], references: [work_order_id, id], onDelete: Restrict)
+  created_at                 DateTime                                 @default(now())
+  grn                        WorkOrderInventoryGrn                    @relation(fields: [grn_id, work_order_id], references: [id, work_order_id], onDelete: Cascade)
+  workOrderSizeLine          FactoryWorkOrderSizeLine                 @relation(fields: [work_order_id, work_order_size_line_id], references: [work_order_id, id], onDelete: Restrict)
   bookingAllocations         WorkOrderInventoryGrnBookingAllocation[]
   generalStockReceipt        FinishedGoodsGeneralStockReceipt?
   allocatedStockReceipts     FinishedGoodsAllocatedStockReceipt[]
@@ -329,24 +329,24 @@ model WorkOrderInventoryGrnLine {
 }
 
 model FactoryDailyProductionReport {
-  id                String                             @id @default(cuid())
-  organization_id   String
-  report_date       DateTime                           @db.Date
-  status            String                             @default("DRAFT") @db.VarChar(20)
-  submitted_at      DateTime?
+  id                   String                             @id @default(cuid())
+  organization_id      String
+  report_date          DateTime                           @db.Date
+  status               String                             @default("DRAFT") @db.VarChar(20)
+  submitted_at         DateTime?
   submitted_by_user_id String?
-  approved_at       DateTime?
-  approved_by       String?                            @db.VarChar(255)
-  approved_by_user_id String?
-  rejection_reason  String?                            @db.VarChar(1000)
-  total_produced    Int                                @default(0)
-  total_transferred Int                                @default(0)
-  total_received    Int                                @default(0)
-  total_labor_cost  Decimal                            @default(0) @db.Decimal(14, 2)
-  created_at        DateTime                           @default(now())
-  updated_at        DateTime                           @updatedAt
-  organization      Organization                       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  lines             FactoryDailyProductionReportLine[]
+  approved_at          DateTime?
+  approved_by          String?                            @db.VarChar(255)
+  approved_by_user_id  String?
+  rejection_reason     String?                            @db.VarChar(1000)
+  total_produced       Int                                @default(0)
+  total_transferred    Int                                @default(0)
+  total_received       Int                                @default(0)
+  total_labor_cost     Decimal                            @default(0) @db.Decimal(14, 2)
+  created_at           DateTime                           @default(now())
+  updated_at           DateTime                           @updatedAt
+  organization         Organization                       @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  lines                FactoryDailyProductionReportLine[]
 
   @@unique([organization_id, report_date])
   @@index([organization_id, status, report_date])
@@ -389,22 +389,22 @@ model FactoryDailyProductionReportLine {
 }
 
 model BatchMaster {
-  id              String            @id @default(cuid())
-  organization_id String
-  work_order_id   String
-  process_id      String
-  contractor_name String?           @db.VarChar(255)
-  laborer_name    String?           @db.VarChar(255)
+  id                String                @id @default(cuid())
+  organization_id   String
+  work_order_id     String
+  process_id        String
+  contractor_name   String?               @db.VarChar(255)
+  laborer_name      String?               @db.VarChar(255)
   assigned_quantity Int
-  piece_rate      Decimal?          @db.Decimal(12, 4)
-  status          String            @default("OPEN") @db.VarChar(20)
-  created_by      String
-  created_at      DateTime          @default(now())
-  updated_at      DateTime          @updatedAt
-  organization    Organization      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  workOrder       FactoryWorkOrder  @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
-  process         MasterProcess     @relation(fields: [process_id], references: [id], onDelete: Restrict)
-  processLogs     ShopFloorProcessLog[]
+  piece_rate        Decimal?              @db.Decimal(12, 4)
+  status            String                @default("OPEN") @db.VarChar(20)
+  created_by        String
+  created_at        DateTime              @default(now())
+  updated_at        DateTime              @updatedAt
+  organization      Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  workOrder         FactoryWorkOrder      @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
+  process           MasterProcess         @relation(fields: [process_id], references: [id], onDelete: Restrict)
+  processLogs       ShopFloorProcessLog[]
 
   @@index([organization_id, process_id, status, created_at])
   @@index([work_order_id, process_id, created_at])
@@ -437,26 +437,26 @@ model ShopFloorProcessLog {
 }
 
 model ShopFloorTransfer {
-  id              String               @id @default(cuid())
+  id              String              @id @default(cuid())
   organization_id String
   work_order_id   String
-  source_log_id   String               @unique
+  source_log_id   String              @unique
   from_process_id String
   to_process_id   String?
   quantity        Int
-  status          String               @default("PENDING_RECEIPT") @db.VarChar(24)
-  is_final        Boolean              @default(false)
+  status          String              @default("PENDING_RECEIPT") @db.VarChar(24)
+  is_final        Boolean             @default(false)
   sent_by         String
   received_by     String?
-  sent_at         DateTime             @default(now())
+  sent_at         DateTime            @default(now())
   received_at     DateTime?
-  created_at      DateTime             @default(now())
-  updated_at      DateTime             @updatedAt
-  organization    Organization         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  workOrder       FactoryWorkOrder     @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
-  sourceLog       ShopFloorProcessLog  @relation(fields: [source_log_id], references: [id], onDelete: Cascade)
-  fromProcess     MasterProcess        @relation("ShopFloorTransferFromProcess", fields: [from_process_id], references: [id], onDelete: Restrict)
-  toProcess       MasterProcess?       @relation("ShopFloorTransferToProcess", fields: [to_process_id], references: [id], onDelete: Restrict)
+  created_at      DateTime            @default(now())
+  updated_at      DateTime            @updatedAt
+  organization    Organization        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  workOrder       FactoryWorkOrder    @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
+  sourceLog       ShopFloorProcessLog @relation(fields: [source_log_id], references: [id], onDelete: Cascade)
+  fromProcess     MasterProcess       @relation("ShopFloorTransferFromProcess", fields: [from_process_id], references: [id], onDelete: Restrict)
+  toProcess       MasterProcess?      @relation("ShopFloorTransferToProcess", fields: [to_process_id], references: [id], onDelete: Restrict)
 
   @@index([organization_id, to_process_id, status, sent_at])
   @@index([organization_id, work_order_id, sent_at])

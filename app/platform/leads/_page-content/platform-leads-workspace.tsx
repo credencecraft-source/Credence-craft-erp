@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, Download, Upload, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, Download, LoaderCircle, RefreshCw, Settings2, Upload, X } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -45,6 +45,7 @@ const LEAD_FIELDS = [
   { key: "mobile", label: "Mobile" },
   { key: "company_name", label: "Company name" },
   { key: "city", label: "City" },
+  { key: "created_at", label: "Added date & time" },
   { key: "source", label: "Source" },
   { key: "stage", label: "Stage" },
   { key: "campaign_date", label: "Campaign date" },
@@ -262,6 +263,7 @@ export default function PlatformLeadsWorkspace({
     city: string | null;
     source: string;
     stage: string;
+    created_at: string;
     last_login_at: string;
   }>
 }) {
@@ -316,8 +318,16 @@ export default function PlatformLeadsWorkspace({
   const [callbackError, setCallbackError] = useState("");
   const [visibleFields, setVisibleFields] = useState<string[]>(LEAD_FIELDS.map(({ key }) => key));
   const [uploading, setUploading] = useState(false);
+  const [refreshingSheet, setRefreshingSheet] = useState(false);
   const [uploadMessage, setUploadMessage] = useState("");
   const [uploadError, setUploadError] = useState("");
+  const [sheetSettingsOpen, setSheetSettingsOpen] = useState(false);
+  const [savingSheetSettings, setSavingSheetSettings] = useState(false);
+  const [sheetWebAppUrl, setSheetWebAppUrl] = useState(
+    "https://script.google.com/macros/s/AKfycbyhCUf7BxTTnl03PVJxvGWWyhHy6PuMP9jZq2d-AHrKTyh-_w3sajIPzVA2atl2JmGLDw/exec",
+  );
+  const [sheetSettingsError, setSheetSettingsError] = useState("");
+  const [sheetSettingsMessage, setSheetSettingsMessage] = useState("");
   const activeSelectedLead = leads.find((lead) => lead.id === selectedLeadId) ?? null;
   const ticketsLoading = Boolean(selectedLeadId && selectedLeadId !== ticketsLoadedForLeadId);
   const ticketLoadError = ticketLoadFailure?.leadId === selectedLeadId ? ticketLoadFailure.error : "";
@@ -366,7 +376,7 @@ export default function PlatformLeadsWorkspace({
         nature_of_business: null,
         campaign_date: null,
         last_campaign_date: null,
-        created_at: user.last_login_at,
+        created_at: user.created_at,
         updated_at: user.last_login_at,
         recordType: "APP_LOGIN" as const,
         workspaceUserId: user.id,
@@ -759,6 +769,66 @@ export default function PlatformLeadsWorkspace({
     }
   }
 
+  async function refreshGoogleSheet() {
+    if (refreshingSheet || uploading) return;
+    setRefreshingSheet(true);
+    setUploadMessage("");
+    setUploadError("");
+    try {
+      const webAppUrl = window.localStorage.getItem("platform-google-sheets-leads-url") || sheetWebAppUrl;
+      const response = await fetch("/api/platform/leads/google-sheets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ webAppUrl }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to sync Google Sheets leads.");
+      const { imported, skippedDuplicates } = payload as {
+        imported: number;
+        skippedDuplicates: number;
+      };
+      setUploadMessage(
+        `${imported} new lead${imported === 1 ? "" : "s"} imported; ${skippedDuplicates} duplicate${skippedDuplicates === 1 ? "" : "s"} skipped.`,
+      );
+      router.refresh();
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : "Unable to sync Google Sheets leads.");
+    } finally {
+      setRefreshingSheet(false);
+    }
+  }
+
+  async function openGoogleSheetSettings() {
+    setSheetSettingsOpen(true);
+    setSheetSettingsError("");
+    setSheetSettingsMessage("");
+    const savedUrl = window.localStorage.getItem("platform-google-sheets-leads-url");
+    if (savedUrl) setSheetWebAppUrl(savedUrl);
+  }
+
+  async function saveAndTestGoogleSheetSettings(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (savingSheetSettings) return;
+    setSavingSheetSettings(true);
+    setSheetSettingsError("");
+    setSheetSettingsMessage("");
+    try {
+      const response = await fetch("/api/platform/leads/google-sheets/configuration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ webAppUrl: sheetWebAppUrl }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to save and test Google Sheets settings.");
+      window.localStorage.setItem("platform-google-sheets-leads-url", sheetWebAppUrl.trim());
+      setSheetSettingsMessage(`Connection successful. ${payload.availableLeads} lead rows are available to sync.`);
+    } catch (error) {
+      setSheetSettingsError(error instanceof Error ? error.message : "Unable to save and test Google Sheets settings.");
+    } finally {
+      setSavingSheetSettings(false);
+    }
+  }
+
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
       <header className="flex flex-wrap items-center justify-between gap-2">
@@ -791,6 +861,29 @@ export default function PlatformLeadsWorkspace({
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <p className="text-xs text-slate-500">{filteredLeads.length} records</p>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={refreshingSheet || uploading}
+            onClick={() => void refreshGoogleSheet()}
+            title={refreshingSheet ? "Refreshing Google Sheets leads" : "Refresh leads from Google Sheets"}
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshingSheet ? "animate-spin" : ""}`} aria-hidden="true" />
+            {refreshingSheet ? "Refreshing..." : "Refresh Sheet"}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={refreshingSheet || uploading}
+            onClick={() => void openGoogleSheetSettings()}
+            aria-label="Configure Google Sheets connection"
+            title="Google Sheets connection settings"
+            className="min-h-0 px-2 py-1.5"
+          >
+            <Settings2 className="h-4 w-4" aria-hidden="true" />
+          </Button>
           {activeTab === "THIRD_PARTY" && (
             <>
               <form action="/api/platform/leads/export" method="get">
@@ -825,6 +918,63 @@ export default function PlatformLeadsWorkspace({
 
       {uploadMessage && <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{uploadMessage}</p>}
       {uploadError && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{uploadError}</p>}
+
+      <Modal
+        open={sheetSettingsOpen}
+        onClose={() => {
+          if (!savingSheetSettings) setSheetSettingsOpen(false);
+        }}
+        ariaLabelledBy="google-sheets-settings-title"
+        size="md"
+        closeOnBackdrop={!savingSheetSettings}
+      >
+        <form onSubmit={saveAndTestGoogleSheetSettings} className="space-y-5 p-6">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 id="google-sheets-settings-title" className="text-lg font-semibold text-slate-900">
+                Google Sheets
+              </h2>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setSheetSettingsOpen(false)}
+              disabled={savingSheetSettings}
+              aria-label="Close Google Sheets settings"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </div>
+          <Input
+            label="Web-app URL"
+            type="url"
+            required
+            maxLength={2048}
+            textCase="preserve"
+            value={sheetWebAppUrl}
+            onChange={(event) => setSheetWebAppUrl(event.target.value)}
+            placeholder="https://script.google.com/macros/s/.../exec"
+            hint="Paste the URL ending in /exec."
+          />
+          {sheetSettingsError && <p role="alert" className="text-sm text-red-700">{sheetSettingsError}</p>}
+          {sheetSettingsMessage && (
+            <p role="status" className="flex items-center gap-2 text-sm text-emerald-700">
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+              {sheetSettingsMessage}
+            </p>
+          )}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => setSheetSettingsOpen(false)} disabled={savingSheetSettings}>
+              Close
+            </Button>
+            <Button type="submit" disabled={savingSheetSettings}>
+              {savingSheetSettings && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
+              {savingSheetSettings ? "Testing..." : "Test and save"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden lg:flex-row">
         <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
@@ -900,7 +1050,7 @@ export default function PlatformLeadsWorkspace({
             fields={LEAD_FIELDS}
             visibleFields={visibleFields}
             onVisibleFieldsChange={changeVisibleFields}
-            storageKey="platform-leads-report-columns-v1"
+            storageKey="platform-leads-report-columns-v2"
             rowIdSelector={(lead) => lead.id}
             selectedIds={activeTab === "THIRD_PARTY" ? selectedLeadIds : []}
             selectable={activeTab === "THIRD_PARTY"}
@@ -1076,7 +1226,7 @@ export default function PlatformLeadsWorkspace({
                       size="sm"
                       variant="outline"
                       disabled={movingSelectedLeads}
-                      onClick={() => void updateSelectedLeadStage("Potential Dead", [lead.id])}
+                      onClick={() => void updateSelectedLeadStage("3-Dead", [lead.id])}
                     >
                       Not Interested
                     </Button>
@@ -1089,6 +1239,11 @@ export default function PlatformLeadsWorkspace({
             newActionLabel="Add lead"
             emptyMessage={activeTab === "APP_LOGIN" ? "No workspace accounts have logged in yet." : "No leads match this category."}
             renderCell={(fieldKey, lead) => {
+              if (fieldKey === "created_at") {
+                return lead.created_at
+                  ? new Date(lead.created_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
+                  : "—";
+              }
               if (fieldKey === "last_login_at") return lead.last_login_at ? new Date(lead.last_login_at).toLocaleString() : "—";
               if (fieldKey === "campaign_date" || fieldKey === "last_campaign_date") {
                 return lead[fieldKey] ? new Date(lead[fieldKey]).toLocaleDateString() : "—";

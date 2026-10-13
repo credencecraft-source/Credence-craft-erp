@@ -68,6 +68,7 @@ type BookingRecord = {
     fulfilledQuantity: number;
     assignmentStatus: string;
     fulfillmentStatus: string;
+    generalInventoryAvailableQuantity: number;
     assignments: Array<{
       id: string;
       workOrderId: string;
@@ -233,6 +234,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [assignmentQuantities, setAssignmentQuantities] = useState<Record<string, number>>({});
   const [isLoadingAssignment, setIsLoadingAssignment] = useState(false);
   const [isSavingAssignment, setIsSavingAssignment] = useState(false);
+  const [allocatingGeneralStockBookingId, setAllocatingGeneralStockBookingId] = useState<string | null>(null);
   const [assignmentError, setAssignmentError] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -634,6 +636,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       setAssignmentError("Select a work order before assigning this booking.");
       return;
     }
+
     setIsSavingAssignment(true);
     setAssignmentError("");
     try {
@@ -701,6 +704,46 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       setAssignmentError(saveError instanceof Error ? saveError.message : "Unable to assign this booking.");
     } finally {
       setIsSavingAssignment(false);
+    }
+  }
+
+  async function allocateGeneralStockToBooking(bookingId: string) {
+    const booking = workOrderTrackingRows.find((record) => record.bookingId === bookingId);
+    if (!booking || allocatingGeneralStockBookingId) return;
+    setAllocatingGeneralStockBookingId(booking.id);
+    setError("");
+    setStatus("");
+    try {
+      const response = await fetch(
+        `/api/distribution/advance-bookings/${encodeURIComponent(booking.id)}/general-stock-allocation`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ organizationId }),
+        },
+      );
+      const data = await response.json().catch(() => null);
+      const allocatedLines = Array.isArray(data?.allocatedLines)
+        ? data.allocatedLines as Array<{ size?: unknown; quantity?: unknown }>
+        : null;
+      if (
+        !response.ok ||
+        data?.ok !== true ||
+        !allocatedLines ||
+        allocatedLines.length === 0 ||
+        !allocatedLines.every((line) =>
+          typeof line.size === "string" && Number.isSafeInteger(line.quantity) && Number(line.quantity) > 0,
+        )
+      ) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to allocate general stock to this booking.");
+      }
+      const totalAllocated = allocatedLines.reduce((sum, line) => sum + Number(line.quantity), 0);
+      setStatus(`Allocated ${totalAllocated} unit${totalAllocated === 1 ? "" : "s"} from general inventory to booking ${booking.bookingId}.`);
+      await loadBookings(undefined, { silent: true, preservePages: true });
+    } catch (allocationError) {
+      setError(allocationError instanceof Error ? allocationError.message : "Unable to allocate general stock to this booking.");
+    } finally {
+      setAllocatingGeneralStockBookingId(null);
     }
   }
 
@@ -1124,6 +1167,20 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             rowActionLabelSelector={(booking) => booking.totalUnassigned > 0 ? "Assign Work Order" : "Fully Assigned"}
             rowActionDisabledSelector={(booking) => booking.totalUnassigned <= 0 || isLoadingBookings}
             rowActionHiddenSelector={(booking) => !booking.salesOrderNo}
+            onSecondaryRowAction={view === "fulfillment"
+              ? (bookingId) => void allocateGeneralStockToBooking(bookingId)
+              : undefined}
+            secondaryRowActionLabel="Allocate General Stock"
+            secondaryRowActionDisabledSelector={(booking) =>
+              isLoadingBookings || allocatingGeneralStockBookingId !== null || booking.totalUnassigned <= 0
+            }
+            secondaryRowActionHiddenSelector={(booking) =>
+              !booking.salesOrderNo ||
+              booking.totalUnassigned <= 0 ||
+              !booking.sizes.some((line) =>
+                line.unassignedQuantity > 0 && line.generalInventoryAvailableQuantity > 0,
+              )
+            }
             onNewOrder={view === "booking" ? startCreating : undefined}
             newActionLabel="Create Advance Booking"
             toolbarActions={(

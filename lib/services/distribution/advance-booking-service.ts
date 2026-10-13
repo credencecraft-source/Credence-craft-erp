@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { listGeneralFinishedGoodsAvailability } from "@/lib/services/inventory/finished-goods-general-stock-allocation-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
 
@@ -81,6 +82,7 @@ function mapBooking(record: Prisma.AdvanceBookingGetPayload<{ include: typeof bo
       assignedQuantity,
       unassignedQuantity: Math.max(line.booked_quantity - assignedQuantity, 0),
       fulfilledQuantity,
+      generalInventoryAvailableQuantity: 0,
       assignmentStatus: statusFor(assignedQuantity, line.booked_quantity),
       fulfillmentStatus: fulfillmentStatusFor(fulfilledQuantity, assignedQuantity),
       assignments: line.assignments.map((assignment) => {
@@ -178,8 +180,22 @@ export async function listAdvanceBookings(
   const hasNextPage = rows.length > take;
   const pageRows = hasNextPage ? rows.slice(0, take) : rows;
   const lastRow = pageRows.at(-1);
+  const generalStockAvailability = await listGeneralFinishedGoodsAvailability(
+    organizationId,
+    pageRows.map((row) => row.order_id),
+  );
   return {
-    bookings: pageRows.map(mapBooking),
+    bookings: pageRows.map((record) => {
+      const booking = mapBooking(record);
+      const availabilityBySize = generalStockAvailability.get(booking.orderId);
+      return {
+        ...booking,
+        sizes: booking.sizes.map((line) => ({
+          ...line,
+          generalInventoryAvailableQuantity: availabilityBySize?.get(normalizedSize(line.size)) ?? 0,
+        })),
+      };
+    }),
     nextCursor: hasNextPage && lastRow
       ? encodeBookingCursor({ createdAt: lastRow.created_at.toISOString(), id: lastRow.id })
       : null,

@@ -4,7 +4,7 @@ import { normalizeUppercase } from "@/lib/utilities/text-case";
 import type { MasterDefinition, MasterFieldDefinition } from "@/lib/master-data/master-data-models";
 
 const MAX_WORKBOOK_SIZE_BYTES = 10 * 1024 * 1024;
-const MAX_WORKBOOK_ROWS = 500;
+const MAX_WORKBOOK_ROWS = 1_000;
 const MAX_WORKBOOK_COLUMNS = 100;
 
 export type ParsedMasterWorkbookRow = {
@@ -12,14 +12,35 @@ export type ParsedMasterWorkbookRow = {
   code: string | null;
   description: string | null;
   fields: Record<string, unknown>;
-  childRows: Record<string, Record<string, unknown>[]>;
+  childRows: Record<string, Record<string, unknown>[] | string>;
+};
+
+export type MasterWorkbookParseFailure = {
+  rowNumber: number;
+  message: string;
+  fieldPaths: string[];
+  row: ParsedMasterWorkbookRow;
+};
+
+export type MasterWorkbookParseResult = {
+  rows: ParsedMasterWorkbookRow[];
+  failures: MasterWorkbookParseFailure[];
 };
 
 export type MasterRecordsImportResult = {
   created: number;
-  failures: Array<{ rowNumber: number; message: string }>;
+  failures: Array<{ rowNumber: number; message: string; row?: ParsedMasterWorkbookRow }>;
+  validatedRowNumbers?: number[];
   fatalError?: string;
 };
+
+export function getRetryableMasterWorkbookRows(
+  failures: MasterRecordsImportResult["failures"],
+) {
+  return failures.flatMap((failure) => failure.row
+    ? [{ rowNumber: failure.rowNumber, message: failure.message, row: failure.row }]
+    : []);
+}
 
 export type MasterWorkbookLookupOption = {
   id: string;
@@ -166,7 +187,17 @@ function isBlankRow(row: unknown[]) {
 export async function parseMasterRecordsWorkbook(
   file: File,
   definition: MasterDefinition,
-): Promise<ParsedMasterWorkbookRow[]> {
+): Promise<ParsedMasterWorkbookRow[]>;
+export async function parseMasterRecordsWorkbook(
+  file: File,
+  definition: MasterDefinition,
+  collectRowErrors: true,
+): Promise<MasterWorkbookParseResult>;
+export async function parseMasterRecordsWorkbook(
+  file: File,
+  definition: MasterDefinition,
+  collectRowErrors = false,
+): Promise<ParsedMasterWorkbookRow[] | MasterWorkbookParseResult> {
   if (!/\.xlsx$/i.test(file.name)) {
     throw new Error("Choose an .xlsx workbook downloaded from this master.");
   }
@@ -238,66 +269,185 @@ export async function parseMasterRecordsWorkbook(
   }
 
   const parsedRows: ParsedMasterWorkbookRow[] = [];
+  const failures: MasterWorkbookParseFailure[] = [];
+  let dataRowCount = 0;
   for (let index = 1; index < rows.length; index += 1) {
     const row = rows[index] ?? [];
     if (isBlankRow(row)) continue;
-    if (parsedRows.length >= MAX_WORKBOOK_ROWS) {
+    dataRowCount += 1;
+    if (dataRowCount > MAX_WORKBOOK_ROWS) {
       throw new Error(`A workbook may contain at most ${MAX_WORKBOOK_ROWS} data rows.`);
     }
 
     const rowNumber = index + 1;
     const values: Record<string, unknown> = {};
-    const childRows: Record<string, Record<string, unknown>[]> = {};
-    for (const field of fields) {
-      const headerIndex = headerIndexes.get(normalizeHeader(field.label))
-        ?? headerIndexes.get(normalizeHeader(field.key));
-      if (headerIndex === undefined) {
-        values[field.key] = field.type === "checkbox" ? false : field.multiple ? [] : null;
-        continue;
+    const childRows: Record<string, Record<string, unknown>[] | string> = {};
+    let failureFieldPaths: string[] = [];
+    try {
+      for (const field of fields) {
+        const headerIndex = headerIndexes.get(normalizeHeader(field.label))
+          ?? headerIndexes.get(normalizeHeader(field.key));
+        if (headerIndex === undefined) {
+          values[field.key] = field.type === "checkbox" ? false : field.multiple ? [] : null;
+          continue;
+        }
+        const rawValue = row[headerIndex];
+        let parsedValue: unknown;
+        try {
+          parsedValue = parseFieldValue(rawValue, field, rowNumber);
+        } catch (error) {
+          failureFieldPaths = [field.key];
+          throw error;
+        }
+        if (field.type === "child-list") {
+          childRows[field.key] = parsedValue as Record<string, unknown>[];
+        } else {
+          values[field.key] = parsedValue;
+        }
       }
-      const parsedValue = parseFieldValue(row[headerIndex], field, rowNumber);
-      if (field.type === "child-list") {
-        childRows[field.key] = parsedValue as Record<string, unknown>[];
-      } else {
-        values[field.key] = parsedValue;
-      }
-    }
 
-    for (const field of fields) {
-      if (!field.required || field.type === "child-list") continue;
-      const value = values[field.key];
-      const missing = Array.isArray(value) ? value.length === 0 : value === null || value === undefined || value === "";
-      if (missing) throw new Error(`Row ${rowNumber}: ${field.label} is required.`);
-    }
-    for (const field of fields) {
-      if (!field.dependsOn || field.type === "child-list") continue;
-      const value = values[field.key];
-      const hasValue = Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== "";
-      const parent = values[field.dependsOn];
-      const hasParent = Array.isArray(parent) ? parent.length > 0 : parent !== null && parent !== undefined && parent !== "";
-      if (hasValue && !hasParent) {
-        throw new Error(`Row ${rowNumber}: ${field.label} requires ${definition.fields.find((candidate) => candidate.key === field.dependsOn)?.label ?? field.dependsOn}.`);
+      for (const field of fields) {
+        if (!field.required || field.type === "child-list") continue;
+        const value = values[field.key];
+        const missing = Array.isArray(value) ? value.length === 0 : value === null || value === undefined || value === "";
+        if (missing) {
+          failureFieldPaths = [field.key];
+          throw new Error(`Row ${rowNumber}: ${field.label} is required.`);
+        }
       }
-      if (field.required && hasParent && !hasValue) {
-        throw new Error(`Row ${rowNumber}: ${field.label} is required when ${definition.fields.find((candidate) => candidate.key === field.dependsOn)?.label ?? field.dependsOn} is set.`);
+      for (const field of fields) {
+        if (!field.dependsOn || field.type === "child-list") continue;
+        const value = values[field.key];
+        const hasValue = Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== "";
+        const parent = values[field.dependsOn];
+        const hasParent = Array.isArray(parent) ? parent.length > 0 : parent !== null && parent !== undefined && parent !== "";
+        if (hasValue && !hasParent) {
+          failureFieldPaths = [field.key];
+          throw new Error(`Row ${rowNumber}: ${field.label} requires ${definition.fields.find((candidate) => candidate.key === field.dependsOn)?.label ?? field.dependsOn}.`);
+        }
+        if (field.required && hasParent && !hasValue) {
+          failureFieldPaths = [field.key];
+          throw new Error(`Row ${rowNumber}: ${field.label} is required when ${definition.fields.find((candidate) => candidate.key === field.dependsOn)?.label ?? field.dependsOn} is set.`);
+        }
       }
-    }
 
-    const label = String(values[labelField.key] ?? "").trim();
-    if (!label) throw new Error(`Row ${rowNumber}: ${labelField.label} is required.`);
-    const masterCodeIndex = headerIndexes.get("master code");
-    const descriptionIndex = headerIndexes.get("description");
-    parsedRows.push({
-      rowNumber,
-      code: masterCodeIndex === undefined ? null : parseText(row[masterCodeIndex]),
-      description: descriptionIndex === undefined ? null : parseText(row[descriptionIndex]),
-      fields: values,
-      childRows,
-    });
+      const label = String(values[labelField.key] ?? "").trim();
+      if (!label) throw new Error(`Row ${rowNumber}: ${labelField.label} is required.`);
+      const masterCodeIndex = headerIndexes.get("master code");
+      const descriptionIndex = headerIndexes.get("description");
+      parsedRows.push({
+        rowNumber,
+        code: masterCodeIndex === undefined ? null : parseText(row[masterCodeIndex]),
+        description: descriptionIndex === undefined ? null : parseText(row[descriptionIndex]),
+        fields: values,
+        childRows,
+      });
+    } catch (error) {
+      if (!collectRowErrors) throw error;
+      const rawFields = Object.fromEntries(fields.map((field) => {
+        const headerIndex = headerIndexes.get(normalizeHeader(field.label))
+          ?? headerIndexes.get(normalizeHeader(field.key));
+        const rawValue = headerIndex === undefined ? "" : row[headerIndex];
+        return [field.key, field.type === "checkbox" ? String(rawValue ?? "") : String(rawValue ?? "").trim()];
+      }));
+      const childValues = Object.fromEntries(fields
+        .filter((field) => field.type === "child-list")
+        .map((field) => [field.key, rawFields[field.key]]));
+      const message = error instanceof Error ? error.message : `Row ${rowNumber} is invalid.`;
+      failures.push({
+        rowNumber,
+        message,
+        fieldPaths: failureFieldPaths,
+        row: {
+          rowNumber,
+          code: headerIndexes.has("master code") ? parseText(row[headerIndexes.get("master code")!]) : null,
+          description: headerIndexes.has("description") ? parseText(row[headerIndexes.get("description")!]) : null,
+          fields: Object.fromEntries(Object.entries(rawFields).filter(([key]) =>
+            fields.find((field) => field.key === key)?.type !== "child-list",
+          )),
+          childRows: childValues,
+        },
+      });
+    }
   }
 
-  if (!parsedRows.length) throw new Error("The workbook has no data rows to import.");
-  return parsedRows;
+  if (!parsedRows.length && !failures.length) throw new Error("The workbook has no data rows to import.");
+  return collectRowErrors ? { rows: parsedRows, failures } : parsedRows;
+}
+
+export function validateCorrectedMasterWorkbookRows(
+  value: unknown,
+  definition: MasterDefinition,
+): ParsedMasterWorkbookRow[] {
+  if (!Array.isArray(value) || value.length > MAX_WORKBOOK_ROWS) {
+    throw new Error("Corrected workbook rows are invalid. Please upload the workbook again.");
+  }
+  const fields = definition.fields.filter((field) => !field.readOnly);
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error("Corrected workbook rows are invalid. Please upload the workbook again.");
+    }
+    const row = entry as Record<string, unknown>;
+    if (
+      !Number.isInteger(row.rowNumber) ||
+      typeof row.fields !== "object" || row.fields === null || Array.isArray(row.fields) ||
+      typeof row.childRows !== "object" || row.childRows === null || Array.isArray(row.childRows) ||
+      (row.code !== null && typeof row.code !== "string") ||
+      (row.description !== null && typeof row.description !== "string")
+    ) {
+      throw new Error("Corrected workbook rows are invalid. Please upload the workbook again.");
+    }
+    const rawFields = row.fields as Record<string, unknown>;
+    const rawChildren = row.childRows as Record<string, unknown>;
+    if (Object.keys(rawFields).some((key) => !fields.some((field) => field.key === key))
+      || Object.keys(rawChildren).some((key) => !fields.some((field) => field.key === key && field.type === "child-list"))) {
+      throw new Error("Corrected workbook rows contain unsupported fields.");
+    }
+
+    const parsedFields: Record<string, unknown> = {};
+    const childRows: Record<string, Record<string, unknown>[]> = {};
+    for (const field of fields) {
+      if (field.type === "child-list") {
+        const children = rawChildren[field.key] ?? [];
+        const childInput = typeof children === "string" ? children : JSON.stringify(children);
+        const parsed = parseFieldValue(childInput, field, Number(row.rowNumber));
+        childRows[field.key] = parsed as Record<string, unknown>[];
+        continue;
+      }
+      const rawValue = rawFields[field.key];
+      const displayValue = Array.isArray(rawValue) ? rawValue.join(";") : rawValue === null || rawValue === undefined ? "" : String(rawValue);
+      parsedFields[field.key] = parseFieldValue(displayValue, field, Number(row.rowNumber));
+    }
+    for (const field of fields) {
+      if (field.type === "child-list") continue;
+      const value = parsedFields[field.key];
+      const hasValue = Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== "";
+      if (field.required && !hasValue) throw new Error(`Row ${row.rowNumber}: ${field.label} is required.`);
+      if (field.dependsOn) {
+        const parent = parsedFields[field.dependsOn];
+        const hasParent = Array.isArray(parent) ? parent.length > 0 : parent !== null && parent !== undefined && parent !== "";
+        if (hasValue && !hasParent) {
+          const parentLabel = fields.find((candidate) => candidate.key === field.dependsOn)?.label ?? field.dependsOn;
+          throw new Error(`Row ${row.rowNumber}: ${field.label} requires ${parentLabel}.`);
+        }
+        if (field.required && hasParent && !hasValue) {
+          const parentLabel = fields.find((candidate) => candidate.key === field.dependsOn)?.label ?? field.dependsOn;
+          throw new Error(`Row ${row.rowNumber}: ${field.label} is required when ${parentLabel} is set.`);
+        }
+      }
+    }
+    const labelField = fields.find((field) => field.key === (definition.labelField ?? fields[0]?.key));
+    if (!labelField || !String(parsedFields[labelField.key] ?? "").trim()) {
+      throw new Error(`Row ${row.rowNumber}: ${labelField?.label ?? definition.label} is required.`);
+    }
+    return {
+      rowNumber: Number(row.rowNumber),
+      code: row.code as string | null,
+      description: row.description as string | null,
+      fields: parsedFields,
+      childRows,
+    };
+  });
 }
 
 export async function validateMasterWorkbookLookupValues(

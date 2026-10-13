@@ -9,7 +9,7 @@ import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import { ReportGrid } from "@/components/reports/report-grid-display";
-import { MasterRecordsExcelActions, type MasterRecordsImportAction } from "@/components/master-data/master-records-excel-actions";
+import type { MasterRecordsImportAction } from "@/components/master-data/master-records-excel-actions";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 import {
   filterMasterOptionsByParent,
@@ -86,7 +86,6 @@ export function MasterRecordsTable({
   createAction,
   updateAction,
   deleteAction,
-  importAction,
   fields,
   lookupOptions,
   childRecords = [],
@@ -878,19 +877,6 @@ export function MasterRecordsTable({
         visibleFields={activeVisibleReportFields}
         onVisibleFieldsChange={setVisibleReportFields}
         storageKey={`master-report-columns-${moduleKey}`}
-        toolbarActions={(
-          <MasterRecordsExcelActions
-            records={records}
-            fields={fields}
-            lookupOptions={lookupOptions}
-            childRecords={childRecords}
-            moduleKey={moduleKey}
-            moduleLabel={moduleLabel}
-            workspaceId={workspaceId}
-            organizationId={organizationId}
-            importAction={importAction}
-          />
-        )}
         rowIdSelector={(record) => record.id}
         selectedIds={[]}
         onRowClick={() => undefined}

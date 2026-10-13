@@ -5,37 +5,10 @@ import {
   CONTACT_GST_REGISTRATION_TYPES,
   CONTACT_GST_STATE_CODES,
 } from "@/lib/services/master-data/contact-master-validation";
+import { CONTACT_WORKBOOK_COLUMNS } from "@/lib/master-data/contact-records-workbook-columns";
 import type { ContactWorkbookRecord } from "@/lib/master-data/contact-records-workbook-parser";
 
 const CONTACT_TEMPLATE_ROWS = 200;
-const CONTACT_COLUMNS = [
-  "Legal Name",
-  "Display Name",
-  "Email",
-  "Phone",
-  "Roles (optional; separate with semicolons)",
-  "GSTIN",
-  "GST Registered Legal Name",
-  "GST Registration Type",
-  "GST Registration Status",
-  "Address Label",
-  "Address Use",
-  "Address Line 1",
-  "Address Line 2",
-  "City",
-  "State",
-  "State Code",
-  "PIN Code",
-  "Country Code",
-  "Default Billing",
-  "Default Shipping",
-  "Account Holder Name",
-  "Account Number",
-  "IFSC Code",
-  "Bank Name",
-  "Branch",
-  "Default Bank Account",
-];
 
 function quoteList(values: readonly string[]) {
   return `"${values.join(",")}"`;
@@ -103,7 +76,7 @@ function populateSheet(sheet: Sheet, rows: unknown[][]) {
   sheet.range(`A1:Z${rows.length}`).value(rows);
   sheet.range("A1:Z1").style({ bold: true });
   sheet.freezePanes(1, 0);
-  CONTACT_COLUMNS.forEach((header, index) => {
+  CONTACT_WORKBOOK_COLUMNS.forEach((header, index) => {
     const column = columnName(index);
     sheet.column(column).width(Math.min(Math.max(header.length + 3, 16), 34));
   });
@@ -114,13 +87,13 @@ export async function createContactWorkbook(records: ContactWorkbookRecord[], _c
   const contactsSheet = workbook.sheet(0).name("Contacts");
   const isBlankTemplate = records.length === 0;
   const rows: unknown[][] = [
-    CONTACT_COLUMNS,
+    [...CONTACT_WORKBOOK_COLUMNS],
     ...records.map(contactRow),
   ];
 
   if (isBlankTemplate) {
     for (let index = 0; index < CONTACT_TEMPLATE_ROWS; index += 1) {
-      rows.push(Array(CONTACT_COLUMNS.length).fill(""));
+      rows.push(Array(CONTACT_WORKBOOK_COLUMNS.length).fill(""));
     }
   }
 

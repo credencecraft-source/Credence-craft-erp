@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Download, FileSpreadsheet, Upload } from "lucide-react";
 
@@ -13,7 +13,10 @@ import type {
   MasterWorkbookRecord,
 } from "@/lib/master-data/master-records-template-workbook";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-models";
-import type { MasterRecordsImportResult } from "@/lib/master-data/master-records-workbook";
+import { uploadMasterWorkbookToHistory } from "@/lib/master-data/master-import-client";
+import type {
+  MasterRecordsImportResult,
+} from "@/lib/master-data/master-records-workbook";
 
 type MasterRecord = MasterWorkbookRecord & { label: string; value_id: string };
 type ChildRecord = MasterWorkbookChildRecord & { id?: string };
@@ -40,72 +43,68 @@ export function MasterRecordsExcelActions({
   moduleLabel,
   workspaceId,
   organizationId,
-  importAction,
 }: MasterRecordsExcelActionsProps) {
   const router = useRouter();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [result, setResult] = useState<MasterRecordsImportResult | null>(null);
-  const [downloadError, setDownloadError] = useState("");
-  const [isGenerating, setIsGenerating] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
-  const [isPending, startTransition] = useTransition();
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const historyUrl = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/migration/import-history`;
 
   const downloadWorkbook = async (includeRecords = true) => {
-    setDownloadError("");
+    setError("");
     setIsGenerating(true);
     try {
-      const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(moduleKey)}/workbook`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          includeRecords,
-          records: includeRecords ? records : [],
-          fields,
-          lookupOptions,
-          childRecords,
-          moduleLabel,
-        }),
-      });
-      if (!response.ok) throw new Error("Unable to create workbook.");
-      const workbookData = await response.arrayBuffer();
-      const blob = new Blob([workbookData], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(moduleKey)}/workbook`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            includeRecords,
+            records: includeRecords ? records : [],
+            fields,
+            lookupOptions,
+            childRecords,
+            moduleLabel,
+          }),
+        },
+      );
+      if (!response.ok) throw new Error("Unable to create this master workbook.");
+      const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = `${moduleKey}-master${includeRecords ? "" : "-template"}.xlsx`;
       anchor.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch {
-      setDownloadError("Unable to create the Excel workbook. Please try again.");
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : "Unable to create this master workbook.");
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const importSelectedWorkbook = () => {
+  const saveWorkbook = async () => {
     if (!selectedFile) return;
-    const formData = new FormData();
-    formData.set("workspaceId", workspaceId);
-    formData.set("organizationId", organizationId);
-    formData.set("moduleKey", moduleKey);
-    formData.set("workbook", selectedFile);
-    setResult(null);
-    startTransition(async () => {
-      try {
-        const importResult = await importAction(formData);
-        setResult(importResult);
-        if (importResult.created > 0) router.refresh();
-      } catch {
-        setResult({ created: 0, failures: [], fatalError: "The workbook could not be imported. Check your file and try again." });
-      }
-    });
+    setIsSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await uploadMasterWorkbookToHistory(organizationId, moduleKey, selectedFile);
+      setNotice("Workbook securely saved on the server. Continue staging, correcting, and importing from Import History.");
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "Unable to save this workbook to Import History.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
     <>
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <Button
           type="button"
           size="sm"
@@ -115,7 +114,7 @@ export function MasterRecordsExcelActions({
           aria-label={`Download ${moduleLabel} Excel workbook`}
           title={`Download ${moduleLabel} Excel workbook`}
         >
-          <Download aria-hidden="true" className="mr-1.5 h-4 w-4" />
+          <Download aria-hidden="true" className="h-4 w-4" />
           {isGenerating ? "Preparing..." : "Download Excel"}
         </Button>
         <Button
@@ -124,68 +123,70 @@ export function MasterRecordsExcelActions({
           variant="secondary"
           onClick={() => {
             setSelectedFile(null);
-            setResult(null);
+            setNotice("");
+            setError("");
             setIsOpen(true);
           }}
           aria-label={`Upload ${moduleLabel} Excel workbook`}
           title={`Upload ${moduleLabel} Excel workbook`}
         >
-          <Upload aria-hidden="true" className="mr-1.5 h-4 w-4" />
+          <Upload aria-hidden="true" className="h-4 w-4" />
           Upload Excel
         </Button>
+        {error ? <p className="text-sm text-[var(--erp-danger)]" role="alert">{error}</p> : null}
       </div>
-      {downloadError ? <p className="text-sm text-slate-700" role="alert">{downloadError}</p> : null}
-
-      <Modal open={isOpen} onClose={() => setIsOpen(false)} ariaLabel={`Import ${moduleLabel} Excel workbook`} size="md">
+      <Modal
+        open={isOpen}
+        onClose={() => setIsOpen(false)}
+        closeOnBackdrop={false}
+        ariaLabel={`Save ${moduleLabel} workbook`}
+        size="md"
+      >
         <div className="space-y-4 p-6">
-          <div>
-            <h2 className="text-base font-semibold">Import {moduleLabel} Excel</h2>
-            <p className="mt-2 text-sm text-slate-600">
-              Choose an .xlsx workbook for this master. Only new records are created; matching records are not overwritten. Use a blank template for new entries, or remove existing rows from an exported workbook before uploading. Valid rows save independently.
+          <header>
+            <h2 className="text-base font-semibold text-[var(--erp-text)]">Upload {moduleLabel} Excel</h2>
+            <p className="mt-2 text-sm text-[var(--erp-muted)]">
+              Save the workbook to server-backed Import History. Stage and validate it there, correct rows with errors, then explicitly start or resume the import. Uploading does not create master records.
             </p>
-          </div>
+          </header>
           <Input
             type="file"
             accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            onClick={(event) => {
-              event.currentTarget.value = "";
-            }}
-            onChange={(event) => {
-              setSelectedFile(event.target.files?.[0] ?? null);
-              setResult(null);
-            }}
+            onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
             aria-label="Excel workbook file"
           />
           {selectedFile ? (
-            <p className="flex items-center gap-2 text-sm text-slate-600">
-              <FileSpreadsheet aria-hidden="true" className="h-4 w-4" />
+            <p className="flex min-w-0 items-center gap-2 truncate text-sm text-[var(--erp-muted)]">
+              <FileSpreadsheet aria-hidden="true" className="h-4 w-4 shrink-0" />
               {selectedFile.name}
             </p>
           ) : null}
-          {result?.fatalError ? <p className="text-sm text-slate-700" role="alert">{result.fatalError}</p> : null}
-          {result && !result.fatalError ? (
-            <div className="space-y-2 text-sm" role={result.failures.length ? "alert" : "status"}>
-              <p>Created {result.created} record{result.created === 1 ? "" : "s"}; {result.failures.length} row{result.failures.length === 1 ? "" : "s"} failed.</p>
-              {result.failures.length ? (
-                <ul className="max-h-40 list-disc space-y-1 overflow-y-auto pl-5">
-                  {result.failures.slice(0, 10).map((failure) => (
-                    <li key={`${failure.rowNumber}-${failure.message}`}>Row {failure.rowNumber}: {failure.message}</li>
-                  ))}
-                </ul>
-              ) : null}
-              {result.failures.length > 10 ? <p>{result.failures.length - 10} additional row errors are not shown.</p> : null}
+          {notice ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--erp-success)] bg-[var(--erp-surface)] px-3 py-2 text-sm text-[var(--erp-success)]" role="status">
+              <span>{notice}</span>
+              <Button type="button" size="sm" variant="secondary" onClick={() => {
+                setIsOpen(false);
+                router.push(historyUrl);
+              }}>
+                Open Import History
+              </Button>
             </div>
+          ) : null}
+          {error ? (
+            <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] px-3 py-2 text-sm text-[var(--erp-danger)]" role="alert">
+              {error}
+            </p>
           ) : null}
           <div className="flex flex-wrap justify-end gap-2">
             <Button type="button" variant="secondary" onClick={() => void downloadWorkbook(false)} disabled={isGenerating}>
-              <Download aria-hidden="true" className="mr-1.5 h-4 w-4" />
+              <Download aria-hidden="true" className="h-4 w-4" />
               Download blank template
             </Button>
-            <Button type="button" variant="secondary" onClick={() => setIsOpen(false)} disabled={isPending}>
+            <Button type="button" variant="secondary" onClick={() => setIsOpen(false)} disabled={isSaving}>
               Close
             </Button>
-            <Button type="button" variant="primary" onClick={importSelectedWorkbook} disabled={!selectedFile || isPending}>
-              {isPending ? "Importing..." : "Import workbook"}
+            <Button type="button" onClick={() => void saveWorkbook()} disabled={!selectedFile || isSaving}>
+              {isSaving ? "Saving to server..." : "Save to Import History"}
             </Button>
           </div>
         </div>

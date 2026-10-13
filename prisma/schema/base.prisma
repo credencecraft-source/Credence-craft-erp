@@ -177,10 +177,110 @@ model Organization {
   distributionQuotations        DistributionQuotation[]
   distributionQuotationLines    DistributionQuotationLine[]
   auditEvents                   AuditEvent[]
+  masterImportJobs                MasterImportJob[]
+  masterImportJobRows             MasterImportJobRow[]
+  masterImportJobFileChunks       MasterImportJobFileChunk[]
 
   @@index([plan_id])
   @@index([database_connection_id])
   @@map("organizations")
+}
+
+enum MasterImportJobStatus {
+  UPLOADING
+  UPLOADED
+  STAGED
+  VALIDATED
+  IMPORTING
+  PARTIAL
+  COMPLETED
+  FAILED
+}
+
+enum MasterImportJobRowStatus {
+  PENDING
+  STAGED
+  VALIDATED
+  INVALID
+  CORRECTED
+  IMPORTING
+  IMPORTED
+  FAILED
+  SKIPPED
+}
+
+model MasterImportJob {
+  id                         String                 @id @default(cuid())
+  organization_id            String
+  module_key                 String                 @db.VarChar(100)
+  status                     MasterImportJobStatus  @default(UPLOADED)
+  uploaded_file_name         String                 @db.VarChar(255)
+  uploaded_file_size         Int
+  file_chunk_count           Int                    @default(0)
+  uploaded_file_chunks       Int                    @default(0)
+  source_sha256              String                 @db.VarChar(64)
+  encrypted_source_file      Bytes
+  total_rows                 Int                    @default(0)
+  processed_rows             Int                    @default(0)
+  successful_rows            Int                    @default(0)
+  failed_rows                Int                    @default(0)
+  checkpoint                 String?                @db.VarChar(120)
+  created_by_user_id         String
+  updated_by_user_id         String
+  created_at                 DateTime               @default(now())
+  updated_at                 DateTime               @updatedAt
+  staged_at                  DateTime?
+  validated_at               DateTime?
+  started_at                 DateTime?
+  completed_at               DateTime?
+  failed_at                  DateTime?
+  expires_at                 DateTime
+
+  organization Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  rows         MasterImportJobRow[]
+  fileChunks   MasterImportJobFileChunk[]
+
+  @@unique([organization_id, id])
+  @@index([organization_id, created_at])
+  @@index([organization_id, status, created_at])
+  @@index([organization_id, expires_at])
+  @@map("master_import_jobs")
+}
+
+model MasterImportJobRow {
+  id                    String                   @id @default(cuid())
+  organization_id       String
+  job_id                String
+  row_number            Int
+  status                MasterImportJobRowStatus @default(PENDING)
+  checkpoint            String?                  @db.VarChar(120)
+  encrypted_payload     Bytes
+  updated_by_user_id    String
+  created_at            DateTime                 @default(now())
+  updated_at            DateTime                 @updatedAt
+
+  organization Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  job          MasterImportJob @relation(fields: [organization_id, job_id], references: [organization_id, id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([organization_id, job_id, row_number])
+  @@index([organization_id, job_id, status, row_number])
+  @@map("master_import_job_rows")
+}
+
+model MasterImportJobFileChunk {
+  id                String          @id @default(cuid())
+  organization_id   String
+  job_id            String
+  chunk_index       Int
+  byte_size         Int
+  sha256            String          @db.VarChar(64)
+  encrypted_data    Bytes
+  created_at        DateTime        @default(now())
+  organization      Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  job               MasterImportJob @relation(fields: [organization_id, job_id], references: [organization_id, id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([organization_id, job_id, chunk_index])
+  @@map("master_import_job_file_chunks")
 }
 
 model OrganizationTaxProfile {

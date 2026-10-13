@@ -7,7 +7,6 @@ import { Plus } from "lucide-react";
 
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import ContactMasterExcelActions from "@/components/master-data/contact-master-excel-actions";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import type { ContactWorkbookRecord } from "@/lib/master-data/contact-records-workbook-parser";
 
@@ -33,6 +32,7 @@ const ROLE_LABELS: Record<string, string> = {
 export default function ContactMasterManager({ organizationId, workspaceId }: { organizationId: string; workspaceId: string }) {
   const router = useRouter();
   const [contacts, setContacts] = useState<ContactRecord[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [visibleFields, setVisibleFields] = useState<string[]>(CONTACT_REPORT_FIELDS.map(({ key }) => key));
   const [loading, setLoading] = useState(true);
@@ -70,6 +70,7 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
       const response = await fetch(`${endpoint}/${encodeURIComponent(contact.id)}`, { method: "DELETE" });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error ?? "Unable to deactivate contact.");
+      setSelectedIds((current) => current.filter((id) => id !== contact.id));
       setNotice("Contact deactivated. Existing documents are unchanged.");
       await loadContacts(search);
     } catch (deactivateError) {
@@ -77,10 +78,79 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
     }
   };
 
-  const workbookContacts = contacts.map(({ roles, ...contact }) => ({
-    ...contact,
-    roles: roles.map((role) => ({ role_code: role.role_code })),
-  }));
+  const deactivateSelectedContacts = async () => {
+    const activeIds = contacts
+      .filter((contact) => selectedIds.includes(contact.id) && contact.is_active)
+      .map((contact) => contact.id);
+    if (activeIds.length === 0) {
+      setNotice("No active selected contacts to deactivate.");
+      return;
+    }
+    if (!window.confirm(`Deactivate ${activeIds.length} selected contact${activeIds.length === 1 ? "" : "s"}?`)) return;
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(endpoint, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactIds: activeIds }),
+      });
+      const result = await response.json() as { error?: unknown; deactivatedCount?: unknown };
+      if (!response.ok) {
+        throw new Error(typeof result.error === "string" ? result.error : "Unable to deactivate selected contacts.");
+      }
+      if (typeof result.deactivatedCount !== "number" || !Number.isSafeInteger(result.deactivatedCount) || result.deactivatedCount < 0) {
+        throw new Error("The contact deactivation response was invalid.");
+      }
+      setSelectedIds([]);
+      setNotice(`${result.deactivatedCount} contact${result.deactivatedCount === 1 ? "" : "s"} deactivated. Existing documents are unchanged.`);
+      await loadContacts(search);
+    } catch (deactivateError) {
+      setError(deactivateError instanceof Error ? deactivateError.message : "Unable to deactivate selected contacts.");
+    }
+  };
+
+  const deleteUnusedSelectedContacts = async () => {
+    if (selectedIds.length === 0) return;
+    if (!window.confirm(
+      `Permanently delete selected contacts that are not used? Contacts referenced by orders or other records will be retained.`,
+    )) return;
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(endpoint, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactIds: selectedIds, operation: "delete-unused" }),
+      });
+      const result = await response.json() as {
+        error?: unknown;
+        deletedCount?: unknown;
+        retainedContactCodes?: unknown;
+      };
+      if (!response.ok) {
+        throw new Error(typeof result.error === "string" ? result.error : "Unable to delete selected contacts.");
+      }
+      if (
+        typeof result.deletedCount !== "number"
+        || !Number.isSafeInteger(result.deletedCount)
+        || result.deletedCount < 0
+        || !Array.isArray(result.retainedContactCodes)
+        || result.retainedContactCodes.some((code) => typeof code !== "string")
+      ) {
+        throw new Error("The contact deletion response was invalid.");
+      }
+      setSelectedIds([]);
+      const retainedCount = result.retainedContactCodes.length;
+      setNotice(
+        `${result.deletedCount} unused contact${result.deletedCount === 1 ? "" : "s"} deleted.`
+        + (retainedCount ? ` ${retainedCount} used contact${retainedCount === 1 ? " was" : "s were"} retained: ${result.retainedContactCodes.join(", ")}.` : ""),
+      );
+      await loadContacts(search);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete selected contacts.");
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -107,10 +177,22 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
         onVisibleFieldsChange={(fields) => setVisibleFields(fields.map(String))}
         storageKey={`contact-master-report-columns-${organizationId}`}
         rowIdSelector={(contact) => contact.id}
-        selectedIds={[]}
-        selectable={false}
+        selectedIds={selectedIds}
+        onToggleSelectAll={(checked, recordIds) => {
+          setSelectedIds((current) => checked
+            ? [...new Set([...current, ...recordIds])]
+            : current.filter((id) => !recordIds.includes(id)));
+        }}
+        onToggleRowSelection={(contactId, checked) => {
+          setSelectedIds((current) => checked
+            ? [...new Set([...current, contactId])]
+            : current.filter((id) => id !== contactId));
+        }}
         onRowClick={(contactId) => router.push(`${basePath}/${encodeURIComponent(contactId)}`)}
-        toolbarActions={<ContactMasterExcelActions contacts={workbookContacts} endpoint={endpoint} />}
+        onDeleteSelected={() => void deactivateSelectedContacts()}
+        deleteSelectedLabel="Deactivate selected"
+        onBulkDeleteSelected={() => void deleteUnusedSelectedContacts()}
+        bulkDeleteSelectedLabel="Delete unused"
         onSearchQueryChange={setSearch}
         getSearchValue={(fieldKey, contact) => {
           switch (fieldKey) {

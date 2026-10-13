@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  prisma: { $transaction: vi.fn(), advanceBooking: { findFirst: vi.fn(), findMany: vi.fn() } },
+  prisma: {
+    $transaction: vi.fn(),
+    advanceBooking: { findFirst: vi.fn(), findMany: vi.fn() },
+    finishedGoodsGeneralStockReceipt: { findMany: vi.fn() },
+  },
   transaction: {
     merchandisingOrder: { findFirst: vi.fn() },
     masterVendor: { findFirst: vi.fn() },
@@ -31,6 +35,7 @@ import {
 describe("advance-booking persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.prisma.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
     mocks.prisma.$transaction.mockImplementation((callback: (transaction: typeof mocks.transaction) => Promise<unknown>) =>
       callback(mocks.transaction));
     mocks.transaction.merchandisingOrder.findFirst.mockResolvedValue({
@@ -298,6 +303,11 @@ describe("advance-booking persistence", () => {
       bookingRow,
       { ...bookingRow, id: "booking-record-2", booking_no: "BK-2" },
     ]);
+    mocks.prisma.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([{
+      order_id: "order-1",
+      size: "m",
+      current_stock: 4,
+    }]);
 
     const result = await listAdvanceBookings("internal-org-1", { limit: 1 });
 
@@ -311,9 +321,17 @@ describe("advance-booking persistence", () => {
       totalBooked: 30,
       totalAssigned: 30,
       totalAllocated: 30,
-      sizes: [{ assignedQuantity: 30 }],
+      sizes: [{ assignedQuantity: 30, generalInventoryAvailableQuantity: 4 }],
     });
     expect(result.bookings).toHaveLength(1);
+    expect(mocks.prisma.finishedGoodsGeneralStockReceipt.findMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: "internal-org-1",
+        order_id: { in: ["order-1"] },
+        current_stock: { gt: 0 },
+      },
+      select: { order_id: true, size: true, current_stock: true },
+    });
     expect(result.nextCursor).toBeTruthy();
     expect(mocks.prisma.advanceBooking.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: "internal-org-1" },

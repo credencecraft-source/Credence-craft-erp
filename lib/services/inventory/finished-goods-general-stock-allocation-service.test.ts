@@ -1,0 +1,300 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
+
+const mocks = vi.hoisted(() => ({
+  prisma: {
+    $transaction: vi.fn(),
+    finishedGoodsGeneralStockReceipt: { findMany: vi.fn() },
+  },
+  transaction: {
+    advanceBooking: { findFirst: vi.fn() },
+    finishedGoodsGeneralStockReceipt: { findMany: vi.fn(), updateMany: vi.fn() },
+    advanceBookingWorkOrderAssignment: { create: vi.fn(), updateMany: vi.fn() },
+    workOrderInventoryGrnBookingAllocation: { create: vi.fn(), updateMany: vi.fn() },
+    finishedGoodsAllocatedStockReceipt: { create: vi.fn(), updateMany: vi.fn() },
+    finishedGoodsStock: { upsert: vi.fn() },
+  },
+  createAuditEvent: vi.fn(),
+}));
+
+vi.mock("@/lib/database/prisma-client", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/services/organizations/audit-event-service", () => ({ createAuditEvent: mocks.createAuditEvent }));
+
+import {
+  allocateAdvanceBookingFromGeneralStock,
+  listGeneralFinishedGoodsAvailability,
+} from "./finished-goods-general-stock-allocation-service";
+
+const bookingRecord = {
+  id: "booking-1",
+  booking_no: "BK-1",
+  order_id: "order-1",
+  quotationLines: [{ quotation: { parentQuotation: { id: "sales-order-1" } } }],
+  sizeLines: [{
+    id: "booking-size-1",
+    size: "M",
+    booked_quantity: 10,
+    assignments: [],
+  }],
+};
+
+const generalStockReceipt = {
+  id: "general-receipt-1",
+  organization_id: "organization-1",
+  entity_id: "entity-1",
+  location_id: "location-1",
+  grn_id: "grn-1",
+  grn_line_id: "grn-line-1",
+  work_order_id: "work-order-1",
+  order_id: "order-1",
+  grn_no: "GRN-1",
+  grn_date: new Date("2026-10-01T00:00:00.000Z"),
+  work_order_no: "WO-1",
+  order_no: "ORD-1",
+  article_no: "ART-1",
+  style_name: "Style 1",
+  brand: "Brand",
+  buyer: "Buyer",
+  product_category: "Shirt",
+  colour: "Blue",
+  size: "M",
+  buyer_size: "M",
+  received_quantity: 10,
+  actual_received_quantity: 10,
+  approved_quantity: 10,
+  rejected_quantity: 0,
+  quantity_in: 8,
+  quantity_out: 0,
+  current_stock: 8,
+  created_by: "factory@example.test",
+  verified_by: "inventory@example.test",
+  posted_at: new Date("2026-10-02T00:00:00.000Z"),
+  created_at: new Date("2026-10-02T00:00:00.000Z"),
+  grnLine: {
+    workOrderSizeLine: {
+      id: "work-order-size-1",
+      work_order_id: "work-order-1",
+      quantity: 20,
+      bookingAssignments: [],
+    },
+    bookingAllocations: [],
+  },
+};
+
+describe("finished-goods general-stock allocation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.prisma.$transaction.mockImplementation(
+      (callback: (transaction: typeof mocks.transaction) => Promise<unknown>) => callback(mocks.transaction),
+    );
+    mocks.transaction.advanceBooking.findFirst.mockResolvedValue(structuredClone(bookingRecord));
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([
+      structuredClone(generalStockReceipt),
+    ]);
+    mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.advanceBookingWorkOrderAssignment.create.mockResolvedValue({ id: "assignment-1" });
+    mocks.transaction.advanceBookingWorkOrderAssignment.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.workOrderInventoryGrnBookingAllocation.create.mockResolvedValue({ id: "grn-allocation-1" });
+    mocks.transaction.workOrderInventoryGrnBookingAllocation.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.finishedGoodsAllocatedStockReceipt.create.mockResolvedValue({ id: "allocated-receipt-1" });
+    mocks.transaction.finishedGoodsAllocatedStockReceipt.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.finishedGoodsStock.upsert.mockResolvedValue({});
+  });
+
+  it("moves available size-matched stock into allocated inventory and creates the work-order assignment", async () => {
+    const result = await allocateAdvanceBookingFromGeneralStock("organization-1", "user-1", "booking-1");
+
+    expect(result).toEqual({
+      bookingId: "booking-1",
+      bookingNo: "BK-1",
+      allocatedLines: [{ size: "M", quantity: 8 }],
+    });
+    expect(mocks.transaction.advanceBookingWorkOrderAssignment.create).toHaveBeenCalledWith({
+      data: {
+        organization_id: "organization-1",
+        booking_size_line_id: "booking-size-1",
+        work_order_id: "work-order-1",
+        work_order_size_line_id: "work-order-size-1",
+        assigned_quantity: 8,
+        created_by: "user-1",
+      },
+      select: { id: true },
+    });
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).toHaveBeenCalledWith({
+      where: { id: "general-receipt-1", organization_id: "organization-1", current_stock: 8 },
+      data: { quantity_out: { increment: 8 }, current_stock: { decrement: 8 } },
+    });
+    expect(mocks.transaction.workOrderInventoryGrnBookingAllocation.create).toHaveBeenCalledWith({
+      data: {
+        organization_id: "organization-1",
+        grn_line_id: "grn-line-1",
+        booking_assignment_id: "assignment-1",
+        allocated_quantity: 8,
+        created_by: "user-1",
+      },
+      select: { id: true },
+    });
+    expect(mocks.transaction.finishedGoodsAllocatedStockReceipt.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        booking_id: "booking-1",
+        booking_size_line_id: "booking-size-1",
+        booking_assignment_id: "assignment-1",
+        grn_allocation_id: "grn-allocation-1",
+        quantity_in: 8,
+        current_stock: 8,
+      }),
+      select: { id: true },
+    });
+    expect(mocks.transaction.finishedGoodsStock.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { quantity_reserved: { increment: new Prisma.Decimal(8) } },
+    }));
+    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      action: "ALLOCATE_GENERAL_FINISHED_GOODS_TO_BOOKING",
+      entityId: "booking-1",
+    }), mocks.transaction);
+  });
+
+  it("caps allocation at the remaining booking and work-order size balances", async () => {
+    const receipt = structuredClone(generalStockReceipt);
+    receipt.current_stock = 15;
+    receipt.grnLine.workOrderSizeLine.quantity = 6;
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([receipt]);
+
+    await allocateAdvanceBookingFromGeneralStock("organization-1", "user-1", "booking-1");
+
+    expect(mocks.transaction.advanceBookingWorkOrderAssignment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ assigned_quantity: 6 }),
+    }));
+    expect(mocks.transaction.workOrderInventoryGrnBookingAllocation.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ allocated_quantity: 6 }),
+    }));
+  });
+
+  it("uses a matching existing assignment's unfulfilled balance before extending it", async () => {
+    const existingAssignment = {
+      id: "assignment-1",
+      work_order_id: "work-order-1",
+      work_order_size_line_id: "work-order-size-1",
+      assigned_quantity: 4,
+      grnAllocations: [{ allocated_quantity: 2 }],
+    };
+    const booking = {
+      ...structuredClone(bookingRecord),
+      sizeLines: [{
+        ...structuredClone(bookingRecord.sizeLines[0]),
+        assignments: [existingAssignment],
+      }],
+    };
+    mocks.transaction.advanceBooking.findFirst.mockResolvedValue(booking);
+    const receipt = {
+      ...structuredClone(generalStockReceipt),
+      grnLine: {
+        ...structuredClone(generalStockReceipt.grnLine),
+        workOrderSizeLine: {
+          ...structuredClone(generalStockReceipt.grnLine.workOrderSizeLine),
+          quantity: 10,
+          bookingAssignments: [{
+            id: "assignment-1",
+            booking_size_line_id: "booking-size-1",
+            assigned_quantity: 4,
+          }],
+        },
+        bookingAllocations: [{
+          id: "grn-allocation-existing",
+          booking_assignment_id: "assignment-1",
+          allocated_quantity: 2,
+          finishedGoodsStockReceipt: { id: "allocated-receipt-existing", current_stock: 2 },
+        }],
+      },
+    };
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([receipt]);
+
+    await allocateAdvanceBookingFromGeneralStock("organization-1", "user-1", "booking-1");
+
+    expect(mocks.transaction.advanceBookingWorkOrderAssignment.updateMany).toHaveBeenCalledWith({
+      where: { id: "assignment-1", organization_id: "organization-1" },
+      data: { assigned_quantity: { increment: 6 } },
+    });
+    expect(mocks.transaction.workOrderInventoryGrnBookingAllocation.create).not.toHaveBeenCalled();
+    expect(mocks.transaction.workOrderInventoryGrnBookingAllocation.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "grn-allocation-existing",
+        organization_id: "organization-1",
+        allocated_quantity: 2,
+      },
+      data: { allocated_quantity: { increment: 8 } },
+    });
+    expect(mocks.transaction.finishedGoodsAllocatedStockReceipt.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "allocated-receipt-existing",
+        organization_id: "organization-1",
+        current_stock: 2,
+      },
+      data: {
+        quantity_in: { increment: 8 },
+        current_stock: { increment: 8 },
+      },
+    });
+    expect(mocks.transaction.advanceBookingWorkOrderAssignment.create).not.toHaveBeenCalled();
+  });
+
+  it("does not assign general stock beyond a booking's existing assignment balance", async () => {
+    const booking = {
+      ...structuredClone(bookingRecord),
+      sizeLines: [{
+        ...structuredClone(bookingRecord.sizeLines[0]),
+        assignments: [{
+          id: "other-work-order-assignment",
+          work_order_id: "other-work-order",
+          work_order_size_line_id: "other-work-order-size",
+          assigned_quantity: 10,
+          grnAllocations: [],
+        }],
+      }],
+    };
+    mocks.transaction.advanceBooking.findFirst.mockResolvedValue(booking);
+    const receipt = structuredClone(generalStockReceipt);
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([receipt]);
+    receipt.grnLine.workOrderSizeLine.quantity = 20;
+
+    await expect(allocateAdvanceBookingFromGeneralStock("organization-1", "user-1", "booking-1"))
+      .rejects.toThrow("No unassigned booking quantity");
+
+    expect(mocks.transaction.advanceBookingWorkOrderAssignment.create).not.toHaveBeenCalled();
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("requires a sales order and does not mutate inventory before that stage", async () => {
+    const booking = {
+      ...structuredClone(bookingRecord),
+      quotationLines: [{ quotation: { parentQuotation: null } }],
+    };
+    mocks.transaction.advanceBooking.findFirst.mockResolvedValue(booking);
+
+    await expect(allocateAdvanceBookingFromGeneralStock("organization-1", "user-1", "booking-1"))
+      .rejects.toThrow("Create a Sales Order");
+
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.findMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not expose another organization's general-stock balances", async () => {
+    mocks.prisma.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([{
+      order_id: "order-1",
+      size: "M",
+      current_stock: 5,
+    }]);
+
+    const result = await listGeneralFinishedGoodsAvailability("organization-1", ["order-1", "order-1"]);
+
+    expect(mocks.prisma.finishedGoodsGeneralStockReceipt.findMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: "organization-1",
+        order_id: { in: ["order-1"] },
+        current_stock: { gt: 0 },
+      },
+      select: { order_id: true, size: true, current_stock: true },
+    });
+    expect(result.get("order-1")?.get("M")).toBe(5);
+  });
+});

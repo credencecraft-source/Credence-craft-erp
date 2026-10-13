@@ -19,7 +19,10 @@ import {
   ORGANIZATION_MASTER_SETUP_INLINE_CHILDREN,
 } from "@/lib/master-data/organization-master-setup-stages";
 import { createOrganizationMasterSetupWorkbook } from "@/lib/services/master-data/organization-master-setup-workbook-service";
-import { parseOrganizationMasterSetupWorkbook } from "./organization-master-setup-workbook";
+import {
+  parseOrganizationMasterSetupWorkbook,
+  validateOrganizationMasterSetupWorkbookCorrection,
+} from "./organization-master-setup-workbook";
 
 describe("organization master setup Excel workbooks", () => {
   it("places lookup parents before dependent categories and subcategories", () => {
@@ -120,6 +123,53 @@ describe("organization master setup Excel workbooks", () => {
       label: "Shirt",
       fields: { Product_Master: "finished-goods-id" },
     });
+  });
+
+  it("keeps valid setup rows and allows invalid lookup rows to be corrected and revalidated", async () => {
+      const definitions = getOrganizationMasterSetupDefinitions("related").map((definition) => ({
+        key: definition.key,
+        label: definition.label,
+        labelField: definition.labelField,
+        fields: getOrganizationMasterSetupFields(definition),
+      }));
+      const categoryDefinition = definitions.find((definition) => definition.key === "category")!;
+      const workbook = XLSX.utils.book_new();
+      const categoryFields = categoryDefinition.fields.filter((field) => !field.readOnly);
+      const rows = [
+        categoryFields.map((field) => field.label),
+        ["Finished Goods", "Shirt"],
+        ["Unknown Type", "Tops"],
+      ];
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.aoa_to_sheet(rows),
+        getOrganizationMasterSetupSheetName(definitions.indexOf(categoryDefinition), categoryDefinition.label),
+      );
+      const file = Object.assign(
+        new Blob([XLSX.write(workbook, { type: "array", bookType: "xlsx" })]),
+        { name: "related-step.xlsx" },
+      ) as File;
+      const lookups = { "product-master": [{ id: "finished-goods-id", label: "Finished Goods" }] };
+
+      const parsed = await parseOrganizationMasterSetupWorkbook(file, definitions, lookups, true);
+      expect(parsed.records).toContainEqual({
+        moduleKey: "category",
+        label: "Shirt",
+        fields: { Product_Master: "finished-goods-id" },
+      });
+      expect(parsed.corrections).toHaveLength(1);
+      expect(parsed.corrections[0].values.Product_Master).toBe("Unknown Type");
+
+      parsed.corrections[0].values.Product_Master = "Finished Goods";
+      expect(validateOrganizationMasterSetupWorkbookCorrection(
+        parsed.corrections[0],
+        categoryDefinition,
+        lookups,
+      )).toEqual([{
+        moduleKey: "category",
+        label: "Tops",
+        fields: { Product_Master: "finished-goods-id" },
+      }]);
   });
 
   it("parses finished-goods and raw-material subcategories from their category rows", async () => {

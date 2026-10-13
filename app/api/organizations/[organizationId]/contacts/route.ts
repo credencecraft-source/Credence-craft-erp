@@ -3,7 +3,12 @@ import { Prisma } from "@prisma/client";
 
 import { getSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
-import { createContact, listContacts } from "@/lib/services/master-data/contact-master-service";
+import {
+  createContact,
+  deactivateContacts,
+  deleteUnusedContacts,
+  listContacts,
+} from "@/lib/services/master-data/contact-master-service";
 import { ContactValidationError } from "@/lib/services/master-data/contact-master-validation";
 import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 
@@ -44,7 +49,7 @@ function handleError(error: unknown, operation: string) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     console.error("Contact master request failed.", { operation, code: error.code });
     if (error.code === "P2002") return NextResponse.json({ error: "A contact code or GSTIN already exists in this organization." }, { status: 409 });
-    if (error.code === "P2003" || error.code === "P2014") return NextResponse.json({ error: "This contact detail is still referenced and cannot be changed." }, { status: 409 });
+    if (error.code === "P2003" || error.code === "P2014") return NextResponse.json({ error: "This contact or one of its linked records is still referenced and cannot be changed or deleted." }, { status: 409 });
     if (error.code === "P2021" || error.code === "P2022") {
       return NextResponse.json({ error: "Contact master database migration is pending. Apply the approved migration before using this module." }, { status: 503 });
     }
@@ -99,5 +104,38 @@ export async function POST(
     );
   } catch (error) {
     return handleError(error, "create");
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ organizationId: string }> },
+) {
+  const { organizationId: organizationPublicId } = await context.params;
+  try {
+    const auth = await authorizedContext(organizationPublicId);
+    if (!auth.authorized) return auth.response;
+    const body = await parseJson(request);
+    if (
+      !body
+      || typeof body !== "object"
+      || Array.isArray(body)
+      || !("contactIds" in body)
+      || !Array.isArray(body.contactIds)
+    ) {
+      throw new ContactValidationError("Contact IDs must be provided as an array.");
+    }
+    const operation = "operation" in body ? body.operation : "deactivate";
+    if (operation !== "deactivate" && operation !== "delete-unused") {
+      throw new ContactValidationError("Contact bulk operation is invalid.");
+    }
+    const result = operation === "delete-unused"
+      ? await deleteUnusedContacts(auth.organizationId, auth.userId, body.contactIds)
+      : await deactivateContacts(auth.organizationId, auth.userId, body.contactIds);
+    return result
+      ? NextResponse.json(result)
+      : NextResponse.json({ error: "One or more contacts were not found." }, { status: 404 });
+  } catch (error) {
+    return handleError(error, "bulk-contact-operation");
   }
 }

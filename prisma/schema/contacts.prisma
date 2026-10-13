@@ -35,15 +35,15 @@ model Contact {
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 
-  organization     Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  roles            ContactRoleAssignment[]
+  organization      Organization             @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  roles             ContactRoleAssignment[]
   tax_registrations ContactTaxRegistration[]
-  addresses        ContactAddress[]
-  bank_accounts    ContactBankAccount[]
-  purchase_orders  PurchaseOrder[]
-  sales_orders     MerchandisingOrder[]
-  legacy_vendors   MasterVendor[]
-  legacy_buyers    MasterBuyer[]
+  addresses         ContactAddress[]
+  bank_accounts     ContactBankAccount[]
+  purchase_orders   PurchaseOrder[]
+  sales_orders      MerchandisingOrder[]
+  legacy_vendors    MasterVendor[]
+  legacy_buyers     MasterBuyer[]
 
   @@unique([organization_id, id])
   @@unique([organization_id, code])
@@ -62,10 +62,10 @@ model ContactCodeCounter {
 }
 
 model ContactRoleDefinition {
-  code             String  @id @db.VarChar(40)
-  label            String  @db.VarChar(100)
-  is_active        Boolean @default(true)
-  assignments      ContactRoleAssignment[]
+  code        String                  @id @db.VarChar(40)
+  label       String                  @db.VarChar(100)
+  is_active   Boolean                 @default(true)
+  assignments ContactRoleAssignment[]
 
   @@map("contact_role_definitions")
 }
@@ -77,9 +77,9 @@ model ContactRoleAssignment {
   is_active       Boolean  @default(true)
   created_at      DateTime @default(now())
 
-  organization Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  contact      Contact               @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Cascade)
-  role         ContactRoleDefinition @relation(fields: [role_code], references: [code], onDelete: Restrict)
+  organization    Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  contact         Contact               @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Cascade)
+  role            ContactRoleDefinition @relation(fields: [role_code], references: [code], onDelete: Restrict)
   purchase_orders PurchaseOrder[]
   sales_orders    MerchandisingOrder[]
 
@@ -89,17 +89,17 @@ model ContactRoleAssignment {
 }
 
 model ContactTaxRegistration {
-  id                String                        @id @default(cuid())
+  id                String                       @id @default(cuid())
   organization_id   String
   contact_id        String
-  gstin             String                        @db.VarChar(15)
-  state_code        String                        @db.VarChar(2)
-  legal_name        String                        @db.VarChar(200)
-  registration_type ContactTaxRegistrationType    @default(REGULAR)
-  status            ContactTaxRegistrationStatus  @default(ACTIVE)
+  gstin             String                       @db.VarChar(15)
+  state_code        String                       @db.VarChar(2)
+  legal_name        String                       @db.VarChar(200)
+  registration_type ContactTaxRegistrationType   @default(REGULAR)
+  status            ContactTaxRegistrationStatus @default(ACTIVE)
   verified_at       DateTime?
-  created_at        DateTime                      @default(now())
-  updated_at        DateTime                      @updatedAt
+  created_at        DateTime                     @default(now())
+  updated_at        DateTime                     @updatedAt
 
   organization Organization     @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   contact      Contact          @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Cascade)
@@ -112,28 +112,28 @@ model ContactTaxRegistration {
 }
 
 model ContactAddress {
-  id                   String              @id @default(cuid())
-  organization_id      String
-  contact_id           String
-  tax_registration_id  String?
-  label                String?             @db.VarChar(80)
-  usage                ContactAddressUsage
-  address_line_1       String              @db.VarChar(200)
-  address_line_2       String?             @db.VarChar(200)
-  city                 String              @db.VarChar(100)
-  state_name           String              @db.VarChar(100)
-  state_code           String?             @db.VarChar(2)
-  postal_code          String              @db.VarChar(20)
-  country_code         String              @default("IN") @db.Char(2)
-  is_default_billing   Boolean             @default(false)
-  is_default_shipping  Boolean             @default(false)
-  is_active            Boolean             @default(true)
-  created_at           DateTime            @default(now())
-  updated_at           DateTime            @updatedAt
+  id                  String              @id @default(cuid())
+  organization_id     String
+  contact_id          String
+  tax_registration_id String?
+  label               String?             @db.VarChar(80)
+  usage               ContactAddressUsage
+  address_line_1      String              @db.VarChar(200)
+  address_line_2      String?             @db.VarChar(200)
+  city                String              @db.VarChar(100)
+  state_name          String              @db.VarChar(100)
+  state_code          String?             @db.VarChar(2)
+  postal_code         String              @db.VarChar(20)
+  country_code        String              @default("IN") @db.Char(2)
+  is_default_billing  Boolean             @default(false)
+  is_default_shipping Boolean             @default(false)
+  is_active           Boolean             @default(true)
+  created_at          DateTime            @default(now())
+  updated_at          DateTime            @updatedAt
 
-  organization     Organization             @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  contact          Contact                  @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Cascade)
-  tax_registration ContactTaxRegistration?   @relation(fields: [organization_id, contact_id, tax_registration_id], references: [organization_id, contact_id, id], onDelete: Restrict)
+  organization     Organization            @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  contact          Contact                 @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Cascade)
+  tax_registration ContactTaxRegistration? @relation(fields: [organization_id, contact_id, tax_registration_id], references: [organization_id, contact_id, id], onDelete: Restrict)
 
   @@index([organization_id, contact_id, usage, is_active])
   @@index([organization_id, tax_registration_id])
@@ -141,19 +141,19 @@ model ContactAddress {
 }
 
 model ContactBankAccount {
-  id                         String   @id @default(cuid())
-  organization_id            String
-  contact_id                 String
-  account_holder_name        String   @db.VarChar(200)
-  account_number_encrypted   String   @db.Text
-  account_number_last4       String   @db.Char(4)
-  ifsc_code                  String   @db.Char(11)
-  bank_name                  String   @db.VarChar(120)
-  branch                     String?  @db.VarChar(120)
-  is_default                 Boolean  @default(false)
-  is_active                  Boolean  @default(true)
-  created_at                 DateTime @default(now())
-  updated_at                 DateTime @updatedAt
+  id                       String   @id @default(cuid())
+  organization_id          String
+  contact_id               String
+  account_holder_name      String   @db.VarChar(200)
+  account_number_encrypted String   @db.Text
+  account_number_last4     String   @db.Char(4)
+  ifsc_code                String   @db.Char(11)
+  bank_name                String   @db.VarChar(120)
+  branch                   String?  @db.VarChar(120)
+  is_default               Boolean  @default(false)
+  is_active                Boolean  @default(true)
+  created_at               DateTime @default(now())
+  updated_at               DateTime @updatedAt
 
   organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   contact      Contact      @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Cascade)

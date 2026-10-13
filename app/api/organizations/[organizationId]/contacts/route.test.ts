@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   getOrganizationForUser: vi.fn(),
   requireOrganizationPermission: vi.fn(),
   createContact: vi.fn(),
+  deactivateContacts: vi.fn(),
+  deleteUnusedContacts: vi.fn(),
   listContacts: vi.fn(),
 }));
 
@@ -17,6 +19,8 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 }));
 vi.mock("@/lib/services/master-data/contact-master-service", () => ({
   createContact: mocks.createContact,
+  deactivateContacts: mocks.deactivateContacts,
+  deleteUnusedContacts: mocks.deleteUnusedContacts,
   listContacts: mocks.listContacts,
 }));
 vi.mock("@/lib/database/database-errors", () => ({
@@ -24,7 +28,7 @@ vi.mock("@/lib/database/database-errors", () => ({
   isDatabaseUnavailableError: () => false,
 }));
 
-import { GET, POST } from "./route";
+import { DELETE, GET, POST } from "./route";
 
 describe("organization contact master API", () => {
   beforeEach(() => {
@@ -34,6 +38,8 @@ describe("organization contact master API", () => {
     mocks.requireOrganizationPermission.mockResolvedValue({});
     mocks.listContacts.mockResolvedValue([]);
     mocks.createContact.mockResolvedValue({ id: "contact-1", code: "ACME-01" });
+    mocks.deactivateContacts.mockResolvedValue({ deactivatedCount: 2 });
+    mocks.deleteUnusedContacts.mockResolvedValue({ deletedCount: 1, retainedContactCodes: [] });
   });
 
   it("rejects unauthenticated contact access", async () => {
@@ -116,5 +122,66 @@ describe("organization contact master API", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.createContact).not.toHaveBeenCalled();
+  });
+
+  it("bulk-deactivates contacts through the authorized internal organization", async () => {
+    const response = await DELETE(
+      new Request("http://localhost/api/organizations/public-org/contacts", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactIds: ["contact-1", "contact-2"] }),
+      }),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("workspace-user-1", "internal-org-1", "MANAGE_MASTER_DATA");
+    expect(mocks.deactivateContacts).toHaveBeenCalledWith("internal-org-1", "workspace-user-1", ["contact-1", "contact-2"]);
+  });
+
+  it("bulk-deletes only unused contacts through the authorized internal organization", async () => {
+    const response = await DELETE(
+      new Request("http://localhost/api/organizations/public-org/contacts", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactIds: ["contact-1"], operation: "delete-unused" }),
+      }),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.deleteUnusedContacts).toHaveBeenCalledWith("internal-org-1", "workspace-user-1", ["contact-1"]);
+    expect(mocks.deactivateContacts).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid bulk contact payloads without invoking the service", async () => {
+    const response = await DELETE(
+      new Request("http://localhost/api/organizations/public-org/contacts", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactIds: "contact-1" }),
+      }),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.deactivateContacts).not.toHaveBeenCalled();
+    expect(mocks.deleteUnusedContacts).not.toHaveBeenCalled();
+  });
+
+  it("rejects unauthorized bulk contact operations before invoking the service", async () => {
+    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: Insufficient permissions."));
+    const response = await DELETE(
+      new Request("http://localhost/api/organizations/public-org/contacts", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactIds: ["contact-1"] }),
+      }),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.deactivateContacts).not.toHaveBeenCalled();
+    expect(mocks.deleteUnusedContacts).not.toHaveBeenCalled();
   });
 });

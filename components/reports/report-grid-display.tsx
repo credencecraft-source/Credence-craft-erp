@@ -33,9 +33,10 @@ interface ReportGridProps<T> {
   rowIdSelector: (record: T) => string;
   selectedIds: string[];
   selectable?: boolean;
+  rowSelectable?: (record: T) => boolean;
   onRowClick: (recordId: string) => void;
   onRecordClick?: (record: T) => void;
-  onToggleSelectAll?: (checked: boolean) => void;
+  onToggleSelectAll?: (checked: boolean, recordIds: string[]) => void;
   onToggleRowSelection?: (recordId: string, checked: boolean) => void;
   statusOptions?: readonly string[];
   selectedStatus?: string;
@@ -44,6 +45,8 @@ interface ReportGridProps<T> {
   newActionLabel?: string;
   onDeleteSelected?: () => void;
   deleteSelectedLabel?: string;
+  onBulkDeleteSelected?: () => void;
+  bulkDeleteSelectedLabel?: string;
   onBulkUpload?: () => void;
   bulkUploadLabel?: string;
   bulkUploadDisabled?: boolean;
@@ -58,6 +61,7 @@ interface ReportGridProps<T> {
   secondaryRowActionLabel?: string;
   secondaryRowActionLabelSelector?: (record: T) => string;
   secondaryRowActionDisabledSelector?: (record: T) => boolean;
+  secondaryRowActionHiddenSelector?: (record: T) => boolean;
   wrapCells?: boolean;
   toolbarActions?: ReactNode;
   onSearchQueryChange?: (query: string) => void;
@@ -77,6 +81,7 @@ function ReportGridImplementation<T>({
   rowIdSelector,
   selectedIds,
   selectable = true,
+  rowSelectable,
   onRowClick,
   onRecordClick,
   onToggleSelectAll,
@@ -88,6 +93,8 @@ function ReportGridImplementation<T>({
   newActionLabel = "+ New Order",
   onDeleteSelected,
   deleteSelectedLabel = "Delete Selected",
+  onBulkDeleteSelected,
+  bulkDeleteSelectedLabel = "Delete Selected",
   onBulkUpload,
   bulkUploadLabel = "Bulk Upload",
   bulkUploadDisabled = false,
@@ -102,6 +109,7 @@ function ReportGridImplementation<T>({
   secondaryRowActionLabel = "Action",
   secondaryRowActionLabelSelector,
   secondaryRowActionDisabledSelector,
+  secondaryRowActionHiddenSelector,
   wrapCells = false,
   toolbarActions,
   onSearchQueryChange,
@@ -208,7 +216,6 @@ function ReportGridImplementation<T>({
     [fields, visibleFields],
   );
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const allFilteredSelected = records.length > 0 && records.every((record) => selectedIdSet.has(rowIdSelector(record)));
   const activeFilterCount = Object.keys(columnFilters).length;
   const indexedFieldKeys = useMemo(
     () => [...new Set([
@@ -240,6 +247,9 @@ function ReportGridImplementation<T>({
     () => filterIndexedReportRecords(indexedRecords, deferredSearchQuery, columnFilters),
     [columnFilters, deferredSearchQuery, indexedRecords],
   );
+  const selectableRecords = filteredRecords.filter((record) => rowSelectable?.(record) ?? true);
+  const allFilteredSelected = selectableRecords.length > 0
+    && selectableRecords.every((record) => selectedIdSet.has(rowIdSelector(record)));
   const virtualizeRows = filteredRecords.length > 100;
   // The virtualizer's imperative API is required for measuring and scrolling large report tables.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -326,8 +336,14 @@ function ReportGridImplementation<T>({
           {toolbarActions}
 
           {onDeleteSelected && selectedIds.length > 0 && (
-            <Button variant="danger" size="sm" onClick={onDeleteSelected} className="h-7 px-2.5 text-[11px]">
+            <Button variant="destructive" size="sm" onClick={onDeleteSelected} className="h-7 px-2.5 text-[11px]">
               {deleteSelectedLabel} ({selectedIds.length})
+            </Button>
+          )}
+
+          {onBulkDeleteSelected && selectedIds.length > 0 && (
+            <Button variant="destructive" size="sm" onClick={onBulkDeleteSelected} className="h-7 px-2.5 text-[11px]">
+              {bulkDeleteSelectedLabel} ({selectedIds.length})
             </Button>
           )}
 
@@ -365,7 +381,13 @@ function ReportGridImplementation<T>({
                 <Checkbox
                   className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
                   checked={allFilteredSelected}
-                  onChange={(e) => onToggleSelectAll?.(e.target.checked)}
+                  disabled={selectableRecords.length === 0}
+                  onChange={(e) => onToggleSelectAll?.(
+                    e.target.checked,
+                    filteredRecords
+                      .filter((record) => rowSelectable?.(record) ?? true)
+                      .map(rowIdSelector),
+                  )}
                 />
               </th>
             )}
@@ -432,6 +454,7 @@ function ReportGridImplementation<T>({
                       <Checkbox
                         className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
                         checked={isSelected}
+                        disabled={!(rowSelectable?.(record) ?? true)}
                         onChange={(e) => onToggleRowSelection?.(recordId, e.target.checked)}
                       />
                     </td>
@@ -450,7 +473,7 @@ function ReportGridImplementation<T>({
                             {rowActionLabelSelector?.(record) ?? rowActionLabel}
                           </Button>
                         ) : null}
-                        {onSecondaryRowAction ? (
+                        {onSecondaryRowAction && !secondaryRowActionHiddenSelector?.(record) ? (
                           <Button
                             variant="secondary"
                             size="sm"
@@ -491,7 +514,7 @@ function ReportGridImplementation<T>({
                             {rowActionLabelSelector?.(record) ?? rowActionLabel}
                           </Button>
                         ) : null}
-                        {onSecondaryRowAction ? (
+                        {onSecondaryRowAction && !secondaryRowActionHiddenSelector?.(record) ? (
                           <Button
                             variant="secondary"
                             size="sm"

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
+import { normalizeUppercase } from "@/lib/utilities/text-case";
 import {
   PLATFORM_LEAD_STAGES,
   PLATFORM_LEAD_THIRD_PARTY_STAGES,
@@ -20,11 +21,12 @@ export type PlatformLeadInput = {
 };
 
 const MAX_IMPORTED_LEADS = 500;
+const GOOGLE_SHEETS_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
 
 function normalizePlatformLeadInput(input: PlatformLeadInput) {
   const name = input.name.trim();
   const email = input.email.trim().toLowerCase();
-  const mobile = input.mobile.trim().replace(/[()\s.-]/g, "");
+  const mobile = input.mobile.trim().replace(/^p:/i, "").replace(/[()\s.-]/g, "");
   const companyName = input.companyName.trim();
   const city = input.city.trim();
   const source = input.source.trim();
@@ -79,6 +81,144 @@ function normalizeImportedPlatformLead(input: PlatformLeadInput, rowNumber: numb
   }
 }
 
+function readGoogleSheetsLeads(payload: unknown): PlatformLeadInput[] {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("Google Sheets returned an invalid response.");
+  }
+
+  const response = payload as Record<string, unknown>;
+  if (response.ok !== true || !Array.isArray(response.leads)) {
+    throw new Error("Google Sheets could not provide lead data. Check that the Apps Script is saved and redeployed.");
+  }
+  if (response.leads.length > MAX_IMPORTED_LEADS) {
+    throw new Error(`Google Sheets returned more than ${MAX_IMPORTED_LEADS} leads. Sync a smaller sheet batch.`);
+  }
+
+  return response.leads.flatMap((value, index) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`Google Sheets row ${index + 2} is invalid.`);
+    }
+
+    const row = value as Record<string, unknown>;
+    if (Object.values(row).some((cell) => typeof cell === "string" && /<test lead:/i.test(cell))) {
+      return [];
+    }
+    const readText = (key: string) => {
+      const cell = row[key];
+      if (cell === undefined || cell === null) return "";
+      if (typeof cell !== "string") {
+        throw new Error(`Google Sheets row ${index + 2} has an invalid ${key} value.`);
+      }
+      return cell;
+    };
+
+    return [{
+      name: normalizeUppercase(readText("name")),
+      email: readText("email"),
+      mobile: readText("mobile"),
+      companyName: normalizeUppercase(readText("companyName")),
+      city: normalizeUppercase(readText("city")),
+      source: normalizeUppercase(readText("source") || "Google Sheets"),
+      stage: "1-new",
+      natureOfBusiness: normalizeUppercase(readText("natureOfBusiness")),
+    }];
+  });
+}
+
+function buildPlatformLeadImports(
+  adminId: string,
+  normalizedRows: ReturnType<typeof normalizePlatformLeadInput>[],
+  action: string,
+) {
+  const leads = normalizedRows.map((normalized) => ({
+    id: randomUUID(),
+    ...normalized,
+  }));
+  const auditEvents = leads.map((lead) => ({
+    platform_admin_id: adminId,
+    action,
+    entity_type: "PlatformLead",
+    entity_id: lead.id,
+    details: {
+      companyName: lead.company_name,
+      source: lead.source,
+      stage: lead.stage,
+    },
+  }));
+  return { leads, auditEvents };
+}
+
+function validateGoogleSheetsConfiguration(webAppUrl: string) {
+  const endpoint = webAppUrl.trim();
+  if (!endpoint) throw new Error("Enter the Google Apps Script web-app URL.");
+
+  let parsedEndpoint: URL;
+  try {
+    parsedEndpoint = new URL(endpoint);
+  } catch {
+    throw new Error("Enter a valid Google Apps Script web-app URL.");
+  }
+  if (
+    parsedEndpoint.protocol !== "https:" ||
+    parsedEndpoint.hostname !== "script.google.com" ||
+    !/^\/macros\/s\/[^/]+\/exec$/.test(parsedEndpoint.pathname) ||
+    parsedEndpoint.username ||
+    parsedEndpoint.password ||
+    parsedEndpoint.search ||
+    parsedEndpoint.hash
+  ) {
+    throw new Error("The URL must be a Google Apps Script web-app URL ending in /exec.");
+  }
+  return parsedEndpoint;
+}
+
+async function requestGoogleSheetsLeads(endpoint: URL) {
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "GET",
+      cache: "no-store",
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error("Google Sheets sync timed out. Try again.");
+    }
+    throw new Error("Unable to reach Google Sheets. Check the Apps Script deployment and try again.");
+  }
+  if (!response.ok) {
+    throw new Error(`Google Sheets sync endpoint returned HTTP ${response.status}.`);
+  }
+
+  const responseText = await response.text();
+  if (new TextEncoder().encode(responseText).byteLength > GOOGLE_SHEETS_RESPONSE_MAX_BYTES) {
+    throw new Error("Google Sheets returned too much data. Sync a smaller sheet batch.");
+  }
+  try {
+    return readGoogleSheetsLeads(JSON.parse(responseText));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      if (
+        response.headers.get("content-type")?.toLowerCase().includes("text/html") ||
+        /^\s*<(?:!doctype|html|head|body)\b/i.test(responseText)
+      ) {
+        throw new Error(
+          "Google Apps Script returned an HTML page instead of JSON. Replace its code with the provided doGet script, save, then update the web-app deployment to execute as you with access set to Anyone.",
+        );
+      }
+      throw new Error("Google Sheets returned an unreadable response. Check the Apps Script deployment.");
+    }
+    throw error;
+  }
+}
+
+export async function testPlatformGoogleSheetsLeadConnection(webAppUrl: string) {
+  await requirePlatformSessionAdmin();
+  const endpoint = validateGoogleSheetsConfiguration(webAppUrl);
+  const leads = await requestGoogleSheetsLeads(endpoint);
+  return { connected: true, availableLeads: leads.length };
+}
+
 export async function listPlatformLeads() {
   await requirePlatformSessionAdmin();
   return prisma.platformLead.findMany({
@@ -106,6 +246,7 @@ export async function listPlatformLeadAppLogins() {
       full_name: true,
       email: true,
       mobile_number: true,
+      created_at: true,
       last_login_at: true,
       organizationMemberships: {
         where: { is_active: true },
@@ -139,6 +280,7 @@ export async function listPlatformLeadAppLogins() {
       city: cities.join(", ") || null,
       source: "App login",
       stage: "Logged in",
+      created_at: user.created_at,
       last_login_at: user.last_login_at,
     };
   });
@@ -155,27 +297,69 @@ export async function importPlatformLeads(inputs: PlatformLeadInput[]) {
     normalizeImportedPlatformLead(input, index + 2),
   );
 
-  const leads = normalizedRows.map((normalized) => ({
-    id: randomUUID(),
-    ...normalized,
-  }));
-  const auditEvents = leads.map((lead) => ({
-    platform_admin_id: admin.id,
-    action: "PLATFORM_LEAD_IMPORTED",
-    entity_type: "PlatformLead",
-    entity_id: lead.id,
-    details: {
-      companyName: lead.company_name,
-      source: lead.source,
-      stage: lead.stage,
-    },
-  }));
+  const { leads, auditEvents } = buildPlatformLeadImports(
+    admin.id,
+    normalizedRows,
+    "PLATFORM_LEAD_IMPORTED",
+  );
 
   await prisma.$transaction([
     prisma.platformLead.createMany({ data: leads }),
     prisma.platformAuditEvent.createMany({ data: auditEvents }),
   ]);
   return leads.map(({ id }) => id);
+}
+
+export async function syncPlatformLeadsFromGoogleSheet(webAppUrl: string) {
+  const admin = await requirePlatformSessionAdmin();
+  const endpoint = validateGoogleSheetsConfiguration(webAppUrl);
+  const inputs = await requestGoogleSheetsLeads(endpoint);
+  if (inputs.length === 0) {
+    return { imported: 0, skippedDuplicates: 0 };
+  }
+  const normalizedRows = inputs.map((input, index) =>
+    normalizeImportedPlatformLead(input, index + 2),
+  );
+  const emails = [...new Set(normalizedRows.map(({ email }) => email).filter((value): value is string => value !== null))];
+  const mobiles = [...new Set(normalizedRows.map(({ mobile }) => mobile).filter((value): value is string => value !== null))];
+  const existingContacts = await prisma.platformLead.findMany({
+    where: {
+      OR: [
+        ...(emails.length ? [{ email: { in: emails } }] : []),
+        ...(mobiles.length ? [{ mobile: { in: mobiles } }] : []),
+      ],
+    },
+    select: { email: true, mobile: true },
+  });
+  const seenEmails = new Set(existingContacts.map(({ email }) => email).filter((value): value is string => Boolean(value)));
+  const seenMobiles = new Set(existingContacts.map(({ mobile }) => mobile).filter((value): value is string => Boolean(value)));
+  const newRows: ReturnType<typeof normalizePlatformLeadInput>[] = [];
+  let skippedDuplicates = 0;
+
+  for (const row of normalizedRows) {
+    const isDuplicate = Boolean(
+      (row.email && seenEmails.has(row.email)) ||
+      (row.mobile && seenMobiles.has(row.mobile)),
+    );
+    if (isDuplicate) skippedDuplicates += 1;
+    else newRows.push(row);
+    if (row.email) seenEmails.add(row.email);
+    if (row.mobile) seenMobiles.add(row.mobile);
+  }
+
+  if (newRows.length > 0) {
+    const { leads, auditEvents } = buildPlatformLeadImports(
+      admin.id,
+      newRows,
+      "PLATFORM_LEAD_GOOGLE_SHEET_IMPORTED",
+    );
+    await prisma.$transaction([
+      prisma.platformLead.createMany({ data: leads }),
+      prisma.platformAuditEvent.createMany({ data: auditEvents }),
+    ]);
+  }
+
+  return { imported: newRows.length, skippedDuplicates };
 }
 
 export async function createPlatformLead(input: PlatformLeadInput) {

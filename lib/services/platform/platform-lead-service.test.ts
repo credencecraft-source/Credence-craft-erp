@@ -84,6 +84,8 @@ import {
   updatePlatformLeadStages,
   movePlatformLeadStages,
   updatePlatformLead,
+  syncPlatformLeadsFromGoogleSheet,
+  testPlatformGoogleSheetsLeadConnection,
 } from "@/lib/services/platform/platform-lead-service";
 import {
   PLATFORM_LEAD_DEAD_STAGES,
@@ -108,16 +110,21 @@ const validInput = {
 
 describe("platform lead management", () => {
   beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     vi.clearAllMocks();
     requirePlatformSessionAdminMock.mockResolvedValue({ id: "admin-1" });
   });
 
-  it("places 3-Dead after Potential Dead in Not Interested, not the Dead tab", () => {
-    expect(PLATFORM_LEAD_STAGES.indexOf("3-Dead"))
-      .toBe(PLATFORM_LEAD_STAGES.indexOf("Potential Dead") + 1);
-    expect(PLATFORM_LEAD_NOT_INTERESTED_STAGES).toContain("3-Dead");
+  it("keeps only canonical stages in the retired status groups", () => {
+    expect(PLATFORM_LEAD_NOT_INTERESTED_STAGES).toEqual(["3-Dead"]);
     expect(PLATFORM_LEAD_THIRD_PARTY_STAGES).not.toContain("3-Dead");
     expect(PLATFORM_LEAD_DEAD_STAGES).not.toContain("3-Dead");
+    expect(PLATFORM_LEAD_DEAD_STAGES).toEqual(["MARK AS FROUD"]);
+    expect(PLATFORM_LEAD_STAGES).not.toContain("Potential Dead");
+    expect(PLATFORM_LEAD_STAGES).not.toContain("Testing WhatsApp msg");
+    expect(PLATFORM_LEAD_STAGES).not.toContain("Froud Verfication");
+    expect(PLATFORM_LEAD_STAGES).not.toContain("Hello blocked");
   });
 
   it("places 2-Potential immediately after Demo Attended", () => {
@@ -148,11 +155,7 @@ describe("platform lead management", () => {
       "Demo Attended",
       "2-Potential",
     ]);
-    expect(PLATFORM_LEAD_NOT_INTERESTED_STAGES).toEqual([
-      "Potential Dead",
-      "3-Dead",
-      "Testing WhatsApp msg",
-    ]);
+    expect(PLATFORM_LEAD_NOT_INTERESTED_STAGES).toEqual(["3-Dead"]);
     expect(PLATFORM_LEAD_VERIFIED_STAGES).toEqual([
       "Verification",
       ...PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES,
@@ -406,6 +409,7 @@ describe("platform lead management", () => {
       full_name: "Taylor Reed",
       email: "taylor@example.com",
       mobile_number: "+919876543210",
+      created_at: new Date("2025-01-15T08:00:00Z"),
       last_login_at: new Date("2026-10-02T10:30:00Z"),
       organizationMemberships: [
         { organization: { organization_name: "Acme Apparel", city: " Bengaluru ", is_active: true } },
@@ -422,12 +426,14 @@ describe("platform lead management", () => {
       city: "Bengaluru",
       source: "App login",
       stage: "Logged in",
+      created_at: new Date("2025-01-15T08:00:00Z"),
       last_login_at: new Date("2026-10-02T10:30:00Z"),
     }]);
     expect(requirePlatformSessionAdminMock).toHaveBeenCalledOnce();
     expect(findWorkspaceUsersMock).toHaveBeenCalledWith(expect.objectContaining({
       where: { last_login_at: { not: null } },
       orderBy: [{ last_login_at: "desc" }, { full_name: "asc" }],
+      select: expect.objectContaining({ created_at: true }),
     }));
   });
 
@@ -500,6 +506,97 @@ describe("platform lead management", () => {
     });
   });
 
+  it("syncs Google Sheet rows as new leads and skips known or repeated contacts", async () => {
+    vi.stubEnv("GOOGLE_SHEETS_LEADS_WEB_APP_URL", "https://script.google.com/macros/s/deployment-id/exec");
+    findLeadsMock.mockResolvedValue([
+      { email: "taylor@example.com", mobile: "+919876543210" },
+    ]);
+    createLeadsMock.mockResolvedValue({ count: 1 });
+    createAuditEventsMock.mockResolvedValue({ count: 1 });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      leads: [
+        { ...validInput, name: "Taylor Reed", mobile: "p:+91 98765-43210" },
+        { ...validInput, name: "Morgan Lee", email: "morgan@example.com", mobile: "+919812345678" },
+        { ...validInput, name: "Morgan Duplicate", email: "morgan@example.com", mobile: "+919812345678" },
+        { ...validInput, name: "<test lead: dummy data for full_name>", mobile: "p:<test lead: dummy data for phone_number>" },
+      ],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(syncPlatformLeadsFromGoogleSheet("https://script.google.com/macros/s/deployment-id/exec")).resolves.toEqual({
+      imported: 1,
+      skippedDuplicates: 2,
+    });
+    expect(fetchMock.mock.calls[0][0]).toEqual(
+      new URL("https://script.google.com/macros/s/deployment-id/exec"),
+    );
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: "GET",
+    });
+    expect(createLeadsMock.mock.calls[0][0].data).toEqual([
+      expect.objectContaining({
+        name: "MORGAN LEE",
+        email: "morgan@example.com",
+        mobile: "+919812345678",
+        stage: "1-new",
+      }),
+    ]);
+    expect(createAuditEventsMock.mock.calls[0][0].data[0]).toMatchObject({
+      platform_admin_id: "admin-1",
+      action: "PLATFORM_LEAD_GOOGLE_SHEET_IMPORTED",
+      details: { stage: "1-new" },
+    });
+  });
+
+  it("does not contact the sheet when platform authorization fails", async () => {
+    vi.stubEnv("GOOGLE_SHEETS_LEADS_WEB_APP_URL", "https://script.google.com/macros/s/deployment-id/exec");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    requirePlatformSessionAdminMock.mockRejectedValue(new Error("Not authorized."));
+
+    await expect(syncPlatformLeadsFromGoogleSheet("https://script.google.com/macros/s/deployment-id/exec")).rejects.toThrow("Not authorized.");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(createLeadsMock).not.toHaveBeenCalled();
+  });
+
+  it("tests the Google Sheets URL without writing configuration data", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      leads: [{ name: "Taylor Reed", email: "taylor@example.com", mobile: "", companyName: "", city: "", source: "", natureOfBusiness: "" }],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(testPlatformGoogleSheetsLeadConnection(
+      "https://script.google.com/macros/s/deployment-id/exec",
+    )).resolves.toEqual({ connected: true, availableLeads: 1 });
+    expect(createAuditEventMock).not.toHaveBeenCalled();
+  });
+
+  it("fails the Google Sheets connection test when the endpoint returns an error payload", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: false,
+      error: "Unauthorized",
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(testPlatformGoogleSheetsLeadConnection(
+      "https://script.google.com/macros/s/deployment-id/exec",
+    )).rejects.toThrow("Google Sheets could not provide lead data. Check that the Apps Script is saved and redeployed.");
+  });
+
+  it("explains when the Apps Script deployment returns an HTML page instead of JSON", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      "<!doctype html><html><body>Sign in</body></html>",
+      { status: 200, headers: { "Content-Type": "text/html" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(testPlatformGoogleSheetsLeadConnection(
+      "https://script.google.com/macros/s/deployment-id/exec",
+    )).rejects.toThrow("Google Apps Script returned an HTML page instead of JSON. Replace its code with the provided doGet script, save, then update the web-app deployment to execute as you with access set to Anyone.");
+  });
+
   it("rejects invalid rows before writing any imported leads", async () => {
     await expect(importPlatformLeads([
       validInput,
@@ -514,6 +611,37 @@ describe("platform lead management", () => {
     await expect(createPlatformLead({ ...validInput, email: "", mobile: "" }))
       .rejects.toThrow("Provide an email address or mobile number.");
     expect(createLeadMock).not.toHaveBeenCalled();
+  });
+
+  it("normalizes Google Sheet phone prefixes and skips placeholder test leads", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      leads: [
+        {
+          name: "Taylor Reed",
+          email: "",
+          mobile: "p:+91 88583-37112",
+          companyName: "Vinay Gupta",
+          city: "Gorakhpur",
+          source: "Google Sheets",
+          natureOfBusiness: "",
+        },
+        {
+          name: "<test lead: dummy data for full_name>",
+          email: "",
+          mobile: "p:<test lead: dummy data for phone_number>",
+          companyName: "<test lead: dummy data for company_name>",
+          city: "<test lead: dummy data for city>",
+          source: "Google Sheets",
+          natureOfBusiness: "",
+        },
+      ],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(testPlatformGoogleSheetsLeadConnection(
+      "https://script.google.com/macros/s/deployment-id/exec",
+    )).resolves.toEqual({ connected: true, availableLeads: 1 });
   });
 
   it("updates the selected lead and records changed fields", async () => {
