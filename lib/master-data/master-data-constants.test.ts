@@ -74,6 +74,27 @@ describe("create-only master insertion", () => {
     expect(models.masterColor.create).not.toHaveBeenCalled();
   });
 
+  it("skips the redundant approval cleanup when importing a new create-only master", async () => {
+    models.masterColor.create.mockResolvedValueOnce({
+      id: "created-color",
+      value_id: "created-color-value",
+    } as never);
+
+    await createMasterValueForOrganization("org-id", "color", {
+      label: "NAVY",
+      fields: { Colors: "NAVY" },
+      createOnly: true,
+    });
+
+    expect(models.approvalRequest.deleteMany).not.toHaveBeenCalled();
+    expect(models.approvalRequest.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organization_id: "org-id",
+        entity_ref_id: "created-color-value",
+      }),
+    });
+  });
+
   describe("active master lookup cache", () => {
     it("loads organization-scoped active values once and resolves dependent lookups in memory", async () => {
       (prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> })
@@ -112,6 +133,70 @@ describe("create-only master insertion", () => {
 });
 
 describe("raw material creation", () => {
+  it("resolves validated lookup values from a shared import index", async () => {
+    const lookupIndex = new Map<string, Map<string, Array<{
+      id: string;
+      value_id: string;
+      label: string;
+      parent_id: string | null;
+    }>>>();
+    const addLookup = (
+      moduleKey: string,
+      id: string,
+      label: string,
+      parentId: string | null = null,
+    ) => {
+      const entries = lookupIndex.get(moduleKey) ?? new Map();
+      const record = { id, value_id: `${id}-value`, label, parent_id: parentId };
+      for (const key of [id, record.value_id, label]) {
+        entries.set(key.toLocaleLowerCase(), [...(entries.get(key.toLocaleLowerCase()) ?? []), record]);
+      }
+      lookupIndex.set(moduleKey, entries);
+    };
+    addLookup("raw-material-category", "raw-category-id", "FABRIC");
+    addLookup("raw-material-sub-category", "raw-subcategory-id", "KNIT", "raw-category-id");
+    addLookup("uom", "uom-id", "METER");
+    addLookup("raw-material-type", "raw-type-id", "RAW");
+    addLookup("size-wise-consumption", "consumption-id", "STANDARD");
+    addLookup("brand", "brand-id", "BRAND");
+    addLookup("color", "colour-id", "BLUE");
+
+    await createMasterValueForOrganization("org-id", "raw-material", {
+      label: "CACHED LOOKUP FABRIC",
+      fields: {
+        Raw_Material_Name: "CACHED LOOKUP FABRIC",
+        Category: "raw-category-id",
+        Subcategory: "raw-subcategory-id",
+        Stock_Uom1: "uom-id",
+        Category_Type: "raw-type-id",
+        Size_Wise_Concemption: true,
+        Size_Wise_Consemption_Master: "consumption-id",
+        Brand1: "brand-id",
+        Colour: "colour-id",
+      },
+      lookupIndex,
+    });
+
+    expect(models.masterRawMaterial.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        raw_material_category_id: "raw-category-id",
+        raw_material_sub_category_id: "raw-subcategory-id",
+        stock_uom_id: "uom-id",
+        raw_material_type_id: "raw-type-id",
+        size_wise_consumption_id: "consumption-id",
+        brand_id: "brand-id",
+        colour_id: "colour-id",
+      }),
+    });
+    expect(models.masterRawMaterialCategory.findFirst).not.toHaveBeenCalled();
+    expect(models.masterRawMaterialSubCategory.findFirst).not.toHaveBeenCalled();
+    expect(models.masterUom.findFirst).not.toHaveBeenCalled();
+    expect(models.masterRawMaterialType.findFirst).not.toHaveBeenCalled();
+    expect(models.masterSizeWiseConsumption.findFirst).not.toHaveBeenCalled();
+    expect(models.masterBrand.findFirst).not.toHaveBeenCalled();
+    expect(models.masterColor.findFirst).not.toHaveBeenCalled();
+  });
+
   it("maps lookup IDs to Prisma relation columns", async () => {
     const lookups = [
       [models.masterRawMaterialCategory, "raw-category-id"],

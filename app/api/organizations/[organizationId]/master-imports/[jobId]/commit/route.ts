@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { commitNextMasterImportRow } from "@/lib/services/master-data/master-import-service";
+import {
+  commitNextMasterImportRow,
+  getMasterImportCommitLookupIndex,
+} from "@/lib/services/master-data/master-import-service";
 import {
   authorizeMasterImportRoute,
   masterImportErrorResponse,
@@ -35,6 +38,10 @@ export async function POST(
       || new Set(rowNumbers).size !== rowNumbers.length)) {
       return NextResponse.json({ error: "Select between 1 and 25 unique workbook rows to import." }, { status: 400 });
     }
+    const lookupIndex = await getMasterImportCommitLookupIndex(
+      authorization.context.organizationId,
+      jobId,
+    );
 
     if (rowNumbers !== undefined) {
       let result: Awaited<ReturnType<typeof commitNextMasterImportRow>> | null = null;
@@ -44,6 +51,7 @@ export async function POST(
           actorUserId: authorization.context.userId,
           jobId,
           rowNumber,
+          ...(lookupIndex ? { lookupIndex } : {}),
         });
         if (result.row === null || result.row.status === "FAILED"
           || result.job.status === "COMPLETED" || result.job.status === "FAILED") break;
@@ -58,6 +66,7 @@ export async function POST(
         organizationId: authorization.context.organizationId,
         actorUserId: authorization.context.userId,
         jobId,
+        ...(lookupIndex ? { lookupIndex } : {}),
       });
       if (result.row === null || result.row.status === "FAILED"
         || result.job.status === "COMPLETED" || result.job.status === "FAILED"

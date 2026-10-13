@@ -1207,6 +1207,26 @@ function getImportLookupModuleKeys(fields: Array<{
   return moduleKeys;
 }
 
+export async function getMasterImportCommitLookupIndex(
+  organizationId: string,
+  jobId: string,
+): Promise<ActiveMasterLookupIndex | undefined> {
+  const job = await prisma.masterImportJob.findFirst({
+    where: { organization_id: organizationId, id: jobId },
+    select: { module_key: true, expires_at: true },
+  });
+  if (!job) throw new MasterImportServiceError("Import job not found.", 404);
+  if (job.expires_at <= new Date()) throw new MasterImportServiceError("Import job has expired.", 410);
+  if (job.module_key === "contact") return undefined;
+
+  const definition = getMasterDefinition(job.module_key);
+  if (!definition) return undefined;
+  return loadActiveMasterLookupIndex(
+    organizationId,
+    getImportLookupModuleKeys(definition.fields),
+  );
+}
+
 export async function validateMasterImportJob(input: {
   organizationId: string;
   actorUserId: string;
@@ -1590,6 +1610,7 @@ export async function commitNextMasterImportRow(input: {
   actorUserId: string;
   jobId: string;
   rowNumber?: number;
+  lookupIndex?: ActiveMasterLookupIndex;
 }) {
   if (input.rowNumber !== undefined
     && (!Number.isSafeInteger(input.rowNumber) || input.rowNumber < 1)) {
@@ -1696,6 +1717,7 @@ export async function commitNextMasterImportRow(input: {
             input.organizationId,
             job.module_key,
             storedPayload,
+            input.lookupIndex,
           );
       const encryptedPayload = Buffer.from(encryptSecret(JSON.stringify({
         ...validation.payload,
@@ -1799,6 +1821,7 @@ export async function commitNextMasterImportRow(input: {
           code: typeof validation.payload.code === "string" ? validation.payload.code : null,
           description: typeof validation.payload.description === "string" ? validation.payload.description : null,
           fields: masterFields,
+          lookupIndex: input.lookupIndex,
           childRows: isRecord(validation.payload.childRows)
             ? Object.fromEntries(Object.entries(validation.payload.childRows).map(([key, rows]) => [
                 key,

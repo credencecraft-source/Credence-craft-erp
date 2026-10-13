@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 
@@ -184,6 +184,17 @@ function statusTone(status: string) {
   return "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] text-[var(--erp-brand)]";
 }
 
+function formatEstimatedTime(remainingRows: number) {
+  const remainingSeconds = Math.max(0, remainingRows) * 5;
+  if (remainingSeconds < 60) return `About ${remainingSeconds} seconds`;
+  const remainingMinutes = Math.ceil(remainingSeconds / 60);
+  const hours = Math.floor(remainingMinutes / 60);
+  const minutes = remainingMinutes % 60;
+  return hours > 0
+    ? `About ${hours} hr ${minutes} min`
+    : `About ${remainingMinutes} min`;
+}
+
 export default function MasterImportJobReportPage({
   workspaceId,
   organizationId,
@@ -197,6 +208,7 @@ export default function MasterImportJobReportPage({
 }) {
   const endpoint = `/api/organizations/${encodeURIComponent(organizationId)}/master-imports/${encodeURIComponent(jobId)}`;
   const historyHref = `/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/admin/migration/import-history`;
+  const automaticFlowStartedForJob = useRef<string | null>(null);
   const [job, setJob] = useState<ImportJob | null>(null);
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [plans, setPlans] = useState<ImportPlan[]>([]);
@@ -223,6 +235,9 @@ export default function MasterImportJobReportPage({
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeOperation, setActiveOperation] = useState<"stage" | "validate" | "auto-plan" | "commit" | null>(null);
   const [activePlanNumber, setActivePlanNumber] = useState<number | null>(null);
+  const [automaticPhase, setAutomaticPhase] = useState<
+    "idle" | "staging" | "planning" | "importing" | "complete" | "attention"
+  >("idle");
 
   const loadJob = useCallback(async () => {
     setIsLoading(true);
@@ -379,7 +394,7 @@ export default function MasterImportJobReportPage({
     }
   };
 
-  const processImportPlan = async (plan: ImportPlan, planIndex: number, totalPlans: number) => {
+  const processImportPlan = useCallback(async (plan: ImportPlan, planIndex: number, totalPlans: number) => {
     let remainingCount = plan.validatedCount;
     let hasMoreRows = remainingCount > 0;
     const maximumBatches = Math.ceil(remainingCount / 25) + 1;
@@ -435,7 +450,7 @@ export default function MasterImportJobReportPage({
       );
     }
     setNotice(`Plan ${plan.planNumber} completed. Starting the next planned import...`);
-  };
+  }, [endpoint]);
 
   const startImportPlan = async (plan: ImportPlan) => {
     if (!job || plan.validatedCount === 0 || isProcessing) return;
@@ -457,7 +472,7 @@ export default function MasterImportJobReportPage({
     }
   };
 
-  const loadAllPendingPlans = async () => {
+  const loadAllPendingPlans = useCallback(async () => {
     const allPlans: ImportPlan[] = [];
     let totalPlanCount: number | null = null;
     let offset = 0;
@@ -490,7 +505,7 @@ export default function MasterImportJobReportPage({
     } while (totalPlanCount !== null && offset < totalPlanCount);
 
     return allPlans;
-  };
+  }, [endpoint]);
 
   const autoStartPlannedImports = async () => {
     if (!job || isProcessing) return;
@@ -644,6 +659,160 @@ export default function MasterImportJobReportPage({
       setActiveOperation(null);
     }
   };
+
+  const runAutomaticImport = useCallback(async (initialJob: ImportJob) => {
+    setIsProcessing(true);
+    setError("");
+    setNotice("Starting the automatic stage, plan, and import flow...");
+    try {
+      let currentJob = initialJob;
+      if (currentJob.status === "COMPLETED") {
+        setAutomaticPhase("complete");
+        setNotice("This import is already complete.");
+        return;
+      }
+      if (currentJob.status === "UPLOADING" || currentJob.status === "FAILED") {
+        throw new Error("This upload cannot start automatically. Open the report and resolve its current status.");
+      }
+      if (currentJob.status === "UPLOADED") {
+        setAutomaticPhase("staging");
+        setNotice("Staging the workbook before planning...");
+        const response = await fetch(`${endpoint}/stage`, { method: "POST" });
+        const payload: unknown = await response.json();
+        if (!response.ok) throw new Error(readError(payload, "Unable to stage this workbook."));
+        if (!isRecord(payload) || !isRecord(payload.job)) {
+          throw new Error("Workbook staging response is invalid.");
+        }
+        currentJob = payload.job as ImportJob;
+        setJob(currentJob);
+        setNotice(`Staging complete: ${currentJob.totalRows} workbook rows found. Planning valid rows...`);
+      }
+
+      setAutomaticPhase("planning");
+      let validationBatchCount = 0;
+      let validatedRowsCount = 0;
+      const maximumValidationBatches = Math.max(1, Math.ceil(currentJob.totalRows / REPORT_PAGE_SIZE) + 1);
+      while (true) {
+        const query = new URLSearchParams({
+          limit: String(REPORT_PAGE_SIZE),
+          offset: "0",
+          tab: "staged",
+        });
+        const stagedResponse = await fetch(`${endpoint}?${query}`, { cache: "no-store" });
+        const stagedPayload: unknown = await stagedResponse.json();
+        if (!stagedResponse.ok) {
+          throw new Error(readError(stagedPayload, "Unable to load staged rows for automatic planning."));
+        }
+        if (!isRecord(stagedPayload) || !Array.isArray(stagedPayload.rows)
+          || !stagedPayload.rows.every(isImportRow)) {
+          throw new Error("Staged rows response is invalid.");
+        }
+        const stagedRows = stagedPayload.rows;
+        if (stagedRows.length === 0) break;
+        if (validationBatchCount >= maximumValidationBatches || stagedRows.length > REPORT_PAGE_SIZE
+          || stagedRows.some((row) => !["STAGED", "CORRECTED"].includes(row.status))) {
+          throw new Error("Staged rows exceeded the safe automatic planning limit.");
+        }
+
+        const rowNumbers = stagedRows.map((row) => row.rowNumber);
+        const validationResponse = await fetch(`${endpoint}/validate`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ rowNumbers }),
+        });
+        const validationPayload: unknown = await validationResponse.json();
+        if (!validationResponse.ok) {
+          throw new Error(readError(validationPayload, "Unable to validate staged rows."));
+        }
+        if (!isRecord(validationPayload) || !isRecord(validationPayload.job)
+          || !Array.isArray(validationPayload.validatedRowNumbers)
+          || validationPayload.validatedRowNumbers.some((rowNumber) =>
+            !Number.isSafeInteger(rowNumber) || !rowNumbers.includes(Number(rowNumber)))) {
+          throw new Error("Automatic validation response is invalid.");
+        }
+        currentJob = validationPayload.job as ImportJob;
+        setJob(currentJob);
+
+        const validatedRowNumbers = validationPayload.validatedRowNumbers as number[];
+        validatedRowsCount += validatedRowNumbers.length;
+        if (validatedRowNumbers.length > 0) {
+          const planResponse = await fetch(`${endpoint}/plans`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ rowNumbers: validatedRowNumbers }),
+          });
+          const planPayload: unknown = await planResponse.json();
+          if (!planResponse.ok) throw new Error(readError(planPayload, "Unable to plan validated rows."));
+          if (!isRecord(planPayload) || typeof planPayload.planCount !== "number"
+            || typeof planPayload.plannedRowCount !== "number") {
+            throw new Error("Automatic plan response is invalid.");
+          }
+        }
+        validationBatchCount += 1;
+        setNotice(
+          `Planning in progress: ${validatedRowsCount} valid rows prepared; invalid rows remain in Errors.`,
+        );
+      }
+
+      const planResponse = await fetch(`${endpoint}/plans`, { method: "POST" });
+      const planPayload: unknown = await planResponse.json();
+      if (!planResponse.ok) throw new Error(readError(planPayload, "Unable to finish creating import plans."));
+      if (!isRecord(planPayload) || typeof planPayload.planCount !== "number"
+        || typeof planPayload.plannedRowCount !== "number") {
+        throw new Error("Import plan response is invalid.");
+      }
+      setActiveReportTab("planned");
+      setReportPage(0);
+
+      setAutomaticPhase("importing");
+      const pendingPlans = (await loadAllPendingPlans())
+        .filter((plan) => plan.validatedCount > 0)
+        .sort((first, second) => first.planNumber - second.planNumber);
+      for (const [index, plan] of pendingPlans.entries()) {
+        setActivePlanNumber(plan.planNumber);
+        setNotice(`Importing plan ${index + 1} of ${pendingPlans.length}...`);
+        await processImportPlan(plan, index + 1, pendingPlans.length);
+      }
+      setActivePlanNumber(null);
+      await loadJob();
+      const errorQuery = new URLSearchParams({
+        limit: "1",
+        offset: "0",
+        tab: "errors",
+      });
+      const errorsResponse = await fetch(`${endpoint}?${errorQuery}`, { cache: "no-store" });
+      const errorsPayload: unknown = await errorsResponse.json();
+      if (!errorsResponse.ok || !isRecord(errorsPayload) || !isReportRowCounts(errorsPayload.rowCounts)) {
+        throw new Error(readError(errorsPayload, "Unable to verify the final import status."));
+      }
+      if (errorsPayload.rowCounts.errors > 0) {
+        setAutomaticPhase("attention");
+        setNotice("Automatic processing finished. Some rows need correction in Errors.");
+      } else {
+        setAutomaticPhase("complete");
+        setNotice("Staging, planning, and importing completed successfully.");
+      }
+    } catch (automaticError) {
+      await loadJob();
+      setAutomaticPhase("attention");
+      setError(automaticError instanceof Error
+        ? automaticError.message
+        : "Automatic import stopped. Open the report to continue manually.");
+      setNotice("Automatic processing stopped; the manual recovery controls remain available.");
+    } finally {
+      setIsProcessing(false);
+      setActiveOperation(null);
+      setActivePlanNumber(null);
+    }
+  }, [endpoint, loadAllPendingPlans, loadJob, processImportPlan]);
+
+  useEffect(() => {
+    if (!job || isLoading || automaticFlowStartedForJob.current === job.id) return;
+    if (new URLSearchParams(window.location.search).get("autoStart") !== "1") return;
+    automaticFlowStartedForJob.current = job.id;
+    const timer = window.setTimeout(() => void runAutomaticImport(job), 0);
+    return () => window.clearTimeout(timer);
+  }, [isLoading, job, runAutomaticImport]);
 
   const openErrorCorrection = (rowNumber: number) => {
     const sourceRow = rows.find((row) => row.rowNumber === rowNumber);
@@ -800,6 +969,38 @@ export default function MasterImportJobReportPage({
 
   const moduleLabel = currentModule?.label ?? job?.moduleKey ?? "Master data";
   const canStage = job?.status === "UPLOADED";
+  const remainingRecords = job
+    ? Math.max(0, job.totalRows - job.successfulRows - job.failedRows)
+    : 0;
+  const handledRecords = job
+    ? Math.min(job.totalRows, Math.max(job.processedRows, job.successfulRows + job.failedRows))
+    : 0;
+  const progressPercent = job && job.totalRows > 0
+    ? Math.floor((handledRecords / job.totalRows) * 100)
+    : 0;
+  const overallStatus = automaticPhase !== "idle"
+    ? {
+        staging: "Staging workbook",
+        planning: "Planning records",
+        importing: "Importing records",
+        complete: "Import complete",
+        attention: "Needs attention",
+      }[automaticPhase]
+    : job?.status === "UPLOADED"
+      ? "Ready to stage"
+      : job?.status === "STAGED"
+        ? "Stage complete · ready to plan"
+        : job?.status === "VALIDATED"
+          ? "Ready to plan"
+          : job?.status === "IMPORTING"
+            ? "Import in progress"
+            : job?.status === "PARTIAL"
+              ? "Needs attention"
+              : job?.status === "COMPLETED"
+                ? "Import complete"
+                : job?.status === "FAILED"
+                  ? "Stopped"
+                  : "Loading status";
   return (
     <Page>
       <Section>
@@ -870,11 +1071,50 @@ export default function MasterImportJobReportPage({
           </div>
         </header>
 
+        {job ? (
+          <Card className="space-y-3 p-4 sm:p-6">
+            <div className="flex min-w-0 flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-base font-semibold text-[var(--erp-text)]">Overall import progress</h2>
+                  <Badge className={statusTone(
+                    automaticPhase === "complete" ? "COMPLETED"
+                      : automaticPhase === "attention" ? "PARTIAL"
+                        : automaticPhase === "importing" ? "IMPORTING"
+                          : job.status,
+                  )}>
+                    {overallStatus}
+                  </Badge>
+                </div>
+                <p className="text-sm text-[var(--erp-muted)]">
+                  {handledRecords} of {job.totalRows} handled · {job.successfulRows} imported · {job.failedRows} need attention
+                </p>
+              </div>
+              <div className="min-w-0 text-sm sm:text-right">
+                <p className="font-semibold text-[var(--erp-text)]">Estimated time remaining</p>
+                <p className="text-[var(--erp-brand)]">
+                  {formatEstimatedTime(remainingRecords)}
+                </p>
+                <p className="text-xs text-[var(--erp-muted)]">
+                  Estimate uses 5 seconds per remaining record; errors need manual review.
+                </p>
+              </div>
+            </div>
+            <progress
+              className="h-2 w-full accent-[var(--erp-brand)]"
+              aria-label="Overall import progress"
+              aria-valuetext={`${handledRecords} of ${job.totalRows} records handled`}
+              max={100}
+              value={progressPercent}
+            />
+          </Card>
+        ) : null}
+
         {notice ? <p className="rounded-xl border border-[var(--erp-success)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-success)]" role="status">{notice}</p> : null}
         {error ? <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-danger)]" role="alert">{error}</p> : null}
         {job?.status === "UPLOADING" ? (
           <Card className="p-6 text-sm text-[var(--erp-muted)]">
-            Upload is incomplete ({job.uploadedFileChunks} of {job.fileChunkCount} chunks saved). Resume it from Import History to continue.
+            Upload is incomplete ({job.uploadedFileChunks} of {job.fileChunkCount} chunks saved). Upload the workbook again to restart.
           </Card>
         ) : null}
         {job?.status === "UPLOADED" ? (

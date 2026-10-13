@@ -197,6 +197,23 @@ async function resolveLookupId(organizationId: string, moduleKey: string, value:
   return result.id;
 }
 
+function resolveLookupIdFromIndex(
+  index: ActiveMasterLookupIndex,
+  moduleKey: string,
+  value: unknown,
+  parentModuleKey?: string,
+  parentValue?: unknown,
+) {
+  const key = String(value).toLocaleLowerCase();
+  const candidates = index.get(moduleKey)?.get(key) ?? [];
+  if (!parentModuleKey || parentValue === null || parentValue === undefined || parentValue === "") {
+    return candidates[0]?.id ?? null;
+  }
+  const parentKeys = index.get(parentModuleKey)?.get(String(parentValue).toLocaleLowerCase()) ?? [];
+  const parentIds = new Set(parentKeys.map((parent) => parent.id));
+  return candidates.find((candidate) => candidate.parent_id !== null && parentIds.has(candidate.parent_id))?.id ?? null;
+}
+
 export async function isActiveMasterLookupForOrganization(
   organizationId: string,
   moduleKey: string,
@@ -320,6 +337,7 @@ async function buildData(
   fields: MasterFieldValues,
   label: string,
   existingLegacyMetadata?: unknown,
+  lookupIndex?: ActiveMasterLookupIndex,
 ) {
   const definition = getMasterDefinition(moduleKey);
   if (!definition) throw new Error("Master module is not available.");
@@ -361,7 +379,21 @@ async function buildData(
       }
 
       if (field.type === "lookup" && hasValue) {
-        const targetId = await resolveLookupId(organizationId, field.lookupModuleKey ?? "", fields[field.key]);
+        const parentField = field.dependsOn
+          ? definition.fields.find((candidate) => candidate.key === field.dependsOn)
+          : undefined;
+        const targetId = lookupIndex
+          ? resolveLookupIdFromIndex(
+              lookupIndex,
+              field.lookupModuleKey ?? "",
+              fields[field.key],
+              parentField?.lookupModuleKey,
+              field.dependsOn ? fields[field.dependsOn] : undefined,
+            )
+          : await resolveLookupId(organizationId, field.lookupModuleKey ?? "", fields[field.key]);
+        if (lookupIndex && !targetId) {
+          throw new Error(`${getMasterDefinition(field.lookupModuleKey ?? "")?.label ?? field.label} lookup value was not found in this organization.`);
+        }
         if (targetId) {
           if (legacyMetadataKey) {
             legacyMetadata[legacyMetadataKey] = targetId;
@@ -763,7 +795,7 @@ export async function syncSizeGroupSizes(organizationId: string, sizeGroupId: st
 export async function createMasterValueForOrganization(
   organizationId: string,
   moduleKey: string,
-  input: { label: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; childRows?: Record<string, Record<string, unknown>[]>; parentValueId?: string | null; createOnly?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; sizeGroupId?: string },
+  input: { label: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; childRows?: Record<string, Record<string, unknown>[]>; parentValueId?: string | null; createOnly?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; sizeGroupId?: string; lookupIndex?: ActiveMasterLookupIndex },
   database: typeof prisma | Prisma.TransactionClient = prisma,
 ) {
   const definition = getMasterDefinition(moduleKey);
@@ -774,7 +806,14 @@ export async function createMasterValueForOrganization(
     const transactionDelegate =
       (transaction as unknown as Record<string, MasterDelegate>)[`master${moduleKey.split("-").map((part) => part[0].toUpperCase() + part.slice(1)).join("")}`] ?? delegate;
 
-    const data = await buildData(organizationId, moduleKey, input.fields ?? {}, input.label.trim());
+    const data = await buildData(
+      organizationId,
+      moduleKey,
+      input.fields ?? {},
+      input.label.trim(),
+      undefined,
+      input.lookupIndex,
+    );
     const sizeGroup = moduleKey === "size" && input.sizeGroupId
       ? await transaction.masterSizeGroup.findFirst({
           where: {
@@ -897,6 +936,7 @@ export async function createMasterValueForOrganization(
             fields: childFields as MasterFieldValues,
             parentValueId: created.id,
             createOnly: true,
+            lookupIndex: input.lookupIndex,
           }, transaction);
         }
       }
@@ -945,9 +985,11 @@ export async function createMasterValueForOrganization(
       });
     }
 
-    await transaction.approvalRequest.deleteMany({
-      where: { organization_id: organizationId, entity_ref_id: created.value_id },
-    });
+    if (!input.createOnly) {
+      await transaction.approvalRequest.deleteMany({
+        where: { organization_id: organizationId, entity_ref_id: created.value_id },
+      });
+    }
     await transaction.approvalRequest.create({
       data: {
         organization_id: organizationId,

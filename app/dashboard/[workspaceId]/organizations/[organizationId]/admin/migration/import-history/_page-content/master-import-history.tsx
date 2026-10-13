@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Download, FileSpreadsheet, RefreshCw, Trash2, Upload } from "lucide-react";
 
 import Badge from "@/components/ui/Badge";
@@ -118,6 +119,7 @@ export default function MasterImportHistory({
   modules: ImportModule[];
 }) {
   const endpoint = `/api/organizations/${encodeURIComponent(organizationId)}/master-imports`;
+  const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [jobs, setJobs] = useState<ImportJob[]>([]);
   const [selectedModule, setSelectedModule] = useState(modules[0]?.key ?? "contact");
@@ -126,14 +128,12 @@ export default function MasterImportHistory({
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false);
-  const [resumeTargetJob, setResumeTargetJob] = useState<ImportJob | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ jobId: string; uploadedBytes: number; totalBytes: number } | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [activeJob, setActiveJob] = useState<ImportJob | null>(null);
   const [activeRows, setActiveRows] = useState<ImportRow[]>([]);
   const [selectedValidationRowIds, setSelectedValidationRowIds] = useState<string[]>([]);
-  const [isOpeningJob, setIsOpeningJob] = useState(false);
   const [deleteTargetJob, setDeleteTargetJob] = useState<ImportJob | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -223,14 +223,6 @@ export default function MasterImportHistory({
     return () => window.clearTimeout(timer);
   }, [loadJobs]);
 
-  useEffect(() => {
-    const input = fileInputRef.current;
-    if (!input) return;
-    const handlePickerCancel = () => setResumeTargetJob(null);
-    input.addEventListener("cancel", handlePickerCancel);
-    return () => input.removeEventListener("cancel", handlePickerCancel);
-  }, []);
-
   const filteredJobs = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     if (!query) return jobs;
@@ -242,7 +234,7 @@ export default function MasterImportHistory({
     });
   }, [jobs, modules, search]);
 
-  const handleUpload = async (file: File | null = selectedFile, resumeJob?: ImportJob) => {
+  const handleUpload = async (file: File | null = selectedFile) => {
     if (!file) {
       setError("Choose an .xlsx workbook to upload.");
       return;
@@ -263,7 +255,7 @@ export default function MasterImportHistory({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...(resumeJob ? { jobId: resumeJob.id } : { moduleKey: selectedModule }),
+          moduleKey: selectedModule,
           uploadedFileName: file.name,
           uploadedFileSize: file.size,
           sourceSha256,
@@ -312,13 +304,16 @@ export default function MasterImportHistory({
       setIsLoading(true);
       await loadJobs();
     } finally {
-      setResumeTargetJob(null);
       setIsUploading(false);
     }
   };
 
+  const startAutomaticImport = (job: ImportJob) => {
+    const reportHref = `/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/admin/migration/import-history/${encodeURIComponent(job.id)}?autoStart=1`;
+    router.push(reportHref);
+  };
+
   const openJob = async (job: ImportJob) => {
-    setIsOpeningJob(true);
     setError("");
     try {
       const response = await fetch(`${endpoint}/${encodeURIComponent(job.id)}`, { cache: "no-store" });
@@ -333,26 +328,6 @@ export default function MasterImportHistory({
       setSelectedValidationRowIds([]);
     } catch (openError) {
       setError(openError instanceof Error ? openError.message : "Unable to open this import.");
-    } finally {
-      setIsOpeningJob(false);
-    }
-  };
-
-  const stageJob = async (job: ImportJob) => {
-    setIsOpeningJob(true);
-    setError("");
-    setNotice("");
-    try {
-      const response = await fetch(`${endpoint}/${encodeURIComponent(job.id)}/stage`, { method: "POST" });
-      const payload: unknown = await response.json();
-      if (!response.ok) throw new Error(errorMessage(payload, "Unable to stage this workbook."));
-      setNotice("Workbook rows are saved in server staging. Review validation results before starting the import.");
-      await loadJobs();
-      await openJob(job);
-    } catch (stageError) {
-      setError(stageError instanceof Error ? stageError.message : "Unable to stage this workbook.");
-    } finally {
-      setIsOpeningJob(false);
     }
   };
 
@@ -649,7 +624,7 @@ export default function MasterImportHistory({
           <div>
             <h1 className="text-2xl font-semibold text-[var(--erp-text)]">Import History</h1>
             <p className="mt-2 text-sm text-[var(--erp-muted)]">
-              Securely staged master workbooks and resumable import progress.
+              Securely staged master workbooks and import progress.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -712,8 +687,7 @@ export default function MasterImportHistory({
                 accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 onChange={(event) => {
                   const file = event.target.files?.[0] ?? null;
-                  if (resumeTargetJob) void handleUpload(file, resumeTargetJob);
-                  else setSelectedFile(file);
+                  setSelectedFile(file);
                 }}
                 className="block w-full min-w-0 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] px-3 py-2 text-sm text-[var(--erp-text)] file:mr-3 file:rounded-lg file:border-0 file:bg-[var(--erp-brand-soft)] file:px-3 file:py-1.5 file:font-semibold file:text-[var(--erp-brand)]"
               />
@@ -798,30 +772,28 @@ export default function MasterImportHistory({
                       <div className="flex flex-wrap justify-end gap-2">
                         <Button
                           type="button"
-                          variant="secondary"
                           size="sm"
-                          disabled={isOpeningJob || deletingJobId !== null}
-                          onClick={() => {
-                            if (job.status === "UPLOADING") {
-                              setError("");
-                              setResumeTargetJob(job);
-                              fileInputRef.current?.click();
-                            } else if (job.status === "UPLOADED") {
-                              void stageJob(job);
-                            } else {
-                              void openJob(job);
-                            }
-                          }}
-                        >
-                          {isOpeningJob
-                            ? "Opening..."
-                            : job.status === "UPLOADING"
-                              ? "Resume upload"
-                              : job.status === "UPLOADED"
-                                ? "Stage workbook"
+                          disabled={deletingJobId !== null || ["UPLOADING", "IMPORTING", "COMPLETED", "FAILED"].includes(job.status)}
+                          title={job.status === "UPLOADING"
+                            ? "This upload is incomplete."
+                            : job.status === "IMPORTING"
+                                ? "This import is already running."
                                 : job.status === "COMPLETED"
-                                  ? "View report"
-                                  : "Open / resume"}
+                                  ? "This import is already complete."
+                                  : job.status === "FAILED"
+                                    ? "This import stopped; open its report for manual recovery."
+                                    : "Stage, plan, and import this workbook automatically"}
+                          onClick={() => startAutomaticImport(job)}
+                        >
+                          {job.status === "UPLOADING"
+                            ? "Upload incomplete"
+                            : job.status === "IMPORTING"
+                                ? "In progress"
+                                : job.status === "COMPLETED"
+                                  ? "Completed"
+                                  : job.status === "FAILED"
+                                    ? "Stopped"
+                                    : "Start"}
                         </Button>
                         <Button
                           type="button"

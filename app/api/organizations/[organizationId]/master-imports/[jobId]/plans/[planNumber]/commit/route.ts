@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   commitNextMasterImportRow,
+  getMasterImportCommitLookupIndex,
   getMasterImportPlanProgress,
   getValidatedMasterImportPlanRows,
 } from "@/lib/services/master-data/master-import-service";
@@ -31,6 +32,10 @@ export async function POST(
     if (rowNumbers.length === 0) {
       return NextResponse.json({ error: "This plan has no validated rows to import." }, { status: 409 });
     }
+    const lookupIndex = await getMasterImportCommitLookupIndex(
+      authorization.context.organizationId,
+      jobId,
+    );
 
     let result: Awaited<ReturnType<typeof commitNextMasterImportRow>> | null = null;
     for (const rowNumber of rowNumbers) {
@@ -39,6 +44,7 @@ export async function POST(
         actorUserId: authorization.context.userId,
         jobId,
         rowNumber,
+        ...(lookupIndex ? { lookupIndex } : {}),
       });
       if ((result.row === null && !("validationRequired" in result && result.validationRequired === true))
         || result.job.status === "COMPLETED" || result.job.status === "FAILED") break;

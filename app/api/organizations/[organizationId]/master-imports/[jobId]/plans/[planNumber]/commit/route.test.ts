@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   authorizeMasterImportRoute: vi.fn(),
   commitNextMasterImportRow: vi.fn(),
+  getMasterImportCommitLookupIndex: vi.fn(),
   getMasterImportPlanProgress: vi.fn(),
   getValidatedMasterImportPlanRows: vi.fn(),
   masterImportErrorResponse: vi.fn(),
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/services/master-data/master-import-service", () => ({
   commitNextMasterImportRow: mocks.commitNextMasterImportRow,
+  getMasterImportCommitLookupIndex: mocks.getMasterImportCommitLookupIndex,
   getMasterImportPlanProgress: mocks.getMasterImportPlanProgress,
   getValidatedMasterImportPlanRows: mocks.getValidatedMasterImportPlanRows,
 }));
@@ -28,6 +30,7 @@ describe("master import plan commit route", () => {
       context: { organizationId: "org-internal", userId: "user-1" },
     });
     mocks.getValidatedMasterImportPlanRows.mockResolvedValue([]);
+    mocks.getMasterImportCommitLookupIndex.mockResolvedValue(undefined);
     mocks.getMasterImportPlanProgress.mockResolvedValue({
       recordCount: 2,
       validatedCount: 0,
@@ -66,7 +69,33 @@ describe("master import plan commit route", () => {
         hasMore: false,
       },
     });
+
     expect(mocks.getMasterImportPlanProgress).toHaveBeenCalledWith("org-internal", "job-1", 2);
+  });
+
+  it("loads master lookup data once and reuses it for every row in the batch", async () => {
+    const lookupIndex = new Map();
+    mocks.getValidatedMasterImportPlanRows.mockResolvedValueOnce([101, 102]);
+    mocks.getMasterImportCommitLookupIndex.mockResolvedValueOnce(lookupIndex);
+
+    const response = await POST(
+      new Request("http://localhost/api/organizations/org-public/master-imports/job-1/plans/2/commit", {
+        method: "POST",
+      }),
+      { params: Promise.resolve({ organizationId: "org-public", jobId: "job-1", planNumber: "2" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.getMasterImportCommitLookupIndex).toHaveBeenCalledTimes(1);
+    expect(mocks.getMasterImportCommitLookupIndex).toHaveBeenCalledWith("org-internal", "job-1");
+    expect(mocks.commitNextMasterImportRow).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      rowNumber: 101,
+      lookupIndex,
+    }));
+    expect(mocks.commitNextMasterImportRow).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      rowNumber: 102,
+      lookupIndex,
+    }));
   });
 
   it("rejects invalid plan numbers before authorization or importing", async () => {

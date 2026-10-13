@@ -144,6 +144,13 @@ describe("contact master numbering", () => {
     expect(contact.code).toBe("CT1");
     expect(mocks.tx.contactRoleDefinition.findMany).not.toHaveBeenCalled();
     expect(mocks.tx.contactRoleAssignment.createMany).not.toHaveBeenCalled();
+    expect(mocks.tx.contactRoleAssignment.findMany).not.toHaveBeenCalled();
+    expect(mocks.tx.contactTaxRegistration.findMany).not.toHaveBeenCalled();
+    expect(mocks.tx.contactAddress.findMany).not.toHaveBeenCalled();
+    expect(mocks.tx.contactBankAccount.findMany).not.toHaveBeenCalled();
+    expect(mocks.tx.contactBankAccount.updateMany).not.toHaveBeenCalled();
+    expect(mocks.tx.masterVendor.findFirst).not.toHaveBeenCalled();
+    expect(mocks.tx.masterBuyer.findFirst).not.toHaveBeenCalled();
   });
 
   it("rejects multiple GSTINs before creating a contact", async () => {

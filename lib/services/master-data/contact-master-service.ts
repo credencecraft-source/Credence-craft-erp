@@ -134,7 +134,7 @@ async function saveDetails(
   input: Partial<ContactInput>,
   partial: boolean,
 ) {
-  if (input.roles !== undefined) {
+  if (input.roles !== undefined && (partial || input.roles.length > 0)) {
     const roles = input.roles.length
       ? await tx.contactRoleDefinition.findMany({
         where: { code: { in: input.roles }, is_active: true },
@@ -187,7 +187,8 @@ async function saveDetails(
     }
   }
 
-  if (input.taxRegistrations !== undefined || input.addresses !== undefined) {
+  if ((input.taxRegistrations !== undefined || input.addresses !== undefined)
+    && (partial || (input.taxRegistrations?.length ?? 0) > 0 || (input.addresses?.length ?? 0) > 0)) {
     const current = await tx.contactTaxRegistration.findMany({
       where: { organization_id: organizationId, contact_id: contactId },
     });
@@ -232,7 +233,7 @@ async function saveDetails(
       registrationsByGstin.set(saved.gstin, saved.id);
     }
 
-    if (input.addresses !== undefined) {
+    if (input.addresses !== undefined && (partial || input.addresses.length > 0)) {
       const currentAddresses = await tx.contactAddress.findMany({
         where: { organization_id: organizationId, contact_id: contactId },
       });
@@ -328,7 +329,7 @@ async function saveDetails(
     }
   }
 
-  if (input.bankAccounts !== undefined) {
+  if (input.bankAccounts !== undefined && (partial || input.bankAccounts.length > 0)) {
     await tx.contactBankAccount.updateMany({
       where: { organization_id: organizationId, contact_id: contactId, is_default: true },
       data: { is_default: false },
@@ -383,7 +384,7 @@ async function saveDetails(
       },
       data: { is_active: false, is_default: false },
     });
-  } else if (!partial) {
+  } else if (!partial && input.bankAccounts === undefined) {
     await tx.contactBankAccount.updateMany({
       where: { organization_id: organizationId, contact_id: contactId, is_active: true },
       data: { is_active: false, is_default: false },
@@ -499,7 +500,9 @@ async function createContactInTransaction(
     select: contactSelect,
   });
   if (!saved) throw new Error("Created contact could not be loaded.");
-  await syncContactRoleProjections(tx, organizationId, contact.id);
+  if (input.roles.length > 0) {
+    await syncContactRoleProjections(tx, organizationId, contact.id);
+  }
   return publicContact(saved);
 }
 
