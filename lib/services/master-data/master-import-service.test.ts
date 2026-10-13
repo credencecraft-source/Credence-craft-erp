@@ -69,6 +69,7 @@ vi.mock("@/lib/master-data/master-data-constants", async (importOriginal) => {
 import { decryptSecret, encryptSecret } from "@/lib/auth/secret-cryptography";
 import {
   commitNextMasterImportRow,
+  formatMasterImportCommitFailure,
   createMasterImportPlans,
   createMasterImportJob,
   deleteMasterImportJob,
@@ -140,6 +141,18 @@ describe("master import service", () => {
     mocks.createAuditEvent.mockResolvedValue({});
     mocks.prisma.$transaction.mockImplementation(async (callback: (tx: typeof mocks.prisma) => unknown) =>
       callback(mocks.prisma));
+  });
+
+  it("shows safe actionable commit failures without exposing raw database errors", () => {
+    expect(formatMasterImportCommitFailure(new Error(
+      "Every selected size must belong to the chosen Size Group in this organization.",
+    ))).toBe("Every selected size must belong to the chosen Size Group in this organization.");
+    expect(formatMasterImportCommitFailure(Object.assign(new Error("raw database message"), {
+      code: "P2003",
+    }))).toContain("Brand, category, subcategory, Size Group, and sizes");
+    expect(formatMasterImportCommitFailure(Object.assign(new Error("sensitive engine details"), {
+      name: "PrismaClientUnknownRequestError",
+    }))).toBe("The record was not saved. Review the row and retry; if the issue repeats, contact your administrator.");
   });
 
   it("returns only safe list DTO fields scoped to the authorized organization", async () => {
@@ -763,13 +776,13 @@ describe("master import service", () => {
     expect(JSON.stringify(row)).not.toContain("sensitive-row");
   });
 
-  it("moves a corrected failed row out of its old plan when it validates", async () => {
+  it("revalidates an invalid error row and removes its old plan assignment", async () => {
     mocks.prisma.masterImportJob.findFirst
       .mockResolvedValueOnce({ ...baseJob, status: "STAGED" })
       .mockResolvedValueOnce({ ...baseJob, status: "VALIDATED", total_rows: 1 });
     mocks.prisma.masterImportJobRow.findMany.mockResolvedValue([{
-      ...rowRecord("FAILED", {
-        rowNumber: 2,
+      ...rowRecord("INVALID", {
+        rowNumber: 1,
         fields: { season: "WINTER" },
         childRows: {},
       }),
@@ -794,7 +807,7 @@ describe("master import service", () => {
         organization_id: "org-internal",
         job_id: "job-1",
         row_number: 1,
-        status: { in: ["STAGED", "CORRECTED", "FAILED"] },
+        status: { in: ["STAGED", "CORRECTED", "INVALID", "FAILED"] },
       }),
       take: 1,
     }));
@@ -877,6 +890,47 @@ describe("master import service", () => {
       expect.objectContaining({ fieldPaths: ["category"] }),
     ]));
     expect(result).toMatchObject({ job: { status: "PARTIAL" }, progress: { failedRows: 1 } });
+  });
+
+  it("validates Article rows with missing supporting masters without creating them", async () => {
+    mocks.prisma.masterImportJob.findFirst
+      .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "STAGED" })
+      .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "VALIDATED", total_rows: 1 });
+    mocks.prisma.masterImportJobRow.findMany.mockResolvedValue([
+      rowRecord("STAGED", {
+        rowNumber: 2,
+        fields: {
+          article: "FW66",
+          Brand: "NEW LABEL",
+          Product_Master: "NEW TYPE",
+          Category: "NEW CATEGORY",
+          Subcategory: "NEW SUBCATEGORY",
+          Sizes: ["S", "M"],
+          Size_Group: "S,M",
+        },
+        childRows: {
+          variants: [{ color: "BLACK", variant_code: null, sku: null, price_override: null }],
+        },
+      }),
+    ]);
+    mocks.prisma.masterImportJobRow.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
+      { status: "VALIDATED", _count: { _all: 1 } },
+    ]);
+    mocks.prisma.masterImportJob.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await validateMasterImportJob({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+      rowNumber: 1,
+    });
+
+    expect(result).toMatchObject({ validatedRowNumbers: [1], progress: { totalRows: 1 } });
+    expect(mocks.createMasterValueForOrganization).not.toHaveBeenCalled();
+    expect(mocks.prisma.masterImportJobRow.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "VALIDATED" }),
+    }));
   });
 
   it("requires explicit row selection before validation", async () => {

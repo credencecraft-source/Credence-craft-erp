@@ -3,11 +3,14 @@ import { notFound, redirect } from "next/navigation";
 
 import { MasterRecordsTable } from "@/components/master-data/master-records-data-table";
 import { requireSessionUser } from "@/lib/auth/session-manager";
+import { prisma } from "@/lib/database/prisma-client";
+import { groupArticleMatrixRows } from "@/lib/master-data/article-import-workbook";
 import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
   MASTER_DEFINITIONS,
   createMasterValueForOrganization,
   deleteMasterValue,
+  deleteSelectedArticlesForOrganization,
   getMasterDefinition,
   getMasterValuesForOrganization,
   getSizeGroupSizesForOrganization,
@@ -24,6 +27,7 @@ import {
 } from "@/lib/master-data/master-records-workbook";
 import type { MasterFieldValues } from "@/lib/master-data/master-data-constants";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
+import { ensureArticleImportSupportingMasters } from "@/lib/services/master-data/master-import-service";
 
 function serializeDecimal(value: unknown): unknown {
   if (value === null || value === undefined) {
@@ -445,6 +449,36 @@ async function deleteMasterValueAction(formData: FormData) {
   redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=delete`);
 }
 
+async function deleteSelectedArticlesAction(formData: FormData) {
+  "use server";
+
+  const workspaceId = String(formData.get("workspaceId") ?? "");
+  const organizationId = String(formData.get("organizationId") ?? "");
+  const moduleKey = String(formData.get("moduleKey") ?? "");
+  const articleIds = formData.getAll("articleId").map(String);
+  const returnPath = `/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/admin/master-data/article`;
+
+  if (!workspaceId || !organizationId || moduleKey !== "article" || articleIds.length === 0 || articleIds.length > 1000) {
+    redirect(`${returnPath}?error=${encodeURIComponent("Select valid Article records and try again.")}`);
+  }
+
+  const user = await requireSessionUser();
+  if (!user.workspace_id) redirect("/");
+  if (user.workspace_id !== workspaceId) notFound();
+
+  const organization = await getOrganizationForUser(user.id, organizationId);
+  if (!organization) notFound();
+  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
+
+  const result = await deleteSelectedArticlesForOrganization(organization.id, user.id, articleIds);
+  if (result.error) {
+    redirect(`${returnPath}?error=${encodeURIComponent(result.error)}`);
+  }
+
+  revalidatePath(returnPath);
+  redirect(`${returnPath}?saved=bulk-delete&deletedCount=${result.deletedCount}`);
+}
+
 async function importMasterValuesAction(formData: FormData): Promise<MasterRecordsImportResult> {
   "use server";
 
@@ -518,6 +552,24 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
       };
     }
   }
+  if (moduleKey === "article") {
+    if (parseFailures.length > 0) {
+      return {
+        created: 0,
+        failures: [],
+        fatalError: `${parseFailures[0].message} Correct the Article workbook and upload it again; related Article rows are grouped during import.`,
+      };
+    }
+    try {
+      rows = groupArticleMatrixRows(rows);
+    } catch (error) {
+      return {
+        created: 0,
+        failures: [],
+        fatalError: error instanceof Error ? error.message : "Article rows could not be grouped safely.",
+      };
+    }
+  }
   const sourceRows = new Map([
     ...rows.map((row) => [row.rowNumber, structuredClone(row)] as const),
     ...parseFailures.flatMap((failure) => failure.row ? [[failure.rowNumber, structuredClone(failure.row)] as const] : []),
@@ -561,6 +613,39 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
         throw new Error(`Complete all required ${definition.label.toLowerCase()} fields.`);
       }
 
+      if (moduleKey === "article") {
+        const articleChildRows = Object.fromEntries(Object.entries(row.childRows).map(([key, value]) => [
+          key,
+          Array.isArray(value) ? value : [],
+        ]));
+        created = await prisma.$transaction(async (transaction) => {
+          const preparedFields = await ensureArticleImportSupportingMasters(
+            transaction,
+            organization.id,
+            fields,
+            articleChildRows,
+          );
+          const articleVariants = Array.isArray(articleChildRows.variants)
+            ? articleChildRows.variants.filter((variant): variant is Record<string, unknown> =>
+                typeof variant === "object" && variant !== null && !Array.isArray(variant))
+                .map((variant) => ({ fields: variant }))
+            : [];
+          const label = getRecordLabel(preparedFields, definition);
+          if (!label) throw new Error("The required Article name is missing.");
+          return createMasterValueForOrganization(organization.id, moduleKey, {
+            label,
+            code: row.code,
+            description: row.description,
+            fields: preparedFields as MasterFieldValues,
+            createOnly: true,
+            articleVariants,
+            articleSizes: Array.isArray(preparedFields.Sizes) ? preparedFields.Sizes.map(String) : [],
+          }, transaction);
+        }, { maxWait: 10_000, timeout: 30_000 });
+        createdCount += 1;
+        continue;
+      }
+
       const childFormData = new FormData();
       for (const field of definition.fields) {
         if (field.type === "child-list") {
@@ -577,14 +662,6 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
         }
       }
 
-      let articleVariants: Array<{ id?: string; fields: Record<string, unknown> }> | undefined;
-      if (moduleKey === "article") {
-        const variantField = definition.fields.find((field) => field.type === "child-list");
-        if (!variantField) throw new Error("Article variant fields are not configured.");
-        articleVariants = validateChildValues(variantField, childFormData).validatedRows
-          .map(({ id, fields: variantFields }) => ({ ...(id ? { id } : {}), fields: variantFields }));
-      }
-
       const label = getRecordLabel(fields, definition);
       if (!label) throw new Error("The required record name is missing.");
       created = await createMasterValueForOrganization(organization.id, moduleKey, {
@@ -593,10 +670,6 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
         description: row.description,
         fields: fields as MasterFieldValues,
         createOnly: true,
-        ...(articleVariants ? { articleVariants } : {}),
-        ...(moduleKey === "article" ? {
-          articleSizes: Array.isArray(fields.Sizes) ? fields.Sizes.map(String) : [],
-        } : {}),
       });
 
       if (moduleKey !== "article") {
@@ -631,10 +704,12 @@ export default async function MasterDataEditorPage({
   searchParams,
 }: {
   params: Promise<{ workspaceId: string; organizationId: string; moduleKey: string }>;
-  searchParams: Promise<{ error?: string; saved?: string }>;
+  searchParams: Promise<{ error?: string; saved?: string; deletedCount?: string }>;
 }) {
   const { workspaceId, organizationId, moduleKey } = await params;
-  const { error, saved } = await searchParams;
+  const { error, saved, deletedCount } = await searchParams;
+  const parsedDeletedCount = Number(deletedCount);
+  const hasValidBulkDeleteCount = Number.isSafeInteger(parsedDeletedCount) && parsedDeletedCount > 0;
   const user = await requireSessionUser();
 
   if (!user.workspace_id) {
@@ -706,9 +781,15 @@ export default async function MasterDataEditorPage({
         </p>
       ) : null}
 
-      {saved ? (
+      {saved && (saved !== "bulk-delete" || hasValidBulkDeleteCount) ? (
         <p className="mt-4 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800" role="status">
-          {saved === "create" ? `${definition.label} created successfully.` : saved === "update" ? `${definition.label} updated successfully.` : `${definition.label} deleted successfully.`}
+          {saved === "create"
+            ? `${definition.label} created successfully.`
+            : saved === "update"
+              ? `${definition.label} updated successfully.`
+              : saved === "bulk-delete"
+                ? `${String(parsedDeletedCount)} Articles deleted successfully.`
+                : `${definition.label} deleted successfully.`}
         </p>
       ) : null}
 
@@ -732,6 +813,7 @@ export default async function MasterDataEditorPage({
         createAction={createMasterValueAction}
         updateAction={updateMasterValueAction}
         deleteAction={deleteMasterValueAction}
+        deleteSelectedAction={deleteSelectedArticlesAction}
         importAction={importMasterValuesAction}
       />
     </div>

@@ -87,7 +87,12 @@ function parseText(value: unknown, preserveCase = false) {
   return preserveCase ? text : normalizeUppercase(text);
 }
 
-function parseFieldValue(value: unknown, field: MasterFieldDefinition, rowNumber: number): unknown {
+function parseFieldValue(
+  value: unknown,
+  field: MasterFieldDefinition,
+  rowNumber: number,
+  articleVariantCell = false,
+): unknown {
   if (field.type === "child-list") {
     const text = String(value ?? "").trim();
     if (!text) return [];
@@ -95,6 +100,18 @@ function parseFieldValue(value: unknown, field: MasterFieldDefinition, rowNumber
     try {
       parsed = JSON.parse(text);
     } catch {
+      if (articleVariantCell) {
+        const colorField = field.childFields?.find((childField) => childField.key === "color");
+        if (!colorField) throw new Error("Article color variant fields are not configured.");
+        return [{
+          ...Object.fromEntries((field.childFields ?? []).map((childField) => [
+            childField.key,
+            childField.key === "color"
+              ? parseFieldValue(text, childField, rowNumber)
+              : null,
+          ])),
+        }];
+      }
       throw new Error(`Row ${rowNumber}: ${field.label} must be a JSON array of child rows.`);
     }
     if (!Array.isArray(parsed)) {
@@ -294,7 +311,12 @@ export async function parseMasterRecordsWorkbook(
         const rawValue = row[headerIndex];
         let parsedValue: unknown;
         try {
-          parsedValue = parseFieldValue(rawValue, field, rowNumber);
+          parsedValue = parseFieldValue(
+            rawValue,
+            field,
+            rowNumber,
+            definition.key === "article" && field.key === "variants",
+          );
         } catch (error) {
           failureFieldPaths = [field.key];
           throw error;
@@ -316,7 +338,8 @@ export async function parseMasterRecordsWorkbook(
         }
       }
       for (const field of fields) {
-        if (!field.dependsOn || field.type === "child-list") continue;
+        if (!field.dependsOn || field.type === "child-list"
+          || definition.key === "article" && field.key === "Sizes") continue;
         const value = values[field.key];
         const hasValue = Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== "";
         const parent = values[field.dependsOn];
@@ -462,6 +485,7 @@ export async function validateMasterWorkbookLookupValues(
   ) => {
     for (const field of fields) {
       if (field.type === "child-list") {
+        if (definition.key === "article" && field.key === "variants") continue;
         const children = Array.isArray(values[field.key]) ? values[field.key] as Record<string, unknown>[] : [];
         for (const child of children) {
           await validateFields(rowNumber, field.childFields ?? [], child);
@@ -469,6 +493,10 @@ export async function validateMasterWorkbookLookupValues(
         continue;
       }
       if (field.type !== "lookup" || !field.lookupModuleKey) continue;
+      if (definition.key === "article"
+        && ["Brand", "Product_Master", "Category", "Subcategory", "Size_Group", "Sizes"].includes(field.key)) {
+        continue;
+      }
 
       const rawValue = values[field.key];
       const selectedValues = Array.isArray(rawValue)

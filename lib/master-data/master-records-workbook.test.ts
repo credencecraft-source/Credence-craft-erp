@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { describe, expect, it } from "vitest";
 
 import type { MasterDefinition } from "@/lib/master-data/master-data-models";
+import { getMasterDefinition } from "@/lib/master-data/master-data-registry";
 import {
   getRetryableMasterWorkbookRows,
   parseMasterRecordsWorkbook,
@@ -66,6 +67,49 @@ describe("parseMasterRecordsWorkbook", () => {
         },
       },
     ]);
+  });
+
+  it("accepts flat Article matrix rows with a plain color cell", async () => {
+    const article = getMasterDefinition("article");
+    if (!article) throw new Error("Article definition is unavailable.");
+    const parsed = await parseMasterRecordsWorkbook(workbookFile([
+      ["Article Name", "Brand", "Available Sizes", "Article Color Variants"],
+      ["FW66", "LABEL", "S", "BLACK"],
+      ["FW66", "LABEL", "M", "BLACK"],
+      ["FW66", "LABEL", "S", "GREY"],
+    ]), article, true);
+
+    expect(parsed.failures).toEqual([]);
+    expect(parsed.rows.map((row) => row.fields.Sizes)).toEqual([["S"], ["M"], ["S"]]);
+    expect(parsed.rows.map((row) => row.childRows.variants)).toEqual([
+      [{ color: "BLACK", variant_code: null, sku: null, price_override: null }],
+      [{ color: "BLACK", variant_code: null, sku: null, price_override: null }],
+      [{ color: "GREY", variant_code: null, sku: null, price_override: null }],
+    ]);
+  });
+
+  it("defers all Article lookup resolution until import", async () => {
+    const article = getMasterDefinition("article");
+    if (!article) throw new Error("Article definition is unavailable.");
+    const parsed = await parseMasterRecordsWorkbook(workbookFile([
+      ["Article Name", "Brand", "Finished Goods Type", "Finished Goods Category", "Finished Goods Subcategory", "Available Sizes", "Article Color Variants"],
+      ["FW66", "NEW LABEL", "NEW TYPE", "NEW CATEGORY", "NEW SUBCATEGORY", "S", "BLACK"],
+    ]), article);
+    const resolverCalls: string[] = [];
+
+    await validateMasterWorkbookLookupValues(article, parsed, async (moduleKey, value) => {
+      resolverCalls.push(`${moduleKey}:${value}`);
+      return [];
+    });
+
+    expect(resolverCalls).toEqual([]);
+    expect(parsed[0].fields).toMatchObject({
+      Brand: "NEW LABEL",
+      Product_Master: "NEW TYPE",
+      Category: "NEW CATEGORY",
+      Subcategory: "NEW SUBCATEGORY",
+      Sizes: ["S"],
+    });
   });
 
   it("rejects missing required columns and invalid field values", async () => {

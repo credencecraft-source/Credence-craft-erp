@@ -44,6 +44,7 @@ import {
   createMasterValueForOrganization,
   deleteAllMasterValuesForOrganization,
   deleteMasterValue,
+  deleteSelectedArticlesForOrganization,
   getMasterValuesForOrganization,
   getSizeGroupSizesForOrganization,
   isMasterSectionBulkDeletable,
@@ -72,6 +73,84 @@ describe("create-only master insertion", () => {
 
     expect(models.masterColor.update).not.toHaveBeenCalled();
     expect(models.masterColor.create).not.toHaveBeenCalled();
+  });
+
+  describe("selected Article deletion", () => {
+    it("deletes selected articles only within the organization and audits the batch", async () => {
+      models.masterArticle.findMany.mockResolvedValue([
+        { id: "article-1", value_id: "article-value-1", legacy_metadata: null },
+        { id: "article-2", value_id: "article-value-2", legacy_metadata: null },
+      ] as never);
+      models.masterArticle.deleteMany.mockResolvedValue({ count: 2 } as never);
+
+      await expect(deleteSelectedArticlesForOrganization(
+        "org-id",
+        "user-id",
+        ["article-1", "article-2"],
+      )).resolves.toEqual({ deletedCount: 2 });
+
+      expect(models.masterArticle.findMany).toHaveBeenCalledWith({
+        where: { organization_id: "org-id", id: { in: ["article-1", "article-2"] } },
+        select: { id: true, value_id: true, legacy_metadata: true },
+      });
+      expect(models.masterArticle.deleteMany).toHaveBeenCalledWith({
+        where: { organization_id: "org-id", id: { in: ["article-1", "article-2"] } },
+      });
+      expect(models.auditEvent.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          organization_id: "org-id",
+          user_id: "user-id",
+          action: "DELETE_SELECTED",
+          entity_type: "article",
+          details: { articleIds: ["article-1", "article-2"], deletedCount: 2 },
+        }),
+      });
+    });
+
+    it("does not delete when any selected article is outside the organization", async () => {
+      models.masterArticle.findMany.mockResolvedValue([
+        { id: "article-1", value_id: "article-value-1", legacy_metadata: null },
+      ] as never);
+
+      await expect(deleteSelectedArticlesForOrganization(
+        "org-id",
+        "user-id",
+        ["article-1", "foreign-article"],
+      )).resolves.toMatchObject({ deletedCount: 0, error: expect.any(String) });
+
+      expect(models.masterArticle.deleteMany).not.toHaveBeenCalled();
+      expect(models.auditEvent.create).not.toHaveBeenCalled();
+    });
+
+    it("does not delete demo Articles outside the complete Dummy Data batch operation", async () => {
+      (prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> }).findFirst
+        .mockResolvedValueOnce({ id: "demo-batch" });
+      models.masterArticle.findMany.mockResolvedValue([
+        {
+          id: "article-demo",
+          value_id: "article-demo-value",
+          legacy_metadata: { dummyDataBatchId: "demo-batch" },
+        },
+      ] as never);
+
+      await expect(deleteSelectedArticlesForOrganization("org-id", "user-id", ["article-demo"]))
+        .resolves.toMatchObject({ deletedCount: 0, error: expect.stringContaining("Demo Articles") });
+
+      expect(models.masterArticle.deleteMany).not.toHaveBeenCalled();
+      expect(models.auditEvent.create).not.toHaveBeenCalled();
+    });
+
+    it("reports dependencies and leaves the batch undeleted", async () => {
+      models.masterArticle.findMany.mockResolvedValue([
+        { id: "article-1", value_id: "article-value-1", legacy_metadata: null },
+      ] as never);
+      models.masterArticle.deleteMany.mockRejectedValue({ code: "P2003" });
+
+      await expect(deleteSelectedArticlesForOrganization("org-id", "user-id", ["article-1"]))
+        .resolves.toMatchObject({ deletedCount: 0, error: expect.stringContaining("used by other records") });
+
+      expect(models.auditEvent.create).not.toHaveBeenCalled();
+    });
   });
 
   it("skips the redundant approval cleanup when importing a new create-only master", async () => {
@@ -280,6 +359,7 @@ describe("article creation", () => {
   });
 
   it("assigns the next organization article code in the requested format", async () => {
+    models.masterBrand.findFirst.mockResolvedValue({ id: "brand-id" } as never);
     models.masterArticle.findMany.mockResolvedValue([
       { article_code: "AR-1" },
       { article_code: "AR6" },
@@ -288,6 +368,7 @@ describe("article creation", () => {
 
     await createMasterValueForOrganization("org-id", "article", {
       label: "Winter Jacket",
+      fields: { Brand: "brand-id" },
     });
 
     expect(models.masterArticle.findMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -304,10 +385,12 @@ describe("article creation", () => {
   });
 
   it("starts the Article code sequence at AR1", async () => {
+    models.masterBrand.findFirst.mockResolvedValue({ id: "brand-id" } as never);
     models.masterArticle.findMany.mockResolvedValue([] as never);
 
     await createMasterValueForOrganization("org-id", "article", {
       label: "Summer Shirt",
+      fields: { Brand: "brand-id" },
     });
 
     expect(models.masterArticle.create).toHaveBeenCalledWith({
@@ -321,6 +404,7 @@ describe("article creation", () => {
 
   it("creates the parent style, color variants, and chosen group sizes in one transaction", async () => {
     let transactionStarted = false;
+    models.masterBrand.findFirst.mockResolvedValue({ id: "brand-id" } as never);
     models.masterSizeGroup.findFirst.mockImplementation(async () => {
       expect(transactionStarted).toBe(true);
       return { id: "size-group-id", legacy_metadata: null } as never;
@@ -364,6 +448,7 @@ describe("article creation", () => {
       label: "ApplePrinter",
       fields: {
         article: "ApplePrinter",
+        Brand: "brand-id",
         Size_Group: "size-group-id",
         default_price: "10.1234",
       },

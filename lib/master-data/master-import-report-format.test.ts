@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatImportReportValue,
+  formatImportCorrectionError,
   getContactTemplateFieldValues,
   getImportReportFields,
   humanizeImportFieldName,
@@ -9,6 +10,14 @@ import {
 } from "./master-import-report-format";
 
 describe("master import report formatting", () => {
+  it("explains legacy generic commit failures without pretending every field is invalid", () => {
+    expect(formatImportCorrectionError(
+      "The record was not saved. Validate this row and retry; if the issue repeats, contact your administrator.",
+    )).toContain("its cause was not saved");
+    expect(formatImportCorrectionError("Size Group must be linked to Brand."))
+      .toBe("Size Group must be linked to Brand.");
+  });
+
   it("uses human-readable headings and readable nested values instead of JSON", () => {
     expect(humanizeImportFieldName("taxRegistrationGstin")).toBe("Tax Registration GSTIN");
     expect(humanizeImportFieldName("addresses.0.stateCode")).toBe("Addresses / Row 1 / State Code");
@@ -55,7 +64,7 @@ describe("master import report formatting", () => {
     expect(fields).not.toHaveProperty("corrections");
   });
 
-  it("uses generic workbook template labels and child rows without backend wrapper headings", () => {
+  it("keys generic report values by field keys for report-grid alignment", () => {
     expect(getImportReportFields({
       rowNumber: 2,
       code: "STYLE-1",
@@ -65,11 +74,28 @@ describe("master import report formatting", () => {
       validationErrors: [],
     }, [{ key: "name", label: "Style Name" }, { key: "sizes", label: "Size Details" }]))
       .toEqual({
-        "Style Name": "STYLE NAME",
-        "Size Details": "1. Size: M\nQuantity: 4",
+        name: "STYLE NAME",
+        sizes: "1. Size: M\nQuantity: 4",
         "Master Code": "STYLE-1",
         Description: "STYLE DESCRIPTION",
       });
+  });
+
+  it("keeps Article values under keys used by Article report columns", () => {
+    expect(getImportReportFields({
+      fields: { article: "FW66", Brand: "ETIQUETTE", Product_Master: "GARMENTS" },
+      childRows: { variants: [{ color: "BLACK" }] },
+    }, [
+      { key: "article", label: "Article Name" },
+      { key: "Brand", label: "Brand" },
+      { key: "Product_Master", label: "Finished Goods Type" },
+      { key: "variants", label: "Article Color Variants" },
+    ])).toMatchObject({
+      article: "FW66",
+      Brand: "ETIQUETTE",
+      Product_Master: "GARMENTS",
+      variants: "1. Color: BLACK",
+    });
   });
 
   it("selects contact data for the same default rows as the contact download template", () => {

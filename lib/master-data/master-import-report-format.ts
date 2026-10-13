@@ -16,6 +16,7 @@ export type ImportReportField = {
   label: string;
   type?: string;
   multiple?: boolean;
+  readOnly?: boolean;
 };
 
 export function getContactTemplateFieldValues(input: Record<string, unknown>) {
@@ -163,6 +164,13 @@ export function formatImportReportValue(value: unknown): string {
   return "";
 }
 
+export function formatImportCorrectionError(message: string) {
+  if (message === "The record was not saved. Validate this row and retry; if the issue repeats, contact your administrator.") {
+    return "The previous import attempt failed, but its cause was not saved. No master changes were committed. Review the fields and save to retry; if it fails again, the report will show the specific reason.";
+  }
+  return message;
+}
+
 export function getImportReportFields(
   payload: Record<string, unknown>,
   moduleFields: ImportReportField[] = [],
@@ -175,7 +183,7 @@ export function getImportReportFields(
   const result: Record<string, string> = {};
   if (fields) {
     for (const field of moduleFields) {
-      result[field.label] = formatImportReportValue(
+      result[field.key] = formatImportReportValue(
         childRows && Object.hasOwn(childRows, field.key)
           ? childRows[field.key]
           : fields[field.key],

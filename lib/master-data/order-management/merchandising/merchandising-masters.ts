@@ -10,6 +10,7 @@ export const MERCHANDISING_MASTER_DEFINITIONS = [
   createMaster("article", "Article", "Parent style master with shared pricing and sizing plus color-specific variants.", [
     text("article", "Article Name", { required: true, unique: true }),
     text("article_code", "Article Code", { readOnly: true }),
+    lookup("Brand", "Brand", "brand", { required: true }),
     lookup("Product_Master", "Finished Goods Type", "product-master"),
     lookup("Category", "Finished Goods Category", "category", { dependsOn: "Product_Master" }),
     lookup("Subcategory", "Finished Goods Subcategory", "sub-category", { dependsOn: "Category" }),

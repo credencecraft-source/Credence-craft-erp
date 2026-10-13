@@ -11,6 +11,7 @@ import { prisma } from "@/lib/database/prisma-client";
 import { parseContactWorkbook } from "@/lib/master-data/contact-records-workbook-parser";
 import { ContactValidationError, parseContactInput, type ContactInput } from "@/lib/services/master-data/contact-master-validation";
 import { createContact } from "@/lib/services/master-data/contact-master-service";
+import { groupArticleMatrixRows } from "@/lib/master-data/article-import-workbook";
 import {
   createMasterValueForOrganization,
   getMasterDefinition,
@@ -879,7 +880,25 @@ async function parseGenericMasterRows(file: File, moduleKey: string): Promise<St
     );
   }
 
-  const rows: StagedPayload[] = parsed.rows.map((row) => ({
+  if (moduleKey === "article" && parsed.failures.length > 0) {
+    const firstFailure = parsed.failures[0];
+    throw new MasterImportServiceError(
+      `${firstFailure.message} Correct the Article workbook and upload it again; related Article rows are grouped during staging.`,
+      400,
+    );
+  }
+  let parsedRows = parsed.rows;
+  if (moduleKey === "article") {
+    try {
+      parsedRows = groupArticleMatrixRows(parsed.rows);
+    } catch (error) {
+      throw new MasterImportServiceError(
+        error instanceof Error ? error.message.slice(0, 500) : "Article rows could not be grouped safely.",
+        400,
+      );
+    }
+  }
+  const rows: StagedPayload[] = parsedRows.map((row) => ({
     payload: { rowNumber: row.rowNumber, code: row.code, description: row.description, fields: row.fields, childRows: row.childRows },
     validationErrors: [],
   }));
@@ -1102,6 +1121,245 @@ function toMasterFieldValues(fields: Record<string, unknown>): MasterFieldValues
   return result;
 }
 
+type ArticleImportLookup = {
+  id: string;
+  is_active: boolean;
+  legacy_metadata: unknown;
+};
+
+function assertArticleImportLookupIsUsable(
+  record: ArticleImportLookup,
+  label: string,
+  dummyBatchId: string | null,
+) {
+  if (!record.is_active) {
+    throw new MasterImportServiceError(`${label} exists but is inactive. Activate it before importing this Article.`, 409);
+  }
+  const metadata = record.legacy_metadata;
+  if (dummyBatchId && isRecord(metadata) && metadata.dummyDataBatchId === dummyBatchId) {
+    throw new MasterImportServiceError("Demo master values cannot be used by regular organization records.", 409);
+  }
+}
+
+async function ensureArticleImportLookup<T extends ArticleImportLookup>(input: {
+  label: string;
+  displayName: string;
+  dummyBatchId: string | null;
+  find: () => Promise<T | null>;
+  create: () => Promise<unknown>;
+}) {
+  let record = await input.find();
+  if (!record) {
+    await input.create();
+    record = await input.find();
+  }
+  if (!record) {
+    throw new MasterImportServiceError(`${input.displayName} "${input.label}" could not be created for this import.`, 409);
+  }
+  assertArticleImportLookupIsUsable(record, input.displayName, input.dummyBatchId);
+  return record;
+}
+
+export async function ensureArticleImportSupportingMasters(
+  transaction: Prisma.TransactionClient,
+  organizationId: string,
+  fields: Record<string, unknown>,
+  childRows: Record<string, unknown>,
+) {
+  const brandLabel = String(fields.Brand ?? "").trim();
+  if (!brandLabel) throw new MasterImportServiceError("Brand is required for every Article.", 400);
+  const dummyBatch = await transaction.organizationDummyDataBatch.findFirst({
+    where: { organization_id: organizationId, status: "ACTIVE" },
+    select: { id: true },
+  });
+  const dummyBatchId = dummyBatch?.id ?? null;
+  const createLookup = (
+    moduleKey: string,
+    label: string,
+    inputFields: MasterFieldValues,
+  ) => createMasterValueForOrganization(organizationId, moduleKey, {
+    label,
+    fields: inputFields,
+    createOnly: true,
+  }, transaction);
+  const brand = await ensureArticleImportLookup({
+    label: brandLabel,
+    displayName: "Brand",
+    dummyBatchId,
+    find: () => transaction.masterBrand.findFirst({
+      where: { organization_id: organizationId, brand: { equals: brandLabel, mode: "insensitive" } },
+      select: { id: true, brand: true, is_active: true, legacy_metadata: true },
+    }),
+    create: () => createLookup("brand", brandLabel, { Brand: brandLabel }),
+  });
+  const normalizedFields: Record<string, unknown> = { ...fields, Brand: brand.brand };
+
+  let productMaster: { id: string; label: string } | null = null;
+  const productMasterLabel = String(fields.Product_Master ?? "").trim();
+  if (productMasterLabel) {
+    const product = await ensureArticleImportLookup({
+      label: productMasterLabel,
+      displayName: "Finished Goods Type",
+      dummyBatchId,
+      find: () => transaction.masterProduct.findFirst({
+        where: {
+          organization_id: organizationId,
+          product_master_name: { equals: productMasterLabel, mode: "insensitive" },
+        },
+        select: { id: true, product_master_name: true, is_active: true, legacy_metadata: true },
+      }),
+      create: () => createLookup("product-master", productMasterLabel, { Product_Master_name: productMasterLabel }),
+    });
+    productMaster = { id: product.id, label: product.product_master_name };
+    normalizedFields.Product_Master = product.product_master_name;
+  }
+
+  let category: { id: string; label: string } | null = null;
+  const categoryLabel = String(fields.Category ?? "").trim();
+  if (categoryLabel) {
+    if (!productMaster) {
+      throw new MasterImportServiceError("Finished Goods Type is required to create or validate a Finished Goods Category.", 400);
+    }
+    const categoryRecord = await ensureArticleImportLookup({
+      label: categoryLabel,
+      displayName: "Finished Goods Category",
+      dummyBatchId,
+      find: () => transaction.masterCategory.findFirst({
+        where: {
+          organization_id: organizationId,
+          category_name: { equals: categoryLabel, mode: "insensitive" },
+        },
+        select: { id: true, category_name: true, product_master_id: true, is_active: true, legacy_metadata: true },
+      }),
+      create: () => createLookup("category", categoryLabel, {
+        Product_Master: productMaster!.label,
+        Category_Name: categoryLabel,
+      }),
+    });
+    if (categoryRecord.product_master_id !== productMaster.id) {
+      throw new MasterImportServiceError(`Finished Goods Category "${categoryLabel}" belongs to a different Finished Goods Type.`, 409);
+    }
+    category = { id: categoryRecord.id, label: categoryRecord.category_name };
+    normalizedFields.Category = categoryRecord.category_name;
+  }
+
+  const subcategoryLabel = String(fields.Subcategory ?? "").trim();
+  if (subcategoryLabel) {
+    if (!category) {
+      throw new MasterImportServiceError("Finished Goods Category is required to create or validate a Finished Goods Subcategory.", 400);
+    }
+    const subcategory = await ensureArticleImportLookup({
+      label: subcategoryLabel,
+      displayName: "Finished Goods Subcategory",
+      dummyBatchId,
+      find: () => transaction.masterSubCategory.findFirst({
+        where: {
+          organization_id: organizationId,
+          sub_category: { equals: subcategoryLabel, mode: "insensitive" },
+        },
+        select: { id: true, sub_category: true, category_id: true, is_active: true, legacy_metadata: true },
+      }),
+      create: () => createLookup("sub-category", subcategoryLabel, {
+        category: category!.label,
+        sub_category: subcategoryLabel,
+      }),
+    });
+    if (subcategory.category_id !== category.id) {
+      throw new MasterImportServiceError(`Finished Goods Subcategory "${subcategoryLabel}" belongs to a different category.`, 409);
+    }
+    normalizedFields.Subcategory = subcategory.sub_category;
+  }
+
+  const variants = Array.isArray(childRows.variants)
+    ? childRows.variants.filter(isRecord)
+    : [];
+  const normalizedVariants: Record<string, unknown>[] = [];
+  for (const variant of variants) {
+    const colorLabel = String(variant.color ?? "").trim();
+    if (!colorLabel) throw new MasterImportServiceError("Every Article color variant requires a Color.", 400);
+    const color = await ensureArticleImportLookup({
+      label: colorLabel,
+      displayName: "Color",
+      dummyBatchId,
+      find: () => transaction.masterColor.findFirst({
+        where: { organization_id: organizationId, colors: { equals: colorLabel, mode: "insensitive" } },
+        select: { id: true, colors: true, is_active: true, legacy_metadata: true },
+      }),
+      create: () => createLookup("color", colorLabel, { Colors: colorLabel }),
+    });
+    normalizedVariants.push({ ...variant, color: color.colors });
+  }
+
+  const sizeValues = Array.isArray(fields.Sizes)
+    ? [...new Set(fields.Sizes.map((value) => String(value).trim()).filter(Boolean))]
+    : [];
+  const normalizedSizes: string[] = [];
+  for (const sizeLabel of sizeValues) {
+    const size = await ensureArticleImportLookup({
+      label: sizeLabel,
+      displayName: "Size",
+      dummyBatchId,
+      find: () => transaction.masterSize.findFirst({
+        where: { organization_id: organizationId, size: { equals: sizeLabel, mode: "insensitive" } },
+        select: { id: true, size: true, is_active: true, legacy_metadata: true },
+      }),
+      create: () => createLookup("size", sizeLabel, { Size: sizeLabel }),
+    });
+    normalizedSizes.push(size.size);
+  }
+
+  let sizeGroupLabel = String(fields.Size_Group ?? "").trim();
+  if (normalizedSizes.length > 0 && !sizeGroupLabel) sizeGroupLabel = normalizedSizes.join(",");
+  if (sizeGroupLabel) {
+    const sizeGroup = await ensureArticleImportLookup({
+      label: sizeGroupLabel,
+      displayName: "Size Group",
+      dummyBatchId,
+      find: () => transaction.masterSizeGroup.findFirst({
+        where: { organization_id: organizationId, size_group: { equals: sizeGroupLabel, mode: "insensitive" } },
+        select: { id: true, size_group: true, brand_id: true, is_active: true, legacy_metadata: true },
+      }),
+      create: () => createLookup("size-group", sizeGroupLabel, {
+        Brand1: brand.brand,
+        Size_Group: sizeGroupLabel,
+        Size: normalizedSizes,
+      }),
+    });
+    if (sizeGroup.brand_id !== brand.id) {
+      throw new MasterImportServiceError(`Size Group "${sizeGroupLabel}" is assigned to a different Brand.`, 409);
+    }
+    if (normalizedSizes.length > 0) {
+      const sizes = await transaction.masterSize.findMany({
+        where: { organization_id: organizationId, size: { in: normalizedSizes } },
+        select: { id: true, size: true },
+      });
+      const links = await transaction.masterSizeGroupSize.findMany({
+        where: {
+          organization_id: organizationId,
+          size_group_id: sizeGroup.id,
+          size_id: { in: sizes.map((size) => size.id) },
+        },
+        select: { size_id: true },
+      });
+      const linkedIds = new Set(links.map((link) => link.size_id));
+      const missingSizeIds = sizes.filter((size) => !linkedIds.has(size.id)).map((size) => size.id);
+      if (missingSizeIds.length > 0) {
+        await transaction.masterSizeGroupSize.createMany({
+          data: missingSizeIds.map((sizeId) => ({
+            organization_id: organizationId,
+            size_group_id: sizeGroup.id,
+            size_id: sizeId,
+          })),
+        });
+      }
+    }
+    normalizedFields.Size_Group = sizeGroup.size_group;
+  }
+  normalizedFields.Sizes = normalizedSizes;
+  childRows.variants = normalizedVariants;
+  return normalizedFields;
+}
+
 async function validateImportPayloadForOrganization(
   organizationId: string,
   moduleKey: string,
@@ -1133,6 +1391,7 @@ async function validateImportPayloadForOrganization(
           const childValue = childRow[childField.key];
           if (childValue === null || childValue === undefined || childValue === "") continue;
           if (typeof childValue !== "string") continue;
+          if (moduleKey === "article" && field.key === "variants" && childField.key === "color") continue;
           if (!isActiveMasterLookupInIndex(index, childField.lookupModuleKey, childValue)) {
             errors.push({
               message: `${childField.label} must match an active value in this organization.`,
@@ -1144,6 +1403,10 @@ async function validateImportPayloadForOrganization(
       continue;
     }
     if (!field.lookupModuleKey) continue;
+    if (moduleKey === "article"
+      && ["Brand", "Product_Master", "Category", "Subcategory", "Size_Group", "Sizes"].includes(field.key)) {
+      continue;
+    }
     const rawValue = fields[field.key];
     if (rawValue === null || rawValue === undefined || rawValue === "") continue;
     const values = field.multiple
@@ -1179,6 +1442,20 @@ async function validateImportPayloadForOrganization(
           fieldPaths: field.dependsOn ? [field.key, field.dependsOn] : [field.key],
         });
       }
+    }
+  }
+  if (moduleKey === "article") {
+    if (fields.Category && !fields.Product_Master) {
+      errors.push({
+        message: "Finished Goods Type is required when a Finished Goods Category is provided.",
+        fieldPaths: ["Product_Master", "Category"],
+      });
+    }
+    if (fields.Subcategory && !fields.Category) {
+      errors.push({
+        message: "Finished Goods Category is required when a Finished Goods Subcategory is provided.",
+        fieldPaths: ["Category", "Subcategory"],
+      });
     }
   }
   return { ...validation, validationErrors: errors };
@@ -1242,7 +1519,7 @@ export async function validateMasterImportJob(input: {
     throw new MasterImportServiceError("Selected row number is invalid.", 400);
   }
   if (input.rowNumber === undefined && input.rowNumbers === undefined) {
-    throw new MasterImportServiceError("Select at least one staged row to validate.", 400);
+    throw new MasterImportServiceError("Select at least one row awaiting validation.", 400);
   }
   if (input.rowNumbers !== undefined
     && (input.rowNumbers.length < 1
@@ -1264,7 +1541,7 @@ export async function validateMasterImportJob(input: {
     where: {
       organization_id: input.organizationId,
       job_id: input.jobId,
-      status: { in: ["STAGED", "CORRECTED", "FAILED"] },
+      status: { in: ["STAGED", "CORRECTED", "INVALID", "FAILED"] },
       ...(input.rowNumber !== undefined
         ? { row_number: input.rowNumber }
         : input.rowNumbers !== undefined ? { row_number: { in: input.rowNumbers } } : {}),
@@ -1411,7 +1688,7 @@ export async function validateMasterImportJob(input: {
       where: {
         organization_id: input.organizationId,
         job_id: input.jobId,
-        status: { in: ["STAGED", "CORRECTED", "FAILED"] },
+        status: { in: ["STAGED", "CORRECTED", "INVALID", "FAILED"] },
         ...(input.rowNumber !== undefined
           ? { row_number: input.rowNumber }
           : input.rowNumbers !== undefined ? { row_number: { in: input.rowNumbers } } : {}),
@@ -1815,23 +2092,33 @@ export async function commitNextMasterImportRow(input: {
         if (typeof label !== "string" || !label.trim()) {
           throw new MasterImportServiceError("Master row label is invalid.", 400);
         }
-        const masterFields = toMasterFieldValues(fields);
+        let masterFields = toMasterFieldValues(fields);
+        const importedChildRows = isRecord(validation.payload.childRows)
+          ? validation.payload.childRows
+          : {};
+        if (job.module_key === "article") {
+          const preparedArticleFields = await ensureArticleImportSupportingMasters(
+            transaction,
+            input.organizationId,
+            fields,
+            importedChildRows,
+          );
+          masterFields = toMasterFieldValues(preparedArticleFields);
+        }
         await createMasterValueForOrganization(input.organizationId, job.module_key, {
           label,
           code: typeof validation.payload.code === "string" ? validation.payload.code : null,
           description: typeof validation.payload.description === "string" ? validation.payload.description : null,
           fields: masterFields,
-          lookupIndex: input.lookupIndex,
-          childRows: isRecord(validation.payload.childRows)
-            ? Object.fromEntries(Object.entries(validation.payload.childRows).map(([key, rows]) => [
+          ...(job.module_key !== "article" ? { lookupIndex: input.lookupIndex } : {}),
+          childRows: Object.fromEntries(Object.entries(importedChildRows).map(([key, rows]) => [
                 key,
                 Array.isArray(rows) ? rows.filter(isRecord) : [],
-              ]))
-            : {},
-          ...(job.module_key === "article" && isRecord(validation.payload.childRows)
-            && Array.isArray(validation.payload.childRows.variants)
+              ])),
+          ...(job.module_key === "article"
+            && Array.isArray(importedChildRows.variants)
             ? {
-                articleVariants: validation.payload.childRows.variants
+                articleVariants: importedChildRows.variants
                   .filter(isRecord)
                   .map((childFields) => ({ fields: childFields })),
               }
@@ -1964,6 +2251,45 @@ function commitProgress(
   };
 }
 
+export function formatMasterImportCommitFailure(error: unknown) {
+  const errorCode = error && typeof error === "object" && "code" in error
+    && typeof error.code === "string" && /^P\d{4}$/.test(error.code)
+    ? error.code
+    : null;
+
+  if (error instanceof Error && error.name === "ContactValidationError") {
+    return "Contact data must be corrected before retrying.";
+  }
+  if (errorCode === "P2028") {
+    return "The database transaction could not be completed. No master changes were saved; validate this row and retry.";
+  }
+  if (errorCode === "P2002") {
+    return "This row conflicts with an existing master record. Check for a duplicate Article, Brand, Color, Size, or code.";
+  }
+  if (errorCode === "P2003" || errorCode === "P2014") {
+    return "A linked master could not be saved. Check that Brand, category, subcategory, Size Group, and sizes belong together.";
+  }
+  if (errorCode === "P2000") {
+    return "A value exceeds the allowed field length. Shorten the affected value and retry.";
+  }
+  if (errorCode === "P2011" || errorCode === "P2012") {
+    return "A required value is missing. Review the Article and variant fields and retry.";
+  }
+  if (errorCode === "P2025") {
+    return "A linked master changed or was removed during import. Refresh the row and validate it again.";
+  }
+  if (errorCode === "P2021" || errorCode === "P2022") {
+    return "The database schema is not ready for this import. Contact your administrator.";
+  }
+  if (errorCode) {
+    return `The database rejected this row (${errorCode}). Review the row and contact your administrator if it repeats.`;
+  }
+  if (error instanceof Error && error.name === "Error" && error.message.trim()) {
+    return error.message.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+  }
+  return "The record was not saved. Review the row and retry; if the issue repeats, contact your administrator.";
+}
+
 async function markMasterImportRowCommitFailed(
   input: { organizationId: string; actorUserId: string; jobId: string; rowNumber: number },
   error: unknown,
@@ -1995,13 +2321,7 @@ async function markMasterImportRowCommitFailed(
       rowNumber: input.rowNumber,
       code: errorCode ?? "UNEXPECTED",
     });
-    const message = error instanceof Error && error.name === "ContactValidationError"
-      ? "Contact data must be corrected before retrying."
-      : errorCode === "P2028"
-        ? "The database transaction could not be completed. No master changes were saved; validate this row and retry."
-        : errorCode === "P2002"
-          ? "This row conflicts with an existing master record. Check for a duplicate and retry."
-          : "The record was not saved. Validate this row and retry; if the issue repeats, contact your administrator.";
+    const message = formatMasterImportCommitFailure(error);
     payload.validationErrors = [{ message, fieldPaths: [] }];
     const updated = await transaction.masterImportJobRow.updateMany({
       where: {

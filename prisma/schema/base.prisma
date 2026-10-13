@@ -1022,6 +1022,7 @@ model MasterBrand {
   organization           Organization             @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   pre_order_checklist    MasterPreOrderChecklist? @relation(fields: [pre_order_checklist_id], references: [id])
   size_groups            MasterSizeGroup[]
+  articles               MasterArticle[]
   raw_materials          MasterRawMaterial[]
 
   @@unique([organization_id, brand])
@@ -1115,6 +1116,7 @@ model MasterArticle {
   product_master_id String?
   category_id       String?
   sub_category_id   String?
+  brand_id          String?
   size_group_id     String?
   default_price     Decimal?               @db.Decimal(18, 4)
   design_by       String?      @db.VarChar(255)
@@ -1128,6 +1130,7 @@ model MasterArticle {
   product_master    MasterProduct?         @relation(fields: [product_master_id], references: [id], onDelete: SetNull)
   category          MasterCategory?        @relation(fields: [category_id], references: [id], onDelete: SetNull)
   sub_category      MasterSubCategory?     @relation(fields: [sub_category_id], references: [id], onDelete: SetNull)
+  brand             MasterBrand?           @relation(fields: [brand_id], references: [id], onDelete: SetNull)
   size_group        MasterSizeGroup?       @relation(fields: [size_group_id], references: [id], onDelete: Restrict)
   variants          MasterArticleVariant[]
   sizes             MasterArticleSize[]
@@ -1138,6 +1141,7 @@ model MasterArticle {
   @@index([organization_id, product_master_id])
   @@index([organization_id, category_id])
   @@index([organization_id, sub_category_id])
+  @@index([organization_id, brand_id])
   @@index([organization_id, size_group_id])
   @@map("master_articles")
 }

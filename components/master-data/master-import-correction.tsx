@@ -50,10 +50,13 @@ export function MasterImportCorrection({
   onRetry: () => void;
   retryLabel?: string;
 }) {
-  const errorCount = rows.reduce(
-    (count, row) => count + Object.values(row.errors).flat().length,
+  const fieldErrorCount = rows.reduce(
+    (count, row) => count + Object.entries(row.errors)
+      .filter(([key]) => key !== "_row")
+      .reduce((fieldCount, [, errors]) => fieldCount + errors.length, 0),
     0,
   );
+  const rowErrorCount = rows.reduce((count, row) => count + (row.errors._row?.length ?? 0), 0);
 
   return (
     <Modal
@@ -69,7 +72,8 @@ export function MasterImportCorrection({
           <h2 className="text-base font-semibold text-[var(--erp-text)]">{title}</h2>
           <p className="mt-2 text-sm text-[var(--erp-text-muted)]">{description}</p>
           <p className="mt-2 text-sm font-medium text-[var(--erp-danger)]" role="status" aria-live="polite">
-            {rows.length} row{rows.length === 1 ? "" : "s"} need correction; {errorCount} field error{errorCount === 1 ? "" : "s"}.
+            {rows.length} row{rows.length === 1 ? "" : "s"} need correction; {fieldErrorCount} field error{fieldErrorCount === 1 ? "" : "s"}
+            {rowErrorCount ? ` and ${rowErrorCount} row-level issue${rowErrorCount === 1 ? "" : "s"}.` : "."}
           </p>
         </header>
         {errorMessage ? (
@@ -82,7 +86,10 @@ export function MasterImportCorrection({
           {rows.map((row) => {
             const safeId = row.id.replace(/[^A-Za-z0-9_-]/g, "_");
             const availableFields = row.fields ?? fields;
-            const fieldsWithErrors = availableFields.filter((field) => row.errors[field.key]?.length);
+            const hasFieldErrors = availableFields.some((field) => row.errors[field.key]?.length);
+            const fieldsToRender = availableFields.filter((field) =>
+              hasFieldErrors ? row.errors[field.key]?.length : row.errors._row?.length,
+            );
             return (
               <section
                 key={row.id}
@@ -111,7 +118,7 @@ export function MasterImportCorrection({
                 </ul>
               ) : null}
               <div className="flex min-w-0 flex-nowrap gap-3 overflow-x-auto pb-2">
-                {fieldsWithErrors.map((field) => {
+                {fieldsToRender.map((field) => {
                   const errorId = `import-error-${safeId}-${field.key.replace(/[^A-Za-z0-9_-]/g, "_")}`;
                   const errors = row.errors[field.key] ?? [];
                   return (

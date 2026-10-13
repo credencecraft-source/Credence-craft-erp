@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Button from "@/components/ui/Button";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import type { MasterRecordsImportAction } from "@/components/master-data/master-records-excel-actions";
@@ -46,6 +47,7 @@ type MasterRecordsTableProps = {
   createAction: (formData: FormData) => Promise<void>;
   updateAction: (formData: FormData) => Promise<void>;
   deleteAction: (formData: FormData) => Promise<void>;
+  deleteSelectedAction: (formData: FormData) => Promise<void>;
   importAction: MasterRecordsImportAction;
   fields: MasterFieldDefinition[];
   lookupOptions: Record<string, MasterLookupOption[]>;
@@ -77,6 +79,15 @@ function SubmitButton({ children }: { children: string }) {
   );
 }
 
+function DeleteConfirmButton({ children }: { children: ReactNode }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" variant="destructive" disabled={pending}>
+      {pending ? "Deleting..." : children}
+    </Button>
+  );
+}
+
 export function MasterRecordsTable({
   records,
   moduleLabel,
@@ -86,12 +97,15 @@ export function MasterRecordsTable({
   createAction,
   updateAction,
   deleteAction,
+  deleteSelectedAction,
   fields,
   lookupOptions,
   childRecords = [],
 }: MasterRecordsTableProps) {
   const router = useRouter();
   const [editingRecord, setEditingRecord] = useState<MasterRecord | null>(null);
+  const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
+  const [deleteDialog, setDeleteDialog] = useState<{ kind: "single"; record: MasterRecord } | { kind: "selected" } | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createFields, setCreateFields] = useState<Record<string, unknown>>({});
   const [editFields, setEditFields] = useState<Record<string, unknown>>({});
@@ -878,7 +892,16 @@ export function MasterRecordsTable({
         onVisibleFieldsChange={setVisibleReportFields}
         storageKey={`master-report-columns-${moduleKey}`}
         rowIdSelector={(record) => record.id}
-        selectedIds={[]}
+        selectedIds={moduleKey === "article" ? selectedRecordIds : []}
+        selectable={moduleKey === "article"}
+        onToggleSelectAll={(checked, ids) => setSelectedRecordIds((current) =>
+          checked ? [...new Set([...current, ...ids])] : current.filter((id) => !ids.includes(id)),
+        )}
+        onToggleRowSelection={(id, checked) => setSelectedRecordIds((current) =>
+          checked ? [...new Set([...current, id])] : current.filter((selectedId) => selectedId !== id),
+        )}
+        onBulkDeleteSelected={moduleKey === "article" ? () => setDeleteDialog({ kind: "selected" }) : undefined}
+        bulkDeleteSelectedLabel="Delete selected Articles"
         onRowClick={() => undefined}
         onRecordClick={(record) => {
           if (moduleKey === "article") {
@@ -913,15 +936,9 @@ export function MasterRecordsTable({
                 <Button type="button" size="sm" variant="secondary" onClick={() => openEditor(record)}>
                   Edit
                 </Button>
-                <form action={deleteAction}>
-                  <input type="hidden" name="workspaceId" value={workspaceId} />
-                  <input type="hidden" name="organizationId" value={organizationId} />
-                  <input type="hidden" name="moduleKey" value={moduleKey} />
-                  <input type="hidden" name="valueId" value={record.value_id} />
-                  <Button type="submit" size="sm" variant="danger">
-                    Delete
-                  </Button>
-                </form>
+                <Button type="button" size="sm" variant="destructive" onClick={() => setDeleteDialog({ kind: "single", record })}>
+                  Delete
+                </Button>
               </div>
             );
           }
@@ -930,6 +947,48 @@ export function MasterRecordsTable({
         }}
         emptyMessage={`No ${moduleLabel.toLowerCase()} records found.`}
       />
+
+      <Modal
+        open={deleteDialog !== null}
+        onClose={() => setDeleteDialog(null)}
+        ariaLabelledBy="master-delete-confirmation-title"
+        ariaDescribedBy="master-delete-confirmation-description"
+        variant="danger"
+        size="sm"
+      >
+        <div className="space-y-4 p-6">
+          <div>
+            <h2 id="master-delete-confirmation-title" className="text-lg font-semibold text-[var(--erp-text)]">
+              {deleteDialog?.kind === "selected"
+                ? `Delete ${selectedRecordIds.length} selected Articles?`
+                : `Delete this ${moduleLabel.toLowerCase()} record?`}
+            </h2>
+            <p id="master-delete-confirmation-description" className="mt-2 text-sm text-[var(--erp-muted)]">
+              This cannot be undone. Records referenced by other data, or protected demo records, cannot be deleted.
+              {deleteDialog?.kind === "selected" ? " The selected batch is all-or-nothing." : ""}
+            </p>
+          </div>
+          {deleteDialog?.kind === "single" ? (
+            <form action={deleteAction} className="flex justify-end gap-2">
+              <input type="hidden" name="workspaceId" value={workspaceId} />
+              <input type="hidden" name="organizationId" value={organizationId} />
+              <input type="hidden" name="moduleKey" value={moduleKey} />
+              <input type="hidden" name="valueId" value={deleteDialog.record.value_id} />
+              <Button type="button" variant="secondary" onClick={() => setDeleteDialog(null)}>Cancel</Button>
+              <DeleteConfirmButton>Delete record</DeleteConfirmButton>
+            </form>
+          ) : deleteDialog?.kind === "selected" ? (
+            <form action={deleteSelectedAction} className="flex justify-end gap-2">
+              <input type="hidden" name="workspaceId" value={workspaceId} />
+              <input type="hidden" name="organizationId" value={organizationId} />
+              <input type="hidden" name="moduleKey" value={moduleKey} />
+              {selectedRecordIds.map((id) => <input key={id} type="hidden" name="articleId" value={id} />)}
+              <Button type="button" variant="secondary" onClick={() => setDeleteDialog(null)}>Cancel</Button>
+              <DeleteConfirmButton>Delete {selectedRecordIds.length} Articles</DeleteConfirmButton>
+            </form>
+          ) : null}
+        </div>
+      </Modal>
 
       {/* CREATE MODAL */}
       {showCreateModal && (

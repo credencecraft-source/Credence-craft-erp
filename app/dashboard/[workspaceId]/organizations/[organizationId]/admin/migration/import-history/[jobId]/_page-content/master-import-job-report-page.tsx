@@ -24,6 +24,7 @@ import { CONTACT_WORKBOOK_COLUMNS } from "@/lib/master-data/contact-records-work
 import type { ContactInput } from "@/lib/services/master-data/contact-master-validation";
 import {
   contactTemplateFieldName,
+  formatImportCorrectionError,
   getImportReportFields,
   humanizeImportFieldName,
   isImportReportError,
@@ -139,10 +140,10 @@ function readValidationErrors(payload: unknown) {
         ? error.fieldPaths.filter((path): path is string => typeof path === "string")
         : [];
       return paths.length
-        ? `${error.message} (${paths.map((path) => payload.input
+        ? `${formatImportCorrectionError(error.message)} (${paths.map((path) => payload.input
           ? contactTemplateFieldName(path)
           : humanizeImportFieldName(path)).join(", ")})`
-        : error.message;
+        : formatImportCorrectionError(error.message);
     }
     return "";
   }).filter(Boolean).join(" | ");
@@ -155,7 +156,7 @@ function readRowValidationErrors(payload: unknown) {
     const fieldPaths = Array.isArray(error.fieldPaths)
       ? error.fieldPaths.filter((path): path is string => typeof path === "string")
       : [];
-    return [{ message: error.message, fieldPaths }];
+    return [{ message: formatImportCorrectionError(error.message), fieldPaths }];
   });
 }
 
@@ -331,8 +332,10 @@ export default function MasterImportJobReportPage({
       ? createdRows
       : activeReportTab === "validated"       ? validatedRows : stagedRows;
   const activeRowCount = activeReportTab === "planned" ? planCount : rowCounts[activeReportTab];
-  const selectedValidationRowNumbers = selectedValidationRowIds.map(Number);
-  const activeSelectedRowIds = activeReportTab === "staged" ? selectedValidationRowIds : [];
+  const activeSelectedRowIds = ["staged", "errors"].includes(activeReportTab)
+    ? selectedValidationRowIds
+    : [];
+  const selectedValidationRowNumbers = activeSelectedRowIds.map(Number);
   const nextPageOffset = reportPage * REPORT_PAGE_SIZE
     + (activeReportTab === "planned" ? plans.length : rows.length);
 
@@ -343,7 +346,7 @@ export default function MasterImportJobReportPage({
   const runOperation = async (operation: "stage" | "validate", selectedRowNumbers: number[] = []) => {
     if (!job) return;
     if (operation === "validate" && selectedRowNumbers.length === 0) {
-      setError("Select at least one staged row to validate.");
+      setError("Select at least one staged or error row to validate.");
       return;
     }
     setActiveOperation(operation);
@@ -839,25 +842,28 @@ export default function MasterImportJobReportPage({
         id: String(rowNumber),
       };
     } else {
-      const fields = currentModule?.fields ?? [];
+      const fields = (currentModule?.fields ?? []).filter((field) => !field.readOnly);
       const fieldErrors = new Map<string, string[]>();
       const linkedPaths = new Map<string, string[]>();
       const hasFieldPaths = fieldPaths.length > 0;
-      for (const field of fields) {
-        const paths = field.type === "child-list"
-          ? fieldPaths.filter((path) => path.startsWith(`${field.key}.`))
-          : fieldPaths.includes(field.key) ? [field.key] : [];
-        if (hasFieldPaths && !paths.length) continue;
-        linkedPaths.set(field.key, paths);
-        fieldErrors.set(field.key, rowErrors
-          .filter((item) => !hasFieldPaths || item.fieldPaths.some((path) => paths.includes(path)))
-          .map((item) => item.message));
+      if (hasFieldPaths) {
+        for (const field of fields) {
+          const paths = field.type === "child-list"
+            ? fieldPaths.filter((path) => path.startsWith(`${field.key}.`))
+            : fieldPaths.includes(field.key) ? [field.key] : [];
+          if (!paths.length) continue;
+          linkedPaths.set(field.key, paths);
+          fieldErrors.set(field.key, rowErrors
+            .filter((item) => item.fieldPaths.some((path) => paths.includes(path)))
+            .map((item) => item.message));
+        }
       }
       const payloadFields = isRecord(payload.fields) ? payload.fields : {};
       const childRows = isRecord(payload.childRows) ? payload.childRows : {};
-      const correctionFields = fields
-        .filter((field) => fieldErrors.has(field.key))
-        .map((field) => ({
+      const fieldsToShow = fieldErrors.size > 0
+        ? fields.filter((field) => fieldErrors.has(field.key))
+        : fields;
+      const correctionFields = fieldsToShow.map((field) => ({
           key: field.key,
           label: field.type === "child-list" ? `${field.label} (JSON rows)` : field.label,
           multiline: field.type === "child-list",
@@ -1068,6 +1074,17 @@ export default function MasterImportJobReportPage({
                 </Button>
               </>
             ) : null}
+            {activeReportTab === "errors" ? (
+              <Button
+                type="button"
+                onClick={() => void runOperation("validate", selectedValidationRowNumbers)}
+                disabled={isProcessing || selectedValidationRowNumbers.length === 0}
+              >
+                {isProcessing && activeOperation === "validate"
+                  ? "Validating..."
+                  : `Validate selected (${selectedValidationRowNumbers.length})`}
+              </Button>
+            ) : null}
           </div>
         </header>
 
@@ -1129,6 +1146,7 @@ export default function MasterImportJobReportPage({
             onChange={(tab) => {
               setActiveReportTab(tab);
               setReportPage(0);
+              setSelectedValidationRowIds([]);
             }}
             tabs={[
               { value: "staged", label: `Staged (${rowCounts.staged})` },
@@ -1200,10 +1218,12 @@ export default function MasterImportJobReportPage({
             storageKey={`master-import-report-${organizationId}-${jobId}-${activeReportTab}`}
             rowIdSelector={(row) => row.id}
             selectedIds={activeSelectedRowIds}
-            selectable={activeReportTab === "staged"}
+            selectable={activeReportTab === "staged" || activeReportTab === "errors"}
             rowSelectable={(row) => !isProcessing && (
               activeReportTab === "staged"
-                && (row.status === "STAGED" || row.status === "CORRECTED")
+                ? row.status === "STAGED" || row.status === "CORRECTED"
+                : activeReportTab === "errors"
+                  && (row.status === "INVALID" || row.status === "FAILED")
             )}
             onToggleSelectAll={(checked, ids) => setSelectedValidationRowIds((current) => {
               if (checked) return [...new Set([...current, ...ids])];
