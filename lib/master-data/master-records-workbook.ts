@@ -197,6 +197,60 @@ function parseFieldValue(
   return parseText(text);
 }
 
+function parseFieldValueForStaging(
+  value: unknown,
+  field: MasterFieldDefinition,
+  articleVariantCell = false,
+): unknown {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    if (field.type === "checkbox") return false;
+    if (field.multiple) return [];
+    return null;
+  }
+  if (field.type === "child-list") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      if (articleVariantCell) {
+        const colorField = field.childFields?.find((childField) => childField.key === "color");
+        return colorField
+          ? [{ ...Object.fromEntries((field.childFields ?? []).map((childField) => [
+              childField.key,
+              childField.key === "color" ? parseText(text) : null,
+            ])) }]
+          : text;
+      }
+      return text;
+    }
+    if (!Array.isArray(parsed)) return text;
+    return parsed.flatMap((entry) => {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+      const rawChild = entry as Record<string, unknown>;
+      return [Object.fromEntries((field.childFields ?? []).map((childField) => [
+        childField.key,
+        parseFieldValueForStaging(rawChild[childField.key] ?? rawChild[childField.label], childField),
+      ]))];
+    });
+  }
+  if (field.multiple && field.type === "lookup") {
+    return text.split(/[;,]/).map((item) => parseText(item)).filter(Boolean);
+  }
+  if (field.type === "checkbox") {
+    if (/^(true|yes|1)$/i.test(text)) return true;
+    if (/^(false|no|0)$/i.test(text)) return false;
+    return text;
+  }
+  if (field.type === "number" || field.type === "percentage" || field.type === "decimal") {
+    const number = Number(text);
+    if (!Number.isFinite(number)) return text;
+    return field.type === "decimal" ? text : number;
+  }
+  if (field.type === "date") return parseDate(value) ?? text;
+  return parseText(text);
+}
+
 function isBlankRow(row: unknown[]) {
   return row.every((value) => String(value ?? "").trim() === "");
 }
@@ -213,7 +267,12 @@ export async function parseMasterRecordsWorkbook(
 export async function parseMasterRecordsWorkbook(
   file: File,
   definition: MasterDefinition,
-  collectRowErrors = false,
+  mode: "stage",
+): Promise<ParsedMasterWorkbookRow[]>;
+export async function parseMasterRecordsWorkbook(
+  file: File,
+  definition: MasterDefinition,
+  collectRowErrors: boolean | "stage" = false,
 ): Promise<ParsedMasterWorkbookRow[] | MasterWorkbookParseResult> {
   if (!/\.xlsx$/i.test(file.name)) {
     throw new Error("Choose an .xlsx workbook downloaded from this master.");
@@ -299,6 +358,33 @@ export async function parseMasterRecordsWorkbook(
     const rowNumber = index + 1;
     const values: Record<string, unknown> = {};
     const childRows: Record<string, Record<string, unknown>[] | string> = {};
+    if (collectRowErrors === "stage") {
+      for (const field of fields) {
+        const headerIndex = headerIndexes.get(normalizeHeader(field.label))
+          ?? headerIndexes.get(normalizeHeader(field.key));
+        const rawValue = headerIndex === undefined ? null : row[headerIndex];
+        const parsedValue = parseFieldValueForStaging(
+          rawValue,
+          field,
+          definition.key === "article" && field.key === "variants",
+        );
+        if (field.type === "child-list") {
+          childRows[field.key] = parsedValue as Record<string, unknown>[] | string;
+        } else {
+          values[field.key] = parsedValue;
+        }
+      }
+      const masterCodeIndex = headerIndexes.get("master code");
+      const descriptionIndex = headerIndexes.get("description");
+      parsedRows.push({
+        rowNumber,
+        code: masterCodeIndex === undefined ? null : parseText(row[masterCodeIndex]),
+        description: descriptionIndex === undefined ? null : parseText(row[descriptionIndex]),
+        fields: values,
+        childRows,
+      });
+      continue;
+    }
     let failureFieldPaths: string[] = [];
     try {
       for (const field of fields) {
@@ -395,7 +481,7 @@ export async function parseMasterRecordsWorkbook(
   }
 
   if (!parsedRows.length && !failures.length) throw new Error("The workbook has no data rows to import.");
-  return collectRowErrors ? { rows: parsedRows, failures } : parsedRows;
+  return collectRowErrors === true ? { rows: parsedRows, failures } : parsedRows;
 }
 
 export function validateCorrectedMasterWorkbookRows(

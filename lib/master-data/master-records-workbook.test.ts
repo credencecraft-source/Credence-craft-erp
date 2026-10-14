@@ -144,6 +144,27 @@ describe("parseMasterRecordsWorkbook", () => {
       .rejects.toThrow("Reference URL must be an http or https URL");
   });
 
+  it("stages raw worksheet values without validating row fields", async () => {
+    const staged = await parseMasterRecordsWorkbook(workbookFile([
+      ["Name", "Ratio", "Due Date", "Reference URL", "Steps"],
+      ["", "101", "not-a-date", "javascript:alert(1)", "{malformed"],
+    ]), definition, "stage");
+
+    expect(staged).toEqual([{
+      rowNumber: 2,
+      code: null,
+      description: null,
+      fields: {
+        name: null,
+        ratio: 101,
+        enabled: false,
+        dueDate: "not-a-date",
+        referenceUrl: "JAVASCRIPT:ALERT(1)",
+      },
+      childRows: { steps: "{malformed" },
+    }]);
+  });
+
   it("rejects unsupported workbook formats, extra columns, and empty imports", async () => {
     await expect(parseMasterRecordsWorkbook(workbookFile([["Name"], ["sample"]], "sample.csv"), definition))
       .rejects.toThrow("Choose an .xlsx workbook");

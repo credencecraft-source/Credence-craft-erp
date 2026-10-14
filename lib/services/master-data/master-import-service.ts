@@ -11,7 +11,7 @@ import { prisma } from "@/lib/database/prisma-client";
 import { parseContactWorkbook } from "@/lib/master-data/contact-records-workbook-parser";
 import { ContactValidationError, parseContactInput, type ContactInput } from "@/lib/services/master-data/contact-master-validation";
 import { createContact } from "@/lib/services/master-data/contact-master-service";
-import { groupArticleMatrixRows } from "@/lib/master-data/article-import-workbook";
+import { groupArticleMatrixRowsWithErrors } from "@/lib/master-data/article-import-workbook";
 import { parseFinishedGoodsSizePrices } from "@/lib/services/master-data/finished-goods-size-service";
 import {
   createMasterValueForOrganization,
@@ -804,7 +804,7 @@ export async function stageMasterImportJob(input: {
     status: entry.validationErrors.length
       ? MasterImportJobRowStatus.INVALID
       : MasterImportJobRowStatus.STAGED,
-    checkpoint: "PARSED",
+    checkpoint: entry.checkpoint ?? "PARSED",
     encrypted_payload: Buffer.from(encryptSecret(JSON.stringify({
       ...entry.payload,
       validationErrors: entry.validationErrors,
@@ -871,7 +871,11 @@ function countsForStagedRows(rows: Array<{ status: MasterImportJobRowStatus }>) 
 }
 
 type ImportValidationError = { message: string; fieldPaths: string[] };
-type StagedPayload = { payload: Record<string, unknown>; validationErrors: ImportValidationError[] };
+type StagedPayload = {
+  payload: Record<string, unknown>;
+  validationErrors: ImportValidationError[];
+  checkpoint?: string;
+};
 
 async function parseGenericMasterRows(file: File, moduleKey: string): Promise<StagedPayload[]> {
   const definition = getMasterDefinition(moduleKey);
@@ -880,47 +884,17 @@ async function parseGenericMasterRows(file: File, moduleKey: string): Promise<St
   }
   let parsed;
   try {
-    parsed = await parseMasterRecordsWorkbook(file, definition, true);
+    parsed = await parseMasterRecordsWorkbook(file, definition, "stage");
   } catch (error) {
     throw new MasterImportServiceError(
       error instanceof Error ? error.message.slice(0, 500) : "Workbook could not be parsed.",
       400,
     );
   }
-
-  if (moduleKey === "article" && parsed.failures.length > 0) {
-    const firstFailure = parsed.failures[0];
-    throw new MasterImportServiceError(
-      `${firstFailure.message} Correct the Article workbook and upload it again; related Article rows are grouped during staging.`,
-      400,
-    );
-  }
-  let parsedRows = parsed.rows;
-  if (moduleKey === "article") {
-    try {
-      parsedRows = groupArticleMatrixRows(parsed.rows);
-    } catch (error) {
-      throw new MasterImportServiceError(
-        error instanceof Error ? error.message.slice(0, 500) : "Article rows could not be grouped safely.",
-        400,
-      );
-    }
-  }
-  const rows: StagedPayload[] = parsedRows.map((row) => ({
+  return parsed.map((row) => ({
     payload: { rowNumber: row.rowNumber, code: row.code, description: row.description, fields: row.fields, childRows: row.childRows },
     validationErrors: [],
   }));
-  rows.push(...parsed.failures.map((failure) => ({
-    payload: {
-      rowNumber: failure.rowNumber,
-      code: failure.row.code,
-      description: failure.row.description,
-      fields: failure.row.fields,
-      childRows: failure.row.childRows,
-    },
-    validationErrors: [{ message: failure.message, fieldPaths: failure.fieldPaths ?? [] }],
-  })));
-  return rows.sort((left, right) => Number(left.payload.rowNumber) - Number(right.payload.rowNumber));
 }
 
 async function parseContactRows(file: File): Promise<StagedPayload[]> {
@@ -1008,7 +982,8 @@ function validateImportPayload(moduleKey: string, value: unknown): {
   const fieldDefinitions = definition.fields.filter((field) => !field.readOnly);
 
   for (const key of Object.keys(fields)) {
-    if (!fieldDefinitions.some((field) => field.key === key)) {
+    if (!(moduleKey === "article" && key === "Size_Prices")
+      && !fieldDefinitions.some((field) => field.key === key)) {
       errors.push({ message: "Row contains a field not defined for this master.", fieldPaths: [key] });
     }
   }
@@ -1545,7 +1520,7 @@ export async function validateMasterImportJob(input: {
     throw new MasterImportServiceError("This import cannot be validated at its current stage.", 409);
   }
 
-  const rows = await prisma.masterImportJobRow.findMany({
+  const selectedRows = await prisma.masterImportJobRow.findMany({
     where: {
       organization_id: input.organizationId,
       job_id: input.jobId,
@@ -1558,44 +1533,198 @@ export async function validateMasterImportJob(input: {
     take: input.rowNumbers?.length ?? 1,
   });
   const requestedRowCount = input.rowNumbers?.length ?? 1;
-  if (rows.length !== requestedRowCount) {
+  if (job.module_key !== "article" && selectedRows.length !== requestedRowCount) {
     throw new MasterImportServiceError("One or more selected rows are no longer awaiting validation.", 409);
   }
+  type ValidationCandidate = {
+    row: (typeof selectedRows)[number];
+    payload: unknown;
+    groupingError?: ImportValidationError;
+    rowsToDelete?: (typeof selectedRows)[number][];
+  };
+  let candidates: ValidationCandidate[] = selectedRows.map((row) => {
+    let payload: unknown;
+    try {
+      payload = JSON.parse(decryptSecret(Buffer.from(row.encrypted_payload).toString("utf8"))) as unknown;
+    } catch {
+      throw new MasterImportServiceError("Import row data is unavailable.", 503);
+    }
+    return { row, payload };
+  });
+  if (job.module_key === "article" && selectedRows.length > 0) {
+    const selectedArticleKeys = new Set(candidates.flatMap(({ payload }) =>
+      isRecord(payload) && isRecord(payload.fields) && typeof payload.fields.article === "string"
+        ? [payload.fields.article.trim().toLocaleLowerCase()]
+        : []));
+    const allPendingArticleRows = await prisma.masterImportJobRow.findMany({
+      where: {
+        organization_id: input.organizationId,
+        job_id: input.jobId,
+        status: { in: [
+          MasterImportJobRowStatus.STAGED,
+          MasterImportJobRowStatus.CORRECTED,
+          MasterImportJobRowStatus.INVALID,
+          MasterImportJobRowStatus.FAILED,
+        ] },
+      },
+      orderBy: { row_number: "asc" },
+    });
+    const rowsByArticle = new Map<string, Array<{
+      row: (typeof allPendingArticleRows)[number];
+      payload: Record<string, unknown>;
+    }>>();
+    for (const row of allPendingArticleRows) {
+      let payload: unknown;
+      try {
+        payload = JSON.parse(decryptSecret(Buffer.from(row.encrypted_payload).toString("utf8"))) as unknown;
+      } catch {
+        throw new MasterImportServiceError("Import row data is unavailable.", 503);
+      }
+      if (!isRecord(payload) || !isRecord(payload.fields) || typeof payload.fields.article !== "string") continue;
+      const articleKey = payload.fields.article.trim().toLocaleLowerCase();
+      if (!selectedArticleKeys.has(articleKey)) continue;
+      const articleRows = rowsByArticle.get(articleKey) ?? [];
+      articleRows.push({ row, payload });
+      rowsByArticle.set(articleKey, articleRows);
+    }
+
+    const groupedCandidates: ValidationCandidate[] = [];
+    const selectedRowsWithoutArticle = candidates.filter(({ payload }) =>
+      !isRecord(payload) || !isRecord(payload.fields) || typeof payload.fields.article !== "string"
+      || !payload.fields.article.trim());
+    for (const articleRows of rowsByArticle.values()) {
+      const workbookRows = articleRows.flatMap(({ payload }) => {
+        if (!isRecord(payload.fields) || typeof payload.rowNumber !== "number"
+          || !isRecord(payload.childRows)) return [];
+        return [{
+          rowNumber: payload.rowNumber,
+          code: typeof payload.code === "string" ? payload.code : null,
+          description: typeof payload.description === "string" ? payload.description : null,
+          fields: payload.fields,
+          childRows: payload.childRows as Record<string, Record<string, unknown>[] | string>,
+        }];
+      });
+      if (workbookRows.length !== articleRows.length) {
+        throw new MasterImportServiceError("Article row data is invalid; correct the row and retry.", 400);
+      }
+      const grouped = groupArticleMatrixRowsWithErrors(workbookRows);
+      const rowByWorkbookNumber = new Map(articleRows.map(({ row, payload }) =>
+        [Number(payload.rowNumber), row]));
+      const groupingFailure = grouped.failures[0];
+      if (groupingFailure) {
+        for (const { row, payload } of articleRows) {
+          const cleanPayload = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== "validationErrors"));
+          groupedCandidates.push({
+            row,
+            payload: {
+              ...cleanPayload,
+              validationErrors: [{
+                message: groupingFailure.message,
+                fieldPaths: groupingFailure.fieldPaths,
+              }],
+            },
+            groupingError: {
+              message: groupingFailure.message,
+              fieldPaths: groupingFailure.fieldPaths,
+            },
+          });
+        }
+      } else {
+        const groupedRow = grouped.rows[0];
+        const primaryRow = rowByWorkbookNumber.get(groupedRow.rowNumber);
+        if (!primaryRow) {
+          throw new MasterImportServiceError("Article grouping could not identify its source row.", 409);
+        }
+        const duplicates = articleRows
+          .filter(({ row }) => row.id !== primaryRow.id)
+          .map(({ row }) => row);
+        groupedCandidates.push({
+          row: primaryRow,
+          payload: {
+            rowNumber: groupedRow.rowNumber,
+            code: groupedRow.code,
+            description: groupedRow.description,
+            fields: groupedRow.fields,
+            childRows: groupedRow.childRows,
+          },
+          rowsToDelete: duplicates,
+        });
+      }
+    }
+    candidates = [...groupedCandidates, ...selectedRowsWithoutArticle];
+  }
   const importDefinition = getMasterDefinition(job.module_key);
-  const lookupIndex = rows.length === 0 || job.module_key === "contact" || !importDefinition
+  const lookupIndex = candidates.length === 0 || job.module_key === "contact" || !importDefinition
     ? new Map<string, Map<string, ActiveMasterLookupRecord[]>>()
     : await loadActiveMasterLookupIndex(
         input.organizationId,
         getImportLookupModuleKeys(importDefinition.fields),
       );
   const validationResults: Array<{
-    row: (typeof rows)[number];
+    row: (typeof selectedRows)[number];
     validation: Awaited<ReturnType<typeof validateImportPayloadForOrganization>>;
     encryptedPayload: Uint8Array<ArrayBuffer>;
+    rowsToDelete: (typeof selectedRows)[number][];
+    groupingError: boolean;
   }> = [];
   const auditEvents: Prisma.AuditEventCreateManyInput[] = [];
-  for (const row of rows) {
-    let previousPayload: unknown;
-    try {
-      previousPayload = JSON.parse(decryptSecret(Buffer.from(row.encrypted_payload).toString("utf8"))) as unknown;
-    } catch {
-      throw new MasterImportServiceError("Import row data is unavailable.", 503);
-    }
-    const validation = await validateImportPayloadForOrganization(
-      input.organizationId,
-      job.module_key,
-      previousPayload,
-      lookupIndex,
-    );
+  for (const candidate of candidates) {
+    const validation = candidate.groupingError
+      ? {
+          payload: Object.fromEntries(Object.entries(candidate.payload as Record<string, unknown>)
+            .filter(([key]) => key !== "validationErrors")),
+          validationErrors: [candidate.groupingError],
+        }
+      : await validateImportPayloadForOrganization(
+          input.organizationId,
+          job.module_key,
+          candidate.payload,
+          lookupIndex,
+        );
     const encryptedPayload = new Uint8Array(Buffer.from(encryptSecret(JSON.stringify({
       ...validation.payload,
       validationErrors: validation.validationErrors,
     })), "utf8"));
-    validationResults.push({ row, validation, encryptedPayload });
+    validationResults.push({
+      row: candidate.row,
+      validation,
+      encryptedPayload,
+      rowsToDelete: candidate.rowsToDelete ?? [],
+      groupingError: Boolean(candidate.groupingError),
+    });
   }
 
   const result = await prisma.$transaction(async (transaction) => {
-    for (const { row, validation, encryptedPayload } of validationResults) {
+    for (const { row, validation, encryptedPayload, rowsToDelete, groupingError } of validationResults) {
+      if (rowsToDelete.length > 0) {
+        const deleted = await transaction.masterImportJobRow.deleteMany({
+          where: {
+            organization_id: input.organizationId,
+            job_id: input.jobId,
+            id: { in: rowsToDelete.map((duplicate) => duplicate.id) },
+            status: { in: rowsToDelete.map((duplicate) => duplicate.status) },
+          },
+        });
+        if (deleted.count !== rowsToDelete.length) {
+          throw new MasterImportServiceError("Article rows changed during validation; reload and retry.", 409);
+        }
+        for (const duplicate of rowsToDelete) {
+          auditEvents.push({
+            organization_id: input.organizationId,
+            user_id: input.actorUserId,
+            module: "MASTER_DATA",
+            action: "MASTER_IMPORT_ARTICLE_ROWS_CONSOLIDATED",
+            entity_type: "MasterImportJobRow",
+            entity_id: duplicate.id,
+            details: {
+              jobId: input.jobId,
+              rowNumber: duplicate.row_number,
+              consolidatedIntoRowId: row.id,
+              consolidatedIntoRowNumber: row.row_number,
+            },
+          });
+        }
+      }
       const updated = await transaction.masterImportJobRow.updateMany({
         where: {
           organization_id: input.organizationId,
@@ -1608,7 +1737,9 @@ export async function validateMasterImportJob(input: {
             ? MasterImportJobRowStatus.INVALID
             : MasterImportJobRowStatus.VALIDATED,
           plan_number: null,
-          checkpoint: validation.validationErrors.length ? "VALIDATION_FAILED" : "VALIDATED",
+          checkpoint: groupingError
+            ? "ARTICLE_MATRIX_CONFLICT"
+            : validation.validationErrors.length ? "VALIDATION_FAILED" : "VALIDATED",
           encrypted_payload: encryptedPayload,
           updated_by_user_id: input.actorUserId,
         },

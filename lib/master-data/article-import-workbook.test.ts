@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { groupArticleMatrixRows } from "./article-import-workbook";
+import {
+  groupArticleMatrixRows,
+  groupArticleMatrixRowsWithErrors,
+} from "./article-import-workbook";
 
 describe("groupArticleMatrixRows", () => {
   it("combines repeated article rows into one style with distinct sizes and colors", () => {
@@ -75,6 +78,40 @@ describe("groupArticleMatrixRows", () => {
       row,
       { ...row, rowNumber: 3, fields: { ...row.fields, Category: "TOPS", Sizes: ["M"] } },
     ])).toThrow(/conflicting Category values in spreadsheet rows 2, 3/);
+  });
+
+  it("isolates a conflicting Article while keeping other Articles grouped", () => {
+    const result = groupArticleMatrixRowsWithErrors([
+      {
+        rowNumber: 2,
+        code: null,
+        description: null,
+        fields: { article: "P799", Category: "TOPS", Sizes: ["S"] },
+        childRows: { variants: [] },
+      },
+      {
+        rowNumber: 3,
+        code: null,
+        description: null,
+        fields: { article: "P799", Category: "BOTTOMS", Sizes: ["M"] },
+        childRows: { variants: [] },
+      },
+      {
+        rowNumber: 4,
+        code: null,
+        description: null,
+        fields: { article: "P800", Category: "TOPS", Sizes: ["S"] },
+        childRows: { variants: [] },
+      },
+    ]);
+
+    expect(result.rows.map((row) => row.fields.article)).toEqual(["P800"]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).toMatchObject({
+      rowNumber: 2,
+      row: { fields: { article: "P799" } },
+    });
+    expect(result.failures[0].message).toContain("conflicting Category values");
   });
 
   it("moves one shared size price to the Article header when every size matches", () => {

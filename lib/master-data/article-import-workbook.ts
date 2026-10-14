@@ -33,12 +33,28 @@ function mergeField(
   values[key] = value;
 }
 
-export function groupArticleMatrixRows(rows: ParsedMasterWorkbookRow[]) {
+export type ArticleMatrixGroupingFailure = {
+  rowNumber: number;
+  message: string;
+  fieldPaths: string[];
+  row: ParsedMasterWorkbookRow;
+  checkpoint: "ARTICLE_MATRIX_CONFLICT";
+};
+
+export function groupArticleMatrixRowsWithErrors(rows: ParsedMasterWorkbookRow[]) {
   const groups = new Map<string, ParsedMasterWorkbookRow[]>();
+  const failures: ArticleMatrixGroupingFailure[] = [];
   for (const row of rows) {
     const article = String(row.fields.article ?? "").trim();
     if (!article) {
-      throw new Error(`Spreadsheet row ${row.rowNumber} is missing its Article Name.`);
+      failures.push({
+        rowNumber: row.rowNumber,
+        message: `Spreadsheet row ${row.rowNumber} is missing its Article Name.`,
+        fieldPaths: ["article"],
+        row,
+        checkpoint: "ARTICLE_MATRIX_CONFLICT",
+      });
+      continue;
     }
     const key = article.toLocaleLowerCase();
     const group = groups.get(key) ?? [];
@@ -46,7 +62,29 @@ export function groupArticleMatrixRows(rows: ParsedMasterWorkbookRow[]) {
     groups.set(key, group);
   }
 
-  return [...groups.values()].map((group) => {
+  const groupedRows: ParsedMasterWorkbookRow[] = [];
+  for (const group of groups.values()) {
+    try {
+      groupedRows.push(groupArticleMatrixRowGroup(group));
+    } catch (error) {
+      const first = group[0];
+      failures.push({
+        rowNumber: first.rowNumber,
+        message: error instanceof Error ? error.message : "Article rows could not be grouped safely.",
+        fieldPaths: [/conflicting ([\w.]+) values/i.exec(error instanceof Error ? error.message : "")?.[1] ?? ""]
+          .filter(Boolean),
+        row: first,
+        checkpoint: "ARTICLE_MATRIX_CONFLICT",
+      });
+    }
+  }
+  return {
+    rows: groupedRows.sort((first, second) => first.rowNumber - second.rowNumber),
+    failures: failures.sort((first, second) => first.rowNumber - second.rowNumber),
+  };
+}
+
+function groupArticleMatrixRowGroup(group: ParsedMasterWorkbookRow[]) {
     const first = structuredClone(group[0]);
     const rowNumbers = group.map((row) => row.rowNumber);
     const fields = { ...first.fields };
@@ -172,5 +210,12 @@ export function groupArticleMatrixRows(rows: ParsedMasterWorkbookRow[]) {
         variants: [...variantsByColor.values()],
       },
     };
-  });
+}
+
+export function groupArticleMatrixRows(rows: ParsedMasterWorkbookRow[]) {
+  const grouped = groupArticleMatrixRowsWithErrors(rows);
+  if (grouped.failures.length > 0) {
+    throw new Error(grouped.failures[0].message);
+  }
+  return grouped.rows;
 }

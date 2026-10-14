@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     masterImportJobRow: {
       createMany: vi.fn(),
       count: vi.fn(),
+      deleteMany: vi.fn(),
       findFirst: vi.fn(),
       findMany: vi.fn(),
       groupBy: vi.fn(),
@@ -410,7 +411,7 @@ describe("master import service", () => {
     expect(mocks.prisma.masterImportJob.updateMany).not.toHaveBeenCalled();
   });
 
-  it("stages generic workbook rows atomically with encrypted payloads and validation errors", async () => {
+  it("stages generic workbook rows atomically without validating their field values", async () => {
     const source = new Uint8Array([80, 75, 3, 4]);
     mocks.prisma.masterImportJob.findFirst
       .mockResolvedValueOnce({
@@ -418,20 +419,19 @@ describe("master import service", () => {
         encrypted_source_file: Buffer.from(encryptSecret(Buffer.from(source).toString("base64"))),
       })
       .mockResolvedValueOnce({ ...baseJob, status: "STAGED", total_rows: 2 });
-    mocks.parseMasterRecordsWorkbook.mockResolvedValue({
-      rows: [{
+    mocks.parseMasterRecordsWorkbook.mockResolvedValue([{
         rowNumber: 2,
         code: null,
         description: null,
         fields: { season_name: "WINTER" },
         childRows: {},
-      }],
-      failures: [{
+      }, {
         rowNumber: 3,
-        message: "Name is required.",
-        row: { rowNumber: 3, code: null, description: null, fields: { season_name: "" }, childRows: {} },
-      }],
-    });
+        code: null,
+        description: null,
+        fields: { season_name: null },
+        childRows: {},
+      }]);
 
     mocks.prisma.masterImportJobRow.createMany.mockResolvedValue({ count: 2 });
     mocks.prisma.masterImportJob.updateMany.mockResolvedValue({ count: 1 });
@@ -450,17 +450,67 @@ describe("master import service", () => {
     expect(mocks.parseMasterRecordsWorkbook).toHaveBeenCalledWith(
       expect.objectContaining({ name: "seasons.xlsx", size: 4 }),
       expect.objectContaining({ key: "season" }),
-      true,
+      "stage",
     );
     expect(insertedRows).toHaveLength(2);
     expect(insertedRows[0].status).toBe("STAGED");
-    expect(insertedRows[1].status).toBe("INVALID");
-    expect(Buffer.from(insertedRows[1].encrypted_payload).toString("utf8")).not.toContain("Name is required.");
+    expect(insertedRows[1].status).toBe("STAGED");
     expect(JSON.stringify(staged)).not.toContain("validationErrors");
     expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "MASTER_IMPORT_STAGED",
-      details: { rowCount: 2, invalidRowCount: 1 },
+      details: { rowCount: 2, invalidRowCount: 0 },
     }), mocks.prisma);
+  });
+
+  it("stages every Article worksheet row without grouping or validation", async () => {
+    const source = new Uint8Array([80, 75, 3, 4]);
+    mocks.prisma.masterImportJob.findFirst
+      .mockResolvedValueOnce({
+        ...baseJob,
+        module_key: "article",
+        encrypted_source_file: Buffer.from(encryptSecret(Buffer.from(source).toString("base64"))),
+      })
+      .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "STAGED", total_rows: 3 });
+    mocks.parseMasterRecordsWorkbook.mockResolvedValue([
+        {
+          rowNumber: 2,
+          code: null,
+          description: null,
+          fields: { article: "P799", Category: "TOPS", Sizes: ["S"] },
+          childRows: { variants: [] },
+        },
+        {
+          rowNumber: 3,
+          code: null,
+          description: null,
+          fields: { article: "P799", Category: "BOTTOMS", Sizes: ["M"] },
+          childRows: { variants: [] },
+        },
+        {
+          rowNumber: 4,
+          code: null,
+          description: null,
+          fields: { article: "P800", Category: "TOPS", Sizes: ["S"] },
+          childRows: { variants: [] },
+        },
+      ]);
+    mocks.prisma.masterImportJobRow.createMany.mockResolvedValue({ count: 3 });
+    mocks.prisma.masterImportJob.updateMany.mockResolvedValue({ count: 1 });
+
+    await stageMasterImportJob({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+    });
+
+    const stagedRows = mocks.prisma.masterImportJobRow.createMany.mock.calls[0][0].data;
+    expect(stagedRows.map((row: { status: string }) => row.status)).toEqual(["STAGED", "STAGED", "STAGED"]);
+    expect(stagedRows.map((row: { encrypted_payload: Uint8Array }) =>
+      JSON.parse(decryptSecret(Buffer.from(row.encrypted_payload).toString("utf8"))).fields.article))
+      .toEqual(["P799", "P799", "P800"]);
+    expect(mocks.prisma.masterImportJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ total_rows: 3, failed_rows: 0 }),
+    }));
   });
 
   it("inserts large staged workbooks in bounded batches within one transaction", async () => {
@@ -470,16 +520,15 @@ describe("master import service", () => {
         encrypted_source_file: Buffer.from(encryptSecret(Buffer.from([80, 75, 3, 4]).toString("base64"))),
       })
       .mockResolvedValueOnce({ ...baseJob, status: "STAGED", total_rows: 5_001 });
-    mocks.parseMasterRecordsWorkbook.mockResolvedValue({
-      rows: Array.from({ length: 5_001 }, (_, index) => ({
+    mocks.parseMasterRecordsWorkbook.mockResolvedValue(
+      Array.from({ length: 5_001 }, (_, index) => ({
         rowNumber: index + 2,
         code: null,
         description: null,
         fields: { season_name: `SEASON ${index + 1}` },
         childRows: {},
       })),
-      failures: [],
-    });
+    );
     mocks.prisma.masterImportJobRow.createMany
       .mockResolvedValueOnce({ count: 5_000 })
       .mockResolvedValueOnce({ count: 1 });
@@ -498,7 +547,7 @@ describe("master import service", () => {
       expect.any(Function),
       { maxWait: 10_000, timeout: 120_000 },
     );
-  });
+  }, 30_000);
 
   it("reconstructs and verifies encrypted upload chunks before staging rows", async () => {
     const source = new Uint8Array([80, 75, 3, 4]);
@@ -511,16 +560,13 @@ describe("master import service", () => {
       sha256: baseJob.source_sha256,
       encrypted_data: Buffer.from(encryptSecret(Buffer.from(source).toString("base64"))),
     }]);
-    mocks.parseMasterRecordsWorkbook.mockResolvedValue({
-      rows: [{
+    mocks.parseMasterRecordsWorkbook.mockResolvedValue([{
         rowNumber: 2,
         code: "WINTER",
         description: "WINTER",
         fields: { season_name: "WINTER" },
         childRows: {},
-      }],
-      failures: [],
-    });
+      }]);
     mocks.prisma.masterImportJobRow.createMany.mockResolvedValue({ count: 1 });
     mocks.prisma.masterImportJob.updateMany.mockResolvedValue({ count: 1 });
 
@@ -537,7 +583,7 @@ describe("master import service", () => {
         arrayBuffer: expect.any(Function),
       }),
       expect.objectContaining({ key: "season" }),
-      true,
+      "stage",
     );
     const workbook = mocks.parseMasterRecordsWorkbook.mock.calls[0][0] as File;
     expect(new Uint8Array(await workbook.arrayBuffer())).toEqual(source);
@@ -859,6 +905,139 @@ describe("master import service", () => {
     });
   });
 
+  it("keeps Article matrix conflicts invalid until the row is corrected", async () => {
+    const groupingError = {
+      message: 'Article "P799" has conflicting Category values in spreadsheet rows 2, 3.',
+      fieldPaths: ["Category"],
+    };
+    mocks.prisma.masterImportJob.findFirst
+      .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "STAGED" })
+      .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "PARTIAL", total_rows: 1 });
+    const firstRow = {
+      ...rowRecord("STAGED", {
+        rowNumber: 2,
+        fields: { article: "P799", Category: "TOPS" },
+        childRows: {},
+      }),
+      row_number: 1,
+    };
+    const secondRow = {
+      ...rowRecord("STAGED", {
+        rowNumber: 3,
+        fields: { article: "P799", Category: "BOTTOMS" },
+        childRows: {},
+      }),
+      id: "row-2",
+      row_number: 2,
+    };
+    mocks.prisma.masterImportJobRow.findMany
+      .mockResolvedValueOnce([firstRow])
+      .mockResolvedValueOnce([firstRow, secondRow]);
+    mocks.prisma.masterImportJobRow.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
+      { status: "INVALID", _count: { _all: 2 } },
+    ]);
+    mocks.prisma.masterImportJob.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.masterImportJobRow.findFirst.mockResolvedValue(null);
+
+    const result = await validateMasterImportJob({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+      rowNumber: 1,
+    });
+
+    const saved = mocks.prisma.masterImportJobRow.updateMany.mock.calls[0][0].data;
+    const savedPayload = JSON.parse(decryptSecret(Buffer.from(saved.encrypted_payload).toString("utf8")));
+    expect(saved.status).toBe("INVALID");
+    expect(saved.checkpoint).toBe("ARTICLE_MATRIX_CONFLICT");
+    expect(savedPayload.validationErrors).toEqual([groupingError]);
+    expect(mocks.prisma.masterImportJobRow.updateMany).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({
+      job: { status: "PARTIAL" },
+      validatedRowNumbers: [],
+      progress: { failedRows: 2 },
+    });
+  });
+
+  it("consolidates valid Article matrix rows during explicit validation", async () => {
+    mocks.prisma.masterImportJob.findFirst
+      .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "STAGED" })
+      .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "PARTIAL", total_rows: 1 });
+    const sharedFields = {
+      article: "FW66",
+      Brand: "LABEL",
+      Product_Master: "TYPE",
+      Category: "CATEGORY",
+      Subcategory: "SUBCATEGORY",
+      Size_Group: "S,M",
+    };
+    const firstRow = {
+      ...rowRecord("STAGED", {
+        rowNumber: 2,
+        fields: { ...sharedFields, Sizes: ["S"], default_price: "125.00" },
+        childRows: { variants: [{ color: "BLACK", variant_code: null, sku: null, price_override: null }] },
+      }),
+      row_number: 1,
+    };
+    const secondRow = {
+      ...rowRecord("STAGED", {
+        rowNumber: 3,
+        fields: { ...sharedFields, Sizes: ["M"], default_price: "135.50" },
+        childRows: { variants: [{ color: "BLACK", variant_code: null, sku: null, price_override: null }] },
+      }),
+      id: "row-2",
+      row_number: 2,
+    };
+    mocks.prisma.masterImportJobRow.findMany
+      .mockResolvedValueOnce([firstRow])
+      .mockResolvedValueOnce([firstRow, secondRow]);
+    mocks.prisma.masterImportJobRow.deleteMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.masterImportJobRow.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
+      { status: "INVALID", _count: { _all: 1 } },
+    ]);
+    mocks.prisma.masterImportJob.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.masterImportJobRow.findFirst.mockResolvedValue(null);
+
+    await validateMasterImportJob({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+      rowNumber: 1,
+    });
+
+    expect(mocks.prisma.masterImportJobRow.deleteMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: "org-internal",
+        job_id: "job-1",
+        id: { in: ["row-2"] },
+        status: { in: ["STAGED"] },
+      },
+    });
+    const updateData = mocks.prisma.masterImportJobRow.updateMany.mock.calls[0][0].data;
+    const savedPayload = JSON.parse(decryptSecret(Buffer.from(updateData.encrypted_payload).toString("utf8")));
+    expect(savedPayload.fields).toMatchObject({
+      default_price: null,
+      Size_Prices: [
+        { size: "S", price: "125.00" },
+        { size: "M", price: "135.50" },
+      ],
+    });
+    expect(mocks.prisma.auditEvent.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          action: "MASTER_IMPORT_ARTICLE_ROWS_CONSOLIDATED",
+          entity_id: "row-2",
+          details: expect.objectContaining({
+            consolidatedIntoRowId: "row-1",
+            consolidatedIntoRowNumber: 1,
+          }),
+        }),
+      ]),
+    });
+  });
+
   it("rejects generic lookup values not active in the authorized organization", async () => {
     mocks.prisma.masterImportJob.findFirst
       .mockResolvedValueOnce({ ...baseJob, module_key: "sub-category", status: "STAGED" })
@@ -933,8 +1112,7 @@ describe("master import service", () => {
     mocks.prisma.masterImportJob.findFirst
       .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "STAGED" })
       .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "VALIDATED", total_rows: 1 });
-    mocks.prisma.masterImportJobRow.findMany.mockResolvedValue([
-      rowRecord("STAGED", {
+    const stagedArticleRow = rowRecord("STAGED", {
         rowNumber: 2,
         fields: {
           article: "FW66",
@@ -948,8 +1126,10 @@ describe("master import service", () => {
         childRows: {
           variants: [{ color: "BLACK", variant_code: null, sku: null, price_override: null }],
         },
-      }),
-    ]);
+      });
+    mocks.prisma.masterImportJobRow.findMany
+      .mockResolvedValueOnce([stagedArticleRow])
+      .mockResolvedValueOnce([stagedArticleRow]);
     mocks.prisma.masterImportJobRow.updateMany.mockResolvedValue({ count: 1 });
     mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
       { status: "VALIDATED", _count: { _all: 1 } },
