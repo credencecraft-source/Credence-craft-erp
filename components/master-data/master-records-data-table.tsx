@@ -162,6 +162,10 @@ export function MasterRecordsTable({
     : fields;
 
   const openEditor = (record: MasterRecord) => {
+    if (moduleKey === "article") {
+      openRecordDetail(record);
+      return;
+    }
     setEditingRecord(record);
 
     let extractedFields: Record<string, unknown> = {};
@@ -974,23 +978,29 @@ export function MasterRecordsTable({
         onVisibleFieldsChange={setVisibleReportFields}
         storageKey={`master-report-columns-${moduleKey}`}
         rowIdSelector={(record) => record.id}
-        selectedIds={moduleKey === "article" ? selectedRecordIds : []}
-        selectable={moduleKey === "article"}
+        selectedIds={selectedRecordIds}
+        selectable
         onToggleSelectAll={(checked, ids) => setSelectedRecordIds((current) =>
           checked ? [...new Set([...current, ...ids])] : current.filter((id) => !ids.includes(id)),
         )}
         onToggleRowSelection={(id, checked) => setSelectedRecordIds((current) =>
           checked ? [...new Set([...current, id])] : current.filter((selectedId) => selectedId !== id),
         )}
-        onBulkDeleteSelected={moduleKey === "article" ? () => setDeleteDialog({ kind: "selected" }) : undefined}
-        bulkDeleteSelectedLabel="Delete selected Articles"
+        onBulkDeleteSelected={() => setDeleteDialog({ kind: "selected" })}
+        bulkDeleteSelectedLabel={`Delete selected ${moduleLabel} records`}
         onRowClick={() => undefined}
         onRecordClick={(record) => {
           if (moduleKey === "article") {
             openRecordDetail(record);
           }
         }}
-        onNewOrder={() => setShowCreateModal(true)}
+        onNewOrder={() => {
+          if (moduleKey === "article") {
+            router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/create`);
+          } else {
+            setShowCreateModal(true);
+          }
+        }}
         newActionLabel="+ Add Record"
         renderCell={(fieldKey, record) => {
           if (fieldKey === "label" && moduleKey === "article") {
@@ -1042,7 +1052,7 @@ export function MasterRecordsTable({
           <div>
             <h2 id="master-delete-confirmation-title" className="text-lg font-semibold text-[var(--erp-text)]">
               {deleteDialog?.kind === "selected"
-                ? `Delete ${selectedRecordIds.length} selected Articles?`
+                ? `Delete ${selectedRecordIds.length} selected ${moduleLabel} records?`
                 : `Delete this ${moduleLabel.toLowerCase()} record?`}
             </h2>
             <p id="master-delete-confirmation-description" className="mt-2 text-sm text-[var(--erp-muted)]">
@@ -1064,9 +1074,9 @@ export function MasterRecordsTable({
               <input type="hidden" name="workspaceId" value={workspaceId} />
               <input type="hidden" name="organizationId" value={organizationId} />
               <input type="hidden" name="moduleKey" value={moduleKey} />
-              {selectedRecordIds.map((id) => <input key={id} type="hidden" name="articleId" value={id} />)}
+              {selectedRecordIds.map((id) => <input key={id} type="hidden" name="recordId" value={id} />)}
               <Button type="button" variant="secondary" onClick={() => setDeleteDialog(null)}>Cancel</Button>
-              <DeleteConfirmButton>Delete {selectedRecordIds.length} Articles</DeleteConfirmButton>
+              <DeleteConfirmButton>Delete {selectedRecordIds.length} records</DeleteConfirmButton>
             </form>
           ) : null}
         </div>

@@ -3,8 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   getOrganizationForUser: vi.fn(),
+  requireOrganizationAccess: vi.fn(),
+  createMasterValueForOrganization: vi.fn(),
+  getMasterDefinition: vi.fn(),
   getMasterValuesForOrganization: vi.fn(),
   getSizeGroupSizesForOrganization: vi.fn(),
+  syncSizeGroupSizes: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({
@@ -12,21 +16,21 @@ vi.mock("@/lib/auth/session-manager", () => ({
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   getOrganizationForUser: mocks.getOrganizationForUser,
-  requireOrganizationAccess: vi.fn(),
+  requireOrganizationAccess: mocks.requireOrganizationAccess,
 }));
 vi.mock("@/lib/master-data/master-data-constants", () => ({
-  createMasterValueForOrganization: vi.fn(),
-  getMasterDefinition: vi.fn(),
+  createMasterValueForOrganization: mocks.createMasterValueForOrganization,
+  getMasterDefinition: mocks.getMasterDefinition,
   getMasterValuesForOrganization: mocks.getMasterValuesForOrganization,
   getSizeGroupSizesForOrganization: mocks.getSizeGroupSizesForOrganization,
-  syncSizeGroupSizes: vi.fn(),
+  syncSizeGroupSizes: mocks.syncSizeGroupSizes,
 }));
 vi.mock("@/lib/database/database-errors", () => ({
   DATABASE_UNAVAILABLE_MESSAGE: "Database unavailable.",
   isDatabaseUnavailableError: vi.fn(() => false),
 }));
 
-import { GET } from "./route";
+import { GET, POST } from "./route";
 
 const contextFor = (moduleKey: string) => ({
   params: Promise.resolve({ organizationId: "public-org", moduleKey }),
@@ -37,6 +41,7 @@ describe("organization master-data lookup route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1", workspace_id: "workspace-1" });
     mocks.getOrganizationForUser.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationAccess.mockResolvedValue(undefined);
     mocks.getMasterValuesForOrganization.mockImplementation(async (_organizationId: string, moduleKey: string) => {
       if (moduleKey === "size-group") {
         return [{
@@ -148,5 +153,41 @@ describe("organization master-data lookup route", () => {
         price: 2,
       }],
     });
+  });
+
+  it("creates Size Group links through the master's single transaction", async () => {
+    mocks.getMasterDefinition.mockReturnValue({
+      label: "Size Group",
+      fields: [
+        { key: "Brand1", required: true },
+        { key: "Size_Group", required: true },
+        { key: "Size", required: true, multiple: true, lookupModuleKey: "size" },
+      ],
+    });
+    mocks.createMasterValueForOrganization.mockResolvedValue({ id: "group-id", value_id: "group-value-id" });
+
+    const response = await POST(new Request("http://localhost/api/organizations/public-org/master-data/size-group", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        label: "CORE S-M",
+        fields: { Brand1: "ACME", Size_Group: "CORE S-M", Size: ["S", "M"] },
+        createOnly: true,
+      }),
+    }), {
+      params: Promise.resolve({ organizationId: "public-org", moduleKey: "size-group" }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(mocks.createMasterValueForOrganization).toHaveBeenCalledWith(
+      "internal-org-1",
+      "size-group",
+      expect.objectContaining({
+        label: "CORE S-M",
+        fields: { Brand1: "ACME", Size_Group: "CORE S-M", Size: ["S", "M"] },
+        createOnly: true,
+      }),
+    );
+    expect(mocks.syncSizeGroupSizes).not.toHaveBeenCalled();
   });
 });

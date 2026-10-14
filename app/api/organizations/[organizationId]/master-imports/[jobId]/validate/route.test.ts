@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/services/master-data/master-import-service", () => ({
-  MASTER_IMPORT_VALIDATION_BATCH_SIZE: 100,
+  MASTER_IMPORT_VALIDATION_BATCH_SIZE: 1_000,
   validateMasterImportJob: mocks.validateMasterImportJob,
 }));
 vi.mock("../../route-support", () => ({
@@ -57,8 +57,8 @@ describe("master import validation route", () => {
     expect(mocks.validateMasterImportJob).not.toHaveBeenCalled();
   });
 
-  it("accepts a full safe validation batch of 100 selected rows", async () => {
-    const rowNumbers = Array.from({ length: 100 }, (_, index) => index + 1);
+  it("accepts a full safe validation batch of 1,000 selected rows", async () => {
+    const rowNumbers = Array.from({ length: 1_000 }, (_, index) => index + 1);
     mocks.parseBoundedJson.mockResolvedValue({ rowNumbers });
     const response = await POST(
       new Request("http://localhost/api/organizations/org-public/master-imports/job-1/validate", { method: "POST" }),
@@ -72,11 +72,12 @@ describe("master import validation route", () => {
       jobId: "job-1",
       rowNumbers,
     });
+    expect(mocks.parseBoundedJson).toHaveBeenCalledWith(expect.any(Request), 32 * 1024);
   });
 
   it("rejects batches larger than the safe validation limit", async () => {
     mocks.parseBoundedJson.mockResolvedValue({
-      rowNumbers: Array.from({ length: 101 }, (_, index) => index + 1),
+      rowNumbers: Array.from({ length: 1_001 }, (_, index) => index + 1),
     });
     const response = await POST(
       new Request("http://localhost/api/organizations/org-public/master-imports/job-1/validate", { method: "POST" }),

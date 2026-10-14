@@ -27,7 +27,7 @@ export async function POST(
     const { organizationId: publicOrganizationId, jobId } = await context.params;
     const authorization = await authorizeMasterImportRoute(publicOrganizationId);
     if (!authorization.authorized) return authorization.response;
-    const body = await parseBoundedJson(request, 4 * 1024);
+    const body = await parseBoundedJson(request, 32 * 1024);
     if (typeof body !== "object" || body === null || Array.isArray(body)
       || Object.keys(body).some((key) => !["rowNumber", "rowNumbers"].includes(key))) {
       return NextResponse.json({ error: "Validation request is invalid." }, { status: 400 });

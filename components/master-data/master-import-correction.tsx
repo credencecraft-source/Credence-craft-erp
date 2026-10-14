@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
@@ -29,6 +31,7 @@ export function MasterImportCorrection({
   fields,
   isPending = false,
   errorMessage,
+  relatedMasterActions,
   showValidateRowAction = true,
   onChange,
   onValidateRow,
@@ -43,6 +46,7 @@ export function MasterImportCorrection({
   fields: MasterImportCorrectionField[];
   isPending?: boolean;
   errorMessage?: string;
+  relatedMasterActions?: ReactNode;
   showValidateRowAction?: boolean;
   onChange: (rowId: string, fieldKey: string, value: string) => void;
   onValidateRow: (rowId: string) => void;
@@ -81,6 +85,7 @@ export function MasterImportCorrection({
             {errorMessage}
           </p>
         ) : null}
+        {relatedMasterActions}
 
         <div className="max-h-[min(60dvh,40rem)] space-y-4 overflow-y-auto pr-1">
           {rows.map((row) => {

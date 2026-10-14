@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
-import { createMasterValueForOrganization, getMasterDefinition, getMasterValuesForOrganization, getSizeGroupSizesForOrganization, syncSizeGroupSizes } from "@/lib/master-data/master-data-constants";
+import { createMasterValueForOrganization, getMasterDefinition, getMasterValuesForOrganization, getSizeGroupSizesForOrganization } from "@/lib/master-data/master-data-constants";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-registry";
 
 export async function GET(
@@ -231,9 +231,7 @@ export async function POST(
 
     const multiLookupField = definition.fields.find((field) => field.type === "lookup" && field.multiple && field.lookupModuleKey);
     const selectedValues = multiLookupField ? fields[multiLookupField.key] : [];
-    if (masterKey === "size-group" && Array.isArray(selectedValues)) {
-      await syncSizeGroupSizes(organization.id, newMasterValue.id, selectedValues);
-    } else if (multiLookupField?.lookupModuleKey && Array.isArray(selectedValues)) {
+    if (masterKey !== "size-group" && multiLookupField?.lookupModuleKey && Array.isArray(selectedValues)) {
       for (const selectedValue of [...new Set(selectedValues.map((value: unknown) => String(value).trim()).filter(Boolean))]) {
         await createMasterValueForOrganization(organization.id, multiLookupField.lookupModuleKey, {
           label: selectedValue,

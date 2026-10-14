@@ -52,6 +52,7 @@ type ImportRow = {
   payload: unknown;
 };
 const MAX_VISIBLE_CORRECTION_ROWS = 50;
+const VALIDATION_BATCH_SIZE = 1_000;
 const UPLOAD_CHUNK_BYTES = 1024 * 1024;
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
@@ -547,11 +548,11 @@ export default function MasterImportHistory({
     setError("");
     setNotice(`Validating ${selectedRowNumbers.length} selected rows...`);
     try {
-      for (let index = 0; index < selectedRowNumbers.length; index += 50) {
+      for (let index = 0; index < selectedRowNumbers.length; index += VALIDATION_BATCH_SIZE) {
         const response = await fetch(`${endpoint}/${encodeURIComponent(activeJob.id)}/validate`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ rowNumbers: selectedRowNumbers.slice(index, index + 50) }),
+          body: JSON.stringify({ rowNumbers: selectedRowNumbers.slice(index, index + VALIDATION_BATCH_SIZE) }),
         });
         const payload: unknown = await response.json();
         if (!response.ok) throw new Error(errorMessage(payload, "Unable to validate this import."));
@@ -559,7 +560,9 @@ export default function MasterImportHistory({
           throw new Error("Validation progress response is invalid.");
         }
         setActiveJob(payload.job as ImportJob);
-        const validatedRowIds = selectedRowNumbers.slice(index, index + 50).map(String);
+        const validatedRowIds = selectedRowNumbers
+          .slice(index, index + VALIDATION_BATCH_SIZE)
+          .map(String);
         setSelectedValidationRowIds((current) =>
           current.filter((rowId) => !validatedRowIds.includes(rowId)),
         );

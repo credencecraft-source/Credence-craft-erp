@@ -1207,6 +1207,119 @@ export async function deleteSelectedArticlesForOrganization(
   }
 }
 
+export async function deleteSelectedMasterValuesForOrganization(
+  organizationId: string,
+  userId: string,
+  moduleKey: string,
+  recordIds: string[],
+) {
+  const definition = getMasterDefinition(moduleKey);
+  const delegateName = moduleKey === "product-master"
+    ? "masterProduct"
+    : moduleKey === "process-master"
+      ? "masterProcess"
+      : `master${moduleKey.split("-").map((part) => part[0].toUpperCase() + part.slice(1)).join("")}`;
+  if (!organizationId || !userId || !definition || definition.hidden
+    || !delegates[moduleKey] || recordIds.length === 0 || recordIds.length > 1_000
+    || new Set(recordIds).size !== recordIds.length
+    || recordIds.some((id) => !id || id.length > 128)) {
+    return { deletedCount: 0, error: `Select valid ${definition?.label ?? "master"} records and try again.` };
+  }
+  const displayLabel = definition.label;
+
+  try {
+    return await prisma.$transaction(async (transaction) => {
+      const transactionDelegates = transaction as unknown as Record<string, MasterDelegate>;
+      const delegate = transactionDelegates[delegateName];
+      if (!delegate) {
+        return { deletedCount: 0, error: `Bulk deletion is not configured for ${displayLabel}.` };
+      }
+      const records = await delegate.findMany({
+        where: { organization_id: organizationId, id: { in: recordIds } },
+        select: { id: true, value_id: true, legacy_metadata: true },
+      });
+      if (records.length !== recordIds.length) {
+        return {
+          deletedCount: 0,
+          error: `One or more selected ${displayLabel} records are no longer available. Refresh and try again.`,
+        };
+      }
+
+      const batch = await transaction.organizationDummyDataBatch.findFirst({
+        where: { organization_id: organizationId, status: "ACTIVE" },
+        select: { id: true },
+      });
+      if (batch && records.some((record) => belongsToDummyBatch(record, batch.id))) {
+        return {
+          deletedCount: 0,
+          error: "Demo master values can only be removed by deleting the complete Dummy Data batch.",
+        };
+      }
+
+      if (moduleKey === "size-group") {
+        const linkedArticle = await transaction.masterArticle.findFirst({
+          where: {
+            organization_id: organizationId,
+            size_group_id: { in: recordIds },
+          },
+          select: { id: true },
+        });
+        if (linkedArticle) {
+          return {
+            deletedCount: 0,
+            error: "One or more selected Size Groups are linked to Articles. Reassign those Articles before deleting the Size Groups.",
+          };
+        }
+      }
+
+      await transaction.approvalRequest.deleteMany({
+        where: {
+          organization_id: organizationId,
+          entity_ref_id: { in: records.map((record) => record.value_id) },
+        },
+      });
+      const deleted = await delegate.deleteMany({
+        where: { organization_id: organizationId, id: { in: recordIds } },
+      });
+      if (deleted.count !== recordIds.length) {
+        throw new Error(`The selected ${displayLabel} records changed while being deleted. Refresh and try again.`);
+      }
+      await transaction.auditEvent.create({
+        data: {
+          organization_id: organizationId,
+          user_id: userId,
+          module: "master-data",
+          action: "DELETE_SELECTED",
+          entity_type: moduleKey,
+          details: {
+            recordIds,
+            ...(moduleKey === "article" ? { articleIds: recordIds } : {}),
+            moduleKey,
+            deletedCount: deleted.count,
+          },
+        },
+      });
+      return { deletedCount: deleted.count };
+    });
+  } catch (error) {
+    const errorCode = typeof error === "object" && error !== null && "code" in error ? error.code : null;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (
+      errorCode === "P2003"
+      || errorMessage.includes("violates foreign key constraint")
+      || errorMessage.includes("violates RESTRICT setting of foreign key constraint")
+    ) {
+      return {
+        deletedCount: 0,
+        error: moduleKey === "size-group"
+          ? "One or more selected Size Groups are linked to Articles or other records. Reassign or remove those dependencies before deleting the Size Groups."
+          : `One or more selected ${displayLabel} records are used by other records. Remove those dependencies before deleting them.`,
+      };
+    }
+    throw error;
+  }
+}
+
 export async function deleteAllMasterValuesForOrganization(
   organizationId: string,
   userId: string,

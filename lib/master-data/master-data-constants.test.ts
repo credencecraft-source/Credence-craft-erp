@@ -46,6 +46,7 @@ import {
   deleteAllMasterValuesForOrganization,
   deleteMasterValue,
   deleteSelectedArticlesForOrganization,
+  deleteSelectedMasterValuesForOrganization,
   getMasterValuesForOrganization,
   getSizeGroupSizesForOrganization,
   isMasterSectionBulkDeletable,
@@ -74,6 +75,35 @@ describe("create-only master insertion", () => {
 
     expect(models.masterColor.update).not.toHaveBeenCalled();
     expect(models.masterColor.create).not.toHaveBeenCalled();
+  });
+
+  it("creates a Size Group and all selected size links in one transaction", async () => {
+    models.masterBrand.findFirst.mockResolvedValue({ id: "brand-id" } as never);
+    models.masterSizeGroup.create.mockResolvedValue({
+      id: "group-id",
+      value_id: "group-value-id",
+      organization_id: "org-id",
+    } as never);
+    models.masterSize.findMany.mockResolvedValue([
+      { id: "size-s", value_id: "size-s-value", size: "S", is_active: true, legacy_metadata: null },
+      { id: "size-m", value_id: "size-m-value", size: "M", is_active: true, legacy_metadata: null },
+    ] as never);
+
+    await createMasterValueForOrganization("org-id", "size-group", {
+      label: "CORE S-M",
+      fields: { Brand1: "brand-id", Size_Group: "CORE S-M", Size: ["S", "M"] },
+      createOnly: true,
+    });
+
+    expect(models.masterSizeGroupSize.createMany).toHaveBeenCalledWith({
+      data: [
+        { organization_id: "org-id", size_group_id: "group-id", size_id: "size-s" },
+        { organization_id: "org-id", size_group_id: "group-id", size_id: "size-m" },
+      ],
+    });
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect((prismaMock.$transaction as ReturnType<typeof vi.fn>).mock.calls[0][0])
+      .toEqual(expect.any(Function));
   });
 
   describe("selected Article deletion", () => {
@@ -105,6 +135,104 @@ describe("create-only master insertion", () => {
           entity_type: "article",
           details: { articleIds: ["article-1", "article-2"], deletedCount: 2 },
         }),
+      });
+    });
+
+    describe("selected master deletion", () => {
+      it("deletes selected records only within the organization and audits the selected module", async () => {
+        models.masterBrand.findMany.mockResolvedValue([
+          { id: "brand-1", value_id: "brand-value-1", legacy_metadata: null },
+          { id: "brand-2", value_id: "brand-value-2", legacy_metadata: null },
+        ] as never);
+        models.masterBrand.deleteMany.mockResolvedValue({ count: 2 } as never);
+
+        await expect(deleteSelectedMasterValuesForOrganization(
+          "org-id",
+          "user-id",
+          "brand",
+          ["brand-1", "brand-2"],
+        )).resolves.toEqual({ deletedCount: 2 });
+
+        expect(models.masterBrand.findMany).toHaveBeenCalledWith({
+          where: { organization_id: "org-id", id: { in: ["brand-1", "brand-2"] } },
+          select: { id: true, value_id: true, legacy_metadata: true },
+        });
+        expect(models.masterBrand.deleteMany).toHaveBeenCalledWith({
+          where: { organization_id: "org-id", id: { in: ["brand-1", "brand-2"] } },
+        });
+        expect(models.auditEvent.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            organization_id: "org-id",
+            user_id: "user-id",
+            action: "DELETE_SELECTED",
+            entity_type: "brand",
+            details: {
+              recordIds: ["brand-1", "brand-2"],
+              moduleKey: "brand",
+              deletedCount: 2,
+            },
+          }),
+        });
+      });
+
+      it("rejects any selection containing a record outside the organization", async () => {
+        models.masterSeason.findMany.mockResolvedValue([
+          { id: "season-1", value_id: "season-value-1", legacy_metadata: null },
+        ] as never);
+
+        await expect(deleteSelectedMasterValuesForOrganization(
+          "org-id",
+          "user-id",
+          "season",
+          ["season-1", "foreign-season"],
+        )).resolves.toMatchObject({ deletedCount: 0, error: expect.stringContaining("no longer available") });
+
+        expect(models.masterSeason.deleteMany).not.toHaveBeenCalled();
+        expect(models.auditEvent.create).not.toHaveBeenCalled();
+      });
+
+      it("keeps linked Size Groups undeleted and returns a clear dependency message", async () => {
+        models.masterSizeGroup.findMany.mockResolvedValue([
+          { id: "group-1", value_id: "group-value-1", legacy_metadata: null },
+        ] as never);
+        models.masterArticle.findFirst.mockResolvedValue({ id: "article-1" } as never);
+
+        await expect(deleteSelectedMasterValuesForOrganization(
+          "org-id",
+          "user-id",
+          "size-group",
+          ["group-1"],
+        )).resolves.toMatchObject({
+          deletedCount: 0,
+          error: expect.stringContaining("linked to Articles"),
+        });
+
+        expect(models.masterArticle.findFirst).toHaveBeenCalledWith({
+          where: { organization_id: "org-id", size_group_id: { in: ["group-1"] } },
+          select: { id: true },
+        });
+        expect(models.masterSizeGroup.deleteMany).not.toHaveBeenCalled();
+        expect(models.auditEvent.create).not.toHaveBeenCalled();
+      });
+
+      it("translates a Size Group foreign-key restriction without bypassing it", async () => {
+        models.masterSizeGroup.findMany.mockResolvedValue([
+          { id: "group-1", value_id: "group-value-1", legacy_metadata: null },
+        ] as never);
+        models.masterArticle.findFirst.mockResolvedValue(null);
+        models.masterSizeGroup.deleteMany.mockRejectedValue({ code: "P2003" });
+
+        await expect(deleteSelectedMasterValuesForOrganization(
+          "org-id",
+          "user-id",
+          "size-group",
+          ["group-1"],
+        )).resolves.toMatchObject({
+          deletedCount: 0,
+          error: expect.stringContaining("linked to Articles or other records"),
+        });
+
+        expect(models.auditEvent.create).not.toHaveBeenCalled();
       });
     });
 

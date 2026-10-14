@@ -10,7 +10,7 @@ import {
   MASTER_DEFINITIONS,
   createMasterValueForOrganization,
   deleteMasterValue,
-  deleteSelectedArticlesForOrganization,
+  deleteSelectedMasterValuesForOrganization,
   getMasterDefinition,
   getMasterValuesForOrganization,
   getSizeGroupSizesForOrganization,
@@ -27,7 +27,7 @@ import {
 } from "@/lib/master-data/master-records-workbook";
 import type { MasterFieldValues } from "@/lib/master-data/master-data-constants";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
-import { ensureArticleImportSupportingMasters } from "@/lib/services/master-data/master-import-service";
+import { validateArticleImportSupportingMasters } from "@/lib/services/master-data/master-import-service";
 import { parseFinishedGoodsSizePrices } from "@/lib/services/master-data/finished-goods-size-service";
 
 function serializeDecimal(value: unknown): unknown {
@@ -197,8 +197,21 @@ async function saveChildValues(
   }
 }
 
-function masterDataErrorRedirect(workspaceId: string, organizationId: string, moduleKey: string, error: unknown): never {
+function masterDataErrorRedirect(
+  workspaceId: string,
+  organizationId: string,
+  moduleKey: string,
+  error: unknown,
+  returnToArticleDetail = false,
+  recordCode = "",
+): never {
   const message = error instanceof Error ? error.message : "Unable to save master data.";
+  if (returnToArticleDetail && moduleKey === "article") {
+    const articlePath = recordCode
+      ? `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/${encodeURIComponent(recordCode)}`
+      : `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/create`;
+    redirect(`${articlePath}?error=${encodeURIComponent(message)}`);
+  }
   redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent(message)}`);
 }
 
@@ -259,18 +272,19 @@ function createWorkbookLookupResolver(organizationId: string) {
   };
 }
 
-async function createMasterValueAction(formData: FormData) {
+export async function createMasterValueAction(formData: FormData) {
   "use server";
 
   const workspaceId = String(formData.get("workspaceId") ?? "");
   const organizationId = String(formData.get("organizationId") ?? "");
   const moduleKey = String(formData.get("moduleKey") ?? "");
+  const returnToArticleDetail = formData.get("returnToArticleDetail") === "true";
   const definition = getMasterDefinition(moduleKey);
   let fields: MasterFieldValues = {};
   try {
     fields = definition ? await readFields(formData, definition.fields) : {};
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail);
   }
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
@@ -280,6 +294,10 @@ async function createMasterValueAction(formData: FormData) {
   }
 
   if (!label || hasMissingRequiredField(fields, definition)) {
+    if (returnToArticleDetail && moduleKey === "article") {
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey,
+        new Error(`Complete all required ${definition.label.toLowerCase()} fields before saving.`), true);
+    }
     redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent(`Complete all required ${definition.label.toLowerCase()} fields before saving.`)}`);
   }
 
@@ -309,7 +327,7 @@ async function createMasterValueAction(formData: FormData) {
         .map(({ id, fields: variantFields }) => ({ ...(id ? { id } : {}), fields: variantFields }));
     }
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail);
   }
 
   let created;
@@ -326,7 +344,7 @@ async function createMasterValueAction(formData: FormData) {
       } : {}),
     });
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail);
   }
 
   if (moduleKey !== "article") {
@@ -334,32 +352,51 @@ async function createMasterValueAction(formData: FormData) {
       await saveChildValues(organization.id, created.id, definition, formData);
     } catch (error) {
       await deleteMasterValue(organization.id, created.id);
-      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail);
     }
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
+  if (returnToArticleDetail && moduleKey === "article") {
+    const articles = await getMasterValuesForOrganization(organization.id, "article", true, {
+      search: label,
+      exactSearch: true,
+      limit: 1,
+    });
+    const articleCode = articles[0]?.code;
+    if (articleCode) {
+      const articlePath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/${encodeURIComponent(articleCode)}`;
+      revalidatePath(articlePath);
+      redirect(`${articlePath}?saved=create`);
+    }
+  }
   redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=create`);
 }
 
-async function updateMasterValueAction(formData: FormData) {
+export async function updateMasterValueAction(formData: FormData) {
   "use server";
 
   const workspaceId = String(formData.get("workspaceId") ?? "");
   const organizationId = String(formData.get("organizationId") ?? "");
   const moduleKey = String(formData.get("moduleKey") ?? "");
   const valueId = String(formData.get("valueId") ?? "");
+  const returnToArticleDetail = formData.get("returnToArticleDetail") === "true";
+  const returnRecordCode = String(formData.get("field_article_code") ?? "");
   const definition = getMasterDefinition(moduleKey);
   let fields: MasterFieldValues = {};
   try {
     fields = definition ? await readFields(formData, definition.fields) : {};
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, returnRecordCode);
   }
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   if (!workspaceId || !organizationId || !moduleKey || !valueId || !label || !definition || definition.hidden || hasMissingRequiredField(fields, definition)) {
+    if (returnToArticleDetail && moduleKey === "article" && definition) {
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey,
+        new Error(`Complete all required ${definition.label.toLowerCase()} fields before saving.`), true, returnRecordCode);
+    }
     return;
   }
 
@@ -390,7 +427,7 @@ async function updateMasterValueAction(formData: FormData) {
       }
     }
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, returnRecordCode);
   }
 
   let updated;
@@ -407,18 +444,23 @@ async function updateMasterValueAction(formData: FormData) {
       } : {}),
     });
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, returnRecordCode);
   }
 
   if (updated && moduleKey !== "article") {
     try {
       await saveChildValues(organization.id, updated.id, definition, formData);
     } catch (error) {
-      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error);
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, returnRecordCode);
     }
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
+  if (returnToArticleDetail && moduleKey === "article" && returnRecordCode) {
+    const articlePath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/${encodeURIComponent(returnRecordCode)}`;
+    revalidatePath(articlePath);
+    redirect(`${articlePath}?saved=update`);
+  }
   redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=update`);
 }
 
@@ -465,17 +507,19 @@ async function deleteMasterValueAction(formData: FormData) {
   redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=delete`);
 }
 
-async function deleteSelectedArticlesAction(formData: FormData) {
+async function deleteSelectedMasterValuesAction(formData: FormData) {
   "use server";
 
   const workspaceId = String(formData.get("workspaceId") ?? "");
   const organizationId = String(formData.get("organizationId") ?? "");
   const moduleKey = String(formData.get("moduleKey") ?? "");
-  const articleIds = formData.getAll("articleId").map(String);
-  const returnPath = `/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/admin/master-data/article`;
+  const recordIds = formData.getAll("recordId").map(String);
+  const returnPath = `/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/admin/master-data/${encodeURIComponent(moduleKey)}`;
+  const definition = getMasterDefinition(moduleKey);
 
-  if (!workspaceId || !organizationId || moduleKey !== "article" || articleIds.length === 0 || articleIds.length > 1000) {
-    redirect(`${returnPath}?error=${encodeURIComponent("Select valid Article records and try again.")}`);
+  if (!workspaceId || !organizationId || !definition || definition.hidden
+    || recordIds.length === 0 || recordIds.length > 1000) {
+    redirect(`${returnPath}?error=${encodeURIComponent(`Select valid ${definition?.label ?? "master"} records and try again.`)}`);
   }
 
   const user = await requireSessionUser();
@@ -486,7 +530,12 @@ async function deleteSelectedArticlesAction(formData: FormData) {
   if (!organization) notFound();
   await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
-  const result = await deleteSelectedArticlesForOrganization(organization.id, user.id, articleIds);
+  const result = await deleteSelectedMasterValuesForOrganization(
+    organization.id,
+    user.id,
+    moduleKey,
+    recordIds,
+  );
   if (result.error) {
     redirect(`${returnPath}?error=${encodeURIComponent(result.error)}`);
   }
@@ -593,19 +642,38 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
   const failures: MasterRecordsImportResult["failures"] = [...parseFailures];
   const lookupValidRows: ParsedMasterWorkbookRow[] = [];
   for (const row of rows) {
+    const validationMessages: string[] = [];
     try {
       await validateMasterWorkbookLookupValues(
         definition,
         [row],
         createWorkbookLookupResolver(organization.id),
       );
-      lookupValidRows.push(row);
     } catch (error) {
+      validationMessages.push(error instanceof Error
+        ? error.message
+        : "Unable to validate this row's lookup values.");
+    }
+    if (moduleKey === "article") {
+      const dependencies = await validateArticleImportSupportingMasters(
+        prisma,
+        organization.id,
+        row.fields,
+        Object.fromEntries(Object.entries(row.childRows).map(([key, value]) => [
+          key,
+          Array.isArray(value) ? value : [],
+        ])),
+      );
+      validationMessages.push(...dependencies.errors.map((error) => error.message));
+    }
+    if (validationMessages.length > 0) {
       failures.push({
         rowNumber: row.rowNumber,
-        message: error instanceof Error ? error.message : "Unable to validate this row's lookup values.",
+        message: [...new Set(validationMessages)].join(" "),
         row: sourceRows.get(row.rowNumber),
       });
+    } else {
+      lookupValidRows.push(row);
     }
   }
   rows = lookupValidRows;
@@ -635,12 +703,16 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
           Array.isArray(value) ? value : [],
         ]));
         created = await prisma.$transaction(async (transaction) => {
-          const preparedFields = await ensureArticleImportSupportingMasters(
+          const dependencies = await validateArticleImportSupportingMasters(
             transaction,
             organization.id,
             fields,
             articleChildRows,
           );
+          if (dependencies.errors.length > 0) {
+            throw new Error(dependencies.errors[0].message);
+          }
+          const preparedFields = fields;
           const articleVariants = Array.isArray(articleChildRows.variants)
             ? articleChildRows.variants.filter((variant): variant is Record<string, unknown> =>
                 typeof variant === "object" && variant !== null && !Array.isArray(variant))
@@ -805,7 +877,7 @@ export default async function MasterDataEditorPage({
             : saved === "update"
               ? `${definition.label} updated successfully.`
               : saved === "bulk-delete"
-                ? `${String(parsedDeletedCount)} Articles deleted successfully.`
+                ? `${String(parsedDeletedCount)} ${definition.label} record${parsedDeletedCount === 1 ? "" : "s"} deleted successfully.`
                 : `${definition.label} deleted successfully.`}
         </p>
       ) : null}
@@ -830,7 +902,7 @@ export default async function MasterDataEditorPage({
         createAction={createMasterValueAction}
         updateAction={updateMasterValueAction}
         deleteAction={deleteMasterValueAction}
-        deleteSelectedAction={deleteSelectedArticlesAction}
+        deleteSelectedAction={deleteSelectedMasterValuesAction}
         importAction={importMasterValuesAction}
       />
     </div>

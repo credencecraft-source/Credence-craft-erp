@@ -8,8 +8,10 @@ import { ReportGrid } from "@/components/reports/report-grid-display";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Page from "@/components/ui/Page";
+import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
 import Tabs from "@/components/ui/Tabs";
 import {
@@ -31,7 +33,8 @@ import {
   type ImportReportField,
 } from "@/lib/master-data/master-import-report-format";
 
-const REPORT_PAGE_SIZE = 100;
+const REPORT_PAGE_SIZE = 1_000;
+const VALIDATION_BATCH_SIZE = 1_000;
 
 type ImportJob = {
   id: string;
@@ -62,6 +65,13 @@ type ImportRow = {
 };
 
 type ImportModule = { key: string; label: string; fields: ImportReportField[] };
+type RelatedMasterSuggestion = {
+  moduleKey: string;
+  label: string;
+  fields: Record<string, unknown>;
+  articleFieldUpdates?: Record<string, unknown>;
+};
+type ExistingSizeGroupOption = { id: string; label: string; sizes: string[] };
 type ReportRow = Record<string, string> & {
   id: string;
   rowNumber: string;
@@ -131,6 +141,33 @@ function readError(payload: unknown, fallback: string) {
   return isRecord(payload) && typeof payload.error === "string" ? payload.error : fallback;
 }
 
+async function getBrandLookupKeys(organizationId: string, brandLabel: string) {
+  const query = new URLSearchParams({
+    search: brandLabel,
+    exact: "true",
+    includeInactive: "false",
+    limit: "200",
+  });
+  const response = await fetch(
+    `/api/organizations/${encodeURIComponent(organizationId)}/master-data/brand?${query}`,
+    { cache: "no-store" },
+  );
+  const payload: unknown = await response.json();
+  if (!response.ok || !Array.isArray(payload)) {
+    throw new Error(readError(payload, "Unable to verify the Brand for Size Groups."));
+  }
+  const normalizedLabel = brandLabel.trim().toLocaleLowerCase();
+  const keys = new Set<string>([normalizedLabel]);
+  for (const value of payload) {
+    if (!isRecord(value) || value.is_active !== true || typeof value.label !== "string"
+      || value.label.toLocaleLowerCase() !== normalizedLabel) continue;
+    for (const key of [value.id, value.value_id]) {
+      if (typeof key === "string") keys.add(key.toLocaleLowerCase());
+    }
+  }
+  return keys;
+}
+
 function readValidationErrors(payload: unknown) {
   if (!isRecord(payload) || !Array.isArray(payload.validationErrors)) return "";
   return payload.validationErrors.map((error) => {
@@ -158,6 +195,26 @@ function readRowValidationErrors(payload: unknown) {
       : [];
     return [{ message: formatImportCorrectionError(error.message), fieldPaths }];
   });
+}
+
+function readRelatedMasterSuggestions(payload: unknown): RelatedMasterSuggestion[] {
+  if (!isRecord(payload) || !Array.isArray(payload.validationErrors)) return [];
+  const suggestions = new Map<string, RelatedMasterSuggestion>();
+  for (const error of payload.validationErrors) {
+    if (!isRecord(error) || !Array.isArray(error.relatedMasters)) continue;
+    for (const value of error.relatedMasters) {
+      if (!isRecord(value) || typeof value.moduleKey !== "string" || typeof value.label !== "string"
+        || !isRecord(value.fields)) continue;
+      const suggestion: RelatedMasterSuggestion = {
+        moduleKey: value.moduleKey,
+        label: value.label,
+        fields: value.fields,
+        ...(isRecord(value.articleFieldUpdates) ? { articleFieldUpdates: value.articleFieldUpdates } : {}),
+      };
+      suggestions.set(`${suggestion.moduleKey}:${suggestion.label.toLocaleLowerCase()}`, suggestion);
+    }
+  }
+  return [...suggestions.values()];
 }
 
 function recordIdentity(payload: unknown, rowNumber: number) {
@@ -219,9 +276,17 @@ export default function MasterImportJobReportPage({
   const [visibleFields, setVisibleFields] = useState<string[]>([]);
   const [selectedRow, setSelectedRow] = useState<ReportRow | null>(null);
   const [correctionRow, setCorrectionRow] = useState<MasterImportCorrectionRow | null>(null);
+  const [relatedMasterSuggestions, setRelatedMasterSuggestions] = useState<RelatedMasterSuggestion[]>([]);
   const [correctionValues, setCorrectionValues] = useState<Record<string, string>>({});
   const [correctionError, setCorrectionError] = useState("");
   const [isSavingCorrection, setIsSavingCorrection] = useState(false);
+  const [showSizeGroupModal, setShowSizeGroupModal] = useState(false);
+  const [sizeGroupName, setSizeGroupName] = useState("");
+  const [sizeGroupBrand, setSizeGroupBrand] = useState("");
+  const [sizeGroupSizes, setSizeGroupSizes] = useState<string[]>([]);
+  const [existingSizeGroups, setExistingSizeGroups] = useState<ExistingSizeGroupOption[]>([]);
+  const [selectedSizeGroupId, setSelectedSizeGroupId] = useState("");
+  const [isLoadingSizeGroups, setIsLoadingSizeGroups] = useState(false);
   const [activeReportTab, setActiveReportTab] = useState<ReportTab>("staged");
   const [reportPage, setReportPage] = useState(0);
   const [rowCounts, setRowCounts] = useState<ReportRowCounts>({
@@ -360,11 +425,11 @@ export default function MasterImportJobReportPage({
         if (!response.ok) throw new Error(readError(payload, "Unable to stage this workbook."));
         setNotice("Workbook rows are saved in server staging. Review validation results before starting the import.");
       } else if (operation === "validate") {
-        for (let index = 0; index < selectedRowNumbers.length; index += REPORT_PAGE_SIZE) {
+        for (let index = 0; index < selectedRowNumbers.length; index += VALIDATION_BATCH_SIZE) {
           const response = await fetch(`${endpoint}/validate`, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ rowNumbers: selectedRowNumbers.slice(index, index + REPORT_PAGE_SIZE) }),
+            body: JSON.stringify({ rowNumbers: selectedRowNumbers.slice(index, index + VALIDATION_BATCH_SIZE) }),
           });
           const payload: unknown = await response.json();
           if (!response.ok) throw new Error(readError(payload, "Unable to validate this import."));
@@ -373,7 +438,7 @@ export default function MasterImportJobReportPage({
           }
           setJob(payload.job as ImportJob);
           const validatedRowIds = selectedRowNumbers
-            .slice(index, index + REPORT_PAGE_SIZE)
+            .slice(index, index + VALIDATION_BATCH_SIZE)
             .map(String);
           setSelectedValidationRowIds((current) =>
             current.filter((rowId) => !validatedRowIds.includes(rowId)),
@@ -574,7 +639,7 @@ export default function MasterImportJobReportPage({
     setActiveOperation("auto-plan");
     setIsProcessing(true);
     setError("");
-    setNotice("Auto Plan is validating staged records in batches of up to 100...");
+    setNotice("Auto Plan is validating staged records in batches of up to 1,000...");
     try {
       const maxValidationBatches = Math.max(1, Math.ceil(job.totalRows / REPORT_PAGE_SIZE));
       let validatedRowCount = 0;
@@ -821,6 +886,7 @@ export default function MasterImportJobReportPage({
     const sourceRow = rows.find((row) => row.rowNumber === rowNumber);
     if (!sourceRow || !isRecord(sourceRow.payload)) return;
     const payload = sourceRow.payload;
+    setRelatedMasterSuggestions(readRelatedMasterSuggestions(payload));
     const rowErrors = readRowValidationErrors(payload);
     const messages = [...new Set(rowErrors.map((item) => item.message))];
     const fieldPaths = [...new Set(rowErrors.flatMap((item) => item.fieldPaths))];
@@ -903,7 +969,7 @@ export default function MasterImportJobReportPage({
     setCorrectionRow(nextCorrection);
   };
 
-  const saveAndValidateCorrection = async (rowId: string) => {
+  const saveAndValidateCorrection = async (rowId: string, fieldOverrides: Record<string, unknown> = {}) => {
     const sourceRow = rows.find((row) => String(row.rowNumber) === rowId);
     if (!sourceRow || !isRecord(sourceRow.payload) || !job) return;
     setIsSavingCorrection(true);
@@ -911,15 +977,19 @@ export default function MasterImportJobReportPage({
     try {
       const payload = { ...sourceRow.payload };
       delete payload.validationErrors;
-      const edits = correctionValues;
+      const edits: Record<string, string> = {
+        ...correctionValues,
+        ...Object.fromEntries(Object.entries(fieldOverrides).map(([key, value]) => [key, String(value ?? "")])),
+      };
 
       if (job.moduleKey === "contact" && isRecord(payload.input)) {
         payload.input = createContactCorrectionDraft(payload.input as unknown as ContactInput, edits);
       } else {
         const fields = isRecord(payload.fields) ? { ...payload.fields } : {};
         const childRows = isRecord(payload.childRows) ? { ...payload.childRows } : {};
-        for (const [key, value] of Object.entries(edits)) {
+        for (const [key, rawValue] of Object.entries(edits)) {
           const definition = currentModule?.fields.find((field) => field.key === key);
+          const value = typeof rawValue === "string" ? rawValue : String(rawValue ?? "");
           if (definition?.type === "child-list") {
             let parsed: unknown;
             try {
@@ -964,10 +1034,238 @@ export default function MasterImportJobReportPage({
       if (!validateResponse.ok) throw new Error(readError(validateResult, "Unable to validate this corrected row."));
 
       setCorrectionRow(null);
+      setRelatedMasterSuggestions([]);
       setNotice("Correction saved and row revalidated.");
       await loadJob();
     } catch (saveError) {
       setCorrectionError(saveError instanceof Error ? saveError.message : "Unable to save this correction.");
+    } finally {
+      setIsSavingCorrection(false);
+    }
+  };
+
+  const createMissingRelatedMasters = async () => {
+    if (!job || job.moduleKey !== "article" || !correctionRow || relatedMasterSuggestions.length === 0) return;
+    if (relatedMasterSuggestions.some((suggestion) => suggestion.moduleKey === "size-group")) {
+      setCorrectionError("Create the Size Group using the dedicated form so you can review its Brand and sizes.");
+      return;
+    }
+    const sourceRow = rows.find((row) => String(row.rowNumber) === correctionRow.id);
+    if (!sourceRow || !isRecord(sourceRow.payload)) return;
+    setIsSavingCorrection(true);
+    setCorrectionError("");
+    try {
+      const fieldOverrides: Record<string, unknown> = {};
+      for (const suggestion of relatedMasterSuggestions) {
+        const baseEndpoint = `/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(suggestion.moduleKey)}`;
+        const query = new URLSearchParams({
+          search: suggestion.label,
+          exact: "true",
+          includeInactive: "true",
+          limit: "200",
+        });
+        const existingResponse = await fetch(`${baseEndpoint}?${query}`, { cache: "no-store" });
+        const existingPayload: unknown = await existingResponse.json();
+        if (!existingResponse.ok || !Array.isArray(existingPayload)) {
+          throw new Error(readError(existingPayload, `Unable to check ${suggestion.label}.`));
+        }
+        const existing = existingPayload.find((value) =>
+          isRecord(value) && typeof value.label === "string"
+          && value.label.toLocaleLowerCase() === suggestion.label.toLocaleLowerCase());
+        if (existing && isRecord(existing) && existing.is_active !== true) {
+          throw new Error(`${suggestion.moduleKey} "${suggestion.label}" already exists but is inactive. Activate it before retrying.`);
+        }
+        if (!existing) {
+          const response = await fetch(baseEndpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              label: suggestion.label,
+              fields: suggestion.fields,
+              createOnly: true,
+            }),
+          });
+          const result: unknown = await response.json();
+          if (!response.ok) throw new Error(readError(result, `Unable to create ${suggestion.label}.`));
+        }
+        Object.assign(fieldOverrides, suggestion.articleFieldUpdates ?? {});
+      }
+      setIsSavingCorrection(false);
+      await saveAndValidateCorrection(correctionRow.id, fieldOverrides);
+    } catch (createError) {
+      setCorrectionError(createError instanceof Error
+        ? createError.message
+        : "Unable to create the missing related masters.");
+    } finally {
+      setIsSavingCorrection(false);
+    }
+  };
+
+  const openSizeGroupCreation = async () => {
+    const suggestion = relatedMasterSuggestions.find((item) => item.moduleKey === "size-group");
+    if (!suggestion) return;
+    setSizeGroupName(suggestion.label);
+    setSizeGroupBrand(String(suggestion.fields.Brand1 ?? ""));
+    setSizeGroupSizes(Array.isArray(suggestion.fields.Size)
+      ? [...new Set(suggestion.fields.Size.map((size) => String(size).trim()).filter(Boolean))]
+      : []);
+    setSelectedSizeGroupId("");
+    setExistingSizeGroups([]);
+    setCorrectionError("");
+    setShowSizeGroupModal(true);
+    setIsLoadingSizeGroups(true);
+    try {
+      const query = new URLSearchParams({ includeInactive: "false", limit: "200" });
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/size-group?${query}`,
+        { cache: "no-store" },
+      );
+      const payload: unknown = await response.json();
+      if (!response.ok || !Array.isArray(payload)) {
+        throw new Error(readError(payload, "Unable to load existing Size Groups."));
+      }
+      const brandKeys = await getBrandLookupKeys(
+        organizationId,
+        String(suggestion.fields.Brand1 ?? ""),
+      );
+      const requiredSizes = Array.isArray(suggestion.fields.Size)
+        ? [...new Set(suggestion.fields.Size.map((size) => String(size).trim().toLocaleLowerCase()).filter(Boolean))]
+        : [];
+      const compatibleGroups = payload.flatMap((value): ExistingSizeGroupOption[] => {
+        if (!isRecord(value) || value.is_active !== true || typeof value.id !== "string"
+          || typeof value.label !== "string" || !isRecord(value.fields)
+          || !Array.isArray(value.sizes)) return [];
+        const groupBrandKey = String(value.fields.Brand1 ?? "").trim().toLocaleLowerCase();
+        if (!brandKeys.has(groupBrandKey)) return [];
+        const sizes = value.sizes.flatMap((size) =>
+          isRecord(size) && size.is_active === true && typeof size.label === "string" ? [size.label] : []);
+        const availableSizeKeys = new Set(sizes.map((size) => size.toLocaleLowerCase()));
+        return requiredSizes.every((size) => availableSizeKeys.has(size))
+          ? [{ id: value.id, label: value.label, sizes }]
+          : [];
+      });
+      setExistingSizeGroups(compatibleGroups);
+    } catch (loadError) {
+      setCorrectionError(loadError instanceof Error
+        ? loadError.message
+        : "Unable to load existing Size Groups.");
+    } finally {
+      setIsLoadingSizeGroups(false);
+    }
+  };
+
+  const createSizeGroupAndRevalidate = async () => {
+    const suggestion = relatedMasterSuggestions.find((item) => item.moduleKey === "size-group");
+    if (!job || !correctionRow || !suggestion || !sizeGroupName.trim() || !sizeGroupBrand.trim()) return;
+    const requiredSizes = [...new Set(sizeGroupSizes.map((size) => size.trim()).filter(Boolean))];
+    if (requiredSizes.length === 0) {
+      setCorrectionError("This Article has no valid required sizes for a Size Group.");
+      return;
+    }
+
+    setIsSavingCorrection(true);
+    setCorrectionError("");
+    try {
+      for (const relatedMaster of relatedMasterSuggestions.filter((item) => item.moduleKey !== "size-group")) {
+        const baseEndpoint = `/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(relatedMaster.moduleKey)}`;
+        const query = new URLSearchParams({
+          search: relatedMaster.label,
+          exact: "true",
+          includeInactive: "true",
+          limit: "200",
+        });
+        const existingResponse = await fetch(`${baseEndpoint}?${query}`, { cache: "no-store" });
+        const existingPayload: unknown = await existingResponse.json();
+        if (!existingResponse.ok || !Array.isArray(existingPayload)) {
+          throw new Error(readError(existingPayload, `Unable to check ${relatedMaster.label}.`));
+        }
+        const existing = existingPayload.find((value) =>
+          isRecord(value) && typeof value.label === "string"
+          && value.label.toLocaleLowerCase() === relatedMaster.label.toLocaleLowerCase());
+        if (existing && isRecord(existing) && existing.is_active !== true) {
+          throw new Error(`${relatedMaster.moduleKey} "${relatedMaster.label}" already exists but is inactive. Activate it before retrying.`);
+        }
+        if (!existing) {
+          const response = await fetch(baseEndpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              label: relatedMaster.label,
+              fields: relatedMaster.fields,
+              createOnly: true,
+            }),
+          });
+          const result: unknown = await response.json();
+          if (!response.ok) throw new Error(readError(result, `Unable to create ${relatedMaster.label}.`));
+        }
+      }
+
+      const groupEndpoint = `/api/organizations/${encodeURIComponent(organizationId)}/master-data/size-group`;
+      const groupQuery = new URLSearchParams({
+        search: sizeGroupName.trim(),
+        exact: "true",
+        includeInactive: "true",
+        limit: "200",
+      });
+      const groupResponse = await fetch(`${groupEndpoint}?${groupQuery}`, { cache: "no-store" });
+      const groupsPayload: unknown = await groupResponse.json();
+      if (!groupResponse.ok || !Array.isArray(groupsPayload)) {
+        throw new Error(readError(groupsPayload, "Unable to check the Size Group."));
+      }
+      const existingGroup = groupsPayload.find((value) =>
+        isRecord(value) && typeof value.label === "string"
+        && value.label.toLocaleLowerCase() === sizeGroupName.trim().toLocaleLowerCase());
+      const brandKeys = await getBrandLookupKeys(organizationId, sizeGroupBrand.trim());
+
+      let savedGroupName = sizeGroupName.trim();
+      if (selectedSizeGroupId && (!existingGroup || !isRecord(existingGroup) || existingGroup.id !== selectedSizeGroupId)) {
+        throw new Error("The selected Size Group is no longer available. Reload the list and choose it again.");
+      }
+      if (existingGroup && isRecord(existingGroup)) {
+        if (existingGroup.is_active !== true) {
+          throw new Error(`Size Group "${savedGroupName}" already exists but is inactive. Activate it before retrying.`);
+        }
+        const existingFields = isRecord(existingGroup.fields) ? existingGroup.fields : {};
+        const existingSizes = Array.isArray(existingGroup.sizes)
+          ? existingGroup.sizes.flatMap((item) =>
+              isRecord(item) && item.is_active === true && typeof item.label === "string" ? [item.label] : [])
+          : [];
+        const existingSizeKeys = new Set(existingSizes.map((size) => size.toLocaleLowerCase()));
+        const hasAllSizes = requiredSizes.every((size) => existingSizeKeys.has(size.toLocaleLowerCase()));
+        if (!brandKeys.has(String(existingFields.Brand1 ?? "").trim().toLocaleLowerCase())
+          || !hasAllSizes) {
+          throw new Error(`Size Group "${savedGroupName}" already exists but does not match this Brand and all required sizes. Choose a different group name.`);
+        }
+        if (typeof existingGroup.label === "string") savedGroupName = existingGroup.label;
+      } else {
+        const response = await fetch(groupEndpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            label: savedGroupName,
+            fields: {
+              Brand1: sizeGroupBrand.trim(),
+              Size_Group: savedGroupName,
+              Size: requiredSizes,
+            },
+            createOnly: true,
+          }),
+        });
+        const result: unknown = await response.json();
+        if (!response.ok) throw new Error(readError(result, `Unable to create Size Group "${savedGroupName}".`));
+        if (isRecord(result) && typeof result.label === "string") savedGroupName = result.label;
+      }
+
+      setShowSizeGroupModal(false);
+      setIsSavingCorrection(false);
+      await saveAndValidateCorrection(correctionRow.id, {
+        Size_Group: savedGroupName,
+        Sizes: requiredSizes.join("; "),
+      });
+    } catch (createError) {
+      setCorrectionError(createError instanceof Error
+        ? createError.message
+        : "Unable to create the Size Group and validate this Article.");
     } finally {
       setIsSavingCorrection(false);
     }
@@ -1330,11 +1628,50 @@ export default function MasterImportJobReportPage({
       <MasterImportCorrection
         open={correctionRow !== null}
         title="Correct import row"
-        description="Correct the indicated fields, or review editable fields when the error does not identify one. Save and validate before retrying import."
+        description="Correct the indicated fields or review editable fields, then save and revalidate this row before retrying import."
         rows={correctionRow ? [correctionRow] : []}
         fields={[]}
         isPending={isSavingCorrection}
         errorMessage={correctionError}
+        relatedMasterActions={relatedMasterSuggestions.length > 0 ? (
+          <div className="space-y-3 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
+            <div>
+              <h3 className="text-sm font-semibold text-[var(--erp-text)]">Missing related masters</h3>
+              <p className="mt-1 text-sm text-[var(--erp-muted)]">
+                Create the listed organization masters, then this row will be saved and revalidated. It will remain in Errors if any issue is still unresolved.
+              </p>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--erp-text)]">
+                {relatedMasterSuggestions.map((suggestion) => (
+                  <li key={`${suggestion.moduleKey}:${suggestion.label}`}>
+                    {suggestion.moduleKey}: {suggestion.label}
+                    {suggestion.moduleKey === "size-group" && Array.isArray(suggestion.fields.Size)
+                      ? ` · Sizes: ${(suggestion.fields.Size as unknown[]).join(", ")}`
+                      : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            {relatedMasterSuggestions.some((suggestion) => suggestion.moduleKey === "size-group") ? (
+              <Button
+                type="button"
+                variant="primary"
+                onClick={openSizeGroupCreation}
+                disabled={isSavingCorrection}
+              >
+                Create Size Group
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void createMissingRelatedMasters()}
+                disabled={isSavingCorrection}
+              >
+                {isSavingCorrection ? "Creating and revalidating..." : "Create missing masters and revalidate"}
+              </Button>
+            )}
+          </div>
+        ) : null}
         showValidateRowAction={false}
         onChange={(_rowId, fieldKey, value) => {
           setCorrectionValues((current) => ({ ...current, [fieldKey]: value }));
@@ -1343,14 +1680,172 @@ export default function MasterImportJobReportPage({
         onClose={() => {
           if (!isSavingCorrection) {
             setCorrectionRow(null);
+            setRelatedMasterSuggestions([]);
             setCorrectionError("");
+            setShowSizeGroupModal(false);
           }
         }}
         onRetry={() => {
           if (correctionRow) void saveAndValidateCorrection(correctionRow.id);
         }}
-        retryLabel="Save and validate"
+        retryLabel="Save and revalidate row"
       />
+      <Modal
+        open={showSizeGroupModal}
+        onClose={() => {
+          if (!isSavingCorrection) setShowSizeGroupModal(false);
+        }}
+        closeOnBackdrop={!isSavingCorrection}
+        ariaLabel="Create Size Group"
+        size="lg"
+      >
+        {(() => {
+          const suggestion = relatedMasterSuggestions.find((item) => item.moduleKey === "size-group");
+          const requiredSizes = sizeGroupSizes;
+          const prerequisiteMasters = relatedMasterSuggestions.filter((item) => item.moduleKey !== "size-group");
+          return (
+            <div className="space-y-5 p-6">
+              <header>
+                <h2 className="text-lg font-semibold text-[var(--erp-text)]">Create Size Group</h2>
+                <p className="mt-1 text-sm text-[var(--erp-muted)]">
+                  Review the suggested group. Its required sizes will be linked, then the Article row will be revalidated.
+                </p>
+              </header>
+              {correctionError ? (
+                <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]" role="alert">
+                  {correctionError}
+                </p>
+              ) : null}
+              {prerequisiteMasters.length ? (
+                <div className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
+                  <p className="text-sm font-semibold text-[var(--erp-text)]">Missing prerequisites created before linking</p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--erp-muted)]">
+                    {prerequisiteMasters.map((master) => (
+                      <li key={`${master.moduleKey}:${master.label}`}>{master.moduleKey}: {master.label}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              <Select
+                label="Use an existing Size Group (optional)"
+                value={selectedSizeGroupId}
+                onChange={(event) => {
+                  const selectedGroup = existingSizeGroups.find((group) => group.id === event.target.value);
+                  setSelectedSizeGroupId(selectedGroup?.id ?? "");
+                  setSizeGroupName(selectedGroup?.label ?? suggestion?.label ?? "");
+                }}
+                disabled={isLoadingSizeGroups || isSavingCorrection}
+                hint={isLoadingSizeGroups
+                  ? "Loading compatible Size Groups..."
+                  : existingSizeGroups.length
+                    ? "Only active groups for this Brand containing every required Article size are listed."
+                    : "No compatible existing groups found. Create a new Size Group below."}
+              >
+                <option value="">Create a new Size Group</option>
+                {existingSizeGroups.map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.label} ({group.sizes.join(", ")})
+                  </option>
+                ))}
+              </Select>
+              <p className="text-sm text-[var(--erp-muted)]">
+                Sizes in the selected group that are not on this Article stay unassigned; no zero quantities are added.
+              </p>
+              <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+                <Input
+                  label="Size Group Name"
+                  required
+                  value={sizeGroupName}
+                  onChange={(event) => setSizeGroupName(event.target.value)}
+                  disabled={isSavingCorrection || Boolean(selectedSizeGroupId)}
+                />
+                <Input
+                  label="Brand"
+                  required
+                  value={sizeGroupBrand}
+                  onChange={(event) => {
+                    setSizeGroupBrand(event.target.value);
+                    if (selectedSizeGroupId) {
+                      setSelectedSizeGroupId("");
+                      setSizeGroupName(suggestion?.label ?? "");
+                    }
+                  }}
+                  disabled={isSavingCorrection}
+                />
+              </div>
+              <fieldset className="space-y-2">
+                <legend className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-muted)]">
+                  Size order
+                </legend>
+                <p className="text-sm text-[var(--erp-muted)]">
+                  Change the order before creating the Size Group. Use the controls to move each size.
+                </p>
+                <ol className="divide-y divide-[var(--erp-border)] rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)]">
+                  {requiredSizes.map((size, index) => (
+                    <li key={`${size}:${index}`} className="flex min-w-0 items-center justify-between gap-3 p-3">
+                      <span className="min-w-0 font-medium text-[var(--erp-text)]">
+                        {index + 1}. {size}
+                      </span>
+                      <div className="flex shrink-0 gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          aria-label={`Move ${size} up`}
+                          onClick={() => setSizeGroupSizes((current) => {
+                            if (index === 0 || selectedSizeGroupId) return current;
+                            const next = [...current];
+                            [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                            return next;
+                          })}
+                          disabled={index === 0 || isSavingCorrection || Boolean(selectedSizeGroupId)}
+                        >
+                          Move up
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          aria-label={`Move ${size} down`}
+                          onClick={() => setSizeGroupSizes((current) => {
+                            if (index >= current.length - 1 || selectedSizeGroupId) return current;
+                            const next = [...current];
+                            [next[index], next[index + 1]] = [next[index + 1], next[index]];
+                            return next;
+                          })}
+                          disabled={index === requiredSizes.length - 1 || isSavingCorrection || Boolean(selectedSizeGroupId)}
+                        >
+                          Move down
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </fieldset>
+              <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--erp-border)] pt-4">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setShowSizeGroupModal(false)}
+                  disabled={isSavingCorrection}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={() => void createSizeGroupAndRevalidate()}
+                  disabled={isLoadingSizeGroups || isSavingCorrection || !sizeGroupName.trim() || !sizeGroupBrand.trim() || requiredSizes.length === 0}
+                >
+                  {isSavingCorrection
+                    ? selectedSizeGroupId ? "Using Size Group and validating..." : "Creating and validating..."
+                    : selectedSizeGroupId ? "Use Size Group and Validate" : "Create Size Group and Validate"}
+                </Button>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
     </Page>
   );
 }

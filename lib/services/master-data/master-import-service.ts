@@ -34,8 +34,8 @@ export const MASTER_IMPORT_MAX_FILE_SIZE = 50 * 1024 * 1024;
 export const MASTER_IMPORT_UPLOAD_CHUNK_BYTES = 1024 * 1024;
 export const MASTER_IMPORT_ROW_PAYLOAD_MAX_BYTES = 128 * 1024;
 export const MASTER_IMPORT_RETENTION_DAYS = 30;
-export const MASTER_IMPORT_REPORT_PAGE_SIZE = 100;
-export const MASTER_IMPORT_VALIDATION_BATCH_SIZE = 100;
+export const MASTER_IMPORT_REPORT_PAGE_SIZE = 1_000;
+export const MASTER_IMPORT_VALIDATION_BATCH_SIZE = 1_000;
 export const MASTER_IMPORT_PLAN_SIZE = 100;
 const MASTER_IMPORT_PLAN_BATCH_SIZE = 25;
 const MASTER_IMPORT_STAGING_ROW_BATCH_SIZE = 5_000;
@@ -1110,237 +1110,240 @@ type ArticleImportLookup = {
   legacy_metadata: unknown;
 };
 
-function assertArticleImportLookupIsUsable(
-  record: ArticleImportLookup,
-  label: string,
-  dummyBatchId: string | null,
-) {
-  if (!record.is_active) {
-    throw new MasterImportServiceError(`${label} exists but is inactive. Activate it before importing this Article.`, 409);
-  }
-  const metadata = record.legacy_metadata;
-  if (dummyBatchId && isRecord(metadata) && metadata.dummyDataBatchId === dummyBatchId) {
-    throw new MasterImportServiceError("Demo master values cannot be used by regular organization records.", 409);
-  }
-}
-
-async function ensureArticleImportLookup<T extends ArticleImportLookup>(input: {
+type ArticleImportMasterSuggestion = {
+  moduleKey: string;
   label: string;
-  displayName: string;
-  dummyBatchId: string | null;
-  find: () => Promise<T | null>;
-  create: () => Promise<unknown>;
-}) {
-  let record = await input.find();
-  if (!record) {
-    await input.create();
-    record = await input.find();
-  }
-  if (!record) {
-    throw new MasterImportServiceError(`${input.displayName} "${input.label}" could not be created for this import.`, 409);
-  }
-  assertArticleImportLookupIsUsable(record, input.displayName, input.dummyBatchId);
-  return record;
-}
+  fields: Record<string, unknown>;
+  articleFieldUpdates?: Record<string, unknown>;
+};
 
-export async function ensureArticleImportSupportingMasters(
-  transaction: Prisma.TransactionClient,
+type ArticleImportDependencyError = ImportValidationError & {
+  relatedMasters?: ArticleImportMasterSuggestion[];
+};
+
+export async function validateArticleImportSupportingMasters(
+  database: Prisma.TransactionClient | typeof prisma,
   organizationId: string,
   fields: Record<string, unknown>,
   childRows: Record<string, unknown>,
 ) {
-  const brandLabel = String(fields.Brand ?? "").trim();
-  if (!brandLabel) throw new MasterImportServiceError("Brand is required for every Article.", 400);
+  const transaction = database as Prisma.TransactionClient;
+  const errors: ArticleImportDependencyError[] = [];
+  const suggestions: ArticleImportMasterSuggestion[] = [];
   const dummyBatch = await transaction.organizationDummyDataBatch.findFirst({
     where: { organization_id: organizationId, status: "ACTIVE" },
     select: { id: true },
   });
   const dummyBatchId = dummyBatch?.id ?? null;
-  const createLookup = (
-    moduleKey: string,
-    label: string,
-    inputFields: MasterFieldValues,
-  ) => createMasterValueForOrganization(organizationId, moduleKey, {
-    label,
-    fields: inputFields,
-    createOnly: true,
-  }, transaction);
-  const brand = await ensureArticleImportLookup({
-    label: brandLabel,
-    displayName: "Brand",
-    dummyBatchId,
-    find: () => transaction.masterBrand.findFirst({
-      where: { organization_id: organizationId, brand: { equals: brandLabel, mode: "insensitive" } },
-      select: { id: true, brand: true, is_active: true, legacy_metadata: true },
-    }),
-    create: () => createLookup("brand", brandLabel, { Brand: brandLabel }),
+  const findBrand = async (label: string) => transaction.masterBrand.findFirst({
+    where: { organization_id: organizationId, brand: { equals: label, mode: "insensitive" } },
+    select: { id: true, brand: true, is_active: true, legacy_metadata: true },
   });
-  const normalizedFields: Record<string, unknown> = { ...fields, Brand: brand.brand };
+  const findProduct = async (label: string) => transaction.masterProduct.findFirst({
+    where: { organization_id: organizationId, product_master_name: { equals: label, mode: "insensitive" } },
+    select: { id: true, product_master_name: true, is_active: true, legacy_metadata: true },
+  });
+  const findCategory = async (label: string) => transaction.masterCategory.findFirst({
+    where: { organization_id: organizationId, category_name: { equals: label, mode: "insensitive" } },
+    select: { id: true, category_name: true, product_master_id: true, is_active: true, legacy_metadata: true },
+  });
+  const findSubcategory = async (label: string) => transaction.masterSubCategory.findFirst({
+    where: { organization_id: organizationId, sub_category: { equals: label, mode: "insensitive" } },
+    select: { id: true, sub_category: true, category_id: true, is_active: true, legacy_metadata: true },
+  });
+  const isUsable = (record: ArticleImportLookup | null, label: string, typeLabel: string) => {
+    if (!record) return false;
+    if (!record.is_active) {
+      errors.push({ message: `${typeLabel} "${label}" exists but is inactive. Activate it before retrying the Article.`, fieldPaths: [] });
+      return false;
+    }
+    if (dummyBatchId && isRecord(record.legacy_metadata)
+      && record.legacy_metadata.dummyDataBatchId === dummyBatchId) {
+      errors.push({ message: `${typeLabel} "${label}" is demo data and cannot be used for this Article.`, fieldPaths: [] });
+      return false;
+    }
+    return true;
+  };
+  const addSuggestion = (
+    input: ArticleImportMasterSuggestion,
+    message: string,
+    fieldPaths: string[],
+  ) => {
+    const key = `${input.moduleKey}:${input.label.toLocaleLowerCase()}`;
+    if (!suggestions.some((suggestion) => `${suggestion.moduleKey}:${suggestion.label.toLocaleLowerCase()}` === key)) {
+      suggestions.push(input);
+    }
+    errors.push({ message, fieldPaths, relatedMasters: [input] });
+  };
 
-  let productMaster: { id: string; label: string } | null = null;
-  const productMasterLabel = String(fields.Product_Master ?? "").trim();
-  if (productMasterLabel) {
-    const product = await ensureArticleImportLookup({
-      label: productMasterLabel,
-      displayName: "Finished Goods Type",
-      dummyBatchId,
-      find: () => transaction.masterProduct.findFirst({
-        where: {
-          organization_id: organizationId,
-          product_master_name: { equals: productMasterLabel, mode: "insensitive" },
-        },
-        select: { id: true, product_master_name: true, is_active: true, legacy_metadata: true },
-      }),
-      create: () => createLookup("product-master", productMasterLabel, { Product_Master_name: productMasterLabel }),
-    });
-    productMaster = { id: product.id, label: product.product_master_name };
-    normalizedFields.Product_Master = product.product_master_name;
-  }
+  const brandLabel = String(fields.Brand ?? "").trim();
+  const brand = brandLabel ? await findBrand(brandLabel) : null;
+  if (brandLabel && !brand) {
+    addSuggestion(
+      { moduleKey: "brand", label: brandLabel, fields: { Brand: brandLabel } },
+      `Brand "${brandLabel}" is missing. Create this Brand before retrying the Article.`,
+      ["Brand"],
+    );
+  } else if (brandLabel) isUsable(brand, brandLabel, "Brand");
 
-  let category: { id: string; label: string } | null = null;
+  const productLabel = String(fields.Product_Master ?? "").trim();
+  const product = productLabel ? await findProduct(productLabel) : null;
+  if (productLabel && !product) {
+    addSuggestion(
+      { moduleKey: "product-master", label: productLabel, fields: { Product_Master_name: productLabel } },
+      `Finished Goods Type "${productLabel}" is missing. Create this type before retrying the Article.`,
+      ["Product_Master"],
+    );
+  } else if (productLabel) isUsable(product, productLabel, "Finished Goods Type");
+
   const categoryLabel = String(fields.Category ?? "").trim();
-  if (categoryLabel) {
-    if (!productMaster) {
-      throw new MasterImportServiceError("Finished Goods Type is required to create or validate a Finished Goods Category.", 400);
-    }
-    const categoryRecord = await ensureArticleImportLookup({
-      label: categoryLabel,
-      displayName: "Finished Goods Category",
-      dummyBatchId,
-      find: () => transaction.masterCategory.findFirst({
-        where: {
-          organization_id: organizationId,
-          category_name: { equals: categoryLabel, mode: "insensitive" },
+  const category = categoryLabel ? await findCategory(categoryLabel) : null;
+  if (categoryLabel && !category) {
+    if (productLabel) {
+      addSuggestion(
+        {
+          moduleKey: "category",
+          label: categoryLabel,
+          fields: { Product_Master: productLabel, Category_Name: categoryLabel },
         },
-        select: { id: true, category_name: true, product_master_id: true, is_active: true, legacy_metadata: true },
-      }),
-      create: () => createLookup("category", categoryLabel, {
-        Product_Master: productMaster!.label,
-        Category_Name: categoryLabel,
-      }),
-    });
-    if (categoryRecord.product_master_id !== productMaster.id) {
-      throw new MasterImportServiceError(`Finished Goods Category "${categoryLabel}" belongs to a different Finished Goods Type.`, 409);
+        `Finished Goods Category "${categoryLabel}" is missing for Finished Goods Type "${productLabel}". Create it before retrying the Article.`,
+        ["Product_Master", "Category"],
+      );
     }
-    category = { id: categoryRecord.id, label: categoryRecord.category_name };
-    normalizedFields.Category = categoryRecord.category_name;
+  } else if (categoryLabel && category && isUsable(category, categoryLabel, "Finished Goods Category")) {
+    if (product && category.product_master_id !== product.id) {
+      errors.push({
+        message: `Finished Goods Category "${categoryLabel}" belongs to a different Finished Goods Type than "${productLabel}".`,
+        fieldPaths: ["Product_Master", "Category"],
+      });
+    }
   }
 
   const subcategoryLabel = String(fields.Subcategory ?? "").trim();
-  if (subcategoryLabel) {
-    if (!category) {
-      throw new MasterImportServiceError("Finished Goods Category is required to create or validate a Finished Goods Subcategory.", 400);
-    }
-    const subcategory = await ensureArticleImportLookup({
-      label: subcategoryLabel,
-      displayName: "Finished Goods Subcategory",
-      dummyBatchId,
-      find: () => transaction.masterSubCategory.findFirst({
-        where: {
-          organization_id: organizationId,
-          sub_category: { equals: subcategoryLabel, mode: "insensitive" },
+  const subcategory = subcategoryLabel ? await findSubcategory(subcategoryLabel) : null;
+  if (subcategoryLabel && !subcategory) {
+    if (categoryLabel) {
+      addSuggestion(
+        {
+          moduleKey: "sub-category",
+          label: subcategoryLabel,
+          fields: { category: categoryLabel, sub_category: subcategoryLabel },
         },
-        select: { id: true, sub_category: true, category_id: true, is_active: true, legacy_metadata: true },
-      }),
-      create: () => createLookup("sub-category", subcategoryLabel, {
-        category: category!.label,
-        sub_category: subcategoryLabel,
-      }),
-    });
-    if (subcategory.category_id !== category.id) {
-      throw new MasterImportServiceError(`Finished Goods Subcategory "${subcategoryLabel}" belongs to a different category.`, 409);
+        `Finished Goods Subcategory "${subcategoryLabel}" is missing for Finished Goods Category "${categoryLabel}". Create it before retrying the Article.`,
+        ["Category", "Subcategory"],
+      );
     }
-    normalizedFields.Subcategory = subcategory.sub_category;
+  } else if (subcategoryLabel && subcategory && isUsable(subcategory, subcategoryLabel, "Finished Goods Subcategory")) {
+    if (category && subcategory.category_id !== category.id) {
+      errors.push({
+        message: `Finished Goods Subcategory "${subcategoryLabel}" belongs to a different Finished Goods Category than "${categoryLabel}".`,
+        fieldPaths: ["Category", "Subcategory"],
+      });
+    }
   }
 
-  const variants = Array.isArray(childRows.variants)
-    ? childRows.variants.filter(isRecord)
-    : [];
-  const normalizedVariants: Record<string, unknown>[] = [];
+  const variants = Array.isArray(childRows.variants) ? childRows.variants.filter(isRecord) : [];
+  const seenColors = new Set<string>();
   for (const variant of variants) {
     const colorLabel = String(variant.color ?? "").trim();
-    if (!colorLabel) throw new MasterImportServiceError("Every Article color variant requires a Color.", 400);
-    const color = await ensureArticleImportLookup({
-      label: colorLabel,
-      displayName: "Color",
-      dummyBatchId,
-      find: () => transaction.masterColor.findFirst({
-        where: { organization_id: organizationId, colors: { equals: colorLabel, mode: "insensitive" } },
-        select: { id: true, colors: true, is_active: true, legacy_metadata: true },
-      }),
-      create: () => createLookup("color", colorLabel, { Colors: colorLabel }),
+    const key = colorLabel.toLocaleLowerCase();
+    if (!colorLabel || seenColors.has(key)) continue;
+    seenColors.add(key);
+    const color = await transaction.masterColor.findFirst({
+      where: { organization_id: organizationId, colors: { equals: colorLabel, mode: "insensitive" } },
+      select: { id: true, colors: true, is_active: true, legacy_metadata: true },
     });
-    normalizedVariants.push({ ...variant, color: color.colors });
+    if (!color) {
+      addSuggestion(
+        { moduleKey: "color", label: colorLabel, fields: { Colors: colorLabel } },
+        `Color "${colorLabel}" is missing. Create this Color before retrying the Article.`,
+        ["variants"],
+      );
+    } else isUsable(color, colorLabel, "Color");
   }
 
-  const sizeValues = Array.isArray(fields.Sizes)
-    ? [...new Set(fields.Sizes.map((value) => String(value).trim()).filter(Boolean))]
+  const sizeLabels = Array.isArray(fields.Sizes)
+    ? [...new Set(fields.Sizes.filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim()).filter(Boolean))]
     : [];
-  const normalizedSizes: string[] = [];
-  for (const sizeLabel of sizeValues) {
-    const size = await ensureArticleImportLookup({
-      label: sizeLabel,
-      displayName: "Size",
-      dummyBatchId,
-      find: () => transaction.masterSize.findFirst({
-        where: { organization_id: organizationId, size: { equals: sizeLabel, mode: "insensitive" } },
-        select: { id: true, size: true, is_active: true, legacy_metadata: true },
-      }),
-      create: () => createLookup("size", sizeLabel, { Size: sizeLabel }),
+  const sizes: Array<{ id: string; size: string; is_active: boolean; legacy_metadata: unknown }> = [];
+  for (const sizeLabel of sizeLabels) {
+    const size = await transaction.masterSize.findFirst({
+      where: { organization_id: organizationId, size: { equals: sizeLabel, mode: "insensitive" } },
+      select: { id: true, size: true, is_active: true, legacy_metadata: true },
     });
-    normalizedSizes.push(size.size);
+    if (!size) {
+      addSuggestion(
+        { moduleKey: "size", label: sizeLabel, fields: { Size: sizeLabel } },
+        `Size "${sizeLabel}" is missing. Create this Size before creating or selecting its Size Group.`,
+        ["Sizes", "Size_Group"],
+      );
+    } else if (isUsable(size, sizeLabel, "Size")) sizes.push(size);
   }
 
-  let sizeGroupLabel = String(fields.Size_Group ?? "").trim();
-  if (normalizedSizes.length > 0 && !sizeGroupLabel) sizeGroupLabel = normalizedSizes.join(",");
-  if (sizeGroupLabel) {
-    const sizeGroup = await ensureArticleImportLookup({
-      label: sizeGroupLabel,
-      displayName: "Size Group",
-      dummyBatchId,
-      find: () => transaction.masterSizeGroup.findFirst({
-        where: { organization_id: organizationId, size_group: { equals: sizeGroupLabel, mode: "insensitive" } },
-        select: { id: true, size_group: true, brand_id: true, is_active: true, legacy_metadata: true },
-      }),
-      create: () => createLookup("size-group", sizeGroupLabel, {
-        Brand1: brand.brand,
-        Size_Group: sizeGroupLabel,
-        Size: normalizedSizes,
-      }),
-    });
-    if (sizeGroup.brand_id !== brand.id) {
-      throw new MasterImportServiceError(`Size Group "${sizeGroupLabel}" is assigned to a different Brand.`, 409);
+  const requestedGroupLabel = String(fields.Size_Group ?? "").trim();
+  if (sizeLabels.length > 0) {
+    const requestedGroup = requestedGroupLabel
+      ? await transaction.masterSizeGroup.findFirst({
+          where: { organization_id: organizationId, size_group: { equals: requestedGroupLabel, mode: "insensitive" } },
+          select: { id: true, size_group: true, brand_id: true, is_active: true, legacy_metadata: true },
+        })
+      : null;
+    const requestedGroupIsUsable = requestedGroup
+      ? isUsable(requestedGroup, requestedGroupLabel, "Size Group")
+      : false;
+    let groupIsComplete = Boolean(requestedGroup && requestedGroupIsUsable
+      && brand && requestedGroup.brand_id === brand.id);
+    if (requestedGroup && brand && requestedGroup.brand_id !== brand.id) {
+      errors.push({ message: `Size Group "${requestedGroupLabel}" is assigned to a different Brand than "${brandLabel}".`, fieldPaths: ["Brand", "Size_Group"] });
     }
-    if (normalizedSizes.length > 0) {
-      const sizes = await transaction.masterSize.findMany({
-        where: { organization_id: organizationId, size: { in: normalizedSizes } },
-        select: { id: true, size: true },
-      });
+    if (requestedGroup && sizes.length === sizeLabels.length && groupIsComplete) {
       const links = await transaction.masterSizeGroupSize.findMany({
         where: {
           organization_id: organizationId,
-          size_group_id: sizeGroup.id,
+          size_group_id: requestedGroup.id,
           size_id: { in: sizes.map((size) => size.id) },
         },
         select: { size_id: true },
       });
-      const linkedIds = new Set(links.map((link) => link.size_id));
-      const missingSizeIds = sizes.filter((size) => !linkedIds.has(size.id)).map((size) => size.id);
-      if (missingSizeIds.length > 0) {
-        await transaction.masterSizeGroupSize.createMany({
-          data: missingSizeIds.map((sizeId) => ({
-            organization_id: organizationId,
-            size_group_id: sizeGroup.id,
-            size_id: sizeId,
-          })),
-        });
-      }
+      const linkedSizeIds = new Set(links.map((link) => link.size_id));
+      groupIsComplete = sizes.every((size) => linkedSizeIds.has(size.id));
     }
-    normalizedFields.Size_Group = sizeGroup.size_group;
+    if (!requestedGroup || !groupIsComplete) {
+      const sizeNames = sizes.length === sizeLabels.length ? sizes.map((size) => size.size) : sizeLabels;
+      const candidatePrefix = requestedGroupLabel && !requestedGroupLabel.includes(",")
+        ? requestedGroupLabel
+        : brandLabel;
+      let suggestedLabel = requestedGroup
+        ? `${candidatePrefix} ${sizeNames.join("-")}`.trim()
+        : requestedGroupLabel && !requestedGroupLabel.includes(",")
+          ? requestedGroupLabel
+          : `${brandLabel} ${sizeNames.join("-")}`.trim();
+      if (!suggestedLabel) suggestedLabel = `SIZE GROUP ${sizeNames.join("-")}`;
+      let suffix = 2;
+      while (await transaction.masterSizeGroup.findFirst({
+        where: { organization_id: organizationId, size_group: { equals: suggestedLabel, mode: "insensitive" } },
+        select: { id: true },
+      })) {
+        suggestedLabel = `${candidatePrefix || `SIZE GROUP ${sizeNames.join("-")}`} ${suffix++}`;
+      }
+      const groupSuggestion: ArticleImportMasterSuggestion = {
+        moduleKey: "size-group",
+        label: suggestedLabel,
+        fields: { Brand1: brandLabel, Size_Group: suggestedLabel, Size: sizeLabels },
+        articleFieldUpdates: { Size_Group: suggestedLabel },
+      };
+      addSuggestion(
+        groupSuggestion,
+        requestedGroup
+          ? `Size Group "${requestedGroupLabel}" does not contain every required size (${sizeLabels.join(", ")}). Create a Size Group "${suggestedLabel}" for Brand "${brandLabel}" containing all of those sizes, then retry the Article.`
+          : `No organization Size Group contains every required size (${sizeLabels.join(", ")}). Create Size Group "${suggestedLabel}" for Brand "${brandLabel}" containing all of those sizes, then retry the Article.`,
+        ["Size_Group", "Sizes", "Brand"],
+      );
+    }
   }
-  normalizedFields.Sizes = normalizedSizes;
-  childRows.variants = normalizedVariants;
-  return normalizedFields;
+
+  return { errors, suggestions };
 }
 
 async function validateImportPayloadForOrganization(
@@ -1359,7 +1362,7 @@ async function validateImportPayloadForOrganization(
   );
 
   const fields = validation.payload.fields;
-  const errors = [...validation.validationErrors];
+  const errors: ArticleImportDependencyError[] = [...validation.validationErrors];
   for (const field of definition.fields) {
     if (!field.lookupModuleKey && field.type !== "child-list") continue;
     if (field.type === "child-list") {
@@ -1440,6 +1443,13 @@ async function validateImportPayloadForOrganization(
         fieldPaths: ["Category", "Subcategory"],
       });
     }
+    const dependencyValidation = await validateArticleImportSupportingMasters(
+      prisma,
+      organizationId,
+      fields,
+      isRecord(validation.payload.childRows) ? validation.payload.childRows : {},
+    );
+    errors.push(...dependencyValidation.errors);
   }
   return { ...validation, validationErrors: errors };
 }
@@ -2231,18 +2241,20 @@ export async function commitNextMasterImportRow(input: {
         if (typeof label !== "string" || !label.trim()) {
           throw new MasterImportServiceError("Master row label is invalid.", 400);
         }
-        let masterFields = toMasterFieldValues(fields);
+        const masterFields = toMasterFieldValues(fields);
         const importedChildRows = isRecord(validation.payload.childRows)
           ? validation.payload.childRows
           : {};
         if (job.module_key === "article") {
-          const preparedArticleFields = await ensureArticleImportSupportingMasters(
+          const dependencies = await validateArticleImportSupportingMasters(
             transaction,
             input.organizationId,
             fields,
             importedChildRows,
           );
-          masterFields = toMasterFieldValues(preparedArticleFields);
+          if (dependencies.errors.length > 0) {
+            throw new MasterImportServiceError(dependencies.errors[0].message, 409);
+          }
         }
         await createMasterValueForOrganization(input.organizationId, job.module_key, {
           label,

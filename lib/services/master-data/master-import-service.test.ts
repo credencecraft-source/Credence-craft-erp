@@ -25,6 +25,15 @@ const mocks = vi.hoisted(() => ({
       findMany: vi.fn(),
       findUnique: vi.fn(),
     },
+    organizationDummyDataBatch: { findFirst: vi.fn() },
+    masterBrand: { findFirst: vi.fn() },
+    masterProduct: { findFirst: vi.fn() },
+    masterCategory: { findFirst: vi.fn() },
+    masterSubCategory: { findFirst: vi.fn() },
+    masterColor: { findFirst: vi.fn() },
+    masterSize: { findFirst: vi.fn() },
+    masterSizeGroup: { findFirst: vi.fn() },
+    masterSizeGroupSize: { findMany: vi.fn() },
     auditEvent: { createMany: vi.fn() },
     $transaction: vi.fn(),
     workspaceUser: { findFirst: vi.fn(), findMany: vi.fn() },
@@ -79,6 +88,7 @@ import {
   getMasterImportJob,
   listMasterImportJobs,
   MASTER_IMPORT_PLAN_SIZE,
+  MASTER_IMPORT_REPORT_PAGE_SIZE,
   MASTER_IMPORT_VALIDATION_BATCH_SIZE,
   saveMasterImportRow,
   stageMasterImportJob,
@@ -131,12 +141,38 @@ function rowRecord(status: string, payload: Record<string, unknown> = { Season: 
   };
 }
 
+function readSuggestionsForTest(payload: unknown) {
+  if (typeof payload !== "object" || payload === null || !("validationErrors" in payload)
+    || !Array.isArray(payload.validationErrors)) return [];
+  return payload.validationErrors.flatMap((error: unknown) =>
+    typeof error === "object" && error !== null && "relatedMasters" in error
+    && Array.isArray(error.relatedMasters) ? error.relatedMasters : []);
+}
+
 describe("master import service", () => {
+  it("supports selecting a full 1,000-row validation page", () => {
+    expect(MASTER_IMPORT_REPORT_PAGE_SIZE).toBe(1_000);
+    expect(MASTER_IMPORT_VALIDATION_BATCH_SIZE).toBe(1_000);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.AUTH_SECRET = "focused-test-secret";
     mocks.prisma.masterImportJob.deleteMany.mockResolvedValue({ count: 0 });
     mocks.prisma.masterImportJobRow.count.mockResolvedValue(0);
+    mocks.prisma.organizationDummyDataBatch.findFirst.mockResolvedValue(null);
+    for (const model of [
+      mocks.prisma.masterBrand,
+      mocks.prisma.masterProduct,
+      mocks.prisma.masterCategory,
+      mocks.prisma.masterSubCategory,
+      mocks.prisma.masterColor,
+      mocks.prisma.masterSize,
+      mocks.prisma.masterSizeGroup,
+    ]) {
+      model.findFirst.mockResolvedValue(null);
+    }
+    mocks.prisma.masterSizeGroupSize.findMany.mockResolvedValue([]);
     mocks.prisma.workspaceUser.findMany.mockResolvedValue([]);
     mocks.loadActiveMasterLookupIndex.mockResolvedValue(new Map());
     mocks.createAuditEvent.mockResolvedValue({});
@@ -644,7 +680,7 @@ describe("master import service", () => {
 
     const detail = await getMasterImportJob("org-internal", "job-1", {
       skip: 0,
-      take: 50,
+      take: 1_000,
       tab: "staged",
     });
 
@@ -661,7 +697,7 @@ describe("master import service", () => {
       },
       orderBy: { row_number: "asc" },
       skip: 0,
-      take: 50,
+      take: 1_000,
     }));
     expect(JSON.stringify(detail)).not.toContain("encrypted_payload");
     expect(JSON.stringify(detail)).not.toContain("encrypted_source_file");
@@ -743,13 +779,13 @@ describe("master import service", () => {
     });
   });
 
-  it("caps one validation transaction at the safe 100-row batch limit", async () => {
-    expect(MASTER_IMPORT_VALIDATION_BATCH_SIZE).toBe(100);
+  it("caps one validation transaction at the safe 1,000-row batch limit", async () => {
+    expect(MASTER_IMPORT_VALIDATION_BATCH_SIZE).toBe(1_000);
     await expect(validateMasterImportJob({
       organizationId: "org-internal",
       actorUserId: "actor-1",
       jobId: "job-1",
-      rowNumbers: Array.from({ length: 101 }, (_, index) => index + 1),
+      rowNumbers: Array.from({ length: 1_001 }, (_, index) => index + 1),
     })).rejects.toMatchObject({ status: 400 });
     expect(mocks.prisma.masterImportJob.findFirst).not.toHaveBeenCalled();
   });
@@ -1111,7 +1147,7 @@ describe("master import service", () => {
   it("validates Article rows with missing supporting masters without creating them", async () => {
     mocks.prisma.masterImportJob.findFirst
       .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "STAGED" })
-      .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "VALIDATED", total_rows: 1 });
+      .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "PARTIAL", total_rows: 1 });
     const stagedArticleRow = rowRecord("STAGED", {
         rowNumber: 2,
         fields: {
@@ -1132,7 +1168,7 @@ describe("master import service", () => {
       .mockResolvedValueOnce([stagedArticleRow]);
     mocks.prisma.masterImportJobRow.updateMany.mockResolvedValue({ count: 1 });
     mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
-      { status: "VALIDATED", _count: { _all: 1 } },
+      { status: "INVALID", _count: { _all: 1 } },
     ]);
     mocks.prisma.masterImportJob.updateMany.mockResolvedValue({ count: 1 });
 
@@ -1143,10 +1179,106 @@ describe("master import service", () => {
       rowNumber: 1,
     });
 
-    expect(result).toMatchObject({ validatedRowNumbers: [1], progress: { totalRows: 1 } });
+    expect(result).toMatchObject({ validatedRowNumbers: [], job: { status: "PARTIAL" }, progress: { totalRows: 1 } });
     expect(mocks.createMasterValueForOrganization).not.toHaveBeenCalled();
     expect(mocks.prisma.masterImportJobRow.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ status: "VALIDATED" }),
+      data: expect.objectContaining({ status: "INVALID" }),
+    }));
+    const update = mocks.prisma.masterImportJobRow.updateMany.mock.calls[0][0];
+    const savedPayload = JSON.parse(decryptSecret(Buffer.from(update.data.encrypted_payload).toString("utf8")));
+    const relatedMasters = savedPayload.validationErrors.flatMap(
+      (validationError: { relatedMasters?: Array<{ moduleKey: string; label: string; fields: Record<string, unknown> }> }) =>
+        validationError.relatedMasters ?? [],
+    );
+    expect(savedPayload.validationErrors.map((validationError: { message: string }) => validationError.message).join(" "))
+      .toContain('Create Size Group "NEW LABEL S-M" for Brand "NEW LABEL" containing all of those sizes');
+    expect(relatedMasters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ moduleKey: "brand", label: "NEW LABEL" }),
+      expect.objectContaining({ moduleKey: "product-master", label: "NEW TYPE" }),
+      expect.objectContaining({ moduleKey: "category", label: "NEW CATEGORY" }),
+      expect.objectContaining({ moduleKey: "sub-category", label: "NEW SUBCATEGORY" }),
+      expect.objectContaining({ moduleKey: "color", label: "BLACK" }),
+      expect.objectContaining({ moduleKey: "size", label: "S" }),
+      expect.objectContaining({ moduleKey: "size", label: "M" }),
+      expect.objectContaining({
+        moduleKey: "size-group",
+        label: "NEW LABEL S-M",
+        fields: { Brand1: "NEW LABEL", Size_Group: "NEW LABEL S-M", Size: ["S", "M"] },
+        articleFieldUpdates: { Size_Group: "NEW LABEL S-M" },
+      }),
+    ]));
+    expect(relatedMasters.some(({ moduleKey, label }: { moduleKey: string; label: string }) =>
+      moduleKey === "size-group" && label.includes(","))).toBe(false);
+  });
+
+  it("suggests a new Size Group when an existing organization group lacks one required size", async () => {
+    mocks.prisma.masterImportJob.findFirst
+      .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "STAGED" })
+      .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "PARTIAL", total_rows: 1 });
+    const stagedArticleRow = rowRecord("STAGED", {
+      rowNumber: 2,
+      fields: { article: "FW99", Brand: "ACME", Sizes: ["S", "M"], Size_Group: "CORE" },
+      childRows: {},
+    });
+    mocks.prisma.masterImportJobRow.findMany
+      .mockResolvedValueOnce([stagedArticleRow])
+      .mockResolvedValueOnce([stagedArticleRow]);
+    mocks.prisma.masterBrand.findFirst.mockResolvedValue({
+      id: "brand-1",
+      brand: "ACME",
+      is_active: true,
+      legacy_metadata: null,
+    });
+    mocks.prisma.masterSize.findFirst.mockImplementation(async ({ where }) => {
+      const label = where.size.equals;
+      return {
+        id: `size-${label.toLowerCase()}`,
+        size: label,
+        is_active: true,
+        legacy_metadata: null,
+      };
+    });
+    mocks.prisma.masterSizeGroup.findFirst.mockImplementation(async ({ where }) => (
+      where.size_group.equals === "CORE"
+        ? {
+            id: "group-core",
+            size_group: "CORE",
+            brand_id: "brand-1",
+            is_active: true,
+            legacy_metadata: null,
+          }
+        : null
+    ));
+    mocks.prisma.masterSizeGroupSize.findMany.mockResolvedValue([{ size_id: "size-s" }]);
+    mocks.prisma.masterImportJobRow.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
+      { status: "INVALID", _count: { _all: 1 } },
+    ]);
+    mocks.prisma.masterImportJob.updateMany.mockResolvedValue({ count: 1 });
+
+    await validateMasterImportJob({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+      rowNumber: 1,
+    });
+
+    const update = mocks.prisma.masterImportJobRow.updateMany.mock.calls[0][0];
+    const savedPayload = JSON.parse(decryptSecret(Buffer.from(update.data.encrypted_payload).toString("utf8")));
+    const suggestions = readSuggestionsForTest(savedPayload);
+    expect(update.data.status).toBe("INVALID");
+    expect(mocks.prisma.masterSizeGroupSize.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "org-internal",
+        size_group_id: "group-core",
+        size_id: { in: ["size-s", "size-m"] },
+      }),
+    }));
+    expect(suggestions).toContainEqual(expect.objectContaining({
+      moduleKey: "size-group",
+      label: "CORE S-M",
+      fields: { Brand1: "ACME", Size_Group: "CORE S-M", Size: ["S", "M"] },
+      articleFieldUpdates: { Size_Group: "CORE S-M" },
     }));
   });
 
