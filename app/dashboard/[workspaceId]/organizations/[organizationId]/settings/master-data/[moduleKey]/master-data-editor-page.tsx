@@ -28,6 +28,7 @@ import {
 import type { MasterFieldValues } from "@/lib/master-data/master-data-constants";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 import { ensureArticleImportSupportingMasters } from "@/lib/services/master-data/master-import-service";
+import { parseFinishedGoodsSizePrices } from "@/lib/services/master-data/finished-goods-size-service";
 
 function serializeDecimal(value: unknown): unknown {
   if (value === null || value === undefined) {
@@ -68,6 +69,19 @@ async function readFields(formData: FormData, fields: MasterFieldDefinition[]) {
     return [field.key, String(value ?? "").trim() || null];
   }));
   return Object.fromEntries(entries);
+}
+
+function readArticleSizePrices(formData: FormData) {
+  const value = formData.get("articleSizePrices");
+  if (typeof value !== "string" || !value) return [];
+  try {
+    return parseFinishedGoodsSizePrices(JSON.parse(value));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error("Article size prices are invalid. Refresh the form and try again.");
+    }
+    throw error;
+  }
 }
 
 function getRecordLabel(fields: Record<string, unknown>, definition: { fields: MasterFieldDefinition[]; labelField?: string }) {
@@ -308,6 +322,7 @@ async function createMasterValueAction(formData: FormData) {
       ...(articleVariants ? { articleVariants } : {}),
       ...(moduleKey === "article" ? {
         articleSizes: Array.isArray(fields.Sizes) ? fields.Sizes.map(String) : [],
+        articleSizePrices: readArticleSizePrices(formData),
       } : {}),
     });
   } catch (error) {
@@ -388,6 +403,7 @@ async function updateMasterValueAction(formData: FormData) {
       ...(articleVariants ? { articleVariants } : {}),
       ...(moduleKey === "article" ? {
         articleSizes: Array.isArray(fields.Sizes) ? fields.Sizes.map(String) : [],
+        articleSizePrices: readArticleSizePrices(formData),
       } : {}),
     });
   } catch (error) {
@@ -640,6 +656,7 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
             createOnly: true,
             articleVariants,
             articleSizes: Array.isArray(preparedFields.Sizes) ? preparedFields.Sizes.map(String) : [],
+            articleSizePrices: parseFinishedGoodsSizePrices(preparedFields.Size_Prices ?? []),
           }, transaction);
         }, { maxWait: 10_000, timeout: 30_000 });
         createdCount += 1;

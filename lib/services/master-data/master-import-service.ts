@@ -12,6 +12,7 @@ import { parseContactWorkbook } from "@/lib/master-data/contact-records-workbook
 import { ContactValidationError, parseContactInput, type ContactInput } from "@/lib/services/master-data/contact-master-validation";
 import { createContact } from "@/lib/services/master-data/contact-master-service";
 import { groupArticleMatrixRows } from "@/lib/master-data/article-import-workbook";
+import { parseFinishedGoodsSizePrices } from "@/lib/services/master-data/finished-goods-size-service";
 import {
   createMasterValueForOrganization,
   getMasterDefinition,
@@ -2132,6 +2133,9 @@ export async function commitNextMasterImportRow(input: {
             : {}),
           ...(job.module_key === "article" && Array.isArray(masterFields.Sizes)
             ? { articleSizes: masterFields.Sizes.filter((value): value is string => typeof value === "string") }
+            : {}),
+          ...(job.module_key === "article"
+            ? { articleSizePrices: parseFinishedGoodsSizePrices(masterFields.Size_Prices ?? []) }
             : {}),
           createOnly: true,
         }, transaction);

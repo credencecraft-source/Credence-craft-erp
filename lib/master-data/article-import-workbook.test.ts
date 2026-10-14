@@ -77,6 +77,72 @@ describe("groupArticleMatrixRows", () => {
     ])).toThrow(/conflicting Category values in spreadsheet rows 2, 3/);
   });
 
+  it("moves one shared size price to the Article header when every size matches", () => {
+    const [article] = groupArticleMatrixRows([
+      {
+        rowNumber: 2,
+        code: null,
+        description: null,
+        fields: { article: "SH30", Sizes: ["S"], default_price: "125.0000" },
+        childRows: { variants: [] },
+      },
+      {
+        rowNumber: 3,
+        code: null,
+        description: null,
+        fields: { article: "SH30", Sizes: ["M"], default_price: "125" },
+        childRows: { variants: [] },
+      },
+    ]);
+
+    expect(article.fields.default_price).toBe("125.0000");
+    expect(article.fields.Size_Prices).toEqual([]);
+  });
+
+  it("keeps different prices on their corresponding sizes and clears the header price", () => {
+    const [article] = groupArticleMatrixRows([
+      {
+        rowNumber: 2,
+        code: null,
+        description: null,
+        fields: { article: "SH30", Sizes: ["S"], default_price: "125.0000" },
+        childRows: { variants: [] },
+      },
+      {
+        rowNumber: 3,
+        code: null,
+        description: null,
+        fields: { article: "SH30", Sizes: ["M"], default_price: "135.5000" },
+        childRows: { variants: [] },
+      },
+    ]);
+
+    expect(article.fields.default_price).toBeNull();
+    expect(article.fields.Size_Prices).toEqual([
+      { size: "S", price: "125.0000" },
+      { size: "M", price: "135.5000" },
+    ]);
+  });
+
+  it("reports duplicate rows that disagree on a single size price", () => {
+    expect(() => groupArticleMatrixRows([
+      {
+        rowNumber: 5170,
+        code: null,
+        description: null,
+        fields: { article: "SH30", Sizes: ["S"], default_price: "125" },
+        childRows: { variants: [] },
+      },
+      {
+        rowNumber: 5171,
+        code: null,
+        description: null,
+        fields: { article: "SH30", Sizes: ["S"], default_price: "126" },
+        childRows: { variants: [] },
+      },
+    ])).toThrow('Article "SH30" size "S" has conflicting prices in spreadsheet rows 5170, 5171.');
+  });
+
   it("rejects conflicting values for a repeated color variant", () => {
     const row = {
       rowNumber: 2,

@@ -8,6 +8,14 @@ function valueKey(value: unknown) {
   return JSON.stringify(value);
 }
 
+function priceKey(value: unknown) {
+  if (isEmpty(value)) return "";
+  const text = String(value).trim();
+  const [integer, fraction = ""] = text.split(".");
+  const normalizedFraction = fraction.replace(/0+$/, "");
+  return normalizedFraction ? `${integer}.${normalizedFraction}` : integer;
+}
+
 function mergeField(
   values: Record<string, unknown>,
   key: string,
@@ -43,19 +51,41 @@ export function groupArticleMatrixRows(rows: ParsedMasterWorkbookRow[]) {
     const rowNumbers = group.map((row) => row.rowNumber);
     const fields = { ...first.fields };
     const sizes: string[] = [];
+    const pricesBySize = new Map<string, { size: string; price: unknown; rowNumbers: number[] }>();
     const variantsByColor = new Map<string, Record<string, unknown>>();
+    const unassignedPrices: Array<{ price: unknown; rowNumber: number }> = [];
     let code = first.code;
     let description = first.description;
 
     for (const row of group) {
       for (const [key, value] of Object.entries(row.fields)) {
-        if (key === "Sizes" || key === "Size_Group") continue;
+        if (key === "Sizes" || key === "Size_Group" || key === "default_price") continue;
         mergeField(fields, key, value, key, rowNumbers);
       }
-      for (const size of Array.isArray(row.fields.Sizes) ? row.fields.Sizes : []) {
+      const rowSizes = Array.isArray(row.fields.Sizes)
+        ? row.fields.Sizes.filter((size): size is string => typeof size === "string" && Boolean(size.trim()))
+        : [];
+      const rowPrice = row.fields.default_price;
+      if (rowSizes.length === 0 && !isEmpty(rowPrice)) {
+        unassignedPrices.push({ price: rowPrice, rowNumber: row.rowNumber });
+      }
+      for (const rawSize of rowSizes) {
+        const size = rawSize.trim();
+        const sizeKey = size.toLocaleLowerCase();
         if (typeof size !== "string" || !size.trim()) continue;
-        if (!sizes.some((existing) => existing.toLocaleLowerCase() === size.toLocaleLowerCase())) {
+        if (!sizes.some((existing) => existing.toLocaleLowerCase() === sizeKey)) {
           sizes.push(size.trim());
+        }
+        if (!isEmpty(rowPrice)) {
+          const existingPrice = pricesBySize.get(sizeKey);
+          if (existingPrice && priceKey(existingPrice.price) !== priceKey(rowPrice)) {
+            const conflictingRows = [...existingPrice.rowNumbers, row.rowNumber];
+            throw new Error(
+              `Article "${String(fields.article ?? "")}" size "${size}" has conflicting prices in spreadsheet rows ${conflictingRows.join(", ")}.`,
+            );
+          }
+          if (existingPrice) existingPrice.rowNumbers.push(row.rowNumber);
+          else pricesBySize.set(sizeKey, { size, price: rowPrice, rowNumbers: [row.rowNumber] });
         }
       }
       const sizeGroup = row.fields.Size_Group;
@@ -90,6 +120,42 @@ export function groupArticleMatrixRows(rows: ParsedMasterWorkbookRow[]) {
         throw new Error(`Article "${String(fields.article ?? "")}" has conflicting Description values in spreadsheet rows ${rowNumbers.join(", ")}.`);
       }
       if (!description) description = row.description;
+    }
+
+    const sizePrices = sizes.map((size) => pricesBySize.get(size.toLocaleLowerCase())
+      ?? { size, price: null, rowNumbers: [] });
+    const distinctPriceKeys = new Set(sizePrices.map(({ price }) => priceKey(price)));
+    const sizePricingIsUniform = sizePrices.length > 0
+      && sizePrices.every(({ price }) => !isEmpty(price))
+      && distinctPriceKeys.size === 1;
+    const unassignedPriceKeys = new Set(unassignedPrices.map(({ price }) => priceKey(price)));
+    if (unassignedPriceKeys.size > 1
+      || (unassignedPrices.length > 0 && sizePrices.length > 0
+        && sizePrices.some(({ price }) => !isEmpty(price)
+          && priceKey(price) !== priceKey(unassignedPrices[0].price)))) {
+      const conflictingRows = [...new Set([
+        ...unassignedPrices.map(({ rowNumber }) => rowNumber),
+        ...sizePrices.flatMap(({ rowNumbers }) => rowNumbers),
+      ])];
+      throw new Error(
+        `Article "${String(fields.article ?? "")}" has conflicting unassigned and size prices in spreadsheet rows ${conflictingRows.join(", ")}.`,
+      );
+    }
+    if (sizePricingIsUniform) {
+      fields.default_price = sizePrices[0].price;
+      fields.Size_Prices = [];
+    } else if (sizePrices.some(({ price }) => !isEmpty(price))) {
+      fields.default_price = null;
+      fields.Size_Prices = sizePrices.map(({ size, price }) => ({
+        size,
+        price: isEmpty(price) ? null : String(price),
+      }));
+    } else if (unassignedPrices.length > 0) {
+      fields.default_price = unassignedPrices[0].price;
+      fields.Size_Prices = [];
+    } else {
+      fields.default_price = first.fields.default_price ?? null;
+      fields.Size_Prices = [];
     }
 
     fields.Sizes = sizes;

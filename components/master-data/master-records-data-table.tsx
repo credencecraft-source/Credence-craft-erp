@@ -70,6 +70,39 @@ const rawMaterialShowAllFieldKeys = new Set([
 ]);
 const rawMaterialFieldOrder = ["Category", "Subcategory", "Raw_Material_Name", "Stock_Uom1", "Colour", "Image_Url", "Show_All1"];
 
+type ArticleSizePrice = { size: string; price: string | null };
+
+function withArticleSizePrices(
+  values: Record<string, unknown>,
+  sizes: string[],
+  sizePrices: ArticleSizePrice[],
+) {
+  const priceBySize = new Map(sizePrices.map(({ size, price }) => [size.toLocaleLowerCase(), price]));
+  const selectedPrices = sizes.map((size) => ({
+    size,
+    price: priceBySize.get(size.toLocaleLowerCase()) ?? null,
+  }));
+  const enteredPrices = selectedPrices
+    .map(({ price }) => price?.trim() ?? "")
+    .filter(Boolean);
+  const updatedValues: Record<string, unknown> = { ...values, Sizes: sizes, Size_Prices: selectedPrices };
+
+  if (enteredPrices.length > 0) {
+    const normalizePrice = (price: string) => {
+      const [integer, fraction = ""] = price.split(".");
+      const normalizedInteger = integer.replace(/^0+(?=\d)/, "");
+      const normalizedFraction = fraction.replace(/0+$/, "");
+      return normalizedFraction ? `${normalizedInteger}.${normalizedFraction}` : normalizedInteger;
+    };
+    const normalizedPrices = enteredPrices.map(normalizePrice);
+    const allSizesPriced = selectedPrices.length > 0 && enteredPrices.length === selectedPrices.length;
+    const isUniform = allSizesPriced && normalizedPrices.every((price) => price === normalizedPrices[0]);
+    updatedValues.default_price = isUniform ? enteredPrices[0] : null;
+  }
+
+  return updatedValues;
+}
+
 function SubmitButton({ children }: { children: string }) {
   const { pending } = useFormStatus();
   return (
@@ -654,7 +687,18 @@ export function MasterRecordsTable({
                         const nextValue = event.target.checked
                           ? [...selectedValues, option.label]
                           : selectedValues.filter((item) => item !== option.label);
-                        const nextValues = { ...values, [field.key]: nextValue };
+                        const nextValues: Record<string, unknown> = moduleKey === "article" && field.key === "Sizes"
+                          ? withArticleSizePrices(
+                              values,
+                              nextValue,
+                              Array.isArray(values.Size_Prices)
+                                ? values.Size_Prices.filter((item): item is ArticleSizePrice =>
+                                    typeof item === "object" && item !== null
+                                    && "size" in item && typeof item.size === "string"
+                                    && "price" in item && (typeof item.price === "string" || item.price === null))
+                                : [],
+                            )
+                          : { ...values, [field.key]: nextValue };
                         for (const dependentField of fields.filter((candidate) => candidate.dependsOn === field.key)) {
                           nextValues[dependentField.key] = dependentField.multiple ? [] : "";
                         }
@@ -666,6 +710,41 @@ export function MasterRecordsTable({
                 );
               })}
             </div>
+            {moduleKey === "article" && field.key === "Sizes" && selectedValues.length > 0 && (
+              <div className="space-y-3 border-t border-slate-200 pt-3">
+                <p className="text-xs font-semibold text-slate-700">Price by size</p>
+                {selectedValues.map((size) => {
+                  const sizePrices = Array.isArray(values.Size_Prices)
+                    ? values.Size_Prices.filter((item): item is ArticleSizePrice =>
+                        typeof item === "object" && item !== null
+                        && "size" in item && typeof item.size === "string"
+                        && "price" in item && (typeof item.price === "string" || item.price === null))
+                    : [];
+                  const price = sizePrices.find((item) => item.size.toLocaleLowerCase() === size.toLocaleLowerCase())?.price ?? "";
+                  return (
+                    <Input
+                      key={`size-price-${size}`}
+                      label={`Price for size ${size}`}
+                      type="number"
+                      min="0"
+                      step="0.0001"
+                      textCase="preserve"
+                      value={price}
+                      onChange={(event) => {
+                        const nextPrices = sizePrices.filter((item) => item.size.toLocaleLowerCase() !== size.toLocaleLowerCase());
+                        nextPrices.push({ size, price: event.target.value || null });
+                        setValues(withArticleSizePrices(values, selectedValues, nextPrices));
+                      }}
+                    />
+                  );
+                })}
+                <input
+                  type="hidden"
+                  name="articleSizePrices"
+                  value={JSON.stringify(Array.isArray(values.Size_Prices) ? values.Size_Prices : [])}
+                />
+              </div>
+            )}
             {options.length === 0 && <p className="text-xs text-slate-500">No {field.label.toLowerCase()} options available.</p>}
             {field.required && <p className="text-[11px] text-slate-500">Select at least one.</p>}
           </fieldset>
@@ -704,6 +783,9 @@ export function MasterRecordsTable({
               const nextValues = { ...values, [field.key]: nextValue };
               for (const dependentField of fields.filter((candidate) => candidate.dependsOn === field.key)) {
                 nextValues[dependentField.key] = dependentField.multiple ? [] : "";
+              }
+              if (moduleKey === "article" && field.key === "Size_Group") {
+                nextValues.Size_Prices = [];
               }
               if (moduleKey === "raw-material" && field.key === "Category") {
                 const selectedCategory = (articleLookupOptions["raw-material-category"] ?? []).find((option) => option.label === nextValue);

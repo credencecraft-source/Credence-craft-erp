@@ -6,6 +6,9 @@ const { transaction } = vi.hoisted(() => ({
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    masterArticle: {
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     masterSizeGroup: {
       findFirst: vi.fn().mockResolvedValue({ id: "group-1", legacy_metadata: null }),
     },
@@ -39,7 +42,7 @@ const { transaction } = vi.hoisted(() => ({
   },
 }));
 
-import { syncFinishedGoodsSizes } from "./finished-goods-size-service";
+import { parseFinishedGoodsSizePrices, syncFinishedGoodsSizes } from "./finished-goods-size-service";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -66,8 +69,8 @@ describe("finished goods style sizes", () => {
     });
     expect(transaction.masterArticleSize.createMany).toHaveBeenCalledWith({
       data: [
-        { organization_id: "org-1", article_id: "style-1", size_id: "size-small" },
-        { organization_id: "org-1", article_id: "style-1", size_id: "size-medium" },
+        { organization_id: "org-1", article_id: "style-1", size_id: "size-small", price: null },
+        { organization_id: "org-1", article_id: "style-1", size_id: "size-medium", price: null },
       ],
     });
   });
@@ -82,5 +85,64 @@ describe("finished goods style sizes", () => {
   it("does not allow sizes without a selected size group", async () => {
     await expect(syncFinishedGoodsSizes(transaction as never, "org-1", "style-1", null, ["S"]))
       .rejects.toThrow("Select a Size Group before choosing sizes.");
+  });
+
+  it("normalizes and validates structured size-price input", () => {
+    expect(parseFinishedGoodsSizePrices([{ size: " S ", price: "12.5000" }])).toEqual([
+      { size: "S", price: "12.5000" },
+    ]);
+    expect(() => parseFinishedGoodsSizePrices([{ size: "S", price: 12 }]))
+      .toThrow("Article size price 1 is invalid.");
+  });
+
+  it("saves variable prices on their sizes and clears the Article header price", async () => {
+    await syncFinishedGoodsSizes(
+      transaction as never,
+      "org-1",
+      "style-1",
+      "group-1",
+      ["S", "M"],
+      [{ size: "S", price: "12.5" }, { size: "M", price: "14" }],
+    );
+
+    expect(transaction.masterArticle.updateMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-1", id: "style-1" },
+      data: { default_price: null },
+    });
+    const savedSizes = transaction.masterArticleSize.createMany.mock.calls[0][0].data;
+    expect(savedSizes.map((entry: { size_id: string; price: { toString(): string } | null }) => [
+      entry.size_id,
+      entry.price?.toString(),
+    ])).toEqual([
+      ["size-small", "12.5"],
+      ["size-medium", "14"],
+    ]);
+  });
+
+  it("promotes a complete uniform size price to the Article header", async () => {
+    await syncFinishedGoodsSizes(
+      transaction as never,
+      "org-1",
+      "style-1",
+      "group-1",
+      ["S", "M"],
+      [{ size: "S", price: "12.5000" }, { size: "M", price: "12.5" }],
+    );
+
+    const headerPrice = transaction.masterArticle.updateMany.mock.calls[0][0].data.default_price;
+    expect(String(headerPrice)).toBe("12.5");
+  });
+
+  it("rejects a price for an unselected size before replacing existing size links", async () => {
+    await expect(syncFinishedGoodsSizes(
+      transaction as never,
+      "org-1",
+      "style-1",
+      "group-1",
+      ["S", "M"],
+      [{ size: "XL", price: "12" }],
+    )).rejects.toThrow("Size prices must match each selected Article size exactly once.");
+
+    expect(transaction.masterArticleSize.deleteMany).not.toHaveBeenCalled();
   });
 });

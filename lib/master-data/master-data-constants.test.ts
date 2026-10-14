@@ -11,6 +11,7 @@ const { prismaMock, models } = vi.hoisted(() => {
     findFirst: vi.fn().mockResolvedValue(null),
     findMany: vi.fn().mockResolvedValue([]),
     update: vi.fn().mockResolvedValue({ id: "updated-id" }),
+    updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     upsert: vi.fn().mockResolvedValue({ id: "upserted-id" }),
   });
   const modelNames = [
@@ -358,6 +359,33 @@ describe("article creation", () => {
     expect(merchandisingOrder.findMany).not.toHaveBeenCalled();
   });
 
+  it("hydrates persisted per-size prices for Article editing", async () => {
+    models.masterArticle.findMany.mockResolvedValueOnce([{
+      id: "article-id",
+      value_id: "article-value-id",
+      organization_id: "org-id",
+      article: "Shirt",
+      article_code: "SH-01",
+      is_active: true,
+    }] as never);
+    models.masterArticleSize.findMany.mockResolvedValueOnce([
+      {
+        article_id: "article-id",
+        price: { toString: () => "12.5" },
+        size: { organization_id: "org-id", size: "S", is_active: true },
+      },
+    ] as never);
+
+    const articles = await getMasterValuesForOrganization("org-id", "article", true, {
+      includeArticleMetrics: false,
+    });
+
+    expect(articles[0].fields).toMatchObject({
+      Sizes: ["S"],
+      Size_Prices: [{ size: "S", price: "12.5" }],
+    });
+  });
+
   it("assigns the next organization article code in the requested format", async () => {
     models.masterBrand.findFirst.mockResolvedValue({ id: "brand-id" } as never);
     models.masterArticle.findMany.mockResolvedValue([
@@ -469,7 +497,7 @@ describe("article creation", () => {
     });
     expect(String(variantData.price_override)).toBe("11.1234");
     expect(models.masterArticleSize.createMany).toHaveBeenCalledWith({
-      data: [{ organization_id: "org-id", article_id: "style-id", size_id: "size-id" }],
+      data: [{ organization_id: "org-id", article_id: "style-id", size_id: "size-id", price: null }],
     });
     expect(models.masterSizeGroup.findFirst).toHaveBeenCalledTimes(2);
     expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 15_000 });

@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import { enforceInventoryLocationLimit } from "@/lib/services/platform/inventory-location-restriction-service";
-import { syncFinishedGoodsSizes } from "@/lib/services/master-data/finished-goods-size-service";
+import { syncFinishedGoodsSizes, type FinishedGoodsSizePriceInput } from "@/lib/services/master-data/finished-goods-size-service";
 import { parseFinishedGoodsPrice, syncFinishedGoodsVariants, type FinishedGoodsVariantInput } from "@/lib/services/master-data/finished-goods-variant-service";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 export { getMasterDefinition, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
@@ -615,16 +615,24 @@ export async function getMasterValuesForOrganization(
           article_id: { in: rows.map((row) => row.id) },
           size: { organization_id: organizationId, ...(includeInactive ? {} : { is_active: true }) },
         },
-        select: { article_id: true, size: { select: { organization_id: true, size: true, is_active: true } } },
+        select: {
+          article_id: true,
+          price: true,
+          size: { select: { organization_id: true, size: true, is_active: true } },
+        },
         orderBy: [{ article_id: "asc" }, { created_at: "asc" }],
       })
     : [];
   const sizesByArticle = new Map<string, string[]>();
+  const sizePricesByArticle = new Map<string, Array<{ size: string; price: string | null }>>();
   for (const articleSize of articleSizes) {
     if (articleSize.size.organization_id !== organizationId) continue;
     const sizes = sizesByArticle.get(articleSize.article_id) ?? [];
     sizes.push(articleSize.size.size);
     sizesByArticle.set(articleSize.article_id, sizes);
+    const prices = sizePricesByArticle.get(articleSize.article_id) ?? [];
+    prices.push({ size: articleSize.size.size, price: articleSize.price?.toString() ?? null });
+    sizePricesByArticle.set(articleSize.article_id, prices);
   }
 
   const hydratedRows = await Promise.all(rows.map(async (row) => {
@@ -645,6 +653,7 @@ export async function getMasterValuesForOrganization(
         price_override: variant.price_override?.toString() ?? null,
       }));
       fields.Sizes = sizesByArticle.get(row.id) ?? [];
+      fields.Size_Prices = sizePricesByArticle.get(row.id) ?? [];
     }
     return {
       id: row.id,
@@ -807,7 +816,7 @@ export async function syncSizeGroupSizes(organizationId: string, sizeGroupId: st
 export async function createMasterValueForOrganization(
   organizationId: string,
   moduleKey: string,
-  input: { label: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; childRows?: Record<string, Record<string, unknown>[]>; parentValueId?: string | null; createOnly?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; sizeGroupId?: string; lookupIndex?: ActiveMasterLookupIndex },
+  input: { label: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; childRows?: Record<string, Record<string, unknown>[]>; parentValueId?: string | null; createOnly?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; articleSizePrices?: FinishedGoodsSizePriceInput[]; sizeGroupId?: string; lookupIndex?: ActiveMasterLookupIndex },
   database: typeof prisma | Prisma.TransactionClient = prisma,
 ) {
   const definition = getMasterDefinition(moduleKey);
@@ -966,6 +975,7 @@ export async function createMasterValueForOrganization(
         created.id,
         typeof created.size_group_id === "string" ? created.size_group_id : null,
         input.articleSizes,
+        input.articleSizePrices,
       );
     }
     if (moduleKey === "size-group" && Array.isArray(input.fields?.Size)) {
@@ -1031,16 +1041,17 @@ export async function createMasterValueForOrganization(
   return createWithinTransaction(database);
 }
 
-export async function updateMasterValue(organizationId: string, valueId: string, input: { label?: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; is_active?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[] }) {
+export async function updateMasterValue(organizationId: string, valueId: string, input: { label?: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; is_active?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; articleSizePrices?: FinishedGoodsSizePriceInput[] }) {
   for (const [moduleKey, delegate] of Object.entries(delegates)) {
     const existing = await delegate.findFirst({ where: { organization_id: organizationId, OR: [{ id: valueId }, { value_id: valueId }] } });
     if (existing) {
       if (await isActiveDummyMaster(organizationId, existing)) {
         throw new Error("Demo master values are managed by the Dummy Data batch and cannot be edited individually.");
       }
-      if (moduleKey === "article" && (input.articleVariants || input.articleSizes)) {
+      if (moduleKey === "article" && (input.articleVariants || input.articleSizes || input.articleSizePrices)) {
         const articleVariants = input.articleVariants;
         const articleSizes = input.articleSizes;
+        const articleSizePrices = input.articleSizePrices;
         return prisma.$transaction(async (transaction) => {
           const currentArticle = await transaction.masterArticle.findFirst({
             where: { organization_id: organizationId, id: existing.id },
@@ -1068,6 +1079,7 @@ export async function updateMasterValue(organizationId: string, valueId: string,
               existing.id,
               typeof updated.size_group_id === "string" ? updated.size_group_id : null,
               articleSizes,
+              articleSizePrices,
             );
           }
           return updated;
