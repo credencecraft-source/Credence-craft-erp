@@ -27,18 +27,20 @@ export async function POST(
     const { organizationId: publicOrganizationId, jobId } = await context.params;
     const authorization = await authorizeMasterImportRoute(publicOrganizationId);
     if (!authorization.authorized) return authorization.response;
-    const body = await parseBoundedJson(request, 32 * 1024);
+    const body = await parseBoundedJson(request, 256 * 1024);
     if (typeof body !== "object" || body === null || Array.isArray(body)
-      || Object.keys(body).some((key) => !["rowNumber", "rowNumbers"].includes(key))) {
+      || Object.keys(body).some((key) => !["rowNumber", "rowNumbers", "take"].includes(key))) {
       return NextResponse.json({ error: "Validation request is invalid." }, { status: 400 });
     }
     const requestBody = body as Record<string, unknown>;
     const rowNumber = requestBody.rowNumber;
     const rowNumbers = requestBody.rowNumbers;
+    const take = requestBody.take;
     if ((rowNumber !== undefined && (!Number.isSafeInteger(rowNumber) || Number(rowNumber) < 1))
       || (rowNumbers !== undefined && !isRowNumberList(rowNumbers))
-      || (rowNumber !== undefined && rowNumbers !== undefined)
-      || (rowNumber === undefined && rowNumbers === undefined)) {
+      || (take !== undefined && (!Number.isSafeInteger(take) || Number(take) < 1
+        || Number(take) > MASTER_IMPORT_VALIDATION_BATCH_SIZE))
+      || [rowNumber, rowNumbers, take].filter((selection) => selection !== undefined).length !== 1) {
       return NextResponse.json({ error: "Select valid staged rows to validate." }, { status: 400 });
     }
     const result = await validateMasterImportJob({
@@ -47,6 +49,7 @@ export async function POST(
       jobId,
       ...(rowNumber !== undefined ? { rowNumber: Number(rowNumber) } : {}),
       ...(rowNumbers !== undefined ? { rowNumbers } : {}),
+      ...(take !== undefined ? { take: Number(take) } : {}),
     });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

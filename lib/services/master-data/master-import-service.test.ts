@@ -150,9 +150,10 @@ function readSuggestionsForTest(payload: unknown) {
 }
 
 describe("master import service", () => {
-  it("supports selecting a full 1,000-row validation page", () => {
+  it("keeps report pages at 1,000 while allowing 10,000 validations and plan rows", () => {
     expect(MASTER_IMPORT_REPORT_PAGE_SIZE).toBe(1_000);
-    expect(MASTER_IMPORT_VALIDATION_BATCH_SIZE).toBe(1_000);
+    expect(MASTER_IMPORT_VALIDATION_BATCH_SIZE).toBe(10_000);
+    expect(MASTER_IMPORT_PLAN_SIZE).toBe(1_000);
   });
 
   beforeEach(() => {
@@ -779,15 +780,70 @@ describe("master import service", () => {
     });
   });
 
-  it("caps one validation transaction at the safe 1,000-row batch limit", async () => {
-    expect(MASTER_IMPORT_VALIDATION_BATCH_SIZE).toBe(1_000);
+  it("caps one validation request at the safe 10,000-row batch limit", async () => {
+    expect(MASTER_IMPORT_VALIDATION_BATCH_SIZE).toBe(10_000);
     await expect(validateMasterImportJob({
       organizationId: "org-internal",
       actorUserId: "actor-1",
       jobId: "job-1",
-      rowNumbers: Array.from({ length: 1_001 }, (_, index) => index + 1),
+      rowNumbers: Array.from({ length: 10_001 }, (_, index) => index + 1),
+    })).rejects.toMatchObject({ status: 400 });
+    await expect(validateMasterImportJob({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+      take: 10_001,
     })).rejects.toMatchObject({ status: 400 });
     expect(mocks.prisma.masterImportJob.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("validates a bounded staged-only batch without selecting existing Errors", async () => {
+    mocks.prisma.masterImportJob.findFirst.mockResolvedValue({
+      ...baseJob,
+      module_key: "season",
+      status: "STAGED",
+    });
+    mocks.prisma.masterImportJobRow.findMany.mockResolvedValue([
+      rowRecord("STAGED", {
+        rowNumber: 1,
+        fields: { season: "SUMMER" },
+        childRows: {},
+      }),
+      {
+        ...rowRecord("CORRECTED", {
+          rowNumber: 2,
+          fields: { season: "WINTER" },
+          childRows: {},
+        }),
+        id: "row-2",
+        row_number: 2,
+        status: "CORRECTED",
+      },
+    ]);
+    mocks.loadActiveMasterLookupIndex.mockResolvedValue(new Map());
+    mocks.prisma.masterImportJobRow.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.masterImportJob.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
+      { status: "VALIDATED", _count: { _all: 2 } },
+    ]);
+
+    const result = await validateMasterImportJob({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+      take: 2,
+    });
+
+    expect(result.processedRowCount).toBe(2);
+    expect(mocks.prisma.masterImportJobRow.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "org-internal",
+        job_id: "job-1",
+        status: { in: ["STAGED", "CORRECTED"] },
+      },
+      orderBy: { row_number: "asc" },
+      take: 2,
+    }));
   });
 
   it("marks a row invalid immediately when its required master lookup is missing", async () => {
@@ -1338,7 +1394,7 @@ describe("master import service", () => {
       tab: "planned",
     });
 
-    expect(MASTER_IMPORT_PLAN_SIZE).toBe(100);
+    expect(MASTER_IMPORT_PLAN_SIZE).toBe(1_000);
     expect(mocks.prisma.masterImportJobRow.findMany).not.toHaveBeenCalled();
     expect(detail.plans).toEqual([
       {
@@ -1397,7 +1453,7 @@ describe("master import service", () => {
     });
   });
 
-  it("creates separate plans for each planning action and never exceeds 100 rows", async () => {
+  it("creates separate plans for each planning action and never exceeds 1,000 rows", async () => {
     const plannedRows: Array<{ row_number: number; status: string; plan_number: number | null }> = [];
     let nextPlanNumber = 1;
     mocks.prisma.masterImportJob.updateMany.mockImplementation(async (args: {
@@ -1466,8 +1522,8 @@ describe("master import service", () => {
     }));
   });
 
-  it("splits a single planning action into plans containing at most 100 records", async () => {
-    const plannedRows = Array.from({ length: 202 }, (_, index) => ({
+  it("splits a single planning action into plans containing at most 1,000 records", async () => {
+    const plannedRows = Array.from({ length: 2_002 }, (_, index) => ({
       row_number: index + 1,
       status: "VALIDATED",
       plan_number: null as number | null,
@@ -1509,8 +1565,8 @@ describe("master import service", () => {
     });
 
     expect(result.plans).toEqual([
-      { planNumber: 1, recordCount: 100 },
-      { planNumber: 2, recordCount: 100 },
+      { planNumber: 1, recordCount: 1_000 },
+      { planNumber: 2, recordCount: 1_000 },
       { planNumber: 3, recordCount: 2 },
     ]);
     expect(Math.max(...result.plans.map((plan) => plan.recordCount))).toBe(MASTER_IMPORT_PLAN_SIZE);

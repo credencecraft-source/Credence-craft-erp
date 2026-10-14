@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/services/master-data/master-import-service", () => ({
-  MASTER_IMPORT_PLAN_SIZE: 100,
+  MASTER_IMPORT_PLAN_SIZE: 1_000,
   createMasterImportPlans: mocks.createMasterImportPlans,
 }));
 vi.mock("../../route-support", () => ({
@@ -101,9 +101,28 @@ describe("master import plan creation route", () => {
     });
   });
 
+  it("accepts an Auto Plan row list up to the 1,000-record plan cap", async () => {
+    mocks.parseOptionalBoundedJson.mockResolvedValue({
+      rowNumbers: Array.from({ length: 1_000 }, (_, index) => index + 1),
+    });
+    const response = await POST(
+      new Request("http://localhost/api/organizations/org-public/master-imports/job-1/plans", {
+        method: "POST",
+        body: "{}",
+      }),
+      { params: Promise.resolve({ organizationId: "org-public", jobId: "job-1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.parseOptionalBoundedJson).toHaveBeenCalledWith(expect.any(Request), 64 * 1024);
+    expect(mocks.createMasterImportPlans).toHaveBeenCalledWith(expect.objectContaining({
+      rowNumbers: Array.from({ length: 1_000 }, (_, index) => index + 1),
+    }));
+  });
+
   it("rejects oversized or duplicate Auto Plan row lists", async () => {
     mocks.parseOptionalBoundedJson.mockResolvedValue({
-      rowNumbers: Array.from({ length: 101 }, (_, index) => index + 1),
+      rowNumbers: Array.from({ length: 1_001 }, (_, index) => index + 1),
     });
     const response = await POST(
       new Request("http://localhost/api/organizations/org-public/master-imports/job-1/plans", {

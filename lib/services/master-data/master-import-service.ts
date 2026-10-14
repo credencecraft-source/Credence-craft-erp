@@ -35,8 +35,8 @@ export const MASTER_IMPORT_UPLOAD_CHUNK_BYTES = 1024 * 1024;
 export const MASTER_IMPORT_ROW_PAYLOAD_MAX_BYTES = 128 * 1024;
 export const MASTER_IMPORT_RETENTION_DAYS = 30;
 export const MASTER_IMPORT_REPORT_PAGE_SIZE = 1_000;
-export const MASTER_IMPORT_VALIDATION_BATCH_SIZE = 1_000;
-export const MASTER_IMPORT_PLAN_SIZE = 100;
+export const MASTER_IMPORT_VALIDATION_BATCH_SIZE = 10_000;
+export const MASTER_IMPORT_PLAN_SIZE = 1_000;
 const MASTER_IMPORT_PLAN_BATCH_SIZE = 25;
 const MASTER_IMPORT_STAGING_ROW_BATCH_SIZE = 5_000;
 
@@ -1186,7 +1186,7 @@ export async function validateArticleImportSupportingMasters(
       ["Brand"],
     );
     return { errors, suggestions };
-  } else if (brandLabel) isUsable(brand, brandLabel, "Brand");
+  } else if (brandLabel && !isUsable(brand, brandLabel, "Brand")) return { errors, suggestions };
 
   const productLabel = String(fields.Product_Master ?? "").trim();
   const product = productLabel ? await findProduct(productLabel) : null;
@@ -1197,7 +1197,7 @@ export async function validateArticleImportSupportingMasters(
       ["Product_Master"],
     );
     return { errors, suggestions };
-  } else if (productLabel) isUsable(product, productLabel, "Finished Goods Type");
+  } else if (productLabel && !isUsable(product, productLabel, "Finished Goods Type")) return { errors, suggestions };
 
   const categoryLabel = String(fields.Category ?? "").trim();
   const category = categoryLabel ? await findCategory(categoryLabel) : null;
@@ -1214,12 +1214,14 @@ export async function validateArticleImportSupportingMasters(
       );
       return { errors, suggestions };
     }
-  } else if (categoryLabel && category && isUsable(category, categoryLabel, "Finished Goods Category")) {
+  } else if (categoryLabel && category) {
+    if (!isUsable(category, categoryLabel, "Finished Goods Category")) return { errors, suggestions };
     if (product && category.product_master_id !== product.id) {
       errors.push({
         message: `Finished Goods Category "${categoryLabel}" belongs to a different Finished Goods Type than "${productLabel}".`,
         fieldPaths: ["Product_Master", "Category"],
       });
+      return { errors, suggestions };
     }
   }
 
@@ -1238,12 +1240,14 @@ export async function validateArticleImportSupportingMasters(
       );
       return { errors, suggestions };
     }
-  } else if (subcategoryLabel && subcategory && isUsable(subcategory, subcategoryLabel, "Finished Goods Subcategory")) {
+  } else if (subcategoryLabel && subcategory) {
+    if (!isUsable(subcategory, subcategoryLabel, "Finished Goods Subcategory")) return { errors, suggestions };
     if (category && subcategory.category_id !== category.id) {
       errors.push({
         message: `Finished Goods Subcategory "${subcategoryLabel}" belongs to a different Finished Goods Category than "${categoryLabel}".`,
         fieldPaths: ["Category", "Subcategory"],
       });
+      return { errors, suggestions };
     }
   }
 
@@ -1265,7 +1269,7 @@ export async function validateArticleImportSupportingMasters(
         ["variants"],
       );
       return { errors, suggestions };
-    } else isUsable(color, colorLabel, "Color");
+    } else if (!isUsable(color, colorLabel, "Color")) return { errors, suggestions };
   }
 
   const sizeLabels = Array.isArray(fields.Sizes)
@@ -1286,6 +1290,7 @@ export async function validateArticleImportSupportingMasters(
       );
       return { errors, suggestions };
     } else if (isUsable(size, sizeLabel, "Size")) sizes.push(size);
+    else return { errors, suggestions };
   }
 
   const requestedGroupLabel = String(fields.Size_Group ?? "").trim();
@@ -1299,10 +1304,12 @@ export async function validateArticleImportSupportingMasters(
     const requestedGroupIsUsable = requestedGroup
       ? isUsable(requestedGroup, requestedGroupLabel, "Size Group")
       : false;
+    if (requestedGroup && !requestedGroupIsUsable) return { errors, suggestions };
     let groupIsComplete = Boolean(requestedGroup && requestedGroupIsUsable
       && brand && requestedGroup.brand_id === brand.id);
     if (requestedGroup && brand && requestedGroup.brand_id !== brand.id) {
       errors.push({ message: `Size Group "${requestedGroupLabel}" is assigned to a different Brand than "${brandLabel}".`, fieldPaths: ["Brand", "Size_Group"] });
+      return { errors, suggestions };
     }
     if (requestedGroup && sizes.length === sizeLabels.length && groupIsComplete) {
       const links = await transaction.masterSizeGroupSize.findMany({
@@ -1515,15 +1522,23 @@ export async function validateMasterImportJob(input: {
   jobId: string;
   rowNumbers?: number[];
   rowNumber?: number;
+  take?: number;
 }) {
-  if (input.rowNumber !== undefined && input.rowNumbers !== undefined) {
+  const selectionCount = [input.rowNumber, input.rowNumbers, input.take]
+    .filter((selection) => selection !== undefined).length;
+  if (selectionCount > 1) {
     throw new MasterImportServiceError("Select one row-validation request at a time.", 400);
   }
   if (input.rowNumber !== undefined
     && (!Number.isSafeInteger(input.rowNumber) || input.rowNumber < 1)) {
     throw new MasterImportServiceError("Selected row number is invalid.", 400);
   }
-  if (input.rowNumber === undefined && input.rowNumbers === undefined) {
+  if (input.take !== undefined
+    && (!Number.isSafeInteger(input.take) || input.take < 1
+      || input.take > MASTER_IMPORT_VALIDATION_BATCH_SIZE)) {
+    throw new MasterImportServiceError("Validation batch size is invalid.", 400);
+  }
+  if (selectionCount === 0) {
     throw new MasterImportServiceError("Select at least one row awaiting validation.", 400);
   }
   if (input.rowNumbers !== undefined
@@ -1546,16 +1561,18 @@ export async function validateMasterImportJob(input: {
     where: {
       organization_id: input.organizationId,
       job_id: input.jobId,
-      status: { in: ["STAGED", "CORRECTED", "INVALID", "FAILED"] },
+      status: { in: input.take === undefined
+        ? ["STAGED", "CORRECTED", "INVALID", "FAILED"]
+        : ["STAGED", "CORRECTED"] },
       ...(input.rowNumber !== undefined
         ? { row_number: input.rowNumber }
         : input.rowNumbers !== undefined ? { row_number: { in: input.rowNumbers } } : {}),
     },
     orderBy: { row_number: "asc" },
-    take: input.rowNumbers?.length ?? 1,
+    take: input.take ?? input.rowNumbers?.length ?? 1,
   });
-  const requestedRowCount = input.rowNumbers?.length ?? 1;
-  if (job.module_key !== "article" && selectedRows.length !== requestedRowCount) {
+  const requestedRowCount = input.take ?? input.rowNumbers?.length ?? 1;
+  if (input.take === undefined && job.module_key !== "article" && selectedRows.length !== requestedRowCount) {
     throw new MasterImportServiceError("One or more selected rows are no longer awaiting validation.", 409);
   }
   type ValidationCandidate = {
@@ -1582,12 +1599,14 @@ export async function validateMasterImportJob(input: {
       where: {
         organization_id: input.organizationId,
         job_id: input.jobId,
-        status: { in: [
-          MasterImportJobRowStatus.STAGED,
-          MasterImportJobRowStatus.CORRECTED,
-          MasterImportJobRowStatus.INVALID,
-          MasterImportJobRowStatus.FAILED,
-        ] },
+        status: { in: input.take === undefined
+          ? [
+              MasterImportJobRowStatus.STAGED,
+              MasterImportJobRowStatus.CORRECTED,
+              MasterImportJobRowStatus.INVALID,
+              MasterImportJobRowStatus.FAILED,
+            ]
+          : [MasterImportJobRowStatus.STAGED, MasterImportJobRowStatus.CORRECTED] },
       },
       orderBy: { row_number: "asc" },
     });
@@ -1849,8 +1868,10 @@ export async function validateMasterImportJob(input: {
       where: {
         organization_id: input.organizationId,
         job_id: input.jobId,
-        status: { in: ["STAGED", "CORRECTED", "INVALID", "FAILED"] },
-        ...(input.rowNumber !== undefined
+        status: { in: input.take === undefined
+          ? ["STAGED", "CORRECTED", "INVALID", "FAILED"]
+          : ["STAGED", "CORRECTED"] },
+        ...(input.take !== undefined ? {} : input.rowNumber !== undefined
           ? { row_number: input.rowNumber }
           : input.rowNumbers !== undefined ? { row_number: { in: input.rowNumbers } } : {}),
       },
@@ -1870,6 +1891,7 @@ export async function validateMasterImportJob(input: {
       validatedRows: (result.counts.counts.get(MasterImportJobRowStatus.VALIDATED) ?? 0)
         + (result.counts.counts.get(MasterImportJobRowStatus.IMPORTED) ?? 0),
     },
+    processedRowCount: selectedRows.length,
     hasMore,
   };
 }

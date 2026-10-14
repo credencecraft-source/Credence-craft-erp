@@ -20,7 +20,7 @@ export async function POST(
     if (!authorization.authorized) return authorization.response;
 
     let rowNumbers: number[] | undefined;
-    const body: unknown = await parseOptionalBoundedJson(request, 4 * 1024);
+    const body: unknown = await parseOptionalBoundedJson(request, 64 * 1024);
     if (body !== undefined) {
       if (typeof body !== "object" || body === null || Array.isArray(body)
         || Object.keys(body).some((key) => key !== "rowNumbers")) {
