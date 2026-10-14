@@ -1174,6 +1174,7 @@ export async function validateArticleImportSupportingMasters(
       suggestions.push(input);
     }
     errors.push({ message, fieldPaths, relatedMasters: [input] });
+    return true;
   };
 
   const brandLabel = String(fields.Brand ?? "").trim();
@@ -1184,6 +1185,7 @@ export async function validateArticleImportSupportingMasters(
       `Brand "${brandLabel}" is missing. Create this Brand before retrying the Article.`,
       ["Brand"],
     );
+    return { errors, suggestions };
   } else if (brandLabel) isUsable(brand, brandLabel, "Brand");
 
   const productLabel = String(fields.Product_Master ?? "").trim();
@@ -1194,6 +1196,7 @@ export async function validateArticleImportSupportingMasters(
       `Finished Goods Type "${productLabel}" is missing. Create this type before retrying the Article.`,
       ["Product_Master"],
     );
+    return { errors, suggestions };
   } else if (productLabel) isUsable(product, productLabel, "Finished Goods Type");
 
   const categoryLabel = String(fields.Category ?? "").trim();
@@ -1209,6 +1212,7 @@ export async function validateArticleImportSupportingMasters(
         `Finished Goods Category "${categoryLabel}" is missing for Finished Goods Type "${productLabel}". Create it before retrying the Article.`,
         ["Product_Master", "Category"],
       );
+      return { errors, suggestions };
     }
   } else if (categoryLabel && category && isUsable(category, categoryLabel, "Finished Goods Category")) {
     if (product && category.product_master_id !== product.id) {
@@ -1232,6 +1236,7 @@ export async function validateArticleImportSupportingMasters(
         `Finished Goods Subcategory "${subcategoryLabel}" is missing for Finished Goods Category "${categoryLabel}". Create it before retrying the Article.`,
         ["Category", "Subcategory"],
       );
+      return { errors, suggestions };
     }
   } else if (subcategoryLabel && subcategory && isUsable(subcategory, subcategoryLabel, "Finished Goods Subcategory")) {
     if (category && subcategory.category_id !== category.id) {
@@ -1259,6 +1264,7 @@ export async function validateArticleImportSupportingMasters(
         `Color "${colorLabel}" is missing. Create this Color before retrying the Article.`,
         ["variants"],
       );
+      return { errors, suggestions };
     } else isUsable(color, colorLabel, "Color");
   }
 
@@ -1278,6 +1284,7 @@ export async function validateArticleImportSupportingMasters(
         `Size "${sizeLabel}" is missing. Create this Size before creating or selecting its Size Group.`,
         ["Sizes", "Size_Group"],
       );
+      return { errors, suggestions };
     } else if (isUsable(size, sizeLabel, "Size")) sizes.push(size);
   }
 
@@ -1340,6 +1347,7 @@ export async function validateArticleImportSupportingMasters(
           : `No organization Size Group contains every required size (${sizeLabels.join(", ")}). Create Size Group "${suggestedLabel}" for Brand "${brandLabel}" containing all of those sizes, then retry the Article.`,
         ["Size_Group", "Sizes", "Brand"],
       );
+      return { errors, suggestions };
     }
   }
 
@@ -1363,6 +1371,7 @@ async function validateImportPayloadForOrganization(
 
   const fields = validation.payload.fields;
   const errors: ArticleImportDependencyError[] = [...validation.validationErrors];
+  const masterLookupErrors: ArticleImportDependencyError[] = [];
   for (const field of definition.fields) {
     if (!field.lookupModuleKey && field.type !== "child-list") continue;
     if (field.type === "child-list") {
@@ -1379,7 +1388,7 @@ async function validateImportPayloadForOrganization(
           if (typeof childValue !== "string") continue;
           if (moduleKey === "article" && field.key === "variants" && childField.key === "color") continue;
           if (!isActiveMasterLookupInIndex(index, childField.lookupModuleKey, childValue)) {
-            errors.push({
+            masterLookupErrors.push({
               message: `${childField.label} must match an active value in this organization.`,
               fieldPaths: [`${field.key}.${rowIndex}.${childField.key}`],
             });
@@ -1401,7 +1410,7 @@ async function validateImportPayloadForOrganization(
     if (field.dependsOn) {
       const parentValue = fields[field.dependsOn];
       if (parentValue === null || parentValue === undefined || parentValue === "") {
-        errors.push({
+        masterLookupErrors.push({
           message: `${field.label} must be linked to ${definition.fields.find((candidate) => candidate.key === field.dependsOn)?.label ?? "its parent field"}.`,
           fieldPaths: [field.dependsOn, field.key],
         });
@@ -1423,12 +1432,15 @@ async function validateImportPayloadForOrganization(
         parentLookupValue,
       );
       if (!isValid) {
-        errors.push({
+        masterLookupErrors.push({
           message: `${field.label} must match an active value in this organization${field.dependsOn ? " and its selected parent" : ""}.`,
           fieldPaths: field.dependsOn ? [field.key, field.dependsOn] : [field.key],
         });
       }
     }
+  }
+  if (masterLookupErrors.length > 0) {
+    return { ...validation, validationErrors: [...errors, ...masterLookupErrors] };
   }
   if (moduleKey === "article") {
     if (fields.Category && !fields.Product_Master) {

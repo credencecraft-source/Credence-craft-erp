@@ -790,6 +790,40 @@ describe("master import service", () => {
     expect(mocks.prisma.masterImportJob.findFirst).not.toHaveBeenCalled();
   });
 
+  it("marks a row invalid immediately when its required master lookup is missing", async () => {
+    mocks.prisma.masterImportJob.findFirst.mockResolvedValue({
+      ...baseJob,
+      module_key: "location",
+      status: "STAGED",
+    });
+    mocks.prisma.masterImportJobRow.findMany.mockResolvedValueOnce([
+      {
+        ...rowRecord("STAGED", { location_name: "HQ", entity_id: "missing-entity" }),
+        row_number: 1,
+      },
+    ]);
+    mocks.loadActiveMasterLookupIndex.mockResolvedValue(new Map());
+    mocks.prisma.masterImportJobRow.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.masterImportJob.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
+      { status: "INVALID", _count: { _all: 1 } },
+    ]);
+
+    const result = await validateMasterImportJob({
+      organizationId: "org-internal",
+      actorUserId: "actor-1",
+      jobId: "job-1",
+      rowNumber: 1,
+    });
+
+    expect(result.validatedRowNumbers).toEqual([]);
+    expect(mocks.prisma.masterImportJobRow.updateMany).toHaveBeenCalled();
+    expect(mocks.prisma.masterImportJobRow.updateMany.mock.calls[0][0]).toMatchObject({
+      where: { organization_id: "org-internal", job_id: "job-1", row_number: 1 },
+      data: { status: "INVALID" },
+    });
+  });
+
   it("rejects importing before the required staging and validation stages", async () => {
     mocks.prisma.masterImportJob.findFirst.mockResolvedValue(baseJob);
 
@@ -1144,7 +1178,7 @@ describe("master import service", () => {
     expect(result).toMatchObject({ job: { status: "PARTIAL" }, progress: { failedRows: 1 } });
   });
 
-  it("validates Article rows with missing supporting masters without creating them", async () => {
+  it("stops Article validation at the first missing master instead of continuing through all related suggestions", async () => {
     mocks.prisma.masterImportJob.findFirst
       .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "STAGED" })
       .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "PARTIAL", total_rows: 1 });
@@ -1191,24 +1225,12 @@ describe("master import service", () => {
         validationError.relatedMasters ?? [],
     );
     expect(savedPayload.validationErrors.map((validationError: { message: string }) => validationError.message).join(" "))
-      .toContain('Create Size Group "NEW LABEL S-M" for Brand "NEW LABEL" containing all of those sizes');
-    expect(relatedMasters).toEqual(expect.arrayContaining([
+      .toContain('Brand "NEW LABEL" is missing. Create this Brand before retrying the Article.');
+    expect(relatedMasters).toEqual([
       expect.objectContaining({ moduleKey: "brand", label: "NEW LABEL" }),
-      expect.objectContaining({ moduleKey: "product-master", label: "NEW TYPE" }),
-      expect.objectContaining({ moduleKey: "category", label: "NEW CATEGORY" }),
-      expect.objectContaining({ moduleKey: "sub-category", label: "NEW SUBCATEGORY" }),
-      expect.objectContaining({ moduleKey: "color", label: "BLACK" }),
-      expect.objectContaining({ moduleKey: "size", label: "S" }),
-      expect.objectContaining({ moduleKey: "size", label: "M" }),
-      expect.objectContaining({
-        moduleKey: "size-group",
-        label: "NEW LABEL S-M",
-        fields: { Brand1: "NEW LABEL", Size_Group: "NEW LABEL S-M", Size: ["S", "M"] },
-        articleFieldUpdates: { Size_Group: "NEW LABEL S-M" },
-      }),
-    ]));
+    ]);
     expect(relatedMasters.some(({ moduleKey, label }: { moduleKey: string; label: string }) =>
-      moduleKey === "size-group" && label.includes(","))).toBe(false);
+      moduleKey === "size-group" && label.includes("NEW LABEL S-M"))).toBe(false);
   });
 
   it("suggests a new Size Group when an existing organization group lacks one required size", async () => {
