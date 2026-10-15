@@ -4,10 +4,6 @@
     {
       "path": "/api/cron/platform-whatsapp-campaigns",
       "schedule": "0 0 * * *"
-    },
-    {
-      "path": "/api/cron/master-import-runs",
-      "schedule": "* * * * *"
     }
   ]
 }

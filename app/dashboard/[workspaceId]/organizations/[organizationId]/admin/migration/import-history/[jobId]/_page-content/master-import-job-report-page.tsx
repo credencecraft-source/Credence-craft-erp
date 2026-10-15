@@ -410,7 +410,7 @@ export default function MasterImportJobReportPage({
     if (run.operation === "VALIDATE") {
       setValidationProgress({ processed: run.progress, total: run.total });
     }
-    setNotice(`${run.operation} queued. Processing continues on the server if you leave this page.`);
+    setNotice(`${run.operation} queued. Keep this page open while it processes. Progress is saved, and you can return later to resume.`);
     while (run.status === "QUEUED" || run.status === "RUNNING") {
       await new Promise((resolve) => window.setTimeout(resolve, 1_500));
       const cancelledRunAfterDelay = cancelledRunsRef.current.get(run.id);
