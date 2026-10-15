@@ -12,6 +12,8 @@ import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Select from "@/components/ui/Select";
 import Tabs from "@/components/ui/Tabs";
+import ArticleQuickCreateDialog from "./article-quick-create-dialog";
+import type { QuickCreateLookupOption } from "@/lib/master-data/quick-create-lookup-options";
 
 type ArticleOption = {
   id: string;
@@ -36,6 +38,7 @@ type ArticleRecord = {
 };
 type ArticleFormAction = (formData: FormData) => void | Promise<void>;
 type ArticleTab = "general" | "colour" | "size";
+type QuickCreateTarget = { masterKey: string; fieldKey: string; variantIndex?: number };
 
 const TABS: Array<{ id: string; panelId: string; value: ArticleTab; label: string }> = [
   { id: "article-general-tab", panelId: "article-general-panel", value: "general", label: "General" },
@@ -87,6 +90,9 @@ export default function ArticleRecordEditor({
   const editing = record !== null;
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<ArticleTab>("general");
+  const [articleLookupOptions, setArticleLookupOptions] = useState(lookupOptions);
+  const [articleSizeGroupSizes, setArticleSizeGroupSizes] = useState(sizeGroupSizes);
+  const [quickCreateTarget, setQuickCreateTarget] = useState<QuickCreateTarget | null>(null);
   const [fields, setFields] = useState(() => ({
     article: asText(record?.fields.article ?? record?.label),
     article_code: asText(record?.fields.article_code ?? record?.code),
@@ -128,11 +134,11 @@ export default function ArticleRecordEditor({
   const setField = (key: string, value: string | string[]) => {
     setFields((current) => ({ ...current, [key]: value }));
   };
-  const sizeGroup = lookupOptions["size-group"]?.find((option) => option.label === fields.Size_Group);
-  const availableSizes = sizeGroup ? sizeGroupSizes[sizeGroup.id] ?? [] : [];
-  const categoryOptions = (lookupOptions.category ?? []).filter((option) =>
+  const sizeGroup = articleLookupOptions["size-group"]?.find((option) => option.label === fields.Size_Group);
+  const availableSizes = sizeGroup ? articleSizeGroupSizes[sizeGroup.id] ?? [] : [];
+  const categoryOptions = (articleLookupOptions.category ?? []).filter((option) =>
     !fields.Product_Master || asText(option.fields.Product_Master) === fields.Product_Master);
-  const subcategoryOptions = (lookupOptions["sub-category"] ?? []).filter((option) =>
+  const subcategoryOptions = (articleLookupOptions["sub-category"] ?? []).filter((option) =>
     !fields.Category || asText(option.fields.category) === fields.Category);
   const sizePriceRows: ArticleSizePrice[] = fields.Sizes.map((size) => ({
     size,
@@ -172,8 +178,58 @@ export default function ArticleRecordEditor({
       : "");
   };
 
+  const applyQuickCreatedOption = (option: QuickCreateLookupOption) => {
+    if (!quickCreateTarget) return;
+    const masterKey = quickCreateTarget.masterKey;
+    const articleOption = {
+      ...option,
+      value_id: option.value_id ?? option.id,
+      parent_id: option.parent_id ?? null,
+      fields: option.fields ?? {},
+    };
+    setArticleLookupOptions((current) => ({
+      ...current,
+      [masterKey]: [
+        ...(current[masterKey] ?? []).filter((item) => item.label !== articleOption.label),
+        articleOption,
+      ],
+    }));
+
+    if (masterKey === "size-group") {
+      const sizes = (option.sizes ?? []).map((item) => item.label);
+      setArticleSizeGroupSizes((current) => ({ ...current, [option.id]: sizes }));
+      setFields((current) => ({
+        ...current,
+        Size_Group: option.label,
+        Sizes: sizes,
+      }));
+    } else if (quickCreateTarget.variantIndex !== undefined) {
+      setVariants((current) => current.map((variant, index) => (
+        index === quickCreateTarget.variantIndex ? { ...variant, color: option.label } : variant
+      )));
+    } else {
+      setFields((current) => {
+        if (quickCreateTarget.fieldKey === "Product_Master") {
+          return { ...current, Product_Master: option.label, Category: "", Subcategory: "" };
+        }
+        if (quickCreateTarget.fieldKey === "Category") {
+          return { ...current, Category: option.label, Subcategory: "" };
+        }
+        return { ...current, [quickCreateTarget.fieldKey]: option.label };
+      });
+    }
+    setQuickCreateTarget(null);
+  };
+
   const articlePath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article`;
   const formAction = editing ? updateAction : createAction;
+  const quickCreateInitialFields = quickCreateTarget?.masterKey === "category"
+    ? { Product_Master: fields.Product_Master }
+    : quickCreateTarget?.masterKey === "sub-category"
+      ? { category: fields.Category }
+      : quickCreateTarget?.masterKey === "size-group"
+        ? { Brand1: fields.Brand }
+        : {};
 
   return (
     <Page as="div">
@@ -220,54 +276,93 @@ export default function ArticleRecordEditor({
                   <input type="hidden" name="code" value={fields.article_code} />
                 </>
               ) : null}
-              <Select
-                label="Brand"
-                name="field_Brand"
-                required
-                value={fields.Brand}
-                onChange={(event) => setField("Brand", event.target.value)}
-                options={[
-                  { value: "", label: "Select Brand" },
-                  ...(lookupOptions.brand ?? []).map(({ label }) => ({ value: label, label })),
-                ]}
-              />
-              <Select
-                label="Finished Goods Type"
-                name="field_Product_Master"
-                value={fields.Product_Master}
-                onChange={(event) => {
-                  setField("Product_Master", event.target.value);
-                  setField("Category", "");
-                  setField("Subcategory", "");
-                }}
-                options={[
-                  { value: "", label: "Select Finished Goods Type" },
-                  ...(lookupOptions["product-master"] ?? []).map(({ label }) => ({ value: label, label })),
-                ]}
-              />
-              <Select
-                label="Finished Goods Category"
-                name="field_Category"
-                value={fields.Category}
-                onChange={(event) => {
-                  setField("Category", event.target.value);
-                  setField("Subcategory", "");
-                }}
-                options={[
-                  { value: "", label: "Select Category" },
-                  ...categoryOptions.map(({ label }) => ({ value: label, label })),
-                ]}
-              />
-              <Select
-                label="Finished Goods Subcategory"
-                name="field_Subcategory"
-                value={fields.Subcategory}
-                onChange={(event) => setField("Subcategory", event.target.value)}
-                options={[
-                  { value: "", label: "Select Subcategory" },
-                  ...subcategoryOptions.map(({ label }) => ({ value: label, label })),
-                ]}
-              />
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                <Select
+                  label="Brand"
+                  name="field_Brand"
+                  required
+                  value={fields.Brand}
+                  onChange={(event) => setField("Brand", event.target.value)}
+                  options={[
+                    { value: "", label: "Select Brand" },
+                    ...(articleLookupOptions.brand ?? []).map(({ label }) => ({ value: label, label })),
+                  ]}
+                />
+                <Button type="button" size="sm" variant="secondary" onClick={() => setQuickCreateTarget({ masterKey: "brand", fieldKey: "Brand" })}>
+                  + Add
+                </Button>
+              </div>
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                <Select
+                  label="Finished Goods Type"
+                  name="field_Product_Master"
+                  value={fields.Product_Master}
+                  onChange={(event) => {
+                    const productMaster = event.target.value;
+                    setFields((current) => ({
+                      ...current,
+                      Product_Master: productMaster,
+                      Category: "",
+                      Subcategory: "",
+                    }));
+                  }}
+                  options={[
+                    { value: "", label: "Select Finished Goods Type" },
+                    ...(articleLookupOptions["product-master"] ?? []).map(({ label }) => ({ value: label, label })),
+                  ]}
+                />
+                <Button type="button" size="sm" variant="secondary" onClick={() => setQuickCreateTarget({ masterKey: "product-master", fieldKey: "Product_Master" })}>
+                  + Add
+                </Button>
+              </div>
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                <Select
+                  label="Finished Goods Category"
+                  name="field_Category"
+                  value={fields.Category}
+                  onChange={(event) => {
+                    const category = event.target.value;
+                    setFields((current) => ({
+                      ...current,
+                      Category: category,
+                      Subcategory: "",
+                    }));
+                  }}
+                  options={[
+                    { value: "", label: "Select Category" },
+                    ...categoryOptions.map(({ label }) => ({ value: label, label })),
+                  ]}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setQuickCreateTarget({
+                    masterKey: "category",
+                    fieldKey: "Category",
+                  })}
+                >
+                  + Add
+                </Button>
+              </div>
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                <Select
+                  label="Finished Goods Subcategory"
+                  name="field_Subcategory"
+                  value={fields.Subcategory}
+                  onChange={(event) => setField("Subcategory", event.target.value)}
+                  options={[
+                    { value: "", label: "Select Subcategory" },
+                    ...subcategoryOptions.map(({ label }) => ({ value: label, label })),
+                  ]}
+                />
+                <Button type="button" size="sm" variant="secondary" onClick={() => setQuickCreateTarget({
+                  masterKey: "sub-category",
+                  fieldKey: "Subcategory",
+                })}>
+                  + Add
+                </Button>
+              </div>
               <Input
                 label="Design By"
                 name="field_design_by"
@@ -316,9 +411,18 @@ export default function ArticleRecordEditor({
                       rowIndex === index ? { ...row, color: event.target.value } : row))}
                     options={[
                       { value: "", label: "Select Color" },
-                      ...(lookupOptions.color ?? []).map(({ label }) => ({ value: label, label })),
+                      ...(articleLookupOptions.color ?? []).map(({ label }) => ({ value: label, label })),
                     ]}
                   />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="w-fit"
+                    onClick={() => setQuickCreateTarget({ masterKey: "color", fieldKey: "color", variantIndex: index })}
+                  >
+                    + Add Color
+                  </Button>
                   <Input label="Variant Code" value={variant.variant_code} onChange={(event) => setVariants((current) => current.map((row, rowIndex) =>
                     rowIndex === index ? { ...row, variant_code: event.target.value } : row))} />
                   <Input label="SKU" value={variant.sku} onChange={(event) => setVariants((current) => current.map((row, rowIndex) =>
@@ -340,21 +444,29 @@ export default function ArticleRecordEditor({
 
             <div id="article-size-panel" role="tabpanel" aria-labelledby="article-size-tab" hidden={activeTab !== "size"} className={activeTab === "size" ? "space-y-5" : "hidden"}>
               <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
-                <Select
-                  label="Size Group"
-                  name="field_Size_Group"
-                  value={fields.Size_Group}
-                  onChange={(event) => {
-                    setField("Size_Group", event.target.value);
-                    const nextGroup = lookupOptions["size-group"]?.find((option) => option.label === event.target.value);
-                    const nextSizes = new Set(nextGroup ? sizeGroupSizes[nextGroup.id] ?? [] : []);
-                    setSizes(fields.Sizes.filter((size) => nextSizes.has(size)));
-                  }}
-                  options={[
-                    { value: "", label: "Select Size Group" },
-                    ...(lookupOptions["size-group"] ?? []).map(({ label }) => ({ value: label, label })),
-                  ]}
-                />
+                <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+                  <Select
+                    label="Size Group"
+                    name="field_Size_Group"
+                    value={fields.Size_Group}
+                    onChange={(event) => {
+                      setField("Size_Group", event.target.value);
+                      const nextGroup = articleLookupOptions["size-group"]?.find((option) => option.label === event.target.value);
+                      const nextSizes = new Set(nextGroup ? articleSizeGroupSizes[nextGroup.id] ?? [] : []);
+                      setSizes(fields.Sizes.filter((size) => nextSizes.has(size)));
+                    }}
+                    options={[
+                      { value: "", label: "Select Size Group" },
+                      ...(articleLookupOptions["size-group"] ?? []).map(({ label }) => ({ value: label, label })),
+                    ]}
+                  />
+                  <Button type="button" size="sm" variant="secondary" onClick={() => setQuickCreateTarget({
+                    masterKey: "size-group",
+                    fieldKey: "Size_Group",
+                  })}>
+                    + Add
+                  </Button>
+                </div>
                 <Input
                   label="Default Price"
                   name="field_default_price"
@@ -414,6 +526,16 @@ export default function ArticleRecordEditor({
             </div>
           </Card>
         </form>
+        {quickCreateTarget ? (
+          <ArticleQuickCreateDialog
+            key={`${quickCreateTarget.masterKey}:${quickCreateTarget.fieldKey}:${quickCreateTarget.variantIndex ?? ""}`}
+            organizationId={organizationId}
+            masterKey={quickCreateTarget.masterKey}
+            initialFields={quickCreateInitialFields}
+            onClose={() => setQuickCreateTarget(null)}
+            onCreated={applyQuickCreatedOption}
+          />
+        ) : null}
       </Section>
     </Page>
   );

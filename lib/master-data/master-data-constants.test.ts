@@ -106,6 +106,67 @@ describe("create-only master insertion", () => {
       .toEqual(expect.any(Function));
   });
 
+  it("rejects a duplicate Size Group for the same Brand and exact size set regardless of order", async () => {
+    models.masterBrand.findFirst.mockResolvedValue({ id: "brand-id" } as never);
+    models.masterSize.findMany.mockResolvedValue([
+      { id: "size-s", value_id: "size-s-value", size: "S", is_active: true, legacy_metadata: null },
+      { id: "size-m", value_id: "size-m-value", size: "M", is_active: true, legacy_metadata: null },
+      { id: "size-l", value_id: "size-l-value", size: "L", is_active: true, legacy_metadata: null },
+    ] as never);
+    models.masterSizeGroup.findMany.mockResolvedValue([{ id: "existing-group" }] as never);
+    models.masterSizeGroupSize.findMany.mockResolvedValue([
+      { size_group_id: "existing-group", size_id: "size-l" },
+      { size_group_id: "existing-group", size_id: "size-m" },
+      { size_group_id: "existing-group", size_id: "size-s" },
+    ] as never);
+
+    await expect(createMasterValueForOrganization("org-id", "size-group", {
+      label: "SECOND S-M-L",
+      fields: { Brand1: "brand-id", Size_Group: "SECOND S-M-L", Size: ["S", "M", "L"] },
+      createOnly: true,
+    })).rejects.toThrow(
+      "This Brand already has a Size Group with exactly these sizes. Reuse that group; only a different size set can be created.",
+    );
+
+    expect(models.masterSizeGroup.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: "subset", selectedSizes: ["S", "M"] },
+    { label: "superset", selectedSizes: ["S", "M", "L", "XL"] },
+  ])("allows a new same-Brand Size Group with a $label size set", async ({ selectedSizes }) => {
+    models.masterBrand.findFirst.mockResolvedValue({ id: "brand-id" } as never);
+    models.masterSize.findMany.mockResolvedValue(
+      ["S", "M", "L", "XL"].map((size) => ({
+        id: `size-${size.toLowerCase()}`,
+        value_id: `size-${size.toLowerCase()}-value`,
+        size,
+        is_active: true,
+        legacy_metadata: null,
+      })) as never,
+    );
+    models.masterSizeGroup.findMany.mockResolvedValue([{ id: "existing-group" }] as never);
+    models.masterSizeGroupSize.findMany.mockResolvedValue(
+      ["S", "M", "L"].map((size) => ({
+        size_group_id: "existing-group",
+        size_id: `size-${size.toLowerCase()}`,
+      })) as never,
+    );
+    models.masterSizeGroup.create.mockResolvedValue({
+      id: "new-group",
+      value_id: "new-group-value",
+      organization_id: "org-id",
+    } as never);
+
+    await expect(createMasterValueForOrganization("org-id", "size-group", {
+      label: `NEW ${selectedSizes.join("-")}`,
+      fields: { Brand1: "brand-id", Size_Group: `NEW ${selectedSizes.join("-")}`, Size: selectedSizes },
+      createOnly: true,
+    })).resolves.toMatchObject({ id: "new-group" });
+
+    expect(models.masterSizeGroup.create).toHaveBeenCalledOnce();
+  });
+
   describe("selected Article deletion", () => {
     it("deletes selected articles only within the organization and audits the batch", async () => {
       models.masterArticle.findMany.mockResolvedValue([
@@ -456,6 +517,24 @@ describe("raw material creation", () => {
 });
 
 describe("article creation", () => {
+  it("omits legacy metadata from Article Variant lookup queries", async () => {
+    await getMasterValuesForOrganization("org-id", "article-variant");
+
+    expect(models.masterArticleVariant.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-id", is_active: true },
+      select: expect.not.objectContaining({ legacy_metadata: true }),
+    }));
+  });
+
+  it("omits legacy metadata from indexed Article Variant lookups", async () => {
+    await loadActiveMasterLookupIndex("org-id", ["article-variant"]);
+
+    expect(models.masterArticleVariant.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-id", is_active: true },
+      select: expect.not.objectContaining({ legacy_metadata: true }),
+    }));
+  });
+
   it("looks up article codes within the organization", async () => {
     await getMasterValuesForOrganization("org-id", "article", true, { articleCode: "AR-7BA58SCH-01" });
 
@@ -512,6 +591,95 @@ describe("article creation", () => {
       Sizes: ["S"],
       Size_Prices: [{ size: "S", price: "12.5" }],
     });
+  });
+
+  it("loads Article variants and size prices concurrently", async () => {
+    const startedReads = new Set<string>();
+    let releaseReads!: () => void;
+    const bothReadsStarted = new Promise<void>((resolve) => {
+      releaseReads = resolve;
+    });
+    models.masterArticle.findMany.mockResolvedValueOnce([{
+      id: "article-id",
+      value_id: "article-value-id",
+      organization_id: "org-id",
+      article: "Shirt",
+      article_code: "SH-01",
+      is_active: true,
+    }] as never);
+    models.masterArticleVariant.findMany.mockImplementation(async () => {
+      startedReads.add("variants");
+      if (startedReads.size === 2) releaseReads();
+      await bothReadsStarted;
+      return [];
+    });
+    models.masterArticleSize.findMany.mockImplementation(async () => {
+      startedReads.add("sizes");
+      if (startedReads.size === 2) releaseReads();
+      await bothReadsStarted;
+      return [];
+    });
+
+    const articles = await getMasterValuesForOrganization("org-id", "article", false, {
+      includeArticleMetrics: false,
+    });
+
+    expect(articles).toHaveLength(1);
+    expect(startedReads).toEqual(new Set(["variants", "sizes"]));
+  });
+
+  it("loads Article details while lookup-label hydration is pending", async () => {
+    let releaseLookupLabel!: () => void;
+    const lookupLabelPending = new Promise<void>((resolve) => {
+      releaseLookupLabel = resolve;
+    });
+    let notifyLabelStarted!: () => void;
+    const labelStarted = new Promise<void>((resolve) => {
+      notifyLabelStarted = resolve;
+    });
+    let notifyArticleDetailsStarted!: () => void;
+    const articleDetailsStarted = new Promise<void>((resolve) => {
+      notifyArticleDetailsStarted = resolve;
+    });
+    const startedArticleDetails = new Set<string>();
+    models.masterArticle.findMany.mockResolvedValueOnce([{
+      id: "article-id",
+      value_id: "article-value-id",
+      organization_id: "org-id",
+      article: "Shirt",
+      article_code: "SH-01",
+      brand_id: "brand-id",
+      is_active: true,
+    }] as never);
+    models.masterBrand.findMany.mockImplementation(async () => {
+      notifyLabelStarted();
+      await lookupLabelPending;
+      return [];
+    });
+    models.masterArticleVariant.findMany.mockImplementation(async () => {
+      startedArticleDetails.add("variants");
+      if (startedArticleDetails.size === 2) notifyArticleDetailsStarted();
+      return [];
+    });
+    models.masterArticleSize.findMany.mockImplementation(async () => {
+      startedArticleDetails.add("sizes");
+      if (startedArticleDetails.size === 2) notifyArticleDetailsStarted();
+      return [];
+    });
+
+    const articlesPending = getMasterValuesForOrganization("org-id", "article", false, {
+      includeArticleMetrics: false,
+    });
+    await labelStarted;
+    const detailsStartedBeforeLabelsResolved = await Promise.race([
+      articleDetailsStarted.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
+    ]);
+    releaseLookupLabel();
+    const articles = await articlesPending;
+
+    expect(articles).toHaveLength(1);
+    expect(detailsStartedBeforeLabelsResolved).toBe(true);
   });
 
   it("assigns the next organization article code in the requested format", async () => {
@@ -794,6 +962,85 @@ describe("process template legacy metadata compatibility", () => {
 
 });
 
+describe("master lookup query concurrency", () => {
+  it("reuses an explicitly resolved dummy-data batch instead of querying it again", async () => {
+    const dummyBatchDelegate = prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> };
+    dummyBatchDelegate.findFirst.mockClear();
+
+    await getMasterValuesForOrganization("org-id", "category", true, {
+      includeDummyData: true,
+      activeDummyDataBatch: { id: "resolved-batch-id" },
+    });
+
+    expect(dummyBatchDelegate.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("selects only lookup identifiers and their display label during hydration", async () => {
+    models.masterLocation.findMany.mockResolvedValueOnce([{
+      id: "location-id",
+      value_id: "location-value-id",
+      organization_id: "org-id",
+      location_name: "Warehouse",
+      entity_id: "entity-id",
+      is_active: true,
+    }] as never);
+    models.masterEntity.findMany.mockResolvedValueOnce([{
+      id: "entity-id",
+      value_id: "entity-value-id",
+      entity_name: "Factory",
+    }] as never);
+
+    const values = await getMasterValuesForOrganization("org-id", "location");
+
+    expect(values[0].fields.entity_id).toBe("Factory");
+    expect(models.masterLocation.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      select: {
+        id: true,
+        value_id: true,
+        organization_id: true,
+        is_active: true,
+        sort_order: true,
+        legacy_metadata: true,
+        location_name: true,
+        entity_id: true,
+      },
+    }));
+    expect(models.masterEntity.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "org-id",
+        OR: [{ id: { in: ["entity-id"] } }, { value_id: { in: ["entity-id"] } }],
+      }),
+      select: { id: true, value_id: true, entity_name: true },
+      take: 500,
+    }));
+  });
+
+  it("starts the master list and dummy-batch reads concurrently", async () => {
+    const startedReads = new Set<string>();
+    let releaseReads!: () => void;
+    const bothReadsStarted = new Promise<void>((resolve) => {
+      releaseReads = resolve;
+    });
+    (prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockImplementation(async () => {
+      startedReads.add("dummy-batch");
+      if (startedReads.size === 2) releaseReads();
+      await bothReadsStarted;
+      return null;
+    });
+    models.masterCategory.findMany.mockImplementation(async () => {
+      startedReads.add("master-values");
+      if (startedReads.size === 2) releaseReads();
+      await bothReadsStarted;
+      return [];
+    });
+
+    const values = await getMasterValuesForOrganization("org-id", "category");
+
+    expect(values).toEqual([]);
+    expect(startedReads).toEqual(new Set(["dummy-batch", "master-values"]));
+  });
+});
+
 describe("dummy master isolation", () => {
   it("hides batch-tagged values while keeping baseline values selectable", async () => {
     (prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({ id: "demo-batch-id" });
@@ -979,6 +1226,46 @@ describe("dummy master isolation", () => {
           fields: { Size: "S", status: null },
         },
       }]);
+    expect((prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> }).findFirst)
+      .toHaveBeenCalledTimes(1);
+  });
+
+  it("selects only the size-group link and size fields used by lookup responses", async () => {
+    models.masterSizeGroupSize.findMany.mockResolvedValueOnce([{
+      size_group_id: "group-id",
+      size: {
+        id: "size-id",
+        value_id: "size-value-id",
+        organization_id: "org-id",
+        size: "M",
+        is_active: true,
+        status: "ACTIVE",
+        legacy_metadata: null,
+      },
+    }] as never);
+
+    await expect(getSizeGroupSizesForOrganization("org-id", undefined, true)).resolves.toMatchObject([{
+      groupId: "group-id",
+      size: { id: "size-id", label: "M", fields: { Size: "M", status: "ACTIVE" } },
+    }]);
+    expect(models.masterSizeGroupSize.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-id" },
+      select: {
+        size_group_id: true,
+        size: {
+          select: {
+            id: true,
+            value_id: true,
+            organization_id: true,
+            size: true,
+            is_active: true,
+            status: true,
+            legacy_metadata: true,
+          },
+        },
+      },
+      orderBy: { created_at: "asc" },
+    }));
   });
 
   it("rejects a forged reference to a demo master during normal master creation", async () => {
@@ -1007,6 +1294,31 @@ describe("dummy master isolation", () => {
 
     await expect(assertNoDummyMasterReferences("org-id", { category: "Demo - Apparel" }))
       .rejects.toThrow("Dummy master values cannot be used by regular organization orders.");
+  });
+
+  it("scopes dummy-reference label reads and selects only labels", async () => {
+    (prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue({
+      master_record_ids: [
+        { moduleKey: "category", id: "dummy-category-id" },
+        { moduleKey: "brand", id: "dummy-brand-id" },
+      ],
+    });
+    models.masterCategory.findMany.mockResolvedValue([] as never);
+    models.masterBrand.findMany.mockResolvedValue([{ brand: "Demo Brand" }] as never);
+
+    await expect(assertNoDummyMasterReferences("org-id", {
+      category: "Demo Category",
+      brand: "Demo Brand",
+    })).rejects.toThrow("Dummy master values cannot be used by regular organization orders.");
+
+    expect(models.masterCategory.findMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-id", id: { in: ["dummy-category-id"] } },
+      select: { category_name: true },
+    });
+    expect(models.masterBrand.findMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-id", id: { in: ["dummy-brand-id"] } },
+      select: { brand: true },
+    });
   });
 
   it("allows organization-owned master values in regular orders", async () => {

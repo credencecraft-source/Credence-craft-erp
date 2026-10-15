@@ -1,14 +1,68 @@
 import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
-import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
-import { createMasterValueForOrganization, getMasterDefinition, getMasterValuesForOrganization, getSizeGroupSizesForOrganization } from "@/lib/master-data/master-data-constants";
+import { getOrganizationForUser, getOrganizationShellContext, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { createMasterValueForOrganization, getActiveOrganizationDummyDataBatch, getMasterDefinition, getMasterValuesForOrganization, getSizeGroupSizesForOrganization } from "@/lib/master-data/master-data-constants";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-registry";
+
+type OrderedMasterValue = {
+  parent_id?: string | null;
+  fields?: Record<string, unknown>;
+};
+
+type MasterLookupRouteProfile = {
+  startedAt: number;
+  organizationMs: number;
+  lookupMs: number;
+};
+
+function profiledJsonResponse(
+  body: unknown,
+  init?: ResponseInit,
+  profile?: MasterLookupRouteProfile,
+) {
+  const serializationStartedAt = profile ? performance.now() : 0;
+  const response = NextResponse.json(body, init);
+  if (profile) {
+    const duration = (value: number) => Math.max(0, value).toFixed(1);
+    response.headers.set(
+      "Server-Timing",
+      `organization;dur=${duration(profile.organizationMs)}, lookup;dur=${duration(profile.lookupMs)}, json;dur=${duration(performance.now() - serializationStartedAt)}, total;dur=${duration(performance.now() - profile.startedAt)}`,
+    );
+  }
+  return response;
+}
+
+function groupMasterValues<T extends OrderedMasterValue>(
+  values: readonly T[],
+  orderField: string,
+) {
+  const groups = new Map<string, T[]>();
+  for (const value of values) {
+    if (!value.parent_id) continue;
+    const group = groups.get(value.parent_id) ?? [];
+    group.push(value);
+    groups.set(value.parent_id, group);
+  }
+  for (const group of groups.values()) {
+    group.sort((left, right) =>
+      Number(left.fields?.[orderField] ?? 0) - Number(right.fields?.[orderField] ?? 0),
+    );
+  }
+  return groups;
+}
 
 export async function GET(
   request: Request,
   context: { params: Promise<{ organizationId: string; moduleKey: string }> }
 ) {
+  const profile = process.env.NODE_ENV === "development"
+    ? { startedAt: performance.now(), organizationMs: 0, lookupMs: 0 }
+    : undefined;
+  let lookupStartedAt: number | undefined;
+  const respond = (body: unknown, init?: ResponseInit) =>
+    profiledJsonResponse(body, init, profile);
+
   try {
     const { organizationId, moduleKey } = await context.params;
     const { searchParams } = new URL(request.url);
@@ -22,17 +76,19 @@ export async function GET(
     const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), maximumLimit) : 100;
 
     if (!organizationId) {
-      return NextResponse.json({ error: "Organization ID is required" }, { status: 400 });
+      return respond({ error: "Organization ID is required" }, { status: 400 });
     }
 
     const user = await requireSessionUser();
     if (!user.workspace_id) {
-      return NextResponse.json({ error: "Unauthorized user workspace" }, { status: 401 });
+      return respond({ error: "Unauthorized user workspace" }, { status: 401 });
     }
 
-    const organization = await getOrganizationForUser(user.id, organizationId);
+    const organizationStartedAt = profile ? performance.now() : 0;
+    const organization = await getOrganizationShellContext(user.id, organizationId);
+    if (profile) profile.organizationMs = performance.now() - organizationStartedAt;
     if (!organization) {
-      return NextResponse.json({ error: "Organization not found" }, { status: 404 });
+      return respond({ error: "Organization not found" }, { status: 404 });
     }
 
     if (moduleKey === "order-lookups") {
@@ -40,31 +96,35 @@ export async function GET(
       const requestedKeys = searchParams.get("keys")?.split(",").map((key) => key.trim()).filter(Boolean);
       const invalidKeys = requestedKeys?.filter((key) => !allLookupKeys.includes(key));
       if (invalidKeys?.length) {
-        return NextResponse.json({ error: "One or more requested order lookup keys are invalid." }, { status: 400 });
+        return respond({ error: "One or more requested order lookup keys are invalid." }, { status: 400 });
       }
+      lookupStartedAt = profile ? performance.now() : undefined;
       const lookupKeys = requestedKeys?.length
         ? allLookupKeys.filter((key) => requestedKeys.includes(key))
         : allLookupKeys;
+      const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organization.id);
       const lookupValues = await Promise.all(
-        lookupKeys.map(async (key) => [
-          key,
-          await getMasterValuesForOrganization(organization.id, key, includeInactive, {
+        lookupKeys.map(async (key) => {
+          const values = await getMasterValuesForOrganization(organization.id, key, includeInactive, {
             limit,
             includeDummyData: true,
+            activeDummyDataBatch,
             ...(requestedKeys?.length && key === "article" ? { includeArticleMetrics: false } : {}),
-          }),
-        ] as const),
+          });
+          const sizeLinks = key === "size-group" && values.length > 0
+            ? await getSizeGroupSizesForOrganization(organization.id, values.map((group) => group.id), true)
+            : undefined;
+          return [key, values, sizeLinks] as const;
+        }),
       );
-      const masterOptions = Object.fromEntries(lookupValues);
+      const masterOptions = Object.fromEntries(lookupValues.map(([key, values]) => [key, values]));
       const buyers = masterOptions.buyer;
       const seasons = masterOptions.season;
       const brands = masterOptions.brand;
       const articles = masterOptions.article;
       const colors = masterOptions.color;
       const sizeGroupOptions = masterOptions["size-group"] ?? [];
-      const sizeLinks = sizeGroupOptions.length
-        ? await getSizeGroupSizesForOrganization(organization.id, sizeGroupOptions.map((group) => group.id), true)
-        : [];
+      const sizeLinks = lookupValues.find(([key]) => key === "size-group")?.[2] ?? [];
       const sizesByGroup = new Map<string, typeof sizeLinks>();
       for (const link of sizeLinks) {
         const groupSizes = sizesByGroup.get(link.groupId) ?? [];
@@ -77,7 +137,10 @@ export async function GET(
       }));
       const enrichedMasterOptions = { ...masterOptions, "size-group": sizeGroups };
 
-      return NextResponse.json({
+      if (profile && lookupStartedAt !== undefined) {
+        profile.lookupMs = performance.now() - lookupStartedAt;
+      }
+      return respond({
         masterOptions: enrichedMasterOptions,
         buyers,
         seasons,
@@ -89,9 +152,25 @@ export async function GET(
       });
     }
 
-    const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, { search, limit, exactSearch, includeDummyData, entityId });
+    lookupStartedAt = profile ? performance.now() : undefined;
+    const activeDummyDataBatch = ["size-group", "process-template"].includes(moduleKey)
+      ? getActiveOrganizationDummyDataBatch(organization.id)
+      : undefined;
+    const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, {
+      search,
+      limit,
+      exactSearch,
+      includeDummyData,
+      entityId,
+      ...(activeDummyDataBatch ? { activeDummyDataBatch } : {}),
+    });
     if (moduleKey === "size-group") {
-      const sizeLinks = await getSizeGroupSizesForOrganization(organization.id, values.map((group) => group.id));
+      const sizeLinks = await getSizeGroupSizesForOrganization(
+        organization.id,
+        values.map((group) => group.id),
+        false,
+        activeDummyDataBatch,
+      );
       const sizesByGroup = new Map<string, typeof sizeLinks[number][]>();
       for (const link of sizeLinks) {
         if (!includeInactive && !link.size.is_active) continue;
@@ -100,70 +179,106 @@ export async function GET(
         sizesByGroup.set(link.groupId, groupSizes);
       }
 
-      return NextResponse.json(values.map((group) => ({
+      if (profile && lookupStartedAt !== undefined) {
+        profile.lookupMs = performance.now() - lookupStartedAt;
+      }
+      return respond(values.map((group) => ({
         ...group,
         sizes: (sizesByGroup.get(group.id) ?? []).map((link) => link.size),
       })));
     }
     if (moduleKey === "process-template") {
-      const steps = await getMasterValuesForOrganization(organization.id, "process-template-step", includeInactive, { limit: 500 });
-      const operationTemplates = await getMasterValuesForOrganization(organization.id, "operation-template", includeInactive, { limit: 500 });
-      const operationSteps = await getMasterValuesForOrganization(organization.id, "operation-template-step", includeInactive, { limit: 500 });
+      const [steps, operationTemplates, operationSteps] = await Promise.all([
+        getMasterValuesForOrganization(organization.id, "process-template-step", includeInactive, { limit: 500, activeDummyDataBatch }),
+        getMasterValuesForOrganization(organization.id, "operation-template", includeInactive, { limit: 500, activeDummyDataBatch }),
+        getMasterValuesForOrganization(organization.id, "operation-template-step", includeInactive, { limit: 500, activeDummyDataBatch }),
+      ]);
+      const stepsByTemplate = groupMasterValues(steps, "Sl_No");
+      const operationTemplatesByProcess = new Map<string, typeof operationTemplates>();
+      const operationTemplateByLabel = new Map<string, (typeof operationTemplates)[number]>();
+      for (const operationTemplate of operationTemplates) {
+        const processName = String(operationTemplate.fields?.Process ?? "").trim();
+        const matchingTemplates = operationTemplatesByProcess.get(processName) ?? [];
+        matchingTemplates.push(operationTemplate);
+        operationTemplatesByProcess.set(processName, matchingTemplates);
+        if (!operationTemplateByLabel.has(operationTemplate.label)) {
+          operationTemplateByLabel.set(operationTemplate.label, operationTemplate);
+        }
+      }
+      for (const matchingTemplates of operationTemplatesByProcess.values()) {
+        matchingTemplates.sort((left, right) =>
+          Number(left.fields?.Sort_Order ?? 0) - Number(right.fields?.Sort_Order ?? 0),
+        );
+      }
+      const operationStepsByTemplate = groupMasterValues(operationSteps, "Sl_No");
+      const operationsByTemplate = new Map<string, Array<{
+        id: string;
+        valueId: string;
+        slNo: number;
+        operation: string;
+        price: number;
+      }>>();
+      for (const operationTemplate of operationTemplates) {
+        operationsByTemplate.set(
+          operationTemplate.id,
+          (operationStepsByTemplate.get(operationTemplate.id) ?? []).map((operationStep) => ({
+            id: operationStep.id,
+            valueId: operationStep.value_id,
+            slNo: Number(operationStep.fields?.Sl_No ?? 0),
+            operation: String(operationStep.fields?.Operation ?? operationStep.label),
+            price: Number(operationStep.fields?.Price ?? 0),
+          })),
+        );
+      }
 
-      return NextResponse.json(values.map((template) => ({
+      if (profile && lookupStartedAt !== undefined) {
+        profile.lookupMs = performance.now() - lookupStartedAt;
+      }
+      return respond(values.map((template) => ({
         ...template,
-        steps: steps
-          .filter((step) => step.parent_id === template.id)
-          .sort((left, right) => Number(left.fields?.Sl_No ?? 0) - Number(right.fields?.Sl_No ?? 0))
-          .map((step) => {
-            const processName = String(step.fields?.Process ?? step.label).trim();
-            const legacyOperationTemplateName = String(step.fields?.Operation_Template ?? "").trim();
-            const matchingOperationTemplates = operationTemplates
-              .filter((item) => String(item.fields?.Process ?? "").trim() === processName)
-              .sort((left, right) => Number(left.fields?.Sort_Order ?? 0) - Number(right.fields?.Sort_Order ?? 0));
-            const operationTemplate = operationTemplates.find((item) => item.label === legacyOperationTemplateName)
-              ?? matchingOperationTemplates[0];
-            const operationTemplateName = operationTemplate?.label ?? legacyOperationTemplateName;
-            const mapOperations = (selectedOperationTemplate: typeof operationTemplate) => selectedOperationTemplate
-              ? operationSteps
-                  .filter((operationStep) => operationStep.parent_id === selectedOperationTemplate.id)
-                  .sort((left, right) => Number(left.fields?.Sl_No ?? 0) - Number(right.fields?.Sl_No ?? 0))
-                  .map((operationStep) => ({
-                    id: operationStep.id,
-                    valueId: operationStep.value_id,
-                    slNo: Number(operationStep.fields?.Sl_No ?? 0),
-                    operation: String(operationStep.fields?.Operation ?? operationStep.label),
-                    price: Number(operationStep.fields?.Price ?? 0),
-                  }))
-              : [];
+        steps: (stepsByTemplate.get(template.id) ?? []).map((step) => {
+          const processName = String(step.fields?.Process ?? step.label).trim();
+          const legacyOperationTemplateName = String(step.fields?.Operation_Template ?? "").trim();
+          const matchingOperationTemplates = operationTemplatesByProcess.get(processName) ?? [];
+          const operationTemplate = operationTemplateByLabel.get(legacyOperationTemplateName)
+            ?? matchingOperationTemplates[0];
+          const operationTemplateName = operationTemplate?.label ?? legacyOperationTemplateName;
+          const mapOperations = (selectedOperationTemplate: typeof operationTemplate) =>
+            selectedOperationTemplate ? operationsByTemplate.get(selectedOperationTemplate.id) ?? [] : [];
 
-            return {
-              id: step.id,
-              valueId: step.value_id,
-              slNo: Number(step.fields?.Sl_No ?? 0),
-              processName,
-              isReturnableProcess: step.fields?.Is_Returnable_Process === true,
-              blockByProcessName: String(step.fields?.Block_By ?? "").trim() || null,
-              operationTemplateName: operationTemplateName || null,
-              operationTemplateId: operationTemplate?.id ?? null,
-              operationTemplates: matchingOperationTemplates.map((candidate) => ({
-                id: candidate.id,
-                valueId: candidate.value_id,
-                label: candidate.label,
-                operations: mapOperations(candidate),
-              })),
-              operations: mapOperations(operationTemplate),
-            };
-          }),
+          return {
+            id: step.id,
+            valueId: step.value_id,
+            slNo: Number(step.fields?.Sl_No ?? 0),
+            processName,
+            isReturnableProcess: step.fields?.Is_Returnable_Process === true,
+            blockByProcessName: String(step.fields?.Block_By ?? "").trim() || null,
+            operationTemplateName: operationTemplateName || null,
+            operationTemplateId: operationTemplate?.id ?? null,
+            operationTemplates: matchingOperationTemplates.map((candidate) => ({
+              id: candidate.id,
+              valueId: candidate.value_id,
+              label: candidate.label,
+              operations: mapOperations(candidate),
+            })),
+            operations: mapOperations(operationTemplate),
+          };
+        }),
       })));
     }
-    return NextResponse.json(values);
+    if (profile && lookupStartedAt !== undefined) {
+      profile.lookupMs = performance.now() - lookupStartedAt;
+    }
+    return respond(values);
   } catch (error: unknown) {
     console.error("Error fetching master data:", error);
-    if (isDatabaseUnavailableError(error)) {
-      return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    if (profile && lookupStartedAt !== undefined) {
+      profile.lookupMs = performance.now() - lookupStartedAt;
     }
-    return NextResponse.json({ error: "Unable to load master data. Please try again." }, { status: 500 });
+    if (isDatabaseUnavailableError(error)) {
+      return respond({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
+    return respond({ error: "Unable to load master data. Please try again." }, { status: 500 });
   }
 }
 

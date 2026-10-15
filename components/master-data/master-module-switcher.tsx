@@ -69,7 +69,7 @@ export function MasterModuleSwitcher({
   return (
     <div className="flex items-center gap-3">
       {/* Module Switcher Dropdown */}
-      <div ref={ref} className="relative">
+      <div ref={ref} className="relative" aria-busy={isPending}>
         <Button
           variant="secondary"
           size="sm"
@@ -79,7 +79,10 @@ export function MasterModuleSwitcher({
         >
           <span className="flex items-center gap-2">
             {isPending && (
-              <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+              <>
+                <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+                <span role="status" aria-live="polite">Opening module…</span>
+              </>
             )}
             {selectedLabel}
           </span>
@@ -102,7 +105,9 @@ export function MasterModuleSwitcher({
                   size="sm"
                   key={option.key}
                   type="button"
+                  disabled={isPending}
                   onClick={() => {
+                    if (isPending) return;
                     setOpen(false);
                     if (active) return;
 

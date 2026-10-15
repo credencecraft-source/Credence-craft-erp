@@ -13,6 +13,7 @@ import {
   deleteSelectedMasterValuesForOrganization,
   getMasterDefinition,
   getMasterValuesForOrganization,
+  getActiveOrganizationDummyDataBatch,
   getSizeGroupSizesForOrganization,
   syncSizeGroupSizes,
   updateMasterValue,
@@ -823,32 +824,37 @@ export default async function MasterDataEditorPage({
     notFound();
   }
 
-  const values = await getMasterValuesForOrganization(organization.id, moduleKey, true, { includeDummyData: true });
   const lookupKeys = [...new Set(definition.fields.flatMap((field) => [
     ...(field.lookupModuleKey ? [field.lookupModuleKey] : []),
     ...(field.childFields ?? []).flatMap((child) => child.lookupModuleKey ? [child.lookupModuleKey] : []),
   ]))];
-  const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => {
-    if (lookupKey === "article-size") {
-      const sizeLinks = await getSizeGroupSizesForOrganization(organization.id, undefined, true);
-      return [lookupKey, sizeLinks.map(({ groupId, size }) => ({
-        id: `${groupId}:${size.id}`,
-        value_id: size.value_id,
-        label: size.label,
-        parent_id: groupId,
-        fields: size.fields,
-      }))];
-    }
-    return [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true, { includeDummyData: true }))
-      .map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id, fields: item.fields }))];
-  })));
   const childModuleKey = definition.fields.find((field) => field.type === "child-list")?.childModuleKey
     ?? definition.fields.find((field) => field.type === "lookup" && field.multiple)?.lookupModuleKey;
-  const childRecords = moduleKey === "size-group"
-    ? (await getSizeGroupSizesForOrganization(organization.id, undefined, true)).map((item) => ({ parentId: item.groupId, label: item.size.label, fields: item.size.fields }))
-    : childModuleKey
-      ? (await getMasterValuesForOrganization(organization.id, childModuleKey, true, { includeDummyData: true })).map((item) => ({ id: item.id, parentId: item.parent_id, label: item.label, fields: serializeDecimal(item.fields) as Record<string, unknown> }))
-      : [];
+  const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organization.id);
+  const [values, lookupOptions, childRecords] = await Promise.all([
+    getMasterValuesForOrganization(organization.id, moduleKey, true, { includeDummyData: true, activeDummyDataBatch }),
+    Promise.all(lookupKeys.map(async (lookupKey) => {
+      if (lookupKey === "article-size") {
+        const sizeLinks = await getSizeGroupSizesForOrganization(organization.id, undefined, true);
+        return [lookupKey, sizeLinks.map(({ groupId, size }) => ({
+          id: `${groupId}:${size.id}`,
+          value_id: size.value_id,
+          label: size.label,
+          parent_id: groupId,
+          fields: size.fields,
+        }))] as const;
+      }
+      return [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true, { includeDummyData: true, activeDummyDataBatch }))
+        .map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id, fields: item.fields }))] as const;
+    })).then(Object.fromEntries),
+    moduleKey === "size-group"
+      ? getSizeGroupSizesForOrganization(organization.id, undefined, true)
+          .then((items) => items.map((item) => ({ parentId: item.groupId, label: item.size.label, fields: item.size.fields })))
+      : childModuleKey
+        ? getMasterValuesForOrganization(organization.id, childModuleKey, true, { includeDummyData: true, activeDummyDataBatch })
+            .then((items) => items.map((item) => ({ id: item.id, parentId: item.parent_id, label: item.label, fields: serializeDecimal(item.fields) as Record<string, unknown> })))
+        : Promise.resolve([]),
+  ]);
   const shouldShowMasterHeader = moduleKey !== "article";
 
   return (

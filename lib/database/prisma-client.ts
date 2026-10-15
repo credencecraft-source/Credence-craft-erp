@@ -37,10 +37,28 @@ function createPrismaClient(): PrismaClient {
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   }).$extends({
     query: {
-      $allOperations(context) {
+      async $allOperations(context) {
         const { args, query } = context;
         const runInTransaction = "runInTransaction" in context && context.runInTransaction === true;
-        return withConnectionRetry(() => query(args), { runInTransaction });
+        const model = "model" in context && typeof context.model === "string"
+          ? context.model
+          : null;
+        const shouldProfile = process.env.NODE_ENV === "development"
+          && process.env.ERP_LOOKUP_QUERY_TIMING === "1"
+          && model !== null
+          && (model.toLowerCase().startsWith("master")
+            || model === "Organization"
+            || model === "OrganizationDummyDataBatch");
+        const startedAt = shouldProfile ? performance.now() : 0;
+        try {
+          return await withConnectionRetry(() => query(args), { runInTransaction });
+        } finally {
+          if (shouldProfile && model) {
+            console.info(
+              `[Prisma lookup query] ${model}.${context.operation} ${(performance.now() - startedAt).toFixed(1)}ms`,
+            );
+          }
+        }
       },
     },
   }) as unknown as PrismaClient;

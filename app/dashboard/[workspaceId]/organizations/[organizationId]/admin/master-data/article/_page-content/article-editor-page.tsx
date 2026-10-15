@@ -2,7 +2,11 @@ import { notFound, redirect } from "next/navigation";
 
 import ArticleRecordEditor from "./article-record-editor";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getMasterValuesForOrganization, getSizeGroupSizesForOrganization } from "@/lib/master-data/master-data-constants";
+import {
+  getActiveOrganizationDummyDataBatch,
+  getMasterValuesForOrganization,
+  getSizeGroupSizesForOrganization,
+} from "@/lib/master-data/master-data-constants";
 import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { createMasterValueAction, updateMasterValueAction } from "@/app/dashboard/[workspaceId]/organizations/[organizationId]/settings/master-data/[moduleKey]/master-data-editor-page";
 
@@ -50,9 +54,10 @@ export default async function ArticleEditorPage({ params, searchParams }: PagePr
   if (recordCode && !record) notFound();
 
   const lookupKeys = ["brand", "product-master", "category", "sub-category", "size-group", "color"];
+  const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organization.id);
   const [lookupEntries, sizeLinks] = await Promise.all([
     Promise.all(lookupKeys.map(async (key) => {
-      const values = await getMasterValuesForOrganization(organization.id, key, true, { limit: 500 });
+      const values = await getMasterValuesForOrganization(organization.id, key, true, { limit: 500, activeDummyDataBatch });
       return [key, values.map((item) => ({
         id: item.id,
         value_id: item.value_id,
