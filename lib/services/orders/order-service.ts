@@ -103,6 +103,7 @@ export type CreateOrderInput = {
 
 type CreateOrderOptions = {
   processSnapshot?: VariantSourceOrder["processSteps"];
+  sourceStatus?: "ARTICLE_BASED";
 };
 
 type PreparedCreateOrder = {
@@ -973,6 +974,7 @@ async function createOrderWithinTransaction(
       deliveryDate,
       finalStatus: input.finalStatus ?? "Draft",
       processStatus: input.processStatus ?? null,
+      ...(options.sourceStatus ? { sourceStatus: options.sourceStatus } : {}),
       ...(activeProcessTemplateId ? { processTemplate: { connect: { id: activeProcessTemplateId } } } : {}),
     },
   });
@@ -1063,6 +1065,7 @@ export async function createOrdersAtomically(
   organizationId: string,
   inputs: CreateOrderInput[],
   userId?: string,
+  options: Pick<CreateOrderOptions, "sourceStatus"> = {},
 ) {
   if (!organizationId) throw new Error("Organization is required to create orders.");
   if (inputs.length === 0 || inputs.length > 100) throw new Error("Select between 1 and 100 colors to create orders.");
@@ -1078,7 +1081,7 @@ export async function createOrdersAtomically(
   const createdOrders = await prisma.$transaction(async (transaction) => {
     const orders = [];
     for (const prepared of preparedOrders) {
-      orders.push(await createOrderWithinTransaction(transaction, organizationId, prepared, formRestriction));
+      orders.push(await createOrderWithinTransaction(transaction, organizationId, prepared, formRestriction, options));
     }
     return orders;
   }, { maxWait: 10000, timeout: Math.max(30000, inputs.length * 1000) });

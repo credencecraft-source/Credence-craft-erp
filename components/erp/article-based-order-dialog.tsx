@@ -45,7 +45,30 @@ function parseMasterOptions(value: unknown): MasterOption[] {
   });
 }
 
-function parseOrderLookups(value: unknown): OrderLookups {
+export function createMasterOptionLookup<T extends MasterOption>(options: T[]) {
+  const lookup = new Map<string, T>();
+  for (const option of options) {
+    const keys = new Set<string>([
+      option.id,
+      option.value_id,
+      option.label,
+      option.code ?? "",
+    ].filter((value): value is string => typeof value === "string" && value.trim() !== ""));
+    for (const key of keys) {
+      const normalizedKey = key.trim().toLocaleLowerCase();
+      if (!lookup.has(normalizedKey)) lookup.set(normalizedKey, option);
+    }
+  }
+  return lookup;
+}
+
+export function resolveMasterOption<T extends MasterOption>(options: T[], candidate: string) {
+  const lookup = createMasterOptionLookup(options);
+  if (!candidate.trim()) return null;
+  return lookup.get(candidate.trim().toLocaleLowerCase()) ?? null;
+}
+
+export function parseOrderLookups(value: unknown): OrderLookups {
   const root = isRecord(value) ? value : {};
   const masterOptions = isRecord(root.masterOptions) ? root.masterOptions : {};
   const sizeGroups = parseMasterOptions(masterOptions["size-group"]);
@@ -121,16 +144,32 @@ export default function ArticleBasedOrderDialog({
     return () => controller.abort();
   }, [lookups, open, organizationId]);
 
-  const selectedArticle = useMemo(
-    () => lookups?.articles.find((article) => article.value_id === selectedArticleId || article.id === selectedArticleId) ?? null,
-    [lookups, selectedArticleId],
+  const articleLookup = useMemo(
+    () => createMasterOptionLookup(lookups?.articles ?? []),
+    [lookups?.articles],
   );
+  const sizeGroupLookup = useMemo(
+    () => createMasterOptionLookup(lookups?.sizeGroups ?? []),
+    [lookups?.sizeGroups],
+  );
+  const selectedArticle = useMemo(() => {
+    if (!lookups || !selectedArticleId.trim()) return null;
+    const directMatch = articleLookup.get(selectedArticleId.trim().toLocaleLowerCase());
+    if (directMatch) return directMatch;
+    return lookups.articles.find((article) => article.value_id === selectedArticleId || article.id === selectedArticleId) ?? null;
+  }, [articleLookup, lookups, selectedArticleId]);
   const articleSizeGroup = String(selectedArticle?.fields.Size_Group ?? "");
-  const selectedSizeGroup = lookups?.sizeGroups.find((group) =>
-    group.label === articleSizeGroup || group.id === articleSizeGroup || group.value_id === articleSizeGroup,
-  );
+  const selectedSizeGroup = useMemo(() => {
+    if (!articleSizeGroup.trim()) return null;
+    const directMatch = sizeGroupLookup.get(articleSizeGroup.trim().toLocaleLowerCase());
+    if (directMatch) return directMatch;
+    return lookups?.sizeGroups.find((group) =>
+      group.label === articleSizeGroup || group.id === articleSizeGroup || group.value_id === articleSizeGroup,
+    ) ?? null;
+  }, [articleSizeGroup, lookups?.sizeGroups, sizeGroupLookup]);
   const brand = String(selectedSizeGroup?.fields.Brand1 ?? "");
-  const selectedVariants = selectedArticle?.variants.filter((variant) => selectedVariantIds.includes(variant.id)) ?? [];
+  const selectedVariantIdSet = useMemo(() => new Set(selectedVariantIds), [selectedVariantIds]);
+  const selectedVariants = selectedArticle?.variants.filter((variant) => selectedVariantIdSet.has(variant.id)) ?? [];
 
   const handleArticleChange = (value: string) => {
     setSelectedArticleId(value);

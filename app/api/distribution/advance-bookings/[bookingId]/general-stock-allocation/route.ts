@@ -19,8 +19,26 @@ export async function POST(request: Request, context: RouteContext) {
     );
     const { bookingId } = await context.params;
     if (!bookingId.trim()) throw new Error("A valid advance booking is required.");
+    if (!Array.isArray(body.lines) || body.lines.length === 0 || body.lines.length > 200) {
+      throw new Error("Submit at least one size-wise general-stock quantity.");
+    }
+    const lines = body.lines.map((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("Each general-stock allocation line must be valid.");
+      }
+      const line = value as Record<string, unknown>;
+      const bookingSizeLineId = typeof line.bookingSizeLineId === "string" ? line.bookingSizeLineId.trim() : "";
+      const quantity = typeof line.quantity === "number" ? line.quantity : Number.NaN;
+      if (!bookingSizeLineId || !Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 2147483647) {
+        throw new Error("Each selected size needs a booking size and a positive whole-number quantity.");
+      }
+      return { bookingSizeLineId, quantity };
+    });
+    if (new Set(lines.map((line) => line.bookingSizeLineId)).size !== lines.length) {
+      throw new Error("Each booking size can only be included once in a general-stock allocation.");
+    }
 
-    const result = await allocateAdvanceBookingFromGeneralStock(organization.id, user.id, bookingId);
+    const result = await allocateAdvanceBookingFromGeneralStock(organization.id, user.id, bookingId, lines);
     return NextResponse.json({ ok: true, ...result }, { status: 200 });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2021", "P2022"].includes(error.code)) {

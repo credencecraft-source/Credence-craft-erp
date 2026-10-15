@@ -22,10 +22,13 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
   const [articleOptions, setArticleOptions] = useState<ArticleOption[]>([]);
   const [articleOptionsLoading, setArticleOptionsLoading] = useState(true);
   const [orderNo, setOrderNo] = useState("");
-  const [directOrderNo, setDirectOrderNo] = useState("");
+  const [orderOptions, setOrderOptions] = useState<RelatedOrder[]>([]);
+  const [orderOptionsNextCursor, setOrderOptionsNextCursor] = useState<string | null>(null);
+  const [orderOptionsLoading, setOrderOptionsLoading] = useState(true);
+  const [loadingMoreOrderOptions, setLoadingMoreOrderOptions] = useState(false);
   const [relatedOrders, setRelatedOrders] = useState<RelatedOrder[]>([]);
   const [relatedOrdersNextCursor, setRelatedOrdersNextCursor] = useState<string | null>(null);
-  const [lookupMode, setLookupMode] = useState<WorkOrderLookupMode>("direct");
+  const [lookupMode, setLookupMode] = useState<WorkOrderLookupMode>("");
   const [mode, setMode] = useState<WorkOrderMode>("");
   const [allAllocations, setAllAllocations] = useState<AllocationResponse[]>([]);
   const [allQuantities, setAllQuantities] = useState<Record<string, string>>({});
@@ -101,6 +104,59 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
     return () => { active = false; };
   }, [organizationId]);
 
+  useEffect(() => {
+    let active = true;
+    const query = new URLSearchParams({ organizationId, limit: "100" });
+    void fetch(`/api/orders?${query.toString()}`, { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok || !Array.isArray(data.orders)) {
+          throw new Error(data.error || "Unable to load orders for the Order No. lookup.");
+        }
+        return data as { orders: RelatedOrder[]; nextCursor?: string | null };
+      })
+      .then((data) => {
+        if (active) {
+          setOrderOptions(data.orders);
+          setOrderOptionsNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
+        }
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load orders for the Order No. lookup.");
+      })
+      .finally(() => {
+        if (active) setOrderOptionsLoading(false);
+      });
+    return () => { active = false; };
+  }, [organizationId]);
+
+  async function loadMoreOrderOptions() {
+    if (!orderOptionsNextCursor || loadingMoreOrderOptions) return;
+    setLoadingMoreOrderOptions(true);
+    setError("");
+    try {
+      const query = new URLSearchParams({
+        organizationId,
+        limit: "100",
+        cursor: orderOptionsNextCursor,
+      });
+      const response = await fetch(`/api/orders?${query.toString()}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || !Array.isArray(data.orders)) {
+        throw new Error(data.error || "Unable to load more orders for the Order No. lookup.");
+      }
+      setOrderOptions((current) => {
+        const existingIds = new Set(current.map((order) => order.id));
+        return [...current, ...(data.orders as RelatedOrder[]).filter((order) => !existingIds.has(order.id))];
+      });
+      setOrderOptionsNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load more orders.");
+    } finally {
+      setLoadingMoreOrderOptions(false);
+    }
+  }
+
   function resetLookupSelection(nextLookupMode: WorkOrderLookupMode) {
     setLookupMode(nextLookupMode);
     setError("");
@@ -108,7 +164,6 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
     setMode("");
     setAllocation(null);
     setOrderNo("");
-    setDirectOrderNo("");
     setRelatedOrders([]);
     setRelatedOrdersNextCursor(null);
     setAllAllocations([]);
@@ -230,7 +285,6 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
     setError("");
     setMessage("");
     setOrderNo(trimmedOrderNo);
-    setDirectOrderNo(trimmedOrderNo);
     setAllocation(null);
     if (!trimmedOrderNo) {
       setLoading(false);
@@ -372,23 +426,46 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
 
       <Card>
         <div className="space-y-4">
-          <div className="max-w-xl">
-            <label htmlFor="work-order-lookup-mode" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">Choose lookup method</label>
-            <Select
-              id="work-order-lookup-mode"
-              value={lookupMode}
-              onChange={(event) => {
-                const nextMode = event.target.value as WorkOrderLookupMode;
-                if (nextMode === "article" || nextMode === "direct") resetLookupSelection(nextMode);
-                else setLookupMode("");
-              }}
-              disabled={loading}
-              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-            >
-              <option value="">Choose work order lookup</option>
-              <option value="article">Article wise</option>
-              <option value="direct">Direct Order Number wise</option>
-            </Select>
+          <div className="space-y-2">
+            <h2 className="text-sm font-semibold text-slate-900">Find work by</h2>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Button
+                type="button"
+                variant="card"
+                size="sm"
+                className={`min-h-0 w-full p-3 ${
+                  lookupMode === "direct"
+                    ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)]"
+                    : ""
+                }`}
+                aria-pressed={lookupMode === "direct"}
+                disabled={loading}
+                onClick={() => resetLookupSelection("direct")}
+              >
+                <span className="block text-sm font-semibold">Order No.</span>
+                <span className="block whitespace-normal text-xs font-normal text-slate-600">
+                  Look up one specific order number.
+                </span>
+              </Button>
+              <Button
+                type="button"
+                variant="card"
+                size="sm"
+                className={`min-h-0 w-full p-3 ${
+                  lookupMode === "article"
+                    ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)]"
+                    : ""
+                }`}
+                aria-pressed={lookupMode === "article"}
+                disabled={loading}
+                onClick={() => resetLookupSelection("article")}
+              >
+                <span className="block text-sm font-semibold">Article No.</span>
+                <span className="block whitespace-normal text-xs font-normal text-slate-600">
+                  Find orders linked to an article number.
+                </span>
+              </Button>
+            </div>
           </div>
 
           {lookupMode === "article" && (
@@ -425,22 +502,42 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
           )}
 
           {lookupMode === "direct" && (
-            <div className="max-w-xl">
-              <label htmlFor="direct-order-no" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">Direct Order No</label>
-              <div className="mt-1 flex flex-col gap-2 sm:flex-row">
-                <Input
-                  id="direct-order-no"
-                  value={directOrderNo}
-                  onChange={(event) => setDirectOrderNo(event.target.value)}
-                  placeholder="Enter order number"
-                  disabled={loading}
-                  className="flex-1"
-                />
-                <Button type="button" onClick={() => void loadOrder(directOrderNo)} disabled={loading || !directOrderNo.trim()}>
-                  {loading ? "Loading..." : "Load order"}
+            <div className="max-w-xl space-y-2">
+              <Select
+                label="Order No."
+                value={orderNo}
+                onChange={(event) => void loadOrder(event.target.value)}
+                disabled={loading || orderOptionsLoading || orderOptions.length === 0}
+                options={[
+                  {
+                    label: orderOptionsLoading
+                      ? "Loading orders..."
+                      : orderOptions.length > 0
+                        ? "Select an order number"
+                        : "No orders found",
+                    value: "",
+                  },
+                  ...orderOptions.map((order) => ({
+                    label: `${order.orderNo}${order.styleName ? ` · ${order.styleName}` : ""}`,
+                    value: order.orderNo,
+                  })),
+                ]}
+              />
+              {orderOptionsNextCursor ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void loadMoreOrderOptions()}
+                  disabled={loadingMoreOrderOptions}
+                >
+                  {loadingMoreOrderOptions ? "Loading orders..." : "Load more order numbers"}
                 </Button>
+              ) : null}
+              {loading && orderNo ? (
+                <p role="status" className="text-sm text-slate-600">Loading order sizes...</p>
+              ) : null}
               </div>
-            </div>
           )}
 
           {lookupMode === "article" && relatedOrders.length > 0 && (
@@ -459,7 +556,6 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
                       setAllAllocations([]);
                       setAllocation(null);
                       setOrderNo("");
-                      setDirectOrderNo("");
                     }
                   }}
                   disabled={loading}

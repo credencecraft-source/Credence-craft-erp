@@ -50,11 +50,22 @@ export async function POST(request: Request) {
       String(body.organizationId ?? ""),
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
-    if (!Array.isArray(body.bookingIds) || body.bookingIds.some((id) => typeof id !== "string") ||
-        typeof body.vendorId !== "string" || !body.vendorId.trim()) {
-      throw new Error("Select advance bookings and a Dealer from Vendor Master.");
+    const vendorId = typeof body.vendorId === "string" && body.vendorId.trim() ? body.vendorId.trim() : null;
+    const contactId = typeof body.contactId === "string" && body.contactId.trim() ? body.contactId.trim() : null;
+    if (
+      !Array.isArray(body.bookingIds) ||
+      body.bookingIds.some((id) => typeof id !== "string") ||
+      Boolean(vendorId) === Boolean(contactId)
+    ) {
+      throw new Error("Select advance bookings and either a Dealer or a Contact Master contact.");
     }
-    const quotation = await createDistributionQuotationFromBookings(organization.id, user.id, body.bookingIds, body.vendorId.trim());
+    const quotation = await createDistributionQuotationFromBookings(
+      organization.id,
+      user.id,
+      body.bookingIds,
+      vendorId,
+      contactId,
+    );
     return NextResponse.json({ quotation }, { status: 201 });
   } catch (error) {
     return quotationErrorResponse(error, "Unable to create the Advance Booking quotation.");

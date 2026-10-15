@@ -107,9 +107,14 @@ export async function createDistributionQuotationFromBookings(
   organizationId: string,
   userId: string,
   bookingIds: string[],
-  vendorId: string,
+  vendorId: string | null,
+  contactId?: string | null,
 ) {
-  if (!vendorId.trim()) throw new Error("Select a Dealer from Vendor Master for the quotation.");
+  const selectedVendorId = vendorId?.trim() || null;
+  const selectedContactId = contactId?.trim() || null;
+  if (Boolean(selectedVendorId) === Boolean(selectedContactId)) {
+    throw new Error("Select either a Dealer from Vendor Master or a Contact Master contact.");
+  }
   if (bookingIds.length === 0 || bookingIds.length > 100) {
     throw new Error("Select between one and 100 advance bookings for a quotation.");
   }
@@ -118,11 +123,29 @@ export async function createDistributionQuotationFromBookings(
   }
 
   const created = await prisma.$transaction(async (transaction) => {
-    const vendor = await transaction.masterVendor.findFirst({
-      where: { organization_id: organizationId, id: vendorId, is_active: true },
-      select: { id: true, vendor: true },
-    });
-    if (!vendor) throw new Error("Select an active Dealer from Vendor Master for the quotation.");
+    let vendor: { id: string; vendor: string } | null = null;
+    let customer: string;
+    if (selectedVendorId) {
+      vendor = await transaction.masterVendor.findFirst({
+        where: { organization_id: organizationId, id: selectedVendorId, is_active: true },
+        select: { id: true, vendor: true },
+      });
+      if (!vendor) throw new Error("Select an active Dealer from Vendor Master for the quotation.");
+      customer = vendor.vendor;
+    } else {
+      if (!selectedContactId) throw new Error("Select a Contact Master contact for the quotation.");
+      const contact = await transaction.contact.findFirst({
+        where: { organization_id: organizationId, id: selectedContactId },
+        select: { id: true, legal_name: true, display_name: true },
+      });
+      if (!contact) throw new Error("Select a Contact Master contact from this organization.");
+      vendor = await transaction.masterVendor.findFirst({
+        where: { organization_id: organizationId, contact_id: contact.id },
+        select: { id: true, vendor: true },
+      });
+      customer = contact.display_name || contact.legal_name;
+      if (!customer.trim()) throw new Error("The selected Contact Master contact does not have a display name.");
+    }
 
     const bookings = await transaction.advanceBooking.findMany({
       where: { organization_id: organizationId, id: { in: bookingIds } },
@@ -177,11 +200,11 @@ export async function createDistributionQuotationFromBookings(
     const quotation = await transaction.distributionQuotation.create({
       data: {
         organization_id: organizationId,
-        vendor_id: vendor.id,
+        vendor_id: vendor?.id ?? null,
         quotation_no: await reserveProcurementDocumentNumber(organizationId, "DISTRIBUTION_QUOTATION", transaction),
         quotation_date: new Date(),
         order_no: combinedOrderNumbers,
-        customer: vendor.vendor,
+        customer,
         mode: orderedBookings.length === 1 ? "SINGLE" : "MULTIPLE",
         status: "DRAFT",
         total_quantity: totalQuantity,
@@ -201,7 +224,8 @@ export async function createDistributionQuotationFromBookings(
       details: {
         quotation_no: quotation.quotation_no,
         booking_nos: orderedBookings.map((booking) => booking.booking_no),
-        vendor_id: vendor.id,
+        vendor_id: vendor?.id ?? null,
+        ...(selectedContactId ? { contact_id: selectedContactId } : {}),
         total_quantity: totalQuantity,
       },
     }, transaction);
@@ -301,8 +325,8 @@ export async function createDistributionMasterQuotation(
   vendorId: string,
 ) {
   if (!vendorId.trim()) throw new Error("Select a Distributor from Vendor Master for the sales order.");
-  if (quotationIds.length < 2 || quotationIds.length > 100) {
-    throw new Error("Select between two and 100 regular quotations for a sales order.");
+  if (quotationIds.length < 1 || quotationIds.length > 100) {
+    throw new Error("Select between one and 100 regular quotations for a sales order.");
   }
   if (new Set(quotationIds).size !== quotationIds.length || quotationIds.some((id) => !id.trim())) {
     throw new Error("Each regular quotation can only be included once.");

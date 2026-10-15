@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   filterBookingsWaitingForWorkOrderAssignment,
   filterAdvanceBookingsForView,
-  filterFullyAssignedBookings,
+  filterBookingsForShipmentTracking,
   validateBookingQuotationSelection,
   validateMasterQuotationChildSelection,
 } from "./quotation-selection-service";
@@ -20,8 +20,9 @@ describe("validateMasterQuotationChildSelection", () => {
     expect(validateMasterQuotationChildSelection(["QT 01", "QT 02"], quotations)).toBe("");
   });
 
-  it("requires at least two unique quotations that are still available", () => {
-    expect(validateMasterQuotationChildSelection(["QT 01"], quotations)).toMatch(/at least two/i);
+  it("allows one available quotation and validates unique selections", () => {
+    expect(validateMasterQuotationChildSelection(["QT 01"], quotations)).toBe("");
+    expect(validateMasterQuotationChildSelection([], quotations)).toMatch(/at least one/i);
     expect(validateMasterQuotationChildSelection(["QT 01", "QT 01"], quotations)).toMatch(/only be included once/i);
     expect(validateMasterQuotationChildSelection(["QT 01", "QT 05"], quotations)).toMatch(/no longer available/i);
   });
@@ -75,17 +76,22 @@ describe("validate advance-booking quotation selection", () => {
 
   describe("split assigned bookings between work-order and shipment tracking", () => {
     const bookings = [
-      { bookingId: "BK-1", assignmentStatus: "UNASSIGNED" },
-      { bookingId: "BK-2", assignmentStatus: "PARTIALLY_ASSIGNED" },
-      { bookingId: "BK-3", assignmentStatus: "FULLY_ASSIGNED" },
+      { bookingId: "BK-1", assignmentStatus: "UNASSIGNED", totalFulfilled: 0 },
+      { bookingId: "BK-2", assignmentStatus: "PARTIALLY_ASSIGNED", totalFulfilled: 0 },
+      { bookingId: "BK-3", assignmentStatus: "FULLY_ASSIGNED", totalFulfilled: 0 },
+      { bookingId: "BK-4", assignmentStatus: "PARTIALLY_ASSIGNED", totalFulfilled: 5 },
     ];
 
-    it("keeps not-fully-assigned bookings in Work Order Tracking", () => {
-      expect(filterBookingsWaitingForWorkOrderAssignment(bookings)).toEqual([bookings[0], bookings[1]]);
+    it("keeps each not-fully-assigned booking and its remaining balance in Work Order Tracking", () => {
+      expect(filterBookingsWaitingForWorkOrderAssignment(bookings)).toEqual([
+        bookings[0],
+        bookings[1],
+        bookings[3],
+      ]);
     });
 
-    it("moves fully assigned bookings to Shipment Tracking", () => {
-      expect(filterFullyAssignedBookings(bookings)).toEqual([bookings[2]]);
+    it("shows fully assigned bookings and partially fulfilled quantities in Shipment Tracking", () => {
+      expect(filterBookingsForShipmentTracking(bookings)).toEqual([bookings[2], bookings[3]]);
     });
   });
 });

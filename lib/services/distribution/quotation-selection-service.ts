@@ -8,8 +8,8 @@ export function validateMasterQuotationChildSelection(
   selectedQuoteIds: string[],
   quotations: MasterQuotationChildSource[],
 ): string {
-  if (selectedQuoteIds.length < 2) {
-    return "Select at least two quotations to create a sales order.";
+  if (selectedQuoteIds.length < 1) {
+    return "Select at least one quotation to create a sales order.";
   }
   if (new Set(selectedQuoteIds).size !== selectedQuoteIds.length) {
     return "A quotation can only be included once in a sales order.";
@@ -53,8 +53,10 @@ export function filterAdvanceBookingsForView<T extends { quotationNo: string | n
   ));
 }
 
-export function filterFullyAssignedBookings<T extends { assignmentStatus: string }>(bookings: T[]) {
-  return bookings.filter((booking) => booking.assignmentStatus === "FULLY_ASSIGNED");
+export function filterBookingsForShipmentTracking<T extends { assignmentStatus: string; totalFulfilled: number }>(bookings: T[]) {
+  return bookings.filter((booking) =>
+    booking.assignmentStatus === "FULLY_ASSIGNED" || booking.totalFulfilled > 0,
+  );
 }
 
 export function filterBookingsWaitingForWorkOrderAssignment<T extends { assignmentStatus: string }>(bookings: T[]) {

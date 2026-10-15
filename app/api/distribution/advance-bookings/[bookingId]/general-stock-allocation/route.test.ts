@@ -32,11 +32,14 @@ describe("advance-booking general-stock allocation route", () => {
     });
   });
 
-  it("allocates general stock with the authorized internal organization and actor", async () => {
+  it("allocates requested quantities with the authorized organization and actor", async () => {
     const request = new Request("http://localhost/api/distribution/advance-bookings/booking-1/general-stock-allocation", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ organizationId: "public-org" }),
+      body: JSON.stringify({
+        organizationId: "public-org",
+        lines: [{ bookingSizeLineId: "booking-size-1", quantity: 12 }],
+      }),
     });
 
     const response = await POST(request, { params: Promise.resolve({ bookingId: "booking-1" }) });
@@ -51,6 +54,7 @@ describe("advance-booking general-stock allocation route", () => {
       "internal-org-1",
       "inventory-user",
       "booking-1",
+      [{ bookingSizeLineId: "booking-size-1", quantity: 12 }],
     );
   });
 
@@ -58,10 +62,29 @@ describe("advance-booking general-stock allocation route", () => {
     const request = new Request("http://localhost/api/distribution/advance-bookings//general-stock-allocation", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ organizationId: "public-org" }),
+      body: JSON.stringify({
+        organizationId: "public-org",
+        lines: [{ bookingSizeLineId: "booking-size-1", quantity: 12 }],
+      }),
     });
 
     const response = await POST(request, { params: Promise.resolve({ bookingId: " " }) });
+
+    expect(response.status).toBe(400);
+    expect(mocks.allocateAdvanceBookingFromGeneralStock).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid quantity lines before calling the allocation service", async () => {
+    const request = new Request("http://localhost/api/distribution/advance-bookings/booking-1/general-stock-allocation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        lines: [{ bookingSizeLineId: "booking-size-1", quantity: 1.5 }],
+      }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ bookingId: "booking-1" }) });
 
     expect(response.status).toBe(400);
     expect(mocks.allocateAdvanceBookingFromGeneralStock).not.toHaveBeenCalled();

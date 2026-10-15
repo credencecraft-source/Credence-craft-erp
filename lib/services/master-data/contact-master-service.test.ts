@@ -48,14 +48,20 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/database/prisma-client", () => ({
-  prisma: { $transaction: mocks.transaction },
+  prisma: { $transaction: mocks.transaction, contact: mocks.tx.contact },
 }));
 vi.mock("@/lib/auth/secret-cryptography", () => ({ encryptSecret: vi.fn() }));
 vi.mock("@/lib/services/organizations/audit-event-service", () => ({
   createAuditEvent: mocks.createAuditEvent,
 }));
 
-import { createContact, deactivateContacts, deleteUnusedContacts, updateContact } from "./contact-master-service";
+import {
+  createContact,
+  deactivateContacts,
+  deleteUnusedContacts,
+  listContactLookupOptions,
+  updateContact,
+} from "./contact-master-service";
 
 describe("contact master numbering", () => {
   beforeEach(() => {
@@ -150,6 +156,26 @@ describe("contact master numbering", () => {
       expect.any(Function),
       { maxWait: 10000, timeout: 30000 },
     );
+  });
+
+  it("lists only organization-scoped contact names and IDs for lookup", async () => {
+    mocks.tx.contact.findMany.mockResolvedValue([{
+      id: "contact-1",
+      code: "CT1",
+      legal_name: "ACME GARMENTS",
+      display_name: "ACME",
+    }]);
+
+    await expect(listContactLookupOptions("org-1", undefined, { skip: 200, take: 200 }))
+      .resolves.toEqual([{ id: "contact-1", code: "CT1", label: "ACME (CT1)" }]);
+
+    expect(mocks.tx.contact.findMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-1" },
+      select: { id: true, code: true, legal_name: true, display_name: true },
+      orderBy: [{ legal_name: "asc" }, { id: "asc" }],
+      skip: 200,
+      take: 200,
+    });
   });
 
   it("creates a contact without role assignments when no role is provided", async () => {

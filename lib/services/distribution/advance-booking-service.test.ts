@@ -4,10 +4,12 @@ const mocks = vi.hoisted(() => ({
   prisma: {
     $transaction: vi.fn(),
     advanceBooking: { findFirst: vi.fn(), findMany: vi.fn() },
+    masterArticle: { findMany: vi.fn() },
     finishedGoodsGeneralStockReceipt: { findMany: vi.fn() },
   },
   transaction: {
     merchandisingOrder: { findFirst: vi.fn() },
+    contact: { findFirst: vi.fn() },
     masterVendor: { findFirst: vi.fn() },
     advanceBookingSizeLine: { findMany: vi.fn() },
     advanceBooking: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
@@ -36,6 +38,7 @@ describe("advance-booking persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.prisma.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
+    mocks.prisma.masterArticle.findMany.mockResolvedValue([]);
     mocks.prisma.$transaction.mockImplementation((callback: (transaction: typeof mocks.transaction) => Promise<unknown>) =>
       callback(mocks.transaction));
     mocks.transaction.merchandisingOrder.findFirst.mockResolvedValue({
@@ -61,7 +64,7 @@ describe("advance-booking persistence", () => {
       style_name: "Style",
       delivery_date: new Date("2026-12-01T00:00:00.000Z"),
       created_at: new Date("2026-10-07T00:00:00.000Z"),
-      order: { orderNo: "ORD-1" },
+      order: { orderNo: "ORD-1", sourceStatus: "DIRECT" },
       quotationLines: [],
       sizeLines: [{
         id: "booking-size-1",
@@ -143,7 +146,7 @@ describe("advance-booking persistence", () => {
       style_name: "Style",
       delivery_date: new Date("2026-12-01T00:00:00.000Z"),
       created_at: new Date("2026-10-07T00:00:00.000Z"),
-      order: { orderNo: "ORD-1" },
+      order: { orderNo: "ORD-1", sourceStatus: "DIRECT" },
       quotationLines: [],
       sizeLines: [{ id: "booking-size-1", size: "M", booked_quantity: 30, assignments: [] }],
     });
@@ -162,6 +165,49 @@ describe("advance-booking persistence", () => {
     }));
   });
 
+  it("saves an arbitrary Contact Master contact as an End Customer without requiring a Vendor record", async () => {
+    mocks.transaction.contact.findFirst.mockResolvedValue({
+      id: "contact-1",
+      legal_name: "ACME GARMENTS",
+      display_name: "ACME",
+    });
+    mocks.transaction.masterVendor.findFirst.mockResolvedValue(null);
+    mocks.transaction.advanceBooking.create.mockResolvedValueOnce({
+      id: "booking-record-contact",
+      organization_id: "internal-org-1",
+      order_id: "order-1",
+      vendor_id: null,
+      booking_no: "BK-CONTACT",
+      customer: "ACME",
+      brand: "Brand",
+      style_name: "Style",
+      delivery_date: new Date("2026-12-01T00:00:00.000Z"),
+      created_at: new Date("2026-10-07T00:00:00.000Z"),
+      order: { orderNo: "ORD-1", sourceStatus: "DIRECT" },
+      sizeLines: [{ id: "booking-size-contact", size: "M", booked_quantity: 10 }],
+    });
+
+    const booking = await createAdvanceBooking("internal-org-1", "user-1", {
+      orderId: "order-1",
+      vendorId: null,
+      contactId: "contact-1",
+      sizes: [{ size: "M", quantity: 10 }],
+    });
+
+    expect(mocks.transaction.contact.findFirst).toHaveBeenCalledWith({
+      where: { id: "contact-1", organization_id: "internal-org-1" },
+      select: { id: true, legal_name: true, display_name: true },
+    });
+    expect(mocks.transaction.masterVendor.findFirst).toHaveBeenCalledWith({
+      where: { organization_id: "internal-org-1", contact_id: "contact-1" },
+      select: { id: true, vendor: true },
+    });
+    expect(mocks.transaction.advanceBooking.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ vendor_id: null, customer: "ACME" }),
+    }));
+    expect(booking.customer).toBe("ACME");
+  });
+
   it("loads shipment details by organization-scoped internal booking ID", async () => {
     mocks.prisma.advanceBooking.findFirst.mockResolvedValue({
       id: "booking-record-1",
@@ -173,7 +219,7 @@ describe("advance-booking persistence", () => {
       style_name: "Style",
       delivery_date: new Date("2026-12-01T00:00:00.000Z"),
       created_at: new Date("2026-10-07T00:00:00.000Z"),
-      order: { orderNo: "ORD-1" },
+      order: { orderNo: "ORD-1", sourceStatus: "DIRECT" },
       quotationLines: [],
       sizeLines: [],
     });
@@ -197,17 +243,42 @@ describe("advance-booking persistence", () => {
       .rejects.toThrow("Advance booking was not found in this organization.");
   });
 
-  it("rejects quantities beyond the order balance without inserting a booking", async () => {
-    await expect(createAdvanceBooking("internal-org-1", "user-1", {
+  it("automatically accepts and audits booking quantities above the remaining order balance", async () => {
+    mocks.transaction.advanceBooking.create.mockResolvedValueOnce({
+      id: "booking-record-overbook",
+      organization_id: "internal-org-1",
+      order_id: "order-1",
+      vendor_id: "vendor-1",
+      booking_no: "BK-OVERBOOK",
+      customer: "Customer",
+      brand: "Brand",
+      style_name: "Style",
+      delivery_date: new Date("2026-12-01T00:00:00.000Z"),
+      created_at: new Date("2026-10-07T00:00:00.000Z"),
+      order: { orderNo: "ORD-1" },
+      sizeLines: [{ id: "booking-size-overbook", size: "M", booked_quantity: 41 }],
+    });
+    await createAdvanceBooking("internal-org-1", "user-1", {
       orderId: "order-1",
       vendorId: "vendor-1",
       sizes: [{ size: "M", quantity: 41 }],
-    })).rejects.toThrow("exceeds the remaining order balance of 40");
+    });
 
-    expect(mocks.transaction.advanceBooking.create).not.toHaveBeenCalled();
+    expect(mocks.transaction.advanceBooking.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        sizeLines: { create: [{ size: "M", booked_quantity: 41 }] },
+      }),
+    }));
+    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      details: expect.objectContaining({
+        total_quantity: 41,
+        total_order_quantity_increase: 1,
+        order_quantity_increases: [{ size: "M", quantity: 1 }],
+      }),
+    }), mocks.transaction);
   });
 
-  it("allows a booking above the order balance only with an explicit increase and audits the excess", async () => {
+  it("calculates and audits the excess booked quantity automatically", async () => {
     mocks.transaction.advanceBooking.create.mockResolvedValueOnce({
       id: "booking-record-1",
       organization_id: "internal-org-1",
@@ -226,7 +297,7 @@ describe("advance-booking persistence", () => {
     await createAdvanceBooking("internal-org-1", "user-1", {
       orderId: "order-1",
       vendorId: null,
-      sizes: [{ size: "M", quantity: 45, orderIncreaseQuantity: 5 }],
+      sizes: [{ size: "M", quantity: 45 }],
     });
 
     expect(mocks.transaction.advanceBooking.create).toHaveBeenCalledWith(expect.objectContaining({
@@ -241,16 +312,6 @@ describe("advance-booking persistence", () => {
         order_quantity_increases: [{ size: "M", quantity: 5 }],
       }),
     }), mocks.transaction);
-  });
-
-  it("rejects booking excess above the explicitly entered order increase", async () => {
-    await expect(createAdvanceBooking("internal-org-1", "user-1", {
-      orderId: "order-1",
-      vendorId: null,
-      sizes: [{ size: "M", quantity: 45, orderIncreaseQuantity: 4 }],
-    })).rejects.toThrow("exceeds the remaining order balance of 40 plus the entered order quantity increase of 4");
-
-    expect(mocks.transaction.advanceBooking.create).not.toHaveBeenCalled();
   });
 
   it("deletes an unquoted, unassigned booking with an audit event", async () => {
@@ -395,6 +456,7 @@ describe("advance-booking persistence", () => {
     expect(result.bookings[0]).toMatchObject({
       bookingId: "BK-1",
       quotationNo: "QT-1",
+      orderSourceStatus: "DIRECT",
       customer: "Customer",
       quotationVendor: "Quotation Vendor",
       masterQuotationVendor: "Master Quotation Vendor",
@@ -547,5 +609,41 @@ describe("advance-booking persistence", () => {
       lines: [{ bookingSizeLineId: "booking-size-m", assignedQuantity: 1 }],
     })).rejects.toThrow("Create a Sales Order before assigning this advance booking to a work order.");
     expect(mocks.transaction.factoryWorkOrder.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+it("recognizes legacy Article-based orders only when their organization Article exists", async () => {
+  const bookingRow = {
+    id: "booking-record-legacy-article",
+    organization_id: "internal-org-1",
+    order_id: "order-article",
+    vendor_id: null,
+    booking_no: "BK-ARTICLE",
+    customer: null,
+    brand: "Brand",
+    style_name: "Oxford Shirt",
+    delivery_date: null,
+    created_at: new Date("2026-10-07T00:00:00.000Z"),
+    order: { orderNo: "ORD-ARTICLE", sourceStatus: "DIRECT", article: "Oxford Shirt" },
+    quotationLines: [],
+    sizeLines: [{
+      id: "size-article",
+      size: "M",
+      booked_quantity: 10,
+      assignments: [],
+    }],
+  };
+  mocks.prisma.advanceBooking.findMany.mockResolvedValue([bookingRow]);
+  mocks.prisma.masterArticle.findMany.mockResolvedValue([{ article: "Oxford Shirt" }]);
+
+  const result = await listAdvanceBookings("internal-org-1");
+
+  expect(result.bookings[0]).toMatchObject({
+    bookingId: "BK-ARTICLE",
+    orderSourceStatus: "ARTICLE_BASED",
+  });
+  expect(mocks.prisma.masterArticle.findMany).toHaveBeenCalledWith({
+    where: { organization_id: "internal-org-1", article: { in: ["Oxford Shirt"] } },
+    select: { article: true },
   });
 });

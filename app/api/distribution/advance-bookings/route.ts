@@ -72,6 +72,15 @@ export async function POST(request: Request) {
     if (body.vendorId !== undefined && body.vendorId !== null && typeof body.vendorId !== "string") {
       throw new Error("Select a valid optional End Customer.");
     }
+    if (body.contactId !== undefined && body.contactId !== null && typeof body.contactId !== "string") {
+      throw new Error("Select a valid optional Contact Master contact.");
+    }
+    if (
+      typeof body.contactId === "string" && body.contactId.trim() &&
+      typeof body.vendorId === "string" && body.vendorId.trim()
+    ) {
+      throw new Error("Select an End Customer from either Contact Master or Vendor Master, not both.");
+    }
     const sizes = body.sizes.map((value) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) {
         throw new Error("Each advance booking size quantity must be valid.");
@@ -79,22 +88,18 @@ export async function POST(request: Request) {
       const line = value as Record<string, unknown>;
       const size = String(line.size ?? "").trim();
       const quantity = typeof line.quantity === "number" ? line.quantity : Number.NaN;
-      const orderIncreaseQuantity = line.orderIncreaseQuantity === undefined
-        ? 0
-        : typeof line.orderIncreaseQuantity === "number"
-          ? line.orderIncreaseQuantity
-          : Number.NaN;
       if (!size || !Number.isSafeInteger(quantity) || quantity < 0) {
         throw new Error("Each size needs a whole-number quantity of zero or more.");
       }
-      if (!Number.isSafeInteger(orderIncreaseQuantity) || orderIncreaseQuantity < 0 || orderIncreaseQuantity > 2147483647) {
-        throw new Error("Each order quantity increase must be a whole number of zero or more.");
+      if (quantity > 2147483647) {
+        throw new Error("Each size quantity must not exceed 2147483647.");
       }
-      return { size, quantity, orderIncreaseQuantity };
+      return { size, quantity };
     });
     const booking = await createAdvanceBooking(organization.id, user.id, {
       orderId: String(body.orderId ?? "").trim(),
       vendorId: typeof body.vendorId === "string" && body.vendorId.trim() ? body.vendorId.trim() : null,
+      contactId: typeof body.contactId === "string" && body.contactId.trim() ? body.contactId.trim() : null,
       sizes,
     });
     return NextResponse.json({ booking }, { status: 201 });

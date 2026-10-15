@@ -10,7 +10,6 @@ type Database = Prisma.TransactionClient;
 export type AdvanceBookingSizeInput = {
   size: string;
   quantity: number;
-  orderIncreaseQuantity?: number;
 };
 
 export type AdvanceBookingAssignmentInput = {
@@ -33,7 +32,7 @@ function fulfillmentStatusFor(fulfilled: number, assigned: number) {
 }
 
 const bookingInclude = {
-  order: { select: { orderNo: true } },
+  order: { select: { orderNo: true, sourceStatus: true, article: true } },
   quotationLines: {
     select: {
       quotation: {
@@ -69,7 +68,10 @@ const bookingInclude = {
   },
 };
 
-function mapBooking(record: Prisma.AdvanceBookingGetPayload<{ include: typeof bookingInclude }>) {
+function mapBooking(
+  record: Prisma.AdvanceBookingGetPayload<{ include: typeof bookingInclude }>,
+  isLegacyArticleBased = false,
+) {
   const sizes = record.sizeLines.map((line) => {
     const assignedQuantity = line.assignments.reduce((sum, assignment) => sum + assignment.assigned_quantity, 0);
     const fulfilledQuantity = line.assignments.reduce(
@@ -108,6 +110,9 @@ function mapBooking(record: Prisma.AdvanceBookingGetPayload<{ include: typeof bo
     bookingId: record.booking_no,
     orderId: record.order_id,
     orderNo: record.order.orderNo,
+    orderSourceStatus: record.order.sourceStatus === "ARTICLE_BASED" || isLegacyArticleBased
+      ? "ARTICLE_BASED"
+      : "DIRECT",
     vendorId: record.vendor_id,
     customer: record.customer ?? "",
     quotationNo: record.quotationLines[0]?.quotation.quotation_no ?? null,
@@ -128,6 +133,25 @@ function mapBooking(record: Prisma.AdvanceBookingGetPayload<{ include: typeof bo
     fulfillmentStatus: fulfillmentStatusFor(totalFulfilled, totalAssigned),
     sizes,
   };
+}
+
+async function getLegacyArticleBasedOrderIds(
+  organizationId: string,
+  records: Array<Prisma.AdvanceBookingGetPayload<{ include: typeof bookingInclude }>>,
+) {
+  const candidates = records.filter((record) =>
+    record.order.sourceStatus !== "ARTICLE_BASED" && Boolean(record.order.article?.trim()),
+  );
+  if (candidates.length === 0) return new Set<string>();
+  const articleNames = [...new Set(candidates.map((record) => record.order.article!.trim()))];
+  const masterArticles = await prisma.masterArticle.findMany({
+    where: { organization_id: organizationId, article: { in: articleNames } },
+    select: { article: true },
+  });
+  const masterArticleNames = new Set(masterArticles.map((article) => article.article.trim().toLocaleUpperCase()));
+  return new Set(candidates
+    .filter((record) => masterArticleNames.has(record.order.article!.trim().toLocaleUpperCase()))
+    .map((record) => record.order_id));
 }
 
 function encodeBookingCursor(value: { createdAt: string; id: string }) {
@@ -181,13 +205,14 @@ export async function listAdvanceBookings(
   const hasNextPage = rows.length > take;
   const pageRows = hasNextPage ? rows.slice(0, take) : rows;
   const lastRow = pageRows.at(-1);
+  const legacyArticleBasedOrderIds = await getLegacyArticleBasedOrderIds(organizationId, pageRows);
   const generalStockAvailability = await listGeneralFinishedGoodsAvailability(
     organizationId,
     pageRows.map((row) => row.order_id),
   );
   return {
     bookings: pageRows.map((record) => {
-      const booking = mapBooking(record);
+      const booking = mapBooking(record, legacyArticleBasedOrderIds.has(record.order_id));
       const availabilityBySize = generalStockAvailability.get(booking.orderId);
       return {
         ...booking,
@@ -209,7 +234,8 @@ export async function getAdvanceBookingById(organizationId: string, bookingId: s
     include: bookingInclude,
   });
   if (!record) throw new Error("Advance booking was not found in this organization.");
-  return { booking: mapBooking(record) };
+  const legacyArticleBasedOrderIds = await getLegacyArticleBasedOrderIds(organizationId, [record]);
+  return { booking: mapBooking(record, legacyArticleBasedOrderIds.has(record.order_id)) };
 }
 
 async function createBookingInTransaction(
@@ -219,14 +245,20 @@ async function createBookingInTransaction(
   input: {
     orderId: string;
     vendorId: string | null;
+    contactId: string | null;
     sizes: AdvanceBookingSizeInput[];
   },
 ) {
+  if (input.vendorId && input.contactId) {
+    throw new Error("Select an End Customer from either Contact Master or Vendor Master, not both.");
+  }
   const order = await transaction.merchandisingOrder.findFirst({
     where: { id: input.orderId, organization_id: organizationId },
     select: {
       id: true,
       orderNo: true,
+      sourceStatus: true,
+      article: true,
       brand: true,
       styleName: true,
       deliveryDate: true,
@@ -234,12 +266,30 @@ async function createBookingInTransaction(
     },
   });
   if (!order) throw new Error("The selected order was not found in this organization.");
+  const legacyArticle = order.sourceStatus !== "ARTICLE_BASED" && order.article?.trim()
+    ? await transaction.masterArticle.findFirst({
+        where: { organization_id: organizationId, article: order.article.trim() },
+        select: { id: true },
+      })
+    : null;
+  const contact = input.contactId
+    ? await transaction.contact.findFirst({
+      where: { id: input.contactId, organization_id: organizationId },
+      select: { id: true, legal_name: true, display_name: true },
+    })
+    : null;
+  if (input.contactId && !contact) throw new Error("Select a contact from this organization's Contact Master.");
   const vendor = input.vendorId
     ? await transaction.masterVendor.findFirst({
       where: { id: input.vendorId, organization_id: organizationId },
       select: { id: true, vendor: true },
     })
-    : null;
+    : contact
+      ? await transaction.masterVendor.findFirst({
+        where: { organization_id: organizationId, contact_id: contact.id },
+        select: { id: true, vendor: true },
+      })
+      : null;
   if (input.vendorId && !vendor) throw new Error("Select an End Customer from this organization's Vendor Master.");
 
   const capacityBySize = new Map<string, number>();
@@ -266,17 +316,10 @@ async function createBookingInTransaction(
     if (!Number.isSafeInteger(line.quantity) || line.quantity < 0 || line.quantity > 2147483647) {
       throw new Error(`Booking quantity for size ${size} must be a whole number of zero or more.`);
     }
-    const orderIncreaseQuantity = line.orderIncreaseQuantity ?? 0;
-    if (!Number.isSafeInteger(orderIncreaseQuantity) || orderIncreaseQuantity < 0 || orderIncreaseQuantity > 2147483647) {
-      throw new Error(`Order quantity increase for size ${size} must be a whole number of zero or more.`);
-    }
     const capacity = capacityBySize.get(size);
     if (capacity === undefined) throw new Error(`Size ${size} does not belong to the selected order.`);
     const available = Math.max(capacity - (bookedBySize.get(size) ?? 0), 0);
     const actualIncrease = Math.max(line.quantity - available, 0);
-    if (actualIncrease > orderIncreaseQuantity) {
-      throw new Error(`Booking quantity for size ${size} exceeds the remaining order balance of ${available} plus the entered order quantity increase of ${orderIncreaseQuantity}.`);
-    }
     return { size, booked_quantity: line.quantity, orderIncreaseQuantity: actualIncrease };
   }).filter((line) => line.booked_quantity > 0);
   if (lines.length === 0) throw new Error("Enter a positive booking quantity for at least one size.");
@@ -287,7 +330,7 @@ async function createBookingInTransaction(
       order_id: order.id,
       vendor_id: vendor?.id ?? null,
       booking_no: await reserveProcurementDocumentNumber(organizationId, "ADVANCE_BOOKING", transaction),
-      customer: vendor?.vendor ?? null,
+      customer: vendor?.vendor ?? (contact?.display_name || contact?.legal_name) ?? null,
       brand: order.brand,
       style_name: order.styleName,
       delivery_date: order.deliveryDate,
@@ -306,7 +349,7 @@ async function createBookingInTransaction(
       style_name: true,
       delivery_date: true,
       created_at: true,
-      order: { select: { orderNo: true } },
+      order: { select: { orderNo: true, sourceStatus: true } },
       sizeLines: {
         orderBy: { size: "asc" },
         select: { id: true, size: true, booked_quantity: true },
@@ -336,6 +379,9 @@ async function createBookingInTransaction(
     bookingId: booking.booking_no,
     orderId: booking.order_id,
     orderNo: booking.order.orderNo,
+    orderSourceStatus: booking.order.sourceStatus === "ARTICLE_BASED" || Boolean(legacyArticle)
+      ? "ARTICLE_BASED"
+      : "DIRECT",
     vendorId: booking.vendor_id,
     customer: booking.customer ?? "",
     quotationNo: null,
@@ -371,10 +417,14 @@ async function createBookingInTransaction(
 export async function createAdvanceBooking(
   organizationId: string,
   userId: string,
-  input: { orderId: string; vendorId: string | null; sizes: AdvanceBookingSizeInput[] },
+  input: { orderId: string; vendorId: string | null; contactId?: string | null; sizes: AdvanceBookingSizeInput[] },
 ) {
   if (!input.orderId.trim()) throw new Error("Select an order.");
-  const normalizedInput = { ...input, vendorId: input.vendorId?.trim() || null };
+  const normalizedInput = {
+    ...input,
+    vendorId: input.vendorId?.trim() || null,
+    contactId: input.contactId?.trim() || null,
+  };
   if (!Array.isArray(input.sizes) || input.sizes.length === 0 || input.sizes.length > 200) {
     throw new Error("Submit valid quantities for the order sizes.");
   }
@@ -522,7 +572,7 @@ export async function listAssignableWorkOrders(organizationId: string, bookingId
   };
 }
 
-async function assignBookingInTransaction(
+export async function assignBookingInTransaction(
   transaction: Database,
   organizationId: string,
   userId: string,

@@ -51,6 +51,22 @@ describe("distribution master quotation API", () => {
     );
   });
 
+  it("allows a single regular quotation to create a sales order", async () => {
+    const response = await POST(post({
+      organizationId: "public-org",
+      quotationIds: ["quote-1"],
+      vendorId: "vendor-1",
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.createDistributionMasterQuotation).toHaveBeenCalledWith(
+      "internal-org-1",
+      "user-1",
+      ["quote-1"],
+      "vendor-1",
+    );
+  });
+
   it("requires a vendor selection before calling the service", async () => {
     const response = await POST(post({
       organizationId: "public-org",

@@ -129,7 +129,7 @@ describe("createArticleBasedOrders", () => {
         colors: "Green",
         rows: [{ size: "M", buyerSize: "M", beforeExcessQty: 7, buyerPoPrice: "14.25" }],
       }),
-    ], "user-id");
+    ], "user-id", { sourceStatus: "ARTICLE_BASED" });
   });
 
   it("rejects an Article that is not found in the authorized organization", async () => {

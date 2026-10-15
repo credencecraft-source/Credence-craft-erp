@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   prisma: { $transaction: vi.fn(), distributionQuotation: { findMany: vi.fn() } },
   transaction: {
     advanceBooking: { findMany: vi.fn() },
+    contact: { findFirst: vi.fn() },
     masterVendor: { findFirst: vi.fn() },
     distributionQuotationLine: { findFirst: vi.fn(), updateMany: vi.fn() },
     distributionQuotation: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
@@ -87,6 +88,7 @@ describe("distribution quotation persistence", () => {
       booking("booking-1", "BK-1"),
       booking("booking-2", "BK-2"),
     ]);
+    mocks.transaction.contact.findFirst.mockResolvedValue(null);
     mocks.transaction.masterVendor.findFirst.mockResolvedValue({ id: "vendor-1", vendor: "Master Vendor A" });
     mocks.transaction.distributionQuotationLine.findFirst.mockResolvedValue(null);
     mocks.transaction.distributionQuotation.create.mockResolvedValue(createdQuotation);
@@ -137,6 +139,7 @@ describe("distribution quotation persistence", () => {
       "user-1",
       ["booking-1", "booking-2"],
       "vendor-1",
+      null,
     );
 
     expect(result).toMatchObject({
@@ -209,6 +212,41 @@ describe("distribution quotation persistence", () => {
         customer: "Master Vendor A",
       }),
     }));
+  });
+
+  it("creates a quotation for any organization Contact Master contact", async () => {
+    mocks.transaction.advanceBooking.findMany.mockResolvedValue([booking("booking-1", "BK-1")]);
+    mocks.transaction.contact.findFirst.mockResolvedValue({
+      id: "contact-1",
+      legal_name: "ACME GARMENTS",
+      display_name: "ACME",
+    });
+    mocks.transaction.masterVendor.findFirst.mockResolvedValueOnce(null);
+
+    await createDistributionQuotationFromBookings(
+      "internal-org-1",
+      "user-1",
+      ["booking-1"],
+      null,
+      "contact-1",
+    );
+
+    expect(mocks.transaction.contact.findFirst).toHaveBeenCalledWith({
+      where: { organization_id: "internal-org-1", id: "contact-1" },
+      select: { id: true, legal_name: true, display_name: true },
+    });
+    expect(mocks.transaction.distributionQuotation.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        vendor_id: null,
+        customer: "ACME",
+      }),
+    }));
+    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      details: expect.objectContaining({
+        vendor_id: null,
+        contact_id: "contact-1",
+      }),
+    }), mocks.transaction);
   });
 
   it("requires an active Dealer from Vendor Master", async () => {
@@ -298,6 +336,41 @@ describe("distribution quotation persistence", () => {
       data: { parent_quotation_id: "master-1" },
     }));
     expect(mocks.createAuditEvent).toHaveBeenCalledOnce();
+  });
+
+  it("creates a sales order from a single quotation", async () => {
+    const child = {
+      id: "quote-1",
+      quotation_no: "QT-1",
+      order_no: "ORD-1",
+      total_quantity: 30,
+      subtotal: new Prisma.Decimal("12.50"),
+    };
+    const master = {
+      ...createdQuotation,
+      id: "master-single",
+      quotation_no: "MQT-SINGLE",
+      mode: "MASTER",
+      total_quantity: 30,
+      subtotal: new Prisma.Decimal("12.50"),
+      lines: [],
+    };
+    mocks.transaction.distributionQuotation.findMany.mockResolvedValue([child]);
+    mocks.transaction.distributionQuotation.create.mockResolvedValue(master);
+    mocks.transaction.distributionQuotation.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await createDistributionMasterQuotation(
+      "internal-org-1",
+      "user-1",
+      ["quote-1"],
+      "vendor-1",
+    );
+
+    expect(result).toMatchObject({ id: "master-single", mode: "MASTER", totalQuantity: 30 });
+    expect(mocks.transaction.distributionQuotation.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: { in: ["quote-1"] } }),
+      data: { parent_quotation_id: "master-single" },
+    }));
   });
 
   it("rejects inactive or cross-organization vendors before creating a master quotation", async () => {

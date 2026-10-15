@@ -200,5 +200,5 @@ export async function createArticleBasedOrders(
     };
   });
 
-  return createOrdersAtomically(organizationId, orderInputs, userId);
+  return createOrdersAtomically(organizationId, orderInputs, userId, { sourceStatus: "ARTICLE_BASED" });
 }

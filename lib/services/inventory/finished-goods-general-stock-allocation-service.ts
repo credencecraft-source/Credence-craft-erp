@@ -5,6 +5,11 @@ import { createAuditEvent } from "@/lib/services/organizations/audit-event-servi
 
 type Database = Prisma.TransactionClient;
 
+export type GeneralStockAllocationLineInput = {
+  bookingSizeLineId: string;
+  quantity: number;
+};
+
 function normalizedSize(value: string | null | undefined) {
   return value?.trim().toLocaleUpperCase() ?? "";
 }
@@ -35,11 +40,12 @@ export async function listGeneralFinishedGoodsAvailability(
   return availability;
 }
 
-async function allocateBookingFromGeneralStockInTransaction(
+export async function allocateBookingFromGeneralStockInTransaction(
   transaction: Database,
   organizationId: string,
   userId: string,
   bookingId: string,
+  requestedLines: GeneralStockAllocationLineInput[],
 ) {
   const booking = await transaction.advanceBooking.findFirst({
     where: { id: bookingId, organization_id: organizationId },
@@ -47,6 +53,7 @@ async function allocateBookingFromGeneralStockInTransaction(
       id: true,
       booking_no: true,
       order_id: true,
+      order: { select: { sourceStatus: true, article: true } },
       quotationLines: {
         select: {
           quotation: {
@@ -75,8 +82,27 @@ async function allocateBookingFromGeneralStockInTransaction(
     },
   });
   if (!booking) throw new Error("Advance booking was not found in this organization.");
+  if (booking.order.sourceStatus !== "ARTICLE_BASED") {
+    const matchingArticle = booking.order.article?.trim()
+      ? await transaction.masterArticle.findFirst({
+          where: {
+            organization_id: organizationId,
+            article: booking.order.article.trim(),
+          },
+          select: { id: true },
+        })
+      : null;
+    if (!matchingArticle) {
+      throw new Error("General stock can only be allocated to bookings from Article-based orders.");
+    }
+  }
   if (!booking.quotationLines[0]?.quotation.parentQuotation) {
     throw new Error("Create a Sales Order before allocating general stock to this advance booking.");
+  }
+  const bookingLineIds = new Set(booking.sizeLines.map((line) => line.id));
+  const requestedByLineId = new Map(requestedLines.map((line) => [line.bookingSizeLineId, line.quantity]));
+  if ([...requestedByLineId.keys()].some((id) => !bookingLineIds.has(id))) {
+    throw new Error("One or more selected sizes do not belong to this advance booking.");
   }
 
   const receipts = await transaction.finishedGoodsGeneralStockReceipt.findMany({
@@ -131,11 +157,12 @@ async function allocateBookingFromGeneralStockInTransaction(
   const allocationAudit: Array<{ size: string; quantity: number; workOrderId: string; receiptId: string }> = [];
 
   for (const bookingLine of bookingLines) {
+    let requestedRemaining = requestedByLineId.get(bookingLine.id) ?? 0;
+    if (requestedRemaining <= 0) continue;
     let bookingRemaining = Math.max(bookingLine.booked_quantity - (fulfilledQuantityByLine.get(bookingLine.id) ?? 0), 0);
-    if (bookingRemaining <= 0) continue;
 
     for (const receipt of receipts) {
-      if (bookingRemaining <= 0 || receipt.current_stock <= 0) continue;
+      if (requestedRemaining <= 0 || bookingRemaining <= 0 || receipt.current_stock <= 0) continue;
       if (normalizedSize(receipt.size) !== normalizedSize(bookingLine.size)) continue;
 
       const workOrderSizeLine = receipt.grnLine.workOrderSizeLine;
@@ -163,6 +190,7 @@ async function allocateBookingFromGeneralStockInTransaction(
         receipt.current_stock,
         bookingRemaining,
         existingAssignmentRemaining + assignmentCapacity,
+        requestedRemaining,
       );
       if (allocationQuantity <= 0) continue;
       const assignmentQuantityToAdd = Math.max(allocationQuantity - existingAssignmentRemaining, 0);
@@ -315,6 +343,7 @@ async function allocateBookingFromGeneralStockInTransaction(
 
       receipt.current_stock -= allocationQuantity;
       bookingRemaining -= allocationQuantity;
+      requestedRemaining -= allocationQuantity;
       fulfilledQuantityByLine.set(
         bookingLine.id,
         (fulfilledQuantityByLine.get(bookingLine.id) ?? 0) + allocationQuantity,
@@ -356,6 +385,9 @@ async function allocateBookingFromGeneralStockInTransaction(
         receiptId: receipt.id,
       });
     }
+    if (requestedRemaining > 0) {
+      throw new Error(`Requested general-stock quantity for size ${bookingLine.size} exceeds its available stock or unassigned balance.`);
+    }
   }
 
   if (results.length === 0) {
@@ -383,14 +415,41 @@ export async function allocateAdvanceBookingFromGeneralStock(
   organizationId: string,
   userId: string,
   bookingId: string,
+  requestedLines: GeneralStockAllocationLineInput[],
 ) {
   if (!organizationId.trim() || !userId.trim() || !bookingId.trim()) {
     throw new Error("A valid organization, actor, and advance booking are required.");
   }
+  if (!Array.isArray(requestedLines) || requestedLines.length === 0 || requestedLines.length > 200) {
+    throw new Error("Submit at least one size-wise general-stock quantity.");
+  }
+  const seenLineIds = new Set<string>();
+  const normalizedRequestedLines: GeneralStockAllocationLineInput[] = [];
+  for (const line of requestedLines) {
+    const bookingSizeLineId = typeof line?.bookingSizeLineId === "string" ? line.bookingSizeLineId.trim() : "";
+    if (
+      !line ||
+      !bookingSizeLineId ||
+      seenLineIds.has(bookingSizeLineId) ||
+      !Number.isSafeInteger(line.quantity) ||
+      line.quantity <= 0 ||
+      line.quantity > 2147483647
+    ) {
+      throw new Error("Each selected size needs a unique booking size and a positive whole-number quantity.");
+    }
+    seenLineIds.add(bookingSizeLineId);
+    normalizedRequestedLines.push({ bookingSizeLineId, quantity: line.quantity });
+  }
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       return await prisma.$transaction(
-        (transaction) => allocateBookingFromGeneralStockInTransaction(transaction, organizationId, userId, bookingId),
+        (transaction) => allocateBookingFromGeneralStockInTransaction(
+          transaction,
+          organizationId,
+          userId,
+          bookingId,
+          normalizedRequestedLines,
+        ),
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 },
       );
     } catch (error) {

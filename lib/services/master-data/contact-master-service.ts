@@ -454,6 +454,30 @@ export async function listContacts(
   return contacts.map(publicContact);
 }
 
+export async function listContactLookupOptions(
+  organizationId: string,
+  database: ContactDatabase = prisma,
+  pagination: { skip?: number; take?: number } = {},
+) {
+  const contacts = await database.contact.findMany({
+    where: { organization_id: organizationId },
+    select: {
+      id: true,
+      code: true,
+      legal_name: true,
+      display_name: true,
+    },
+    orderBy: [{ legal_name: "asc" }, { id: "asc" }],
+    skip: pagination.skip ?? 0,
+    take: Math.min(Math.max(pagination.take ?? MAX_CONTACT_BULK_SELECTION, 1), MAX_CONTACT_BULK_SELECTION),
+  });
+  return contacts.map((contact) => ({
+    id: contact.id,
+    code: contact.code,
+    label: `${contact.display_name || contact.legal_name} (${contact.code})`,
+  }));
+}
+
 export async function getContact(organizationId: string, contactId: string, database: ContactDatabase = prisma) {
   const contact = await database.contact.findFirst({
     where: { organization_id: organizationId, id: contactId },

@@ -14,7 +14,7 @@ import { ReportGrid } from "@/components/reports/report-grid-display";
 import {
   filterBookingsWaitingForWorkOrderAssignment,
   filterAdvanceBookingsForView,
-  filterFullyAssignedBookings,
+  filterBookingsForShipmentTracking,
   validateBookingQuotationSelection,
 } from "@/lib/services/distribution/quotation-selection-service";
 
@@ -44,12 +44,14 @@ type OrderDetails = OrderRecord & {
 type VendorOption = {
   id: string;
   label: string;
+  contactId?: string;
 };
 
 type BookingRecord = {
   id: string;
   bookingId: string;
   orderId: string;
+  orderSourceStatus: string;
   vendorId: string | null;
   orderNo: string;
   quotationNo: string | null;
@@ -111,6 +113,7 @@ type BookingReportField =
   | "brand"
   | "styleName"
   | "totalBooked"
+  | "totalUnassigned"
   | "totalAssigned"
   | "totalAllocated"
   | "assignmentStatus"
@@ -130,6 +133,7 @@ const bookingReportFields: Array<{ key: BookingReportField; label: string }> = [
   { key: "brand", label: "Brand" },
   { key: "styleName", label: "Style" },
   { key: "totalBooked", label: "Total Qty" },
+  { key: "totalUnassigned", label: "Work Order Balance" },
   { key: "totalAssigned", label: "Assigned Qty" },
   { key: "createdAt", label: "Created Date" },
 ];
@@ -142,6 +146,7 @@ const advanceBookingReportFields = bookingReportFields.filter(
   ({ key }) =>
     key !== "assignmentStatus" &&
     key !== "fulfillmentStatus" &&
+    key !== "totalUnassigned" &&
     key !== "quotationVendor" &&
     key !== "masterQuotationVendor",
 );
@@ -150,12 +155,12 @@ const shipmentTrackingReportFields = [
   ...bookingReportFields.filter(({ key }) => key === "bookingId"),
   ...bookingReportFields.filter(({ key }) => key === "totalBooked"),
   { key: "totalAllocated" as const, label: "Allocated Qty" },
-  { key: "assignmentStatus" as const, label: "Stock Availability" },
   ...bookingReportFields.filter(({ key }) =>
     key !== "totalAssigned" &&
     key !== "bookingId" &&
     key !== "totalBooked" &&
     key !== "totalAllocated" &&
+    key !== "totalUnassigned" &&
     key !== "assignmentStatus",
   ),
 ];
@@ -214,13 +219,13 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [vendorsError, setVendorsError] = useState("");
   const [allContactsError, setAllContactsError] = useState("");
   const [showAllContacts, setShowAllContacts] = useState(false);
+  const [showAllQuotationContacts, setShowAllQuotationContacts] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState("");
   const [selectedQuotationVendorId, setSelectedQuotationVendorId] = useState("");
   const [orderDetailsRetry, setOrderDetailsRetry] = useState(0);
   const [orderDetails, setOrderDetails] = useState<{ id: string; order: OrderDetails } | null>(null);
   const [orderDetailsError, setOrderDetailsError] = useState("");
   const [entry, setEntry] = useState<Record<string, number>>(emptySizes());
-  const [orderQtyIncrease, setOrderQtyIncrease] = useState<Record<string, number>>(emptySizes());
   const [isCreating, setIsCreating] = useState(false);
   const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
   const [isCreatingQuotation, setIsCreatingQuotation] = useState(false);
@@ -240,10 +245,9 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [assignmentBooking, setAssignmentBooking] = useState<BookingRecord | null>(null);
   const [assignableWorkOrders, setAssignableWorkOrders] = useState<AssignableWorkOrder[]>([]);
   const [selectedAssignmentWorkOrderId, setSelectedAssignmentWorkOrderId] = useState("");
-  const [assignmentQuantities, setAssignmentQuantities] = useState<Record<string, number>>({});
   const [isLoadingAssignment, setIsLoadingAssignment] = useState(false);
   const [isSavingAssignment, setIsSavingAssignment] = useState(false);
-  const [allocatingGeneralStockBookingId, setAllocatingGeneralStockBookingId] = useState<string | null>(null);
+  const [allocationPlan, setAllocationPlan] = useState<"general-stock-first" | "work-order-only">("general-stock-first");
   const [assignmentError, setAssignmentError] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -307,9 +311,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const selectedAllContactVendor = currentAllContactVendors?.find((vendor) => vendor.id === selectedVendorId) ?? null;
   const endCustomerVendors = showAllContacts && currentAllContactVendors
     ? currentAllContactVendors
-    : !showAllContacts && selectedAllContactVendor && !vendors.some((vendor) => vendor.id === selectedVendorId)
-      ? [...vendors, selectedAllContactVendor]
-      : vendors;
+    : vendors;
   const selectedVendor = endCustomerVendors.find((vendor) => vendor.id === selectedVendorId) ?? null;
   const finishedGoodsBySize = useMemo(() => {
     const sizes = emptySizes();
@@ -363,7 +365,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     [reportRows, view],
   );
   const shipmentTrackingRows = useMemo(
-    () => view === "fulfillment" || view === "shipment" ? filterFullyAssignedBookings(reportRows) : [],
+    () => view === "fulfillment" || view === "shipment" ? filterBookingsForShipmentTracking(reportRows) : [],
     [reportRows, view],
   );
   const selectedReportBookings = useMemo(
@@ -472,21 +474,32 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     setIsLoadingAllContacts(true);
     setAllContactsError("");
     try {
-      const response = await fetch(
-        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/vendor?includeInactive=true&includeDummyData=true&limit=200`,
-        {
-          cache: "no-store",
-          signal,
-        },
-      );
-      const data = await response.json().catch(() => null);
-      if (!response.ok || !Array.isArray(data)) {
-        throw new Error(typeof data?.error === "string" ? data.error : "Unable to load all contacts.");
+      const contacts: VendorOption[] = [];
+      const pageSize = 200;
+      for (let offset = 0; ; offset += pageSize) {
+        const response = await fetch(
+          `/api/organizations/${encodeURIComponent(organizationId)}/contacts/lookup?limit=${pageSize}&offset=${offset}`,
+          { cache: "no-store", signal },
+        );
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !Array.isArray(data)) {
+          throw new Error(typeof data?.error === "string" ? data.error : "Unable to load all contacts.");
+        }
+        if (data.some((contact) =>
+          !contact ||
+          typeof contact.id !== "string" ||
+          typeof contact.code !== "string" ||
+          typeof contact.label !== "string"
+        )) {
+          throw new Error("The contact list returned an invalid response. Refresh and try again.");
+        }
+        contacts.push(...data);
+        if (data.length < pageSize) break;
       }
-      const options = data
-        .filter((value: { id?: string; label?: string }) => typeof value?.id === "string" && typeof value?.label === "string" && value.label.trim())
-        .map((value: { id: string; label: string }) => ({ id: value.id, label: value.label.trim() }))
-        .sort((left: VendorOption, right: VendorOption) => left.label.localeCompare(right.label));
+      const options = contacts
+        .map((contact) => ({ ...contact, contactId: contact.id }))
+        .filter((contact) => contact.label.trim())
+        .sort((left, right) => left.label.localeCompare(right.label));
       setAllContactVendors({ organizationId, options });
     } catch (loadError) {
       if (signal?.aborted) return;
@@ -507,7 +520,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   }, [loadVendors]);
 
   useEffect(() => {
-    if (!showAllContacts || currentAllContactVendors !== null) return;
+    if ((!showAllContacts && !showAllQuotationContacts) || currentAllContactVendors !== null) return;
 
     const controller = new AbortController();
     void Promise.resolve().then(() => {
@@ -516,7 +529,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     return () => {
       controller.abort();
     };
-  }, [currentAllContactVendors, loadAllContacts, showAllContacts]);
+  }, [currentAllContactVendors, loadAllContacts, showAllContacts, showAllQuotationContacts]);
 
   useEffect(() => {
     if (!selectedOrderId) return;
@@ -586,14 +599,6 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     }));
   }
 
-  function updateOrderQtyIncrease(size: SizeKey, value: string) {
-    const parsed = value === "" ? 0 : Number(value);
-    setOrderQtyIncrease((current) => ({
-      ...current,
-      [size]: Number.isFinite(parsed) ? Math.max(0, parsed) : 0,
-    }));
-  }
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -617,36 +622,20 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     }
 
     const quantities: Record<string, number> = {};
-    const orderIncreases: Record<string, number> = {};
     let totalBooked = 0;
 
     for (const size of Object.keys(finishedGoodsBySize)) {
       const quantity = Number(entry[size] || 0);
-      const increase = Number(orderQtyIncrease[size] || 0);
-      if (!Number.isSafeInteger(quantity) || quantity < 0) {
+      if (!Number.isSafeInteger(quantity) || quantity < 0 || quantity > 2147483647) {
         setError(`Quantity for size ${size} must be a whole number greater than or equal to zero.`);
         return;
       }
-      if (!Number.isSafeInteger(increase) || increase < 0 || increase > 2147483647) {
-        setError(`Order quantity increase for size ${size} must be a whole number of zero or more.`);
-        return;
-      }
       if (quantity > 0) quantities[size] = quantity;
-      if (increase > 0) orderIncreases[size] = increase;
       totalBooked += quantity;
     }
 
     if (totalBooked <= 0) {
       setError("Enter at least one size quantity before submitting the advance booking.");
-      return;
-    }
-
-    const exceedsBalance = Object.keys(finishedGoodsBySize).some((size) =>
-      (quantities[size] ?? 0) >
-        Math.max(finishedGoodsBySize[size] - (bookedTotals[size] ?? 0), 0) + (orderIncreases[size] ?? 0),
-    );
-    if (exceedsBalance) {
-      setError("One or more booking quantities exceed the remaining balance plus the entered order quantity increase.");
       return;
     }
 
@@ -658,11 +647,11 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         body: JSON.stringify({
           organizationId,
           orderId: selectedOrder.id,
-          vendorId: selectedVendor?.id ?? "",
+          vendorId: selectedVendor?.contactId ? "" : selectedVendor?.id ?? "",
+          contactId: selectedVendor?.contactId ?? "",
           sizes: Object.entries(quantities).map(([size, quantity]) => ({
             size,
             quantity,
-            orderIncreaseQuantity: orderIncreases[size] ?? 0,
           })),
         }),
       });
@@ -676,7 +665,6 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         ...current.filter((booking) => booking.id !== createdBooking.id),
       ]);
       setEntry(emptySizes());
-      setOrderQtyIncrease(emptySizes());
       setStatus(`Advance booking ${createdBooking.bookingId} submitted.`);
       setIsCreating(false);
     } catch (submitError) {
@@ -686,10 +674,27 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     }
   }
 
+  function matchingWorkOrderSizeLine(workOrder: AssignableWorkOrder | null, size: string) {
+    return workOrder?.sizeLines.find((line) =>
+      line.size.trim().toLocaleUpperCase() === size.trim().toLocaleUpperCase(),
+    );
+  }
+
+  function plannedStockQuantity(line: BookingRecord["sizes"][number]) {
+    if (allocationPlan !== "general-stock-first" || assignmentBooking?.orderSourceStatus !== "ARTICLE_BASED") return 0;
+    return Math.min(line.generalInventoryAvailableQuantity, line.unassignedQuantity);
+  }
+
+  function plannedWorkOrderQuantity(line: BookingRecord["sizes"][number]) {
+    if (allocationPlan === "general-stock-first" && !selectedAssignmentWorkOrder) return 0;
+    return Math.max(line.unassignedQuantity - plannedStockQuantity(line), 0);
+  }
+
   async function openAssignment(booking: BookingRecord) {
     setAssignmentBooking(booking);
+    setAssignableWorkOrders([]);
     setSelectedAssignmentWorkOrderId("");
-    setAssignmentQuantities({});
+    setAllocationPlan(booking.orderSourceStatus === "ARTICLE_BASED" ? "general-stock-first" : "work-order-only");
     setAssignmentError("");
     setIsLoadingAssignment(true);
     try {
@@ -710,119 +715,85 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     }
   }
 
-  async function saveWorkOrderAssignment() {
-    if (!assignmentBooking || !selectedAssignmentWorkOrder) {
-      setAssignmentError("Select a work order before assigning this booking.");
+  async function saveBookingAllocation() {
+    if (!assignmentBooking || isSavingAssignment) return;
+    const generalStockLines: Array<{ bookingSizeLineId: string; quantity: number }> = [];
+    const workOrderLines: Array<{ bookingSizeLineId: string; assignedQuantity: number }> = [];
+    for (const line of assignmentBooking.sizes) {
+      const stockQuantity = plannedStockQuantity(line);
+      if (stockQuantity > 0) generalStockLines.push({ bookingSizeLineId: line.id, quantity: stockQuantity });
+      const workOrderQuantity = plannedWorkOrderQuantity(line);
+      const workOrderLine = matchingWorkOrderSizeLine(selectedAssignmentWorkOrder, line.size);
+      const maxWorkOrderQuantity = workOrderLine?.availableQuantity ?? 0;
+      if (workOrderQuantity > maxWorkOrderQuantity) {
+        setAssignmentError(
+          `Size ${line.size} needs ${workOrderQuantity} units for the selected work order, but only ${maxWorkOrderQuantity} are available.`,
+        );
+        return;
+      }
+      if (workOrderQuantity > 0) {
+        workOrderLines.push({ bookingSizeLineId: line.id, assignedQuantity: workOrderQuantity });
+      }
+    }
+    if (generalStockLines.length === 0 && workOrderLines.length === 0) {
+      setAssignmentError("No available General Stock or Work Order quantity is selected to allocate.");
+      return;
+    }
+    if (workOrderLines.length > 0 && !selectedAssignmentWorkOrder) {
+      setAssignmentError("Select a work order before assigning the remaining quantity.");
       return;
     }
 
     setIsSavingAssignment(true);
     setAssignmentError("");
     try {
-      const response = await fetch(`/api/distribution/advance-bookings/${encodeURIComponent(assignmentBooking.id)}/assignments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          organizationId,
-          workOrderId: selectedAssignmentWorkOrder.id,
-          lines: assignmentBooking.sizes.map((line) => ({
-            bookingSizeLineId: line.id,
-            assignedQuantity: assignmentQuantities[line.id] ?? 0,
-          })),
-        }),
-      });
-      const data = await response.json().catch(() => null);
-      if (!response.ok || data?.ok !== true) {
-        throw new Error(typeof data?.error === "string" ? data.error : "Unable to assign this booking.");
-      }
-      const addedQuantity = assignmentBooking.sizes.reduce(
-        (sum, line) => sum + (assignmentQuantities[line.id] ?? 0),
-        0,
-      );
-      const updatedTotalAssigned = assignmentBooking.totalAssigned + addedQuantity;
-      const updatedBooking: BookingRecord = {
-        ...assignmentBooking,
-        totalAssigned: updatedTotalAssigned,
-        totalAllocated: updatedTotalAssigned,
-        totalUnassigned: Math.max(assignmentBooking.totalBooked - updatedTotalAssigned, 0),
-        assignmentStatus: updatedTotalAssigned <= 0
-          ? "UNASSIGNED"
-          : updatedTotalAssigned >= assignmentBooking.totalBooked
-            ? "FULLY_ASSIGNED"
-            : "PARTIALLY_ASSIGNED",
-        sizes: assignmentBooking.sizes.map((line) => {
-          const quantity = assignmentQuantities[line.id] ?? 0;
-          if (quantity <= 0) return line;
-          const assignedQuantity = line.assignedQuantity + quantity;
-          return {
-            ...line,
-            assignedQuantity,
-            unassignedQuantity: Math.max(line.bookedQuantity - assignedQuantity, 0),
-            assignmentStatus: assignedQuantity >= line.bookedQuantity ? "FULLY_ASSIGNED" : "PARTIALLY_ASSIGNED",
-            assignments: [
-              ...line.assignments,
-              {
-                id: `pending-${selectedAssignmentWorkOrder.id}-${line.id}`,
-                workOrderId: selectedAssignmentWorkOrder.id,
-                workOrderNo: selectedAssignmentWorkOrder.workOrderNo,
-                assignedQuantity: quantity,
-                fulfilledQuantity: 0,
-                remainingQuantity: quantity,
-              },
-            ],
-          };
-        }),
-      };
-      setBookings((current) => current.map((booking) =>
-        booking.id === updatedBooking.id ? updatedBooking : booking,
-      ));
-      setAssignmentBooking(null);
-      setStatus(`Booking ${assignmentBooking.bookingId} assigned to ${selectedAssignmentWorkOrder.workOrderNo}.`);
-      void loadBookings(undefined, { silent: true });
-    } catch (saveError) {
-      setAssignmentError(saveError instanceof Error ? saveError.message : "Unable to assign this booking.");
-    } finally {
-      setIsSavingAssignment(false);
-    }
-  }
-
-  async function allocateGeneralStockToBooking(bookingId: string) {
-    const booking = workOrderTrackingRows.find((record) => record.bookingId === bookingId);
-    if (!booking || allocatingGeneralStockBookingId) return;
-    setAllocatingGeneralStockBookingId(booking.id);
-    setError("");
-    setStatus("");
-    try {
       const response = await fetch(
-        `/api/distribution/advance-bookings/${encodeURIComponent(booking.id)}/general-stock-allocation`,
+        `/api/distribution/advance-bookings/${encodeURIComponent(assignmentBooking.id)}/allocation`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ organizationId }),
+          body: JSON.stringify({
+            organizationId,
+            workOrderId: selectedAssignmentWorkOrder?.id ?? "",
+            generalStockLines,
+            workOrderLines,
+          }),
         },
       );
       const data = await response.json().catch(() => null);
-      const allocatedLines = Array.isArray(data?.allocatedLines)
-        ? data.allocatedLines as Array<{ size?: unknown; quantity?: unknown }>
-        : null;
-      if (
-        !response.ok ||
-        data?.ok !== true ||
-        !allocatedLines ||
-        allocatedLines.length === 0 ||
-        !allocatedLines.every((line) =>
-          typeof line.size === "string" && Number.isSafeInteger(line.quantity) && Number(line.quantity) > 0,
-        )
-      ) {
-        throw new Error(typeof data?.error === "string" ? data.error : "Unable to allocate general stock to this booking.");
+      if (!response.ok || data?.ok !== true) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to save the booking allocation.");
       }
-      const totalAllocated = allocatedLines.reduce((sum, line) => sum + Number(line.quantity), 0);
-      setStatus(`Allocated ${totalAllocated} unit${totalAllocated === 1 ? "" : "s"} from general inventory to booking ${booking.bookingId}.`);
+      const stockQuantity = generalStockLines.reduce((sum, line) => sum + line.quantity, 0);
+      const workOrderQuantity = workOrderLines.reduce((sum, line) => sum + line.assignedQuantity, 0);
+      if (stockQuantity > 0) {
+        const allocatedLines = data.generalStock?.allocatedLines;
+        const allocatedTotal = Array.isArray(allocatedLines)
+          ? allocatedLines.reduce((sum: number, line: unknown) => {
+              const quantity = line && typeof line === "object"
+                ? (line as { quantity?: unknown }).quantity
+                : undefined;
+              return sum + (typeof quantity === "number" && Number.isSafeInteger(quantity) ? quantity : 0);
+            }, 0)
+          : 0;
+        if (allocatedTotal !== stockQuantity) {
+          throw new Error("The stock allocation did not match the requested quantities. Refresh and review the booking.");
+        }
+      }
+      if (workOrderQuantity > 0 && data.workOrder?.workOrderId !== selectedAssignmentWorkOrder?.id) {
+        throw new Error("The work-order assignment was not confirmed. Refresh and review the booking.");
+      }
+      const allocationSummary = [
+        stockQuantity > 0 ? `${stockQuantity} from general stock` : "",
+        workOrderQuantity > 0 ? `${workOrderQuantity} to ${selectedAssignmentWorkOrder?.workOrderNo}` : "",
+      ].filter(Boolean).join(" and ");
+      setAssignmentBooking(null);
+      setStatus(`Allocated ${allocationSummary} for booking ${assignmentBooking.bookingId}.`);
       await loadBookings(undefined, { silent: true, preservePages: true });
     } catch (allocationError) {
-      setError(allocationError instanceof Error ? allocationError.message : "Unable to allocate general stock to this booking.");
+      setAssignmentError(allocationError instanceof Error ? allocationError.message : "Unable to save the booking allocation.");
     } finally {
-      setAllocatingGeneralStockBookingId(null);
+      setIsSavingAssignment(false);
     }
   }
 
@@ -838,8 +809,14 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     setStatus("");
     if (quotationSelectionError || !selectedQuotationVendorId || isCreatingQuotation) {
       setError(quotationSelectionError || (!selectedQuotationVendorId
-        ? "Select a Dealer from Vendor Master."
+        ? "Select a Dealer or Contact for the quotation."
         : "Wait for the current quotation to finish saving."));
+      return;
+    }
+    const isContactSelection = selectedQuotationVendorId.startsWith("contact:");
+    const selectedCounterpartyId = selectedQuotationVendorId.slice(selectedQuotationVendorId.indexOf(":") + 1);
+    if (!selectedCounterpartyId) {
+      setError("Select a valid Dealer or Contact for the quotation.");
       return;
     }
     setIsCreatingQuotation(true);
@@ -850,7 +827,8 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         body: JSON.stringify({
           organizationId,
           bookingIds: selectedBookings.map((booking) => booking.id),
-          vendorId: selectedQuotationVendorId,
+          vendorId: isContactSelection ? null : selectedCounterpartyId,
+          contactId: isContactSelection ? selectedCounterpartyId : null,
         }),
       });
       const data = await response.json().catch(() => null);
@@ -1015,7 +993,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
           {view === "booking"
             ? "Advance bookings linked to a quotation are hidden from this register. They remain available in Work Order Tracking."
             : view === "shipment"
-              ? "Shipment Tracking shows quoted bookings after their work-order quantities are fully assigned."
+              ? "Shipment Tracking shows quoted bookings with fulfilled quantities or fully assigned quantities. Any remaining balance stays in Work Order Tracking."
               : "Advance bookings are saved to this organization’s database and shared across users."}
         </p>
       ) : null}
@@ -1047,7 +1025,6 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   onChange={(event) => {
                     setSelectedOrderId(event.target.value);
                     setEntry(emptySizes());
-                    setOrderQtyIncrease(emptySizes());
                     setError("");
                     setOrderDetailsError("");
                   }}
@@ -1078,13 +1055,17 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                         },
                         ...endCustomerVendors.map((vendor) => ({ label: vendor.label, value: vendor.id })),
                       ]}
-                      disabled={isLoadingVendors || (showAllContacts && isLoadingAllContacts)}
+                      disabled={showAllContacts ? isLoadingAllContacts : isLoadingVendors}
                     />
                   </div>
                   <Checkbox
                     label="LIST ALL"
                     checked={showAllContacts}
-                    onChange={(event) => setShowAllContacts(event.target.checked)}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      if (!checked && selectedAllContactVendor) setSelectedVendorId("");
+                      setShowAllContacts(checked);
+                    }}
                     className="mt-0.5 shrink-0"
                   />
                 </div>
@@ -1108,10 +1089,13 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   </Button>
                 </div>
               ) : null}
-              {!isLoadingVendors && !vendorsError && vendors.length === 0 ? (
+              {!showAllContacts && !isLoadingVendors && !vendorsError && vendors.length === 0 ? (
                 <div className="flex flex-wrap items-center gap-3">
                   <p role="status" className="text-sm text-slate-600">No active End Customer is available. End Customer is optional.</p>
                 </div>
+              ) : null}
+              {showAllContacts && currentAllContactVendors?.length === 0 && !isLoadingAllContacts && !allContactsError ? (
+                <p role="status" className="text-sm text-slate-600">No contacts are available in Contact Master.</p>
               ) : null}
               {isLoadingOrders ? (
                 <p role="status" className="text-sm text-slate-600">Loading organization orders...</p>
@@ -1146,7 +1130,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               <div className="border-b border-slate-200 pb-2">
                 <h2 className="text-base font-semibold text-slate-900">Finished Goods Sizes</h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  Enter the advance booking quantity for each size. Use Order Qty Increase only for an approved increase beyond the original order.
+                  Book Qty may exceed the current balance. Excess booked is calculated automatically.
                 </p>
               </div>
               {!selectedOrder ? (
@@ -1164,7 +1148,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                       <th scope="col" className="px-3 py-2">Order Qty</th>
                       <th scope="col" className="px-3 py-2">Already Booked</th>
                       <th scope="col" className="px-3 py-2">Balance to Book</th>
-                      <th scope="col" className="px-3 py-2">Order Qty Increase</th>
+                      <th scope="col" className="px-3 py-2">Excess booked</th>
                       <th scope="col" className="px-3 py-2">Book Qty</th>
                     </tr>
                   </thead>
@@ -1180,6 +1164,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                       const orderQty = finishedGoodsBySize[size];
                       const alreadyBooked = bookedTotals[size] ?? 0;
                       const balanceToBook = Math.max(0, orderQty - alreadyBooked);
+                      const excessBooked = Math.max(0, (entry[size] ?? 0) - balanceToBook);
 
                       return (
                         <tr key={size}>
@@ -1190,21 +1175,18 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                           <td className="px-3 py-1.5">
                             <Input
                               type="number"
-                              min={0}
-                              max={2147483647}
-                              step={1}
-                              value={String(orderQtyIncrease[size] ?? 0)}
-                              onChange={(event) => updateOrderQtyIncrease(size, event.target.value)}
+                              value={String(excessBooked)}
                               className="max-w-40"
-                              disabled={!selectedOrder}
-                              aria-label={`Order quantity increase for size ${size}`}
+                              disabled
+                              readOnly
+                              aria-label={`Excess booked quantity for size ${size}`}
                             />
                           </td>
                           <td className="px-3 py-1.5">
                             <Input
                               type="number"
                               min={0}
-                              max={balanceToBook + (orderQtyIncrease[size] ?? 0)}
+                              max={2147483647}
                               step={1}
                               value={String(entry[size] ?? 0)}
                               onChange={(event) => updateEntry(size, event.target.value)}
@@ -1242,7 +1224,6 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   onClick={() => {
                     setIsCreating(false);
                     setEntry(emptySizes());
-                    setOrderQtyIncrease(emptySizes());
                     setError("");
                   }}
                 >
@@ -1286,24 +1267,11 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               if (booking) void openAssignment(booking);
             } : undefined}
             rowActionPosition="start"
-            rowActionLabel="Assign Work Order"
-            rowActionLabelSelector={(booking) => booking.totalUnassigned > 0 ? "Assign Work Order" : "Fully Assigned"}
-            rowActionDisabledSelector={(booking) => booking.totalUnassigned <= 0 || isLoadingBookings}
+            rowActionLabel="Allocate"
+            rowActionDisabledSelector={(booking) =>
+              booking.totalUnassigned <= 0 || isLoadingBookings || isSavingAssignment
+            }
             rowActionHiddenSelector={(booking) => !booking.salesOrderNo}
-            onSecondaryRowAction={view === "fulfillment"
-              ? (bookingId) => void allocateGeneralStockToBooking(bookingId)
-              : undefined}
-            secondaryRowActionLabel="Allocate General Stock"
-            secondaryRowActionDisabledSelector={(booking) =>
-              isLoadingBookings || allocatingGeneralStockBookingId !== null || booking.totalUnassigned <= 0
-            }
-            secondaryRowActionHiddenSelector={(booking) =>
-              !booking.salesOrderNo ||
-              booking.totalUnassigned <= 0 ||
-              !booking.sizes.some((line) =>
-                line.unassignedQuantity > 0 && line.generalInventoryAvailableQuantity > 0,
-              )
-            }
             onNewOrder={view === "booking" ? startCreating : undefined}
             newActionLabel="Create Advance Booking"
             toolbarActions={(
@@ -1324,7 +1292,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                     type="button"
                     variant="primary"
                     size="sm"
-                    disabled={Boolean(quotationSelectionError) || isLoadingBookings || isCreatingQuotation || isLoadingVendors || vendors.length === 0}
+                    disabled={Boolean(quotationSelectionError) || isLoadingBookings || isCreatingQuotation}
                     title={quotationSelectionError || undefined}
                     onClick={() => {
                       setError("");
@@ -1355,7 +1323,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               : view === "fulfillment"
                 ? reportRows.length === 0
                   ? "No advance bookings have a quotation yet."
-                  : "All quoted bookings are fully assigned. Open Shipment Tracking."
+                  : "No unassigned quantities remain here. Open Shipment Tracking for fulfilled or fully assigned bookings."
                 : "No unquoted advance bookings are available."}
             renderCell={renderBookingCell}
           />
@@ -1422,7 +1390,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               )}
               emptyMessage={isLoadingBookings
                 ? "Loading shipment tracking..."
-                : "No quoted bookings are fully assigned to work orders yet."}
+                : "No quoted bookings have fulfilled quantities or fully assigned quantities yet."}
               renderCell={renderShipmentBookingCell}
             />
           </Card>
@@ -1518,10 +1486,20 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         >
           <header className="space-y-1">
             <h2 id="quotation-vendor-title" className="text-lg font-semibold text-slate-900">Create Quotation</h2>
-            <p className="text-sm text-slate-600">Select the Dealer independently of the optional End Customer.</p>
+            <p className="text-sm text-slate-600">Select a Dealer, or enable LIST ALL to choose any Contact Master contact. End Customer remains optional.</p>
           </header>
+          <Checkbox
+            label="LIST ALL"
+            checked={showAllQuotationContacts}
+            onChange={(event) => {
+              setShowAllQuotationContacts(event.target.checked);
+              setSelectedQuotationVendorId("");
+              setError("");
+            }}
+            disabled={isCreatingQuotation}
+          />
           <Select
-            label="Dealer"
+            label="Dealer / Contact"
             required
             value={selectedQuotationVendorId}
             onChange={(event) => {
@@ -1529,17 +1507,48 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               setError("");
             }}
             options={[
-              { label: isLoadingVendors ? "Loading vendors..." : "Select a Dealer", value: "" },
-              ...vendors.map((vendor) => ({ label: vendor.label, value: vendor.id })),
+              {
+                label: showAllQuotationContacts
+                  ? isLoadingAllContacts ? "Loading all contacts..." : "Select a Contact"
+                  : isLoadingVendors ? "Loading vendors..." : "Select a Dealer",
+                value: "",
+              },
+              ...(showAllQuotationContacts
+                ? (currentAllContactVendors ?? []).map((contact) => ({
+                    label: contact.label,
+                    value: `contact:${contact.contactId ?? contact.id}`,
+                  }))
+                : vendors.map((vendor) => ({ label: vendor.label, value: `vendor:${vendor.id}` }))),
             ]}
-            disabled={isLoadingVendors || isCreatingQuotation || vendors.length === 0}
+            disabled={(showAllQuotationContacts ? isLoadingAllContacts : isLoadingVendors) || isCreatingQuotation}
           />
+          {showAllQuotationContacts && allContactsError ? (
+            <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-700">
+              <span>{allContactsError}</span>
+              <Button type="button" variant="secondary" size="sm" onClick={() => void loadAllContacts()} disabled={isLoadingAllContacts}>
+                Retry All Contacts
+              </Button>
+            </div>
+          ) : null}
+          {showAllQuotationContacts && currentAllContactVendors?.length === 0 && !isLoadingAllContacts && !allContactsError ? (
+            <p role="status" className="text-sm text-slate-600">No contacts are available in Contact Master.</p>
+          ) : null}
+          {showAllQuotationContacts ? (
+            <p className="text-sm text-slate-600">Contacts without a Vendor Master record are saved on the quotation by name.</p>
+          ) : null}
+          {!showAllQuotationContacts && !isLoadingVendors && !vendorsError && vendors.length === 0 ? (
+            <p role="status" className="text-sm text-slate-600">No active Dealers are available. Enable LIST ALL to choose a Contact Master contact.</p>
+          ) : null}
           {error ? <p role="alert" className="text-sm text-red-700">{error}</p> : null}
           <footer className="flex justify-end gap-3 border-t border-[var(--erp-border)] pt-4">
             <Button type="button" variant="secondary" onClick={() => setIsQuotationVendorModalOpen(false)} disabled={isCreatingQuotation}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={!selectedQuotationVendorId || isLoadingVendors || isCreatingQuotation}>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={!selectedQuotationVendorId || (showAllQuotationContacts ? isLoadingAllContacts : isLoadingVendors) || isCreatingQuotation}
+            >
               {isCreatingQuotation ? "Creating..." : "Create Quotation"}
             </Button>
           </footer>
@@ -1547,37 +1556,73 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       </Modal>
       <Modal
         open={assignmentBooking !== null}
-        onClose={() => {
-          if (!isSavingAssignment) setAssignmentBooking(null);
-        }}
+        onClose={() => { if (!isSavingAssignment) setAssignmentBooking(null); }}
         ariaLabelledBy="advance-booking-assignment-title"
         ariaDescribedBy="advance-booking-assignment-description"
-        size="lg"
+        size="2xl"
       >
         {assignmentBooking ? (
-          <div className="space-y-4 p-6">
-            <header className="space-y-1">
+          <div className="space-y-6 p-6">
+            <header className="space-y-2">
               <h2 id="advance-booking-assignment-title" className="text-xl font-semibold text-slate-900">
-                Assign Booking to Work Order
+                Allocate Booking
               </h2>
               <p id="advance-booking-assignment-description" className="text-sm text-slate-600">
-                {assignmentBooking.bookingId} · {assignmentBooking.orderNo} · Remaining booking quantity: {assignmentBooking.totalUnassigned}
+                {assignmentBooking.bookingId} · {assignmentBooking.orderNo}. Choose an allocation plan and review the automatic size-wise quantities.
               </p>
             </header>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              {[
+                { label: "Booking balance", value: assignmentBooking.totalUnassigned },
+                {
+                  label: "Order type",
+                  value: assignmentBooking.orderSourceStatus === "ARTICLE_BASED" ? "Article-based" : "Direct",
+                },
+                {
+                  label: assignmentBooking.orderSourceStatus === "ARTICLE_BASED" && allocationPlan === "general-stock-first"
+                    ? "Available to take from stock"
+                    : "To work order",
+                  value: isLoadingAssignment
+                    ? "Loading…"
+                    : assignmentBooking.orderSourceStatus === "ARTICLE_BASED"
+                      ? allocationPlan === "general-stock-first"
+                        ? assignmentBooking.sizes.reduce((sum, line) => sum + plannedStockQuantity(line), 0)
+                        : assignmentBooking.sizes.reduce((sum, line) => sum + plannedWorkOrderQuantity(line), 0)
+                      : selectedAssignmentWorkOrder
+                        ? assignmentBooking.totalUnassigned
+                        : "Select below",
+                },
+              ].map((item) => (
+                <div key={item.label} className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-600">{item.label}</p>
+                  <p className="mt-1 text-lg font-semibold text-slate-900">{item.value}</p>
+                </div>
+              ))}
+            </div>
+
             {isLoadingAssignment ? (
               <p role="status" className="text-sm text-slate-600">Loading work orders for this booking...</p>
             ) : (
               <Select
-                label="Work Order"
+                label={allocationPlan === "work-order-only"
+                  ? "Work Order (required)"
+                  : "Work Order for remaining quantities (optional)"}
                 value={selectedAssignmentWorkOrderId}
                 onChange={(event) => {
                   setSelectedAssignmentWorkOrderId(event.target.value);
-                  setAssignmentQuantities({});
                   setAssignmentError("");
                 }}
                 disabled={assignableWorkOrders.length === 0}
                 options={[
-                  { label: assignableWorkOrders.length ? "Select a work order" : "No work orders for this order", value: "" },
+                  {
+                    label: assignableWorkOrders.length
+                      ? allocationPlan === "general-stock-first"
+                        ? "Leave remaining quantity in Work Order Tracking"
+                        : "Choose a work order"
+                      : "No work orders available",
+                    value: "",
+                  },
                   ...assignableWorkOrders.map((workOrder) => ({
                     label: `${workOrder.workOrderNo} · ${workOrder.status}`,
                     value: workOrder.id,
@@ -1585,49 +1630,110 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                 ]}
               />
             )}
-            {selectedAssignmentWorkOrder ? (
+
+            {assignmentBooking.orderSourceStatus === "ARTICLE_BASED" ? (
+              <section className="space-y-2" aria-labelledby="allocation-plan-label">
+                <h3 id="allocation-plan-label" className="text-sm font-semibold text-slate-900">Allocation plan</h3>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Button
+                    type="button"
+                    variant="card"
+                    size="sm"
+                    className={`min-h-0 w-full p-3 ${
+                      allocationPlan === "general-stock-first"
+                        ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)]"
+                        : ""
+                    }`}
+                    aria-pressed={allocationPlan === "general-stock-first"}
+                    disabled={isSavingAssignment}
+                    onClick={() => setAllocationPlan("general-stock-first")}
+                  >
+                    <span className="block text-sm font-semibold">Use available General Stock first</span>
+                    <span className="block whitespace-normal text-xs font-normal text-slate-600">
+                      Submit matching stock by itself. Any balance stays in Work Order Tracking unless you select a Work Order.
+                    </span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="card"
+                    size="sm"
+                    className={`min-h-0 w-full p-3 ${
+                      allocationPlan === "work-order-only"
+                        ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)]"
+                        : ""
+                    }`}
+                    aria-pressed={allocationPlan === "work-order-only"}
+                    disabled={isSavingAssignment}
+                    onClick={() => setAllocationPlan("work-order-only")}
+                  >
+                    <span className="block text-sm font-semibold">Allocate full quantity to Work Order</span>
+                    <span className="block whitespace-normal text-xs font-normal text-slate-600">
+                      Leave General Stock untouched and assign the full balance.
+                    </span>
+                  </Button>
+                </div>
+              </section>
+            ) : null}
+
+            <section className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">Size-wise allocation</h3>
+                <p className="text-sm text-slate-600">
+                  {assignmentBooking.orderSourceStatus === "ARTICLE_BASED"
+                    ? allocationPlan === "general-stock-first"
+                      ? selectedAssignmentWorkOrder
+                        ? "Available stock is used first. The remaining quantity is assigned to the selected Work Order."
+                        : "Available stock can be submitted by itself. Any balance remains in Work Order Tracking."
+                      : "The full remaining quantity for each size will be assigned to the work order."
+                    : "Direct orders have no reusable Article stock. Allocate quantities to a work order only."}
+                </p>
+              </div>
               <div className="max-w-full overflow-x-auto rounded-lg border border-[var(--erp-border)]">
-                <table className="w-full min-w-[36rem] text-left text-sm">
+                <table className="w-full min-w-[52rem] text-left text-sm">
                   <thead className="border-b border-[var(--erp-border)] bg-[var(--erp-surface-soft)] text-xs font-semibold uppercase text-slate-600">
                     <tr>
-                      <th scope="col" className="px-3 py-2">Size</th>
-                      <th scope="col" className="px-3 py-2">Booking Qty</th>
-                      <th scope="col" className="px-3 py-2">Assigned</th>
-                      <th scope="col" className="px-3 py-2">Work Order Balance</th>
-                      <th scope="col" className="px-3 py-2">Assign Qty</th>
+                      <th scope="col" className="px-3 py-3">Size</th>
+                      <th scope="col" className="px-3 py-3">Booking balance</th>
+                      {assignmentBooking.orderSourceStatus === "ARTICLE_BASED" ? (
+                        <>
+                          <th scope="col" className="px-3 py-3">General stock</th>
+                          <th scope="col" className="px-3 py-3">Take from stock</th>
+                        </>
+                      ) : null}
+                      <th scope="col" className="px-3 py-3">Work-order balance</th>
+                      <th scope="col" className="px-3 py-3">Assign to work order</th>
+                      <th scope="col" className="px-3 py-3">Remaining</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--erp-border)]">
                     {assignmentBooking.sizes.map((line) => {
-                      const workOrderLine = selectedAssignmentWorkOrder.sizeLines.find(
-                        (candidate) => candidate.size.trim().toLocaleUpperCase() === line.size.trim().toLocaleUpperCase(),
-                      );
+                      const stockQuantity = plannedStockQuantity(line);
+                      const quantityToWorkOrder = plannedWorkOrderQuantity(line);
+                      const workOrderLine = matchingWorkOrderSizeLine(selectedAssignmentWorkOrder, line.size);
                       const workOrderBalance = workOrderLine?.availableQuantity ?? 0;
-                      const maxAssignable = Math.min(line.unassignedQuantity, workOrderBalance);
+                      const notYetAllocated = Math.max(line.unassignedQuantity - stockQuantity - quantityToWorkOrder, 0);
                       return (
                         <tr key={line.id}>
-                          <td className="px-3 py-2 font-medium text-slate-800">{line.size}</td>
-                          <td className="px-3 py-2">{line.bookedQuantity}</td>
-                          <td className="px-3 py-2">{line.assignedQuantity}</td>
-                          <td className="px-3 py-2">{workOrderLine ? workOrderBalance : "Size unavailable"}</td>
-                          <td className="w-36 px-3 py-2">
-                            <Input
-                              type="number"
-                              min={0}
-                              max={maxAssignable}
-                              step={1}
-                              value={String(assignmentQuantities[line.id] ?? 0)}
-                              disabled={!workOrderLine || maxAssignable === 0}
-                              onChange={(event) => {
-                                const value = event.target.value;
-                                if (value !== "" && !/^\d+$/.test(value)) return;
-                                setAssignmentQuantities((current) => ({
-                                  ...current,
-                                  [line.id]: value === "" ? 0 : Number(value),
-                                }));
-                              }}
-                              aria-label={`Assign quantity for booking ${assignmentBooking.bookingId}, size ${line.size}`}
-                            />
+                          <td className="px-3 py-3 font-medium text-slate-900">{line.size}</td>
+                          <td className="px-3 py-3">{line.unassignedQuantity}</td>
+                          {assignmentBooking.orderSourceStatus === "ARTICLE_BASED" ? (
+                            <>
+                              <td className="px-3 py-3">{line.generalInventoryAvailableQuantity}</td>
+                              <td className="px-3 py-3 font-medium">{stockQuantity}</td>
+                            </>
+                          ) : null}
+                          <td className="px-3 py-3">
+                            {selectedAssignmentWorkOrder
+                              ? workOrderLine?.availableQuantity ?? "Size unavailable"
+                              : allocationPlan === "general-stock-first"
+                                ? "Optional"
+                                : "Select a work order"}
+                          </td>
+                          <td className="px-3 py-3 font-medium">{quantityToWorkOrder}</td>
+                          <td className="px-3 py-3">
+                            {selectedAssignmentWorkOrder && quantityToWorkOrder > workOrderBalance
+                              ? `${quantityToWorkOrder - workOrderBalance} over work-order balance`
+                              : notYetAllocated}
                           </td>
                         </tr>
                       );
@@ -1635,7 +1741,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   </tbody>
                 </table>
               </div>
-            ) : null}
+            </section>
             {assignmentBooking.sizes.some((line) => line.assignments.length > 0) ? (
               <section className="space-y-2">
                 <h3 className="text-sm font-semibold text-slate-800">Existing work-order assignments</h3>
@@ -1649,18 +1755,37 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               </section>
             ) : null}
             {assignmentError ? <p role="alert" className="text-sm text-red-700">{assignmentError}</p> : null}
-            <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--erp-border)] pt-4">
-              <Button type="button" variant="secondary" onClick={() => setAssignmentBooking(null)} disabled={isSavingAssignment}>
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="primary"
-                onClick={() => void saveWorkOrderAssignment()}
-                disabled={!selectedAssignmentWorkOrder || isLoadingAssignment || isSavingAssignment}
-              >
-                {isSavingAssignment ? "Saving assignment..." : "Assign to Work Order"}
-              </Button>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--erp-border)] pt-4">
+              <p className="text-sm text-slate-600">
+                General Stock can be submitted alone. Any unassigned balance stays in Work Order Tracking; selected stock and Work Order allocations save together.
+              </p>
+              <div className="flex flex-wrap justify-end gap-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setAssignmentBooking(null)}
+                  disabled={isSavingAssignment}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={() => void saveBookingAllocation()}
+                  disabled={isLoadingAssignment || isSavingAssignment || (
+                    !assignmentBooking.sizes.some((line) =>
+                      plannedStockQuantity(line) > 0 || plannedWorkOrderQuantity(line) > 0,
+                    ) ||
+                    assignmentBooking.sizes.some((line) => plannedWorkOrderQuantity(line) > 0) &&
+                    !selectedAssignmentWorkOrder
+                  ) || assignmentBooking.sizes.some((line) => {
+                    const workOrderLine = matchingWorkOrderSizeLine(selectedAssignmentWorkOrder, line.size);
+                    return plannedWorkOrderQuantity(line) > (workOrderLine?.availableQuantity ?? 0);
+                  })}
+                >
+                  {isSavingAssignment ? "Saving allocation..." : "Save Allocation"}
+                </Button>
+              </div>
             </div>
           </div>
         ) : null}
