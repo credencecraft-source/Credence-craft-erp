@@ -501,6 +501,7 @@ export async function getMasterValuesForOrganization(
     articleCode?: string;
     includeArticleMetrics?: boolean;
     activeDummyDataBatch?: { id: string } | null | Promise<{ id: string } | null>;
+    onRowsFetched?: (rowIds: string[]) => void | Promise<void>;
   } = {},
 ) {
   const definition = getMasterDefinition(moduleKey);
@@ -556,6 +557,7 @@ export async function getMasterValuesForOrganization(
   const rows = fetchedRows
     .filter((row) => options.includeDummyData || !dummyBatch || !belongsToDummyBatch(row, dummyBatch.id))
     .slice(0, limit);
+  const additionalRead = options.onRowsFetched?.(rows.map((row) => row.id));
   const lookupFieldsByModuleKey = new Map<string, MasterFieldDefinition[]>();
   const lookupFields = definition.fields.filter((field) => field.type === "lookup");
   for (const field of lookupFields) {
@@ -622,7 +624,11 @@ export async function getMasterValuesForOrganization(
         }),
       ])
     : Promise.resolve(null);
-  const [, articleDetails] = await Promise.all([lookupHydration, articleDetailsPromise]);
+  const [, articleDetails] = await Promise.all([
+    lookupHydration,
+    articleDetailsPromise,
+    additionalRead ?? Promise.resolve(),
+  ]);
   const articleVariants = articleDetails?.[0] ?? [];
   const variantsByArticle = new Map<string, typeof articleVariants>();
   for (const variant of articleVariants) {
@@ -879,6 +885,7 @@ export async function createMasterValueForOrganization(
       transaction,
     );
     let selectedSizeIds: string[] = [];
+    let selectedSizeLabels = new Set<string>();
     if (moduleKey === "size-group" && Array.isArray(input.fields?.Size)) {
       const selectedLabels = [...new Set(input.fields.Size.map((value) => String(value).trim()).filter(Boolean))];
       const sizes = await transaction.masterSize.findMany({
@@ -906,6 +913,7 @@ export async function createMasterValueForOrganization(
         throw new Error("Every selected size must be active and belong to this organization.");
       }
       selectedSizeIds = selectedSizes.map((size) => size.id);
+      selectedSizeLabels = new Set(selectedSizes.map((size) => size.size.trim().toLocaleLowerCase()));
     }
     const sizeGroup = moduleKey === "size" && input.sizeGroupId
       ? await transaction.masterSizeGroup.findFirst({
@@ -995,19 +1003,22 @@ export async function createMasterValueForOrganization(
             organization_id: organizationId,
             size_group_id: { in: existingGroups.map((group) => group.id) },
           },
-          select: { size_group_id: true, size_id: true },
+          select: {
+            size_group_id: true,
+            size: { select: { organization_id: true, size: true } },
+          },
         });
-        const selectedSizeIdSet = new Set(selectedSizeIds);
         const sizesByGroup = new Map<string, Set<string>>();
         for (const link of links) {
+          if (link.size.organization_id !== organizationId) continue;
           const groupSizes = sizesByGroup.get(link.size_group_id) ?? new Set<string>();
-          groupSizes.add(link.size_id);
+          groupSizes.add(link.size.size.trim().toLocaleLowerCase());
           sizesByGroup.set(link.size_group_id, groupSizes);
         }
         const duplicateGroup = existingGroups.find((group) => {
           const groupSizes = sizesByGroup.get(group.id) ?? new Set<string>();
-          return groupSizes.size === selectedSizeIdSet.size
-            && [...selectedSizeIdSet].every((sizeId) => groupSizes.has(sizeId));
+          return groupSizes.size === selectedSizeLabels.size
+            && [...selectedSizeLabels].every((size) => groupSizes.has(size));
         });
         if (duplicateGroup) {
           throw new Error(

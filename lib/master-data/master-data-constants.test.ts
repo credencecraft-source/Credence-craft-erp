@@ -115,9 +115,9 @@ describe("create-only master insertion", () => {
     ] as never);
     models.masterSizeGroup.findMany.mockResolvedValue([{ id: "existing-group" }] as never);
     models.masterSizeGroupSize.findMany.mockResolvedValue([
-      { size_group_id: "existing-group", size_id: "size-l" },
-      { size_group_id: "existing-group", size_id: "size-m" },
-      { size_group_id: "existing-group", size_id: "size-s" },
+      { size_group_id: "existing-group", size: { organization_id: "org-id", size: "l" } },
+      { size_group_id: "existing-group", size: { organization_id: "org-id", size: "M" } },
+      { size_group_id: "existing-group", size: { organization_id: "org-id", size: "S" } },
     ] as never);
 
     await expect(createMasterValueForOrganization("org-id", "size-group", {
@@ -149,7 +149,7 @@ describe("create-only master insertion", () => {
     models.masterSizeGroupSize.findMany.mockResolvedValue(
       ["S", "M", "L"].map((size) => ({
         size_group_id: "existing-group",
-        size_id: `size-${size.toLowerCase()}`,
+        size: { organization_id: "org-id", size },
       })) as never,
     );
     models.masterSizeGroup.create.mockResolvedValue({
@@ -1038,6 +1038,62 @@ describe("master lookup query concurrency", () => {
 
     expect(values).toEqual([]);
     expect(startedReads).toEqual(new Set(["dummy-batch", "master-values"]));
+  });
+
+  it("starts dependent reads before lookup-label hydration completes", async () => {
+    const startedReads = new Set<string>();
+    let releaseBothReads!: () => void;
+    const bothReadsStarted = new Promise<void>((resolve) => {
+      releaseBothReads = resolve;
+    });
+    let resolveBrandRows!: (rows: never[]) => void;
+    const brandRowsPending = new Promise<never[]>((resolve) => {
+      resolveBrandRows = resolve;
+    });
+    let releaseDependentRead!: () => void;
+    const dependentReadPending = new Promise<void>((resolve) => {
+      releaseDependentRead = resolve;
+    });
+
+    models.masterSizeGroup.findMany.mockResolvedValueOnce([{
+      id: "size-group-id",
+      value_id: "size-group-value-id",
+      organization_id: "org-id",
+      size_group: "Adult",
+      brand_id: "brand-id",
+      measurement_chart_id: null,
+      is_active: true,
+      sort_order: 0,
+      legacy_metadata: null,
+    }] as never);
+    models.masterBrand.findMany.mockImplementation(async () => {
+      startedReads.add("lookup-labels");
+      if (startedReads.size === 2) releaseBothReads();
+      return brandRowsPending;
+    });
+
+    const valuesPromise = getMasterValuesForOrganization("org-id", "size-group", false, {
+      onRowsFetched: async (rowIds) => {
+        expect(rowIds).toEqual(["size-group-id"]);
+        startedReads.add("dependent-read");
+        if (startedReads.size === 2) releaseBothReads();
+        await dependentReadPending;
+      },
+    });
+    const bothStartedBeforeEitherCompleted = await Promise.race([
+      bothReadsStarted.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
+    ]);
+
+    expect(bothStartedBeforeEitherCompleted).toBe(true);
+    releaseDependentRead();
+    resolveBrandRows([{
+      id: "brand-id",
+      value_id: "brand-value-id",
+      brand: "Example Brand",
+    }] as never[]);
+    const values = await valuesPromise;
+    expect(values[0].fields.Brand1).toBe("Example Brand");
   });
 });
 

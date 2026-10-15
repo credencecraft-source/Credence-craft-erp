@@ -36,9 +36,13 @@ export const MASTER_IMPORT_ROW_PAYLOAD_MAX_BYTES = 128 * 1024;
 export const MASTER_IMPORT_RETENTION_DAYS = 30;
 export const MASTER_IMPORT_REPORT_PAGE_SIZE = 1_000;
 export const MASTER_IMPORT_VALIDATION_BATCH_SIZE = 10_000;
+export const MASTER_IMPORT_VALIDATION_RUN_BATCH_SIZE = 100;
 export const MASTER_IMPORT_PLAN_SIZE = 1_000;
 const MASTER_IMPORT_PLAN_BATCH_SIZE = 25;
 const MASTER_IMPORT_STAGING_ROW_BATCH_SIZE = 5_000;
+const MASTER_IMPORT_VALIDATION_WRITE_BATCH_SIZE = 500;
+const MASTER_IMPORT_VALIDATION_BULK_WRITE_THRESHOLD = 25;
+const MASTER_IMPORT_RUN_LEASE_SECONDS = 360;
 
 const MASTER_IMPORT_UPLOAD_TRANSACTION_MAX_WAIT_MS = 10_000;
 const MASTER_IMPORT_UPLOAD_TRANSACTION_TIMEOUT_MS = 20_000;
@@ -797,24 +801,28 @@ export async function stageMasterImportJob(input: {
   if (stagedData.length === 0) {
     throw new MasterImportServiceError("The workbook contains no importable data rows.", 400);
   }
-  const encryptedRows = stagedData.map((entry, index) => ({
-    organization_id: input.organizationId,
-    job_id: input.jobId,
-    row_number: index + 1,
-    status: entry.validationErrors.length
-      ? MasterImportJobRowStatus.INVALID
-      : MasterImportJobRowStatus.STAGED,
-    checkpoint: entry.checkpoint ?? "PARSED",
-    encrypted_payload: Buffer.from(encryptSecret(JSON.stringify({
-      ...entry.payload,
-      validationErrors: entry.validationErrors,
-    })), "utf8"),
-    updated_by_user_id: input.actorUserId,
-  }));
+  const invalidRowCount = stagedData.reduce(
+    (count, entry) => count + Number(entry.validationErrors.length > 0),
+    0,
+  );
 
   const result = await prisma.$transaction(async (transaction) => {
-    for (let offset = 0; offset < encryptedRows.length; offset += MASTER_IMPORT_STAGING_ROW_BATCH_SIZE) {
-      const batch = encryptedRows.slice(offset, offset + MASTER_IMPORT_STAGING_ROW_BATCH_SIZE);
+    for (let offset = 0; offset < stagedData.length; offset += MASTER_IMPORT_STAGING_ROW_BATCH_SIZE) {
+      const batch = stagedData.slice(offset, offset + MASTER_IMPORT_STAGING_ROW_BATCH_SIZE)
+        .map((entry, batchIndex) => ({
+          organization_id: input.organizationId,
+          job_id: input.jobId,
+          row_number: offset + batchIndex + 1,
+          status: entry.validationErrors.length
+            ? MasterImportJobRowStatus.INVALID
+            : MasterImportJobRowStatus.STAGED,
+          checkpoint: entry.checkpoint ?? "PARSED",
+          encrypted_payload: Buffer.from(encryptSecret(JSON.stringify({
+            ...entry.payload,
+            validationErrors: entry.validationErrors,
+          })), "utf8"),
+          updated_by_user_id: input.actorUserId,
+        }));
       const inserted = await transaction.masterImportJobRow.createMany({ data: batch });
       if (inserted.count !== batch.length) {
         throw new MasterImportServiceError("The workbook could not be fully staged. Refresh and try again.", 409);
@@ -832,10 +840,10 @@ export async function stageMasterImportJob(input: {
         checkpoint: "STAGED",
         staged_at: now,
         updated_by_user_id: input.actorUserId,
-        total_rows: encryptedRows.length,
+        total_rows: stagedData.length,
         processed_rows: 0,
         successful_rows: 0,
-        failed_rows: encryptedRows.filter((row) => row.status === MasterImportJobRowStatus.INVALID).length,
+        failed_rows: invalidRowCount,
       },
     });
     if (updated.count !== 1) {
@@ -853,8 +861,8 @@ export async function stageMasterImportJob(input: {
       entityType: "MasterImportJob",
       entityId: input.jobId,
       details: {
-        rowCount: encryptedRows.length,
-        invalidRowCount: countsForStagedRows(encryptedRows),
+        rowCount: stagedData.length,
+        invalidRowCount,
       },
     }, transaction);
     return savedJob;
@@ -866,16 +874,67 @@ export async function stageMasterImportJob(input: {
   return { job: publicJob(result) };
 }
 
-function countsForStagedRows(rows: Array<{ status: MasterImportJobRowStatus }>) {
-  return rows.filter((row) => row.status === MasterImportJobRowStatus.INVALID).length;
-}
-
 type ImportValidationError = { message: string; fieldPaths: string[] };
 type StagedPayload = {
   payload: Record<string, unknown>;
   validationErrors: ImportValidationError[];
   checkpoint?: string;
 };
+
+async function updateValidatedImportRowsInBulk(
+  transaction: Prisma.TransactionClient,
+  input: { organizationId: string; jobId: string; actorUserId: string },
+  rows: Array<{
+    row: { row_number: number; status: MasterImportJobRowStatus };
+    validation: { validationErrors: ImportValidationError[] };
+    encryptedPayload: Uint8Array<ArrayBuffer>;
+    groupingError: boolean;
+  }>,
+) {
+  for (let offset = 0; offset < rows.length; offset += MASTER_IMPORT_VALIDATION_WRITE_BATCH_SIZE) {
+    const batch = rows.slice(offset, offset + MASTER_IMPORT_VALIDATION_WRITE_BATCH_SIZE);
+    const values = batch.map(({ row, validation, encryptedPayload, groupingError }) => {
+      const invalid = validation.validationErrors.length > 0;
+      const status = invalid ? MasterImportJobRowStatus.INVALID : MasterImportJobRowStatus.VALIDATED;
+      const checkpoint = groupingError
+        ? "ARTICLE_MATRIX_CONFLICT"
+        : invalid ? "VALIDATION_FAILED" : "VALIDATED";
+      return Prisma.sql`(
+        ${row.row_number},
+        ${row.status}::"MasterImportJobRowStatus",
+        ${status}::"MasterImportJobRowStatus",
+        ${checkpoint},
+        ${encryptedPayload},
+        ${input.actorUserId}
+      )`;
+    });
+    const updatedCount = await transaction.$executeRaw(Prisma.sql`
+      UPDATE "master_import_job_rows" AS target
+      SET
+        "status" = batch."next_status",
+        "plan_number" = NULL,
+        "checkpoint" = batch."checkpoint",
+        "encrypted_payload" = batch."encrypted_payload",
+        "updated_by_user_id" = batch."updated_by_user_id",
+        "updated_at" = CURRENT_TIMESTAMP
+      FROM (VALUES ${Prisma.join(values)}) AS batch(
+        "row_number",
+        "expected_status",
+        "next_status",
+        "checkpoint",
+        "encrypted_payload",
+        "updated_by_user_id"
+      )
+      WHERE target."organization_id" = ${input.organizationId}
+        AND target."job_id" = ${input.jobId}
+        AND target."row_number" = batch."row_number"
+        AND target."status" = batch."expected_status"
+    `);
+    if (updatedCount !== batch.length) {
+      throw new MasterImportServiceError("Import rows changed during validation; reload and try again.", 409);
+    }
+  }
+}
 
 async function parseGenericMasterRows(file: File, moduleKey: string): Promise<StagedPayload[]> {
   const definition = getMasterDefinition(moduleKey);
@@ -1110,6 +1169,25 @@ type ArticleImportLookup = {
   legacy_metadata: unknown;
 };
 
+type ArticleImportSizeGroup = ArticleImportLookup & {
+  size_group: string;
+  brand_id: string;
+};
+
+type ArticleImportSupportingMasterIndex = {
+  dummyBatchId: string | null;
+  brands: Map<string, ArticleImportLookup & { brand: string }>;
+  products: Map<string, ArticleImportLookup & { product_master_name: string }>;
+  categories: Map<string, ArticleImportLookup & { category_name: string; product_master_id: string | null }>;
+  subcategories: Map<string, ArticleImportLookup & { sub_category: string; category_id: string | null }>;
+  colors: Map<string, ArticleImportLookup & { colors: string }>;
+  sizes: Map<string, ArticleImportLookup & { size: string }>;
+  sizeGroups: Map<string, ArticleImportSizeGroup>;
+  existingSizeGroupNames: Set<string>;
+  sizeGroupSizeLabelsByGroupId: Map<string, Set<string>>;
+  knownMissingSizeGroupNames: Set<string>;
+};
+
 type ArticleImportMasterSuggestion = {
   moduleKey: string;
   label: string;
@@ -1121,20 +1199,203 @@ type ArticleImportDependencyError = ImportValidationError & {
   relatedMasters?: ArticleImportMasterSuggestion[];
 };
 
+function normalizedArticleMasterLabel(value: string) {
+  return value.trim().toLocaleLowerCase();
+}
+
+function addArticleMasterLabels(target: Set<string>, value: unknown) {
+  if (typeof value === "string" && value.trim()) target.add(value.trim());
+}
+
+async function loadArticleImportSupportingMasterIndex(
+  organizationId: string,
+  payloads: unknown[],
+): Promise<ArticleImportSupportingMasterIndex> {
+  const labels = {
+    brands: new Set<string>(),
+    products: new Set<string>(),
+    categories: new Set<string>(),
+    subcategories: new Set<string>(),
+    colors: new Set<string>(),
+    sizes: new Set<string>(),
+    sizeGroups: new Set<string>(),
+  };
+  for (const payload of payloads) {
+    if (!isRecord(payload) || !isRecord(payload.fields)) continue;
+    addArticleMasterLabels(labels.brands, payload.fields.Brand);
+    addArticleMasterLabels(labels.products, payload.fields.Product_Master);
+    addArticleMasterLabels(labels.categories, payload.fields.Category);
+    addArticleMasterLabels(labels.subcategories, payload.fields.Subcategory);
+    addArticleMasterLabels(labels.sizeGroups, payload.fields.Size_Group);
+    if (Array.isArray(payload.fields.Sizes)) {
+      for (const size of payload.fields.Sizes) addArticleMasterLabels(labels.sizes, size);
+    }
+    if (isRecord(payload.childRows) && Array.isArray(payload.childRows.variants)) {
+      for (const variant of payload.childRows.variants) {
+        if (isRecord(variant)) addArticleMasterLabels(labels.colors, variant.color);
+      }
+    }
+  }
+
+  const [dummyBatch, brands, products, categories, subcategories, colors, sizes] = await Promise.all([
+    prisma.organizationDummyDataBatch.findFirst({
+      where: { organization_id: organizationId, status: "ACTIVE" },
+      select: { id: true },
+    }),
+    labels.brands.size
+      ? prisma.masterBrand.findMany({
+          where: {
+            organization_id: organizationId,
+            OR: [...labels.brands].map((brand) => ({ brand: { equals: brand, mode: "insensitive" as const } })),
+          },
+          select: { id: true, brand: true, is_active: true, legacy_metadata: true },
+        })
+      : Promise.resolve([]),
+    labels.products.size
+      ? prisma.masterProduct.findMany({
+          where: {
+            organization_id: organizationId,
+            OR: [...labels.products].map((product) => ({
+              product_master_name: { equals: product, mode: "insensitive" as const },
+            })),
+          },
+          select: { id: true, product_master_name: true, is_active: true, legacy_metadata: true },
+        })
+      : Promise.resolve([]),
+    labels.categories.size
+      ? prisma.masterCategory.findMany({
+          where: {
+            organization_id: organizationId,
+            OR: [...labels.categories].map((category) => ({
+              category_name: { equals: category, mode: "insensitive" as const },
+            })),
+          },
+          select: {
+            id: true,
+            category_name: true,
+            product_master_id: true,
+            is_active: true,
+            legacy_metadata: true,
+          },
+        })
+      : Promise.resolve([]),
+    labels.subcategories.size
+      ? prisma.masterSubCategory.findMany({
+          where: {
+            organization_id: organizationId,
+            OR: [...labels.subcategories].map((subcategory) => ({
+              sub_category: { equals: subcategory, mode: "insensitive" as const },
+            })),
+          },
+          select: {
+            id: true,
+            sub_category: true,
+            category_id: true,
+            is_active: true,
+            legacy_metadata: true,
+          },
+        })
+      : Promise.resolve([]),
+    labels.colors.size
+      ? prisma.masterColor.findMany({
+          where: {
+            organization_id: organizationId,
+            OR: [...labels.colors].map((color) => ({ colors: { equals: color, mode: "insensitive" as const } })),
+          },
+          select: { id: true, colors: true, is_active: true, legacy_metadata: true },
+        })
+      : Promise.resolve([]),
+    labels.sizes.size
+      ? prisma.masterSize.findMany({
+          where: {
+            organization_id: organizationId,
+            OR: [...labels.sizes].map((size) => ({ size: { equals: size, mode: "insensitive" as const } })),
+          },
+          select: { id: true, size: true, is_active: true, legacy_metadata: true },
+        })
+      : Promise.resolve([]),
+  ]);
+  const sizeGroupFilters = [
+    ...[...labels.sizeGroups].map((sizeGroup) => ({
+      size_group: { equals: sizeGroup, mode: "insensitive" as const },
+    })),
+    ...(brands.length > 0 ? [{ brand_id: { in: brands.map((brand) => brand.id) } }] : []),
+  ];
+  const sizeGroups = sizeGroupFilters.length > 0
+    ? await prisma.masterSizeGroup.findMany({
+        where: { organization_id: organizationId, OR: sizeGroupFilters },
+        select: {
+          id: true,
+          size_group: true,
+          brand_id: true,
+          is_active: true,
+          legacy_metadata: true,
+        },
+      })
+    : [];
+  const sizeGroupIds = [...new Set(sizeGroups.map((group) => group.id))];
+  const sizeGroupSizeLinks = sizeGroupIds.length > 0
+    ? await prisma.masterSizeGroupSize.findMany({
+        where: {
+          organization_id: organizationId,
+          size_group_id: { in: sizeGroupIds },
+        },
+        select: {
+          size_group_id: true,
+          size: { select: { organization_id: true, size: true } },
+        },
+      })
+      : [];
+  const sizeGroupSizeLabelsByGroupId = new Map<string, Set<string>>();
+  for (const link of sizeGroupSizeLinks) {
+      if (link.size.organization_id !== organizationId) continue;
+      const labels = sizeGroupSizeLabelsByGroupId.get(link.size_group_id) ?? new Set<string>();
+      labels.add(normalizedArticleMasterLabel(link.size.size));
+      sizeGroupSizeLabelsByGroupId.set(link.size_group_id, labels);
+  }
+
+  const indexByLabel = <T extends { [key: string]: unknown }>(
+    records: T[],
+    key: keyof T,
+  ) => {
+    const index = new Map<string, T>();
+    for (const record of records) {
+      const label = normalizedArticleMasterLabel(String(record[key] ?? ""));
+      if (!index.has(label)) index.set(label, record);
+    }
+    return index;
+  };
+  return {
+    dummyBatchId: dummyBatch?.id ?? null,
+    brands: indexByLabel(brands, "brand"),
+    products: indexByLabel(products, "product_master_name"),
+    categories: indexByLabel(categories, "category_name"),
+    subcategories: indexByLabel(subcategories, "sub_category"),
+    colors: indexByLabel(colors, "colors"),
+    sizes: indexByLabel(sizes, "size"),
+    sizeGroups: indexByLabel(sizeGroups, "size_group"),
+    existingSizeGroupNames: new Set(sizeGroups.map((group) => normalizedArticleMasterLabel(group.size_group))),
+    sizeGroupSizeLabelsByGroupId,
+    knownMissingSizeGroupNames: new Set(),
+  };
+}
+
 export async function validateArticleImportSupportingMasters(
   database: Prisma.TransactionClient | typeof prisma,
   organizationId: string,
   fields: Record<string, unknown>,
   childRows: Record<string, unknown>,
+  supportingIndex?: ArticleImportSupportingMasterIndex,
 ) {
   const transaction = database as Prisma.TransactionClient;
   const errors: ArticleImportDependencyError[] = [];
   const suggestions: ArticleImportMasterSuggestion[] = [];
-  const dummyBatch = await transaction.organizationDummyDataBatch.findFirst({
-    where: { organization_id: organizationId, status: "ACTIVE" },
-    select: { id: true },
-  });
-  const dummyBatchId = dummyBatch?.id ?? null;
+  const dummyBatchId = supportingIndex
+    ? supportingIndex.dummyBatchId
+    : (await transaction.organizationDummyDataBatch.findFirst({
+        where: { organization_id: organizationId, status: "ACTIVE" },
+        select: { id: true },
+      }))?.id ?? null;
   const findBrand = async (label: string) => transaction.masterBrand.findFirst({
     where: { organization_id: organizationId, brand: { equals: label, mode: "insensitive" } },
     select: { id: true, brand: true, is_active: true, legacy_metadata: true },
@@ -1178,7 +1439,11 @@ export async function validateArticleImportSupportingMasters(
   };
 
   const brandLabel = String(fields.Brand ?? "").trim();
-  const brand = brandLabel ? await findBrand(brandLabel) : null;
+  const brand = brandLabel
+    ? supportingIndex
+      ? supportingIndex.brands.get(normalizedArticleMasterLabel(brandLabel)) ?? null
+      : await findBrand(brandLabel)
+    : null;
   if (brandLabel && !brand) {
     addSuggestion(
       { moduleKey: "brand", label: brandLabel, fields: { Brand: brandLabel } },
@@ -1189,7 +1454,11 @@ export async function validateArticleImportSupportingMasters(
   } else if (brandLabel && !isUsable(brand, brandLabel, "Brand")) return { errors, suggestions };
 
   const productLabel = String(fields.Product_Master ?? "").trim();
-  const product = productLabel ? await findProduct(productLabel) : null;
+  const product = productLabel
+    ? supportingIndex
+      ? supportingIndex.products.get(normalizedArticleMasterLabel(productLabel)) ?? null
+      : await findProduct(productLabel)
+    : null;
   if (productLabel && !product) {
     addSuggestion(
       { moduleKey: "product-master", label: productLabel, fields: { Product_Master_name: productLabel } },
@@ -1200,7 +1469,11 @@ export async function validateArticleImportSupportingMasters(
   } else if (productLabel && !isUsable(product, productLabel, "Finished Goods Type")) return { errors, suggestions };
 
   const categoryLabel = String(fields.Category ?? "").trim();
-  const category = categoryLabel ? await findCategory(categoryLabel) : null;
+  const category = categoryLabel
+    ? supportingIndex
+      ? supportingIndex.categories.get(normalizedArticleMasterLabel(categoryLabel)) ?? null
+      : await findCategory(categoryLabel)
+    : null;
   if (categoryLabel && !category) {
     if (productLabel) {
       addSuggestion(
@@ -1226,7 +1499,11 @@ export async function validateArticleImportSupportingMasters(
   }
 
   const subcategoryLabel = String(fields.Subcategory ?? "").trim();
-  const subcategory = subcategoryLabel ? await findSubcategory(subcategoryLabel) : null;
+  const subcategory = subcategoryLabel
+    ? supportingIndex
+      ? supportingIndex.subcategories.get(normalizedArticleMasterLabel(subcategoryLabel)) ?? null
+      : await findSubcategory(subcategoryLabel)
+    : null;
   if (subcategoryLabel && !subcategory) {
     if (categoryLabel) {
       addSuggestion(
@@ -1258,10 +1535,12 @@ export async function validateArticleImportSupportingMasters(
     const key = colorLabel.toLocaleLowerCase();
     if (!colorLabel || seenColors.has(key)) continue;
     seenColors.add(key);
-    const color = await transaction.masterColor.findFirst({
-      where: { organization_id: organizationId, colors: { equals: colorLabel, mode: "insensitive" } },
-      select: { id: true, colors: true, is_active: true, legacy_metadata: true },
-    });
+    const color = supportingIndex
+      ? supportingIndex.colors.get(normalizedArticleMasterLabel(colorLabel)) ?? null
+      : await transaction.masterColor.findFirst({
+          where: { organization_id: organizationId, colors: { equals: colorLabel, mode: "insensitive" } },
+          select: { id: true, colors: true, is_active: true, legacy_metadata: true },
+        });
     if (!color) {
       addSuggestion(
         { moduleKey: "color", label: colorLabel, fields: { Colors: colorLabel } },
@@ -1278,10 +1557,12 @@ export async function validateArticleImportSupportingMasters(
     : [];
   const sizes: Array<{ id: string; size: string; is_active: boolean; legacy_metadata: unknown }> = [];
   for (const sizeLabel of sizeLabels) {
-    const size = await transaction.masterSize.findFirst({
-      where: { organization_id: organizationId, size: { equals: sizeLabel, mode: "insensitive" } },
-      select: { id: true, size: true, is_active: true, legacy_metadata: true },
-    });
+    const size = supportingIndex
+      ? supportingIndex.sizes.get(normalizedArticleMasterLabel(sizeLabel)) ?? null
+      : await transaction.masterSize.findFirst({
+          where: { organization_id: organizationId, size: { equals: sizeLabel, mode: "insensitive" } },
+          select: { id: true, size: true, is_active: true, legacy_metadata: true },
+        });
     if (!size) {
       addSuggestion(
         { moduleKey: "size", label: sizeLabel, fields: { Size: sizeLabel } },
@@ -1296,34 +1577,84 @@ export async function validateArticleImportSupportingMasters(
   const requestedGroupLabel = String(fields.Size_Group ?? "").trim();
   if (sizeLabels.length > 0) {
     const requestedGroup = requestedGroupLabel
-      ? await transaction.masterSizeGroup.findFirst({
-          where: { organization_id: organizationId, size_group: { equals: requestedGroupLabel, mode: "insensitive" } },
-          select: { id: true, size_group: true, brand_id: true, is_active: true, legacy_metadata: true },
-        })
+      ? supportingIndex
+        ? supportingIndex.sizeGroups.get(normalizedArticleMasterLabel(requestedGroupLabel)) ?? null
+        : await transaction.masterSizeGroup.findFirst({
+            where: { organization_id: organizationId, size_group: { equals: requestedGroupLabel, mode: "insensitive" } },
+            select: { id: true, size_group: true, brand_id: true, is_active: true, legacy_metadata: true },
+          })
       : null;
-    const requestedGroupIsUsable = requestedGroup
-      ? isUsable(requestedGroup, requestedGroupLabel, "Size Group")
-      : false;
-    if (requestedGroup && !requestedGroupIsUsable) return { errors, suggestions };
-    let groupIsComplete = Boolean(requestedGroup && requestedGroupIsUsable
-      && brand && requestedGroup.brand_id === brand.id);
-    if (requestedGroup && brand && requestedGroup.brand_id !== brand.id) {
-      errors.push({ message: `Size Group "${requestedGroupLabel}" is assigned to a different Brand than "${brandLabel}".`, fieldPaths: ["Brand", "Size_Group"] });
-      return { errors, suggestions };
+    const requiredSizeLabels = new Set(sizeLabels.map(normalizedArticleMasterLabel));
+    let groupsForBrand: ArticleImportSizeGroup[] = [];
+    if (brand) {
+      groupsForBrand = supportingIndex
+        ? [...supportingIndex.sizeGroups.values()].filter((group) => group.brand_id === brand.id)
+        : await transaction.masterSizeGroup.findMany({
+            where: { organization_id: organizationId, brand_id: brand.id },
+            select: { id: true, size_group: true, brand_id: true, is_active: true, legacy_metadata: true },
+          });
     }
-    if (requestedGroup && sizes.length === sizeLabels.length && groupIsComplete) {
-      const links = await transaction.masterSizeGroupSize.findMany({
+    const groupIsSelectable = (group: ArticleImportSizeGroup) => group.is_active
+      && !(dummyBatchId && isRecord(group.legacy_metadata)
+        && group.legacy_metadata.dummyDataBatchId === dummyBatchId);
+    const groupHasExactSizes = (group: ArticleImportSizeGroup, linkedSizeLabels: Set<string>) =>
+      linkedSizeLabels.size === requiredSizeLabels.size
+      && [...requiredSizeLabels].every((size) => linkedSizeLabels.has(size));
+    let exactGroups: ArticleImportSizeGroup[] = [];
+    if (supportingIndex) {
+      const hasExactSizes = (group: ArticleImportSizeGroup) => groupHasExactSizes(
+        group,
+        supportingIndex.sizeGroupSizeLabelsByGroupId.get(group.id) ?? new Set<string>(),
+      );
+      exactGroups = groupsForBrand.filter(hasExactSizes);
+    } else if (groupsForBrand.length > 0) {
+      const allGroupLinks = await transaction.masterSizeGroupSize.findMany({
         where: {
           organization_id: organizationId,
-          size_group_id: requestedGroup.id,
-          size_id: { in: sizes.map((size) => size.id) },
+          size_group_id: { in: groupsForBrand.map((group) => group.id) },
         },
-        select: { size_id: true },
+        select: {
+          size_group_id: true,
+          size: { select: { organization_id: true, size: true } },
+        },
       });
-      const linkedSizeIds = new Set(links.map((link) => link.size_id));
-      groupIsComplete = sizes.every((size) => linkedSizeIds.has(size.id));
+      const linksByGroupId = new Map<string, Set<string>>();
+      for (const link of allGroupLinks) {
+        if (link.size.organization_id !== organizationId) continue;
+        const linkedSizeLabels = linksByGroupId.get(link.size_group_id) ?? new Set<string>();
+        linkedSizeLabels.add(normalizedArticleMasterLabel(link.size.size));
+        linksByGroupId.set(link.size_group_id, linkedSizeLabels);
+      }
+      const hasExactSizes = (group: ArticleImportSizeGroup) => groupHasExactSizes(
+        group,
+        linksByGroupId.get(group.id) ?? new Set<string>(),
+      );
+      exactGroups = groupsForBrand.filter(hasExactSizes);
     }
-    if (!requestedGroup || !groupIsComplete) {
+    const requestedExactGroup = requestedGroup
+      && requestedGroup.brand_id === brand?.id
+      && exactGroups.some((group) => group.id === requestedGroup.id)
+      ? requestedGroup
+      : null;
+    const matchingGroup = requestedExactGroup && groupIsSelectable(requestedExactGroup)
+      ? requestedExactGroup
+      : exactGroups.find(groupIsSelectable) ?? null;
+    if (matchingGroup) {
+      fields.Size_Group = matchingGroup.size_group;
+      return { errors, suggestions };
+    }
+    const unavailableExactGroup = requestedExactGroup ?? exactGroups[0];
+    if (unavailableExactGroup) {
+      isUsable(unavailableExactGroup, unavailableExactGroup.size_group, "Size Group");
+      return { errors, suggestions };
+    }
+    if (requestedGroup
+      && requestedGroup.brand_id === brand?.id
+      && !groupIsSelectable(requestedGroup)) {
+      isUsable(requestedGroup, requestedGroupLabel, "Size Group");
+      return { errors, suggestions };
+    }
+    {
       const sizeNames = sizes.length === sizeLabels.length ? sizes.map((size) => size.size) : sizeLabels;
       const candidatePrefix = requestedGroupLabel && !requestedGroupLabel.includes(",")
         ? requestedGroupLabel
@@ -1335,10 +1666,24 @@ export async function validateArticleImportSupportingMasters(
           : `${brandLabel} ${sizeNames.join("-")}`.trim();
       if (!suggestedLabel) suggestedLabel = `SIZE GROUP ${sizeNames.join("-")}`;
       let suffix = 2;
-      while (await transaction.masterSizeGroup.findFirst({
-        where: { organization_id: organizationId, size_group: { equals: suggestedLabel, mode: "insensitive" } },
-        select: { id: true },
-      })) {
+      while (await (async () => {
+        if (!supportingIndex) {
+          return Boolean(await transaction.masterSizeGroup.findFirst({
+            where: { organization_id: organizationId, size_group: { equals: suggestedLabel, mode: "insensitive" } },
+            select: { id: true },
+          }));
+        }
+        const key = normalizedArticleMasterLabel(suggestedLabel);
+        if (supportingIndex.existingSizeGroupNames.has(key)) return true;
+        if (supportingIndex.knownMissingSizeGroupNames.has(key)) return false;
+        const existing = await transaction.masterSizeGroup.findFirst({
+          where: { organization_id: organizationId, size_group: { equals: suggestedLabel, mode: "insensitive" } },
+          select: { id: true },
+        });
+        if (existing) supportingIndex.existingSizeGroupNames.add(key);
+        else supportingIndex.knownMissingSizeGroupNames.add(key);
+        return Boolean(existing);
+      })()) {
         suggestedLabel = `${candidatePrefix || `SIZE GROUP ${sizeNames.join("-")}`} ${suffix++}`;
       }
       const groupSuggestion: ArticleImportMasterSuggestion = {
@@ -1366,6 +1711,7 @@ async function validateImportPayloadForOrganization(
   moduleKey: string,
   value: unknown,
   lookupIndex?: ActiveMasterLookupIndex,
+  articleSupportingIndex?: ArticleImportSupportingMasterIndex,
 ) {
   const validation = validateImportPayload(moduleKey, value);
   if (moduleKey === "contact") return validation;
@@ -1467,6 +1813,7 @@ async function validateImportPayloadForOrganization(
       organizationId,
       fields,
       isRecord(validation.payload.childRows) ? validation.payload.childRows : {},
+      articleSupportingIndex,
     );
     errors.push(...dependencyValidation.errors);
   }
@@ -1516,6 +1863,31 @@ export async function getMasterImportCommitLookupIndex(
   );
 }
 
+export async function getMasterImportValidationContext(
+  organizationId: string,
+  jobId: string,
+): Promise<{ moduleKey: string; lookupIndex?: ActiveMasterLookupIndex }> {
+  const job = await prisma.masterImportJob.findFirst({
+    where: { organization_id: organizationId, id: jobId },
+    select: { module_key: true, expires_at: true },
+  });
+  if (!job) throw new MasterImportServiceError("Import job not found.", 404);
+  if (job.expires_at <= new Date()) throw new MasterImportServiceError("Import job has expired.", 410);
+  if (job.module_key === "contact" || job.module_key === "article") {
+    return { moduleKey: job.module_key };
+  }
+
+  const definition = getMasterDefinition(job.module_key);
+  if (!definition) return { moduleKey: job.module_key };
+  return {
+    moduleKey: job.module_key,
+    lookupIndex: await loadActiveMasterLookupIndex(
+      organizationId,
+      getImportLookupModuleKeys(definition.fields),
+    ),
+  };
+}
+
 export async function validateMasterImportJob(input: {
   organizationId: string;
   actorUserId: string;
@@ -1523,6 +1895,8 @@ export async function validateMasterImportJob(input: {
   rowNumbers?: number[];
   rowNumber?: number;
   take?: number;
+  lookupIndex?: ActiveMasterLookupIndex;
+  runProgress?: { runId: string; expectedProgress: number };
 }) {
   const selectionCount = [input.rowNumber, input.rowNumbers, input.take]
     .filter((selection) => selection !== undefined).length;
@@ -1695,12 +2069,15 @@ export async function validateMasterImportJob(input: {
     candidates = [...groupedCandidates, ...selectedRowsWithoutArticle];
   }
   const importDefinition = getMasterDefinition(job.module_key);
-  const lookupIndex = candidates.length === 0 || job.module_key === "contact" || !importDefinition
+  const lookupIndex = input.lookupIndex ?? (candidates.length === 0
+    || job.module_key === "contact"
+    || job.module_key === "article"
+    || !importDefinition
     ? new Map<string, Map<string, ActiveMasterLookupRecord[]>>()
     : await loadActiveMasterLookupIndex(
         input.organizationId,
         getImportLookupModuleKeys(importDefinition.fields),
-      );
+      ));
   const validationResults: Array<{
     row: (typeof selectedRows)[number];
     validation: Awaited<ReturnType<typeof validateImportPayloadForOrganization>>;
@@ -1709,6 +2086,12 @@ export async function validateMasterImportJob(input: {
     groupingError: boolean;
   }> = [];
   const auditEvents: Prisma.AuditEventCreateManyInput[] = [];
+  const articleSupportingIndex = job.module_key === "article" && candidates.length > 0
+    ? await loadArticleImportSupportingMasterIndex(
+        input.organizationId,
+        candidates.map(({ payload }) => payload),
+      )
+    : undefined;
   for (const candidate of candidates) {
     const validation = candidate.groupingError
       ? {
@@ -1721,6 +2104,7 @@ export async function validateMasterImportJob(input: {
           job.module_key,
           candidate.payload,
           lookupIndex,
+          articleSupportingIndex,
         );
     const encryptedPayload = new Uint8Array(Buffer.from(encryptSecret(JSON.stringify({
       ...validation.payload,
@@ -1734,6 +2118,7 @@ export async function validateMasterImportJob(input: {
       groupingError: Boolean(candidate.groupingError),
     });
   }
+  const useBulkRowUpdates = validationResults.length > MASTER_IMPORT_VALIDATION_BULK_WRITE_THRESHOLD;
 
   const result = await prisma.$transaction(async (transaction) => {
     for (const { row, validation, encryptedPayload, rowsToDelete, groupingError } of validationResults) {
@@ -1766,27 +2151,29 @@ export async function validateMasterImportJob(input: {
           });
         }
       }
-      const updated = await transaction.masterImportJobRow.updateMany({
-        where: {
-          organization_id: input.organizationId,
-          job_id: input.jobId,
-          row_number: row.row_number,
-          status: row.status,
-        },
-        data: {
-          status: validation.validationErrors.length
-            ? MasterImportJobRowStatus.INVALID
-            : MasterImportJobRowStatus.VALIDATED,
-          plan_number: null,
-          checkpoint: groupingError
-            ? "ARTICLE_MATRIX_CONFLICT"
-            : validation.validationErrors.length ? "VALIDATION_FAILED" : "VALIDATED",
-          encrypted_payload: encryptedPayload,
-          updated_by_user_id: input.actorUserId,
-        },
-      });
-      if (updated.count !== 1) {
-        throw new MasterImportServiceError("Import row changed during validation; reload and retry.", 409);
+      if (!useBulkRowUpdates) {
+        const updated = await transaction.masterImportJobRow.updateMany({
+          where: {
+            organization_id: input.organizationId,
+            job_id: input.jobId,
+            row_number: row.row_number,
+            status: row.status,
+          },
+          data: {
+            status: validation.validationErrors.length
+              ? MasterImportJobRowStatus.INVALID
+              : MasterImportJobRowStatus.VALIDATED,
+            plan_number: null,
+            checkpoint: groupingError
+              ? "ARTICLE_MATRIX_CONFLICT"
+              : validation.validationErrors.length ? "VALIDATION_FAILED" : "VALIDATED",
+            encrypted_payload: encryptedPayload,
+            updated_by_user_id: input.actorUserId,
+          },
+        });
+        if (updated.count !== 1) {
+          throw new MasterImportServiceError("Import row changed during validation; reload and try again.", 409);
+        }
       }
       auditEvents.push({
         organization_id: input.organizationId,
@@ -1804,6 +2191,9 @@ export async function validateMasterImportJob(input: {
           fieldPaths: validation.validationErrors.flatMap((error) => error.fieldPaths),
         },
       });
+    }
+    if (useBulkRowUpdates) {
+      await updateValidatedImportRowsInBulk(transaction, input, validationResults);
     }
     if (auditEvents.length > 0) {
       await transaction.auditEvent.createMany({ data: auditEvents });
@@ -1857,6 +2247,25 @@ export async function validateMasterImportJob(input: {
       entityId: input.jobId,
       details: { status, failedRows: counts.failed_rows },
     }, transaction);
+    if (input.runProgress) {
+      const checkpoint = await transaction.masterImportRun.updateMany({
+        where: {
+          organization_id: input.organizationId,
+          job_id: input.jobId,
+          id: input.runProgress.runId,
+          status: "RUNNING",
+          progress: input.runProgress.expectedProgress,
+        },
+        data: {
+          progress: { increment: selectedRows.length },
+          lease_expires_at: new Date(Date.now() + MASTER_IMPORT_RUN_LEASE_SECONDS * 1_000),
+          updated_at: new Date(),
+        },
+      });
+      if (checkpoint.count !== 1) {
+        throw new MasterImportServiceError("Validation progress changed; retry the background operation.", 409);
+      }
+    }
     return { savedJob, counts };
   }, {
     maxWait: MASTER_IMPORT_STAGING_TRANSACTION_MAX_WAIT_MS,
@@ -2722,18 +3131,87 @@ export async function transitionMasterImportJob(input: {
   return publicJob(job);
 }
 
+function getValidationErrorFingerprint(value: unknown): string {
+  if (!isRecord(value) || !Array.isArray(value.validationErrors)) return "";
+  const normalized = value.validationErrors
+    .map((error) => {
+      if (!isRecord(error) || typeof error.message !== "string") return "";
+      const fieldPaths = Array.isArray(error.fieldPaths)
+        ? error.fieldPaths
+            .filter((path): path is string => typeof path === "string")
+            .map((path) => path.trim())
+            .filter(Boolean)
+            .sort()
+        : [];
+      return JSON.stringify({
+        message: error.message.trim(),
+        fieldPaths,
+      });
+    })
+    .filter(Boolean)
+    .sort()
+    .join("||");
+  return normalized;
+}
+
+async function findMatchingValidationRowsForRevalidation(
+  organizationId: string,
+  jobId: string,
+  rowNumber: number,
+  previousPayload: unknown,
+) {
+  const fingerprint = getValidationErrorFingerprint(previousPayload);
+  if (!fingerprint) return [] as Array<{ rowNumber: number; payload: unknown }>;
+
+  const rows = await prisma.masterImportJobRow.findMany({
+    where: {
+      organization_id: organizationId,
+      job_id: jobId,
+      status: { in: [MasterImportJobRowStatus.INVALID, MasterImportJobRowStatus.FAILED] },
+      row_number: { not: rowNumber },
+    },
+    select: {
+      row_number: true,
+      encrypted_payload: true,
+    },
+  });
+
+  const matchingRows = rows.flatMap((row): Array<{ rowNumber: number; payload: unknown }> => {
+      try {
+        const payload = JSON.parse(decryptSecret(Buffer.from(row.encrypted_payload).toString("utf8"))) as unknown;
+        return getValidationErrorFingerprint(payload) === fingerprint
+          ? [{ rowNumber: row.row_number, payload }]
+          : [];
+      } catch {
+        return [];
+      }
+    });
+  return [...new Map(matchingRows.map((row) => [row.rowNumber, row])).values()];
+}
+
 export async function saveMasterImportRow(input: {
   organizationId: string;
   actorUserId: string;
   jobId: string;
   rowNumber: number;
   payload: unknown;
+  deferMatchingRevalidation?: boolean;
+  relatedSizeGroupUpdate?: { name: string; sizes: string[] };
 }) {
   if (!Number.isSafeInteger(input.rowNumber) || input.rowNumber < 1) {
     throw new MasterImportServiceError("Row number must be a positive integer.", 400);
   }
   if (!isRecord(input.payload)) {
     throw new MasterImportServiceError("Import row correction is invalid.", 400);
+  }
+  if (input.relatedSizeGroupUpdate
+    && (!input.deferMatchingRevalidation
+      || typeof input.relatedSizeGroupUpdate.name !== "string"
+      || !input.relatedSizeGroupUpdate.name.trim()
+      || !Array.isArray(input.relatedSizeGroupUpdate.sizes)
+      || input.relatedSizeGroupUpdate.sizes.length === 0
+      || input.relatedSizeGroupUpdate.sizes.some((size) => typeof size !== "string" || !size.trim()))) {
+    throw new MasterImportServiceError("Related Size Group correction is invalid.", 400);
   }
   const correctedPayload = { ...input.payload };
   delete correctedPayload.validationErrors;
@@ -2824,6 +3302,7 @@ export async function saveMasterImportRow(input: {
     throw new MasterImportServiceError("Import row data exceeds the permitted size.", 413);
   }
   const encryptedPayload = Buffer.from(encryptSecret(serializedPayload), "utf8");
+  let previousPayload: unknown;
 
   const row = await prisma.$transaction(async (transaction) => {
     const job = await transaction.masterImportJob.findFirst({
@@ -2847,7 +3326,6 @@ export async function saveMasterImportRow(input: {
     if (existing.status === "IMPORTED" || existing.status === "SKIPPED") {
       throw new MasterImportServiceError("Imported or skipped rows cannot be corrected.", 409);
     }
-    let previousPayload: unknown;
     try {
       previousPayload = JSON.parse(decryptSecret(Buffer.from(existing.encrypted_payload).toString("utf8"))) as unknown;
     } catch {
@@ -2915,11 +3393,63 @@ export async function saveMasterImportRow(input: {
     return savedRow;
   });
 
+  const relatedRowsToRevalidate = await findMatchingValidationRowsForRevalidation(
+    input.organizationId,
+    input.jobId,
+    input.rowNumber,
+    previousPayload,
+  );
+  if (input.relatedSizeGroupUpdate && relatedRowsToRevalidate.length > 0) {
+    if (jobForNormalization.module_key !== "article") {
+      throw new MasterImportServiceError("Related Size Group corrections are only valid for Article imports.", 400);
+    }
+    if (relatedRowsToRevalidate.length + 1 > MASTER_IMPORT_VALIDATION_BATCH_SIZE) {
+      throw new MasterImportServiceError(
+        `More than ${MASTER_IMPORT_VALIDATION_BATCH_SIZE.toLocaleString()} matching rows require validation. Correct this group in smaller batches.`,
+        400,
+      );
+    }
+    for (const relatedRow of relatedRowsToRevalidate) {
+      if (!isRecord(relatedRow.payload) || !isRecord(relatedRow.payload.fields)) {
+        throw new MasterImportServiceError(`Related import row ${relatedRow.rowNumber} is invalid.`, 503);
+      }
+      await saveMasterImportRow({
+        organizationId: input.organizationId,
+        actorUserId: input.actorUserId,
+        jobId: input.jobId,
+        rowNumber: relatedRow.rowNumber,
+        payload: {
+          ...relatedRow.payload,
+          fields: {
+            ...relatedRow.payload.fields,
+            Size_Group: input.relatedSizeGroupUpdate.name,
+            Sizes: input.relatedSizeGroupUpdate.sizes,
+          },
+        },
+        deferMatchingRevalidation: true,
+      });
+    }
+  }
+  if (!input.deferMatchingRevalidation && relatedRowsToRevalidate.length > 0) {
+    await validateMasterImportJob({
+      organizationId: input.organizationId,
+      actorUserId: input.actorUserId,
+      jobId: input.jobId,
+      rowNumbers: [
+        input.rowNumber,
+        ...relatedRowsToRevalidate.map((row) => row.rowNumber),
+      ].sort((left, right) => left - right),
+    });
+  }
+
   return {
     rowNumber: row.row_number,
     status: row.status,
     checkpoint: row.checkpoint,
     updatedAt: row.updated_at,
+    ...(input.deferMatchingRevalidation
+      ? { relatedRowNumbers: relatedRowsToRevalidate.map((relatedRow) => relatedRow.rowNumber) }
+      : {}),
   };
 }
 
