@@ -1,6 +1,6 @@
 import XlsxPopulate, { type Sheet } from "xlsx-populate";
 
-import { getMasterValuesForOrganization } from "@/lib/master-data/master-data-constants";
+import { getActiveOrganizationDummyDataBatch, getMasterValuesForOrganization } from "@/lib/master-data/master-data-constants";
 
 const MAX_ORDER_ROWS = 500;
 const DELIVERY_DATE_COLUMN = 11;
@@ -110,11 +110,13 @@ export async function createBulkOrderTemplate(masterOptions: TemplateMasterOptio
 }
 
 export async function getOrganizationBulkOrderTemplate(organizationId: string) {
+  const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organizationId);
   const lookupValues = await Promise.all(ORDER_MASTER_COLUMNS.map(async ({ key }) => [
     key,
     await getMasterValuesForOrganization(organizationId, key, false, {
       limit: 500,
       includeDummyData: true,
+      activeDummyDataBatch,
     }),
   ] as const));
   return createBulkOrderTemplate(Object.fromEntries(lookupValues));

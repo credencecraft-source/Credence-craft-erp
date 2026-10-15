@@ -71,6 +71,7 @@ export async function GET(
     const entityId = moduleKey === "location" ? searchParams.get("entityId") || undefined : undefined;
     const search = searchParams.get("search") || undefined;
     const exactSearch = searchParams.get("exact") === "true";
+    const compactOrderLookups = searchParams.get("shape") === "compact";
     const requestedLimit = Number(searchParams.get("limit") || 100);
     const maximumLimit = moduleKey === "order-lookups" ? 500 : 200;
     const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), maximumLimit) : 100;
@@ -105,14 +106,21 @@ export async function GET(
       const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organization.id);
       const lookupValues = await Promise.all(
         lookupKeys.map(async (key) => {
+          let sizeLinksPromise: ReturnType<typeof getSizeGroupSizesForOrganization> | undefined;
           const values = await getMasterValuesForOrganization(organization.id, key, includeInactive, {
             limit,
             includeDummyData: true,
             activeDummyDataBatch,
+            ...(key === "size-group" ? {
+              onRowsFetched: (rowIds) => {
+                sizeLinksPromise = getSizeGroupSizesForOrganization(organization.id, rowIds, true);
+                return sizeLinksPromise.then(() => undefined);
+              },
+            } : {}),
             ...(requestedKeys?.length && key === "article" ? { includeArticleMetrics: false } : {}),
           });
-          const sizeLinks = key === "size-group" && values.length > 0
-            ? await getSizeGroupSizesForOrganization(organization.id, values.map((group) => group.id), true)
+          const sizeLinks = key === "size-group"
+            ? await sizeLinksPromise
             : undefined;
           return [key, values, sizeLinks] as const;
         }),
@@ -140,15 +148,22 @@ export async function GET(
       if (profile && lookupStartedAt !== undefined) {
         profile.lookupMs = performance.now() - lookupStartedAt;
       }
-      return respond({
+      const responseBody = {
         masterOptions: enrichedMasterOptions,
+        orderLookups: ORDER_LOOKUP_FIELDS,
+      };
+      if (compactOrderLookups) {
+        return respond(responseBody);
+      }
+
+      return respond({
+        ...responseBody,
         buyers,
         seasons,
         brands,
         articles,
         colors,
         sizeGroups,
-        orderLookups: ORDER_LOOKUP_FIELDS,
       });
     }
 
@@ -156,6 +171,7 @@ export async function GET(
     const activeDummyDataBatch = ["size-group", "process-template"].includes(moduleKey)
       ? getActiveOrganizationDummyDataBatch(organization.id)
       : undefined;
+    let sizeLinksPromise: ReturnType<typeof getSizeGroupSizesForOrganization> | undefined;
     const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, {
       search,
       limit,
@@ -163,14 +179,20 @@ export async function GET(
       includeDummyData,
       entityId,
       ...(activeDummyDataBatch ? { activeDummyDataBatch } : {}),
+      ...(moduleKey === "size-group" ? {
+        onRowsFetched: (rowIds) => {
+          sizeLinksPromise = getSizeGroupSizesForOrganization(
+            organization.id,
+            rowIds,
+            false,
+            activeDummyDataBatch,
+          );
+          return sizeLinksPromise.then(() => undefined);
+        },
+      } : {}),
     });
     if (moduleKey === "size-group") {
-      const sizeLinks = await getSizeGroupSizesForOrganization(
-        organization.id,
-        values.map((group) => group.id),
-        false,
-        activeDummyDataBatch,
-      );
+      const sizeLinks = sizeLinksPromise ? await sizeLinksPromise : [];
       const sizesByGroup = new Map<string, typeof sizeLinks[number][]>();
       for (const link of sizeLinks) {
         if (!includeInactive && !link.size.is_active) continue;

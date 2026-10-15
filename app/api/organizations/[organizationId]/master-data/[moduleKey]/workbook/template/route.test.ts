@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   requireOrganizationPermission: vi.fn(),
   getMasterDefinition: vi.fn(),
   getMasterValuesForOrganization: vi.fn(),
+  getActiveOrganizationDummyDataBatch: vi.fn(),
   getSizeGroupSizesForOrganization: vi.fn(),
   createWorkbook: vi.fn(),
 }));
@@ -18,6 +19,7 @@ vi.mock("@/lib/database/database-errors", () => ({
   isDatabaseUnavailableError: vi.fn(() => false),
 }));
 vi.mock("@/lib/master-data/master-data-constants", () => ({
+  getActiveOrganizationDummyDataBatch: mocks.getActiveOrganizationDummyDataBatch,
   getMasterDefinition: mocks.getMasterDefinition,
   getMasterValuesForOrganization: mocks.getMasterValuesForOrganization,
   getSizeGroupSizesForOrganization: mocks.getSizeGroupSizesForOrganization,
@@ -51,6 +53,7 @@ describe("organization master-data template route", () => {
     mocks.getSessionUser.mockResolvedValue({ id: "user-1", workspace_id: "workspace-1" });
     mocks.getOrganizationForUser.mockResolvedValue({ id: "internal-org-1" });
     mocks.requireOrganizationPermission.mockResolvedValue({});
+    mocks.getActiveOrganizationDummyDataBatch.mockResolvedValue({ id: "active-batch-id" });
     mocks.getMasterDefinition.mockReturnValue(definition);
     mocks.getMasterValuesForOrganization.mockResolvedValue([{
       id: "buyer-id",
@@ -93,8 +96,10 @@ describe("organization master-data template route", () => {
       "internal-org-1",
       "buyer",
       true,
-      { includeDummyData: true },
+      expect.objectContaining({ includeDummyData: true }),
     );
+    await expect(mocks.getMasterValuesForOrganization.mock.calls[0][3].activeDummyDataBatch)
+      .resolves.toEqual({ id: "active-batch-id" });
     expect(mocks.createWorkbook).toHaveBeenCalledWith({
       records: [],
       fields: definition.fields,

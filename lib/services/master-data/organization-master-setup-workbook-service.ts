@@ -1,6 +1,9 @@
 import XlsxPopulate from "xlsx-populate";
 
-import { getMasterValuesForOrganization } from "@/lib/master-data/master-data-constants";
+import {
+  getActiveOrganizationDummyDataBatch,
+  getMasterValuesForOrganization,
+} from "@/lib/master-data/master-data-constants";
 import {
   getOrganizationMasterSetupWorkbookDefinitions,
   getOrganizationMasterSetupFields,
@@ -43,12 +46,13 @@ export async function createOrganizationMasterSetupWorkbook(
       .map((field) => field.lookupModuleKey),
   ))];
   const lookupOptions: Record<string, Array<{ id: string; label: string }>> = {};
+  const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organizationId);
   await Promise.all(lookupKeys.map(async (key) => {
     lookupOptions[key] = await getMasterValuesForOrganization(
       organizationId,
       key,
       false,
-      { limit: 500 },
+      { limit: 500, activeDummyDataBatch },
     );
   }));
 

@@ -30,6 +30,18 @@ describe("master import route errors", () => {
     });
   });
 
+  it("reports a wrapped missing import table as a migration readiness error", async () => {
+    const response = masterImportErrorResponse(
+      new Error("Import operation failed", { cause: { code: "P2021" } }),
+      "get-run",
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "Master import database migration is pending. Apply the approved migration before using this feature.",
+    });
+  });
+
   describe("master import bounded JSON parsing", () => {
     it("accepts an empty stream for optional JSON", async () => {
       const request = new Request("http://localhost/api/plans", {

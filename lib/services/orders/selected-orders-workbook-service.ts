@@ -1,7 +1,11 @@
 import XlsxPopulate, { type Sheet, type Workbook } from "xlsx-populate";
 import JSZip from "jszip";
 
-import { getMasterValuesForOrganization, getSizeGroupSizesForOrganization } from "@/lib/master-data/master-data-constants";
+import {
+  getActiveOrganizationDummyDataBatch,
+  getMasterValuesForOrganization,
+  getSizeGroupSizesForOrganization,
+} from "@/lib/master-data/master-data-constants";
 import { getOrderById } from "@/lib/services/orders/order-service";
 
 const MAX_SELECTED_ORDERS = 100;
@@ -119,9 +123,10 @@ export async function createSelectedOrdersWorkbook(
     throw new SelectedOrdersWorkbookError("Select orders with the same Size Group to create this workbook.");
   }
   const masterKeys = [...new Set([...BOM_MASTER_COLUMNS.map(({ key }) => key)])];
+  const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organizationId);
   const [sizeGroups, ...masterValues] = await Promise.all([
-    getMasterValuesForOrganization(organizationId, "size-group", false, { limit: 500 }),
-    ...masterKeys.map((key) => getMasterValuesForOrganization(organizationId, key, false, { limit: 500 })),
+    getMasterValuesForOrganization(organizationId, "size-group", false, { limit: 500, activeDummyDataBatch }),
+    ...masterKeys.map((key) => getMasterValuesForOrganization(organizationId, key, false, { limit: 500, activeDummyDataBatch })),
   ]);
   const orderSizeGroups = orders.map((order) => resolveSizeGroup(order, sizeGroups));
   const firstGroupId = orderSizeGroups[0].id;

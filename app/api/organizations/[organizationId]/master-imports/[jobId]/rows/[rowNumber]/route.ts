@@ -22,9 +22,20 @@ export async function PATCH(
 
     const rowNumber = Number(rawRowNumber);
     const body = await parseBoundedJson(request, 160 * 1024);
+    const relatedSizeGroupUpdate = isRecord(body) ? body.relatedSizeGroupUpdate : undefined;
     if (!Number.isSafeInteger(rowNumber) || rowNumber < 1
       || !isRecord(body) || !Object.hasOwn(body, "payload")
-      || Object.keys(body).some((key) => key !== "payload")) {
+      || Object.keys(body).some((key) =>
+        !["payload", "deferMatchingRevalidation", "relatedSizeGroupUpdate"].includes(key))
+      || (body.deferMatchingRevalidation !== undefined
+        && typeof body.deferMatchingRevalidation !== "boolean")
+      || (relatedSizeGroupUpdate !== undefined
+        && (!isRecord(relatedSizeGroupUpdate)
+          || Object.keys(relatedSizeGroupUpdate).some((key) => !["name", "sizes"].includes(key))
+          || typeof relatedSizeGroupUpdate.name !== "string"
+          || !Array.isArray(relatedSizeGroupUpdate.sizes)
+          || relatedSizeGroupUpdate.sizes.length === 0
+          || relatedSizeGroupUpdate.sizes.some((size) => typeof size !== "string")))) {
       return NextResponse.json({ error: "Import row correction is invalid." }, { status: 400 });
     }
     const row = await saveMasterImportRow({
@@ -33,8 +44,23 @@ export async function PATCH(
       jobId,
       rowNumber,
       payload: body.payload,
+      ...(body.deferMatchingRevalidation === true ? { deferMatchingRevalidation: true } : {}),
+      ...(isRecord(relatedSizeGroupUpdate)
+        ? {
+            relatedSizeGroupUpdate: {
+              name: String(relatedSizeGroupUpdate.name),
+              sizes: relatedSizeGroupUpdate.sizes as string[],
+            },
+          }
+        : {}),
     });
-    return NextResponse.json({ row }, { headers: { "Cache-Control": "no-store" } });
+    const { relatedRowNumbers, ...savedRow } = row;
+    return NextResponse.json(
+      body.deferMatchingRevalidation === true
+        ? { row: savedRow, relatedRowNumbers: relatedRowNumbers ?? [] }
+        : { row: savedRow },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     return masterImportErrorResponse(error, "save-row");
   }

@@ -155,7 +155,7 @@ export default function BulkOrderCreationPage() {
       const parsedRows = await parseBulkOrderFile(file);
       if (parsedRows.length > 0) {
         const lookupResponse = await fetch(
-          `/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups?includeInactive=false&limit=500`,
+          `/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups?includeInactive=false&limit=500&keys=entity,category,sub-category,season,article,color,buyer,brand,size-group&shape=compact`,
           { cache: "no-store" },
         );
         const lookupData: unknown = await lookupResponse.json().catch(() => null);

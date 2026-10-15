@@ -6,6 +6,7 @@ import {
   isDatabaseUnavailableError,
 } from "@/lib/database/database-errors";
 import {
+  getActiveOrganizationDummyDataBatch,
   getMasterDefinition,
   getMasterValuesForOrganization,
   getSizeGroupSizesForOrganization,
@@ -49,6 +50,7 @@ export async function GET(
       ...(field.lookupModuleKey ? [field.lookupModuleKey] : []),
       ...(field.childFields ?? []).flatMap((child) => child.lookupModuleKey ? [child.lookupModuleKey] : []),
     ]))];
+    const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organization.id);
     const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (lookupKey) => {
       if (lookupKey === "article-size") {
         const sizeLinks = await getSizeGroupSizesForOrganization(organization.id, undefined, true);
@@ -59,7 +61,10 @@ export async function GET(
           parent_id: groupId,
         }))];
       }
-      const values = await getMasterValuesForOrganization(organization.id, lookupKey, true, { includeDummyData: true });
+      const values = await getMasterValuesForOrganization(organization.id, lookupKey, true, {
+        includeDummyData: true,
+        activeDummyDataBatch,
+      });
       return [lookupKey, values.map(({ id, value_id, label, parent_id }) => ({
         id,
         value_id,

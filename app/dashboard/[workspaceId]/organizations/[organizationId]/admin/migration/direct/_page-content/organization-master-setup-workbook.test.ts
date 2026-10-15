@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import * as XLSX from "xlsx";
 import XlsxPopulate from "xlsx-populate";
 
-const { getMasterValuesMock } = vi.hoisted(() => ({
+const { getActiveOrganizationDummyDataBatchMock, getMasterValuesMock } = vi.hoisted(() => ({
+  getActiveOrganizationDummyDataBatchMock: vi.fn().mockResolvedValue(null),
   getMasterValuesMock: vi.fn(),
 }));
 
 vi.mock("@/lib/master-data/master-data-constants", () => ({
+  getActiveOrganizationDummyDataBatch: getActiveOrganizationDummyDataBatchMock,
   getMasterValuesForOrganization: getMasterValuesMock,
 }));
 

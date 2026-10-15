@@ -180,6 +180,7 @@ model Organization {
   masterImportJobs                MasterImportJob[]
   masterImportJobRows             MasterImportJobRow[]
   masterImportJobFileChunks       MasterImportJobFileChunk[]
+  masterImportRuns                MasterImportRun[]
 
   @@index([plan_id])
   @@index([database_connection_id])
@@ -207,6 +208,13 @@ enum MasterImportJobRowStatus {
   IMPORTED
   FAILED
   SKIPPED
+}
+
+enum MasterImportRunStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
 }
 
 model MasterImportJob {
@@ -240,12 +248,40 @@ model MasterImportJob {
   organization Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   rows         MasterImportJobRow[]
   fileChunks   MasterImportJobFileChunk[]
+  runs         MasterImportRun[]
 
   @@unique([organization_id, id])
   @@index([organization_id, created_at])
   @@index([organization_id, status, created_at])
   @@index([organization_id, expires_at])
   @@map("master_import_jobs")
+}
+
+model MasterImportRun {
+  id                  String                @id @default(cuid())
+  organization_id     String
+  job_id              String
+  operation           String                @db.VarChar(40)
+  status              MasterImportRunStatus @default(QUEUED)
+  input               Json
+  progress            Int                   @default(0)
+  total               Int                   @default(0)
+  attempt_count       Int                   @default(0)
+  lease_expires_at    DateTime?
+  last_error          String?               @db.VarChar(1000)
+  requested_by_user_id String
+  created_at          DateTime              @default(now())
+  updated_at          DateTime              @updatedAt
+  started_at          DateTime?
+  completed_at        DateTime?
+
+  organization Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  job          MasterImportJob @relation(fields: [organization_id, job_id], references: [organization_id, id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([organization_id, id])
+  @@index([status, lease_expires_at, created_at])
+  @@index([organization_id, job_id, created_at])
+  @@map("master_import_runs")
 }
 
 model MasterImportJobRow {

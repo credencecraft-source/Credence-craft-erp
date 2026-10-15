@@ -5,7 +5,11 @@ import Button from "@/components/ui/Button";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getMasterValuesForOrganization, isMasterSectionBulkDeletable } from "@/lib/master-data/master-data-constants";
+import {
+  getActiveOrganizationDummyDataBatch,
+  getMasterValuesForOrganization,
+  isMasterSectionBulkDeletable,
+} from "@/lib/master-data/master-data-constants";
 import { getOrganizationForUser, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { createOrganizationMasterSetupSection, createOrganizationMasterSetupStage, createOrganizationMerchandisingStarterMasters, deleteOrganizationMasterSetupSection, type OrganizationMasterSetupRecord } from "@/lib/services/master-data/organization-master-setup-service";
 import { getOrganizationMasterSetupDefinitions, getOrganizationMasterSetupFields, type OrganizationMasterSetupStage } from "@/lib/master-data/organization-master-setup-stages";
@@ -174,12 +178,21 @@ export default async function OrganizationMasterSetupPage({ params, searchParams
   await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
   const activeStage = step === "related" || step === "third" ? step : "independent";
   const activeDefinitions = getOrganizationMasterSetupDefinitions(activeStage);
-  const existing = Object.fromEntries(await Promise.all(activeDefinitions.map(async (definition) => [definition.key, (await getMasterValuesForOrganization(organization.id, definition.key, true)).map((value) => value.label)])));
+  const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organization.id);
+  const existing = Object.fromEntries(await Promise.all(activeDefinitions.map(async (definition) => [
+    definition.key,
+    (await getMasterValuesForOrganization(organization.id, definition.key, true, { activeDummyDataBatch }))
+      .map((value) => value.label),
+  ])));
   const lookupKeys = [...new Set(activeDefinitions.flatMap((definition) => [
     ...definition.fields.flatMap((field) => field.lookupModuleKey ? [field.lookupModuleKey] : []),
     ...(definition.key === "process-template" ? ["process-master"] : []),
   ]))];
-  const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (key) => [key, (await getMasterValuesForOrganization(organization.id, key, false)).map((value) => ({ id: value.id, label: value.label }))])));
+  const lookupOptions = Object.fromEntries(await Promise.all(lookupKeys.map(async (key) => [
+    key,
+    (await getMasterValuesForOrganization(organization.id, key, false, { activeDummyDataBatch }))
+      .map((value) => ({ id: value.id, label: value.label })),
+  ])));
   const stage = {
     definitions: activeDefinitions.map((definition) => ({
       key: definition.key,

@@ -3,15 +3,17 @@ import JSZip from "jszip";
 import * as XLSX from "xlsx";
 import XlsxPopulate from "xlsx-populate";
 
-const { getOrderById, getMasterValuesForOrganization, getSizeGroupSizesForOrganization } = vi.hoisted(() => ({
+const { getOrderById, getMasterValuesForOrganization, getActiveOrganizationDummyDataBatch, getSizeGroupSizesForOrganization } = vi.hoisted(() => ({
   getOrderById: vi.fn(),
   getMasterValuesForOrganization: vi.fn(),
+  getActiveOrganizationDummyDataBatch: vi.fn(),
   getSizeGroupSizesForOrganization: vi.fn(),
 }));
 
 vi.mock("@/lib/services/orders/order-service", () => ({ getOrderById }));
 vi.mock("@/lib/master-data/master-data-constants", () => ({
   getMasterValuesForOrganization,
+  getActiveOrganizationDummyDataBatch,
   getSizeGroupSizesForOrganization,
 }));
 
@@ -73,6 +75,7 @@ describe("createSelectedOrdersWorkbook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getOrderById.mockImplementation(async (id: string) => makeOrder(id));
+    getActiveOrganizationDummyDataBatch.mockResolvedValue({ id: "active-batch-id" });
     getMasterValuesForOrganization.mockImplementation(async (_organizationId: string, key: string) => {
       if (key === "size-group") return [{ id: "group-id", value_id: "group-value", label: "Standard" }];
       return [{ id: `${key}-id`, value_id: `${key}-value`, label: `${key} master` }];
@@ -125,6 +128,9 @@ describe("createSelectedOrdersWorkbook", () => {
 
     expect(getOrderById).toHaveBeenNthCalledWith(1, "order-1", "organization-id");
     expect(getOrderById).toHaveBeenNthCalledWith(2, "order-2", "organization-id");
+    expect(getActiveOrganizationDummyDataBatch).toHaveBeenCalledExactlyOnceWith("organization-id");
+    const batchPromises = getMasterValuesForOrganization.mock.calls.map((call) => call[3].activeDummyDataBatch);
+    expect(batchPromises.every((batchPromise) => batchPromise === batchPromises[0])).toBe(true);
   });
 
   it("rejects selections with different size groups before creating a workbook", async () => {

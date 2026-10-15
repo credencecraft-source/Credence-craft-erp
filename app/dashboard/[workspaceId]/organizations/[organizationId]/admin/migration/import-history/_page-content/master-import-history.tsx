@@ -51,8 +51,15 @@ type ImportRow = {
   checkpoint: string | null;
   payload: unknown;
 };
+type BackgroundImportRun = {
+  id: string;
+  operation: string;
+  status: string;
+  progress: number;
+  total: number;
+  error?: unknown;
+};
 const MAX_VISIBLE_CORRECTION_ROWS = 50;
-const VALIDATION_BATCH_SIZE = 1_000;
 const UPLOAD_CHUNK_BYTES = 1024 * 1024;
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
@@ -75,6 +82,15 @@ function readRowValidationErrors(payload: unknown) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isBackgroundImportRun(value: unknown): value is BackgroundImportRun {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.operation === "string"
+    && typeof value.status === "string"
+    && Number.isSafeInteger(value.progress)
+    && Number.isSafeInteger(value.total);
 }
 
 function readRowErrors(payload: unknown) {
@@ -546,30 +562,38 @@ export default function MasterImportHistory({
     const selectedRowNumbers = selectedValidationRowIds.map(Number);
     setIsProcessing(true);
     setError("");
-    setNotice(`Validating ${selectedRowNumbers.length} selected rows...`);
+    setNotice(`Queueing validation for ${selectedRowNumbers.length} selected rows...`);
     try {
-      for (let index = 0; index < selectedRowNumbers.length; index += VALIDATION_BATCH_SIZE) {
-        const response = await fetch(`${endpoint}/${encodeURIComponent(activeJob.id)}/validate`, {
+      const runEndpoint = `${endpoint}/${encodeURIComponent(activeJob.id)}/runs`;
+      const response = await fetch(runEndpoint, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ rowNumbers: selectedRowNumbers.slice(index, index + VALIDATION_BATCH_SIZE) }),
-        });
-        const payload: unknown = await response.json();
-        if (!response.ok) throw new Error(errorMessage(payload, "Unable to validate this import."));
-        if (!isRecord(payload) || !isRecord(payload.job)) {
-          throw new Error("Validation progress response is invalid.");
-        }
-        setActiveJob(payload.job as ImportJob);
-        const validatedRowIds = selectedRowNumbers
-          .slice(index, index + VALIDATION_BATCH_SIZE)
-          .map(String);
-        setSelectedValidationRowIds((current) =>
-          current.filter((rowId) => !validatedRowIds.includes(rowId)),
-        );
+          body: JSON.stringify({ operation: "VALIDATE", rowNumbers: selectedRowNumbers }),
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) throw new Error(errorMessage(payload, "Unable to queue this import validation."));
+      if (!isRecord(payload) || !isBackgroundImportRun(payload.run)) {
+          throw new Error("Validation run response is invalid.");
       }
+      let run = payload.run;
+      while (run.status === "QUEUED" || run.status === "RUNNING") {
+          setNotice(`${run.operation}: ${run.progress.toLocaleString()} of ${run.total.toLocaleString()} processed.`);
+          await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+          const statusResponse = await fetch(`${runEndpoint}/${encodeURIComponent(run.id)}/process`, { method: "POST" });
+          const statusPayload: unknown = await statusResponse.json();
+          if (!statusResponse.ok) throw new Error(errorMessage(statusPayload, "Unable to process validation run."));
+          if (!isRecord(statusPayload) || !isBackgroundImportRun(statusPayload.run)) {
+            throw new Error("Validation progress response is invalid.");
+          }
+          run = statusPayload.run;
+          if (run.status === "FAILED") {
+            throw new Error(typeof run.error === "string" ? run.error : "The background validation failed.");
+          }
+      }
+      if (run.status !== "COMPLETED") throw new Error("The background validation did not complete.");
       setSelectedValidationRowIds([]);
       await openJob(activeJob);
-      setNotice("Selected rows were validated. Review the updated row statuses before importing.");
+      setNotice(`${selectedRowNumbers.length.toLocaleString()} selected rows were validated. Review the updated row statuses before importing.`);
     } catch (validationError) {
       setError(validationError instanceof Error ? validationError.message : "Unable to validate this import.");
     } finally {

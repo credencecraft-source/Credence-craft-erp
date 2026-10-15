@@ -34,12 +34,27 @@ export function masterImportErrorResponse(error: unknown, operation: string) {
   if (error instanceof MasterImportServiceError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }
-  const prismaCode = error instanceof Prisma.PrismaClientKnownRequestError
-    ? error.code
-    : typeof error === "object" && error !== null && "code" in error
-      && typeof error.code === "string" && /^P\d{4}$/.test(error.code)
-      ? error.code
-      : null;
+  const pending: unknown[] = [error];
+  const visited = new Set<object>();
+  let prismaCode: string | null = null;
+  while (pending.length > 0 && prismaCode === null) {
+    const current = pending.pop();
+    if (typeof current !== "object" || current === null || visited.has(current)) continue;
+    visited.add(current);
+
+    const candidate = current as { code?: unknown; cause?: unknown };
+    const code = current instanceof Prisma.PrismaClientKnownRequestError
+      ? current.code
+      : typeof candidate.code === "string" && /^P\d{4}$/.test(candidate.code)
+        ? candidate.code
+        : null;
+    if (code) {
+      prismaCode = code;
+      break;
+    }
+    pending.push(candidate.cause);
+  }
+
   if (prismaCode) {
     console.error("Master import request failed.", { operation, code: prismaCode });
     if (prismaCode === "P2021" || prismaCode === "P2022") {

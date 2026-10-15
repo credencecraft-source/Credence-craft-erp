@@ -204,7 +204,7 @@ export default function MerchandisingOrderDetailsPage() {
     hasLoadedLookupsRef.current = true;
 
     try {
-      const lookupsRes = await fetch(`/api/organizations/${orgId}/master-data/order-lookups`, { cache: "no-store" });
+      const lookupsRes = await fetch(`/api/organizations/${orgId}/master-data/order-lookups?shape=compact`, { cache: "no-store" });
       if (lookupsRes.ok) {
         const lookupData: unknown = await lookupsRes.json();
         setMasterOptions(parseMasterOptions(isRecord(lookupData) ? lookupData.masterOptions : undefined));
@@ -396,7 +396,7 @@ export default function MerchandisingOrderDetailsPage() {
         throw new Error(data?.error || "Unable to create master value.");
       }
 
-      const refreshedResponse = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups`, { cache: "no-store" });
+      const refreshedResponse = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups?shape=compact`, { cache: "no-store" });
       if (refreshedResponse.ok) {
         const refreshedData: unknown = await refreshedResponse.json();
         setMasterOptions(parseMasterOptions(isRecord(refreshedData) ? refreshedData.masterOptions : undefined));

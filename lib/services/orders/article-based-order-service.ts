@@ -1,5 +1,8 @@
 import { prisma } from "@/lib/database/prisma-client";
-import { getMasterValuesForOrganization } from "@/lib/master-data/master-data-constants";
+import {
+  getActiveOrganizationDummyDataBatch,
+  getMasterValuesForOrganization,
+} from "@/lib/master-data/master-data-constants";
 
 import { createOrdersAtomically, type CreateOrderInput } from "./order-service";
 
@@ -49,11 +52,18 @@ function parseSelectedColors(value: unknown): SelectedColor[] {
   });
 }
 
-async function requireActiveMasterLabel(organizationId: string, moduleKey: string, reference: string, label: string) {
+async function requireActiveMasterLabel(
+  organizationId: string,
+  moduleKey: string,
+  reference: string,
+  label: string,
+  activeDummyDataBatch: ReturnType<typeof getActiveOrganizationDummyDataBatch>,
+) {
   const [value] = await getMasterValuesForOrganization(organizationId, moduleKey, false, {
     search: reference,
     exactSearch: true,
     limit: 1,
+    activeDummyDataBatch,
   });
   if (!value || value.id !== reference && value.value_id !== reference && value.label !== reference) {
     throw new Error(`Select an active ${label} belonging to this organization.`);
@@ -78,10 +88,12 @@ export async function createArticleBasedOrders(
     throw new Error("Enter a valid delivery date.");
   }
 
+  const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organizationId);
   const [article] = await getMasterValuesForOrganization(organizationId, "article", false, {
     search: articleId,
     exactSearch: true,
     limit: 1,
+    activeDummyDataBatch,
   });
   if (!article || article.id !== articleId && article.value_id !== articleId) {
     throw new Error("Select an active Article belonging to this organization.");
@@ -144,13 +156,14 @@ export async function createArticleBasedOrders(
   }
 
   const [entityName, buyer, season, sizeGroups] = await Promise.all([
-    requireActiveMasterLabel(organizationId, "entity", entityId, "Entity"),
-    requireActiveMasterLabel(organizationId, "buyer", buyerId, "Buyer"),
-    requireActiveMasterLabel(organizationId, "season", seasonId, "Season"),
+    requireActiveMasterLabel(organizationId, "entity", entityId, "Entity", activeDummyDataBatch),
+    requireActiveMasterLabel(organizationId, "buyer", buyerId, "Buyer", activeDummyDataBatch),
+    requireActiveMasterLabel(organizationId, "season", seasonId, "Season", activeDummyDataBatch),
     getMasterValuesForOrganization(organizationId, "size-group", false, {
       search: sizeGroup,
       exactSearch: true,
       limit: 1,
+      activeDummyDataBatch,
     }),
   ]);
   const selectedSizeGroup = sizeGroups.find((group) => group.label === sizeGroup);

@@ -100,6 +100,7 @@ export default function ArticleBasedOrderDialog({
       includeInactive: "false",
       limit: "500",
       keys: "article,entity,buyer,season,size-group",
+      shape: "compact",
     });
     void fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups?${query.toString()}`, {
       cache: "no-store",

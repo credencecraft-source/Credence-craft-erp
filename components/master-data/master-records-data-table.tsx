@@ -17,6 +17,7 @@ import {
   filterMasterOptionsByParent,
   getMasterSelectionLabel,
 } from "@/lib/master-data/master-data-selection";
+import { getMasterRecordSearchValue } from "@/lib/master-data/master-record-search";
 import {
   loadQuickCreateLookupOptions,
   type QuickCreateLookupOption,
@@ -1142,6 +1143,12 @@ export function MasterRecordsTable({
   const handleRecordClick = useCallback((record: MasterRecord) => {
     if (moduleKey === "article") openRecordDetail(record);
   }, [moduleKey, openRecordDetail]);
+  const getMetadataSearchValue = useCallback((key: string, record: MasterRecord) => {
+    const field = masterFieldByKey.get(key);
+    return field ? getFieldValue(record, field) : "\u2014";
+  }, [getFieldValue, masterFieldByKey]);
+  const getReportSearchValue = useCallback((fieldKey: string, record: MasterRecord) =>
+    getMasterRecordSearchValue(fieldKey, record, getMetadataSearchValue), [getMetadataSearchValue]);
   const handleNewOrder = useCallback(() => {
     if (moduleKey === "article") {
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/create`);
@@ -1206,6 +1213,7 @@ export function MasterRecordsTable({
         onNewOrder={handleNewOrder}
         newActionLabel="+ Add Record"
         renderCell={renderReportCell}
+        getSearchValue={getReportSearchValue}
         emptyMessage={`No ${moduleLabel.toLowerCase()} records found.`}
       />
 

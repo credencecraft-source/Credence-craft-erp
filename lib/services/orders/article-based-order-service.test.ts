@@ -1,6 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { masterValues, variantFindMany, articleSizeFindMany, createOrdersAtomically } = vi.hoisted(() => ({
+const {
+  activeDummyDataBatch,
+  getActiveDummyDataBatchMock,
+  getMasterValuesMock,
+  masterValues,
+  variantFindMany,
+  articleSizeFindMany,
+  createOrdersAtomically,
+} = vi.hoisted(() => ({
+  activeDummyDataBatch: Promise.resolve({ id: "active-batch-id" }),
+  getActiveDummyDataBatchMock: vi.fn(),
+  getMasterValuesMock: vi.fn(),
   masterValues: {} as Record<string, Array<Record<string, unknown>>>,
   variantFindMany: vi.fn(),
   articleSizeFindMany: vi.fn(),
@@ -15,7 +26,8 @@ vi.mock("@/lib/database/prisma-client", () => ({
 }));
 
 vi.mock("@/lib/master-data/master-data-constants", () => ({
-  getMasterValuesForOrganization: vi.fn(async (_organizationId: string, moduleKey: string) => masterValues[moduleKey] ?? []),
+  getActiveOrganizationDummyDataBatch: getActiveDummyDataBatchMock,
+  getMasterValuesForOrganization: getMasterValuesMock,
 }));
 
 vi.mock("./order-service", () => ({
@@ -57,6 +69,8 @@ function validRequest() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getActiveDummyDataBatchMock.mockReturnValue(activeDummyDataBatch);
+  getMasterValuesMock.mockImplementation(async (_organizationId: string, moduleKey: string) => masterValues[moduleKey] ?? []);
   masterValues.article = [article];
   masterValues["size-group"] = [{ id: "size-group-id", value_id: "size-group-value-id", label: "Standard", fields: { Brand1: "Northstar" } }];
   masterValues.entity = [{ id: "entity-id", value_id: "entity-value-id", label: "Main Factory", fields: {} }];
@@ -77,6 +91,11 @@ describe("createArticleBasedOrders", () => {
   it("creates one order per color with its size quantities and master price", async () => {
     await createArticleBasedOrders("org-id", validRequest(), "user-id");
 
+    expect(getActiveDummyDataBatchMock).toHaveBeenCalledExactlyOnceWith("org-id");
+    const batchPromises = getMasterValuesMock.mock.calls
+      .map((call) => call[3].activeDummyDataBatch);
+    expect(batchPromises).toHaveLength(5);
+    expect(batchPromises.every((batchPromise) => batchPromise === activeDummyDataBatch)).toBe(true);
     expect(variantFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         organization_id: "org-id",

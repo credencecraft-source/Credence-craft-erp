@@ -48,8 +48,14 @@ describe("organization master-data lookup route", () => {
     mocks.getOrganizationShellContext.mockResolvedValue({ id: "internal-org-1" });
     mocks.requireOrganizationAccess.mockResolvedValue(undefined);
     mocks.getActiveOrganizationDummyDataBatch.mockResolvedValue({ id: "active-batch-id" });
-    mocks.getMasterValuesForOrganization.mockImplementation(async (_organizationId: string, moduleKey: string) => {
+    mocks.getMasterValuesForOrganization.mockImplementation(async (
+      _organizationId: string,
+      moduleKey: string,
+      _includeInactive: boolean,
+      options?: { onRowsFetched?: (rowIds: string[]) => Promise<void> | void },
+    ) => {
       if (moduleKey === "size-group") {
+        await options?.onRowsFetched?.(["group-id"]);
         return [{
           id: "group-id",
           value_id: "group-value-id",
@@ -123,9 +129,15 @@ describe("organization master-data lookup route", () => {
     const sizeLinksStarted = new Promise<void>((resolve) => {
       notifySizeLinksStarted = resolve;
     });
-    mocks.getMasterValuesForOrganization.mockImplementation(async (_organizationId: string, moduleKey: string) => {
+    mocks.getMasterValuesForOrganization.mockImplementation(async (
+      _organizationId: string,
+      moduleKey: string,
+      _includeInactive: boolean,
+      options?: { onRowsFetched?: (rowIds: string[]) => Promise<void> | void },
+    ) => {
       if (moduleKey === "article") return articlesPending;
       if (moduleKey === "size-group") {
+        await options?.onRowsFetched?.(["group-id"]);
         return [{ id: "group-id", value_id: "group-value-id", label: "Adult", fields: {}, is_active: true }];
       }
       return [];
@@ -208,6 +220,33 @@ describe("organization master-data lookup route", () => {
     expect(batchPromises.every((batchPromise) => batchPromise === batchPromises[0])).toBe(true);
     expect(mocks.getActiveOrganizationDummyDataBatch).toHaveBeenCalledExactlyOnceWith("internal-org-1");
     expect(mocks.getSizeGroupSizesForOrganization).toHaveBeenCalledWith("internal-org-1", ["group-id"], true);
+  });
+
+  it("returns a compact order lookup shape without duplicate top-level lists", async () => {
+    const defaultResponse = await GET(
+      new Request("http://localhost/api/organizations/public-org/master-data/order-lookups?keys=category,buyer,size-group"),
+      contextFor("order-lookups"),
+    );
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/master-data/order-lookups?keys=category,buyer,size-group&shape=compact"),
+      contextFor("order-lookups"),
+    );
+    const defaultBody = await defaultResponse.json();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(defaultResponse.status).toBe(200);
+    expect(Object.keys(body).sort()).toEqual(["masterOptions", "orderLookups"]);
+    expect(Object.keys(body.masterOptions).sort()).toEqual(["buyer", "category", "size-group"]);
+    expect(body.masterOptions).toEqual(defaultBody.masterOptions);
+    expect(body.orderLookups).toEqual(defaultBody.orderLookups);
+    expect(defaultBody.buyers).toEqual(expect.any(Array));
+    expect(defaultBody.buyers).toEqual(defaultBody.masterOptions.buyer);
+    expect(JSON.stringify(body).length).toBeLessThan(JSON.stringify(defaultBody).length);
+    expect(body.masterOptions["size-group"][0].sizes).toEqual([
+      { id: "size-id", value_id: "size-value-id", label: "M", fields: {} },
+    ]);
+    expect(body.orderLookups).toEqual(expect.any(Array));
   });
 
   it("rejects unknown requested order lookup keys", async () => {
