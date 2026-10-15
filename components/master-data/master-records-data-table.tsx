@@ -303,6 +303,7 @@ export function MasterRecordsTable({
         - (secondOrder === -1 ? rawMaterialFieldOrder.length : secondOrder);
     })
     : fields, [fields, moduleKey]);
+  const masterFieldByKey = useMemo(() => new Map(fields.map((field) => [field.key, field])), [fields]);
 
   const openRecordDetail = useCallback((record: MasterRecord) => {
     if (moduleKey === "article") {
@@ -660,7 +661,7 @@ export function MasterRecordsTable({
     const options = articleLookupOptions[field.lookupModuleKey ?? ""] ?? emptyMasterLookupOptions;
     if (!field.dependsOn) return options;
 
-    const parentField = fields.find((candidate) => candidate.key === field.dependsOn);
+    const parentField = masterFieldByKey.get(field.dependsOn);
     const parentOptions = articleLookupOptions[parentField?.lookupModuleKey ?? ""] ?? emptyMasterLookupOptions;
     const parentValue = values[field.dependsOn];
     if (moduleKey === "article" && field.key === "Sizes" && !parentValue) return [];
@@ -1128,7 +1129,6 @@ export function MasterRecordsTable({
     ? visibleReportFields
     : defaultVisibleReportFields, [defaultVisibleReportFields, visibleReportFields]);
 
-  const masterFieldByKey = useMemo(() => new Map(fields.map((field) => [field.key, field])), [fields]);
   const handleToggleSelectAll = useCallback((checked: boolean, ids: string[]) => {
     setSelectedRecordIds((current) =>
       checked ? [...new Set([...current, ...ids])] : current.filter((id) => !ids.includes(id)),
