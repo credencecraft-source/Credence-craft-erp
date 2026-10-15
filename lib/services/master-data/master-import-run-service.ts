@@ -107,7 +107,9 @@ export async function enqueueMasterImportRun(input: {
       || rowNumbers.some((rowNumber) => !Number.isSafeInteger(rowNumber) || rowNumber < 1))) {
     throw new MasterImportServiceError("Selected import rows are invalid.", 400);
   }
-  if ((input.operation === "VALIDATE") !== (rowNumbers !== undefined)
+  const acceptsSelectedRows = input.operation === "VALIDATE" || input.operation === "PLAN";
+  if ((input.operation === "VALIDATE" && rowNumbers === undefined)
+    || (!acceptsSelectedRows && rowNumbers !== undefined)
     || (input.operation === "PLAN" && rowNumbers !== undefined && rowNumbers.length === 0)) {
     throw new MasterImportServiceError("Selected rows are required for this import operation.", 400);
   }

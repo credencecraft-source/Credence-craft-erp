@@ -566,7 +566,7 @@ export default function MasterImportJobReportPage({
       ? createdRows
       : activeReportTab === "validated"       ? validatedRows : stagedRows;
   const activeRowCount = activeReportTab === "planned" ? planCount : rowCounts[activeReportTab];
-  const activeSelectedRowIds = ["staged", "errors"].includes(activeReportTab)
+  const activeSelectedRowIds = ["staged", "validated", "errors"].includes(activeReportTab)
     ? selectedValidationRowIds
     : [];
   const selectedValidationRowNumbers = activeSelectedRowIds.map(Number);

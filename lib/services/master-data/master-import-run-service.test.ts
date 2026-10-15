@@ -40,6 +40,7 @@ vi.mock("@/lib/services/master-data/master-import-service", () => ({
 
 import {
   cancelMasterImportRun,
+  enqueueMasterImportRun,
   runMasterImportWorkerBatch,
 } from "./master-import-run-service";
 
@@ -177,5 +178,53 @@ describe("master import validation worker", () => {
 
     const claimQuery = mocks.prisma.$queryRaw.mock.calls[0][0];
     expect(claimQuery.values).toEqual(expect.arrayContaining(["org-1", "job-1", "run-1"]));
+  });
+
+  it("queues a plan for selected validated rows", async () => {
+    const createdRun = {
+      id: "run-plan-1",
+      job_id: "job-1",
+      operation: "PLAN",
+      status: "QUEUED",
+      progress: 0,
+      total: 2,
+      attempt_count: 0,
+      last_error: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+      started_at: null,
+      completed_at: null,
+    };
+    const transaction = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "job-1" }]),
+      masterImportJob: {
+        findFirst: vi.fn().mockResolvedValue({
+          status: "VALIDATED",
+          expires_at: new Date(Date.now() + 60_000),
+        }),
+      },
+      masterImportRun: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue(createdRun),
+      },
+    };
+    mocks.prisma.$transaction.mockImplementation(async (callback) => callback(transaction));
+
+    const result = await enqueueMasterImportRun({
+      organizationId: "org-1",
+      actorUserId: "user-1",
+      jobId: "job-1",
+      operation: "PLAN",
+      rowNumbers: [4, 9],
+    });
+
+    expect(transaction.masterImportRun.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        operation: "PLAN",
+        input: { rowNumbers: [4, 9] },
+        total: 2,
+      }),
+    }));
+    expect(result.run).toMatchObject({ id: "run-plan-1", operation: "PLAN", total: 2 });
   });
 });
