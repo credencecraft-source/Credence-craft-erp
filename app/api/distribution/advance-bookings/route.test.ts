@@ -90,7 +90,23 @@ describe("advance-booking route", () => {
     expect(mocks.createAdvanceBooking).toHaveBeenCalledWith("internal-org-1", "user-1", {
       orderId: "order-1",
       vendorId: "vendor-1",
-      sizes: [{ size: "M", quantity: 30 }],
+      sizes: [{ size: "M", quantity: 30, orderIncreaseQuantity: 0 }],
+    });
+  });
+
+  it("passes a validated order quantity increase to the tenant-scoped service", async () => {
+    const response = await POST(postRequest({
+      organizationId: "public-org",
+      orderId: "order-1",
+      vendorId: "",
+      sizes: [{ size: "M", quantity: 45, orderIncreaseQuantity: 5 }],
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.createAdvanceBooking).toHaveBeenCalledWith("internal-org-1", "user-1", {
+      orderId: "order-1",
+      vendorId: null,
+      sizes: [{ size: "M", quantity: 45, orderIncreaseQuantity: 5 }],
     });
   });
 
@@ -100,6 +116,18 @@ describe("advance-booking route", () => {
       orderId: "order-1",
       vendorId: "vendor-1",
       sizes: [{ size: "M", quantity: 1.5 }],
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.createAdvanceBooking).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid order quantity increases before persistence", async () => {
+    const response = await POST(postRequest({
+      organizationId: "public-org",
+      orderId: "order-1",
+      vendorId: "",
+      sizes: [{ size: "M", quantity: 45, orderIncreaseQuantity: -1 }],
     }));
 
     expect(response.status).toBe(400);

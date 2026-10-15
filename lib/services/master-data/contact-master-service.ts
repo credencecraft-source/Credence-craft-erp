@@ -514,7 +514,8 @@ export async function createContact(
 ) {
   if ("$transaction" in database) {
     return database.$transaction((tx) =>
-      createContactInTransaction(organizationId, actorId, value, tx));
+      createContactInTransaction(organizationId, actorId, value, tx),
+    { maxWait: 10000, timeout: 30000 });
   }
   return createContactInTransaction(organizationId, actorId, value, database);
 }
@@ -557,7 +558,7 @@ export async function updateContact(
     if (!saved) throw new Error("Updated contact could not be loaded.");
     await syncContactRoleProjections(tx, organizationId, contactId);
     return publicContact(saved);
-  });
+  }, { maxWait: 10000, timeout: 30000 });
 }
 
 async function deactivateContactRecord(

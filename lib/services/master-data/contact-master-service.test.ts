@@ -55,7 +55,7 @@ vi.mock("@/lib/services/organizations/audit-event-service", () => ({
   createAuditEvent: mocks.createAuditEvent,
 }));
 
-import { createContact, deactivateContacts, deleteUnusedContacts } from "./contact-master-service";
+import { createContact, deactivateContacts, deleteUnusedContacts, updateContact } from "./contact-master-service";
 
 describe("contact master numbering", () => {
   beforeEach(() => {
@@ -114,6 +114,42 @@ describe("contact master numbering", () => {
       select: { current_value: true },
     });
     expect(mocks.tx.contact.create.mock.calls.map(([args]) => args.data.code)).toEqual(["CT1", "CT2"]);
+    expect(mocks.transaction).toHaveBeenNthCalledWith(
+      1,
+      expect.any(Function),
+      { maxWait: 10000, timeout: 30000 },
+    );
+  });
+
+  it("updates contacts with a bounded extended transaction for synchronized master records", async () => {
+    mocks.tx.contact.findFirst.mockReturnValue({
+      id: "contact-CT1",
+      code: "CT1",
+      legal_name: "ACME APPAREL",
+      display_name: null,
+      email: null,
+      phone: null,
+      is_active: true,
+      created_at: new Date(),
+      updated_at: new Date(),
+      roles: [{ role_code: "CUSTOMER" }],
+      tax_registrations: [],
+      addresses: [],
+      bank_accounts: [],
+    });
+    const updated = await updateContact("org-1", "user-1", "contact-CT1", {
+      legalName: "Acme Apparel",
+      roles: ["CUSTOMER"],
+      taxRegistrations: [],
+      addresses: [],
+      bankAccounts: [],
+    });
+
+    expect(updated).toMatchObject({ id: "contact-CT1", code: "CT1" });
+    expect(mocks.transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { maxWait: 10000, timeout: 30000 },
+    );
   });
 
   it("creates a contact without role assignments when no role is provided", async () => {

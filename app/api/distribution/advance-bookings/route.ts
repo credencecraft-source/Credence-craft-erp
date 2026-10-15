@@ -79,10 +79,18 @@ export async function POST(request: Request) {
       const line = value as Record<string, unknown>;
       const size = String(line.size ?? "").trim();
       const quantity = typeof line.quantity === "number" ? line.quantity : Number.NaN;
+      const orderIncreaseQuantity = line.orderIncreaseQuantity === undefined
+        ? 0
+        : typeof line.orderIncreaseQuantity === "number"
+          ? line.orderIncreaseQuantity
+          : Number.NaN;
       if (!size || !Number.isSafeInteger(quantity) || quantity < 0) {
         throw new Error("Each size needs a whole-number quantity of zero or more.");
       }
-      return { size, quantity };
+      if (!Number.isSafeInteger(orderIncreaseQuantity) || orderIncreaseQuantity < 0 || orderIncreaseQuantity > 2147483647) {
+        throw new Error("Each order quantity increase must be a whole number of zero or more.");
+      }
+      return { size, quantity, orderIncreaseQuantity };
     });
     const booking = await createAdvanceBooking(organization.id, user.id, {
       orderId: String(body.orderId ?? "").trim(),

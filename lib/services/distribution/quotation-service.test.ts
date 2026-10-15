@@ -33,11 +33,11 @@ const line = {
   booked_quantity: 20,
   created_at: new Date("2026-10-07T00:00:00.000Z"),
 };
-const booking = (id: string, bookingNo: string, vendorId = "vendor-1") => ({
+const booking = (id: string, bookingNo: string, vendorId: string | null = "vendor-1", customer: string | null = "Vendor A") => ({
   id,
   booking_no: bookingNo,
   vendor_id: vendorId,
-  customer: "Vendor A",
+  customer,
   brand: "Brand",
   style_name: "Style",
   order: { orderNo: "ORD-1" },
@@ -184,6 +184,31 @@ describe("distribution quotation persistence", () => {
     mocks.transaction.distributionQuotationLine.findFirst.mockResolvedValue({ booking_no: "BK-1" });
     await expect(createDistributionQuotationFromBookings("internal-org-1", "user-1", ["booking-1"], "vendor-1"))
       .rejects.toThrow("already has a quotation");
+  });
+
+  it("creates a quotation for a booking without an End Customer", async () => {
+    mocks.transaction.advanceBooking.findMany.mockResolvedValue([
+      booking("booking-1", "BK-1", null, null),
+    ]);
+
+    await expect(createDistributionQuotationFromBookings(
+      "internal-org-1",
+      "user-1",
+      ["booking-1"],
+      "vendor-1",
+    )).resolves.toMatchObject({
+      quotationNo: "QT-1",
+    });
+    expect(mocks.transaction.masterVendor.findFirst).toHaveBeenCalledWith({
+      where: { organization_id: "internal-org-1", id: "vendor-1", is_active: true },
+      select: { id: true, vendor: true },
+    });
+    expect(mocks.transaction.distributionQuotation.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        vendor_id: "vendor-1",
+        customer: "Master Vendor A",
+      }),
+    }));
   });
 
   it("requires an active Dealer from Vendor Master", async () => {

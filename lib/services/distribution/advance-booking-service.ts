@@ -10,6 +10,7 @@ type Database = Prisma.TransactionClient;
 export type AdvanceBookingSizeInput = {
   size: string;
   quantity: number;
+  orderIncreaseQuantity?: number;
 };
 
 export type AdvanceBookingAssignmentInput = {
@@ -235,11 +236,11 @@ async function createBookingInTransaction(
   if (!order) throw new Error("The selected order was not found in this organization.");
   const vendor = input.vendorId
     ? await transaction.masterVendor.findFirst({
-      where: { id: input.vendorId, organization_id: organizationId, is_active: true },
+      where: { id: input.vendorId, organization_id: organizationId },
       select: { id: true, vendor: true },
     })
     : null;
-  if (input.vendorId && !vendor) throw new Error("Select an active End Customer from Vendor Master.");
+  if (input.vendorId && !vendor) throw new Error("Select an End Customer from this organization's Vendor Master.");
 
   const capacityBySize = new Map<string, number>();
   for (const row of order.finishedGoods) {
@@ -265,11 +266,18 @@ async function createBookingInTransaction(
     if (!Number.isSafeInteger(line.quantity) || line.quantity < 0 || line.quantity > 2147483647) {
       throw new Error(`Booking quantity for size ${size} must be a whole number of zero or more.`);
     }
+    const orderIncreaseQuantity = line.orderIncreaseQuantity ?? 0;
+    if (!Number.isSafeInteger(orderIncreaseQuantity) || orderIncreaseQuantity < 0 || orderIncreaseQuantity > 2147483647) {
+      throw new Error(`Order quantity increase for size ${size} must be a whole number of zero or more.`);
+    }
     const capacity = capacityBySize.get(size);
     if (capacity === undefined) throw new Error(`Size ${size} does not belong to the selected order.`);
     const available = Math.max(capacity - (bookedBySize.get(size) ?? 0), 0);
-    if (line.quantity > available) throw new Error(`Booking quantity for size ${size} exceeds the remaining order balance of ${available}.`);
-    return { size, booked_quantity: line.quantity };
+    const actualIncrease = Math.max(line.quantity - available, 0);
+    if (actualIncrease > orderIncreaseQuantity) {
+      throw new Error(`Booking quantity for size ${size} exceeds the remaining order balance of ${available} plus the entered order quantity increase of ${orderIncreaseQuantity}.`);
+    }
+    return { size, booked_quantity: line.quantity, orderIncreaseQuantity: actualIncrease };
   }).filter((line) => line.booked_quantity > 0);
   if (lines.length === 0) throw new Error("Enter a positive booking quantity for at least one size.");
 
@@ -284,10 +292,28 @@ async function createBookingInTransaction(
       style_name: order.styleName,
       delivery_date: order.deliveryDate,
       created_by: userId,
-      sizeLines: { create: lines },
+      sizeLines: {
+        create: lines.map(({ size, booked_quantity }) => ({ size, booked_quantity })),
+      },
     },
-    include: bookingInclude,
+    select: {
+      id: true,
+      booking_no: true,
+      order_id: true,
+      vendor_id: true,
+      customer: true,
+      brand: true,
+      style_name: true,
+      delivery_date: true,
+      created_at: true,
+      order: { select: { orderNo: true } },
+      sizeLines: {
+        orderBy: { size: "asc" },
+        select: { id: true, size: true, booked_quantity: true },
+      },
+    },
   });
+  const totalBooked = booking.sizeLines.reduce((sum, line) => sum + line.booked_quantity, 0);
   await createAuditEvent({
     organizationId,
     userId,
@@ -298,10 +324,48 @@ async function createBookingInTransaction(
     details: {
       booking_no: booking.booking_no,
       order_no: order.orderNo,
-      total_quantity: lines.reduce((sum, line) => sum + line.booked_quantity, 0),
+      total_quantity: totalBooked,
+      total_order_quantity_increase: lines.reduce((sum, line) => sum + line.orderIncreaseQuantity, 0),
+      order_quantity_increases: lines
+        .filter((line) => line.orderIncreaseQuantity > 0)
+        .map((line) => ({ size: line.size, quantity: line.orderIncreaseQuantity })),
     },
   }, transaction);
-  return mapBooking(booking);
+  return {
+    id: booking.id,
+    bookingId: booking.booking_no,
+    orderId: booking.order_id,
+    orderNo: booking.order.orderNo,
+    vendorId: booking.vendor_id,
+    customer: booking.customer ?? "",
+    quotationNo: null,
+    salesOrderNo: null,
+    quotationVendor: null,
+    masterQuotationVendor: null,
+    brand: booking.brand ?? "",
+    styleName: booking.style_name ?? "",
+    deliveryDate: booking.delivery_date?.toISOString().slice(0, 10) ?? "",
+    createdAt: booking.created_at.toISOString(),
+    totalBooked,
+    totalAssigned: 0,
+    totalAllocated: 0,
+    totalUnassigned: totalBooked,
+    totalFulfilled: 0,
+    assignmentStatus: statusFor(0, totalBooked),
+    fulfillmentStatus: fulfillmentStatusFor(0, 0),
+    sizes: booking.sizeLines.map((line) => ({
+      id: line.id,
+      size: line.size,
+      bookedQuantity: line.booked_quantity,
+      assignedQuantity: 0,
+      unassignedQuantity: line.booked_quantity,
+      fulfilledQuantity: 0,
+      generalInventoryAvailableQuantity: 0,
+      assignmentStatus: statusFor(0, line.booked_quantity),
+      fulfillmentStatus: fulfillmentStatusFor(0, 0),
+      assignments: [],
+    })),
+  };
 }
 
 export async function createAdvanceBooking(

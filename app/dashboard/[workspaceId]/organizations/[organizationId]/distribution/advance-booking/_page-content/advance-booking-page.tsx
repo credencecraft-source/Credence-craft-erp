@@ -6,6 +6,7 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
+import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
@@ -204,14 +205,22 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [ordersError, setOrdersError] = useState("");
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [vendors, setVendors] = useState<VendorOption[]>([]);
+  const [allContactVendors, setAllContactVendors] = useState<{
+    organizationId: string;
+    options: VendorOption[];
+  } | null>(null);
   const [isLoadingVendors, setIsLoadingVendors] = useState(true);
+  const [isLoadingAllContacts, setIsLoadingAllContacts] = useState(false);
   const [vendorsError, setVendorsError] = useState("");
+  const [allContactsError, setAllContactsError] = useState("");
+  const [showAllContacts, setShowAllContacts] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState("");
   const [selectedQuotationVendorId, setSelectedQuotationVendorId] = useState("");
   const [orderDetailsRetry, setOrderDetailsRetry] = useState(0);
   const [orderDetails, setOrderDetails] = useState<{ id: string; order: OrderDetails } | null>(null);
   const [orderDetailsError, setOrderDetailsError] = useState("");
   const [entry, setEntry] = useState<Record<string, number>>(emptySizes());
+  const [orderQtyIncrease, setOrderQtyIncrease] = useState<Record<string, number>>(emptySizes());
   const [isCreating, setIsCreating] = useState(false);
   const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
   const [isCreatingQuotation, setIsCreatingQuotation] = useState(false);
@@ -292,7 +301,16 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   }, [loadBookings]);
 
   const selectedOrder = orderDetails?.id === selectedOrderId ? orderDetails.order : null;
-  const selectedVendor = vendors.find((vendor) => vendor.id === selectedVendorId) ?? null;
+  const currentAllContactVendors = allContactVendors?.organizationId === organizationId
+    ? allContactVendors.options
+    : null;
+  const selectedAllContactVendor = currentAllContactVendors?.find((vendor) => vendor.id === selectedVendorId) ?? null;
+  const endCustomerVendors = showAllContacts && currentAllContactVendors
+    ? currentAllContactVendors
+    : !showAllContacts && selectedAllContactVendor && !vendors.some((vendor) => vendor.id === selectedVendorId)
+      ? [...vendors, selectedAllContactVendor]
+      : vendors;
+  const selectedVendor = endCustomerVendors.find((vendor) => vendor.id === selectedVendorId) ?? null;
   const finishedGoodsBySize = useMemo(() => {
     const sizes = emptySizes();
     for (const row of selectedOrder?.finishedGoods ?? []) {
@@ -426,7 +444,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     setVendorsError("");
     try {
       const response = await fetch(
-        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/vendor?includeInactive=false&includeDummyData=true`,
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/vendor?includeInactive=false&includeDummyData=true&limit=200`,
         {
         cache: "no-store",
         signal,
@@ -450,6 +468,34 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     }
   }, [organizationId]);
 
+  const loadAllContacts = useCallback(async (signal?: AbortSignal) => {
+    setIsLoadingAllContacts(true);
+    setAllContactsError("");
+    try {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/vendor?includeInactive=true&includeDummyData=true&limit=200`,
+        {
+          cache: "no-store",
+          signal,
+        },
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data)) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to load all contacts.");
+      }
+      const options = data
+        .filter((value: { id?: string; label?: string }) => typeof value?.id === "string" && typeof value?.label === "string" && value.label.trim())
+        .map((value: { id: string; label: string }) => ({ id: value.id, label: value.label.trim() }))
+        .sort((left: VendorOption, right: VendorOption) => left.label.localeCompare(right.label));
+      setAllContactVendors({ organizationId, options });
+    } catch (loadError) {
+      if (signal?.aborted) return;
+      setAllContactsError(loadError instanceof Error ? loadError.message : "Unable to load all contacts.");
+    } finally {
+      if (!signal?.aborted) setIsLoadingAllContacts(false);
+    }
+  }, [organizationId]);
+
   useEffect(() => {
     const controller = new AbortController();
     void Promise.resolve().then(() => {
@@ -459,6 +505,18 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       controller.abort();
     };
   }, [loadVendors]);
+
+  useEffect(() => {
+    if (!showAllContacts || currentAllContactVendors !== null) return;
+
+    const controller = new AbortController();
+    void Promise.resolve().then(() => {
+      if (!controller.signal.aborted) void loadAllContacts(controller.signal);
+    });
+    return () => {
+      controller.abort();
+    };
+  }, [currentAllContactVendors, loadAllContacts, showAllContacts]);
 
   useEffect(() => {
     if (!selectedOrderId) return;
@@ -528,6 +586,14 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     }));
   }
 
+  function updateOrderQtyIncrease(size: SizeKey, value: string) {
+    const parsed = value === "" ? 0 : Number(value);
+    setOrderQtyIncrease((current) => ({
+      ...current,
+      [size]: Number.isFinite(parsed) ? Math.max(0, parsed) : 0,
+    }));
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -551,15 +617,22 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     }
 
     const quantities: Record<string, number> = {};
+    const orderIncreases: Record<string, number> = {};
     let totalBooked = 0;
 
     for (const size of Object.keys(finishedGoodsBySize)) {
       const quantity = Number(entry[size] || 0);
+      const increase = Number(orderQtyIncrease[size] || 0);
       if (!Number.isSafeInteger(quantity) || quantity < 0) {
         setError(`Quantity for size ${size} must be a whole number greater than or equal to zero.`);
         return;
       }
+      if (!Number.isSafeInteger(increase) || increase < 0 || increase > 2147483647) {
+        setError(`Order quantity increase for size ${size} must be a whole number of zero or more.`);
+        return;
+      }
       if (quantity > 0) quantities[size] = quantity;
+      if (increase > 0) orderIncreases[size] = increase;
       totalBooked += quantity;
     }
 
@@ -569,10 +642,11 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     }
 
     const exceedsBalance = Object.keys(finishedGoodsBySize).some((size) =>
-      (quantities[size] ?? 0) > finishedGoodsBySize[size] - (bookedTotals[size] ?? 0),
+      (quantities[size] ?? 0) >
+        Math.max(finishedGoodsBySize[size] - (bookedTotals[size] ?? 0), 0) + (orderIncreases[size] ?? 0),
     );
     if (exceedsBalance) {
-      setError("One or more quantities exceed the remaining order balance for that size.");
+      setError("One or more booking quantities exceed the remaining balance plus the entered order quantity increase.");
       return;
     }
 
@@ -585,7 +659,11 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
           organizationId,
           orderId: selectedOrder.id,
           vendorId: selectedVendor?.id ?? "",
-          sizes: Object.entries(quantities).map(([size, quantity]) => ({ size, quantity })),
+          sizes: Object.entries(quantities).map(([size, quantity]) => ({
+            size,
+            quantity,
+            orderIncreaseQuantity: orderIncreases[size] ?? 0,
+          })),
         }),
       });
       const data = await response.json().catch(() => null);
@@ -598,6 +676,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         ...current.filter((booking) => booking.id !== createdBooking.id),
       ]);
       setEntry(emptySizes());
+      setOrderQtyIncrease(emptySizes());
       setStatus(`Advance booking ${createdBooking.bookingId} submitted.`);
       setIsCreating(false);
     } catch (submitError) {
@@ -968,6 +1047,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   onChange={(event) => {
                     setSelectedOrderId(event.target.value);
                     setEntry(emptySizes());
+                    setOrderQtyIncrease(emptySizes());
                     setError("");
                     setOrderDetailsError("");
                   }}
@@ -978,19 +1058,36 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   disabled={isLoadingOrders || orders.length === 0}
                   required
                 />
-                <Select
-                  label="End Customer (Optional)"
-                  value={selectedVendorId}
-                  onChange={(event) => {
-                    setSelectedVendorId(event.target.value);
-                    setError("");
-                  }}
-                  options={[
-                    { label: isLoadingVendors ? "Loading Vendor Master..." : "No End Customer", value: "" },
-                    ...vendors.map((vendor) => ({ label: vendor.label, value: vendor.id })),
-                  ]}
-                  disabled={isLoadingVendors}
-                />
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <Select
+                      label="End Customer (Optional)"
+                      value={selectedVendorId}
+                      onChange={(event) => {
+                        setSelectedVendorId(event.target.value);
+                        setError("");
+                      }}
+                      options={[
+                        {
+                          label: isLoadingVendors
+                            ? "Loading Vendor Master..."
+                            : showAllContacts && isLoadingAllContacts
+                              ? "Loading all contacts..."
+                              : "No End Customer",
+                          value: "",
+                        },
+                        ...endCustomerVendors.map((vendor) => ({ label: vendor.label, value: vendor.id })),
+                      ]}
+                      disabled={isLoadingVendors || (showAllContacts && isLoadingAllContacts)}
+                    />
+                  </div>
+                  <Checkbox
+                    label="LIST ALL"
+                    checked={showAllContacts}
+                    onChange={(event) => setShowAllContacts(event.target.checked)}
+                    className="mt-0.5 shrink-0"
+                  />
+                </div>
                 <Input label="Brand" value={selectedOrder?.brand ?? ""} readOnly />
                 <Input label="Style" value={selectedOrder?.styleName ?? ""} readOnly />
                 <Input label="Delivery Date" type="date" value={selectedOrder?.deliveryDate?.slice(0, 10) ?? ""} readOnly />
@@ -1000,6 +1097,14 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   <span>{vendorsError}</span>
                   <Button type="button" variant="secondary" size="sm" onClick={() => void loadVendors()} disabled={isLoadingVendors}>
                     Retry Vendor Master
+                  </Button>
+                </div>
+              ) : null}
+              {showAllContacts && allContactsError ? (
+                <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-700">
+                  <span>{allContactsError}</span>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => void loadAllContacts()} disabled={isLoadingAllContacts}>
+                    Retry All Contacts
                   </Button>
                 </div>
               ) : null}
@@ -1040,7 +1145,9 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             <section className="space-y-3">
               <div className="border-b border-slate-200 pb-2">
                 <h2 className="text-base font-semibold text-slate-900">Finished Goods Sizes</h2>
-                <p className="mt-1 text-sm text-slate-600">Enter the advance booking quantity for each size.</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Enter the advance booking quantity for each size. Use Order Qty Increase only for an approved increase beyond the original order.
+                </p>
               </div>
               {!selectedOrder ? (
                 <p role="status" className="text-sm text-slate-600">
@@ -1050,20 +1157,21 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                 <p role="status" className="text-sm text-slate-600">This order has no finished-goods size quantities.</p>
               )}
               <div className="max-w-full overflow-x-auto rounded-lg border border-slate-200">
-                <table className="w-full min-w-[42rem] text-left text-sm">
+                <table className="w-full min-w-[52rem] text-left text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-600">
                     <tr>
                       <th scope="col" className="px-3 py-2">Size</th>
                       <th scope="col" className="px-3 py-2">Order Qty</th>
                       <th scope="col" className="px-3 py-2">Already Booked</th>
                       <th scope="col" className="px-3 py-2">Balance to Book</th>
+                      <th scope="col" className="px-3 py-2">Order Qty Increase</th>
                       <th scope="col" className="px-3 py-2">Book Qty</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white">
                     {Object.keys(finishedGoodsBySize).length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-500">
+                        <td colSpan={6} className="px-4 py-6 text-center text-sm text-slate-500">
                           Select an order with finished-goods sizes to enter booking quantities.
                         </td>
                       </tr>
@@ -1083,7 +1191,20 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                             <Input
                               type="number"
                               min={0}
-                              max={balanceToBook}
+                              max={2147483647}
+                              step={1}
+                              value={String(orderQtyIncrease[size] ?? 0)}
+                              onChange={(event) => updateOrderQtyIncrease(size, event.target.value)}
+                              className="max-w-40"
+                              disabled={!selectedOrder}
+                              aria-label={`Order quantity increase for size ${size}`}
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <Input
+                              type="number"
+                              min={0}
+                              max={balanceToBook + (orderQtyIncrease[size] ?? 0)}
                               step={1}
                               value={String(entry[size] ?? 0)}
                               onChange={(event) => updateEntry(size, event.target.value)}
@@ -1120,6 +1241,8 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   variant="secondary"
                   onClick={() => {
                     setIsCreating(false);
+                    setEntry(emptySizes());
+                    setOrderQtyIncrease(emptySizes());
                     setError("");
                   }}
                 >
