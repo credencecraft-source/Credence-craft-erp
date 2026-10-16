@@ -3,6 +3,8 @@ import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => {
   const merchandisingOrderFindFirst = vi.fn();
+  const masterSizeGroupFindMany = vi.fn();
+  const masterSizeGroupSizeFindMany = vi.fn();
   const factoryWorkOrderCreate = vi.fn();
   const factoryWorkOrderFindFirst = vi.fn();
   const factoryWorkOrderFindMany = vi.fn();
@@ -35,6 +37,8 @@ const mocks = vi.hoisted(() => {
   };
   return {
     merchandisingOrderFindFirst,
+    masterSizeGroupFindMany,
+    masterSizeGroupSizeFindMany,
     factoryWorkOrderCreate,
     factoryWorkOrderFindFirst,
     factoryWorkOrderFindMany,
@@ -58,6 +62,8 @@ vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
     $transaction: mocks.prismaTransaction,
     merchandisingOrder: { findMany: mocks.merchandisingOrderFindMany },
+    masterSizeGroup: { findMany: mocks.masterSizeGroupFindMany },
+    masterSizeGroupSize: { findMany: mocks.masterSizeGroupSizeFindMany },
     factoryWorkOrder: { findFirst: mocks.factoryWorkOrderFindFirst, findMany: mocks.factoryWorkOrderFindMany },
     factoryWorkOrderBomLine: { findMany: mocks.factoryWorkOrderBomLineFindMany },
     rmGrnOrderAllocation: { findMany: mocks.rmGrnOrderAllocationFindMany },
@@ -76,6 +82,7 @@ import {
   createWorkOrders,
   createWorkOrdersForSampleOrders,
   deleteWorkOrder,
+  listWorkOrderAllocationsByArticle,
   listWorkOrderArticles,
   listWorkOrders,
 } from "./work-order-service";
@@ -91,6 +98,8 @@ describe("factory work-order batch creation", () => {
     mocks.orderProcessControllerFindUnique.mockResolvedValue(null);
     mocks.masterProcessTemplateFindFirst.mockResolvedValue(null);
     mocks.rmGrnOrderAllocationFindMany.mockResolvedValue([]);
+    mocks.masterSizeGroupFindMany.mockResolvedValue([]);
+    mocks.masterSizeGroupSizeFindMany.mockResolvedValue([]);
     mocks.factoryWorkOrderBomLineFindMany.mockImplementation(({ where }: { where: { id?: { in: string[] }; source_bom_item_id?: { in: string[] } } }) => (
       "id" in where
         ? Promise.resolve([
@@ -123,6 +132,38 @@ describe("factory work-order batch creation", () => {
         sizeLines: sizeLines.create.map((line, index) => ({ id: `line-${nextId}-${index}`, ...line })),
       };
     });
+
+  });
+
+  it("lists work-order allocation sizes in the related Size Group order", async () => {
+    mocks.merchandisingOrderFindMany.mockResolvedValueOnce([{
+      id: "order-1",
+      orderNo: "OD-1",
+      styleName: "Shirt",
+      buyer: "Buyer",
+      sizeGroup: "CORE",
+      orderQty: 30,
+      finishedGoods: [
+        { id: "fg-m", size: "M", buyerSize: "M", totalQty: 10 },
+        { id: "fg-xl", size: "XL", buyerSize: "XL", totalQty: 10 },
+        { id: "fg-s", size: "S", buyerSize: "S", totalQty: 10 },
+      ],
+      workOrders: [],
+    }]);
+    mocks.masterSizeGroupFindMany.mockResolvedValueOnce([{
+      id: "group-id",
+      value_id: "group-value-id",
+      size_group: "CORE",
+    }]);
+    mocks.masterSizeGroupSizeFindMany.mockResolvedValueOnce([
+      { size_group_id: "group-id", size: { id: "size-xl", value_id: "size-xl-value", organization_id: "org-1", size: "XL", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+      { size_group_id: "group-id", size: { id: "size-s", value_id: "size-s-value", organization_id: "org-1", size: "S", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+      { size_group_id: "group-id", size: { id: "size-m", value_id: "size-m-value", organization_id: "org-1", size: "M", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+    ]);
+
+    const result = await listWorkOrderAllocationsByArticle("org-1", "Shirt");
+
+    expect(result.allocations[0].sizes.map((size) => size.size)).toEqual(["XL", "S", "M"]);
   });
 
   describe("factory work-order article options", () => {

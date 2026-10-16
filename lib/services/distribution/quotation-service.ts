@@ -3,11 +3,26 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
+import {
+  getSizeGroupSizeOrderMapForOrganization,
+  sortBySizeGroupOrder,
+} from "@/lib/master-data/master-data-constants";
 
 const quotationInclude = {
   lines: {
     orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
-    include: { sourceBooking: { select: { customer: true } } },
+    include: {
+      sourceBooking: {
+        select: {
+          customer: true,
+          order: { select: { sizeGroup: true } },
+          sizeLines: {
+            select: { size: true, booked_quantity: true },
+            orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
+          },
+        },
+      },
+    },
   },
 };
 
@@ -31,7 +46,14 @@ function isValidDateOnly(value: string) {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-function mapQuotation(record: Prisma.DistributionQuotationGetPayload<{ include: typeof quotationInclude }>) {
+async function mapQuotation(
+  organizationId: string,
+  record: Prisma.DistributionQuotationGetPayload<{ include: typeof quotationInclude }>,
+) {
+  const sizeOrderByGroup = await getSizeGroupSizeOrderMapForOrganization(
+    organizationId,
+    record.lines.map((line) => line.sourceBooking.order?.sizeGroup ?? ""),
+  );
   return {
     id: record.id,
     quotationNo: record.quotation_no,
@@ -47,19 +69,28 @@ function mapQuotation(record: Prisma.DistributionQuotationGetPayload<{ include: 
     subtotal: record.subtotal.toFixed(2),
     parentQuotationId: record.parent_quotation_id,
     createdAt: record.created_at.toISOString(),
-    lines: record.lines.map((line) => ({
-      id: line.id,
-      sourceBookingId: line.source_booking_id,
-      endCustomer: line.sourceBooking.customer ?? "",
-      bookingNo: line.booking_no,
-      orderNo: line.order_no,
-      description: line.item_description,
-      brand: line.brand ?? "",
-      styleName: line.style_name ?? "",
-      quantity: line.quantity,
-      unitPrice: line.unit_price.toFixed(4),
-      lineTotal: line.line_total.toFixed(2),
-    })),
+    lines: record.lines.map((line) => {
+      const sizeGroup = line.sourceBooking.order?.sizeGroup ?? "";
+      const sizeOrder = sizeOrderByGroup.get(sizeGroup.trim().toLocaleLowerCase()) ?? [];
+      const orderedSizeLines = sortBySizeGroupOrder(line.sourceBooking.sizeLines, sizeOrder, (sizeLine) => sizeLine.size);
+      return {
+        id: line.id,
+        sourceBookingId: line.source_booking_id,
+        endCustomer: line.sourceBooking.customer ?? "",
+        sizes: orderedSizeLines.map((sizeLine) => ({
+          size: sizeLine.size,
+          bookedQuantity: sizeLine.booked_quantity,
+        })),
+        bookingNo: line.booking_no,
+        orderNo: line.order_no,
+        description: line.item_description,
+        brand: line.brand ?? "",
+        styleName: line.style_name ?? "",
+        quantity: line.quantity,
+        unitPrice: line.unit_price.toFixed(4),
+        lineTotal: line.line_total.toFixed(2),
+      };
+    }),
   };
 }
 
@@ -98,7 +129,7 @@ export async function getDistributionQuotation(organizationId: string, quotation
   });
   if (!quotation) throw new Error("The quotation was not found in this organization.");
   return {
-    quotation: mapQuotation(quotation),
+    quotation: await mapQuotation(organizationId, quotation),
     children: quotation.childQuotations.map(mapQuotationSummary),
   };
 }
@@ -150,8 +181,8 @@ export async function createDistributionQuotationFromBookings(
     const bookings = await transaction.advanceBooking.findMany({
       where: { organization_id: organizationId, id: { in: bookingIds } },
       include: {
-        order: { select: { orderNo: true } },
-        sizeLines: { orderBy: [{ size: "asc" }, { id: "asc" }] },
+        order: { select: { orderNo: true, sizeGroup: true } },
+        sizeLines: { orderBy: [{ created_at: "asc" }, { id: "asc" }] },
       },
     });
     if (bookings.length !== bookingIds.length) {
@@ -231,7 +262,7 @@ export async function createDistributionQuotationFromBookings(
     }, transaction);
     return quotation;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
-  return mapQuotation(created);
+  return mapQuotation(organizationId, created);
 }
 
 export async function saveDistributionQuotationDraft(
@@ -315,7 +346,7 @@ export async function saveDistributionQuotationDraft(
     }, transaction);
     return updated;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
-  return mapQuotation(record);
+  return mapQuotation(organizationId, record);
 }
 
 export async function createDistributionMasterQuotation(
@@ -423,7 +454,7 @@ export async function createDistributionMasterQuotation(
     }, transaction);
     return master;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
-  return mapQuotation(record);
+  return mapQuotation(organizationId, record);
 }
 
 export async function deleteDistributionQuotation(

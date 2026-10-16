@@ -3,10 +3,13 @@ import { Prisma } from "@prisma/client";
 
 const prismaCounterMock = vi.hoisted(() => ({
   upsert: vi.fn(),
+  orderFindFirst: vi.fn(),
   orderFindMany: vi.fn(),
   articleFindMany: vi.fn(),
   articleVariantFindMany: vi.fn(),
   bomItemFindMany: vi.fn(),
+  sizeGroupFindMany: vi.fn(),
+  sizeGroupSizeFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -15,6 +18,7 @@ vi.mock("@/lib/database/prisma-client", () => ({
       upsert: prismaCounterMock.upsert,
     },
     merchandisingOrder: {
+      findFirst: prismaCounterMock.orderFindFirst,
       findMany: prismaCounterMock.orderFindMany,
     },
     masterArticle: {
@@ -22,6 +26,12 @@ vi.mock("@/lib/database/prisma-client", () => ({
     },
     masterArticleVariant: {
       findMany: prismaCounterMock.articleVariantFindMany,
+    },
+    masterSizeGroup: {
+      findMany: prismaCounterMock.sizeGroupFindMany,
+    },
+    masterSizeGroupSize: {
+      findMany: prismaCounterMock.sizeGroupSizeFindMany,
     },
     billOfMaterialItem: {
       findMany: prismaCounterMock.bomItemFindMany,
@@ -31,6 +41,7 @@ vi.mock("@/lib/database/prisma-client", () => ({
 
 import {
   getArticleOrderSummaries,
+  getOrderById,
   listBomItemsPage,
   listOrdersPage,
   reserveNextOrderNumber,
@@ -40,6 +51,38 @@ import {
 describe("reserveNextOrderNumber", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe("Size Group ordering for order forms", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("returns order sizes according to the selected Size Group", async () => {
+      prismaCounterMock.orderFindFirst.mockResolvedValueOnce({
+        id: "order-1",
+        sizeGroup: "CORE",
+        finishedGoods: [
+          { id: "fg-m", size: "M", buyerSize: "M" },
+          { id: "fg-xl", size: "XL", buyerSize: "XL" },
+          { id: "fg-s", size: "S", buyerSize: "S" },
+        ],
+      });
+      prismaCounterMock.sizeGroupFindMany.mockResolvedValueOnce([{
+        id: "group-id",
+        value_id: "group-value-id",
+        size_group: "CORE",
+      }]);
+      prismaCounterMock.sizeGroupSizeFindMany.mockResolvedValueOnce([
+        { size_group_id: "group-id", size: { id: "size-xl", value_id: "size-xl-value", organization_id: "org-1", size: "XL", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+        { size_group_id: "group-id", size: { id: "size-s", value_id: "size-s-value", organization_id: "org-1", size: "S", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+        { size_group_id: "group-id", size: { id: "size-m", value_id: "size-m-value", organization_id: "org-1", size: "M", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+      ]);
+
+      const order = await getOrderById("order-1", "org-1");
+
+      expect(order?.finishedGoods.map((row) => row.size)).toEqual(["XL", "S", "M"]);
+    });
   });
 
   it("falls back to the base prisma client when a closed transaction is reused", async () => {
@@ -192,6 +235,50 @@ describe("reserveNextOrderNumbers", () => {
       expect(prismaCounterMock.orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
         where: { organization_id: "org-1", season: "Winter", article: "Jacket" },
       }));
+    });
+
+    it("keeps report size columns and rows in Size Group order", async () => {
+      prismaCounterMock.orderFindMany.mockResolvedValueOnce([{
+        id: "order-1",
+        orderNo: "OD-1",
+        entityName: "Factory",
+        category: "Top",
+        subCategory: "Shirt",
+        season: "Winter",
+        article: "Shirt",
+        styleName: "Shirt",
+        colors: "Navy",
+        buyer: "Buyer",
+        brand: "Brand",
+        sizeGroup: "CORE",
+        orderQty: 30,
+        deliveryDate: null,
+        finalStatus: "Draft",
+        processStatus: null,
+        finishedGoods: [
+          { id: "fg-m", buyerSize: "M", size: "M", beforeExcessQty: 10, excess: null, excessQty: 0, totalQty: 10 },
+          { id: "fg-xl", buyerSize: "XL", size: "XL", beforeExcessQty: 10, excess: null, excessQty: 0, totalQty: 10 },
+          { id: "fg-s", buyerSize: "S", size: "S", beforeExcessQty: 10, excess: null, excessQty: 0, totalQty: 10 },
+        ],
+        bomItems: [],
+      }]);
+      prismaCounterMock.sizeGroupFindMany.mockResolvedValueOnce([{
+        id: "group-id",
+        value_id: "group-value-id",
+        size_group: "CORE",
+      }]);
+      prismaCounterMock.sizeGroupSizeFindMany.mockResolvedValueOnce([
+        { size_group_id: "group-id", size: { id: "size-xl", value_id: "size-xl-value", organization_id: "org-1", size: "XL", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+        { size_group_id: "group-id", size: { id: "size-s", value_id: "size-s-value", organization_id: "org-1", size: "S", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+        { size_group_id: "group-id", size: { id: "size-m", value_id: "size-m-value", organization_id: "org-1", size: "M", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+      ]);
+
+      const [summary] = await getArticleOrderSummaries("org-1", { season: "Winter", article: "Shirt" });
+
+      expect(summary.sizeOrder).toEqual(["XL", "S", "M"]);
+      expect(summary.sizes.map(({ size }) => size)).toEqual(["XL", "S", "M"]);
+      expect((summary.orders[0] as { finishedGoods: Array<{ size: string }> }).finishedGoods.map(({ size }) => size))
+        .toEqual(["XL", "S", "M"]);
     });
   });
 

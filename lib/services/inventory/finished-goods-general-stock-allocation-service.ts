@@ -1,6 +1,10 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
+import {
+  getSizeGroupSizeOrderMapForOrganization,
+  sortBySizeGroupOrder,
+} from "@/lib/master-data/master-data-constants";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 
 type Database = Prisma.TransactionClient;
@@ -53,7 +57,7 @@ export async function allocateBookingFromGeneralStockInTransaction(
       id: true,
       booking_no: true,
       order_id: true,
-      order: { select: { sourceStatus: true, article: true } },
+      order: { select: { sourceStatus: true, article: true, sizeGroup: true } },
       quotationLines: {
         select: {
           quotation: {
@@ -82,6 +86,12 @@ export async function allocateBookingFromGeneralStockInTransaction(
     },
   });
   if (!booking) throw new Error("Advance booking was not found in this organization.");
+  const sizeGroupOrderByReference = await getSizeGroupSizeOrderMapForOrganization(
+    organizationId,
+    booking.order.sizeGroup ? [booking.order.sizeGroup] : [],
+    transaction,
+  );
+  const sizeGroupOrder = sizeGroupOrderByReference.get(booking.order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
   if (booking.order.sourceStatus !== "ARTICLE_BASED") {
     const matchingArticle = booking.order.article?.trim()
       ? await transaction.masterArticle.findFirst({
@@ -145,9 +155,7 @@ export async function allocateBookingFromGeneralStockInTransaction(
     orderBy: [{ posted_at: "asc" }, { id: "asc" }],
   });
 
-  const bookingLines = [...booking.sizeLines].sort((left, right) =>
-    normalizedSize(left.size).localeCompare(normalizedSize(right.size)),
-  );
+  const bookingLines = sortBySizeGroupOrder(booking.sizeLines, sizeGroupOrder, (line) => line.size);
   const fulfilledQuantityByLine = new Map(bookingLines.map((line) => [
     line.id,
     line.assignments.reduce((sum, assignment) =>

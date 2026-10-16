@@ -53,6 +53,7 @@ type ArticleReview = {
   totalOrderQty: number;
   buyers: string[];
   orders: ReviewOrder[];
+  sizeOrder: string[];
   bomItems: BomItem[];
 };
 
@@ -115,7 +116,7 @@ export default function ArticleOrderSummaryDetailPage() {
   }, [articleParam, articleSegment, organizationId, seasonParam, workspaceId]);
 
   const orders = summary?.orders ?? EMPTY_ORDERS;
-  const sizeRows = useMemo(() => buildSizeRows(orders), [orders]);
+  const sizeRows = useMemo(() => buildSizeRows(orders, summary?.sizeOrder ?? []), [orders, summary?.sizeOrder]);
   const totalOrderQty = orders.reduce((total, order) => total + Number(order.orderQty ?? 0), 0);
   const statusCount = new Set(orders.map((order) => order.finalStatus).filter(Boolean)).size;
   const summaryPath = `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order-summary`;
@@ -252,7 +253,7 @@ function GeneralTable({
 
 type SizeMatrixColumn = { size: string; buyerSizes: string[] };
 
-function buildSizeRows(orders: ReviewOrder[]): SizeMatrixColumn[] {
+function buildSizeRows(orders: ReviewOrder[], sizeOrder: string[]): SizeMatrixColumn[] {
   const columns = new Map<string, Set<string>>();
   for (const order of orders) {
     for (const row of order.finishedGoods) {
@@ -262,8 +263,14 @@ function buildSizeRows(orders: ReviewOrder[]): SizeMatrixColumn[] {
       if (buyerSize) columns.get(size)?.add(buyerSize);
     }
   }
-  return [...columns].map(([size, buyerSizes]) => ({ size, buyerSizes: [...buyerSizes].sort() }))
-    .sort((left, right) => left.size.localeCompare(right.size));
+  const sizeRank = new Map(sizeOrder.map((size, index) => [size.trim().toLocaleLowerCase(), index]));
+  return [...columns].map(([size, buyerSizes], originalIndex) => ({ size, buyerSizes: [...buyerSizes].sort(), originalIndex }))
+    .sort((left, right) => (
+      (sizeRank.get(left.size.trim().toLocaleLowerCase()) ?? Number.MAX_SAFE_INTEGER)
+      - (sizeRank.get(right.size.trim().toLocaleLowerCase()) ?? Number.MAX_SAFE_INTEGER)
+      || left.originalIndex - right.originalIndex
+    ))
+    .map(({ size, buyerSizes }) => ({ size, buyerSizes }));
 }
 
 function FinishedGoodsMatrix({ orders, rows }: { orders: ReviewOrder[]; rows: SizeMatrixColumn[] }) {

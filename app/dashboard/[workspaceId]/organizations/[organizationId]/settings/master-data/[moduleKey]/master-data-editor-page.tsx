@@ -205,8 +205,14 @@ function masterDataErrorRedirect(
   error: unknown,
   returnToArticleDetail = false,
   recordCode = "",
+  returnToSizeGroupDetail = false,
+  recordId = "",
 ): never {
   const message = error instanceof Error ? error.message : "Unable to save master data.";
+  if (returnToSizeGroupDetail && moduleKey === "size-group" && recordId) {
+    const recordPath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/size-group/${encodeURIComponent(recordId)}`;
+    redirect(`${recordPath}?error=${encodeURIComponent(message)}`);
+  }
   if (returnToArticleDetail && moduleKey === "article") {
     const articlePath = recordCode
       ? `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/${encodeURIComponent(recordCode)}`
@@ -382,13 +388,24 @@ export async function updateMasterValueAction(formData: FormData) {
   const moduleKey = String(formData.get("moduleKey") ?? "");
   const valueId = String(formData.get("valueId") ?? "");
   const returnToArticleDetail = formData.get("returnToArticleDetail") === "true";
+  const returnToSizeGroupDetail = moduleKey === "size-group"
+    && formData.get("returnToSizeGroupDetail") === "true";
   const returnRecordCode = String(formData.get("field_article_code") ?? "");
   const definition = getMasterDefinition(moduleKey);
   let fields: MasterFieldValues = {};
   try {
     fields = definition ? await readFields(formData, definition.fields) : {};
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, returnRecordCode);
+    masterDataErrorRedirect(
+      workspaceId,
+      organizationId,
+      moduleKey,
+      error,
+      returnToArticleDetail,
+      returnRecordCode,
+      returnToSizeGroupDetail,
+      valueId,
+    );
   }
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
@@ -397,6 +414,11 @@ export async function updateMasterValueAction(formData: FormData) {
     if (returnToArticleDetail && moduleKey === "article" && definition) {
       masterDataErrorRedirect(workspaceId, organizationId, moduleKey,
         new Error(`Complete all required ${definition.label.toLowerCase()} fields before saving.`), true, returnRecordCode);
+    }
+    if (returnToSizeGroupDetail && definition) {
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey,
+        new Error(`Complete all required ${definition.label.toLowerCase()} fields before saving.`),
+        false, "", true, valueId);
     }
     return;
   }
@@ -428,7 +450,16 @@ export async function updateMasterValueAction(formData: FormData) {
       }
     }
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, returnRecordCode);
+    masterDataErrorRedirect(
+      workspaceId,
+      organizationId,
+      moduleKey,
+      error,
+      returnToArticleDetail,
+      returnRecordCode,
+      returnToSizeGroupDetail,
+      valueId,
+    );
   }
 
   let updated;
@@ -445,14 +476,32 @@ export async function updateMasterValueAction(formData: FormData) {
       } : {}),
     });
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, returnRecordCode);
+    masterDataErrorRedirect(
+      workspaceId,
+      organizationId,
+      moduleKey,
+      error,
+      returnToArticleDetail,
+      returnRecordCode,
+      returnToSizeGroupDetail,
+      valueId,
+    );
   }
 
   if (updated && moduleKey !== "article") {
     try {
       await saveChildValues(organization.id, updated.id, definition, formData);
     } catch (error) {
-      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, returnRecordCode);
+      masterDataErrorRedirect(
+        workspaceId,
+        organizationId,
+        moduleKey,
+        error,
+        returnToArticleDetail,
+        returnRecordCode,
+        returnToSizeGroupDetail,
+        valueId,
+      );
     }
   }
 
@@ -461,6 +510,11 @@ export async function updateMasterValueAction(formData: FormData) {
     const articlePath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/${encodeURIComponent(returnRecordCode)}`;
     revalidatePath(articlePath);
     redirect(`${articlePath}?saved=update`);
+  }
+  if (returnToSizeGroupDetail && moduleKey === "size-group") {
+    const recordPath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/size-group/${encodeURIComponent(valueId)}`;
+    revalidatePath(recordPath);
+    redirect(`${recordPath}?saved=update`);
   }
   redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=update`);
 }

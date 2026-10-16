@@ -627,10 +627,17 @@ export async function getMasterValuesForOrganization(
         }),
       ])
     : Promise.resolve(null);
-  const [, articleDetails] = await Promise.all([
+  const articleSizeOrderPromise = moduleKey === "article" && rows.length > 0
+    ? getSizeGroupSizeOrderMapForOrganization(
+        organizationId,
+        rows.map((row) => String((row as Record<string, unknown>).size_group_id ?? "")),
+      )
+    : Promise.resolve(new Map<string, string[]>());
+  const [, articleDetails, , articleSizeOrderByReference] = await Promise.all([
     lookupHydration,
     articleDetailsPromise,
     additionalRead ?? Promise.resolve(),
+    articleSizeOrderPromise,
   ]);
   const articleVariants = articleDetails?.[0] ?? [];
   const variantsByArticle = new Map<string, typeof articleVariants>();
@@ -662,6 +669,8 @@ export async function getMasterValuesForOrganization(
       fields[field.key] = related ?? fields[field.key] ?? null;
     }
     if (moduleKey === "article") {
+      const sizeGroupReference = String((row as Record<string, unknown>).size_group_id ?? "");
+      const orderedSizes = articleSizeOrderByReference.get(sizeGroupReference.trim().toLocaleLowerCase()) ?? [];
       fields.variants = (variantsByArticle.get(row.id) ?? []).map((variant) => ({
         id: variant.id,
         variant: variant.variant,
@@ -670,8 +679,12 @@ export async function getMasterValuesForOrganization(
         sku: variant.sku,
         price_override: variant.price_override?.toString() ?? null,
       }));
-      fields.Sizes = sizesByArticle.get(row.id) ?? [];
-      fields.Size_Prices = sizePricesByArticle.get(row.id) ?? [];
+      fields.Sizes = sortBySizeGroupOrder(sizesByArticle.get(row.id) ?? [], orderedSizes, (size) => size);
+      fields.Size_Prices = sortBySizeGroupOrder(
+        sizePricesByArticle.get(row.id) ?? [],
+        orderedSizes,
+        (entry) => entry.size,
+      );
     }
     return {
       id: row.id,
@@ -800,7 +813,7 @@ export async function getSizeGroupSizesForOrganization(
           },
         },
       },
-      orderBy: { created_at: "asc" },
+      orderBy: [{ created_at: "asc" }, { id: "asc" }],
     }),
   ]);
   const dummyGroups = dummyBatch && !includeDummyData
@@ -823,6 +836,73 @@ export async function getSizeGroupSizesForOrganization(
       fields: { Size: link.size.size, status: link.size.status },
     },
   }));
+}
+
+export async function getSizeGroupSizeOrderMapForOrganization(
+  organizationId: string,
+  groupReferences: string[],
+  database: typeof prisma | Prisma.TransactionClient = prisma,
+) {
+  const references = [...new Set(groupReferences.map((value) => value.trim()).filter(Boolean))];
+  if (references.length === 0) return new Map<string, string[]>();
+
+  const groups = await database.masterSizeGroup.findMany({
+    where: {
+      organization_id: organizationId,
+      OR: [
+        { id: { in: references } },
+        { value_id: { in: references } },
+        { size_group: { in: references } },
+      ],
+    },
+    select: { id: true, value_id: true, size_group: true },
+  });
+  if (groups.length === 0) return new Map<string, string[]>();
+
+  const links = await database.masterSizeGroupSize.findMany({
+    where: {
+      organization_id: organizationId,
+      size_group_id: { in: groups.map((group) => group.id) },
+    },
+    select: {
+      size_group_id: true,
+      size: { select: { organization_id: true, size: true } },
+    },
+    orderBy: [{ created_at: "asc" }, { id: "asc" }],
+  });
+  const labelsByGroupId = new Map<string, string[]>();
+  for (const link of links) {
+    if (link.size.organization_id !== organizationId) continue;
+    const labels = labelsByGroupId.get(link.size_group_id) ?? [];
+    labels.push(link.size.size);
+    labelsByGroupId.set(link.size_group_id, labels);
+  }
+
+  const orderByReference = new Map<string, string[]>();
+  for (const group of groups) {
+    const labels = labelsByGroupId.get(group.id) ?? [];
+    for (const reference of [group.id, group.value_id, group.size_group]) {
+      if (reference) orderByReference.set(reference.trim().toLocaleLowerCase(), labels);
+    }
+  }
+  return orderByReference;
+}
+
+export function sortBySizeGroupOrder<T>(
+  values: readonly T[],
+  orderedSizes: readonly string[],
+  getSize: (value: T) => string | null | undefined,
+) {
+  const rankBySize = new Map(orderedSizes.map((size, index) => [size.trim().toLocaleLowerCase(), index]));
+  return values
+    .map((value, originalIndex) => ({ value, originalIndex }))
+    .sort((first, second) => {
+      const firstRank = rankBySize.get(String(getSize(first.value) ?? "").trim().toLocaleLowerCase());
+      const secondRank = rankBySize.get(String(getSize(second.value) ?? "").trim().toLocaleLowerCase());
+      return (firstRank ?? Number.MAX_SAFE_INTEGER) - (secondRank ?? Number.MAX_SAFE_INTEGER)
+        || first.originalIndex - second.originalIndex;
+    })
+    .map(({ value }) => value);
 }
 
 export async function syncSizeGroupSizes(organizationId: string, sizeGroupId: string, selectedValues: unknown[]) {
@@ -852,8 +932,14 @@ export async function syncSizeGroupSizes(organizationId: string, sizeGroupId: st
       where: { organization_id: organizationId, size_group_id: sizeGroupId },
     });
     if (selectedSizes.length > 0) {
+      const createdAt = new Date();
       await transaction.masterSizeGroupSize.createMany({
-        data: selectedSizes.map((size) => ({ organization_id: organizationId, size_group_id: sizeGroupId, size_id: size.id })),
+        data: selectedSizes.map((size, index) => ({
+          organization_id: organizationId,
+          size_group_id: sizeGroupId,
+          size_id: size.id,
+          created_at: new Date(createdAt.getTime() + index),
+        })),
       });
     }
   });

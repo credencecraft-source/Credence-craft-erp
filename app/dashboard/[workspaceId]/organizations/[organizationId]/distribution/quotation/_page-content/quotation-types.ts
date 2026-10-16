@@ -8,6 +8,10 @@ export type DistributionQuotationLine = {
   brand: string;
   styleName: string;
   quantity: number;
+  sizes: Array<{
+    size: string;
+    bookedQuantity: number;
+  }>;
   unitPrice: string;
   lineTotal: string;
 };

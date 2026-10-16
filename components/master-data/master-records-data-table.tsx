@@ -309,13 +309,16 @@ export function MasterRecordsTable({
     if (moduleKey === "article") {
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/${encodeURIComponent(record.code || record.value_id)}`);
     }
+    if (moduleKey === "size-group") {
+      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/size-group/${encodeURIComponent(record.id)}`);
+    }
     if (moduleKey === "gold-seal") {
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/gold-seals/${encodeURIComponent(record.value_id)}`);
     }
   }, [moduleKey, organizationId, router, workspaceId]);
 
   const openEditor = useCallback((record: MasterRecord) => {
-    if (moduleKey === "article") {
+    if (moduleKey === "article" || moduleKey === "size-group") {
       openRecordDetail(record);
       return;
     }

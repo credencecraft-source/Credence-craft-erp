@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   },
   transaction: {
     advanceBooking: { findFirst: vi.fn() },
+    masterSizeGroup: { findMany: vi.fn() },
+    masterSizeGroupSize: { findMany: vi.fn() },
     masterArticle: { findFirst: vi.fn() },
     finishedGoodsGeneralStockReceipt: { findMany: vi.fn(), updateMany: vi.fn() },
     advanceBookingWorkOrderAssignment: { create: vi.fn(), updateMany: vi.fn() },
@@ -161,6 +163,52 @@ describe("finished-goods general-stock allocation", () => {
       action: "ALLOCATE_GENERAL_FINISHED_GOODS_TO_BOOKING",
       entityId: "booking-1",
     }), mocks.transaction);
+  });
+
+  it("returns allocated sizes in their Size Group order", async () => {
+    mocks.transaction.advanceBooking.findFirst.mockResolvedValue({
+      ...structuredClone(bookingRecord),
+      order: { sourceStatus: "ARTICLE_BASED", sizeGroup: "group-1" },
+      sizeLines: ["M", "S"].map((size) => ({
+        id: `booking-size-${size}`,
+        size,
+        booked_quantity: 10,
+        assignments: [],
+      })),
+    });
+    mocks.transaction.masterSizeGroup.findMany.mockResolvedValue([{
+      id: "group-id",
+      value_id: "group-value-id",
+      size_group: "group-1",
+    }]);
+    mocks.transaction.masterSizeGroupSize.findMany.mockResolvedValue(["S", "M"].map((size) => ({
+      size_group_id: "group-id",
+      size: { organization_id: "organization-1", size },
+    })));
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue(
+      ["M", "S"].map((size) => ({
+        ...structuredClone(generalStockReceipt),
+        id: `general-receipt-${size}`,
+        grn_line_id: `grn-line-${size}`,
+        size,
+        grnLine: {
+          ...structuredClone(generalStockReceipt.grnLine),
+          workOrderSizeLine: {
+            ...structuredClone(generalStockReceipt.grnLine.workOrderSizeLine),
+            id: `work-order-size-${size}`,
+          },
+        },
+      })),
+    );
+
+    const result = await allocateAdvanceBookingFromGeneralStock(
+      "organization-1",
+      "user-1",
+      "booking-1",
+      ["M", "S"].map((size) => ({ bookingSizeLineId: `booking-size-${size}`, quantity: 1 })),
+    );
+
+    expect(result.allocatedLines.map(({ size }) => size)).toEqual(["S", "M"]);
   });
 
   it("rejects general-stock allocation for Direct orders before reading or moving stock", async () => {

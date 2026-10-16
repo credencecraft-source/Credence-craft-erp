@@ -9,6 +9,10 @@ import {
   type WorkOrderGrnLineInput,
 } from "@/lib/services/inventory/work-order-grn-validation";
 import { allocateApprovedReceiptToBookingAssignments } from "@/lib/services/inventory/work-order-grn-booking-allocation";
+import {
+  getSizeGroupSizeOrderMapForOrganization,
+  sortBySizeGroupOrder,
+} from "@/lib/master-data/master-data-constants";
 
 type Database = Prisma.TransactionClient;
 
@@ -21,7 +25,7 @@ function parseGrnDate(value: string) {
   return date;
 }
 
-function mapGrn(record: {
+function mapGrnPayload(record: {
   id: string;
   grn_no: string;
   grn_date: Date;
@@ -38,6 +42,7 @@ function mapGrn(record: {
       article: string | null;
       styleName: string | null;
       brand: string | null;
+      sizeGroup: string | null;
       entity: { is_active: boolean; locations: Array<{ id: string; location_name: string }> } | null;
     };
   };
@@ -67,7 +72,7 @@ function mapGrn(record: {
       }>;
     };
   }>;
-}) {
+}, sizeOrder: string[] = []) {
   return {
     id: record.id,
     grnNo: record.grn_no,
@@ -86,7 +91,11 @@ function mapGrn(record: {
       brand: record.workOrder.order.brand,
       locations: record.workOrder.order.entity?.is_active ? record.workOrder.order.entity.locations : [],
     },
-    lines: record.lines.map((line) => ({
+    lines: sortBySizeGroupOrder(
+      record.lines,
+      sizeOrder,
+      (line) => line.size ?? line.buyer_size,
+    ).map((line) => ({
       id: line.id,
       workOrderSizeLineId: line.work_order_size_line_id,
       size: line.size,
@@ -110,6 +119,10 @@ function mapGrn(record: {
   };
 }
 
+function mapGrn(record: Parameters<typeof mapGrnPayload>[0], sizeOrder: string[] = []) {
+  return mapGrnPayload(record, sizeOrder);
+}
+
 const grnIncludes = {
   workOrder: {
     select: {
@@ -128,6 +141,7 @@ const grnIncludes = {
           buyer: true,
           category: true,
           colors: true,
+          sizeGroup: true,
           entity: {
             select: {
               is_active: true,
@@ -156,7 +170,7 @@ const grnIncludes = {
         },
       },
     },
-    orderBy: [{ size: "asc" as const }, { buyer_size: "asc" as const }],
+    orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
   },
 };
 
@@ -188,8 +202,15 @@ export async function listWorkOrderInventoryGrns(
   });
   const hasMore = records.length > take;
   const page = hasMore ? records.slice(0, take) : records;
+  const sizeOrderByGroup = await getSizeGroupSizeOrderMapForOrganization(
+    organizationId,
+    page.map((record) => record.workOrder.order.sizeGroup ?? ""),
+  );
   return {
-    grns: page.map(mapGrn),
+    grns: page.map((record) => {
+      const sizeOrder = sizeOrderByGroup.get(record.workOrder.order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
+      return mapGrn(record, sizeOrder);
+    }),
     nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
   };
 }
@@ -212,7 +233,7 @@ export async function listWorkOrdersForReceiving(
   const records = await prisma.factoryWorkOrder.findMany({
     where: { organization_id: organizationId },
     include: {
-      order: { select: { article: true, styleName: true, brand: true, buyer: true } },
+      order: { select: { article: true, styleName: true, brand: true, buyer: true, sizeGroup: true } },
       sizeLines: {
         select: { id: true, size: true, buyer_size: true, quantity: true },
       },
@@ -223,6 +244,10 @@ export async function listWorkOrdersForReceiving(
   });
   const hasMore = records.length > take;
   const page = hasMore ? records.slice(0, take) : records;
+  const sizeOrderByGroup = await getSizeGroupSizeOrderMapForOrganization(
+    organizationId,
+    page.map((workOrder) => workOrder.order.sizeGroup ?? ""),
+  );
   const workOrderIds = page.map((workOrder) => workOrder.id);
   const priorLines = workOrderIds.length > 0
     ? await prisma.workOrderInventoryGrnLine.findMany({
@@ -260,7 +285,11 @@ export async function listWorkOrdersForReceiving(
       buyer: workOrder.order.buyer,
       totalQty: workOrder.total_qty,
       status: workOrder.status,
-      sizeLines: workOrder.sizeLines.map((line) => {
+      sizeLines: sortBySizeGroupOrder(
+        workOrder.sizeLines,
+        sizeOrderByGroup.get(workOrder.order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [],
+        (line) => line.size ?? line.buyer_size,
+      ).map((line) => {
         const previouslyReceivedQuantity = receivedByWorkOrderSize.get(`${workOrder.id}:${line.id}`) ?? 0;
         return {
           id: line.id,
@@ -370,7 +399,7 @@ async function createInTransaction(
       received_quantity: normalized.reduce((total, line) => total + line.receivedQuantity, 0),
     },
   }, transaction);
-  return mapGrn(grn);
+  return grn;
 }
 
 export async function createWorkOrderInventoryGrn(
@@ -388,10 +417,16 @@ export async function createWorkOrderInventoryGrn(
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await prisma.$transaction(
+      const record = await prisma.$transaction(
         (transaction) => createInTransaction(transaction, organizationId, userId, input),
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 },
       );
+      const sizeOrderByGroup = await getSizeGroupSizeOrderMapForOrganization(
+        organizationId,
+        record.workOrder.order.sizeGroup ? [record.workOrder.order.sizeGroup] : [],
+      );
+      const sizeOrder = sizeOrderByGroup.get(record.workOrder.order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
+      return mapGrn(record, sizeOrder);
     } catch (error) {
       if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2034" || attempt === 2) {
         throw error;

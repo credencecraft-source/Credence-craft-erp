@@ -146,18 +146,20 @@ export default function ArticleRecordEditor({
   }));
   const hasSizePrices = sizePriceRows.some((entry) => entry.price !== null);
 
-  const setSizes = (selected: string[]) => {
-    setField("Sizes", selected);
-    const retainedPrices = Object.fromEntries(selected.flatMap((size) => {
+  const setSizes = (selected: string[], orderedAvailableSizes = availableSizes) => {
+    const selectedSet = new Set(selected);
+    const orderedSelection = orderedAvailableSizes.filter((size) => selectedSet.has(size));
+    setField("Sizes", orderedSelection);
+    const retainedPrices = Object.fromEntries(orderedSelection.flatMap((size) => {
       const price = sizePrices[size.toLocaleLowerCase()];
       return price ? [[size.toLocaleLowerCase(), price]] : [];
     }));
     setSizePrices(retainedPrices);
-    const enteredPrices = selected.map((size) => retainedPrices[size.toLocaleLowerCase()] ?? "").filter(Boolean);
+    const enteredPrices = orderedSelection.map((size) => retainedPrices[size.toLocaleLowerCase()] ?? "").filter(Boolean);
     if (enteredPrices.length > 0) {
       const normalized = enteredPrices.map(normalizePrice);
-      setField("default_price", selected.length > 0
-        && enteredPrices.length === selected.length
+      setField("default_price", orderedSelection.length > 0
+        && enteredPrices.length === orderedSelection.length
         && normalized.every((price) => price === normalized[0])
         ? enteredPrices[0]
         : "");
@@ -452,8 +454,9 @@ export default function ArticleRecordEditor({
                     onChange={(event) => {
                       setField("Size_Group", event.target.value);
                       const nextGroup = articleLookupOptions["size-group"]?.find((option) => option.label === event.target.value);
-                      const nextSizes = new Set(nextGroup ? articleSizeGroupSizes[nextGroup.id] ?? [] : []);
-                      setSizes(fields.Sizes.filter((size) => nextSizes.has(size)));
+                      const nextAvailableSizes = nextGroup ? articleSizeGroupSizes[nextGroup.id] ?? [] : [];
+                      const nextSizes = new Set(nextAvailableSizes);
+                      setSizes(fields.Sizes.filter((size) => nextSizes.has(size)), nextAvailableSizes);
                     }}
                     options={[
                       { value: "", label: "Select Size Group" },
@@ -504,7 +507,7 @@ export default function ArticleRecordEditor({
                 <div className="space-y-3">
                   <h2 className="text-sm font-semibold text-[var(--erp-text)]">Size-wise prices</h2>
                   <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                    {fields.Sizes.map((size) => (
+                    {availableSizes.filter((size) => fields.Sizes.includes(size)).map((size) => (
                       <Input
                         key={size}
                         label={`${size} price`}

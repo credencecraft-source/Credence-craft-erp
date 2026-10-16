@@ -1667,7 +1667,7 @@ describe("master import service", () => {
       moduleKey === "size-group" && label.includes("NEW LABEL S-M"))).toBe(false);
   });
 
-  it("suggests a new Size Group when an existing organization group lacks one required size", async () => {
+  it("suggests a new Size Group when an existing group has a different size set", async () => {
     mocks.prisma.masterImportJob.findFirst
       .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "STAGED" })
       .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "PARTIAL", total_rows: 1 });
@@ -1700,7 +1700,13 @@ describe("master import service", () => {
     }]);
     mocks.prisma.masterSizeGroupSize.findMany.mockResolvedValue([{
       size_group_id: "group-core",
-      size: { organization_id: "org-internal", size: "S" },
+      size: { id: "size-s", organization_id: "org-internal" },
+    }, {
+      size_group_id: "group-core",
+      size: { id: "size-m", organization_id: "org-internal" },
+    }, {
+      size_group_id: "group-core",
+      size: { id: "size-xl", organization_id: "org-internal" },
     }]);
     mocks.prisma.masterImportJobRow.updateMany.mockResolvedValue({ count: 1 });
     mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
@@ -1726,7 +1732,7 @@ describe("master import service", () => {
       }),
       select: {
         size_group_id: true,
-        size: { select: { organization_id: true, size: true } },
+        size: { select: { id: true, organization_id: true } },
       },
     }));
     expect(suggestions).toContainEqual(expect.objectContaining({
@@ -1737,7 +1743,7 @@ describe("master import service", () => {
     }));
   });
 
-  it("reuses a same-brand Size Group with the exact full size set regardless of order or group name", async () => {
+  it("reuses a same-brand Size Group with the exact size set regardless of order or group name", async () => {
     mocks.prisma.masterImportJob.findFirst
       .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "STAGED" })
       .mockResolvedValueOnce({ ...baseJob, module_key: "article", status: "PARTIAL", total_rows: 1 });
@@ -1781,7 +1787,7 @@ describe("master import service", () => {
     mocks.prisma.masterSizeGroupSize.findMany.mockResolvedValue([
       ...[...matchingSizes].reverse().map((size) => ({
         size_group_id: "group-existing",
-        size: { organization_id: "org-internal", size: size.toLowerCase() },
+        size: { id: `size-${size.toLowerCase()}`, organization_id: "org-internal" },
       })),
     ]);
     mocks.prisma.masterImportJobRow.updateMany.mockResolvedValue({ count: 1 });

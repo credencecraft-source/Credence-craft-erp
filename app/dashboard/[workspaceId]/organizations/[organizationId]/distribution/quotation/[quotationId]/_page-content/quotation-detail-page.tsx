@@ -286,10 +286,10 @@ export default function QuotationDetailPage() {
                 <h2 className="text-base font-semibold text-slate-900">Quotation Subform</h2>
                 <p className="mt-1 text-sm text-slate-600">Each selected Advance Booking is one quotation line. The booking quantity is the sum of its booked sizes.</p>
               </div>
-              <Table tableClassName="min-w-[60rem]">
+              <Table tableClassName="min-w-[72rem]">
                 <thead className="bg-[var(--erp-surface-soft)] text-left text-xs font-semibold uppercase text-slate-600">
                   <tr>
-                    <th className="px-3 py-2">Advance Booking</th><th className="px-3 py-2">End Customer</th><th className="px-3 py-2">Order</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Booking Qty</th><th className="px-3 py-2">Unit Price</th><th className="px-3 py-2">Line Total</th>
+                    <th className="px-3 py-2">Advance Booking</th><th className="px-3 py-2">End Customer</th><th className="px-3 py-2">Order</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Size-wise Qty</th><th className="px-3 py-2">Booking Qty</th><th className="px-3 py-2">Unit Price</th><th className="px-3 py-2">Line Total</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--erp-border)] text-sm text-slate-700">
@@ -301,6 +301,11 @@ export default function QuotationDetailPage() {
                         <td className="px-3 py-2">{line.endCustomer || "—"}</td>
                         <td className="px-3 py-2">{line.orderNo}</td>
                         <td className="px-3 py-2">{line.description || "—"}</td>
+                        <td className="px-3 py-2">
+                          {line.sizes.length > 0
+                            ? line.sizes.map(({ size, bookedQuantity }) => `${size}: ${bookedQuantity.toLocaleString()}`).join(" · ")
+                            : "—"}
+                        </td>
                         <td className="px-3 py-2">{line.quantity}</td>
                         <td className="w-40 px-3 py-2">
                           <Input

@@ -14,7 +14,12 @@ import {
 import { lockOrganizationOrderQuantityLimit } from "@/lib/services/platform/order-quantity-limit-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { requireActiveOrganizationEntity } from "@/lib/services/organizations/organization-entity-service";
-import { assertNoDummyMasterReferences, getSizeGroupSizesForOrganization } from "@/lib/master-data/master-data-constants";
+import {
+  assertNoDummyMasterReferences,
+  getSizeGroupSizeOrderMapForOrganization,
+  getSizeGroupSizesForOrganization,
+  sortBySizeGroupOrder,
+} from "@/lib/master-data/master-data-constants";
 import { buildVariantOrderInput, type VariantCreateRequest, type VariantSourceOrder } from "@/lib/services/orders/order-variant-input";
 import { createPreparedVariantToken, readPreparedVariantToken } from "@/lib/services/orders/order-variant-preparation";
 
@@ -306,7 +311,7 @@ export async function listOrdersLegacy(organizationId: string) {
 }
 
 export async function getOrderById(id: string, organizationId: string) {
-  return prisma.merchandisingOrder.findFirst({
+  const order = await prisma.merchandisingOrder.findFirst({
     where: { id, organization_id: organizationId },
     select: {
       id: true,
@@ -396,6 +401,17 @@ export async function getOrderById(id: string, organizationId: string) {
       },
     },
   });
+  if (!order) return null;
+
+  const groupOrderByReference = await getSizeGroupSizeOrderMapForOrganization(
+    organizationId,
+    order.sizeGroup ? [order.sizeGroup] : [],
+  );
+  const orderedSizes = groupOrderByReference.get(order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
+  return {
+    ...order,
+    finishedGoods: sortBySizeGroupOrder(order.finishedGoods, orderedSizes, (row) => row.size ?? row.buyerSize),
+  };
 }
 
 async function findProcessTemplate(organizationId: string, processTemplateId: string | null | undefined, database: Prisma.TransactionClient | typeof prisma) {
@@ -1585,7 +1601,6 @@ export async function getArticleOrderSummaries(
           excessQty: true,
           totalQty: true,
         },
-        orderBy: [{ size: "asc" }, { id: "asc" }],
       },
       bomItems: {
         select: {
@@ -1602,6 +1617,10 @@ export async function getArticleOrderSummaries(
     },
     orderBy: [{ season: "asc" }, { article: "asc" }, { orderNo: "asc" }, { id: "asc" }],
   });
+  const groupOrderByReference = await getSizeGroupSizeOrderMapForOrganization(
+    organizationId,
+    orders.map((order) => order.sizeGroup ?? ""),
+  );
 
   const grouped = new Map<string, {
     season: string | null;
@@ -1611,6 +1630,7 @@ export async function getArticleOrderSummaries(
     buyers: Set<string>;
     orderNumbers: string[];
     orders: Array<Record<string, unknown>>;
+    sizeOrder: string[];
     sizeTotals: Map<string, number>;
     bomTotals: Map<string, {
       rawMaterialName: string;
@@ -1626,6 +1646,7 @@ export async function getArticleOrderSummaries(
   for (const order of orders) {
     const season = order.season?.trim() || null;
     const article = order.article?.trim() || null;
+    const sizeOrder = groupOrderByReference.get(order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
     const groupKey = JSON.stringify([season, article]);
     let summary = grouped.get(groupKey);
 
@@ -1638,6 +1659,7 @@ export async function getArticleOrderSummaries(
         buyers: new Set<string>(),
         orderNumbers: [],
         orders: [],
+        sizeOrder,
         sizeTotals: new Map<string, number>(),
         bomTotals: new Map(),
       };
@@ -1648,6 +1670,11 @@ export async function getArticleOrderSummaries(
     summary.totalOrderQty += Number(order.orderQty ?? 0);
     if (order.buyer?.trim()) summary.buyers.add(order.buyer.trim());
     summary.orderNumbers.push(order.orderNo);
+    const orderedFinishedGoods = sortBySizeGroupOrder(
+      order.finishedGoods,
+      sizeOrder,
+      (row) => row.size ?? row.buyerSize,
+    );
 
     summary.orders.push({
       id: order.id,
@@ -1666,7 +1693,7 @@ export async function getArticleOrderSummaries(
       deliveryDate: toDateOnly(order.deliveryDate),
       finalStatus: order.finalStatus,
       processStatus: order.processStatus,
-      finishedGoods: order.finishedGoods.map((row) => ({
+      finishedGoods: orderedFinishedGoods.map((row) => ({
         id: row.id,
         buyerSize: row.buyerSize,
         size: row.size,
@@ -1677,7 +1704,7 @@ export async function getArticleOrderSummaries(
       })),
     });
 
-    for (const row of order.finishedGoods) {
+    for (const row of orderedFinishedGoods) {
       const size = row.size?.trim() || "Unassigned Size";
       summary.sizeTotals.set(size, (summary.sizeTotals.get(size) ?? 0) + Number(row.totalQty ?? 0));
     }
@@ -1710,7 +1737,12 @@ export async function getArticleOrderSummaries(
     buyers: [...summary.buyers].sort(),
     orderNumbers: summary.orderNumbers,
     orders: summary.orders,
-    sizes: [...summary.sizeTotals].map(([size, totalQty]) => ({ size, totalQty })),
+    sizeOrder: summary.sizeOrder,
+    sizes: sortBySizeGroupOrder(
+      [...summary.sizeTotals].map(([size, totalQty]) => ({ size, totalQty })),
+      summary.sizeOrder,
+      (entry) => entry.size,
+    ),
     bomItems: [...summary.bomTotals.values()].map((item) => ({
       ...item,
       affectedOrderNumbers: [...item.affectedOrderNumbers],

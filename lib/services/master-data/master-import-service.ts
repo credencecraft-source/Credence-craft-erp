@@ -1454,7 +1454,7 @@ type ArticleImportSupportingMasterIndex = {
   sizes: Map<string, ArticleImportLookup & { size: string }>;
   sizeGroups: Map<string, ArticleImportSizeGroup>;
   existingSizeGroupNames: Set<string>;
-  sizeGroupSizeLabelsByGroupId: Map<string, Set<string>>;
+  sizeGroupSizeIdsByGroupId: Map<string, Set<string>>;
   knownMissingSizeGroupNames: Set<string>;
 };
 
@@ -1612,16 +1612,16 @@ async function loadArticleImportSupportingMasterIndex(
         },
         select: {
           size_group_id: true,
-          size: { select: { organization_id: true, size: true } },
+            size: { select: { id: true, organization_id: true } },
         },
       })
       : [];
-  const sizeGroupSizeLabelsByGroupId = new Map<string, Set<string>>();
+  const sizeGroupSizeIdsByGroupId = new Map<string, Set<string>>();
   for (const link of sizeGroupSizeLinks) {
       if (link.size.organization_id !== organizationId) continue;
-      const labels = sizeGroupSizeLabelsByGroupId.get(link.size_group_id) ?? new Set<string>();
-      labels.add(normalizedArticleMasterLabel(link.size.size));
-      sizeGroupSizeLabelsByGroupId.set(link.size_group_id, labels);
+      const sizeIds = sizeGroupSizeIdsByGroupId.get(link.size_group_id) ?? new Set<string>();
+      sizeIds.add(link.size.id);
+      sizeGroupSizeIdsByGroupId.set(link.size_group_id, sizeIds);
   }
 
   const indexByLabel = <T extends { [key: string]: unknown }>(
@@ -1645,7 +1645,7 @@ async function loadArticleImportSupportingMasterIndex(
     sizes: indexByLabel(sizes, "size"),
     sizeGroups: indexByLabel(sizeGroups, "size_group"),
     existingSizeGroupNames: new Set(sizeGroups.map((group) => normalizedArticleMasterLabel(group.size_group))),
-    sizeGroupSizeLabelsByGroupId,
+    sizeGroupSizeIdsByGroupId,
     knownMissingSizeGroupNames: new Set(),
   };
 }
@@ -1854,7 +1854,7 @@ export async function validateArticleImportSupportingMasters(
             select: { id: true, size_group: true, brand_id: true, is_active: true, legacy_metadata: true },
           })
       : null;
-    const requiredSizeLabels = new Set(sizeLabels.map(normalizedArticleMasterLabel));
+    const requiredSizeIds = new Set(sizes.map((size) => size.id));
     let groupsForBrand: ArticleImportSizeGroup[] = [];
     if (brand) {
       groupsForBrand = supportingIndex
@@ -1867,16 +1867,15 @@ export async function validateArticleImportSupportingMasters(
     const groupIsSelectable = (group: ArticleImportSizeGroup) => group.is_active
       && !(dummyBatchId && isRecord(group.legacy_metadata)
         && group.legacy_metadata.dummyDataBatchId === dummyBatchId);
-    const groupHasExactSizes = (group: ArticleImportSizeGroup, linkedSizeLabels: Set<string>) =>
-      linkedSizeLabels.size === requiredSizeLabels.size
-      && [...requiredSizeLabels].every((size) => linkedSizeLabels.has(size));
-    let exactGroups: ArticleImportSizeGroup[] = [];
+    const groupHasExactSizes = (groupSizeIds: Set<string>) =>
+      groupSizeIds.size === requiredSizeIds.size
+      && [...requiredSizeIds].every((sizeId) => groupSizeIds.has(sizeId));
+    let matchingGroups: ArticleImportSizeGroup[] = [];
     if (supportingIndex) {
       const hasExactSizes = (group: ArticleImportSizeGroup) => groupHasExactSizes(
-        group,
-        supportingIndex.sizeGroupSizeLabelsByGroupId.get(group.id) ?? new Set<string>(),
+        supportingIndex.sizeGroupSizeIdsByGroupId.get(group.id) ?? new Set<string>(),
       );
-      exactGroups = groupsForBrand.filter(hasExactSizes);
+      matchingGroups = groupsForBrand.filter(hasExactSizes);
     } else if (groupsForBrand.length > 0) {
       const allGroupLinks = await transaction.masterSizeGroupSize.findMany({
         where: {
@@ -1885,35 +1884,34 @@ export async function validateArticleImportSupportingMasters(
         },
         select: {
           size_group_id: true,
-          size: { select: { organization_id: true, size: true } },
+          size: { select: { id: true, organization_id: true } },
         },
       });
-      const linksByGroupId = new Map<string, Set<string>>();
+      const sizeIdsByGroupId = new Map<string, Set<string>>();
       for (const link of allGroupLinks) {
         if (link.size.organization_id !== organizationId) continue;
-        const linkedSizeLabels = linksByGroupId.get(link.size_group_id) ?? new Set<string>();
-        linkedSizeLabels.add(normalizedArticleMasterLabel(link.size.size));
-        linksByGroupId.set(link.size_group_id, linkedSizeLabels);
+        const sizeIds = sizeIdsByGroupId.get(link.size_group_id) ?? new Set<string>();
+        sizeIds.add(link.size.id);
+        sizeIdsByGroupId.set(link.size_group_id, sizeIds);
       }
       const hasExactSizes = (group: ArticleImportSizeGroup) => groupHasExactSizes(
-        group,
-        linksByGroupId.get(group.id) ?? new Set<string>(),
+        sizeIdsByGroupId.get(group.id) ?? new Set<string>(),
       );
-      exactGroups = groupsForBrand.filter(hasExactSizes);
+      matchingGroups = groupsForBrand.filter(hasExactSizes);
     }
     const requestedExactGroup = requestedGroup
       && requestedGroup.brand_id === brand?.id
-      && exactGroups.some((group) => group.id === requestedGroup.id)
+      && matchingGroups.some((group) => group.id === requestedGroup.id)
       ? requestedGroup
       : null;
     const matchingGroup = requestedExactGroup && groupIsSelectable(requestedExactGroup)
       ? requestedExactGroup
-      : exactGroups.find(groupIsSelectable) ?? null;
+      : matchingGroups.find(groupIsSelectable) ?? null;
     if (matchingGroup) {
       fields.Size_Group = matchingGroup.size_group;
       return { errors, suggestions };
     }
-    const unavailableExactGroup = requestedExactGroup ?? exactGroups[0];
+    const unavailableExactGroup = requestedExactGroup ?? matchingGroups[0];
     if (unavailableExactGroup) {
       isUsable(unavailableExactGroup, unavailableExactGroup.size_group, "Size Group");
       return { errors, suggestions };

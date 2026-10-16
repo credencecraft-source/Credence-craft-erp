@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
-  prisma: { $transaction: vi.fn(), distributionQuotation: { findMany: vi.fn() } },
+  prisma: { $transaction: vi.fn(), distributionQuotation: { findFirst: vi.fn(), findMany: vi.fn() } },
   transaction: {
     advanceBooking: { findMany: vi.fn() },
     contact: { findFirst: vi.fn() },
@@ -24,6 +24,7 @@ import {
   createDistributionMasterQuotation,
   createDistributionQuotationFromBookings,
   deleteDistributionQuotation,
+  getDistributionQuotation,
   listDistributionQuotations,
   saveDistributionQuotationDraft,
 } from "./quotation-service";
@@ -66,7 +67,13 @@ const createdQuotation = {
   lines: [{
     id: "quotation-line-1",
     source_booking_id: "booking-1",
-    sourceBooking: { customer: "End Customer A" },
+    sourceBooking: {
+      customer: "End Customer A",
+      sizeLines: [
+        { size: "M", booked_quantity: 20 },
+        { size: "S", booked_quantity: 10 },
+      ],
+    },
     booking_no: "BK-1",
     order_no: "ORD-1",
     item_description: "Brand Style",
@@ -96,6 +103,27 @@ describe("distribution quotation persistence", () => {
     mocks.transaction.distributionQuotation.updateMany.mockResolvedValue({ count: 1 });
     mocks.reserveProcurementDocumentNumber.mockResolvedValue("QT-1");
     mocks.createAuditEvent.mockResolvedValue({});
+  });
+
+  it("returns size-wise booked quantities for every quotation line", async () => {
+    mocks.prisma.distributionQuotation.findFirst.mockResolvedValue({
+      ...createdQuotation,
+      childQuotations: [],
+    });
+
+    const result = await getDistributionQuotation("internal-org-1", "quotation-1");
+
+    expect(mocks.prisma.distributionQuotation.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "internal-org-1", id: "quotation-1" },
+    }));
+    expect(result.quotation.lines[0]).toMatchObject({
+      bookingNo: "BK-1",
+      quantity: 30,
+      sizes: [
+        { size: "M", bookedQuantity: 20 },
+        { size: "S", bookedQuantity: 10 },
+      ],
+    });
   });
 
   it("loads quotation registers from summary fields without fetching detail lines", async () => {

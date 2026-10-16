@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   },
   transaction: {
     merchandisingOrder: { findFirst: vi.fn() },
+    masterSizeGroup: { findMany: vi.fn() },
+    masterSizeGroupSize: { findMany: vi.fn() },
     contact: { findFirst: vi.fn() },
     masterVendor: { findFirst: vi.fn() },
     advanceBookingSizeLine: { findMany: vi.fn() },
@@ -94,7 +96,6 @@ describe("advance-booking persistence", () => {
       }),
       select: expect.objectContaining({
         sizeLines: {
-          orderBy: { size: "asc" },
           select: { id: true, size: true, booked_quantity: true },
         },
       }),
@@ -110,6 +111,73 @@ describe("advance-booking persistence", () => {
       isolationLevel: "Serializable",
     }));
     expect(mocks.createAuditEvent).toHaveBeenCalledOnce();
+  });
+
+  it("saves and returns booking sizes in the selected order's Size Group order", async () => {
+    mocks.transaction.merchandisingOrder.findFirst.mockResolvedValue({
+      id: "order-1",
+      orderNo: "ORD-1",
+      brand: "Brand",
+      styleName: "Style",
+      deliveryDate: new Date("2026-12-01T00:00:00.000Z"),
+      sizeGroup: "group-1",
+      finishedGoods: ["S", "M", "L", "XL"].map((size) => ({
+        size,
+        buyerSize: size,
+        totalQty: 40,
+        beforeExcessQty: 40,
+      })),
+    });
+    mocks.transaction.masterSizeGroup.findMany.mockResolvedValue([{
+      id: "group-id",
+      value_id: "group-value-id",
+      size_group: "group-1",
+    }]);
+    mocks.transaction.masterSizeGroupSize.findMany.mockResolvedValue(
+      ["S", "M", "L", "XL"].map((size) => ({
+        size_group_id: "group-id",
+        size: { organization_id: "internal-org-1", size },
+      })),
+    );
+    mocks.transaction.advanceBooking.create.mockResolvedValue({
+      id: "booking-record-1",
+      organization_id: "internal-org-1",
+      order_id: "order-1",
+      vendor_id: "vendor-1",
+      booking_no: "BK-1",
+      customer: "Customer",
+      brand: "Brand",
+      style_name: "Style",
+      delivery_date: new Date("2026-12-01T00:00:00.000Z"),
+      created_at: new Date("2026-10-07T00:00:00.000Z"),
+      order: { orderNo: "ORD-1", sourceStatus: "DIRECT", sizeGroup: "group-1" },
+      quotationLines: [],
+      sizeLines: ["XL", "L", "M", "S"].map((size) => ({
+        id: `booking-size-${size}`,
+        size,
+        booked_quantity: 1,
+        assignments: [],
+      })),
+    });
+
+    const booking = await createAdvanceBooking("internal-org-1", "user-1", {
+      orderId: "order-1",
+      vendorId: "vendor-1",
+      sizes: ["XL", "L", "M", "S"].map((size) => ({ size, quantity: 1 })),
+    });
+
+    expect(mocks.transaction.masterSizeGroupSize.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "internal-org-1", size_group_id: { in: ["group-id"] } },
+      orderBy: [{ created_at: "asc" }, { id: "asc" }],
+    }));
+    expect(mocks.transaction.advanceBooking.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        sizeLines: {
+          create: ["S", "M", "L", "XL"].map((size) => ({ size, booked_quantity: 1 })),
+        },
+      }),
+    }));
+    expect(booking.sizes.map(({ size }) => size)).toEqual(["S", "M", "L", "XL"]);
   });
 
   it("allows a selected inactive End Customer from the same organization", async () => {

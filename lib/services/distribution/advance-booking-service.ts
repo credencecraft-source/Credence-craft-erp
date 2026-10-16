@@ -4,6 +4,10 @@ import { prisma } from "@/lib/database/prisma-client";
 import { listGeneralFinishedGoodsAvailability } from "@/lib/services/inventory/finished-goods-general-stock-allocation-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
+import {
+  getSizeGroupSizeOrderMapForOrganization,
+  sortBySizeGroupOrder,
+} from "@/lib/master-data/master-data-constants";
 
 type Database = Prisma.TransactionClient;
 
@@ -32,7 +36,7 @@ function fulfillmentStatusFor(fulfilled: number, assigned: number) {
 }
 
 const bookingInclude = {
-  order: { select: { orderNo: true, sourceStatus: true, article: true } },
+  order: { select: { orderNo: true, sourceStatus: true, article: true, sizeGroup: true } },
   quotationLines: {
     select: {
       quotation: {
@@ -53,7 +57,7 @@ const bookingInclude = {
     take: 1,
   },
   sizeLines: {
-    orderBy: { size: "asc" as const },
+    orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
     include: {
       assignments: {
         include: {
@@ -71,8 +75,9 @@ const bookingInclude = {
 function mapBooking(
   record: Prisma.AdvanceBookingGetPayload<{ include: typeof bookingInclude }>,
   isLegacyArticleBased = false,
+  sizeOrder: string[] = [],
 ) {
-  const sizes = record.sizeLines.map((line) => {
+  const sizes = sortBySizeGroupOrder(record.sizeLines, sizeOrder, (line) => line.size).map((line) => {
     const assignedQuantity = line.assignments.reduce((sum, assignment) => sum + assignment.assigned_quantity, 0);
     const fulfilledQuantity = line.assignments.reduce(
       (sum, assignment) => sum + assignment.grnAllocations.reduce((lineSum, allocation) => lineSum + allocation.allocated_quantity, 0),
@@ -206,13 +211,18 @@ export async function listAdvanceBookings(
   const pageRows = hasNextPage ? rows.slice(0, take) : rows;
   const lastRow = pageRows.at(-1);
   const legacyArticleBasedOrderIds = await getLegacyArticleBasedOrderIds(organizationId, pageRows);
+  const sizeOrderByGroup = await getSizeGroupSizeOrderMapForOrganization(
+    organizationId,
+    pageRows.map((row) => row.order.sizeGroup ?? ""),
+  );
   const generalStockAvailability = await listGeneralFinishedGoodsAvailability(
     organizationId,
     pageRows.map((row) => row.order_id),
   );
   return {
     bookings: pageRows.map((record) => {
-      const booking = mapBooking(record, legacyArticleBasedOrderIds.has(record.order_id));
+      const sizeOrder = sizeOrderByGroup.get(record.order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
+      const booking = mapBooking(record, legacyArticleBasedOrderIds.has(record.order_id), sizeOrder);
       const availabilityBySize = generalStockAvailability.get(booking.orderId);
       return {
         ...booking,
@@ -235,7 +245,12 @@ export async function getAdvanceBookingById(organizationId: string, bookingId: s
   });
   if (!record) throw new Error("Advance booking was not found in this organization.");
   const legacyArticleBasedOrderIds = await getLegacyArticleBasedOrderIds(organizationId, [record]);
-  return { booking: mapBooking(record, legacyArticleBasedOrderIds.has(record.order_id)) };
+  const sizeOrderByGroup = await getSizeGroupSizeOrderMapForOrganization(
+    organizationId,
+    record.order.sizeGroup ? [record.order.sizeGroup] : [],
+  );
+  const sizeOrder = sizeOrderByGroup.get(record.order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
+  return { booking: mapBooking(record, legacyArticleBasedOrderIds.has(record.order_id), sizeOrder) };
 }
 
 async function createBookingInTransaction(
@@ -262,10 +277,17 @@ async function createBookingInTransaction(
       brand: true,
       styleName: true,
       deliveryDate: true,
+      sizeGroup: true,
       finishedGoods: { select: { size: true, buyerSize: true, totalQty: true, beforeExcessQty: true } },
     },
   });
   if (!order) throw new Error("The selected order was not found in this organization.");
+  const sizeGroupOrderByReference = await getSizeGroupSizeOrderMapForOrganization(
+    organizationId,
+    order.sizeGroup ? [order.sizeGroup] : [],
+    transaction,
+  );
+  const sizeGroupOrder = sizeGroupOrderByReference.get(order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
   const legacyArticle = order.sourceStatus !== "ARTICLE_BASED" && order.article?.trim()
     ? await transaction.masterArticle.findFirst({
         where: { organization_id: organizationId, article: order.article.trim() },
@@ -309,7 +331,7 @@ async function createBookingInTransaction(
   }
 
   const seen = new Set<string>();
-  const lines = input.sizes.map((line) => {
+  const lines = sortBySizeGroupOrder(input.sizes.map((line) => {
     const size = normalizedSize(line.size);
     if (!size || size.length > 100 || seen.has(size)) throw new Error("Each valid finished-goods size must be submitted once.");
     seen.add(size);
@@ -321,7 +343,7 @@ async function createBookingInTransaction(
     const available = Math.max(capacity - (bookedBySize.get(size) ?? 0), 0);
     const actualIncrease = Math.max(line.quantity - available, 0);
     return { size, booked_quantity: line.quantity, orderIncreaseQuantity: actualIncrease };
-  }).filter((line) => line.booked_quantity > 0);
+  }).filter((line) => line.booked_quantity > 0), sizeGroupOrder, (line) => line.size);
   if (lines.length === 0) throw new Error("Enter a positive booking quantity for at least one size.");
 
   const booking = await transaction.advanceBooking.create({
@@ -349,9 +371,8 @@ async function createBookingInTransaction(
       style_name: true,
       delivery_date: true,
       created_at: true,
-      order: { select: { orderNo: true, sourceStatus: true } },
+      order: { select: { orderNo: true, sourceStatus: true, sizeGroup: true } },
       sizeLines: {
-        orderBy: { size: "asc" },
         select: { id: true, size: true, booked_quantity: true },
       },
     },
@@ -399,7 +420,7 @@ async function createBookingInTransaction(
     totalFulfilled: 0,
     assignmentStatus: statusFor(0, totalBooked),
     fulfillmentStatus: fulfillmentStatusFor(0, 0),
-    sizes: booking.sizeLines.map((line) => ({
+    sizes: sortBySizeGroupOrder(booking.sizeLines, sizeGroupOrder, (line) => line.size).map((line) => ({
       id: line.id,
       size: line.size,
       bookedQuantity: line.booked_quantity,

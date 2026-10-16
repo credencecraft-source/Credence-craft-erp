@@ -5,6 +5,10 @@ import { reserveChallanNumber } from "@/lib/services/organizations/challan-numbe
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { splitBomSizes } from "@/lib/services/orders/order-quantity-calculations";
 import { getWorkOrderBomAllocatedQuantities } from "@/lib/services/factory/work-order-material-allocation-service";
+import {
+  getSizeGroupSizeOrderMapForOrganization,
+  sortBySizeGroupOrder,
+} from "@/lib/master-data/master-data-constants";
 
 export type WorkOrderQuantityInput = {
   sourceFinishedGoodsId?: string;
@@ -163,6 +167,7 @@ export async function listWorkOrderAllocationsByArticle(organizationId: string, 
       orderNo: true,
       styleName: true,
       buyer: true,
+      sizeGroup: true,
       orderQty: true,
       finishedGoods: { select: { id: true, size: true, buyerSize: true, totalQty: true } },
       workOrders: { select: { sizeLines: { select: { source_finished_goods_id: true, quantity: true } } } },
@@ -174,6 +179,10 @@ export async function listWorkOrderAllocationsByArticle(organizationId: string, 
 
   const hasMore = orders.length > take;
   const page = hasMore ? orders.slice(0, take) : orders;
+  const groupOrderByReference = await getSizeGroupSizeOrderMapForOrganization(
+    organizationId,
+    page.map((order) => order.sizeGroup ?? ""),
+  );
   const allocations = page.map((order) => {
     const allocated = new Map<string, number>();
     for (const workOrder of order.workOrders) {
@@ -181,9 +190,10 @@ export async function listWorkOrderAllocationsByArticle(organizationId: string, 
         allocated.set(line.source_finished_goods_id, (allocated.get(line.source_finished_goods_id) ?? 0) + line.quantity);
       }
     }
+    const groupOrder = groupOrderByReference.get(order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
     return {
       order: { orderNo: order.orderNo, styleName: order.styleName, buyer: order.buyer, orderQty: order.orderQty },
-      sizes: order.finishedGoods.map((row) => {
+      sizes: sortBySizeGroupOrder(order.finishedGoods, groupOrder, (row) => row.size ?? row.buyerSize).map((row) => {
         const allocatedQty = allocated.get(row.id) ?? 0;
         const orderedQty = row.totalQty ?? 0;
         return { id: row.id, size: row.size, buyerSize: row.buyerSize, orderedQty, allocatedQty, remainingQty: Math.max(orderedQty - allocatedQty, 0) };
@@ -409,6 +419,17 @@ export async function getWorkOrderAllocation(organizationId: string, orderNo: st
 
   if (!order) return null;
 
+  const groupOrderByReference = await getSizeGroupSizeOrderMapForOrganization(
+    organizationId,
+    order.sizeGroup ? [order.sizeGroup] : [],
+  );
+  const groupOrder = groupOrderByReference.get(order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
+  const orderedFinishedGoods = sortBySizeGroupOrder(
+    order.finishedGoods,
+    groupOrder,
+    (row) => row.size ?? row.buyerSize,
+  );
+
   const allocated = new Map<string, number>();
   for (const workOrder of order.workOrders) {
     for (const line of workOrder.sizeLines) {
@@ -428,7 +449,7 @@ export async function getWorkOrderAllocation(organizationId: string, orderNo: st
       processTemplate: mapProcessTemplate(order.processTemplate),
       processSteps: mapProcessSteps(order.processSteps),
     },
-    sizes: order.finishedGoods.map((row) => ({ id: row.id, size: row.size, buyerSize: row.buyerSize, orderedQty: row.totalQty ?? 0, allocatedQty: allocated.get(row.id) ?? 0, remainingQty: Math.max((row.totalQty ?? 0) - (allocated.get(row.id) ?? 0), 0) })),
+    sizes: orderedFinishedGoods.map((row) => ({ id: row.id, size: row.size, buyerSize: row.buyerSize, orderedQty: row.totalQty ?? 0, allocatedQty: allocated.get(row.id) ?? 0, remainingQty: Math.max((row.totalQty ?? 0) - (allocated.get(row.id) ?? 0), 0) })),
     workOrders: order.workOrders.map((workOrder) => ({
       id: workOrder.id,
       workOrderNo: workOrder.work_order_no,

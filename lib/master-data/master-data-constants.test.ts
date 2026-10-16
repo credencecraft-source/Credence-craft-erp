@@ -48,10 +48,13 @@ import {
   deleteSelectedArticlesForOrganization,
   deleteSelectedMasterValuesForOrganization,
   getMasterValuesForOrganization,
+  getSizeGroupSizeOrderMapForOrganization,
   getSizeGroupSizesForOrganization,
   isMasterSectionBulkDeletable,
   isActiveMasterLookupInIndex,
   loadActiveMasterLookupIndex,
+  syncSizeGroupSizes,
+  sortBySizeGroupOrder,
   updateMasterValue,
 } from "./master-data-constants";
 import { getOrganizationMasterSetupDefinitions } from "./organization-master-setup-stages";
@@ -64,6 +67,45 @@ beforeEach(() => {
 });
 
 describe("create-only master insertion", () => {
+  it("provides stable Size Group order for all lookup consumers", async () => {
+    models.masterSizeGroup.findMany.mockResolvedValueOnce([{
+      id: "group-id",
+      value_id: "group-value-id",
+      size_group: "CORE",
+    }] as never);
+    models.masterSizeGroupSize.findMany.mockResolvedValueOnce([
+      { size_group_id: "group-id", size: { id: "size-xl", value_id: "size-xl-value", organization_id: "org-id", size: "XL", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+      { size_group_id: "group-id", size: { id: "size-s", value_id: "size-s-value", organization_id: "org-id", size: "S", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+      { size_group_id: "group-id", size: { id: "size-m", value_id: "size-m-value", organization_id: "org-id", size: "M", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+    ] as never);
+
+    const orders = await getSizeGroupSizeOrderMapForOrganization("org-id", ["CORE"]);
+
+    expect(orders.get("core")).toEqual(["XL", "S", "M"]);
+    expect(sortBySizeGroupOrder(["M", "unknown", "XL", "S"], orders.get("core")!, (size) => size))
+      .toEqual(["XL", "S", "M", "unknown"]);
+    expect(models.masterSizeGroupSize.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      orderBy: [{ created_at: "asc" }, { id: "asc" }],
+    }));
+  });
+
+  it("saves Size Group sizes in the selected order", async () => {
+    models.masterSize.findMany.mockResolvedValue([
+      { id: "size-xl", value_id: "size-xl-value", size: "XL" },
+      { id: "size-s", value_id: "size-s-value", size: "S" },
+      { id: "size-m", value_id: "size-m-value", size: "M" },
+    ] as never);
+
+    await syncSizeGroupSizes("org-id", "group-id", ["XL", "S", "M"]);
+
+    const createMany = models.masterSizeGroupSize.createMany.mock.calls[0][0] as {
+      data: Array<{ size_id: string; created_at: Date }>;
+    };
+    expect(createMany.data.map(({ size_id }) => size_id)).toEqual(["size-xl", "size-s", "size-m"]);
+    expect(createMany.data[0].created_at.getTime()).toBeLessThan(createMany.data[1].created_at.getTime());
+    expect(createMany.data[1].created_at.getTime()).toBeLessThan(createMany.data[2].created_at.getTime());
+  });
+
   it("does not overwrite an organization master value that appeared after upload validation", async () => {
     models.masterColor.findFirst.mockResolvedValueOnce({ id: "existing-color", colors: "Navy" } as never);
 
@@ -593,6 +635,44 @@ describe("article creation", () => {
       Sizes: ["S"],
       Size_Prices: [{ size: "S", price: "12.5" }],
     });
+  });
+
+  it("hydrates Article sizes and size prices in the current Size Group order", async () => {
+    models.masterArticle.findMany.mockResolvedValueOnce([{
+      id: "article-id",
+      value_id: "article-value-id",
+      organization_id: "org-id",
+      article: "Shirt",
+      article_code: "SH-01",
+      size_group_id: "group-id",
+      is_active: true,
+    }] as never);
+    models.masterArticleSize.findMany.mockResolvedValueOnce([
+      { article_id: "article-id", price: null, size: { organization_id: "org-id", size: "M", is_active: true } },
+      { article_id: "article-id", price: null, size: { organization_id: "org-id", size: "XL", is_active: true } },
+      { article_id: "article-id", price: null, size: { organization_id: "org-id", size: "S", is_active: true } },
+    ] as never);
+    models.masterSizeGroup.findMany.mockResolvedValueOnce([{
+      id: "group-id",
+      value_id: "group-value-id",
+      size_group: "CORE",
+    }] as never);
+    models.masterSizeGroup.findMany.mockResolvedValueOnce([{
+      id: "group-id",
+      value_id: "group-value-id",
+      size_group: "CORE",
+    }] as never);
+    models.masterSizeGroupSize.findMany.mockResolvedValueOnce([
+      { size_group_id: "group-id", size: { id: "size-xl", value_id: "size-xl-value", organization_id: "org-id", size: "XL", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+      { size_group_id: "group-id", size: { id: "size-s", value_id: "size-s-value", organization_id: "org-id", size: "S", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+      { size_group_id: "group-id", size: { id: "size-m", value_id: "size-m-value", organization_id: "org-id", size: "M", is_active: true, status: "ACTIVE", legacy_metadata: null } },
+    ] as never);
+
+    const articles = await getMasterValuesForOrganization("org-id", "article", true, {
+      includeArticleMetrics: false,
+    });
+
+    expect(articles[0].fields.Sizes).toEqual(["XL", "S", "M"]);
   });
 
   it("loads Article variants and size prices concurrently", async () => {
@@ -1325,7 +1405,7 @@ describe("dummy master isolation", () => {
           },
         },
       },
-      orderBy: { created_at: "asc" },
+      orderBy: [{ created_at: "asc" }, { id: "asc" }],
     }));
   });
 

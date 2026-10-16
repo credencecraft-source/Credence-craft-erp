@@ -112,6 +112,7 @@ type BookingReportField =
   | "masterQuotationVendor"
   | "brand"
   | "styleName"
+  | "sizeSummary"
   | "totalBooked"
   | "totalUnassigned"
   | "totalAssigned"
@@ -134,6 +135,7 @@ const bookingReportFields: Array<{ key: BookingReportField; label: string }> = [
   { key: "masterQuotationVendor", label: "Distributor" },
   { key: "brand", label: "Brand" },
   { key: "styleName", label: "Style" },
+  { key: "sizeSummary", label: "Size-wise Qty Breakup" },
   { key: "totalBooked", label: "Total Qty" },
   { key: "totalUnassigned", label: "Work Order Balance" },
   { key: "totalAssigned", label: "Assigned Qty" },
@@ -1247,7 +1249,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             fields={view === "fulfillment" ? fulfillmentReportFields : advanceBookingReportFields}
             visibleFields={visibleReportFields}
             onVisibleFieldsChange={(fields) => setVisibleReportFields(orderBookingReportFields(fields as BookingReportField[]))}
-            storageKey={`distribution-booking-report-columns:${organizationId}`}
+            storageKey={`distribution-booking-report-columns:v2:${organizationId}`}
             rowIdSelector={getBookingRowId}
             selectedIds={selectedBookingIds}
             selectable={view === "booking"}
