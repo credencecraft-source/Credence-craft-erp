@@ -6,6 +6,7 @@ import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import Input from "@/components/ui/Input";
 import Checkbox from "@/components/ui/Checkbox";
+import OrderQrCodeCard from "./order-qr-code-card";
 import {
   filterMasterOptionsByParent,
   findMasterSelectionOption,
@@ -197,10 +198,7 @@ export default function OrderDetailsTab({
           General Order Information
         </h3>
         {!isCreateMode && form.orderNo ? (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-right">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">Order No</div>
-            <div className="text-sm font-bold text-emerald-900">{form.orderNo}</div>
-          </div>
+          <OrderQrCodeCard orderNo={form.orderNo} styleName={form.styleName} colors={form.colors} />
         ) : null}
       </div>
 
@@ -215,7 +213,7 @@ export default function OrderDetailsTab({
             "Select brand"
           )}
         </div>
-        {!isCreateMode && (
+        {!isCreateMode && form.sourceStatus === "ARTICLE_BASED" && (
           <div className="w-full">
             {renderMasterSelect(
               "Article",

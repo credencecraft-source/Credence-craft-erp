@@ -195,7 +195,7 @@ describe("organization master-data lookup route", () => {
 
   it("loads only the requested Article-order lookup lists", async () => {
     const response = await GET(
-      new Request("http://localhost/api/organizations/public-org/master-data/order-lookups?includeInactive=false&limit=500&keys=article,entity,buyer,season,size-group"),
+      new Request("http://localhost/api/organizations/public-org/master-data/order-lookups?includeInactive=false&limit=500&keys=article,entity,buyer,season,size-group&includeArticleDetails=false"),
       contextFor("order-lookups"),
     );
     const body = await response.json();
@@ -211,6 +211,7 @@ describe("organization master-data lookup route", () => {
         limit: 500,
         includeDummyData: true,
         includeArticleMetrics: false,
+        includeArticleDetails: false,
       }),
     );
     await expect(mocks.getMasterValuesForOrganization.mock.calls[0][3].activeDummyDataBatch)

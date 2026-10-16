@@ -33,6 +33,7 @@ export type OrderFormState = {
   orderQty: number | string;
   sellingPricePerPcs: number;
   orderNo: string;
+  sourceStatus: string;
   article: string;
   entityName: string;
   category: string;

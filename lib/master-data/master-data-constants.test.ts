@@ -104,6 +104,8 @@ describe("create-only master insertion", () => {
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
     expect((prismaMock.$transaction as ReturnType<typeof vi.fn>).mock.calls[0][0])
       .toEqual(expect.any(Function));
+    expect((prismaMock.$transaction as ReturnType<typeof vi.fn>).mock.calls[0][1])
+      .toEqual({ maxWait: 10_000, timeout: 30_000 });
   });
 
   it("rejects a duplicate Size Group for the same Brand and exact size set regardless of order", async () => {
@@ -796,7 +798,10 @@ describe("article creation", () => {
       data: [{ organization_id: "org-id", article_id: "style-id", size_id: "size-id", price: null }],
     });
     expect(models.masterSizeGroup.findFirst).toHaveBeenCalledTimes(2);
-    expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 15_000 });
+    expect(prismaMock.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { maxWait: 10_000, timeout: 30_000 },
+    );
   });
 
   it("uses the longer transaction timeout when updating Article sizes", async () => {

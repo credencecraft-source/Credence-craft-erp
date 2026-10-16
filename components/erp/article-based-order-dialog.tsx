@@ -105,6 +105,7 @@ export default function ArticleBasedOrderDialog({
   onCreated: (orderNumbers: string[]) => void;
 }) {
   const [lookups, setLookups] = useState<OrderLookups | null>(null);
+  const [articleDetails, setArticleDetails] = useState<Record<string, ArticleOption>>({});
   const [selectedArticleId, setSelectedArticleId] = useState("");
   const [entityId, setEntityId] = useState("");
   const [buyerId, setBuyerId] = useState("");
@@ -124,6 +125,7 @@ export default function ArticleBasedOrderDialog({
       limit: "500",
       keys: "article,entity,buyer,season,size-group",
       shape: "compact",
+      includeArticleDetails: "false",
     });
     void fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups?${query.toString()}`, {
       cache: "no-store",
@@ -158,7 +160,50 @@ export default function ArticleBasedOrderDialog({
     if (directMatch) return directMatch;
     return lookups.articles.find((article) => article.value_id === selectedArticleId || article.id === selectedArticleId) ?? null;
   }, [articleLookup, lookups, selectedArticleId]);
-  const articleSizeGroup = String(selectedArticle?.fields.Size_Group ?? "");
+  const selectedArticleOption = selectedArticle;
+  const selectedArticleDetails = articleDetails[selectedArticleId] ?? null;
+  const selectedArticleWithDetails = selectedArticleDetails ?? selectedArticleOption;
+  const isLoadingArticleDetails = Boolean(
+    selectedArticleId && selectedArticleOption && !selectedArticleDetails && !error,
+  );
+
+  useEffect(() => {
+    if (!open || !selectedArticleId || !selectedArticleOption || selectedArticleDetails) return;
+
+    const controller = new AbortController();
+    const query = new URLSearchParams({
+      includeInactive: "false",
+      search: selectedArticleOption.value_id,
+      exact: "true",
+      limit: "1",
+    });
+    void fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/article?${query.toString()}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload: unknown = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error(isRecord(payload) && typeof payload.error === "string"
+            ? payload.error
+            : "Unable to load the selected Article's colors and sizes.");
+        }
+        const details = parseOrderLookups({ masterOptions: { article: payload } }).articles[0];
+        if (!details) throw new Error("The selected Article's colors and sizes could not be loaded.");
+        setArticleDetails((current) => ({ ...current, [selectedArticleId]: details }));
+        setSelectedVariantIds(details.variants.map((variant) => variant.id));
+        setError("");
+      })
+      .catch((loadError: unknown) => {
+        if (loadError instanceof DOMException && loadError.name === "AbortError") return;
+        setError(loadError instanceof Error
+          ? loadError.message
+          : "Unable to load the selected Article's colors and sizes.");
+      });
+
+    return () => controller.abort();
+  }, [open, organizationId, selectedArticleDetails, selectedArticleId, selectedArticleOption]);
+  const articleSizeGroup = String(selectedArticleWithDetails?.fields.Size_Group ?? "");
   const selectedSizeGroup = useMemo(() => {
     if (!articleSizeGroup.trim()) return null;
     const directMatch = sizeGroupLookup.get(articleSizeGroup.trim().toLocaleLowerCase());
@@ -169,11 +214,11 @@ export default function ArticleBasedOrderDialog({
   }, [articleSizeGroup, lookups?.sizeGroups, sizeGroupLookup]);
   const brand = String(selectedSizeGroup?.fields.Brand1 ?? "");
   const selectedVariantIdSet = useMemo(() => new Set(selectedVariantIds), [selectedVariantIds]);
-  const selectedVariants = selectedArticle?.variants.filter((variant) => selectedVariantIdSet.has(variant.id)) ?? [];
+  const selectedVariants = selectedArticleWithDetails?.variants.filter((variant) => selectedVariantIdSet.has(variant.id)) ?? [];
 
   const handleArticleChange = (value: string) => {
     setSelectedArticleId(value);
-    setSelectedVariantIds([]);
+    setSelectedVariantIds(articleDetails[value]?.variants.map((variant) => variant.id) ?? []);
     setQuantities({});
     setError("");
   };
@@ -192,7 +237,7 @@ export default function ArticleBasedOrderDialog({
   };
 
   const handleSubmit = async () => {
-    if (!selectedArticle || !entityId || !buyerId || !seasonId || !deliveryDate) {
+    if (!selectedArticleWithDetails || !entityId || !buyerId || !seasonId || !deliveryDate) {
       setError("Select an Article, Entity, Buyer, Season, and Delivery Date.");
       return;
     }
@@ -200,7 +245,7 @@ export default function ArticleBasedOrderDialog({
       setError("Select at least one Article color.");
       return;
     }
-    if (!brand || !articleSizeGroup || !selectedArticle.sizes.length) {
+    if (!brand || !articleSizeGroup || !selectedArticleWithDetails.sizes.length) {
       setError("Complete this Article's Size Group, Brand, and available sizes before creating orders.");
       return;
     }
@@ -208,7 +253,7 @@ export default function ArticleBasedOrderDialog({
     let colors: Array<{ variantId: string; quantities: Array<{ size: string; quantity: number }> }>;
     try {
       colors = selectedVariants.map((variant) => {
-        const colorQuantities = selectedArticle.sizes.flatMap((size) => {
+        const colorQuantities = selectedArticleWithDetails.sizes.flatMap((size) => {
           const rawQuantity = quantities[variant.id]?.[size]?.trim() ?? "";
           if (!rawQuantity) return [];
           const quantity = Number(rawQuantity);
@@ -233,7 +278,7 @@ export default function ArticleBasedOrderDialog({
       const response = await fetch(`/api/orders/from-article?organizationId=${encodeURIComponent(organizationId)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ articleId: selectedArticle.value_id, entityId, buyerId, seasonId, deliveryDate, colors }),
+        body: JSON.stringify({ articleId: selectedArticleWithDetails.value_id, entityId, buyerId, seasonId, deliveryDate, colors }),
       });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) {
@@ -256,7 +301,7 @@ export default function ArticleBasedOrderDialog({
   };
 
   return (
-    <Modal open={open} onClose={isSubmitting ? () => undefined : handleClose} ariaLabelledBy="article-order-dialog-title" size="xl" className="space-y-5 p-6">
+    <Modal open={open} onClose={isSubmitting ? () => undefined : handleClose} ariaLabelledBy="article-order-dialog-title" size="2xl" className="space-y-5 p-6">
       <div className="flex items-start justify-between gap-4 border-b border-[var(--erp-border)] pb-4">
         <div>
           <h2 id="article-order-dialog-title" className="text-lg font-semibold text-[var(--erp-text)]">Create Orders from Article</h2>
@@ -306,14 +351,16 @@ export default function ArticleBasedOrderDialog({
             <Input label="Brand (from Article Size Group)" value={brand} readOnly />
           </div>
 
-          {selectedArticle ? (
+          {selectedArticleWithDetails ? (
             <div className="space-y-3">
               <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
-                <p><span className="font-semibold">Category:</span> {String(selectedArticle.fields.Category ?? "Not set")}</p>
-                <p><span className="font-semibold">Subcategory:</span> {String(selectedArticle.fields.Subcategory ?? "Not set")}</p>
+                <p><span className="font-semibold">Category:</span> {String(selectedArticleWithDetails.fields.Category ?? "Not set")}</p>
+                <p><span className="font-semibold">Subcategory:</span> {String(selectedArticleWithDetails.fields.Subcategory ?? "Not set")}</p>
                 <p><span className="font-semibold">Size Group:</span> {articleSizeGroup || "Not set"}</p>
               </div>
-              {selectedArticle.variants.length === 0 || selectedArticle.sizes.length === 0 ? (
+              {isLoadingArticleDetails ? (
+                <p role="status" className="text-sm text-[var(--erp-text-muted)]">Loading this Article&apos;s colors and sizes...</p>
+              ) : selectedArticleWithDetails.variants.length === 0 || selectedArticleWithDetails.sizes.length === 0 ? (
                 <p className="rounded-lg border border-[var(--erp-warning-border)] bg-[var(--erp-warning-bg)] px-3 py-2 text-sm text-[var(--erp-warning-text)]">
                   Add active color variants and available sizes to this Article before creating an order.
                 </p>
@@ -323,11 +370,11 @@ export default function ArticleBasedOrderDialog({
                     <tr>
                       <th scope="col" className="sticky left-0 bg-[var(--erp-surface-soft)] p-3">Select</th>
                       <th scope="col" className="sticky left-16 bg-[var(--erp-surface-soft)] p-3">Color</th>
-                      {selectedArticle.sizes.map((size) => <th key={size} scope="col" className="min-w-28 p-3 text-center">{size}</th>)}
+                      {selectedArticleWithDetails.sizes.map((size) => <th key={size} scope="col" className="min-w-20 p-3 text-center">{size}</th>)}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--erp-border)]">
-                    {selectedArticle.variants.map((variant) => {
+                    {selectedArticleWithDetails.variants.map((variant) => {
                       const checked = selectedVariantIds.includes(variant.id);
                       return (
                         <tr key={variant.id}>
@@ -335,8 +382,8 @@ export default function ArticleBasedOrderDialog({
                             <Checkbox aria-label={`Select ${variant.color}`} checked={checked} onChange={(event) => handleVariantChange(variant.id, event.target.checked)} />
                           </td>
                           <th scope="row" className="sticky left-16 bg-[var(--erp-surface)] p-3 text-left font-medium text-[var(--erp-text)]">{variant.color}</th>
-                          {selectedArticle.sizes.map((size) => (
-                            <td key={size} className="min-w-28 p-2">
+                          {selectedArticleWithDetails.sizes.map((size) => (
+                            <td key={size} className="min-w-20 p-2">
                               <Input
                                 aria-label={`${variant.color} ${size} quantity`}
                                 type="number"
@@ -347,6 +394,7 @@ export default function ArticleBasedOrderDialog({
                                 disabled={!checked}
                                 value={quantities[variant.id]?.[size] ?? ""}
                                 onChange={(event) => handleQuantityChange(variant.id, size, event.target.value)}
+                                className="w-20 px-2 text-center"
                               />
                             </td>
                           ))}
@@ -365,7 +413,7 @@ export default function ArticleBasedOrderDialog({
         <p className="text-xs text-[var(--erp-text-muted)]">{selectedVariants.length} color order{selectedVariants.length === 1 ? "" : "s"} will be created.</p>
         <div className="flex gap-2">
           <Button type="button" variant="secondary" onClick={handleClose} disabled={isSubmitting}>Cancel</Button>
-          <Button type="button" variant="primary" onClick={() => void handleSubmit()} disabled={isLoading || !lookups || isSubmitting}>
+          <Button type="button" variant="primary" onClick={() => void handleSubmit()} disabled={isLoading || isLoadingArticleDetails || !lookups || isSubmitting}>
             {isSubmitting ? "Creating orders..." : "Create Color Orders"}
           </Button>
         </div>

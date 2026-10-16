@@ -178,6 +178,7 @@ export default function MerchandisingOrderDetailsPage() {
     orderQty: 1,
     sellingPricePerPcs: 0,
     orderNo: "",
+    sourceStatus: "DIRECT",
     article: "",
     entityName: "",
     category: "",
@@ -630,7 +631,10 @@ export default function MerchandisingOrderDetailsPage() {
   const handleSave = async () => {
     try {
       setIsSaving(true);
-      const missingField = getMissingRequiredOrderField(form, Boolean(orderId));
+      const missingField = getMissingRequiredOrderField(
+        form,
+        orderId ? form.sourceStatus : "DIRECT",
+      );
       if (missingField) {
         throw new Error(`Blocking Field Missing: '${missingField}' is required.`);
       }

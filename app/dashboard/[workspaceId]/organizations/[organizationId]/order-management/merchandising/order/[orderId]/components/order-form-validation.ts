@@ -19,12 +19,12 @@ type RequiredOrderFields = Pick<
 
 export function getMissingRequiredOrderField(
   form: RequiredOrderFields,
-  requireArticle: boolean,
+  orderSourceStatus: string,
 ) {
   const requiredFields: Array<[string, unknown]> = [
     ["Buyer", form.buyer],
     ["Brand", form.brand],
-    ...(requireArticle ? [["Article", form.article] as [string, unknown]] : []),
+    ...(orderSourceStatus === "ARTICLE_BASED" ? [["Article", form.article] as [string, unknown]] : []),
     ["Delivery Date", form.deliveryDate],
     ["Entity Name", form.entityName],
     ["Product Category", form.category],

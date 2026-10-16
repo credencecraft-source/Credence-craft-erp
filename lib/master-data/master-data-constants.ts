@@ -500,6 +500,7 @@ export async function getMasterValuesForOrganization(
     entityId?: string;
     articleCode?: string;
     includeArticleMetrics?: boolean;
+    includeArticleDetails?: boolean;
     activeDummyDataBatch?: { id: string } | null | Promise<{ id: string } | null>;
     onRowsFetched?: (rowIds: string[]) => void | Promise<void>;
   } = {},
@@ -589,7 +590,9 @@ export async function getMasterValuesForOrganization(
     lookupCache.set(lookupModuleKey, labels);
   }));
 
-  const articleDetailsPromise = moduleKey === "article" && rows.length > 0
+  const articleDetailsPromise = moduleKey === "article"
+    && options.includeArticleDetails !== false
+    && rows.length > 0
     ? Promise.all([
         prisma.masterArticleVariant.findMany({
           where: {
@@ -1125,7 +1128,10 @@ export async function createMasterValueForOrganization(
   };
 
   if ("$transaction" in database) {
-    return database.$transaction(createWithinTransaction, moduleKey === "article" ? { timeout: 15_000 } : undefined);
+    return database.$transaction(createWithinTransaction, {
+      maxWait: 10_000,
+      timeout: 30_000,
+    });
   }
   return createWithinTransaction(database);
 }

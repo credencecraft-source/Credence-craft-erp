@@ -122,6 +122,8 @@ type BookingReportField =
 
 type BookingReportRow = BookingRecord & { sizeSummary: string };
 
+const ADVANCE_BOOKING_PAGE_SIZE = 25;
+
 const bookingReportFields: Array<{ key: BookingReportField; label: string }> = [
   { key: "assignmentStatus", label: "Work Order Assignment" },
   { key: "fulfillmentStatus", label: "Fulfillment Status" },
@@ -263,7 +265,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     else if (!options.silent) setIsLoadingBookings(true);
     setBookingsError("");
     try {
-      const query = new URLSearchParams({ organizationId, limit: "100" });
+      const query = new URLSearchParams({ organizationId, limit: String(ADVANCE_BOOKING_PAGE_SIZE) });
       if (options.cursor) query.set("cursor", options.cursor);
       const response = await fetch(`/api/distribution/advance-bookings?${query}`, {
         cache: "no-store",
@@ -411,7 +413,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     setIsLoadingOrders(true);
     setOrdersError("");
     try {
-      const query = new URLSearchParams({ organizationId, limit: "100" });
+      const query = new URLSearchParams({ organizationId, limit: String(ADVANCE_BOOKING_PAGE_SIZE) });
       const response = await fetch(`/api/orders?${query.toString()}`, {
         cache: "no-store",
         signal,
@@ -559,7 +561,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     try {
       const query = new URLSearchParams({
         organizationId,
-        limit: "100",
+        limit: String(ADVANCE_BOOKING_PAGE_SIZE),
         cursor: nextOrderCursor,
       });
       const response = await fetch(`/api/orders?${query.toString()}`, { cache: "no-store" });

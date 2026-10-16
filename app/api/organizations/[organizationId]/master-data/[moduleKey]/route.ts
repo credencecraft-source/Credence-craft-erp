@@ -118,6 +118,9 @@ export async function GET(
               },
             } : {}),
             ...(requestedKeys?.length && key === "article" ? { includeArticleMetrics: false } : {}),
+            ...(key === "article"
+              ? { includeArticleDetails: searchParams.get("includeArticleDetails") !== "false" }
+              : {}),
           });
           const sizeLinks = key === "size-group"
             ? await sizeLinksPromise

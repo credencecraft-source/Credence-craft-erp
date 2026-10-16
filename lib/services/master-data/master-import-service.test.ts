@@ -1288,11 +1288,17 @@ describe("master import service", () => {
       }),
     }));
     expect(mocks.prisma.masterBrand.findFirst).not.toHaveBeenCalled();
+    expect(mocks.prisma.masterImportJobRow.findMany.mock.calls[1][0].select).toEqual({
+      id: true,
+      row_number: true,
+      status: true,
+      encrypted_payload: true,
+    });
     expect(mocks.prisma.masterImportJobRow.updateMany).toHaveBeenCalledTimes(2);
   });
 
   it("writes large validation batches with bounded set-based row updates", async () => {
-    const rows = Array.from({ length: 26 }, (_, index) => ({
+    const rows = Array.from({ length: 550 }, (_, index) => ({
       ...rowRecord("STAGED", {
         rowNumber: index + 1,
         fields: { season: `SEASON ${index + 1}` },
@@ -1303,14 +1309,14 @@ describe("master import service", () => {
     }));
     mocks.prisma.masterImportJob.findFirst
       .mockResolvedValueOnce({ ...baseJob, status: "STAGED" })
-      .mockResolvedValueOnce({ ...baseJob, status: "VALIDATED", total_rows: 26 });
+      .mockResolvedValueOnce({ ...baseJob, status: "VALIDATED", total_rows: 550 });
     mocks.prisma.masterImportJobRow.findMany.mockResolvedValueOnce(rows);
     mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([
-      { status: "VALIDATED", _count: { _all: 26 } },
+      { status: "VALIDATED", _count: { _all: 550 } },
     ]);
     mocks.prisma.masterImportJobRow.findFirst.mockResolvedValue(null);
     mocks.prisma.masterImportJob.updateMany.mockResolvedValue({ count: 1 });
-    mocks.prisma.$executeRaw.mockResolvedValue(26);
+    mocks.prisma.$executeRaw.mockResolvedValueOnce(500).mockResolvedValueOnce(50);
 
     const result = await validateMasterImportJob({
       organizationId: "org-internal",
@@ -1320,8 +1326,8 @@ describe("master import service", () => {
       runProgress: { runId: "run-1", expectedProgress: 0 },
     });
 
-    expect(result.validatedRowNumbers).toHaveLength(26);
-    expect(mocks.prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(result.validatedRowNumbers).toHaveLength(550);
+    expect(mocks.prisma.$executeRaw).toHaveBeenCalledTimes(2);
     expect(mocks.prisma.masterImportJobRow.updateMany).not.toHaveBeenCalled();
     expect(mocks.prisma.masterImportRun.updateMany).toHaveBeenCalledWith({
       where: {
@@ -1332,7 +1338,7 @@ describe("master import service", () => {
         progress: 0,
       },
       data: expect.objectContaining({
-        progress: { increment: 26 },
+        progress: { increment: 550 },
         lease_expires_at: expect.any(Date),
         updated_at: expect.any(Date),
       }),
@@ -1340,10 +1346,10 @@ describe("master import service", () => {
     expect(mocks.prisma.auditEvent.createMany).toHaveBeenCalledWith({
       data: expect.arrayContaining([
         expect.objectContaining({ entity_id: "row-1", action: "MASTER_IMPORT_ROW_VALIDATED" }),
-        expect.objectContaining({ entity_id: "row-26", action: "MASTER_IMPORT_ROW_VALIDATED" }),
+        expect.objectContaining({ entity_id: "row-550", action: "MASTER_IMPORT_ROW_VALIDATED" }),
       ]),
     });
-  });
+  }, 30_000);
 
   it("stops Article validation at the first missing master instead of continuing through all related suggestions", async () => {
     mocks.prisma.masterImportJob.findFirst

@@ -36,7 +36,7 @@ export const MASTER_IMPORT_ROW_PAYLOAD_MAX_BYTES = 128 * 1024;
 export const MASTER_IMPORT_RETENTION_DAYS = 30;
 export const MASTER_IMPORT_REPORT_PAGE_SIZE = 1_000;
 export const MASTER_IMPORT_VALIDATION_BATCH_SIZE = 10_000;
-export const MASTER_IMPORT_VALIDATION_RUN_BATCH_SIZE = 100;
+export const MASTER_IMPORT_VALIDATION_RUN_BATCH_SIZE = 500;
 export const MASTER_IMPORT_PLAN_SIZE = 1_000;
 const MASTER_IMPORT_PLAN_BATCH_SIZE = 25;
 const MASTER_IMPORT_STAGING_ROW_BATCH_SIZE = 5_000;
@@ -1944,6 +1944,12 @@ export async function validateMasterImportJob(input: {
     },
     orderBy: { row_number: "asc" },
     take: input.take ?? input.rowNumbers?.length ?? 1,
+    select: {
+      id: true,
+      row_number: true,
+      status: true,
+      encrypted_payload: true,
+    },
   });
   const requestedRowCount = input.take ?? input.rowNumbers?.length ?? 1;
   if (input.take === undefined && job.module_key !== "article" && selectedRows.length !== requestedRowCount) {
@@ -1983,6 +1989,12 @@ export async function validateMasterImportJob(input: {
           : [MasterImportJobRowStatus.STAGED, MasterImportJobRowStatus.CORRECTED] },
       },
       orderBy: { row_number: "asc" },
+      select: {
+        id: true,
+        row_number: true,
+        status: true,
+        encrypted_payload: true,
+      },
     });
     const rowsByArticle = new Map<string, Array<{
       row: (typeof allPendingArticleRows)[number];

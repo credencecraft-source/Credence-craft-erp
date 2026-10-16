@@ -19,11 +19,15 @@ const validForm = {
 };
 
 describe("getMissingRequiredOrderField", () => {
-  it("allows a direct create order without an Article", () => {
-    expect(getMissingRequiredOrderField(validForm, false)).toBeNull();
+  it("allows a direct order to be created without an Article", () => {
+    expect(getMissingRequiredOrderField(validForm, "DIRECT")).toBeNull();
   });
 
-  it("still requires Article when editing an order", () => {
-    expect(getMissingRequiredOrderField(validForm, true)).toBe("Article");
+  it("allows a direct order to be edited without an Article", () => {
+    expect(getMissingRequiredOrderField(validForm, "DIRECT")).toBeNull();
+  });
+
+  it("requires Article when editing an Article-based order", () => {
+    expect(getMissingRequiredOrderField(validForm, "ARTICLE_BASED")).toBe("Article");
   });
 });

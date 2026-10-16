@@ -27,7 +27,7 @@ vi.mock("@/lib/services/master-data/master-import-service", () => ({
   },
   MASTER_IMPORT_PLAN_SIZE: 1_000,
   MASTER_IMPORT_VALIDATION_BATCH_SIZE: 10_000,
-  MASTER_IMPORT_VALIDATION_RUN_BATCH_SIZE: 100,
+  MASTER_IMPORT_VALIDATION_RUN_BATCH_SIZE: 500,
   commitNextMasterImportRow: vi.fn(),
   createMasterImportPlans: vi.fn(),
   getMasterImportCommitLookupIndex: vi.fn(),
@@ -87,16 +87,18 @@ describe("master import validation worker", () => {
     mocks.validateMasterImportJob.mockResolvedValue({});
   });
 
-  it("validates non-article rows in 100-row batches with resumable progress checkpoints", async () => {
+  it("validates non-article rows in 500-row batches with resumable progress checkpoints", async () => {
+    const run = createValidationRun(Array.from({ length: 1_050 }, (_, index) => index + 1));
+    mocks.prisma.masterImportRun.findFirst.mockResolvedValue(run);
     const result = await runMasterImportWorkerBatch();
 
     expect(result).toEqual({ claimedRuns: 1, completedRuns: 1, failedRuns: 0 });
     expect(mocks.getMasterImportValidationContext).toHaveBeenCalledTimes(1);
     expect(mocks.validateMasterImportJob).toHaveBeenCalledTimes(3);
     expect(mocks.validateMasterImportJob.mock.calls.map(([input]) => input.rowNumbers.length))
-      .toEqual([100, 100, 50]);
+      .toEqual([500, 500, 50]);
     expect(mocks.validateMasterImportJob.mock.calls.map(([input]) => input.runProgress.expectedProgress))
-      .toEqual([0, 100, 200]);
+      .toEqual([0, 500, 1_000]);
     expect(mocks.validateMasterImportJob.mock.calls.every(([input]) => input.lookupIndex instanceof Map))
       .toBe(true);
     expect(mocks.prisma.masterImportRun.updateMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -117,7 +119,7 @@ describe("master import validation worker", () => {
   });
 
   it("stops between validation batches after a run is cancelled", async () => {
-    const run = createValidationRun(Array.from({ length: 250 }, (_, index) => index + 1));
+    const run = createValidationRun(Array.from({ length: 1_050 }, (_, index) => index + 1));
     mocks.prisma.masterImportRun.findFirst.mockResolvedValue(run);
     mocks.validateMasterImportJob.mockImplementation(async () => {
       run.status = "FAILED";
