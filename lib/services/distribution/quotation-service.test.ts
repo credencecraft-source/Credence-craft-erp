@@ -373,6 +373,72 @@ describe("distribution quotation persistence", () => {
     }));
   });
 
+  it("creates a sales order for any organization Contact Master contact", async () => {
+    const child = {
+      id: "quote-1",
+      quotation_no: "QT-1",
+      order_no: "ORD-1",
+      total_quantity: 30,
+      subtotal: new Prisma.Decimal("12.50"),
+    };
+    const master = {
+      ...createdQuotation,
+      id: "master-contact",
+      vendor_id: null,
+      customer: "ACME",
+      quotation_no: "MQT-CONTACT",
+      mode: "MASTER",
+      total_quantity: 30,
+      subtotal: new Prisma.Decimal("12.50"),
+      lines: [],
+    };
+    mocks.transaction.contact.findFirst.mockResolvedValue({
+      id: "contact-1",
+      legal_name: "ACME GARMENTS",
+      display_name: "ACME",
+    });
+    mocks.transaction.distributionQuotation.findMany.mockResolvedValue([child]);
+    mocks.transaction.distributionQuotation.create.mockResolvedValue(master);
+    mocks.transaction.distributionQuotation.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(createDistributionMasterQuotation(
+      "internal-org-1",
+      "user-1",
+      ["quote-1"],
+      null,
+      "contact-1",
+    )).resolves.toMatchObject({ id: "master-contact", customer: "ACME", mode: "MASTER" });
+
+    expect(mocks.transaction.contact.findFirst).toHaveBeenCalledWith({
+      where: { organization_id: "internal-org-1", id: "contact-1" },
+      select: { id: true, legal_name: true, display_name: true },
+    });
+    expect(mocks.transaction.distributionQuotation.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ vendor_id: null, customer: "ACME" }),
+    }));
+    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      details: expect.objectContaining({
+        vendor_id: null,
+        contact_id: "contact-1",
+        contact_name: "ACME",
+      }),
+    }), mocks.transaction);
+  });
+
+  it("rejects a Contact Master contact from outside the organization", async () => {
+    mocks.transaction.contact.findFirst.mockResolvedValue(null);
+
+    await expect(createDistributionMasterQuotation(
+      "internal-org-1",
+      "user-1",
+      ["quote-1"],
+      null,
+      "foreign-contact",
+    )).rejects.toThrow("Select a Contact Master contact from this organization.");
+
+    expect(mocks.transaction.distributionQuotation.create).not.toHaveBeenCalled();
+  });
+
   it("rejects inactive or cross-organization vendors before creating a master quotation", async () => {
     mocks.transaction.masterVendor.findFirst.mockResolvedValue(null);
 
@@ -381,7 +447,7 @@ describe("distribution quotation persistence", () => {
       "user-1",
       ["quote-1", "quote-2"],
       "foreign-vendor",
-    )).rejects.toThrow("Select an active Distributor from Vendor Master.");
+    )).rejects.toThrow("Select an active Vendor Master vendor.");
 
     expect(mocks.transaction.distributionQuotation.create).not.toHaveBeenCalled();
   });

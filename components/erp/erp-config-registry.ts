@@ -254,7 +254,7 @@ export const ERP_MODULES: ErpModule[] = [
         children: [
           {
             key: "fulfillment",
-            label: "Work Order Tracking",
+            label: "Allocate Bookings",
             href: "/advance-booking/fulfillment",
           },
           {

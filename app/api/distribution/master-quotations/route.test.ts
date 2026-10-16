@@ -35,6 +35,7 @@ describe("distribution master quotation API", () => {
       organizationId: "public-org",
       quotationIds: ["quote-1", "quote-2"],
       vendorId: "vendor-1",
+      contactId: null,
     }));
 
     expect(response.status).toBe(201);
@@ -48,6 +49,7 @@ describe("distribution master quotation API", () => {
       "user-1",
       ["quote-1", "quote-2"],
       "vendor-1",
+      null,
     );
   });
 
@@ -56,6 +58,7 @@ describe("distribution master quotation API", () => {
       organizationId: "public-org",
       quotationIds: ["quote-1"],
       vendorId: "vendor-1",
+      contactId: null,
     }));
 
     expect(response.status).toBe(201);
@@ -64,16 +67,43 @@ describe("distribution master quotation API", () => {
       "user-1",
       ["quote-1"],
       "vendor-1",
+      null,
     );
   });
 
-  it("requires a vendor selection before calling the service", async () => {
+  it("allows any Contact Master contact to create a sales order", async () => {
+    const response = await POST(post({
+      organizationId: "public-org",
+      quotationIds: ["quote-1"],
+      contactId: "contact-1",
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.createDistributionMasterQuotation).toHaveBeenCalledWith(
+      "internal-org-1",
+      "user-1",
+      ["quote-1"],
+      null,
+      "contact-1",
+    );
+  });
+
+  it("requires exactly one vendor or Contact Master selection", async () => {
     const response = await POST(post({
       organizationId: "public-org",
       quotationIds: ["quote-1", "quote-2"],
     }));
 
     expect(response.status).toBe(400);
+    expect(mocks.createDistributionMasterQuotation).not.toHaveBeenCalled();
+
+    const bothResponse = await POST(post({
+      organizationId: "public-org",
+      quotationIds: ["quote-1"],
+      vendorId: "vendor-1",
+      contactId: "contact-1",
+    }));
+    expect(bothResponse.status).toBe(400);
     expect(mocks.createDistributionMasterQuotation).not.toHaveBeenCalled();
   });
 });

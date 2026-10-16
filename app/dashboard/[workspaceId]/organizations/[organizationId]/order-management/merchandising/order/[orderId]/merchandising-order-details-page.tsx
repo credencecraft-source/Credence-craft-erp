@@ -14,6 +14,7 @@ import Skeleton from "@/components/ui/Skeleton";
 import Tabs from "@/components/ui/Tabs";
 import OrderDetailsTab from "./components/OrderDetailsTab";
 import { getProcessRows } from "./components/process-tab-state";
+import { getMissingRequiredOrderField } from "./components/order-form-validation";
 import type { OrderFormState } from "./components/order-form-types";
 
 const FinishedGoodsTab = React.lazy(() => import("./components/FinishedGoodsTab"));
@@ -629,23 +630,9 @@ export default function MerchandisingOrderDetailsPage() {
   const handleSave = async () => {
     try {
       setIsSaving(true);
-      const requiredFields: Array<[string, unknown]> = [
-        ["Buyer", form.buyer],
-        ["Brand", form.brand],
-        ["Article", form.article],
-        ["Delivery Date", form.deliveryDate],
-        ["Entity Name", form.entityName],
-        ["Product Category", form.category],
-        ["Product Sub Category", form.subCategory],
-        ["Style Name", form.styleName],
-        ["Colors", form.colors],
-        ["Season", form.season],
-        ["Size Group", form.sizeGroup],
-        ...(form.haveSizeRatio ? [["Ratio Order Qty", form.ratioOrderQty] as [string, unknown]] : []),
-      ];
-      const missingField = requiredFields.find(([, value]) => !String(value ?? "").trim());
+      const missingField = getMissingRequiredOrderField(form, Boolean(orderId));
       if (missingField) {
-        throw new Error(`Blocking Field Missing: '${missingField[0]}' is required.`);
+        throw new Error(`Blocking Field Missing: '${missingField}' is required.`);
       }
       if (!Number.isFinite(Number(form.orderQty)) || Number(form.orderQty) <= 0) {
         throw new Error("Blocking Field Missing: 'Order Qty' must be greater than 0.");

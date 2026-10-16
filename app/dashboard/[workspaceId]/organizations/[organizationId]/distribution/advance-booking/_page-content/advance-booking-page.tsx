@@ -474,29 +474,23 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     setIsLoadingAllContacts(true);
     setAllContactsError("");
     try {
-      const contacts: VendorOption[] = [];
-      const pageSize = 200;
-      for (let offset = 0; ; offset += pageSize) {
-        const response = await fetch(
-          `/api/organizations/${encodeURIComponent(organizationId)}/contacts/lookup?limit=${pageSize}&offset=${offset}`,
-          { cache: "no-store", signal },
-        );
-        const data = await response.json().catch(() => null);
-        if (!response.ok || !Array.isArray(data)) {
-          throw new Error(typeof data?.error === "string" ? data.error : "Unable to load all contacts.");
-        }
-        if (data.some((contact) =>
-          !contact ||
-          typeof contact.id !== "string" ||
-          typeof contact.code !== "string" ||
-          typeof contact.label !== "string"
-        )) {
-          throw new Error("The contact list returned an invalid response. Refresh and try again.");
-        }
-        contacts.push(...data);
-        if (data.length < pageSize) break;
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/contacts/lookup?all=true`,
+        { cache: "no-store", signal },
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data)) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to load all contacts.");
       }
-      const options = contacts
+      if (data.some((contact) =>
+        !contact ||
+        typeof contact.id !== "string" ||
+        typeof contact.code !== "string" ||
+        typeof contact.label !== "string"
+      )) {
+        throw new Error("The contact list returned an invalid response. Refresh and try again.");
+      }
+      const options = (data as VendorOption[])
         .map((contact) => ({ ...contact, contactId: contact.id }))
         .filter((contact) => contact.label.trim())
         .sort((left, right) => left.label.localeCompare(right.label));

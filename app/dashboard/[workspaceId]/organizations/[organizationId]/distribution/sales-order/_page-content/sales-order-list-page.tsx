@@ -14,7 +14,7 @@ type SalesOrderField = "quotationNo" | "orderNo" | "customer" | "childCount" | "
 const fields: Array<{ key: SalesOrderField; label: string }> = [
   { key: "quotationNo", label: "Sales Order No" },
   { key: "orderNo", label: "Order No" },
-  { key: "customer", label: "Distributor" },
+  { key: "customer", label: "Customer / Contact" },
   { key: "childCount", label: "Child Quotations" },
   { key: "totalQuantity", label: "Total Qty" },
   { key: "subtotal", label: "Subtotal" },

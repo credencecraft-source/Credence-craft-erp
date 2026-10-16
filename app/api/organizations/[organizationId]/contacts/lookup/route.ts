@@ -21,6 +21,13 @@ export async function GET(
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
     const searchParams = new URL(request.url).searchParams;
+    if (searchParams.get("all") === "true") {
+      return NextResponse.json(await listContactLookupOptions(
+        organization.id,
+        undefined,
+        { all: true },
+      ));
+    }
     const rawLimit = Number(searchParams.get("limit") ?? 200);
     const rawOffset = Number(searchParams.get("offset") ?? 0);
     if (

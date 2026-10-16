@@ -457,7 +457,7 @@ export async function listContacts(
 export async function listContactLookupOptions(
   organizationId: string,
   database: ContactDatabase = prisma,
-  pagination: { skip?: number; take?: number } = {},
+  pagination: { skip?: number; take?: number; all?: boolean } = {},
 ) {
   const contacts = await database.contact.findMany({
     where: { organization_id: organizationId },
@@ -468,8 +468,12 @@ export async function listContactLookupOptions(
       display_name: true,
     },
     orderBy: [{ legal_name: "asc" }, { id: "asc" }],
-    skip: pagination.skip ?? 0,
-    take: Math.min(Math.max(pagination.take ?? MAX_CONTACT_BULK_SELECTION, 1), MAX_CONTACT_BULK_SELECTION),
+    ...(pagination.all
+      ? {}
+      : {
+          skip: pagination.skip ?? 0,
+          take: Math.min(Math.max(pagination.take ?? MAX_CONTACT_BULK_SELECTION, 1), MAX_CONTACT_BULK_SELECTION),
+        }),
   });
   return contacts.map((contact) => ({
     id: contact.id,

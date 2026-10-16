@@ -19,10 +19,18 @@ export async function POST(request: Request) {
     if (!Array.isArray(body.quotationIds) || body.quotationIds.some((id) => typeof id !== "string")) {
       throw new Error("Select regular quotations to create a sales order.");
     }
-    if (typeof body.vendorId !== "string" || !body.vendorId.trim()) {
-      throw new Error("Select a Distributor from Vendor Master for the sales order.");
+    const vendorId = typeof body.vendorId === "string" && body.vendorId.trim() ? body.vendorId.trim() : null;
+    const contactId = typeof body.contactId === "string" && body.contactId.trim() ? body.contactId.trim() : null;
+    if (Boolean(vendorId) === Boolean(contactId)) {
+      throw new Error("Select either a Vendor Master vendor or a Contact Master contact for the sales order.");
     }
-    const quotation = await createDistributionMasterQuotation(organization.id, user.id, body.quotationIds, body.vendorId);
+    const quotation = await createDistributionMasterQuotation(
+      organization.id,
+      user.id,
+      body.quotationIds,
+      vendorId,
+      contactId,
+    );
     return NextResponse.json({ quotation }, { status: 201 });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {

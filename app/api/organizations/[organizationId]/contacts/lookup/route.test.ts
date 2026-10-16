@@ -58,6 +58,20 @@ describe("organization contact lookup API", () => {
     );
   });
 
+  it("returns all lightweight contact labels in one organization-scoped lookup", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/contacts/lookup?all=true"),
+      routeContext,
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.listContactLookupOptions).toHaveBeenCalledWith(
+      "internal-org-1",
+      undefined,
+      { all: true },
+    );
+  });
+
   it("rejects invalid pagination before listing contacts", async () => {
     const response = await GET(
       new Request("http://localhost/api/organizations/public-org/contacts/lookup?limit=500"),

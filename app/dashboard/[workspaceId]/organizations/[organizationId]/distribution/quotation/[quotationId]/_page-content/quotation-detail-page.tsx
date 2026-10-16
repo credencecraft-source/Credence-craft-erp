@@ -163,7 +163,7 @@ export default function QuotationDetailPage() {
           <h1 className="mt-2 text-3xl font-bold text-slate-900">
             {quotation?.quotationNo ?? "Quotation Draft"}
           </h1>
-          {quotation ? <p className="mt-2 text-sm text-slate-600">{quotation.mode === "MASTER" ? "Distributor" : "Dealer"}: {quotation.customer} · {quotation.orderNo}</p> : null}
+          {quotation ? <p className="mt-2 text-sm text-slate-600">Customer / Contact: {quotation.customer} · {quotation.orderNo}</p> : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="secondary" onClick={returnToQuotationContext}>
@@ -202,13 +202,13 @@ export default function QuotationDetailPage() {
                 <h2 className="text-base font-semibold text-slate-900">
                   {quotation.mode === "MASTER" ? "Sales Order Header" : "Quotation Header"}
                 </h2>
-                <p className="mt-1 text-sm text-slate-600">Database-backed draft · {quotation.mode === "MASTER" ? "Distributor" : "Dealer"} and source orders are inherited from the selected bookings.</p>
+                <p className="mt-1 text-sm text-slate-600">Database-backed draft · Customer / Contact and source orders are inherited from the selected bookings.</p>
               </div>
               <Badge>{quotation.status}</Badge>
             </div>
             <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-4">
               <Input label={quotation.mode === "MASTER" ? "Sales Order No" : "Quotation No"} value={quotation.quotationNo} readOnly />
-              <Input label={quotation.mode === "MASTER" ? "Distributor" : "Dealer"} value={quotation.customer} readOnly />
+              <Input label="Customer / Contact" value={quotation.customer} readOnly />
               <Input label="Source Order(s)" value={quotation.orderNo} readOnly />
               <Input label={quotation.mode === "MASTER" ? "Sales Order Date" : "Quotation Date"} type="date" value={quotationDate} onChange={(event) => setQuotationDate(event.target.value)} disabled={quotation.mode === "MASTER" || quotation.status !== "DRAFT"} />
               <Input label="Valid Until" type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} disabled={quotation.mode === "MASTER" || quotation.status !== "DRAFT"} />

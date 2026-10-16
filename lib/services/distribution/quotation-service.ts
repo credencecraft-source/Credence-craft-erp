@@ -322,9 +322,14 @@ export async function createDistributionMasterQuotation(
   organizationId: string,
   userId: string,
   quotationIds: string[],
-  vendorId: string,
+  vendorId: string | null,
+  contactId?: string | null,
 ) {
-  if (!vendorId.trim()) throw new Error("Select a Distributor from Vendor Master for the sales order.");
+  const selectedVendorId = vendorId?.trim() || null;
+  const selectedContactId = contactId?.trim() || null;
+  if (Boolean(selectedVendorId) === Boolean(selectedContactId)) {
+    throw new Error("Select either a Vendor Master vendor or a Contact Master contact for the sales order.");
+  }
   if (quotationIds.length < 1 || quotationIds.length > 100) {
     throw new Error("Select between one and 100 regular quotations for a sales order.");
   }
@@ -332,11 +337,25 @@ export async function createDistributionMasterQuotation(
     throw new Error("Each regular quotation can only be included once.");
   }
   const record = await prisma.$transaction(async (transaction) => {
-    const vendor = await transaction.masterVendor.findFirst({
-      where: { organization_id: organizationId, id: vendorId, is_active: true },
-      select: { id: true, vendor: true },
-    });
-    if (!vendor) throw new Error("Select an active Distributor from Vendor Master.");
+    let vendor: { id: string; vendor: string } | null = null;
+    let customer: string;
+    if (selectedVendorId) {
+      vendor = await transaction.masterVendor.findFirst({
+        where: { organization_id: organizationId, id: selectedVendorId, is_active: true },
+        select: { id: true, vendor: true },
+      });
+      if (!vendor) throw new Error("Select an active Vendor Master vendor.");
+      customer = vendor.vendor;
+    } else {
+      if (!selectedContactId) throw new Error("Select a Contact Master contact for the sales order.");
+      const contact = await transaction.contact.findFirst({
+        where: { organization_id: organizationId, id: selectedContactId },
+        select: { id: true, legal_name: true, display_name: true },
+      });
+      if (!contact) throw new Error("Select a Contact Master contact from this organization.");
+      customer = contact.display_name || contact.legal_name;
+      if (!customer.trim()) throw new Error("The selected Contact Master contact does not have a display name.");
+    }
     const children = await transaction.distributionQuotation.findMany({
       where: {
         organization_id: organizationId,
@@ -363,11 +382,11 @@ export async function createDistributionMasterQuotation(
     const master = await transaction.distributionQuotation.create({
       data: {
         organization_id: organizationId,
-        vendor_id: vendor.id,
+        vendor_id: vendor?.id ?? null,
         quotation_no: await reserveProcurementDocumentNumber(organizationId, "DISTRIBUTION_MASTER_QUOTATION", transaction),
         quotation_date: new Date(),
         order_no: orderNumbers.join(", "),
-        customer: vendor.vendor,
+        customer,
         mode: "MASTER",
         status: "DRAFT",
         total_quantity: totalQuantity,
@@ -396,8 +415,9 @@ export async function createDistributionMasterQuotation(
       details: {
         quotation_no: master.quotation_no,
         child_quotation_nos: orderedChildren.map((child) => child.quotation_no),
-        vendor_id: vendor.id,
-        vendor_name: vendor.vendor,
+        vendor_id: vendor?.id ?? null,
+        ...(vendor ? { vendor_name: vendor.vendor } : {}),
+        ...(selectedContactId ? { contact_id: selectedContactId, contact_name: customer } : {}),
         total_quantity: totalQuantity,
       },
     }, transaction);

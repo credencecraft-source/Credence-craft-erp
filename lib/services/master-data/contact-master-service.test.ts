@@ -178,6 +178,25 @@ describe("contact master numbering", () => {
     });
   });
 
+  it("lists every lightweight contact lookup option in one query when requested", async () => {
+    mocks.tx.contact.findMany.mockResolvedValue([
+      { id: "contact-1", code: "CT1", legal_name: "ACME GARMENTS", display_name: "ACME" },
+      { id: "contact-2", code: "CT2", legal_name: "BETA GARMENTS", display_name: null },
+    ]);
+
+    await expect(listContactLookupOptions("org-1", undefined, { all: true }))
+      .resolves.toEqual([
+        { id: "contact-1", code: "CT1", label: "ACME (CT1)" },
+        { id: "contact-2", code: "CT2", label: "BETA GARMENTS (CT2)" },
+      ]);
+
+    expect(mocks.tx.contact.findMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-1" },
+      select: { id: true, code: true, legal_name: true, display_name: true },
+      orderBy: [{ legal_name: "asc" }, { id: "asc" }],
+    });
+  });
+
   it("creates a contact without role assignments when no role is provided", async () => {
     mocks.tx.contact.findFirst.mockImplementation(() => ({
       id: "contact-CT1",

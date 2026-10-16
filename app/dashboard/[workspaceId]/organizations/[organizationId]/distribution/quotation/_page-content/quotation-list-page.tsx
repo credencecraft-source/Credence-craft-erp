@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Checkbox from "@/components/ui/Checkbox";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import { ReportGrid } from "@/components/reports/report-grid-display";
@@ -12,6 +13,7 @@ import { validateMasterQuotationChildSelection } from "@/lib/services/distributi
 import type { DistributionQuotationSummary } from "./quotation-types";
 
 type VendorOption = { id: string; label: string };
+type ContactOption = { id: string; code: string; label: string };
 
 type QuotationField = keyof Pick<
   DistributionQuotationSummary,
@@ -21,7 +23,7 @@ type QuotationField = keyof Pick<
 const fields: Array<{ key: QuotationField; label: string }> = [
   { key: "quotationNo", label: "Quotation No" },
   { key: "orderNo", label: "Order No" },
-  { key: "customer", label: "Dealer" },
+  { key: "customer", label: "Customer / Contact" },
   { key: "mode", label: "Type" },
   { key: "status", label: "Status" },
   { key: "totalQuantity", label: "Total Qty" },
@@ -50,7 +52,11 @@ export default function QuotationListPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isCreatingSalesOrder, setIsCreatingSalesOrder] = useState(false);
   const [vendors, setVendors] = useState<VendorOption[]>([]);
-  const [selectedVendorId, setSelectedVendorId] = useState("");
+  const [selectedCounterparty, setSelectedCounterparty] = useState("");
+  const [showAllContacts, setShowAllContacts] = useState(false);
+  const [allContacts, setAllContacts] = useState<ContactOption[]>([]);
+  const [isLoadingAllContacts, setIsLoadingAllContacts] = useState(false);
+  const [allContactsError, setAllContactsError] = useState("");
   const [isLoadingVendors, setIsLoadingVendors] = useState(true);
   const [vendorError, setVendorError] = useState("");
   const [isSalesOrderModalOpen, setIsSalesOrderModalOpen] = useState(false);
@@ -98,8 +104,6 @@ export default function QuotationListPage() {
           .map((value: { id: string; label: string }) => ({ id: value.id, label: value.label.trim() }))
           .sort((left: VendorOption, right: VendorOption) => left.label.localeCompare(right.label));
         setVendors(options);
-        setSelectedVendorId((current) => options.some((vendor: VendorOption) => vendor.id === current) ? current : "");
-        if (options.length === 0) setVendorError("Add an active Distributor in Vendor Master before creating a sales order.");
       } catch (loadError) {
         if (!controller.signal.aborted) {
           setVendorError(loadError instanceof Error ? loadError.message : "Unable to load Vendor Master.");
@@ -110,6 +114,34 @@ export default function QuotationListPage() {
     };
     void Promise.resolve().then(loadVendors);
     return () => controller.abort();
+  }, [organizationId]);
+
+  const loadAllContacts = useCallback(async () => {
+    setIsLoadingAllContacts(true);
+    setAllContactsError("");
+    try {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/contacts/lookup?all=true`,
+        { cache: "no-store" },
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data)) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to load Contact Master.");
+      }
+      if (data.some((contact) =>
+        !contact ||
+        typeof contact.id !== "string" ||
+        typeof contact.code !== "string" ||
+        typeof contact.label !== "string"
+      )) {
+        throw new Error("The contact list returned an invalid response. Refresh and try again.");
+      }
+      setAllContacts(data as ContactOption[]);
+    } catch (loadError) {
+      setAllContactsError(loadError instanceof Error ? loadError.message : "Unable to load Contact Master.");
+    } finally {
+      setIsLoadingAllContacts(false);
+    }
   }, [organizationId]);
 
   const regularQuotations = useMemo(
@@ -126,13 +158,24 @@ export default function QuotationListPage() {
   const selectionError = validateMasterQuotationChildSelection(selectedIds, validationQuotes);
 
   async function createSalesOrder() {
+    const isContactSelection = selectedCounterparty.startsWith("contact:");
+    const counterpartyId = selectedCounterparty.slice(selectedCounterparty.indexOf(":") + 1);
+    if (!counterpartyId) {
+      setError("Select a Vendor or Contact for the sales order.");
+      return;
+    }
     setIsCreatingSalesOrder(true);
     setError("");
     try {
       const response = await fetch("/api/distribution/master-quotations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ organizationId, quotationIds: selectedIds, vendorId: selectedVendorId }),
+        body: JSON.stringify({
+          organizationId,
+          quotationIds: selectedIds,
+          vendorId: isContactSelection ? null : counterpartyId,
+          contactId: isContactSelection ? counterpartyId : null,
+        }),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || typeof data?.quotation?.id !== "string") {
@@ -215,7 +258,7 @@ export default function QuotationListPage() {
         onClose={() => {
           if (!isCreatingSalesOrder) setIsSalesOrderModalOpen(false);
         }}
-        ariaLabelledBy="sales-order-vendor-title"
+        ariaLabelledBy="sales-order-counterparty-title"
         size="sm"
         closeOnBackdrop={!isCreatingSalesOrder}
       >
@@ -227,25 +270,63 @@ export default function QuotationListPage() {
           }}
         >
           <div>
-            <h2 id="sales-order-vendor-title" className="text-lg font-semibold text-slate-900">Create Sales Order</h2>
-            <p className="mt-1 text-sm text-slate-600">Choose a Distributor from Vendor Master for this sales order.</p>
+            <h2 id="sales-order-counterparty-title" className="text-lg font-semibold text-slate-900">Create Sales Order</h2>
+            <p className="mt-1 text-sm text-slate-600">Choose a Vendor or enable LIST ALL to select any Contact Master contact.</p>
           </div>
+          <Checkbox
+            label="LIST ALL"
+            checked={showAllContacts}
+            onChange={(event) => {
+              const checked = event.target.checked;
+              setShowAllContacts(checked);
+              setSelectedCounterparty("");
+              setError("");
+              if (checked && allContacts.length === 0) void loadAllContacts();
+            }}
+            disabled={isCreatingSalesOrder}
+          />
           <Select
-            label="Distributor"
+            label="Vendor / Contact"
             required
-            value={selectedVendorId}
-            onChange={(event) => setSelectedVendorId(event.target.value)}
-            disabled={isLoadingVendors || isCreatingSalesOrder || vendors.length === 0}
+            value={selectedCounterparty}
+            onChange={(event) => setSelectedCounterparty(event.target.value)}
+            disabled={(showAllContacts ? isLoadingAllContacts : isLoadingVendors) || isCreatingSalesOrder}
           >
-            <option value="">{isLoadingVendors ? "Loading vendors..." : "Select a Distributor"}</option>
-            {vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.label}</option>)}
+            <option value="">
+              {showAllContacts
+                ? isLoadingAllContacts ? "Loading all contacts..." : "Select a Contact"
+                : isLoadingVendors ? "Loading vendors..." : "Select a Vendor"}
+            </option>
+            {showAllContacts
+              ? allContacts.map((contact) => (
+                  <option key={contact.id} value={`contact:${contact.id}`}>{contact.label}</option>
+                ))
+              : vendors.map((vendor) => (
+                  <option key={vendor.id} value={`vendor:${vendor.id}`}>{vendor.label}</option>
+                ))}
           </Select>
+          {showAllContacts && allContactsError ? (
+            <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-700">
+              <span>{allContactsError}</span>
+              <Button type="button" variant="secondary" size="sm" onClick={() => void loadAllContacts()} disabled={isLoadingAllContacts}>
+                Retry All Contacts
+              </Button>
+            </div>
+          ) : null}
           {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
           <div className="flex justify-end gap-3">
             <Button type="button" variant="secondary" onClick={() => setIsSalesOrderModalOpen(false)} disabled={isCreatingSalesOrder}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={!selectedVendorId || isLoadingVendors || isCreatingSalesOrder}>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={
+                !selectedCounterparty ||
+                (showAllContacts ? isLoadingAllContacts : isLoadingVendors) ||
+                isCreatingSalesOrder
+              }
+            >
               {isCreatingSalesOrder ? "Creating..." : "Create Sales Order"}
             </Button>
           </div>
