@@ -42,6 +42,7 @@ const MASTER_IMPORT_PLAN_BATCH_SIZE = 25;
 const MASTER_IMPORT_STAGING_ROW_BATCH_SIZE = 5_000;
 const MASTER_IMPORT_VALIDATION_WRITE_BATCH_SIZE = 500;
 const MASTER_IMPORT_VALIDATION_BULK_WRITE_THRESHOLD = 25;
+const MASTER_IMPORT_ARTICLE_KEY_BACKFILL_BATCH_SIZE = 500;
 const MASTER_IMPORT_RUN_LEASE_SECONDS = 360;
 
 const MASTER_IMPORT_UPLOAD_TRANSACTION_MAX_WAIT_MS = 10_000;
@@ -248,6 +249,202 @@ export async function listMasterImportJobs(
     : [];
   const uploaderNames = new Map(uploaders.map((uploader) => [uploader.id, uploader.full_name]));
   return jobs.map((job) => publicJob(job, uploaderNames.get(job.created_by_user_id) ?? null));
+}
+
+export async function getMasterImportErrorAnalysis(organizationId: string, jobId: string) {
+  const job = await prisma.masterImportJob.findFirst({
+    where: { organization_id: organizationId, id: jobId },
+    select: { id: true, uploaded_file_name: true, module_key: true },
+  });
+  if (!job) throw new MasterImportServiceError("Import job not found.", 404);
+
+  const batchSize = 1_000;
+  const sampleRowLimit = 10;
+  const groups = new Map<string, {
+    reason: string;
+    fields: Set<string>;
+    affectedRows: number;
+    sampleRows: number[];
+  }>();
+  let totalErrorRows = 0;
+  let lastRowNumber = 0;
+
+  while (true) {
+    const rows = await prisma.masterImportJobRow.findMany({
+      where: {
+        organization_id: organizationId,
+        job_id: jobId,
+        status: { in: [MasterImportJobRowStatus.INVALID, MasterImportJobRowStatus.FAILED] },
+        row_number: { gt: lastRowNumber },
+      },
+      orderBy: { row_number: "asc" },
+      take: batchSize,
+      select: { row_number: true, encrypted_payload: true },
+    });
+    if (rows.length === 0) break;
+
+    for (const row of rows) {
+      totalErrorRows += 1;
+      lastRowNumber = row.row_number;
+      let payload: unknown;
+      try {
+        payload = JSON.parse(decryptSecret(Buffer.from(row.encrypted_payload).toString("utf8"))) as unknown;
+      } catch {
+        throw new MasterImportServiceError("Import row data is unavailable for error analysis.", 503);
+      }
+
+      const validationErrors = isRecord(payload) && Array.isArray(payload.validationErrors)
+        ? payload.validationErrors
+        : [];
+      const rowGroups = new Set<string>();
+      const errorsToGroup = validationErrors.length > 0
+        ? validationErrors
+        : ["No structured validation reason is saved for this row."];
+      for (const error of errorsToGroup) {
+        const reason = typeof error === "string"
+          ? error.trim()
+          : isRecord(error) && typeof error.message === "string"
+            ? error.message.trim()
+            : "";
+        if (!reason) continue;
+        const fields = isRecord(error) && Array.isArray(error.fieldPaths)
+          ? [...new Set(error.fieldPaths
+              .filter((field): field is string => typeof field === "string")
+              .map((field) => field.trim())
+              .filter(Boolean))]
+              .sort((first, second) => first.localeCompare(second))
+          : [];
+        const key = reason.replace(/\s+/g, " ").toLocaleLowerCase();
+        if (rowGroups.has(key)) continue;
+        rowGroups.add(key);
+
+        const group = groups.get(key) ?? {
+          reason,
+          fields: new Set<string>(),
+          affectedRows: 0,
+          sampleRows: [],
+        };
+        for (const field of fields) group.fields.add(field);
+        group.affectedRows += 1;
+        if (group.sampleRows.length < sampleRowLimit) group.sampleRows.push(row.row_number);
+        groups.set(key, group);
+      }
+    }
+    if (rows.length < batchSize) break;
+  }
+
+  const groupedErrors = [...groups.values()]
+    .map((group) => ({ ...group, fields: [...group.fields].sort((first, second) => first.localeCompare(second)) }))
+    .sort((first, second) =>
+    second.affectedRows - first.affectedRows || first.reason.localeCompare(second.reason),
+    );
+  return {
+    jobId: job.id,
+    moduleKey: job.module_key,
+    fileName: job.uploaded_file_name,
+    totalErrorRows,
+    reasonCount: groupedErrors.length,
+    groupedErrors,
+  };
+}
+
+export async function getMasterImportErrorGroupAction(
+  organizationId: string,
+  jobId: string,
+  requestedReason: string,
+) {
+  const normalizedReason = requestedReason.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  if (!normalizedReason) {
+    throw new MasterImportServiceError("Select a valid error reason.", 400);
+  }
+
+  const job = await prisma.masterImportJob.findFirst({
+    where: { organization_id: organizationId, id: jobId },
+    select: { id: true, module_key: true },
+  });
+  if (!job) throw new MasterImportServiceError("Import job not found.", 404);
+  if (job.module_key !== "article") {
+    throw new MasterImportServiceError("Automatic master creation is available for Article imports only.", 400);
+  }
+
+  const maxRows = MASTER_IMPORT_VALIDATION_BATCH_SIZE;
+  const rowNumbers: number[] = [];
+  const suggestions = new Map<string, {
+    moduleKey: string;
+    label: string;
+    fields: Record<string, unknown>;
+    articleFieldUpdates?: Record<string, unknown>;
+  }>();
+  let totalAffectedRows = 0;
+  let lastRowNumber = 0;
+
+  while (true) {
+    const rows = await prisma.masterImportJobRow.findMany({
+      where: {
+        organization_id: organizationId,
+        job_id: jobId,
+        status: { in: [MasterImportJobRowStatus.INVALID, MasterImportJobRowStatus.FAILED] },
+        row_number: { gt: lastRowNumber },
+      },
+      orderBy: { row_number: "asc" },
+      take: 1_000,
+      select: { row_number: true, encrypted_payload: true },
+    });
+    if (rows.length === 0) break;
+
+    for (const row of rows) {
+      lastRowNumber = row.row_number;
+      let payload: unknown;
+      try {
+        payload = JSON.parse(decryptSecret(Buffer.from(row.encrypted_payload).toString("utf8"))) as unknown;
+      } catch {
+        throw new MasterImportServiceError("Import row data is unavailable for error analysis.", 503);
+      }
+      if (!isRecord(payload) || !Array.isArray(payload.validationErrors)) continue;
+
+      const matchingErrors = payload.validationErrors.filter((error) => {
+        const reason = typeof error === "string"
+          ? error.trim()
+          : isRecord(error) && typeof error.message === "string"
+            ? error.message.trim()
+            : "";
+        return reason.replace(/\s+/g, " ").toLocaleLowerCase() === normalizedReason;
+      });
+      if (matchingErrors.length === 0) continue;
+      totalAffectedRows += 1;
+      if (rowNumbers.length < maxRows) rowNumbers.push(row.row_number);
+
+      for (const error of matchingErrors) {
+        if (!isRecord(error) || !Array.isArray(error.relatedMasters)) continue;
+        for (const relatedMaster of error.relatedMasters) {
+          if (!isRecord(relatedMaster)
+            || typeof relatedMaster.moduleKey !== "string"
+            || typeof relatedMaster.label !== "string"
+            || !isRecord(relatedMaster.fields)) continue;
+          const suggestion = {
+            moduleKey: relatedMaster.moduleKey,
+            label: relatedMaster.label,
+            fields: relatedMaster.fields,
+            ...(isRecord(relatedMaster.articleFieldUpdates)
+              ? { articleFieldUpdates: relatedMaster.articleFieldUpdates }
+              : {}),
+          };
+          suggestions.set(
+            `${suggestion.moduleKey}:${suggestion.label.toLocaleLowerCase()}`,
+            suggestion,
+          );
+        }
+      }
+    }
+    if (rows.length < 1_000) break;
+  }
+
+  return {
+    rowNumbers,
+    totalAffectedRows,
+    truncated: totalAffectedRows > rowNumbers.length,
+    suggestions: [...suggestions.values()],
+  };
 }
 
 export async function createMasterImportJob(input: {
@@ -813,6 +1010,9 @@ export async function stageMasterImportJob(input: {
           organization_id: input.organizationId,
           job_id: input.jobId,
           row_number: offset + batchIndex + 1,
+          article_group_key: job.module_key === "article"
+            ? articleGroupKeyFromPayload(entry.payload)
+            : null,
           status: entry.validationErrors.length
             ? MasterImportJobRowStatus.INVALID
             : MasterImportJobRowStatus.STAGED,
@@ -881,6 +1081,18 @@ type StagedPayload = {
   checkpoint?: string;
 };
 
+function articleGroupKey(articleName: unknown) {
+  const normalized = typeof articleName === "string"
+    ? articleName.trim().toLocaleLowerCase()
+    : "";
+  return createHash("sha256").update(normalized).digest("hex");
+}
+
+function articleGroupKeyFromPayload(payload: unknown) {
+  const fields = isRecord(payload) && isRecord(payload.fields) ? payload.fields : {};
+  return articleGroupKey(fields.article);
+}
+
 async function updateValidatedImportRowsInBulk(
   transaction: Prisma.TransactionClient,
   input: { organizationId: string; jobId: string; actorUserId: string },
@@ -933,6 +1145,64 @@ async function updateValidatedImportRowsInBulk(
     if (updatedCount !== batch.length) {
       throw new MasterImportServiceError("Import rows changed during validation; reload and try again.", 409);
     }
+  }
+}
+
+async function backfillArticleGroupKeys(
+  organizationId: string,
+  jobId: string,
+  statuses: MasterImportJobRowStatus[],
+) {
+  let lastRowNumber = 0;
+  while (true) {
+    const rows = await prisma.masterImportJobRow.findMany({
+      where: {
+        organization_id: organizationId,
+        job_id: jobId,
+        status: { in: statuses },
+        article_group_key: null,
+        row_number: { gt: lastRowNumber },
+      },
+      orderBy: { row_number: "asc" },
+      take: MASTER_IMPORT_ARTICLE_KEY_BACKFILL_BATCH_SIZE,
+      select: {
+        id: true,
+        row_number: true,
+        status: true,
+        encrypted_payload: true,
+      },
+    });
+    if (rows.length === 0) return;
+
+    const values = rows.map((row) => {
+      let payload: unknown;
+      try {
+        payload = JSON.parse(decryptSecret(Buffer.from(row.encrypted_payload).toString("utf8"))) as unknown;
+      } catch {
+        throw new MasterImportServiceError("Import row data is unavailable.", 503);
+      }
+      return Prisma.sql`(
+        ${row.id},
+        ${row.status}::"MasterImportJobRowStatus",
+        ${articleGroupKeyFromPayload(payload)}
+      )`;
+    });
+    const updatedCount = await prisma.$executeRaw(Prisma.sql`
+      UPDATE "master_import_job_rows" AS target
+      SET "article_group_key" = batch."article_group_key"
+      FROM (VALUES ${Prisma.join(values)}) AS batch("id", "expected_status", "article_group_key")
+      WHERE target."organization_id" = ${organizationId}
+        AND target."job_id" = ${jobId}
+        AND target."id" = batch."id"
+        AND target."status" = batch."expected_status"
+        AND target."article_group_key" IS NULL
+    `);
+    if (updatedCount !== rows.length) {
+      throw new MasterImportServiceError("Article rows changed during validation preparation; retry validation.", 409);
+    }
+
+    lastRowNumber = rows[rows.length - 1].row_number;
+    if (rows.length < MASTER_IMPORT_ARTICLE_KEY_BACKFILL_BATCH_SIZE) return;
   }
 }
 
@@ -1948,6 +2218,7 @@ export async function validateMasterImportJob(input: {
       id: true,
       row_number: true,
       status: true,
+      article_group_key: true,
       encrypted_payload: true,
     },
   });
@@ -1971,36 +2242,53 @@ export async function validateMasterImportJob(input: {
     return { row, payload };
   });
   if (job.module_key === "article" && selectedRows.length > 0) {
-    const selectedArticleKeys = new Set(candidates.flatMap(({ payload }) =>
-      isRecord(payload) && isRecord(payload.fields) && typeof payload.fields.article === "string"
-        ? [payload.fields.article.trim().toLocaleLowerCase()]
-        : []));
-    const allPendingArticleRows = await prisma.masterImportJobRow.findMany({
+    const pendingStatuses = input.take === undefined
+      ? [
+          MasterImportJobRowStatus.STAGED,
+          MasterImportJobRowStatus.CORRECTED,
+          MasterImportJobRowStatus.INVALID,
+          MasterImportJobRowStatus.FAILED,
+        ]
+      : [MasterImportJobRowStatus.STAGED, MasterImportJobRowStatus.CORRECTED];
+    const unindexedPendingRow = await prisma.masterImportJobRow.findFirst({
       where: {
         organization_id: input.organizationId,
         job_id: input.jobId,
-        status: { in: input.take === undefined
-          ? [
-              MasterImportJobRowStatus.STAGED,
-              MasterImportJobRowStatus.CORRECTED,
-              MasterImportJobRowStatus.INVALID,
-              MasterImportJobRowStatus.FAILED,
-            ]
-          : [MasterImportJobRowStatus.STAGED, MasterImportJobRowStatus.CORRECTED] },
+        status: { in: pendingStatuses },
+        article_group_key: null,
       },
-      orderBy: { row_number: "asc" },
-      select: {
-        id: true,
-        row_number: true,
-        status: true,
-        encrypted_payload: true,
-      },
+      select: { id: true },
     });
+    if (unindexedPendingRow) {
+      await backfillArticleGroupKeys(input.organizationId, input.jobId, pendingStatuses);
+    }
+    const selectedArticleKeys = new Set(candidates.flatMap(({ payload }) =>
+      isRecord(payload) && isRecord(payload.fields) && typeof payload.fields.article === "string"
+        ? [articleGroupKey(payload.fields.article)]
+        : []));
+    const matchingArticleRows = selectedArticleKeys.size > 0
+      ? await prisma.masterImportJobRow.findMany({
+          where: {
+            organization_id: input.organizationId,
+            job_id: input.jobId,
+            article_group_key: { in: [...selectedArticleKeys] },
+            status: { in: pendingStatuses },
+          },
+          orderBy: { row_number: "asc" },
+          select: {
+            id: true,
+            row_number: true,
+            status: true,
+            article_group_key: true,
+            encrypted_payload: true,
+          },
+        })
+      : [];
     const rowsByArticle = new Map<string, Array<{
-      row: (typeof allPendingArticleRows)[number];
+      row: (typeof matchingArticleRows)[number];
       payload: Record<string, unknown>;
     }>>();
-    for (const row of allPendingArticleRows) {
+    for (const row of matchingArticleRows) {
       let payload: unknown;
       try {
         payload = JSON.parse(decryptSecret(Buffer.from(row.encrypted_payload).toString("utf8"))) as unknown;
@@ -2008,7 +2296,7 @@ export async function validateMasterImportJob(input: {
         throw new MasterImportServiceError("Import row data is unavailable.", 503);
       }
       if (!isRecord(payload) || !isRecord(payload.fields) || typeof payload.fields.article !== "string") continue;
-      const articleKey = payload.fields.article.trim().toLocaleLowerCase();
+      const articleKey = articleGroupKey(payload.fields.article);
       if (!selectedArticleKeys.has(articleKey)) continue;
       const articleRows = rowsByArticle.get(articleKey) ?? [];
       articleRows.push({ row, payload });
@@ -3359,6 +3647,9 @@ export async function saveMasterImportRow(input: {
         status: MasterImportJobRowStatus.STAGED,
         checkpoint: "CORRECTION_PENDING",
         encrypted_payload: encryptedPayload,
+        ...(jobForNormalization.module_key === "article"
+          ? { article_group_key: articleGroupKeyFromPayload(correctedPayload) }
+          : {}),
         updated_by_user_id: input.actorUserId,
       },
     });

@@ -36,9 +36,6 @@ import {
 const REPORT_PAGE_SIZE = 1_000;
 const STAGED_VALIDATION_ACTION_LIMIT = 10_000;
 const PLAN_SELECTION_LIMIT = 1_000;
-const AUTO_MASTER_CREATE_LIMIT = 500;
-const AUTO_MASTER_CREATE_BATCH_SIZE = 100;
-const AUTO_ERROR_VALIDATION_BATCH_SIZE = STAGED_VALIDATION_ACTION_LIMIT;
 
 type ImportJob = {
   id: string;
@@ -297,6 +294,7 @@ export default function MasterImportJobReportPage({
   const historyHref = `/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/admin/migration/import-history`;
   const automaticFlowStartedForJob = useRef<string | null>(null);
   const cancelledRunsRef = useRef(new Map<string, ImportRun>());
+  const backgroundRunRequestInFlight = useRef(false);
   const [job, setJob] = useState<ImportJob | null>(null);
   const [activeRun, setActiveRun] = useState<ImportRun | null>(null);
   const [rows, setRows] = useState<ImportRow[]>([]);
@@ -333,7 +331,7 @@ export default function MasterImportJobReportPage({
   const [isStoppingRun, setIsStoppingRun] = useState(false);
   const [validationProgress, setValidationProgress] = useState<{ processed: number; total: number } | null>(null);
   const [activeOperation, setActiveOperation] = useState<
-    "stage" | "validate" | "validate-staged" | "select-staged" | "auto-create-masters" | "commit" | null
+    "stage" | "validate" | "validate-staged" | "select-staged" | "commit" | null
   >(null);
   const [activePlanNumber, setActivePlanNumber] = useState<number | null>(null);
   const [automaticPhase, setAutomaticPhase] = useState<
@@ -481,6 +479,8 @@ export default function MasterImportJobReportPage({
   useEffect(() => {
     if (!activeRun || isProcessing || (activeRun.status !== "QUEUED" && activeRun.status !== "RUNNING")) return;
     const timer = window.setInterval(() => {
+      if (backgroundRunRequestInFlight.current) return;
+      backgroundRunRequestInFlight.current = true;
       void (async () => {
         const response = await fetch(`${endpoint}/runs/${activeRun.id}/process`, { method: "POST" });
         const payload: unknown = await response.json();
@@ -506,6 +506,8 @@ export default function MasterImportJobReportPage({
         }
       })().catch((pollError) => {
         setError(pollError instanceof Error ? pollError.message : "Unable to refresh background import status.");
+      }).finally(() => {
+        backgroundRunRequestInFlight.current = false;
       });
     }, 2_000);
     return () => window.clearInterval(timer);
@@ -665,160 +667,6 @@ export default function MasterImportJobReportPage({
       setError(validationError instanceof Error
         ? validationError.message
         : "Unable to validate staged records.");
-    } finally {
-      setIsProcessing(false);
-      setActiveOperation(null);
-    }
-  };
-
-  const loadAllErrorRows = async () => {
-    const errorRows: ImportRow[] = [];
-    let totalErrorCount: number | null = null;
-
-    while (totalErrorCount === null
-      || errorRows.length < Math.min(totalErrorCount, STAGED_VALIDATION_ACTION_LIMIT)) {
-      const query = new URLSearchParams({
-        limit: String(Math.min(
-          REPORT_PAGE_SIZE,
-          STAGED_VALIDATION_ACTION_LIMIT - errorRows.length,
-        )),
-        offset: String(errorRows.length),
-        tab: "errors",
-      });
-      const response = await fetch(`${endpoint}?${query}`, { cache: "no-store" });
-      const payload: unknown = await response.json();
-      if (!response.ok) throw new Error(readError(payload, "Unable to load all error rows."));
-      if (!isRecord(payload) || !Array.isArray(payload.rows)
-        || !payload.rows.every(isImportRow) || !isReportRowCounts(payload.rowCounts)) {
-        throw new Error("Error row response is invalid.");
-      }
-      totalErrorCount = payload.rowCounts.errors;
-      const pageRows = payload.rows as ImportRow[];
-      if (pageRows.length === 0 && errorRows.length < Math.min(totalErrorCount, STAGED_VALIDATION_ACTION_LIMIT)) {
-        throw new Error("The error list changed while loading. Refresh and try again.");
-      }
-      if (pageRows.length === 0) {
-        break;
-      }
-      errorRows.push(...pageRows);
-    }
-
-    return { rows: errorRows, totalErrorCount };
-  };
-
-  const autoCreateMastersAndValidateErrors = async () => {
-    if (!job || job.moduleKey !== "article" || isProcessing || rowCounts.errors === 0) return;
-    if (!window.confirm(
-      `Create suggested organization masters for up to ${Math.min(rowCounts.errors, STAGED_VALIDATION_ACTION_LIMIT).toLocaleString()} Article error rows, then revalidate them? This does not import any Article records. Size Groups remain manual because their Brand and size links need review.`,
-    )) return;
-
-    setActiveOperation("auto-create-masters");
-    setIsProcessing(true);
-    setError("");
-    setValidationProgress(null);
-    const attemptedSuggestions = new Set<string>();
-    let totalCreated = 0;
-    let totalFailures = 0;
-    let rowsValidated = 0;
-    let sizeGroupsNeedReview = false;
-    let hasMoreSuggestedMasters = false;
-    let hasMoreErrorRows = false;
-    const creationFailureMessages: string[] = [];
-
-    try {
-      for (let pass = 0; pass < 6; pass += 1) {
-        const { rows: errorRows, totalErrorCount } = await loadAllErrorRows();
-        hasMoreErrorRows = totalErrorCount > errorRows.length;
-        if (errorRows.length === 0) break;
-        const rowNumbers = errorRows.map((row) => row.rowNumber);
-        const suggestions = new Map<string, RelatedMasterSuggestion>();
-        for (const row of errorRows) {
-          for (const suggestion of readRelatedMasterSuggestions(row.payload)) {
-            if (suggestion.moduleKey === "size-group") {
-              sizeGroupsNeedReview = true;
-              continue;
-            }
-            const key = `${suggestion.moduleKey}:${suggestion.label.toLocaleLowerCase()}`;
-            if (!attemptedSuggestions.has(key)) suggestions.set(key, suggestion);
-          }
-        }
-
-        const dependencyOrder: Record<string, number> = {
-          brand: 0,
-          "product-master": 0,
-          category: 1,
-          "sub-category": 2,
-          color: 3,
-          size: 4,
-        };
-        const pendingSuggestions = [...suggestions.values()]
-          .sort((first, second) =>
-            (dependencyOrder[first.moduleKey] ?? Number.MAX_SAFE_INTEGER)
-              - (dependencyOrder[second.moduleKey] ?? Number.MAX_SAFE_INTEGER),
-          )
-          .slice(0, AUTO_MASTER_CREATE_LIMIT);
-
-        if (suggestions.size > pendingSuggestions.length) {
-          hasMoreSuggestedMasters = true;
-          setNotice(`Creating ${pendingSuggestions.length} of ${suggestions.size} suggested masters this pass. Re-run the action for remaining suggestions.`);
-        } else {
-          setNotice(`Creating suggested masters and revalidating ${rowNumbers.length.toLocaleString()} error rows...`);
-        }
-
-        for (let offset = 0; offset < pendingSuggestions.length; offset += AUTO_MASTER_CREATE_BATCH_SIZE) {
-          const batch = pendingSuggestions.slice(offset, offset + AUTO_MASTER_CREATE_BATCH_SIZE);
-          const response = await fetch(`${endpoint}/suggested-masters`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ suggestions: batch }),
-          });
-          const payload: unknown = await response.json();
-          if (!response.ok) throw new Error(readError(payload, "Unable to create suggested masters."));
-          if (!isRecord(payload) || !Array.isArray(payload.results)
-            || !payload.results.every((result) => isRecord(result)
-              && typeof result.moduleKey === "string"
-              && typeof result.label === "string"
-              && typeof result.created === "boolean")) {
-            throw new Error("Suggested master creation response is invalid.");
-          }
-          for (const result of payload.results) {
-            const key = `${result.moduleKey}:${result.label.toLocaleLowerCase()}`;
-            attemptedSuggestions.add(key);
-            if (result.created) totalCreated += 1;
-            else {
-              totalFailures += 1;
-              if (creationFailureMessages.length < 5 && typeof result.error === "string") {
-                creationFailureMessages.push(`${result.moduleKey} ${result.label}: ${result.error}`);
-              }
-            }
-          }
-        }
-
-        for (let offset = 0; offset < rowNumbers.length; offset += AUTO_ERROR_VALIDATION_BATCH_SIZE) {
-          const batch = rowNumbers.slice(offset, offset + AUTO_ERROR_VALIDATION_BATCH_SIZE);
-          const run = await runImportInBackground("VALIDATE", { rowNumbers: batch });
-          if (run.status === "CANCELLED") {
-            setNotice("Automatic master creation stopped during validation. Created masters remain saved; resume from Errors when ready.");
-            return;
-          }
-          rowsValidated += batch.length;
-          setNotice(`Created ${totalCreated} masters · revalidated ${rowsValidated.toLocaleString()} error rows.`);
-        }
-
-        if (pendingSuggestions.length === 0 || totalErrorCount <= errorRows.length) {
-          if (pendingSuggestions.length === 0) break;
-        }
-      }
-
-      await loadJob("errors", 0);
-      setNotice(
-        `Finished: ${totalCreated} masters created, ${totalFailures} creation issues, ${rowsValidated.toLocaleString()} error rows revalidated.${creationFailureMessages.length ? ` Issues: ${creationFailureMessages.join(" · ")}` : ""}${sizeGroupsNeedReview ? " Size Groups still need manual review." : ""}${hasMoreSuggestedMasters || hasMoreErrorRows ? " Some rows or suggestions remain; run the action again to continue." : ""}`,
-      );
-    } catch (automationError) {
-      await loadJob("errors", 0);
-      setError(automationError instanceof Error
-        ? automationError.message
-        : "Unable to create suggested masters and revalidate errors.");
     } finally {
       setIsProcessing(false);
       setActiveOperation(null);
@@ -1680,18 +1528,16 @@ export default function MasterImportJobReportPage({
             ) : null}
             {activeReportTab === "errors" ? (
               <>
-                {job?.moduleKey === "article" ? (
-                  <Button
-                    type="button"
-                    variant="primary"
-                    onClick={() => void autoCreateMastersAndValidateErrors()}
-                    disabled={isProcessing || rowCounts.errors === 0}
-                  >
-                    {isProcessing && activeOperation === "auto-create-masters"
-                      ? "Creating masters and validating..."
-                      : "Auto-create masters & validate all errors"}
-                  </Button>
-                ) : null}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    const analysisHref = `${historyHref}/${encodeURIComponent(jobId)}/error-analysis`;
+                    window.open(analysisHref, "_blank", "noopener,noreferrer");
+                  }}
+                >
+                  Open error analysis
+                </Button>
                 <Button
                   type="button"
                   variant="secondary"
@@ -1878,6 +1724,7 @@ export default function MasterImportJobReportPage({
             </div>
           ) : (
           <ReportGrid
+            key={activeReportTab}
             title={activeReportTab === "errors"
               ? "Rows with errors"
               : activeReportTab === "created"
