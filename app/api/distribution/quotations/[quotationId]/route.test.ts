@@ -45,7 +45,30 @@ describe("distribution quotation detail API", () => {
   it("loads the quotation using authorized tenant scope", async () => {
     const response = await GET(new Request("http://localhost/api/distribution/quotations/quotation-1?organizationId=public-org"), context);
     expect(response.status).toBe(200);
-    expect(mocks.getDistributionQuotation).toHaveBeenCalledWith("internal-org-1", "quotation-1");
+    expect(mocks.getDistributionQuotation).toHaveBeenCalledWith("internal-org-1", "quotation-1", {
+      masterOrder: false,
+      includeChildren: true,
+    });
+  });
+
+  it("uses the master-order detail query only when requested", async () => {
+    const response = await GET(new Request("http://localhost/api/distribution/quotations/quotation-1?organizationId=public-org&mode=MASTER"), context);
+
+    expect(response.status).toBe(200);
+    expect(mocks.getDistributionQuotation).toHaveBeenCalledWith("internal-org-1", "quotation-1", {
+      masterOrder: true,
+      includeChildren: true,
+    });
+  });
+
+  it("omits child summaries for a clicked quotation detail", async () => {
+    const response = await GET(new Request("http://localhost/api/distribution/quotations/quotation-1?organizationId=public-org&mode=QUOTATION"), context);
+
+    expect(response.status).toBe(200);
+    expect(mocks.getDistributionQuotation).toHaveBeenCalledWith("internal-org-1", "quotation-1", {
+      masterOrder: false,
+      includeChildren: false,
+    });
   });
 
   it("saves header and detail inputs only for an authorized merchandising role", async () => {

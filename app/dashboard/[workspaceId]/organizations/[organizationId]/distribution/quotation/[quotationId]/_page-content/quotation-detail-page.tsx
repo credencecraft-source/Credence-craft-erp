@@ -49,6 +49,7 @@ export default function QuotationDetailPage() {
   const router = useRouter();
   const organizationId = params.organizationId;
   const quotationId = params.quotationId ?? params.salesOrderId ?? params.masterQuotationId ?? "";
+  const isMasterOrder = params.salesOrderId !== undefined || params.masterQuotationId !== undefined;
   const [quotation, setQuotation] = useState<DistributionQuotation | null>(null);
   const [children, setChildren] = useState<DistributionQuotationSummary[]>([]);
   const [quotationDate, setQuotationDate] = useState("");
@@ -71,6 +72,7 @@ export default function QuotationDetailPage() {
     setError("");
     try {
       const query = new URLSearchParams({ organizationId });
+      query.set("mode", isMasterOrder ? "MASTER" : "QUOTATION");
       const response = await fetch(`/api/distribution/quotations/${encodeURIComponent(quotationId)}?${query}`, { cache: "no-store" });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.quotation) {
@@ -88,7 +90,7 @@ export default function QuotationDetailPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [organizationId, quotationId]);
+  }, [isMasterOrder, organizationId, quotationId]);
 
   useEffect(() => {
     void Promise.resolve().then(loadQuotation);
@@ -321,6 +323,7 @@ export default function QuotationDetailPage() {
                       <td className="px-4 py-3 font-medium">
                         <Link
                           href={childQuotationPath}
+                          prefetch={false}
                           onClick={(event) => event.stopPropagation()}
                           className="inline-flex items-center gap-1.5 rounded-sm text-[var(--erp-brand)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)]"
                         >

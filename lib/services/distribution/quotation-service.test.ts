@@ -127,6 +127,39 @@ describe("distribution quotation persistence", () => {
     });
   });
 
+  it("omits unused booking detail relations when loading a master sales order", async () => {
+    mocks.prisma.distributionQuotation.findFirst.mockResolvedValueOnce({
+      ...createdQuotation,
+      mode: "MASTER",
+      lines: [],
+      childQuotations: [],
+    });
+
+    const result = await getDistributionQuotation("internal-org-1", "quotation-1", { masterOrder: true });
+
+    expect(mocks.prisma.distributionQuotation.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "internal-org-1", id: "quotation-1", mode: "MASTER" },
+      include: expect.objectContaining({ lines: expect.objectContaining({ take: 0 }) }),
+    }));
+    expect(mocks.prisma.distributionQuotation.findFirst).toHaveBeenCalledTimes(1);
+    expect(result.quotation.lines).toEqual([]);
+  });
+
+  it("skips child-quotation relations for a quotation detail", async () => {
+    mocks.prisma.distributionQuotation.findFirst.mockResolvedValueOnce({
+      ...createdQuotation,
+      childQuotations: undefined,
+    });
+
+    const result = await getDistributionQuotation("internal-org-1", "quotation-1", { includeChildren: false });
+
+    expect(mocks.prisma.distributionQuotation.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "internal-org-1", id: "quotation-1" },
+      include: expect.not.objectContaining({ childQuotations: expect.anything() }),
+    }));
+    expect(result.children).toEqual([]);
+  });
+
   it("loads quotation registers from summary fields without fetching detail lines", async () => {
     mocks.prisma.distributionQuotation.findMany.mockResolvedValue([{
       id: "quotation-1",

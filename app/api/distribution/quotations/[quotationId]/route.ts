@@ -15,12 +15,15 @@ type RouteContext = { params: Promise<{ quotationId: string }> };
 export async function GET(request: Request, context: RouteContext) {
   try {
     const user = await requireSessionUser();
+    const url = new URL(request.url);
     const organization = await requireOrganizationContext(
       user.id,
-      new URL(request.url).searchParams.get("organizationId") ?? "",
+      url.searchParams.get("organizationId") ?? "",
     );
     const { quotationId } = await context.params;
-    return NextResponse.json(await getDistributionQuotation(organization.id, quotationId));
+    const masterOrder = url.searchParams.get("mode") === "MASTER";
+    const includeChildren = url.searchParams.get("mode") !== "QUOTATION";
+    return NextResponse.json(await getDistributionQuotation(organization.id, quotationId, { masterOrder, includeChildren }));
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2021", "P2022"].includes(error.code)) {
       return NextResponse.json({ error: "Advance Booking quotations are unavailable until their database migration is deployed." }, { status: 503 });

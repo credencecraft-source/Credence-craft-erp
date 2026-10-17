@@ -72,21 +72,27 @@ describe("create-only master insertion", () => {
       id: "group-id",
       value_id: "group-value-id",
       size_group: "CORE",
+      size_links: [
+        { size_group_id: "group-id", size: { organization_id: "org-id", size: "XL" } },
+        { size_group_id: "group-id", size: { organization_id: "org-id", size: "S" } },
+        { size_group_id: "group-id", size: { organization_id: "org-id", size: "M" } },
+      ],
     }] as never);
-    models.masterSizeGroupSize.findMany.mockResolvedValueOnce([
-      { size_group_id: "group-id", size: { id: "size-xl", value_id: "size-xl-value", organization_id: "org-id", size: "XL", is_active: true, status: "ACTIVE", legacy_metadata: null } },
-      { size_group_id: "group-id", size: { id: "size-s", value_id: "size-s-value", organization_id: "org-id", size: "S", is_active: true, status: "ACTIVE", legacy_metadata: null } },
-      { size_group_id: "group-id", size: { id: "size-m", value_id: "size-m-value", organization_id: "org-id", size: "M", is_active: true, status: "ACTIVE", legacy_metadata: null } },
-    ] as never);
 
     const orders = await getSizeGroupSizeOrderMapForOrganization("org-id", ["CORE"]);
 
     expect(orders.get("core")).toEqual(["XL", "S", "M"]);
     expect(sortBySizeGroupOrder(["M", "unknown", "XL", "S"], orders.get("core")!, (size) => size))
       .toEqual(["XL", "S", "M", "unknown"]);
-    expect(models.masterSizeGroupSize.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      orderBy: [{ created_at: "asc" }, { id: "asc" }],
+    expect(models.masterSizeGroup.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({
+        size_links: expect.objectContaining({
+          where: { organization_id: "org-id" },
+          orderBy: [{ created_at: "asc" }, { id: "asc" }],
+        }),
+      }),
     }));
+    expect(models.masterSizeGroupSize.findMany).not.toHaveBeenCalled();
   });
 
   it("saves Size Group sizes in the selected order", async () => {
@@ -661,12 +667,12 @@ describe("article creation", () => {
       id: "group-id",
       value_id: "group-value-id",
       size_group: "CORE",
+      size_links: [
+        { size_group_id: "group-id", size: { organization_id: "org-id", size: "XL" } },
+        { size_group_id: "group-id", size: { organization_id: "org-id", size: "S" } },
+        { size_group_id: "group-id", size: { organization_id: "org-id", size: "M" } },
+      ],
     }] as never);
-    models.masterSizeGroupSize.findMany.mockResolvedValueOnce([
-      { size_group_id: "group-id", size: { id: "size-xl", value_id: "size-xl-value", organization_id: "org-id", size: "XL", is_active: true, status: "ACTIVE", legacy_metadata: null } },
-      { size_group_id: "group-id", size: { id: "size-s", value_id: "size-s-value", organization_id: "org-id", size: "S", is_active: true, status: "ACTIVE", legacy_metadata: null } },
-      { size_group_id: "group-id", size: { id: "size-m", value_id: "size-m-value", organization_id: "org-id", size: "M", is_active: true, status: "ACTIVE", legacy_metadata: null } },
-    ] as never);
 
     const articles = await getMasterValuesForOrganization("org-id", "article", true, {
       includeArticleMetrics: false,

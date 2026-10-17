@@ -855,27 +855,26 @@ export async function getSizeGroupSizeOrderMapForOrganization(
         { size_group: { in: references } },
       ],
     },
-    select: { id: true, value_id: true, size_group: true },
-  });
-  if (groups.length === 0) return new Map<string, string[]>();
-
-  const links = await database.masterSizeGroupSize.findMany({
-    where: {
-      organization_id: organizationId,
-      size_group_id: { in: groups.map((group) => group.id) },
-    },
     select: {
-      size_group_id: true,
-      size: { select: { organization_id: true, size: true } },
+      id: true,
+      value_id: true,
+      size_group: true,
+      size_links: {
+        where: { organization_id: organizationId },
+        select: {
+          size_group_id: true,
+          size: { select: { organization_id: true, size: true } },
+        },
+        orderBy: [{ created_at: "asc" }, { id: "asc" }],
+      },
     },
-    orderBy: [{ created_at: "asc" }, { id: "asc" }],
   });
   const labelsByGroupId = new Map<string, string[]>();
-  for (const link of links) {
-    if (link.size.organization_id !== organizationId) continue;
-    const labels = labelsByGroupId.get(link.size_group_id) ?? [];
-    labels.push(link.size.size);
-    labelsByGroupId.set(link.size_group_id, labels);
+  for (const group of groups) {
+    const labels = group.size_links
+      .filter((link) => link.size.organization_id === organizationId)
+      .map((link) => link.size.size);
+    labelsByGroupId.set(group.id, labels);
   }
 
   const orderByReference = new Map<string, string[]>();

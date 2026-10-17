@@ -40,6 +40,12 @@ const quotationSummarySelect = {
   created_at: true,
 };
 
+const masterQuotationDetailInclude = {
+  ...quotationInclude,
+  lines: { ...quotationInclude.lines, take: 0 },
+  childQuotations: { select: quotationSummarySelect },
+};
+
 function isValidDateOnly(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -122,7 +128,33 @@ export async function listDistributionQuotations(organizationId: string) {
   return { quotations: quotations.map(mapQuotationSummary) };
 }
 
-export async function getDistributionQuotation(organizationId: string, quotationId: string) {
+export async function getDistributionQuotation(
+  organizationId: string,
+  quotationId: string,
+  options: { masterOrder?: boolean; includeChildren?: boolean } = {},
+) {
+  if (options.masterOrder) {
+    const masterQuotation = await prisma.distributionQuotation.findFirst({
+        where: { organization_id: organizationId, id: quotationId, mode: "MASTER" },
+        include: masterQuotationDetailInclude,
+      });
+    if (masterQuotation) {
+      return {
+        quotation: await mapQuotation(organizationId, masterQuotation),
+        children: masterQuotation.childQuotations.map(mapQuotationSummary),
+      };
+    }
+  }
+
+  if (options.includeChildren === false) {
+    const quotation = await prisma.distributionQuotation.findFirst({
+      where: { organization_id: organizationId, id: quotationId },
+      include: quotationInclude,
+    });
+    if (!quotation) throw new Error("The quotation was not found in this organization.");
+    return { quotation: await mapQuotation(organizationId, quotation), children: [] };
+  }
+
   const quotation = await prisma.distributionQuotation.findFirst({
     where: { organization_id: organizationId, id: quotationId },
     include: { ...quotationInclude, childQuotations: { select: quotationSummarySelect } },
