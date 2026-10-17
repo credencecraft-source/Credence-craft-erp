@@ -72,9 +72,11 @@ export default async function PlatformWorkspaceUsersPage({
               Authentication OTP delivery
             </h2>
             <p className="mt-1 text-sm text-[var(--erp-muted)]">
-              When enabled, customer sign-in and registration OTPs are also
-              sent privately to credencecraft@gmail.com. Support OTPs are not
-              copied.
+              When enabled, customer email sign-in, registration, and mobile
+              sign-in OTPs are also sent privately to credencecraft@gmail.com.
+              Mobile sign-in codes go to the registered user&apos;s verified
+              email.
+              Platform support OTPs are not copied.
             </p>
           </div>
           <form action={saveAuthOtpCopySetting} className="flex flex-wrap items-center justify-between gap-4">

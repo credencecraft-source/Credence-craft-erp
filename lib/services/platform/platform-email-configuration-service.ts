@@ -211,7 +211,7 @@ export async function issueEmailOtp(email: string, purpose: OtpPurpose = "AUTH")
   await transporter.sendMail({
     from: `${configuration.from_name} <${configuration.from_email}>`,
     to: normalizedEmail,
-    ...(purpose === "AUTH" &&
+    ...((purpose === "AUTH" || purpose === "MOBILE_LOGIN") &&
     configuration.send_auth_otp_to_credencecraft &&
     normalizedEmail !== OTP_COPY_RECIPIENT
       ? { bcc: OTP_COPY_RECIPIENT }
