@@ -52,6 +52,7 @@ The development server regenerates Prisma Client from the current schema before 
 - Database connection strings and usernames are encrypted with `AUTH_SECRET`. Rotate `AUTH_SECRET` only with a planned credential re-encryption procedure.
 - Order numbers use a tenant-scoped atomic counter. The migration initializes counters from existing numeric `OD-*` order numbers and leaves nonconforming legacy order numbers untouched.
 - Platform administrators are never provisioned by a public login or OTP request. After migrations are applied, create the first administrator from a trusted one-time operator environment with `PLATFORM_ADMIN_EMAIL`, optional `PLATFORM_ADMIN_NAME`, and run `npm run platform:bootstrap-admin`. The command stores only a random unusable password hash and refuses to run if any administrator already exists. Platform access uses email verification codes; the legacy password-login API returns `410 Gone`.
+- Platform administrators can optionally enable private copies of customer sign-in and registration OTPs to `credencecraft@gmail.com` in Platform → Workspace Users. The setting is off by default and does not copy platform support OTPs.
 
 ## Vercel Preview And Production
 

@@ -675,6 +675,7 @@ model PlatformEmailConfiguration {
   from_email              String   @db.VarChar(255)
   from_name               String   @db.VarChar(255)
   is_active               Boolean  @default(true)
+  send_auth_otp_to_credencecraft Boolean @default(false)
   created_at              DateTime @default(now())
   updated_at              DateTime @updatedAt
 

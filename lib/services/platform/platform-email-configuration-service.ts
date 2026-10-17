@@ -3,12 +3,16 @@ import nodemailer from "nodemailer";
 import type { PlatformEmailConfiguration } from "@prisma/client";
 
 import { decryptSecret, encryptSecret } from "@/lib/auth/secret-cryptography";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 
 const CONFIGURATION_ID = "default";
+const OTP_COPY_RECIPIENT = "credencecraft@gmail.com";
 const OTP_TTL_MINUTES = 10;
 const MAX_OTP_ATTEMPTS = 5;
 export type OtpPurpose = "AUTH" | "SUPPORT" | "ORGANIZATION_EMAIL" | "MOBILE_LOGIN";
+
+export class PlatformEmailConfigurationError extends Error {}
 
 type EmailConfigurationInput = {
   smtpHost: string;
@@ -39,12 +43,69 @@ function normalizeConfiguration(configuration: PlatformEmailConfiguration | null
     fromEmail: configuration.from_email,
     fromName: configuration.from_name,
     isActive: configuration.is_active,
+    sendAuthOtpToCredencecraft: configuration.send_auth_otp_to_credencecraft,
     hasPassword: Boolean(configuration.smtp_password_encrypted),
   };
 }
 
 export async function getPlatformEmailConfiguration() {
   return normalizeConfiguration(await prisma.platformEmailConfiguration.findUnique({ where: { id: CONFIGURATION_ID } }));
+}
+
+export async function getAuthOtpCopySetting() {
+  await requirePlatformSessionAdmin();
+  const configuration = await prisma.platformEmailConfiguration.findUnique({
+    where: { id: CONFIGURATION_ID },
+    select: { send_auth_otp_to_credencecraft: true },
+  });
+  return configuration?.send_auth_otp_to_credencecraft ?? false;
+}
+
+export async function setAuthOtpCopySetting(enabled: boolean) {
+  const admin = await requirePlatformSessionAdmin();
+  if (typeof enabled !== "boolean") {
+    throw new PlatformEmailConfigurationError(
+      "Select a valid OTP email copy setting.",
+    );
+  }
+
+  return prisma.$transaction(async (transaction) => {
+    const configuration = await transaction.platformEmailConfiguration.findUnique({
+      where: { id: CONFIGURATION_ID },
+      select: { send_auth_otp_to_credencecraft: true },
+    });
+    if (!configuration) {
+      if (enabled) {
+        throw new PlatformEmailConfigurationError(
+          "Configure platform email delivery before enabling OTP copies.",
+        );
+      }
+      return false;
+    }
+
+    const previousValue = configuration.send_auth_otp_to_credencecraft;
+    if (previousValue === enabled) return enabled;
+
+    await transaction.platformEmailConfiguration.update({
+      where: { id: CONFIGURATION_ID },
+      data: { send_auth_otp_to_credencecraft: enabled },
+    });
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: admin.id,
+        action: "PLATFORM_AUTH_OTP_COPY_SETTING_UPDATED",
+        entity_type: "PlatformEmailConfiguration",
+        entity_id: CONFIGURATION_ID,
+        details: {
+          sendAuthOtpToCredencecraft: {
+            before: previousValue,
+            after: enabled,
+          },
+        },
+      },
+    });
+    return enabled;
+  });
 }
 
 export async function savePlatformEmailConfiguration(input: EmailConfigurationInput) {
@@ -150,6 +211,11 @@ export async function issueEmailOtp(email: string, purpose: OtpPurpose = "AUTH")
   await transporter.sendMail({
     from: `${configuration.from_name} <${configuration.from_email}>`,
     to: normalizedEmail,
+    ...(purpose === "AUTH" &&
+    configuration.send_auth_otp_to_credencecraft &&
+    normalizedEmail !== OTP_COPY_RECIPIENT
+      ? { bcc: OTP_COPY_RECIPIENT }
+      : {}),
     subject: "Your Credence Craft verification code",
     text: `Your verification code is ${code}. It expires in ${OTP_TTL_MINUTES} minutes.`,
     html: `<p>Your verification code is:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p><p>This code expires in ${OTP_TTL_MINUTES} minutes.</p>`,
