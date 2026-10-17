@@ -1,0 +1,250 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
+
+const mocks = vi.hoisted(() => ({
+  prisma: {
+    $transaction: vi.fn(),
+    distributionQuotation: { findFirst: vi.fn() },
+    distributionQuotationLine: { findMany: vi.fn() },
+    advanceBooking: { findMany: vi.fn(), findFirst: vi.fn() },
+    finishedGoodsOutwardRequestLine: { findMany: vi.fn() },
+    finishedGoodsStock: { updateMany: vi.fn() },
+    finishedGoodsAllocatedStockReceipt: { deleteMany: vi.fn() },
+    workOrderInventoryGrnLine: { updateMany: vi.fn() },
+    workOrderInventoryGrnBookingAllocation: { deleteMany: vi.fn() },
+  },
+  createAuditEvent: vi.fn(),
+}));
+
+vi.mock("@/lib/database/prisma-client", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/services/organizations/audit-event-service", () => ({
+  createAuditEvent: mocks.createAuditEvent,
+}));
+
+import {
+  listQuotationBookingFulfillment,
+  reverseQuotationBookingFulfillment,
+} from "./quotation-booking-fulfillment-service";
+
+const quote = {
+  id: "quotation-1",
+  quotation_no: "QT-1",
+  mode: "SINGLE",
+  status: "DRAFT",
+  childQuotations: [],
+};
+
+const bookingWithFulfillment = () => ({
+  id: "booking-1",
+  booking_no: "BK-1",
+  sizeLines: [{
+    id: "booking-size-1",
+    assignments: [{
+      id: "assignment-1",
+      grnAllocations: [{
+        id: "allocation-1",
+        grn_line_id: "grn-line-1",
+        allocated_quantity: 5,
+        grnLine: {
+          id: "grn-line-1",
+          advance_booked_quantity: 5,
+          grn: { grn_no: "WGRN-1" },
+        },
+        finishedGoodsStockReceipt: {
+          id: "receipt-1",
+          entity_id: "entity-1",
+          location_id: "location-1",
+          style_name: "Style",
+          size: "M",
+          quantity_in: 5,
+          current_stock: 5,
+          quantity_out: 0,
+        },
+      }],
+      finishedGoodsStockReceipts: [{ id: "receipt-1" }],
+    }],
+  }],
+});
+
+describe("quotation-linked booking fulfillment", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.prisma.distributionQuotation.findFirst.mockResolvedValue(quote);
+    mocks.prisma.distributionQuotationLine.findMany.mockResolvedValue([{ source_booking_id: "booking-1" }]);
+    mocks.prisma.advanceBooking.findMany.mockResolvedValue([bookingWithFulfillment()]);
+    mocks.prisma.advanceBooking.findFirst.mockResolvedValue(bookingWithFulfillment());
+    mocks.prisma.finishedGoodsOutwardRequestLine.findMany.mockResolvedValue([]);
+    mocks.prisma.finishedGoodsStock.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.finishedGoodsAllocatedStockReceipt.deleteMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.workOrderInventoryGrnLine.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.workOrderInventoryGrnBookingAllocation.deleteMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.$transaction.mockImplementation(
+      (callback: (transaction: typeof mocks.prisma) => Promise<unknown>) => callback(mocks.prisma),
+    );
+    mocks.createAuditEvent.mockResolvedValue({});
+  });
+
+  it("lists only fulfilled bookings linked to this organization's quotation or its sales order", async () => {
+    const result = await listQuotationBookingFulfillment("internal-org-1", "quotation-1");
+
+    expect(mocks.prisma.distributionQuotation.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "quotation-1", organization_id: "internal-org-1" },
+    }));
+    expect(mocks.prisma.distributionQuotationLine.findMany).toHaveBeenCalledWith({
+      where: { organization_id: "internal-org-1", quotation_id: { in: ["quotation-1"] } },
+      select: { source_booking_id: true },
+    });
+    expect(result.bookings).toEqual([{
+      id: "booking-1",
+      bookingNo: "BK-1",
+      fulfilledQuantity: 5,
+      grnNumbers: ["WGRN-1"],
+      hasFulfillment: true,
+    }]);
+  });
+
+  it("includes child quotation bookings when loading a sales-order fulfillment preview", async () => {
+    mocks.prisma.distributionQuotation.findFirst.mockResolvedValue({
+      ...quote,
+      mode: "MASTER",
+      childQuotations: [{ id: "child-quotation-1" }],
+    });
+    mocks.prisma.distributionQuotationLine.findMany.mockResolvedValue([
+      { source_booking_id: "booking-1" },
+      { source_booking_id: "booking-2" },
+    ]);
+    mocks.prisma.advanceBooking.findMany.mockResolvedValue([
+      bookingWithFulfillment(),
+      { ...bookingWithFulfillment(), id: "booking-2", booking_no: "BK-2" },
+    ]);
+
+    const result = await listQuotationBookingFulfillment("internal-org-1", "quotation-1");
+
+    expect(mocks.prisma.distributionQuotationLine.findMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: "internal-org-1",
+        quotation_id: { in: ["quotation-1", "child-quotation-1"] },
+      },
+      select: { source_booking_id: true },
+    });
+    expect(result.bookings.map((booking) => booking.bookingNo)).toEqual(["BK-1", "BK-2"]);
+  });
+
+  it("reverses only unused allocation stock and writes an audit event", async () => {
+    const result = await reverseQuotationBookingFulfillment(
+      "internal-org-1",
+      "user-1",
+      "quotation-1",
+      "booking-1",
+    );
+
+    expect(result).toEqual({
+      bookingId: "booking-1",
+      bookingNo: "BK-1",
+      reversedQuantity: 5,
+      grnNumbers: ["WGRN-1"],
+    });
+    expect(mocks.prisma.finishedGoodsStock.updateMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: "internal-org-1",
+        entity_id: "entity-1",
+        location_id: "location-1",
+        style_name: "Style",
+        size: "M",
+        quantity_on_hand: { gte: 5 },
+        quantity_reserved: { gte: 5 },
+      },
+      data: {
+        quantity_on_hand: { decrement: 5 },
+        quantity_reserved: { decrement: 5 },
+      },
+    });
+    expect(mocks.prisma.workOrderInventoryGrnLine.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "grn-line-1",
+        grn: { organization_id: "internal-org-1" },
+        advance_booked_quantity: { gte: 5 },
+      },
+      data: { advance_booked_quantity: { decrement: 5 } },
+    });
+    expect(mocks.prisma.finishedGoodsAllocatedStockReceipt.deleteMany).toHaveBeenCalledWith({
+      where: { organization_id: "internal-org-1", id: { in: ["receipt-1"] }, booking_id: "booking-1" },
+    });
+    expect(mocks.prisma.workOrderInventoryGrnBookingAllocation.deleteMany).toHaveBeenCalledWith({
+      where: { organization_id: "internal-org-1", id: { in: ["allocation-1"] } },
+    });
+    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      organizationId: "internal-org-1",
+      userId: "user-1",
+      action: "REVERSE_WORK_ORDER_GRN_BOOKING_FULFILLMENT",
+      entityId: "booking-1",
+      details: expect.objectContaining({
+        quotation_id: "quotation-1",
+        booking_no: "BK-1",
+        grn_numbers: ["WGRN-1"],
+        reversed_quantity: 5,
+      }),
+    }), mocks.prisma);
+  });
+
+  it("blocks reversal when allocated inventory has been issued", async () => {
+    const booking = bookingWithFulfillment();
+    booking.sizeLines[0].assignments[0].grnAllocations[0].finishedGoodsStockReceipt!.quantity_out = 1;
+    booking.sizeLines[0].assignments[0].grnAllocations[0].finishedGoodsStockReceipt!.current_stock = 4;
+    mocks.prisma.advanceBooking.findFirst.mockResolvedValue(booking);
+
+    await expect(reverseQuotationBookingFulfillment(
+      "internal-org-1",
+      "user-1",
+      "quotation-1",
+      "booking-1",
+    )).rejects.toThrow("already been issued or changed");
+
+    expect(mocks.prisma.finishedGoodsStock.updateMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.finishedGoodsAllocatedStockReceipt.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("blocks reversal while an active outward request reserves the receipt", async () => {
+    mocks.prisma.finishedGoodsOutwardRequestLine.findMany.mockResolvedValue([{
+      source_stock_id: "receipt-1",
+      requested_quantity: new Prisma.Decimal(5),
+      shipped_quantity: new Prisma.Decimal(0),
+    }]);
+
+    await expect(reverseQuotationBookingFulfillment(
+      "internal-org-1",
+      "user-1",
+      "quotation-1",
+      "booking-1",
+    )).rejects.toThrow("reserved by an active finished-goods request");
+
+    expect(mocks.prisma.finishedGoodsStock.updateMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.finishedGoodsAllocatedStockReceipt.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a booking not linked to the selected quotation", async () => {
+    mocks.prisma.distributionQuotationLine.findMany.mockResolvedValue([]);
+
+    await expect(reverseQuotationBookingFulfillment(
+      "internal-org-1",
+      "user-1",
+      "quotation-1",
+      "booking-foreign",
+    )).rejects.toThrow("not linked to this quotation or sales order");
+
+    expect(mocks.prisma.advanceBooking.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("requires a draft quotation before listing or reversing fulfillment", async () => {
+    mocks.prisma.distributionQuotation.findFirst.mockResolvedValue({ ...quote, status: "ISSUED" });
+
+    await expect(listQuotationBookingFulfillment("internal-org-1", "quotation-1"))
+      .rejects.toThrow("Only draft quotations");
+    await expect(reverseQuotationBookingFulfillment(
+      "internal-org-1",
+      "user-1",
+      "quotation-1",
+      "booking-1",
+    )).rejects.toThrow("Only draft quotations");
+  });
+});

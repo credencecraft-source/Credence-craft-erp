@@ -41,6 +41,7 @@ vi.mock("@/lib/services/inventory/finished-goods-outward-service", () => ({
 }));
 
 import { POST } from "./route";
+import { Prisma } from "@prisma/client";
 
 function postRequest(body: unknown) {
   return new Request("http://localhost/api/inventory/finished-goods-outward", {
@@ -132,6 +133,24 @@ describe("finished-goods-outward route", () => {
 
     expect(response.status).toBe(403);
     expect(mocks.createRequestFromBookings).not.toHaveBeenCalled();
+  });
+
+  it("returns a safe actionable message when an inventory reference changes during request creation", async () => {
+    mocks.createRequestFromBookings.mockRejectedValue(new Prisma.PrismaClientKnownRequestError(
+      "Foreign key constraint failed",
+      { code: "P2003", clientVersion: "test" },
+    ));
+
+    const response = await POST(postRequest({
+      organizationId: "public-org",
+      action: "request-bookings",
+      bookingRequests: [{ bookingId: "booking-1", sizeRequests: [{ sizeLineId: "size-1", quantity: "2" }] }],
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "A selected booking or inventory record changed before the request could be saved. Refresh Shipment Tracking and try again.",
+    });
   });
 
   it("routes a pick reversal through the inventory-authorized service", async () => {

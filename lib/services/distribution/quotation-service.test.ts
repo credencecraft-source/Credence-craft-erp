@@ -43,6 +43,7 @@ const booking = (id: string, bookingNo: string, vendorId: string | null = "vendo
   brand: "Brand",
   style_name: "Style",
   order: { orderNo: "ORD-1" },
+  quotationLines: [],
   sizeLines: [
     { ...line, id: `${id}-size-m`, size: "M", booked_quantity: 20 },
     ...(id === "booking-1" ? [{ ...line, id: `${id}-size-s`, size: "S", booked_quantity: 10 }] : []),
@@ -161,7 +162,7 @@ describe("distribution quotation persistence", () => {
     expect(result.quotations[0]).not.toHaveProperty("lines");
   });
 
-  it("creates a persisted regular quotation header and booking-derived lines transactionally", async () => {
+  it("creates a quotation transactionally and returns only fields needed by the creation screen", async () => {
     const result = await createDistributionQuotationFromBookings(
       "internal-org-1",
       "user-1",
@@ -173,10 +174,7 @@ describe("distribution quotation persistence", () => {
     expect(result).toMatchObject({
       id: "quotation-1",
       quotationNo: "QT-1",
-      mode: "MULTIPLE",
-      status: "DRAFT",
-      totalQuantity: 50,
-      lines: [{ bookingNo: "BK-1", endCustomer: "End Customer A" }],
+      customer: "Master Vendor A",
     });
     expect(mocks.transaction.distributionQuotation.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -188,6 +186,17 @@ describe("distribution quotation persistence", () => {
           expect.objectContaining({ source_booking_id: "booking-1", quantity: 30 }),
           expect.objectContaining({ source_booking_id: "booking-2", quantity: 20 }),
         ]) },
+      }),
+      select: {
+        id: true,
+        quotation_no: true,
+        customer: true,
+      },
+    }));
+    expect(mocks.transaction.advanceBooking.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "internal-org-1", id: { in: ["booking-1", "booking-2"] } },
+      include: expect.objectContaining({
+        quotationLines: { select: { booking_no: true }, take: 1 },
       }),
     }));
     const createdData = mocks.transaction.distributionQuotation.create.mock.calls[0][0].data;
@@ -201,6 +210,7 @@ describe("distribution quotation persistence", () => {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     }));
     expect(mocks.createAuditEvent).toHaveBeenCalledOnce();
+    expect(result).not.toHaveProperty("lines");
   });
 
   it("allows bookings from different vendors and rejects duplicate quotations", async () => {
@@ -209,10 +219,12 @@ describe("distribution quotation persistence", () => {
       booking("booking-2", "BK-2", "vendor-2"),
     ]);
     await expect(createDistributionQuotationFromBookings("internal-org-1", "user-1", ["booking-1", "booking-2"], "vendor-1"))
-      .resolves.toMatchObject({ vendorId: "vendor-1" });
+      .resolves.toMatchObject({ quotationNo: "QT-1" });
 
-    mocks.transaction.advanceBooking.findMany.mockResolvedValue([booking("booking-1", "BK-1")]);
-    mocks.transaction.distributionQuotationLine.findFirst.mockResolvedValue({ booking_no: "BK-1" });
+    mocks.transaction.advanceBooking.findMany.mockResolvedValue([{
+      ...booking("booking-1", "BK-1"),
+      quotationLines: [{ booking_no: "BK-1" }],
+    }]);
     await expect(createDistributionQuotationFromBookings("internal-org-1", "user-1", ["booking-1"], "vendor-1"))
       .rejects.toThrow("already has a quotation");
   });

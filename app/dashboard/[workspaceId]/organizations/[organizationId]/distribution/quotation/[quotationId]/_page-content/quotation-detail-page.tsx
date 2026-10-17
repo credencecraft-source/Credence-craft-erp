@@ -13,6 +13,14 @@ import Modal from "@/components/ui/Modal";
 import Table from "@/components/ui/Table";
 import type { DistributionQuotation, DistributionQuotationSummary } from "../../_page-content/quotation-types";
 
+type BookingFulfillment = {
+  id: string;
+  bookingNo: string;
+  fulfilledQuantity: number;
+  grnNumbers: string[];
+  hasFulfillment: boolean;
+};
+
 function amountForLine(unitPrice: string, quantity: number) {
   if (!/^\d{1,10}(\.\d{1,4})?$/.test(unitPrice)) return null;
   const [whole, fraction = ""] = unitPrice.split(".");
@@ -52,6 +60,11 @@ export default function QuotationDetailPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
+  const [fulfillmentBookings, setFulfillmentBookings] = useState<BookingFulfillment[]>([]);
+  const [isLoadingFulfillment, setIsLoadingFulfillment] = useState(false);
+  const [fulfillmentError, setFulfillmentError] = useState("");
+  const [pendingReversal, setPendingReversal] = useState<BookingFulfillment | null>(null);
+  const [reversingBookingId, setReversingBookingId] = useState("");
 
   const loadQuotation = useCallback(async () => {
     setIsLoading(true);
@@ -80,6 +93,32 @@ export default function QuotationDetailPage() {
   useEffect(() => {
     void Promise.resolve().then(loadQuotation);
   }, [loadQuotation]);
+
+  const loadFulfillment = useCallback(async () => {
+    if (!quotation) return;
+    setIsLoadingFulfillment(true);
+    setFulfillmentError("");
+    try {
+      const query = new URLSearchParams({ organizationId });
+      const response = await fetch(
+        `/api/distribution/quotations/${encodeURIComponent(quotation.id)}/booking-fulfillment?${query}`,
+        { cache: "no-store" },
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data?.bookings)) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to load booking inventory fulfillment.");
+      }
+      setFulfillmentBookings(data.bookings as BookingFulfillment[]);
+    } catch (loadError) {
+      setFulfillmentError(loadError instanceof Error ? loadError.message : "Unable to load booking inventory fulfillment.");
+    } finally {
+      setIsLoadingFulfillment(false);
+    }
+  }, [organizationId, quotation]);
+
+  useEffect(() => {
+    if (showDeleteConfirmation && quotation) void Promise.resolve().then(loadFulfillment);
+  }, [loadFulfillment, quotation, showDeleteConfirmation]);
 
   const displayedTotal = useMemo(() => {
     if (!quotation) return "0.00";
@@ -138,9 +177,35 @@ export default function QuotationDetailPage() {
       router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/${listPath}`);
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Unable to delete quotation.");
-      setShowDeleteConfirmation(false);
     } finally {
       setIsDeleting(false);
+    }
+  }
+
+  async function reverseBookingFulfillment() {
+    if (!quotation || !pendingReversal || reversingBookingId) return;
+    setReversingBookingId(pendingReversal.id);
+    setFulfillmentError("");
+    setError("");
+    try {
+      const response = await fetch(
+        `/api/distribution/quotations/${encodeURIComponent(quotation.id)}/booking-fulfillment`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ organizationId, bookingId: pendingReversal.id }),
+        },
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.reversed) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to remove booking inventory fulfillment.");
+      }
+      setPendingReversal(null);
+      await loadFulfillment();
+    } catch (reversalError) {
+      setFulfillmentError(reversalError instanceof Error ? reversalError.message : "Unable to remove booking inventory fulfillment.");
+    } finally {
+      setReversingBookingId("");
     }
   }
 
@@ -331,7 +396,7 @@ export default function QuotationDetailPage() {
       <Modal
         open={showDeleteConfirmation}
         onClose={() => {
-          if (!isDeleting) setShowDeleteConfirmation(false);
+          if (!isDeleting && !reversingBookingId) setShowDeleteConfirmation(false);
         }}
         ariaLabelledBy="distribution-quotation-delete-title"
         ariaDescribedBy="distribution-quotation-delete-description"
@@ -349,12 +414,69 @@ export default function QuotationDetailPage() {
                 : "This draft quotation and its detail lines will be deleted. Its advance bookings will remain and can be deleted afterward if they have no work-order assignments."}
             </p>
           </header>
+          {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
+          <section className="space-y-3 border-t border-[var(--erp-border)] pt-4" aria-label="Linked booking inventory fulfillment">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">Booking inventory fulfillment</h3>
+              <p className="mt-1 text-sm text-slate-600">
+                If a linked booking is blocked from deletion by Work Order GRN fulfillment, reverse that booking&apos;s unused inventory here. The GRN and its audit history are preserved.
+              </p>
+            </div>
+            {isLoadingFulfillment ? <p role="status" className="text-sm text-slate-600">Loading booking fulfillment...</p> : null}
+            {fulfillmentError ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{fulfillmentError}</p> : null}
+            {fulfillmentBookings.length > 0 ? (
+              <p role="alert" className="rounded-md border border-[var(--erp-warning-border)] bg-[var(--erp-warning-bg)] px-3 py-2 text-sm text-[var(--erp-warning-text)]">
+                Remove the linked booking&apos;s inventory fulfillment before deleting this {quotation?.mode === "MASTER" ? "sales order" : "quotation"}.
+              </p>
+            ) : null}
+            {!isLoadingFulfillment && !fulfillmentError && fulfillmentBookings.length === 0 ? (
+              <p className="text-sm text-slate-600">No linked bookings have Work Order GRN fulfillment.</p>
+            ) : null}
+            {fulfillmentBookings.map((booking) => (
+              <div key={booking.id} className="space-y-2 rounded-md border border-[var(--erp-border)] p-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 text-sm">
+                    <p className="font-medium text-slate-900">{booking.bookingNo} · {booking.fulfilledQuantity.toLocaleString()} PCS</p>
+                    <p className="text-slate-600">Work Order GRN: {booking.grnNumbers.join(", ") || "—"}</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => setPendingReversal(booking)}
+                    disabled={isLoadingFulfillment || isDeleting || Boolean(reversingBookingId)}
+                  >
+                    Remove inventory fulfillment
+                  </Button>
+                </div>
+                {pendingReversal?.id === booking.id ? (
+                  <div className="space-y-3 border-t border-[var(--erp-border)] pt-3">
+                    <p className="text-sm text-slate-700">
+                      Confirm reversal for {booking.bookingNo}? This removes its GRN allocation and unused allocated-stock receipts and reduces reserved/on-hand stock. It is blocked if stock has been issued, changed, or reserved by an active request.
+                    </p>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Button type="button" variant="secondary" onClick={() => setPendingReversal(null)} disabled={Boolean(reversingBookingId)}>
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        onClick={() => void reverseBookingFulfillment()}
+                        disabled={Boolean(reversingBookingId)}
+                      >
+                        {reversingBookingId === booking.id ? "Removing..." : "Confirm removal"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </section>
           <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--erp-border)] pt-4">
             <Button
               type="button"
               variant="secondary"
               onClick={() => setShowDeleteConfirmation(false)}
-              disabled={isDeleting}
+              disabled={isDeleting || Boolean(reversingBookingId)}
             >
               Cancel
             </Button>
@@ -362,7 +484,7 @@ export default function QuotationDetailPage() {
               type="button"
               variant="destructive"
               onClick={() => void deleteQuotation()}
-              disabled={isDeleting}
+              disabled={isDeleting || isLoadingFulfillment || Boolean(fulfillmentError) || fulfillmentBookings.length > 0}
             >
               {isDeleting ? "Deleting..." : "Delete"}
             </Button>

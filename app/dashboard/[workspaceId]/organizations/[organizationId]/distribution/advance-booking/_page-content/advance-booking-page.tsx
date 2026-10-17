@@ -267,7 +267,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     else if (!options.silent) setIsLoadingBookings(true);
     setBookingsError("");
     try {
-      const query = new URLSearchParams({ organizationId, limit: String(ADVANCE_BOOKING_PAGE_SIZE) });
+      const query = new URLSearchParams({ organizationId, limit: String(ADVANCE_BOOKING_PAGE_SIZE), view });
       if (options.cursor) query.set("cursor", options.cursor);
       const response = await fetch(`/api/distribution/advance-bookings?${query}`, {
         cache: "no-store",
@@ -296,9 +296,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         else if (!options.silent) setIsLoadingBookings(false);
       }
     }
-  }, [organizationId]);
+  }, [organizationId, view]);
 
   useEffect(() => {
+    if (view === "booking" && isCreating) return;
     const controller = new AbortController();
     void Promise.resolve().then(() => {
       if (!controller.signal.aborted) void loadBookings(controller.signal);
@@ -306,7 +307,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     return () => {
       controller.abort();
     };
-  }, [loadBookings]);
+  }, [isCreating, loadBookings, view]);
 
   const selectedOrder = orderDetails?.id === selectedOrderId ? orderDetails.order : null;
   const currentAllContactVendors = allContactVendors?.organizationId === organizationId
@@ -415,7 +416,11 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     setIsLoadingOrders(true);
     setOrdersError("");
     try {
-      const query = new URLSearchParams({ organizationId, limit: String(ADVANCE_BOOKING_PAGE_SIZE) });
+      const query = new URLSearchParams({
+        organizationId,
+        limit: String(ADVANCE_BOOKING_PAGE_SIZE),
+        purpose: "advance-booking",
+      });
       const response = await fetch(`/api/orders?${query.toString()}`, {
         cache: "no-store",
         signal,
@@ -436,6 +441,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   }, [organizationId]);
 
   useEffect(() => {
+    if (view !== "booking" || !isCreating) return;
     const controller = new AbortController();
     void Promise.resolve().then(() => {
       if (!controller.signal.aborted) void loadInitialOrders(controller.signal);
@@ -443,7 +449,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     return () => {
       controller.abort();
     };
-  }, [loadInitialOrders]);
+  }, [isCreating, loadInitialOrders, view]);
 
   const loadVendors = useCallback(async (signal?: AbortSignal) => {
     setIsLoadingVendors(true);
@@ -508,6 +514,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   }, [organizationId]);
 
   useEffect(() => {
+    if (view !== "booking" || (!isCreating && !isQuotationVendorModalOpen)) return;
     const controller = new AbortController();
     void Promise.resolve().then(() => {
       if (!controller.signal.aborted) void loadVendors(controller.signal);
@@ -515,7 +522,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     return () => {
       controller.abort();
     };
-  }, [loadVendors]);
+  }, [isCreating, isQuotationVendorModalOpen, loadVendors, view]);
 
   useEffect(() => {
     if ((!showAllContacts && !showAllQuotationContacts) || currentAllContactVendors !== null) return;
@@ -530,10 +537,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   }, [currentAllContactVendors, loadAllContacts, showAllContacts, showAllQuotationContacts]);
 
   useEffect(() => {
-    if (!selectedOrderId) return;
+    if (view !== "booking" || !isCreating || !selectedOrderId) return;
 
     const controller = new AbortController();
-    const query = new URLSearchParams({ organizationId });
+    const query = new URLSearchParams({ organizationId, purpose: "advance-booking" });
     void fetch(`/api/orders/${encodeURIComponent(selectedOrderId)}?${query.toString()}`, {
       cache: "no-store",
       signal: controller.signal,
@@ -554,7 +561,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       });
 
     return () => controller.abort();
-  }, [organizationId, orderDetailsRetry, selectedOrderId]);
+  }, [isCreating, organizationId, orderDetailsRetry, selectedOrderId, view]);
 
   async function loadMoreOrders() {
     if (!nextOrderCursor || isLoadingMoreOrders) return;
@@ -565,6 +572,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         organizationId,
         limit: String(ADVANCE_BOOKING_PAGE_SIZE),
         cursor: nextOrderCursor,
+        purpose: "advance-booking",
       });
       const response = await fetch(`/api/orders?${query.toString()}`, { cache: "no-store" });
       const data = await response.json().catch(() => null);

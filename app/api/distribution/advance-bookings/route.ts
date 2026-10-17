@@ -50,6 +50,7 @@ export async function GET(request: Request) {
     return NextResponse.json(await listAdvanceBookings(organization.id, {
       cursor: search.get("cursor") || undefined,
       limit: Number.isFinite(limit) ? limit : 100,
+      view: search.get("view") ?? undefined,
     }));
   } catch (error) {
     return errorResponse(error, "Unable to load advance bookings.");

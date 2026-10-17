@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
     $transaction: vi.fn(),
     advanceBooking: { findFirst: vi.fn(), findMany: vi.fn() },
     masterArticle: { findMany: vi.fn() },
-    finishedGoodsGeneralStockReceipt: { findMany: vi.fn() },
+    finishedGoodsGeneralStockReceipt: { findMany: vi.fn(), groupBy: vi.fn() },
   },
   transaction: {
     merchandisingOrder: { findFirst: vi.fn() },
@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
     masterSizeGroupSize: { findMany: vi.fn() },
     contact: { findFirst: vi.fn() },
     masterVendor: { findFirst: vi.fn() },
-    advanceBookingSizeLine: { findMany: vi.fn() },
+    advanceBookingSizeLine: { findMany: vi.fn(), groupBy: vi.fn() },
     advanceBooking: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
     factoryWorkOrder: { findFirst: vi.fn() },
     advanceBookingWorkOrderAssignment: { findMany: vi.fn(), updateMany: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
@@ -40,6 +40,7 @@ describe("advance-booking persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.prisma.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
+    mocks.prisma.finishedGoodsGeneralStockReceipt.groupBy.mockResolvedValue([]);
     mocks.prisma.masterArticle.findMany.mockResolvedValue([]);
     mocks.prisma.$transaction.mockImplementation((callback: (transaction: typeof mocks.transaction) => Promise<unknown>) =>
       callback(mocks.transaction));
@@ -53,6 +54,7 @@ describe("advance-booking persistence", () => {
     });
     mocks.transaction.masterVendor.findFirst.mockResolvedValue({ id: "vendor-1", vendor: "Customer" });
     mocks.transaction.advanceBookingSizeLine.findMany.mockResolvedValue([]);
+    mocks.transaction.advanceBookingSizeLine.groupBy.mockResolvedValue([]);
     mocks.transaction.advanceBookingWorkOrderAssignment.deleteMany.mockResolvedValue({ count: 1 });
     mocks.reserveProcurementDocumentNumber.mockResolvedValue("BK-1");
     mocks.transaction.advanceBooking.create.mockResolvedValue({
@@ -382,6 +384,46 @@ describe("advance-booking persistence", () => {
     }), mocks.transaction);
   });
 
+  it("aggregates prior booked quantities by size in the authorized organization and order", async () => {
+    mocks.transaction.advanceBookingSizeLine.groupBy.mockResolvedValue([{
+      size: "M",
+      _sum: { booked_quantity: 35 },
+    }]);
+    mocks.transaction.advanceBooking.create.mockResolvedValueOnce({
+      id: "booking-record-1",
+      organization_id: "internal-org-1",
+      order_id: "order-1",
+      vendor_id: null,
+      booking_no: "BK-1",
+      customer: null,
+      brand: "Brand",
+      style_name: "Style",
+      delivery_date: new Date("2026-12-01T00:00:00.000Z"),
+      created_at: new Date("2026-10-07T00:00:00.000Z"),
+      order: { orderNo: "ORD-1" },
+      sizeLines: [{ id: "booking-size-1", size: "M", booked_quantity: 10 }],
+    });
+
+    await createAdvanceBooking("internal-org-1", "user-1", {
+      orderId: "order-1",
+      vendorId: null,
+      sizes: [{ size: "M", quantity: 10 }],
+    });
+
+    expect(mocks.transaction.advanceBookingSizeLine.groupBy).toHaveBeenCalledWith({
+      where: { organization_id: "internal-org-1", booking: { order_id: "order-1" } },
+      by: ["size"],
+      _sum: { booked_quantity: true },
+    });
+    expect(mocks.transaction.advanceBookingSizeLine.findMany).not.toHaveBeenCalled();
+    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      details: expect.objectContaining({
+        total_order_quantity_increase: 5,
+        order_quantity_increases: [{ size: "M", quantity: 5 }],
+      }),
+    }), mocks.transaction);
+  });
+
   it("deletes an unquoted, unassigned booking with an audit event", async () => {
     mocks.transaction.advanceBooking.findMany.mockResolvedValue([{
       id: "booking-record-1",
@@ -513,10 +555,10 @@ describe("advance-booking persistence", () => {
       bookingRow,
       { ...bookingRow, id: "booking-record-2", booking_no: "BK-2" },
     ]);
-    mocks.prisma.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([{
+    mocks.prisma.finishedGoodsGeneralStockReceipt.groupBy.mockResolvedValue([{
       order_id: "order-1",
       size: "m",
-      current_stock: 4,
+      _sum: { current_stock: 4 },
     }]);
 
     const result = await listAdvanceBookings("internal-org-1", { limit: 1 });
@@ -535,13 +577,14 @@ describe("advance-booking persistence", () => {
       sizes: [{ assignedQuantity: 30, generalInventoryAvailableQuantity: 4 }],
     });
     expect(result.bookings).toHaveLength(1);
-    expect(mocks.prisma.finishedGoodsGeneralStockReceipt.findMany).toHaveBeenCalledWith({
+    expect(mocks.prisma.finishedGoodsGeneralStockReceipt.groupBy).toHaveBeenCalledWith({
       where: {
         organization_id: "internal-org-1",
         order_id: { in: ["order-1"] },
         current_stock: { gt: 0 },
       },
-      select: { order_id: true, size: true, current_stock: true },
+      by: ["order_id", "size"],
+      _sum: { current_stock: true },
     });
     expect(result.nextCursor).toBeTruthy();
     expect(mocks.prisma.advanceBooking.findMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -580,6 +623,30 @@ describe("advance-booking persistence", () => {
         }),
       }),
     }));
+  });
+
+  it("filters quoted bookings in the order register query before pagination", async () => {
+    mocks.prisma.advanceBooking.findMany.mockResolvedValue([{
+      id: "unquoted-booking-record",
+      order_id: "order-1",
+      booking_no: "BK-UNQUOTED",
+      created_at: new Date("2026-10-07T00:00:00.000Z"),
+      order: { orderNo: "ORD-1", sourceStatus: "DIRECT", article: null, sizeGroup: null },
+      quotationLines: [],
+      sizeLines: [],
+    }]);
+
+    const result = await listAdvanceBookings("internal-org-1", { limit: 1, view: "booking" });
+
+    expect(result.bookings.map((booking) => booking.bookingId)).toEqual(["BK-UNQUOTED"]);
+    expect(mocks.prisma.advanceBooking.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "internal-org-1",
+        quotationLines: { none: {} },
+      },
+      take: 2,
+    }));
+    expect(mocks.prisma.finishedGoodsGeneralStockReceipt.groupBy).not.toHaveBeenCalled();
   });
 
   it("rejects malformed booking cursors instead of silently restarting the list", async () => {

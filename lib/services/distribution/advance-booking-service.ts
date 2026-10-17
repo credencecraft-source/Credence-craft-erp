@@ -72,6 +72,19 @@ const bookingInclude = {
   },
 };
 
+const bookingRegisterInclude = {
+  ...bookingInclude,
+  sizeLines: {
+    orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
+    include: {
+      assignments: {
+        select: { assigned_quantity: true },
+        orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
+      },
+    },
+  },
+};
+
 function mapBooking(
   record: Prisma.AdvanceBookingGetPayload<{ include: typeof bookingInclude }>,
   isLegacyArticleBased = false,
@@ -142,7 +155,10 @@ function mapBooking(
 
 async function getLegacyArticleBasedOrderIds(
   organizationId: string,
-  records: Array<Prisma.AdvanceBookingGetPayload<{ include: typeof bookingInclude }>>,
+  records: Array<{
+    order_id: string;
+    order: { sourceStatus: string; article: string | null };
+  }>,
 ) {
   const candidates = records.filter((record) =>
     record.order.sourceStatus !== "ARTICLE_BASED" && Boolean(record.order.article?.trim()),
@@ -184,13 +200,103 @@ function decodeBookingCursor(value: string | undefined) {
   return { createdAt, id: decoded.id };
 }
 
+async function listAdvanceBookingRegister(
+  organizationId: string,
+  cursor: ReturnType<typeof decodeBookingCursor>,
+  take: number,
+) {
+  const rows = await prisma.advanceBooking.findMany({
+    where: {
+      organization_id: organizationId,
+      quotationLines: { none: {} },
+      ...(cursor
+        ? {
+            OR: [
+              { created_at: { lt: cursor.createdAt } },
+              { created_at: cursor.createdAt, id: { lt: cursor.id } },
+            ],
+          }
+        : {}),
+    },
+    include: bookingRegisterInclude,
+    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    take: take + 1,
+  });
+  const hasNextPage = rows.length > take;
+  const pageRows = hasNextPage ? rows.slice(0, take) : rows;
+  const lastRow = pageRows.at(-1);
+  const [legacyArticleBasedOrderIds, sizeOrderByGroup] = await Promise.all([
+    getLegacyArticleBasedOrderIds(organizationId, pageRows),
+    getSizeGroupSizeOrderMapForOrganization(
+      organizationId,
+      pageRows.map((row) => row.order.sizeGroup ?? ""),
+    ),
+  ]);
+  return {
+    bookings: pageRows.map((record) => {
+      const sizeOrder = sizeOrderByGroup.get(record.order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
+      const sizes = sortBySizeGroupOrder(record.sizeLines, sizeOrder, (line) => line.size).map((line) => {
+        const assignedQuantity = line.assignments.reduce((sum, assignment) => sum + assignment.assigned_quantity, 0);
+        return {
+          id: line.id,
+          size: line.size,
+          bookedQuantity: line.booked_quantity,
+          assignedQuantity,
+          unassignedQuantity: Math.max(line.booked_quantity - assignedQuantity, 0),
+          fulfilledQuantity: 0,
+          generalInventoryAvailableQuantity: 0,
+          assignmentStatus: statusFor(assignedQuantity, line.booked_quantity),
+          fulfillmentStatus: fulfillmentStatusFor(0, assignedQuantity),
+          assignments: [],
+        };
+      });
+      const totalBooked = sizes.reduce((sum, line) => sum + line.bookedQuantity, 0);
+      const totalAssigned = sizes.reduce((sum, line) => sum + line.assignedQuantity, 0);
+      return {
+        id: record.id,
+        bookingId: record.booking_no,
+        orderId: record.order_id,
+        orderNo: record.order.orderNo,
+        orderSourceStatus: record.order.sourceStatus === "ARTICLE_BASED" || legacyArticleBasedOrderIds.has(record.order_id)
+          ? "ARTICLE_BASED"
+          : "DIRECT",
+        vendorId: record.vendor_id,
+        customer: record.customer ?? "",
+        quotationNo: record.quotationLines[0]?.quotation.quotation_no ?? null,
+        salesOrderNo: record.quotationLines[0]?.quotation.parentQuotation?.quotation_no ?? null,
+        quotationVendor: record.quotationLines[0]?.quotation.vendor?.vendor ?? record.quotationLines[0]?.quotation.customer ?? null,
+        masterQuotationVendor: record.quotationLines[0]?.quotation.parentQuotation?.vendor?.vendor ??
+          record.quotationLines[0]?.quotation.parentQuotation?.customer ?? null,
+        brand: record.brand ?? "",
+        styleName: record.style_name ?? "",
+        deliveryDate: record.delivery_date?.toISOString().slice(0, 10) ?? "",
+        createdAt: record.created_at.toISOString(),
+        totalBooked,
+        totalAssigned,
+        totalAllocated: totalAssigned,
+        totalUnassigned: Math.max(totalBooked - totalAssigned, 0),
+        totalFulfilled: 0,
+        assignmentStatus: statusFor(totalAssigned, totalBooked),
+        fulfillmentStatus: fulfillmentStatusFor(0, totalAssigned),
+        sizes,
+      };
+    }),
+    nextCursor: hasNextPage && lastRow
+      ? encodeBookingCursor({ createdAt: lastRow.created_at.toISOString(), id: lastRow.id })
+      : null,
+  };
+}
+
 export async function listAdvanceBookings(
   organizationId: string,
-  options: { cursor?: string; limit?: number } = {},
+  options: { cursor?: string; limit?: number; view?: string } = {},
 ) {
   const requestedLimit = options.limit ?? 100;
   const take = Math.min(Math.max(Number.isFinite(requestedLimit) ? Math.trunc(requestedLimit) : 100, 1), 200);
   const cursor = decodeBookingCursor(options.cursor);
+  if (options.view === "booking") {
+    return listAdvanceBookingRegister(organizationId, cursor, take);
+  }
   const rows = await prisma.advanceBooking.findMany({
     where: {
       organization_id: organizationId,
@@ -210,15 +316,14 @@ export async function listAdvanceBookings(
   const hasNextPage = rows.length > take;
   const pageRows = hasNextPage ? rows.slice(0, take) : rows;
   const lastRow = pageRows.at(-1);
-  const legacyArticleBasedOrderIds = await getLegacyArticleBasedOrderIds(organizationId, pageRows);
-  const sizeOrderByGroup = await getSizeGroupSizeOrderMapForOrganization(
-    organizationId,
-    pageRows.map((row) => row.order.sizeGroup ?? ""),
-  );
-  const generalStockAvailability = await listGeneralFinishedGoodsAvailability(
-    organizationId,
-    pageRows.map((row) => row.order_id),
-  );
+  const [legacyArticleBasedOrderIds, sizeOrderByGroup, generalStockAvailability] = await Promise.all([
+    getLegacyArticleBasedOrderIds(organizationId, pageRows),
+    getSizeGroupSizeOrderMapForOrganization(
+      organizationId,
+      pageRows.map((row) => row.order.sizeGroup ?? ""),
+    ),
+    listGeneralFinishedGoodsAvailability(organizationId, pageRows.map((row) => row.order_id)),
+  ]);
   return {
     bookings: pageRows.map((record) => {
       const sizeOrder = sizeOrderByGroup.get(record.order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
@@ -320,14 +425,15 @@ async function createBookingInTransaction(
     if (!size) continue;
     capacityBySize.set(size, (capacityBySize.get(size) ?? 0) + (row.totalQty ?? row.beforeExcessQty ?? 0));
   }
-  const existing = await transaction.advanceBookingSizeLine.findMany({
+  const existing = await transaction.advanceBookingSizeLine.groupBy({
     where: { organization_id: organizationId, booking: { order_id: order.id } },
-    select: { size: true, booked_quantity: true },
+    by: ["size"],
+    _sum: { booked_quantity: true },
   });
   const bookedBySize = new Map<string, number>();
   for (const line of existing) {
     const size = normalizedSize(line.size);
-    bookedBySize.set(size, (bookedBySize.get(size) ?? 0) + line.booked_quantity);
+    bookedBySize.set(size, (bookedBySize.get(size) ?? 0) + (line._sum.booked_quantity ?? 0));
   }
 
   const seen = new Set<string>();

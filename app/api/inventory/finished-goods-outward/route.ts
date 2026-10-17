@@ -64,6 +64,16 @@ function handleError(error: unknown, fallback: string) {
     if (["P2002", "P2034"].includes(error.code)) {
       return NextResponse.json({ error: "The workflow changed while saving. Reload and try again." }, { status: 409 });
     }
+    if (["P2003", "P2025"].includes(error.code)) {
+      return NextResponse.json({
+        error: "A selected booking or inventory record changed before the request could be saved. Refresh Shipment Tracking and try again.",
+      }, { status: 409 });
+    }
+    if (error.code === "P2028") {
+      return NextResponse.json({
+        error: "Saving the FG Stock DC request timed out. Refresh the workflow before retrying to confirm whether it was saved.",
+      }, { status: 503 });
+    }
     if (["P2021", "P2022"].includes(error.code)) {
       return NextResponse.json({ error: "The FG Stock DC schema is not deployed. Apply its database migration before using this page." }, { status: 503 });
     }

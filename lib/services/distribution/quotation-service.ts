@@ -183,16 +183,15 @@ export async function createDistributionQuotationFromBookings(
       include: {
         order: { select: { orderNo: true, sizeGroup: true } },
         sizeLines: { orderBy: [{ created_at: "asc" }, { id: "asc" }] },
+        quotationLines: { select: { booking_no: true }, take: 1 },
       },
     });
     if (bookings.length !== bookingIds.length) {
       throw new Error("One or more selected bookings are unavailable in this organization.");
     }
     const orderedBookings = bookingIds.map((id) => bookings.find((booking) => booking.id === id)!);
-    const previouslyQuoted = await transaction.distributionQuotationLine.findFirst({
-      where: { organization_id: organizationId, source_booking_id: { in: bookingIds } },
-      select: { booking_no: true },
-    });
+    const previouslyQuoted = orderedBookings.find((booking) => booking.quotationLines.length > 0)
+      ?.quotationLines[0];
     if (previouslyQuoted) {
       throw new Error(`Booking ${previouslyQuoted.booking_no} already has a quotation. Use that quotation instead of creating a duplicate.`);
     }
@@ -243,7 +242,11 @@ export async function createDistributionQuotationFromBookings(
         created_by: userId,
         lines: { create: quotationLines },
       },
-      include: quotationInclude,
+      select: {
+        id: true,
+        quotation_no: true,
+        customer: true,
+      },
     });
     await createAuditEvent({
       organizationId,
@@ -262,7 +265,11 @@ export async function createDistributionQuotationFromBookings(
     }, transaction);
     return quotation;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
-  return mapQuotation(organizationId, created);
+  return {
+    id: created.id,
+    quotationNo: created.quotation_no,
+    customer: created.customer,
+  };
 }
 
 export async function saveDistributionQuotationDraft(
