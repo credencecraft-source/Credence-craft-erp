@@ -97,17 +97,27 @@ export default function GeneralPurchaseOrderStagePage({ stage }: { stage: Genera
   const [gstOptions, setGstOptions] = useState<MasterOption[]>([]);
   const [hsnOptions, setHsnOptions] = useState<MasterOption[]>([]);
   const [requestLines, setRequestLines] = useState([{ rawMaterialId: "", quantity: "1" }]);
-  const [priceDrafts, setPriceDrafts] = useState<Record<string, PriceDraft>>({});
+  const [priceDraftOverrides, setPriceDraftOverrides] = useState<Record<string, PriceDraft>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [poDate, setPoDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [deliveryDate, setDeliveryDate] = useState("");
   const [createdPurchaseOrder, setCreatedPurchaseOrder] = useState<CreatedPurchaseOrder | null>(null);
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadedStage, setLoadedStage] = useState<GeneralPurchaseOrderStage | null>(null);
+  const [lookupsLoading, setLookupsLoading] = useState(true);
+  const [loadedLookupStage, setLoadedLookupStage] = useState<GeneralPurchaseOrderStage | null>(null);
+  const [lookupsError, setLookupsError] = useState("");
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const requestsLoading = loading || loadedStage !== stage;
+  const masterOptionsLoading = lookupsLoading || loadedLookupStage !== stage;
+  const priceDrafts = useMemo(
+    () => hydratePriceDrafts(priceDraftOverrides, requests, gstOptions),
+    [gstOptions, priceDraftOverrides, requests],
+  );
 
   const fetchRequests = useCallback(async (cursor?: string) => {
     const status = stage === "approve-price"
@@ -128,10 +138,10 @@ export default function GeneralPurchaseOrderStagePage({ stage }: { stage: Genera
     );
   }, [organizationId, stage]);
 
-  const fetchMasterOptions = useCallback(async (): Promise<MasterLookups> => {
+  const fetchMasterOptions = useCallback(async (signal?: AbortSignal): Promise<MasterLookups> => {
     const load = (module: string, includeDummyData = false) => fetchJson<MasterOption[]>(
       `/api/organizations/${encodeURIComponent(organizationId)}/master-data/${module}?includeInactive=false&limit=200${includeDummyData ? "&includeDummyData=true" : ""}`,
-      { cache: "no-store" },
+      { cache: "no-store", ...(signal ? { signal } : {}) },
     );
     if (stage === "allocate-vendor") {
       return { materials: await load("raw-material"), vendors: [], gst: [], hsn: [] };
@@ -143,37 +153,59 @@ export default function GeneralPurchaseOrderStagePage({ stage }: { stage: Genera
     return { materials: [], vendors: [], gst: [], hsn: [] };
   }, [organizationId, stage]);
 
+  const loadMasterOptions = useCallback(async (signal?: AbortSignal) => {
+    setLookupsLoading(true);
+    setLookupsError("");
+    try {
+      const lookups = await fetchMasterOptions(signal);
+      if (signal?.aborted) return;
+      setMaterials(lookups.materials);
+      setVendors(lookups.vendors);
+      setGstOptions(lookups.gst);
+      setHsnOptions(lookups.hsn);
+    } catch (loadError) {
+      if (!signal?.aborted) {
+        setLookupsError(loadError instanceof Error ? loadError.message : "Unable to load General PO master data.");
+      }
+    } finally {
+      if (!signal?.aborted) {
+        setLoadedLookupStage(stage);
+        setLookupsLoading(false);
+      }
+    }
+  }, [fetchMasterOptions, stage]);
+
   const refresh = useCallback(async () => {
     const page = await fetchRequests();
     setRequests(page.requests);
     setNextCursor(page.nextCursor);
-    setPriceDrafts((current) => hydratePriceDrafts(current, page.requests, gstOptions));
-  }, [fetchRequests, gstOptions]);
+  }, [fetchRequests]);
 
   useEffect(() => {
     let active = true;
-    Promise.all([fetchRequests(), fetchMasterOptions()])
-      .then(([requestPage, lookups]) => {
+    const lookupController = new AbortController();
+    fetchRequests()
+      .then((requestPage) => {
         if (!active) return;
         setRequests(requestPage.requests);
         setNextCursor(requestPage.nextCursor);
-        setMaterials(lookups.materials);
-        setVendors(lookups.vendors);
-        setGstOptions(lookups.gst);
-        setHsnOptions(lookups.hsn);
-        setPriceDrafts((current) => hydratePriceDrafts(current, requestPage.requests, lookups.gst));
         setError("");
       })
       .catch((loadError: unknown) => {
         if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load General PO data.");
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) {
+          setLoadedStage(stage);
+          setLoading(false);
+        }
       });
+    void Promise.resolve().then(() => loadMasterOptions(lookupController.signal));
     return () => {
       active = false;
+      lookupController.abort();
     };
-  }, [fetchMasterOptions, fetchRequests]);
+  }, [fetchRequests, loadMasterOptions, stage]);
 
   const loadMoreRequests = async () => {
     if (!nextCursor || loadingMore) return;
@@ -183,7 +215,6 @@ export default function GeneralPurchaseOrderStagePage({ stage }: { stage: Genera
       const page = await fetchRequests(nextCursor);
       setRequests((current) => [...current, ...page.requests]);
       setNextCursor(page.nextCursor);
-      setPriceDrafts((current) => hydratePriceDrafts(current, page.requests, gstOptions));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load more General PO requests.");
     } finally {
@@ -192,9 +223,9 @@ export default function GeneralPurchaseOrderStagePage({ stage }: { stage: Genera
   };
 
   const changeDraft = (requestId: string, field: keyof PriceDraft, value: string) => {
-    setPriceDrafts((current) => ({
+    setPriceDraftOverrides((current) => ({
       ...current,
-      [requestId]: { ...current[requestId], [field]: value },
+      [requestId]: { ...priceDrafts[requestId], [field]: value },
     }));
   };
 
@@ -364,8 +395,16 @@ export default function GeneralPurchaseOrderStagePage({ stage }: { stage: Genera
 
         <div className="space-y-5 p-5">
           {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+          {lookupsError && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <p role="alert">{lookupsError}</p>
+              <Button type="button" variant="secondary" size="sm" disabled={masterOptionsLoading} onClick={() => void loadMasterOptions()}>
+                {masterOptionsLoading ? "Loading masters…" : "Retry master data"}
+              </Button>
+            </div>
+          )}
           {notice && <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</div>}
-          {loading ? (
+          {requestsLoading ? (
             <div className="flex min-h-40 items-center justify-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Loading General PO records…</div>
           ) : (
             <>
@@ -384,7 +423,8 @@ export default function GeneralPurchaseOrderStagePage({ stage }: { stage: Genera
                           label={`Raw material ${index + 1}`}
                           value={line.rawMaterialId}
                           onChange={(event) => setRequestLines((current) => current.map((item, lineIndex) => lineIndex === index ? { ...item, rawMaterialId: event.target.value } : item))}
-                          options={[{ value: "", label: "Select raw material" }, ...materials.map((material) => ({ value: material.id, label: material.label }))]}
+                          options={[{ value: "", label: masterOptionsLoading ? "Loading raw materials…" : "Select raw material" }, ...materials.map((material) => ({ value: material.id, label: material.label }))]}
+                          disabled={masterOptionsLoading || Boolean(lookupsError)}
                           required
                         />
                         <Input
@@ -407,12 +447,12 @@ export default function GeneralPurchaseOrderStagePage({ stage }: { stage: Genera
                     <Button variant="secondary" onClick={() => setRequestLines((current) => [...current, { rawMaterialId: "", quantity: "1" }])}>
                       <Plus className="h-4 w-4" />Add material
                     </Button>
-                    <Button onClick={saveRequests} disabled={busy === "save-requests" || materials.length === 0}>
+                    <Button onClick={saveRequests} disabled={busy === "save-requests" || masterOptionsLoading || Boolean(lookupsError) || materials.length === 0}>
                       {busy === "save-requests" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                       Save material request
                     </Button>
                   </div>
-                  {materials.length === 0 && <EmptyState message="No active raw materials are available in the organization master data." />}
+                  {!masterOptionsLoading && !lookupsError && materials.length === 0 && <EmptyState message="No active raw materials are available in the organization master data." />}
                   <RequestTable requests={requests} />
                   <LoadMoreButton hasMore={Boolean(nextCursor)} loading={loadingMore} onClick={loadMoreRequests} />
                 </section>
@@ -459,7 +499,8 @@ export default function GeneralPurchaseOrderStagePage({ stage }: { stage: Genera
                                 label="Vendor"
                                 value={draft.vendorId}
                                 onChange={(event) => changeDraft(request.id, "vendorId", event.target.value)}
-                                options={[{ value: "", label: "Select vendor" }, ...vendors.map((vendor) => ({ value: vendor.id, label: vendor.label }))]}
+                                options={[{ value: "", label: masterOptionsLoading ? "Loading vendors…" : "Select vendor" }, ...vendors.map((vendor) => ({ value: vendor.id, label: vendor.label }))]}
+                                disabled={masterOptionsLoading || Boolean(lookupsError)}
                                 required
                               />
                               <Input label="Vendor price / unit" type="number" min="0" step="0.0001" value={draft.vendorPrice} onChange={(event) => changeDraft(request.id, "vendorPrice", event.target.value)} required />
@@ -467,14 +508,16 @@ export default function GeneralPurchaseOrderStagePage({ stage }: { stage: Genera
                                 label="GST"
                                 value={draft.gstMasterId}
                                 onChange={(event) => changeDraft(request.id, "gstMasterId", event.target.value)}
-                                options={[{ value: "", label: "Select GST" }, ...gstOptions.map((option) => ({ value: option.id, label: `${option.label} (${masterNumber(option)}%)` }))]}
+                                options={[{ value: "", label: masterOptionsLoading ? "Loading GST…" : "Select GST" }, ...gstOptions.map((option) => ({ value: option.id, label: `${option.label} (${masterNumber(option)}%)` }))]}
+                                disabled={masterOptionsLoading || Boolean(lookupsError)}
                                 required
                               />
                               <Select
                                 label="HSN code"
                                 value={draft.hsnCode}
                                 onChange={(event) => changeDraft(request.id, "hsnCode", event.target.value)}
-                                options={[{ value: "", label: "Select HSN" }, ...hsnOptions.map((option) => ({ value: String(option.fields?.Hsn_Code ?? option.fields?.hsn_code ?? option.label), label: option.label }))]}
+                                options={[{ value: "", label: masterOptionsLoading ? "Loading HSN…" : "Select HSN" }, ...hsnOptions.map((option) => ({ value: String(option.fields?.Hsn_Code ?? option.fields?.hsn_code ?? option.label), label: option.label }))]}
+                                disabled={masterOptionsLoading || Boolean(lookupsError)}
                                 required
                               />
                               <Input label={`Quantity (${request.stockUom})`} type="number" min="0.01" step="0.01" value={draft.quantity} onChange={(event) => changeDraft(request.id, "quantity", event.target.value)} required />
@@ -493,8 +536,8 @@ export default function GeneralPurchaseOrderStagePage({ stage }: { stage: Genera
                       })}
                     </div>
                   )}
-                  {vendors.length === 0 && activePendingRequests.length > 0 && <EmptyState message="No active vendors are available in the organization master data." />}
-                  {(gstOptions.length === 0 || hsnOptions.length === 0) && activePendingRequests.length > 0 && <EmptyState message="Active GST and HSN master values are required before vendor pricing can be saved." />}
+                  {!masterOptionsLoading && !lookupsError && vendors.length === 0 && activePendingRequests.length > 0 && <EmptyState message="No active vendors are available in the organization master data." />}
+                  {!masterOptionsLoading && !lookupsError && (gstOptions.length === 0 || hsnOptions.length === 0) && activePendingRequests.length > 0 && <EmptyState message="Active GST and HSN master values are required before vendor pricing can be saved." />}
                   <LoadMoreButton hasMore={Boolean(nextCursor)} loading={loadingMore} onClick={loadMoreRequests} />
                 </section>
               )}

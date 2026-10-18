@@ -304,6 +304,9 @@ export function StageButton({
 export function GroupedPurchaseOrderForm({
   rows,
   vendors,
+  vendorsLoading,
+  vendorsError,
+  onRetryLoadVendors,
   organizationId,
   onClose,
   onCreated,
@@ -311,6 +314,9 @@ export function GroupedPurchaseOrderForm({
 }: {
   rows: BomRow[];
   vendors: VendorOption[];
+  vendorsLoading: boolean;
+  vendorsError: string;
+  onRetryLoadVendors: () => void;
   organizationId: string;
   onClose: () => void;
   onCreated: (source: "stock" | "vendor") => void;
@@ -486,16 +492,29 @@ export function GroupedPurchaseOrderForm({
               <div className="rounded-md border border-slate-200 bg-white px-3 py-2 shadow-sm">
                 <Checkbox
                   checked={takingFromStock}
-                  disabled={!currentStoreVendor}
+                  disabled={!currentStoreVendor || vendorsLoading || Boolean(vendorsError)}
                   onChange={(event) => selectStockAllocation(event.target.checked)}
                   label="Take from Stock"
                   className="h-3.5 w-3.5"
                 />
+                {vendorsLoading && (
+                  <p className="ml-6 mt-1 text-[10px] text-slate-500" role="status">
+                    Loading active vendors...
+                  </p>
+                )}
+                {vendorsError && (
+                  <div className="ml-6 mt-1 flex items-center gap-2">
+                    <p className="text-[10px] text-[var(--erp-danger)]" role="alert">{vendorsError}</p>
+                    <Button type="button" variant="secondary" size="sm" onClick={onRetryLoadVendors}>
+                      Retry
+                    </Button>
+                  </div>
+                )}
                 {takingFromStock && currentStoreVendor ? (
                   <p className="ml-6 mt-1 text-[10px] font-semibold text-emerald-800">
                     Current store: {currentStoreVendor.label}
                   </p>
-                ) : !currentStoreVendor ? (
+                ) : !vendorsLoading && !vendorsError && !currentStoreVendor ? (
                   <p className="ml-6 mt-1 max-w-52 text-[10px] text-slate-500">
                     Mark an active vendor as the current store to enable stock booking.
                   </p>
@@ -515,10 +534,10 @@ export function GroupedPurchaseOrderForm({
         </div>
         <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
           <label className="block max-w-sm text-xs font-bold text-slate-700">
-            Vendor lookup
+            {vendorsLoading ? "Vendor lookup (loading...)" : "Vendor lookup"}
             <Select
               value={vendorId}
-              disabled={takingFromStock}
+              disabled={takingFromStock || vendorsLoading || Boolean(vendorsError)}
               onChange={(event) => {
                 setVendorId(event.target.value);
                 setLines(Object.fromEntries(rows.map((row) => [row.id, String(row.remainingQty ?? row.requiredQty ?? "")])));
@@ -533,6 +552,19 @@ export function GroupedPurchaseOrderForm({
               ))}
             </Select>
           </label>
+          {!vendorsLoading && !vendorsError && vendors.length === 0 && (
+            <p className="mt-2 text-xs text-slate-500" role="status">
+              No active vendors are available for this organization.
+            </p>
+          )}
+          {vendorsError && (
+            <div className="mt-2 flex items-center gap-2">
+              <p className="text-xs text-[var(--erp-danger)]" role="alert">{vendorsError}</p>
+              <Button type="button" variant="secondary" size="sm" onClick={onRetryLoadVendors}>
+                Retry vendor lookup
+              </Button>
+            </div>
+          )}
           <div className="mt-2 flex max-w-sm justify-end">
             <Button
               variant="secondary"

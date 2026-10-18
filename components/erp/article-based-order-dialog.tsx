@@ -115,6 +115,7 @@ export default function ArticleBasedOrderDialog({
   const [quantities, setQuantities] = useState<Record<string, Record<string, string>>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [lookupRetry, setLookupRetry] = useState(0);
   const isLoadingLookups = open && !lookups && !error;
 
   useEffect(() => {
@@ -145,7 +146,7 @@ export default function ArticleBasedOrderDialog({
         setError(loadError instanceof Error ? loadError.message : "Unable to load Article order options.");
       });
     return () => controller.abort();
-  }, [lookups, open, organizationId]);
+  }, [lookups, lookupRetry, open, organizationId]);
 
   const articleLookup = useMemo(
     () => createMasterOptionLookup(lookups?.articles ?? []),
@@ -204,7 +205,7 @@ export default function ArticleBasedOrderDialog({
       });
 
     return () => controller.abort();
-  }, [open, organizationId, selectedArticleDetails, selectedArticleId, selectedArticleOption]);
+  }, [lookupRetry, open, organizationId, selectedArticleDetails, selectedArticleId, selectedArticleOption]);
   const articleSizeGroup = String(selectedArticleWithDetails?.fields.Size_Group ?? "");
   const selectedSizeGroup = useMemo(() => {
     if (!articleSizeGroup.trim()) return null;
@@ -312,7 +313,14 @@ export default function ArticleBasedOrderDialog({
         <Button type="button" variant="ghost" size="sm" onClick={handleClose} disabled={isSubmitting} aria-label="Close Article order dialog">Close</Button>
       </div>
 
-      {error && <p role="alert" className="rounded-lg border border-[var(--erp-error-border)] bg-[var(--erp-error-bg)] px-3 py-2 text-sm text-[var(--erp-error-text)]">{error}</p>}
+      {error && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--erp-error-border)] bg-[var(--erp-error-bg)] px-3 py-2">
+          <p role="alert" className="text-sm text-[var(--erp-error-text)]">{error}</p>
+          <Button type="button" variant="secondary" size="sm" onClick={() => { setError(""); setLookupRetry((attempt) => attempt + 1); }}>
+            Retry lookup
+          </Button>
+        </div>
+      )}
 
       <div className="space-y-5">
         <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -351,7 +359,7 @@ export default function ArticleBasedOrderDialog({
             options={[{ value: "", label: isLoading ? "Loading seasons..." : "Select Season" }, ...((open ? lookups?.seasons ?? [] : []).map((item) => ({ value: item.value_id, label: item.label })))]}
             disabled={isLoading}
           />
-          <Input label="Delivery Date" type="date" required value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} disabled={isLoading} />
+          <Input label="Delivery Date" type="date" required value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} />
           <Input label="Brand (from Article Size Group)" value={brand} readOnly />
         </div>
 

@@ -4,12 +4,16 @@ import { Prisma } from "@prisma/client";
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   bomFindMany: vi.fn(),
+  bomFindFirst: vi.fn(),
   groupedPurchaseOrderFindFirst: vi.fn(),
+  groupedPurchaseOrderFindMany: vi.fn(),
   groupedPurchaseOrderUpdate: vi.fn(),
   groupedPurchaseOrderCount: vi.fn(),
   queryRaw: vi.fn(),
   groupedLineGroupBy: vi.fn(),
   bookingGroupBy: vi.fn(),
+  organizationFindUnique: vi.fn(),
+  rawMaterialFindMany: vi.fn(),
   createAuditEvent: vi.fn(),
   transactionClient: {
     masterVendor: { findFirst: vi.fn() },
@@ -23,20 +27,25 @@ vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
     $transaction: mocks.transaction,
     $queryRaw: mocks.queryRaw,
-    billOfMaterialItem: { findMany: mocks.bomFindMany },
-    groupedPurchaseOrder: { findFirst: mocks.groupedPurchaseOrderFindFirst, count: mocks.groupedPurchaseOrderCount, update: mocks.groupedPurchaseOrderUpdate },
+    billOfMaterialItem: { findMany: mocks.bomFindMany, findFirst: mocks.bomFindFirst },
+    groupedPurchaseOrder: { findFirst: mocks.groupedPurchaseOrderFindFirst, findMany: mocks.groupedPurchaseOrderFindMany, count: mocks.groupedPurchaseOrderCount, update: mocks.groupedPurchaseOrderUpdate },
     groupedPurchaseOrderLine: { groupBy: mocks.groupedLineGroupBy },
     rawMaterialStockBooking: { groupBy: mocks.bookingGroupBy },
+    organization: { findUnique: mocks.organizationFindUnique },
+    masterRawMaterial: { findMany: mocks.rawMaterialFindMany },
   },
 }));
 vi.mock("@/lib/services/organizations/audit-event-service", () => ({ createAuditEvent: mocks.createAuditEvent }));
 
-import { approveGroupedPurchaseOrder, createGroupedPurchaseOrder, deleteGroupedPurchaseOrder, getGroupedPurchaseOrder, getProcurementSummary, listAllocatableBomRows, listAllocatableBomRowsPage, rejectGroupedPurchaseOrder } from "./grouped-purchase-order-service";
+import { approveGroupedPurchaseOrder, createGroupedPurchaseOrder, deleteGroupedPurchaseOrder, getGroupedPurchaseOrder, getProcurementSummary, listAllocatableBomRows, listAllocatableBomRowsPage, listGroupedPurchaseOrdersPage, rejectGroupedPurchaseOrder } from "./grouped-purchase-order-service";
 
 describe("stock-origin grouped price approval", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.transaction.mockImplementation((callback) => callback(mocks.transactionClient));
+    mocks.queryRaw.mockResolvedValue([]);
+    mocks.organizationFindUnique.mockResolvedValue({ state: null, gst_number: null });
+    mocks.rawMaterialFindMany.mockResolvedValue([]);
     mocks.transactionClient.groupedPurchaseOrder.findFirst.mockResolvedValue({ id: "group-1", source_type: "STOCK" });
     mocks.transactionClient.rawMaterialStockBooking.groupBy.mockResolvedValue([{
       take_from_stock_id: "stock-1",
@@ -280,11 +289,16 @@ describe("stock-origin grouped price approval", () => {
     expect(mocks.groupedPurchaseOrderFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "group-1", organization_id: "org-1" },
     }));
+    expect(mocks.groupedPurchaseOrderFindFirst.mock.calls[0][0].include.lines)
+      .not.toHaveProperty("take");
   });
 
   it("counts allocatable rows in the database without loading BOM rows", async () => {
-    mocks.queryRaw.mockResolvedValue([{ count: BigInt(1) }]);
-    mocks.groupedPurchaseOrderCount.mockResolvedValueOnce(2).mockResolvedValueOnce(3);
+    mocks.queryRaw.mockResolvedValue([{
+      pending_vendor_allocation: BigInt(1),
+      pending_price_approval: BigInt(2),
+      ready_for_po: BigInt(3),
+    }]);
 
     await expect(getProcurementSummary("org-1")).resolves.toEqual({
       pendingVendorAllocation: 1,
@@ -293,36 +307,191 @@ describe("stock-origin grouped price approval", () => {
       totalOpen: 6,
     });
     expect(mocks.queryRaw).toHaveBeenCalledTimes(1);
+    expect(mocks.groupedPurchaseOrderCount).not.toHaveBeenCalled();
     expect(mocks.bomFindMany).not.toHaveBeenCalled();
   });
 
   it("returns a bounded allocation page and scopes aggregates to its BOM IDs", async () => {
-    const bomRow = (id: string) => ({
-      id,
-      order_id: `order-${id}`,
-      categoryType: "Fabric",
-      category: "Fabric",
-      subCategory: "Woven",
-      rawMaterialName: "Cotton",
-      stockUom: "MTR",
-      internalConsumption: new Prisma.Decimal("1"),
-      internalPrice: new Prisma.Decimal("2"),
-      requiredQty: new Prisma.Decimal("10"),
-      totalRequiredQty: null,
-      order: { orderNo: `ORDER-${id}`, styleName: "Style", brand: "Brand", entity_id: "entity-1", entityName: "Factory", entity: { id: "entity-1", entity_name: "Factory", is_active: true } },
-    });
-    mocks.bomFindMany.mockResolvedValue([bomRow("bom-1"), bomRow("bom-2")]);
-    mocks.groupedLineGroupBy.mockResolvedValue([]);
-    mocks.bookingGroupBy.mockResolvedValue([]);
+    mocks.queryRaw.mockResolvedValue([
+      {
+        id: "bom-1",
+        order_id: "order-bom-1",
+        category_type: "Fabric",
+        category: "Fabric",
+        sub_category: "Woven",
+        raw_material_name: "Cotton",
+        stock_uom: "MTR",
+        internal_consumption: new Prisma.Decimal("1"),
+        internal_price: new Prisma.Decimal("2"),
+        required_qty: new Prisma.Decimal("10"),
+        total_required_qty: null,
+        remaining_qty: new Prisma.Decimal("10"),
+        order_no: "ORDER-bom-1",
+        style_name: "Style",
+        brand: "Brand",
+        entity_id: "entity-1",
+        entity_name: "Factory",
+        entity_record_id: "entity-1",
+        entity_record_name: "Factory",
+      },
+      {
+        id: "bom-2",
+        order_id: "order-bom-2",
+        category_type: "Fabric",
+        category: "Fabric",
+        sub_category: "Woven",
+        raw_material_name: "Cotton",
+        stock_uom: "MTR",
+        internal_consumption: new Prisma.Decimal("1"),
+        internal_price: new Prisma.Decimal("2"),
+        required_qty: new Prisma.Decimal("10"),
+        total_required_qty: null,
+        remaining_qty: new Prisma.Decimal("10"),
+        order_no: "ORDER-bom-2",
+        style_name: "Style",
+        brand: "Brand",
+        entity_id: "entity-1",
+        entity_name: "Factory",
+        entity_record_id: "entity-1",
+        entity_record_name: "Factory",
+      },
+    ]);
 
     await expect(listAllocatableBomRowsPage("org-1", { limit: 1 }))
       .resolves.toMatchObject({ bomRows: [{ id: "bom-1", remainingQty: 10 }], nextCursor: "bom-1" });
-    expect(mocks.bomFindMany).toHaveBeenCalledWith(expect.objectContaining({ take: 2 }));
-    expect(mocks.groupedLineGroupBy).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
-        source_bom_item_id: { in: ["bom-1"] },
-        groupedPurchaseOrder: { organization_id: "org-1", source_type: "VENDOR" },
+    expect(mocks.queryRaw).toHaveBeenCalledOnce();
+    expect(mocks.bomFindMany).not.toHaveBeenCalled();
+    expect(mocks.groupedLineGroupBy).not.toHaveBeenCalled();
+    expect(mocks.bookingGroupBy).not.toHaveBeenCalled();
+  });
+
+  it("scans past fully allocated rows and resumes after the last visible row", async () => {
+    mocks.bomFindFirst.mockResolvedValue({ id: "cursor-bom", created_at: new Date("2026-10-01T00:00:00Z") });
+    mocks.queryRaw.mockResolvedValue([{
+      id: "bom-2",
+      order_id: "order-2",
+      category_type: "Fabric",
+      category: "Fabric",
+      sub_category: "Woven",
+      raw_material_name: "Cotton",
+      stock_uom: "MTR",
+      internal_consumption: new Prisma.Decimal("1"),
+      internal_price: new Prisma.Decimal("2"),
+      required_qty: new Prisma.Decimal("10"),
+      total_required_qty: null,
+      remaining_qty: new Prisma.Decimal("5"),
+      order_no: "ORDER-2",
+      style_name: "Style",
+      brand: "Brand",
+      entity_id: "entity-1",
+      entity_name: "Factory",
+      entity_record_id: "entity-1",
+      entity_record_name: "Factory",
+    }]);
+
+    await expect(listAllocatableBomRowsPage("org-1", { cursor: "cursor-bom", limit: 1 }))
+      .resolves.toMatchObject({ bomRows: [{ id: "bom-2", remainingQty: 5 }], nextCursor: null });
+    expect(mocks.bomFindFirst).toHaveBeenCalledWith({
+      where: { id: "cursor-bom", order: { organization_id: "org-1" } },
+      select: { id: true, created_at: true },
+    });
+    expect(mocks.bomFindMany).not.toHaveBeenCalled();
+    expect(mocks.groupedLineGroupBy).not.toHaveBeenCalled();
+    expect(mocks.bookingGroupBy).not.toHaveBeenCalled();
+  });
+
+  it("loads only one grouped line per paged approval row", async () => {
+    mocks.groupedPurchaseOrderFindMany.mockResolvedValue([]);
+
+    await listGroupedPurchaseOrdersPage("org-1", "PENDING_PRICE_APPROVAL", { limit: 20 });
+
+    expect(mocks.groupedPurchaseOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-1", status: "PENDING_PRICE_APPROVAL" },
+      take: 21,
+      include: expect.objectContaining({
+        lines: expect.objectContaining({ take: 1 }),
       }),
     }));
+  });
+
+  it("keeps grouped quantities, price totals, and tax material summaries on compact rows", async () => {
+    mocks.groupedPurchaseOrderFindMany.mockResolvedValue([{
+      id: "group-1",
+      entity_id: "entity-1",
+      entity: { id: "entity-1", entity_name: "Factory" },
+      source_type: "VENDOR",
+      grouped_po_no: "GPO-1",
+      display_no: 1,
+      status: "PENDING_PRICE_APPROVAL",
+      submitted_at: new Date("2026-10-01T00:00:00Z"),
+      approved_by: null,
+      approved_at: null,
+      rejection_reason: null,
+      note: null,
+      raw_material: "Cotton",
+      category_type: "Fabric",
+      category: "Fabric",
+      sub_category: "Woven",
+      brand: "Brand",
+      total_required_qty: new Prisma.Decimal("12"),
+      total_grouped_qty: null,
+      no_of_styles: 2,
+      stock_uom: "MTR",
+      buying_uom: null,
+      convert_value: null,
+      round_of: false,
+      buying_qty: null,
+      buying_qty_round: null,
+      difference_round: null,
+      moq_stock_uom: null,
+      moq_buying: null,
+      extra_buying_uom: null,
+      buying_qty_total: null,
+      vendor_price: null,
+      vendor_price_inr: null,
+      gst: null,
+      hsn_code: null,
+      other_charges: null,
+      other_charges_inr: null,
+      currency: null,
+      exchange_price: null,
+      vendor: { id: "vendor-1", vendor: "Vendor", gst_number: null, registered_state: null, registeredState: null },
+      lines: [{
+        id: "line-1",
+        source_bom_item_id: "bom-1",
+        order_no: "ORDER-1",
+        style_name: "Style",
+        brand: "Brand",
+        category: "Fabric",
+        sub_category: "Woven",
+        item_name: "Cotton",
+        category_type: "Fabric",
+        internal_price_bom: null,
+        other_charges_per_item: null,
+        total_extra: null,
+        total_spend: null,
+        internal_consumption: new Prisma.Decimal("1"),
+        required_qty: new Prisma.Decimal("12"),
+        grouped_qty: new Prisma.Decimal("5"),
+        vendor_price: null,
+      }],
+    }]);
+    mocks.queryRaw.mockResolvedValue([{
+      grouped_purchase_order_id: "group-1",
+      item_name: "Cotton",
+      vendor_price_total: new Prisma.Decimal("20"),
+      grouped_qty_total: new Prisma.Decimal("10"),
+    }]);
+
+    await expect(listGroupedPurchaseOrdersPage("org-1", "PENDING_PRICE_APPROVAL", { limit: 20 }))
+      .resolves.toMatchObject({
+        groupedPurchaseOrders: [{
+          id: "group-1",
+          totalGroupedQty: 10,
+          lineVendorPriceTotal: 20,
+          lineTaxDetails: [{ itemName: "Cotton", gst: null, hsnCode: null }],
+          lines: [{ itemName: "Cotton" }],
+        }],
+      });
   });
 });

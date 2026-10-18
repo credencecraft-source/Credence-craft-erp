@@ -41,6 +41,8 @@ vi.mock("@/lib/database/prisma-client", () => ({
 
 import {
   getArticleOrderSummaries,
+  getOrderCoreById,
+  getOrderDetailSection,
   getOrderById,
   listBomItemsPage,
   listOrdersPage,
@@ -86,6 +88,48 @@ describe("reserveNextOrderNumber", () => {
 
       expect(order?.finishedGoods.map((row) => row.size)).toEqual(["XL", "S", "M"]);
     });
+
+    it("loads finished goods only when requesting that order section", async () => {
+      prismaCounterMock.orderFindFirst.mockResolvedValueOnce({
+        sizeGroup: "CORE",
+        finishedGoods: [
+          { id: "fg-m", size: "M", buyerSize: "M" },
+          { id: "fg-xl", size: "XL", buyerSize: "XL" },
+        ],
+      });
+      prismaCounterMock.sizeGroupFindMany.mockResolvedValueOnce([{
+        id: "group-id",
+        value_id: "group-value-id",
+        size_group: "CORE",
+        size_links: ["XL", "M"].map((size) => ({
+          size: { organization_id: "org-1", size },
+        })),
+      }]);
+      prismaCounterMock.sizeGroupSizeFindMany.mockResolvedValueOnce([]);
+
+      await getOrderDetailSection("order-1", "org-1", "finishedGoods");
+
+      expect(prismaCounterMock.orderFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: "order-1", organization_id: "org-1" },
+        select: expect.objectContaining({
+          finishedGoods: expect.any(Object),
+        }),
+      }));
+      expect(prismaCounterMock.orderFindFirst.mock.calls[0][0].select).not.toHaveProperty("bomItems");
+      expect(prismaCounterMock.orderFindFirst.mock.calls[0][0].select).not.toHaveProperty("processSteps");
+    });
+  });
+
+  it("loads only order header fields for the initial edit view", async () => {
+    prismaCounterMock.orderFindFirst.mockResolvedValueOnce({ id: "order-1", orderNo: "OD-1" });
+
+    await getOrderCoreById("order-1", "org-1");
+
+    const query = prismaCounterMock.orderFindFirst.mock.calls[0][0];
+    expect(query.where).toEqual({ id: "order-1", organization_id: "org-1" });
+    expect(query.select).not.toHaveProperty("finishedGoods");
+    expect(query.select).not.toHaveProperty("bomItems");
+    expect(query.select).not.toHaveProperty("processSteps");
   });
 
   it("falls back to the base prisma client when a closed transaction is reused", async () => {
@@ -237,6 +281,10 @@ describe("reserveNextOrderNumbers", () => {
 
       expect(prismaCounterMock.orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
         where: { organization_id: "org-1", season: "Winter", article: "Jacket" },
+        select: expect.not.objectContaining({
+          finishedGoods: expect.anything(),
+          bomItems: expect.anything(),
+        }),
       }));
     });
 
@@ -279,7 +327,7 @@ describe("reserveNextOrderNumbers", () => {
         { size_group_id: "group-id", size: { id: "size-m", value_id: "size-m-value", organization_id: "org-1", size: "M", is_active: true, status: "ACTIVE", legacy_metadata: null } },
       ]);
 
-      const [summary] = await getArticleOrderSummaries("org-1", { season: "Winter", article: "Shirt" });
+      const [summary] = await getArticleOrderSummaries("org-1", { season: "Winter", article: "Shirt" }, "finishedGoods");
 
       expect(summary.sizeOrder).toEqual(["XL", "S", "M"]);
       expect(summary.sizes.map(({ size }) => size)).toEqual(["XL", "S", "M"]);

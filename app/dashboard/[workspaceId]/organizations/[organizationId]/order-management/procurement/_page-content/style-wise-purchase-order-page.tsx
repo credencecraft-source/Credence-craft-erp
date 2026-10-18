@@ -29,6 +29,8 @@ export default function StyleWisePurchaseOrderPage({
   const stageDataRequests = useRef(new Map<string, Promise<void>>());
   const [bomRows, setBomRows] = useState<BomRow[]>([]);
   const [vendors, setVendors] = useState<VendorOption[]>([]);
+  const [vendorsLoading, setVendorsLoading] = useState(false);
+  const [vendorsError, setVendorsError] = useState("");
   const [gstOptions, setGstOptions] = useState<GstOption[]>([]);
   const [groupedPurchaseOrders, setGroupedPurchaseOrders] = useState<
     GroupedPurchaseOrder[]
@@ -157,13 +159,24 @@ export default function StyleWisePurchaseOrderPage({
     return request;
   }, [organizationId]);
 
+  const ensureVendorsLoaded = useCallback(async () => {
+    if (loadedStageData.current.has(`${organizationId}:vendors`)) return;
+    setVendorsLoading(true);
+    setVendorsError("");
+    try {
+      await loadOnce("vendors", loadVendors);
+    } catch (loadError) {
+      setVendorsError(loadError instanceof Error ? loadError.message : "Unable to load vendors.");
+    } finally {
+      setVendorsLoading(false);
+    }
+  }, [loadOnce, loadVendors, organizationId]);
+
   const loadStageData = useCallback((targetStage: StyleWiseStage) => {
     const requests: Promise<void>[] = [];
     if (targetStage === "allocate") {
       const needsAllocation = !loadedStageData.current.has(`${organizationId}:allocation`);
-      const needsVendors = !loadedStageData.current.has(`${organizationId}:vendors`);
       if (needsAllocation) requests.push(loadOnce("allocation", loadAllocatableRows));
-      if (needsVendors) requests.push(loadOnce("vendors", loadVendors));
       return Promise.all(requests).then(() => undefined);
     }
 
@@ -176,7 +189,7 @@ export default function StyleWisePurchaseOrderPage({
       requests.push(loadOnce("create", () => loadPriceApprovals(undefined, "create")));
     }
     return Promise.all(requests).then(() => undefined);
-  }, [loadAllocatableRows, loadGstOptions, loadOnce, loadPriceApprovals, loadVendors, organizationId]);
+  }, [loadAllocatableRows, loadGstOptions, loadOnce, loadPriceApprovals, organizationId]);
 
   const selectStage = (nextStage: StyleWiseStage) => {
     const nextPath = nextStage === "allocate"
@@ -185,7 +198,7 @@ export default function StyleWisePurchaseOrderPage({
     if (window.location.pathname !== nextPath) window.history.pushState(null, "", nextPath);
     if (nextStage === "allocate") {
       setPriceLoading(false);
-      if (!loadedStageData.current.has(`${organizationId}:allocation`) || !loadedStageData.current.has(`${organizationId}:vendors`)) setLoading(true);
+      if (!loadedStageData.current.has(`${organizationId}:allocation`)) setLoading(true);
     } else {
       setLoading(false);
       const needsPriceData = nextStage === "price"
@@ -394,7 +407,10 @@ export default function StyleWisePurchaseOrderPage({
               {selectedMaterial && (
                 <Button
                   type="button"
-                  onClick={() => setShowGroupedForm(true)}
+                  onClick={() => {
+                    setShowGroupedForm(true);
+                    void ensureVendorsLoaded();
+                  }}
                   disabled={selectedRows.length === 0}
                   className="inline-flex items-center gap-1.5 rounded-md bg-[var(--erp-brand)] px-3 py-2 text-xs font-bold text-white hover:bg-[var(--erp-brand-hover)] disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
@@ -521,6 +537,9 @@ export default function StyleWisePurchaseOrderPage({
         <GroupedPurchaseOrderForm
           rows={selectedRows}
           vendors={vendors}
+          vendorsLoading={vendorsLoading}
+          vendorsError={vendorsError}
+          onRetryLoadVendors={() => void ensureVendorsLoaded()}
           organizationId={organizationId}
           onClose={() => setShowGroupedForm(false)}
           onCreated={(source) => {

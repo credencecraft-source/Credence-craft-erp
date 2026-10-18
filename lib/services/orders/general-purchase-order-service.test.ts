@@ -48,6 +48,10 @@ vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
     $transaction: mocks.transaction,
     purchaseOrder: { findFirst: mocks.purchaseOrderFindFirst },
+    generalPurchaseOrderRequest: {
+      findFirst: mocks.requestFindFirst,
+      findMany: mocks.requestFindMany,
+    },
   },
 }));
 
@@ -55,6 +59,7 @@ import {
   approveGeneralPurchaseOrderPrice,
   createGeneralPurchaseOrder,
   createGeneralPurchaseOrderRequests,
+  listGeneralPurchaseOrderRequests,
   saveGeneralPurchaseOrderPrice,
 } from "./general-purchase-order-service";
 
@@ -159,6 +164,95 @@ describe("general purchase-order request workflow", () => {
     )).rejects.toThrow("unavailable in this organization");
 
     expect(mocks.requestCreate).not.toHaveBeenCalled();
+  });
+
+  it("loads paged General PO rows with tenant-checked relations in one query", async () => {
+    mocks.requestFindMany.mockResolvedValue([{
+      id: "request-1",
+      status: "PENDING_PRICE_APPROVAL",
+      raw_material_id: "material-1",
+      quantity: new Prisma.Decimal("12.5"),
+      vendor_id: "vendor-1",
+      vendor_price: new Prisma.Decimal("4.25"),
+      gst: new Prisma.Decimal("5"),
+      hsn_code: "1234",
+      created_by: "Requester",
+      created_at: new Date("2026-10-03T00:00:00.000Z"),
+      approved_by: null,
+      approved_at: null,
+      purchase_order_id: null,
+      rawMaterial: {
+        id: "material-1",
+        organization_id: "org-1",
+        raw_material_name: "Cotton",
+        raw_material_category: { organization_id: "org-1", raw_material_category: "Fabric" },
+        raw_material_sub_category: { organization_id: "org-1", raw_material_sub_category: "Woven" },
+        stock_uom: { organization_id: "org-1", uom: "MTR" },
+      },
+      vendor: { id: "vendor-1", organization_id: "org-1", vendor: "Vendor" },
+      purchaseOrder: null,
+    }]);
+
+    await expect(listGeneralPurchaseOrderRequests("org-1", ["PENDING_PRICE_APPROVAL"], { limit: 25 }))
+      .resolves.toMatchObject({
+        requests: [{
+          id: "request-1",
+          rawMaterial: "Cotton",
+          category: "Fabric",
+          subCategory: "Woven",
+          stockUom: "MTR",
+          vendor: { id: "vendor-1", name: "Vendor" },
+          quantity: 12.5,
+        }],
+        nextCursor: null,
+      });
+    expect(mocks.requestFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-1", status: { in: ["PENDING_PRICE_APPROVAL"] } },
+      take: 26,
+      select: expect.objectContaining({
+        rawMaterial: expect.objectContaining({
+          select: expect.objectContaining({
+            raw_material_category: expect.any(Object),
+            raw_material_sub_category: expect.any(Object),
+            stock_uom: expect.any(Object),
+          }),
+        }),
+      }),
+    }));
+    expect(mocks.categoryFindMany).not.toHaveBeenCalled();
+    expect(mocks.subCategoryFindMany).not.toHaveBeenCalled();
+    expect(mocks.uomFindMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects related master data outside the authorized organization", async () => {
+    mocks.requestFindMany.mockResolvedValue([{
+      id: "request-1",
+      status: "PENDING_PRICE_APPROVAL",
+      raw_material_id: "material-1",
+      quantity: new Prisma.Decimal("1"),
+      vendor_id: null,
+      vendor_price: null,
+      gst: null,
+      hsn_code: null,
+      created_by: null,
+      created_at: new Date("2026-10-03T00:00:00.000Z"),
+      approved_by: null,
+      approved_at: null,
+      purchase_order_id: null,
+      rawMaterial: {
+        id: "material-1",
+        organization_id: "org-1",
+        raw_material_name: "Cotton",
+        raw_material_category: { organization_id: "other-org", raw_material_category: "Fabric" },
+        raw_material_sub_category: { organization_id: "org-1", raw_material_sub_category: "Woven" },
+        stock_uom: { organization_id: "org-1", uom: "MTR" },
+      },
+      vendor: null,
+      purchaseOrder: null,
+    }]);
+
+    await expect(listGeneralPurchaseOrderRequests("org-1"))
+      .rejects.toThrow("unavailable organization master data");
   });
 
   it("rejects a vendor outside the organization before saving pricing", async () => {

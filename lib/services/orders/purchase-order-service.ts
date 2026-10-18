@@ -26,22 +26,6 @@ const purchaseOrderReportSelect = {
   delivery_date: true,
   created_at: true,
   vendor: { select: { id: true, vendor: true, legacy_metadata: true } },
-  lines: {
-    select: {
-      total: true,
-      quantity: true,
-      price: true,
-      gst: true,
-      hsn_code: true,
-      stock_uom: true,
-      masterPurchaseOrder: {
-        select: {
-          lines: { take: 1, select: { stock_uom: true } },
-          sourceRecords: { take: 1, select: { groupedPurchaseOrder: { select: { buying_uom: true } } } },
-        },
-      },
-    },
-  },
 } satisfies Prisma.PurchaseOrderSelect;
 
 const numberValue = (value: Prisma.Decimal | number | string | null | undefined) => value == null ? null : Number(value);
@@ -251,6 +235,55 @@ export async function listPurchaseOrderReportPage(
   });
   const hasNextPage = rows.length > limit;
   const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
+  const lineSummaries = pageRows.length === 0
+    ? []
+    : await prisma.$queryRaw<Array<{
+        purchase_order_id: string;
+        total: string;
+        gst_values: string[];
+        hsn_codes: string[];
+        buying_uoms: string[];
+      }>>`
+        WITH page_orders AS (
+          SELECT id
+          FROM purchase_orders
+          WHERE organization_id = ${organizationId}
+            AND id IN (${Prisma.join(pageRows.map((order) => order.id))})
+        ),
+        line_aggregates AS (
+          SELECT
+            line.purchase_order_id,
+            COALESCE(SUM(COALESCE(line.total, line.quantity * COALESCE(line.price, 0))), 0)::text AS total,
+            COALESCE(ARRAY_AGG(DISTINCT line.gst::text) FILTER (WHERE line.gst IS NOT NULL), ARRAY[]::text[]) AS gst_values,
+            COALESCE(ARRAY_AGG(DISTINCT line.hsn_code) FILTER (WHERE line.hsn_code IS NOT NULL), ARRAY[]::text[]) AS hsn_codes
+          FROM purchase_order_lines AS line
+          INNER JOIN page_orders ON page_orders.id = line.purchase_order_id
+          GROUP BY line.purchase_order_id
+        ),
+        buying_uom_aggregates AS (
+          SELECT
+            line.purchase_order_id,
+            ARRAY_AGG(DISTINCT grouped.buying_uom) FILTER (WHERE grouped.buying_uom IS NOT NULL) AS buying_uoms
+          FROM purchase_order_lines AS line
+          INNER JOIN page_orders ON page_orders.id = line.purchase_order_id
+          INNER JOIN master_purchase_order_sources AS source
+            ON source.master_purchase_order_id = line.master_purchase_order_id
+          INNER JOIN grouped_purchase_orders AS grouped
+            ON grouped.id = source.grouped_purchase_order_id
+          WHERE grouped.organization_id = ${organizationId}
+          GROUP BY line.purchase_order_id
+        )
+        SELECT
+          page_orders.id AS purchase_order_id,
+          COALESCE(line_aggregates.total, '0') AS total,
+          COALESCE(line_aggregates.gst_values, ARRAY[]::text[]) AS gst_values,
+          COALESCE(line_aggregates.hsn_codes, ARRAY[]::text[]) AS hsn_codes,
+          COALESCE(buying_uom_aggregates.buying_uoms, ARRAY[]::text[]) AS buying_uoms
+        FROM page_orders
+        LEFT JOIN line_aggregates ON line_aggregates.purchase_order_id = page_orders.id
+        LEFT JOIN buying_uom_aggregates ON buying_uom_aggregates.purchase_order_id = page_orders.id
+      `;
+  const lineSummaryByOrder = new Map(lineSummaries.map((summary) => [summary.purchase_order_id, summary]));
   const purchaseOrders = pageRows.map((order) => ({
     id: order.id,
     entityId: order.entity?.id ?? order.entity_id,
@@ -261,13 +294,12 @@ export async function listPurchaseOrderReportPage(
     deliveryDate: order.delivery_date,
     createdAt: order.created_at,
     vendor: { id: order.vendor.id, name: order.vendor.vendor, email: vendorEmail(order.vendor.legacy_metadata) },
-    total: order.lines.reduce((sum, line) => sum + Number(line.total ?? (Number(line.quantity) * Number(line.price ?? 0))), 0),
-    lines: order.lines.map((line) => ({
-      gst: numberValue(line.gst),
-      hsnCode: line.hsn_code,
-      buyingUom: line.masterPurchaseOrder?.sourceRecords[0]?.groupedPurchaseOrder.buying_uom ?? null,
-      stockUom: line.stock_uom ?? line.masterPurchaseOrder?.lines[0]?.stock_uom ?? null,
-    })),
+    total: Number(lineSummaryByOrder.get(order.id)?.total ?? 0),
+    gstValues: (lineSummaryByOrder.get(order.id)?.gst_values ?? [])
+      .map(Number)
+      .filter(Number.isFinite),
+    hsnCodes: lineSummaryByOrder.get(order.id)?.hsn_codes ?? [],
+    buyingUoms: lineSummaryByOrder.get(order.id)?.buying_uoms ?? [],
   }));
 
   return {

@@ -169,10 +169,17 @@ function serializePurchaseOrder(order: {
   };
 }
 
-async function enrichPurchaseOrderTaxFields<T extends ReturnType<typeof serializePurchaseOrder>>(organizationId: string, orders: T[]) {
+type PurchaseOrderWithLineTaxDetails = ReturnType<typeof serializePurchaseOrder> & {
+  lineTaxDetails?: Array<{ itemName: string | null; gst?: unknown; hsnCode?: string | null }>;
+};
+
+async function enrichPurchaseOrderTaxFields<T extends PurchaseOrderWithLineTaxDetails>(organizationId: string, orders: T[]) {
   const organization = await prisma.organization.findUnique({ where: { id: organizationId }, select: { state: true, gst_number: true } });
   const ordersWithTaxContext = orders.map((order) => ({ ...order, organizationState: organization?.state ?? null, organizationGstin: organization?.gst_number ?? null }));
-  const rawMaterialNames = [...new Set(orders.flatMap((order) => order.lines.map((line) => line.itemName).filter((name): name is string => Boolean(name))))];
+  const rawMaterialNames = [...new Set(orders.flatMap((order) => [
+    ...order.lines.map((line) => line.itemName),
+    ...("lineTaxDetails" in order ? order.lineTaxDetails?.map((line) => line.itemName) ?? [] : []),
+  ]).filter((name): name is string => Boolean(name)))];
   if (rawMaterialNames.length === 0) return ordersWithTaxContext;
 
   const rawMaterials = await prisma.masterRawMaterial.findMany({
@@ -187,6 +194,14 @@ async function enrichPurchaseOrderTaxFields<T extends ReturnType<typeof serializ
   return ordersWithTaxContext.map((order) => ({
     ...order,
     lines: order.lines.map((line) => ({ ...line, ...(taxByMaterial.get(line.itemName ?? "") ?? { gst: null, hsnCode: null }) })),
+    ...("lineTaxDetails" in order && order.lineTaxDetails
+      ? {
+          lineTaxDetails: order.lineTaxDetails.map((line) => ({
+            ...line,
+            ...(taxByMaterial.get(line.itemName ?? "") ?? { gst: null, hsnCode: null }),
+          })),
+        }
+      : {}),
   }));
 }
 
@@ -215,6 +230,14 @@ const groupedPurchaseOrderInclude = {
       stock_uom: true,
       vendor_price: true,
     },
+  },
+} satisfies Prisma.GroupedPurchaseOrderInclude;
+
+const groupedPurchaseOrderPageInclude = {
+  ...groupedPurchaseOrderInclude,
+  lines: {
+    ...groupedPurchaseOrderInclude.lines,
+    take: 1,
   },
 } satisfies Prisma.GroupedPurchaseOrderInclude;
 
@@ -345,24 +368,144 @@ export async function listAllocatableBomRowsPage(
   input: { cursor?: string; limit?: number } = {},
 ) {
   const limit = Math.min(100, Math.max(1, Math.trunc(input.limit ?? 50)));
-  const rows = await prisma.billOfMaterialItem.findMany({
-    where: { order: { organization_id: organizationId } },
-    select: allocatableBomItemSelect,
-    orderBy: [{ created_at: "desc" }, { id: "desc" }],
-    take: limit + 1,
-    ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
-  });
-  const hasNextPage = rows.length > limit;
-  const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
-  const totals = await loadAllocationQuantityTotals(organizationId, pageRows.map((row) => row.id));
+  const cursorRow = input.cursor
+    ? await prisma.billOfMaterialItem.findFirst({
+        where: { id: input.cursor, order: { organization_id: organizationId } },
+        select: { id: true, created_at: true },
+      })
+    : null;
+  if (input.cursor && !cursorRow) throw new Error("Allocation pagination cursor is invalid for this organization.");
+
+  const rows = await prisma.$queryRaw<Array<{
+    id: string;
+    order_id: string;
+    category_type: string | null;
+    category: string | null;
+    sub_category: string | null;
+    raw_material_name: string | null;
+    stock_uom: string | null;
+    internal_consumption: Prisma.Decimal | null;
+    internal_price: Prisma.Decimal | null;
+    required_qty: Prisma.Decimal | null;
+    total_required_qty: Prisma.Decimal | null;
+    remaining_qty: Prisma.Decimal;
+    order_no: string;
+    style_name: string | null;
+    brand: string | null;
+    entity_id: string | null;
+    entity_name: string | null;
+    entity_record_id: string | null;
+    entity_record_name: string | null;
+  }>>`
+    WITH bom_rows AS (
+      SELECT
+        bom.id,
+        bom."orderId" AS order_id,
+        bom."categoryType" AS category_type,
+        bom.category,
+        bom."subCategory" AS sub_category,
+        bom."rawMaterialName" AS raw_material_name,
+        bom."stockUom" AS stock_uom,
+        bom."internalConsumption" AS internal_consumption,
+        bom."internalPrice" AS internal_price,
+        bom."requiredQty" AS required_qty,
+        bom."totalRequiredQty" AS total_required_qty,
+        bom.created_at,
+        orders.organization_id,
+        orders."orderNo" AS order_no,
+        orders."styleName" AS style_name,
+        orders.brand,
+        orders.entity_id,
+        orders."entityName" AS entity_name,
+        entity.entity_name AS entity_record_name,
+        entity.id AS entity_record_id
+      FROM bill_of_material_items AS bom
+      INNER JOIN merchandising_orders AS orders
+        ON orders.id = bom."orderId"
+      LEFT JOIN master_entities AS entity
+        ON entity.id = orders.entity_id
+        AND entity.organization_id = orders.organization_id
+      WHERE orders.organization_id = ${organizationId}
+        AND (
+          ${cursorRow?.created_at ?? null}::timestamptz IS NULL
+          OR (bom.created_at, bom.id) < (${cursorRow?.created_at ?? null}::timestamptz, ${cursorRow?.id ?? null})
+        )
+    ),
+    grouped_allocations AS (
+      SELECT line.source_bom_item_id, SUM(line.grouped_qty) AS quantity
+      FROM grouped_purchase_order_lines AS line
+      INNER JOIN grouped_purchase_orders AS grouped
+        ON grouped.id = line.grouped_purchase_order_id
+      INNER JOIN bom_rows ON bom_rows.id = line.source_bom_item_id
+      WHERE grouped.organization_id = ${organizationId}
+        AND grouped.source_type = 'VENDOR'
+      GROUP BY line.source_bom_item_id
+    ),
+    stock_allocations AS (
+      SELECT
+        booking.source_bom_item_id,
+        SUM(CASE WHEN booking.status = 'BOOKED' THEN booking.booked_quantity ELSE 0 END) AS booked_quantity,
+        SUM(CASE WHEN booking.status = 'FULFILLED' THEN booking.fulfilled_quantity ELSE 0 END) AS fulfilled_quantity
+      FROM raw_material_stock_bookings AS booking
+      INNER JOIN bom_rows ON bom_rows.id = booking.source_bom_item_id
+      WHERE booking.organization_id = ${organizationId}
+        AND booking.status IN ('BOOKED', 'FULFILLED')
+      GROUP BY booking.source_bom_item_id
+    ),
+    eligible_rows AS (
+      SELECT
+        bom_rows.*,
+        COALESCE(bom_rows.total_required_qty, bom_rows.required_qty, 0)
+          - COALESCE(grouped_allocations.quantity, 0)
+          - COALESCE(stock_allocations.booked_quantity, 0)
+          - COALESCE(stock_allocations.fulfilled_quantity, 0) AS remaining_qty
+      FROM bom_rows
+      LEFT JOIN grouped_allocations
+        ON grouped_allocations.source_bom_item_id = bom_rows.id
+      LEFT JOIN stock_allocations
+        ON stock_allocations.source_bom_item_id = bom_rows.id
+    )
+    SELECT
+      id, order_id, category_type, category, sub_category, raw_material_name, stock_uom,
+      internal_consumption, internal_price, required_qty, total_required_qty, remaining_qty,
+      order_no, style_name, brand, entity_id, entity_name,
+      entity_record_id, entity_record_name
+    FROM eligible_rows
+    WHERE remaining_qty > 0
+    ORDER BY created_at DESC, id DESC
+    LIMIT ${limit + 1}
+  `;
+  const hasMore = rows.length > limit;
+  const pageRows = hasMore ? rows.slice(0, limit) : rows;
   return {
-    bomRows: serializeAllocatableBomRows(pageRows, totals),
-    nextCursor: hasNextPage ? pageRows[pageRows.length - 1]?.id ?? null : null,
+    bomRows: pageRows.map((row) => ({
+      id: row.id,
+      orderId: row.order_id,
+      orderNo: row.order_no,
+      entityId: row.entity_record_id ?? row.entity_id,
+      entityName: row.entity_record_name ?? row.entity_name ?? "Missing Entity",
+      styleName: row.style_name,
+      brand: row.brand,
+      category: row.category,
+      categoryType: row.category_type,
+      subCategory: row.sub_category,
+      itemName: row.raw_material_name,
+      stockUom: row.stock_uom,
+      internalConsumption: decimalValue(row.internal_consumption),
+      internalPriceBom: decimalValue(row.internal_price),
+      requiredQty: decimalValue(row.total_required_qty ?? row.required_qty),
+      remainingQty: decimalValue(row.remaining_qty),
+    })),
+    nextCursor: hasMore ? pageRows[pageRows.length - 1]?.id ?? null : null,
   };
 }
 
-async function countAllocatableBomRows(organizationId: string) {
-  const [result] = await prisma.$queryRaw<Array<{ count: bigint }>>`
+export async function getProcurementSummary(organizationId: string) {
+  const [result] = await prisma.$queryRaw<Array<{
+    pending_vendor_allocation: bigint;
+    pending_price_approval: bigint;
+    ready_for_po: bigint;
+  }>>`
     WITH grouped_allocations AS (
       SELECT line.source_bom_item_id, SUM(line.grouped_qty) AS quantity
       FROM grouped_purchase_order_lines AS line
@@ -380,35 +523,40 @@ async function countAllocatableBomRows(organizationId: string) {
       WHERE booking.organization_id = ${organizationId}
         AND booking.status IN ('BOOKED', 'FULFILLED')
       GROUP BY booking.source_bom_item_id
+    ),
+    allocation_count AS (
+      SELECT COUNT(*)::bigint AS count
+      FROM bill_of_material_items AS bom
+      INNER JOIN merchandising_orders AS orders
+        ON orders.id = bom."orderId"
+      LEFT JOIN grouped_allocations
+        ON grouped_allocations.source_bom_item_id = bom.id
+      LEFT JOIN stock_allocations
+        ON stock_allocations.source_bom_item_id = bom.id
+      WHERE orders.organization_id = ${organizationId}
+        AND COALESCE(bom."totalRequiredQty", bom."requiredQty", 0)
+          > COALESCE(grouped_allocations.quantity, 0)
+            + COALESCE(stock_allocations.booked_quantity, 0)
+            + COALESCE(stock_allocations.fulfilled_quantity, 0)
+    ),
+    purchase_order_counts AS (
+      SELECT
+        COUNT(*) FILTER (WHERE status = ${PRICE_APPROVAL_STATUS})::bigint AS pending_price_approval,
+        COUNT(*) FILTER (
+          WHERE source_type = 'VENDOR' AND status = ${APPROVED_STATUS}
+        )::bigint AS ready_for_po
+      FROM grouped_purchase_orders
+      WHERE organization_id = ${organizationId}
     )
-    SELECT COUNT(*)::bigint AS count
-    FROM bill_of_material_items AS bom
-    INNER JOIN merchandising_orders AS orders
-      ON orders.id = bom."orderId"
-    LEFT JOIN grouped_allocations
-      ON grouped_allocations.source_bom_item_id = bom.id
-    LEFT JOIN stock_allocations
-      ON stock_allocations.source_bom_item_id = bom.id
-    WHERE orders.organization_id = ${organizationId}
-      AND COALESCE(bom."totalRequiredQty", bom."requiredQty", 0)
-        > COALESCE(grouped_allocations.quantity, 0)
-          + COALESCE(stock_allocations.booked_quantity, 0)
-          + COALESCE(stock_allocations.fulfilled_quantity, 0)
+    SELECT allocation_count.count AS pending_vendor_allocation,
+      purchase_order_counts.pending_price_approval,
+      purchase_order_counts.ready_for_po
+    FROM allocation_count CROSS JOIN purchase_order_counts
   `;
 
-  return Number(result?.count ?? 0);
-}
-
-export async function getProcurementSummary(organizationId: string) {
-  const [pendingVendorAllocation, pendingPriceApproval, readyForPo] = await Promise.all([
-    countAllocatableBomRows(organizationId),
-    prisma.groupedPurchaseOrder.count({
-      where: { organization_id: organizationId, status: PRICE_APPROVAL_STATUS },
-    }),
-    prisma.groupedPurchaseOrder.count({
-      where: { organization_id: organizationId, source_type: "VENDOR", status: APPROVED_STATUS },
-    }),
-  ]);
+  const pendingVendorAllocation = Number(result?.pending_vendor_allocation ?? 0);
+  const pendingPriceApproval = Number(result?.pending_price_approval ?? 0);
+  const readyForPo = Number(result?.ready_for_po ?? 0);
 
   return {
     pendingVendorAllocation,
@@ -604,15 +752,52 @@ export async function listGroupedPurchaseOrdersPage(
   const limit = Math.min(100, Math.max(1, Math.trunc(input.limit ?? 50)));
   const rows = await prisma.groupedPurchaseOrder.findMany({
     where: { organization_id: organizationId, ...(status ? { status: Array.isArray(status) ? { in: status } : status } : {}) },
-    include: groupedPurchaseOrderInclude,
+    include: groupedPurchaseOrderPageInclude,
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
     take: limit + 1,
     ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
   });
   const hasNextPage = rows.length > limit;
   const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
+  const lineSummaries = pageRows.length === 0
+    ? []
+    : await prisma.$queryRaw<Array<{
+        grouped_purchase_order_id: string;
+        item_name: string | null;
+        vendor_price_total: Prisma.Decimal | null;
+        grouped_qty_total: Prisma.Decimal | null;
+      }>>`
+        SELECT DISTINCT
+          line.grouped_purchase_order_id,
+          line.item_name,
+          SUM(line.grouped_qty * COALESCE(line.vendor_price, 0))
+            OVER (PARTITION BY line.grouped_purchase_order_id) AS vendor_price_total,
+          SUM(line.grouped_qty)
+            OVER (PARTITION BY line.grouped_purchase_order_id) AS grouped_qty_total
+        FROM grouped_purchase_order_lines AS line
+        INNER JOIN grouped_purchase_orders AS grouped
+          ON grouped.id = line.grouped_purchase_order_id
+        WHERE grouped.organization_id = ${organizationId}
+          AND line.grouped_purchase_order_id IN (${Prisma.join(pageRows.map((row) => row.id))})
+      `;
+  const lineSummariesByOrder = new Map<string, typeof lineSummaries>();
+  for (const summary of lineSummaries) {
+    const current = lineSummariesByOrder.get(summary.grouped_purchase_order_id) ?? [];
+    current.push(summary);
+    lineSummariesByOrder.set(summary.grouped_purchase_order_id, current);
+  }
+  const serializedOrders = pageRows.map((row) => {
+    const summaries = lineSummariesByOrder.get(row.id) ?? [];
+    return {
+      ...serializePurchaseOrder(row),
+      totalGroupedQty: decimalValue(row.total_grouped_qty) ?? decimalValue(summaries[0]?.grouped_qty_total),
+      lineVendorPriceTotal: decimalValue(summaries[0]?.vendor_price_total),
+      lineTaxDetails: [...new Set(summaries.map((summary) => summary.item_name).filter((name): name is string => Boolean(name)))]
+        .map((itemName) => ({ itemName })),
+    };
+  });
   return {
-    groupedPurchaseOrders: await enrichPurchaseOrderTaxFields(organizationId, pageRows.map(serializePurchaseOrder)),
+    groupedPurchaseOrders: await enrichPurchaseOrderTaxFields(organizationId, serializedOrders),
     nextCursor: hasNextPage ? pageRows[pageRows.length - 1]?.id ?? null : null,
   };
 }

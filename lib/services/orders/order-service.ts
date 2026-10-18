@@ -436,6 +436,148 @@ export async function getOrderById(id: string, organizationId: string) {
   };
 }
 
+export type OrderDetailSection = "finishedGoods" | "bom" | "process";
+
+export async function getOrderCoreById(id: string, organizationId: string) {
+  return prisma.merchandisingOrder.findFirst({
+    where: { id, organization_id: organizationId },
+    select: {
+      id: true,
+      organization_id: true,
+      entity_id: true,
+      orderNo: true,
+      entityName: true,
+      category: true,
+      subCategory: true,
+      season: true,
+      article: true,
+      styleName: true,
+      colors: true,
+      buyer: true,
+      brand: true,
+      sizeGroup: true,
+      haveSizeRatio: true,
+      ratioOrderQty: true,
+      orderQty: true,
+      deliveryDate: true,
+      finalStatus: true,
+      processStatus: true,
+      sourceStatus: true,
+      process_template_id: true,
+      created_at: true,
+      updated_at: true,
+    },
+  });
+}
+
+export async function getOrderDetailSection(
+  id: string,
+  organizationId: string,
+  section: OrderDetailSection,
+) {
+  switch (section) {
+    case "finishedGoods": {
+      const order = await prisma.merchandisingOrder.findFirst({
+        where: { id, organization_id: organizationId },
+        select: {
+          sizeGroup: true,
+          finishedGoods: {
+            select: {
+              id: true,
+              buyerSize: true,
+              size: true,
+              beforeExcessQty: true,
+              excess: true,
+              excessQty: true,
+              totalQty: true,
+              buyerPoPrice: true,
+              exchangePrice: true,
+              priceInInr: true,
+            },
+          },
+        },
+      });
+      if (!order) return null;
+
+      const groupOrderByReference = await getSizeGroupSizeOrderMapForOrganization(
+        organizationId,
+        order.sizeGroup ? [order.sizeGroup] : [],
+      );
+      const orderedSizes = groupOrderByReference.get(order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
+      return {
+        finishedGoods: sortBySizeGroupOrder(
+          order.finishedGoods,
+          orderedSizes,
+          (row) => row.size ?? row.buyerSize,
+        ),
+      };
+    }
+    case "bom": {
+      const order = await prisma.merchandisingOrder.findFirst({
+        where: { id, organization_id: organizationId },
+        select: {
+          bomItems: {
+            select: {
+              id: true,
+              categoryType: true,
+              category: true,
+              subCategory: true,
+              rawMaterialName: true,
+              stockUom: true,
+              size: true,
+              orderQty: true,
+              buyerConsumption: true,
+              buyerPrice: true,
+              internalConsumption: true,
+              internalPrice: true,
+              valuePerGarmentRm: true,
+              consumption: true,
+              requiredQty: true,
+              itemWiseExcessPercentage: true,
+              itemWiseExcessQty: true,
+              totalRequiredQty: true,
+            },
+          },
+        },
+      });
+      return order ? { bomItems: order.bomItems } : null;
+    }
+    case "process": {
+      const order = await prisma.merchandisingOrder.findFirst({
+        where: { id, organization_id: organizationId },
+        select: {
+          process_template_id: true,
+          processSteps: {
+            orderBy: { sl_no: "asc" },
+            select: {
+              id: true,
+              order_id: true,
+              source_template_step_id: true,
+              process_id: true,
+              process_name: true,
+              sl_no: true,
+              cost: true,
+              process: { select: { id: true, value_id: true, process_name: true } },
+              operations: {
+                orderBy: { sl_no: "asc" },
+                select: {
+                  id: true,
+                  order_process_step_id: true,
+                  source_operation_template_step_id: true,
+                  operation: true,
+                  sl_no: true,
+                  price: true,
+                },
+              },
+            },
+          },
+        },
+      });
+      return order;
+    }
+  }
+}
+
 async function findProcessTemplate(organizationId: string, processTemplateId: string | null | undefined, database: Prisma.TransactionClient | typeof prisma) {
   if (!processTemplateId) return null;
   const template = await database.masterProcessTemplate.findFirst({
@@ -1590,7 +1732,10 @@ export async function updateOrderWithDetails(
 export async function getArticleOrderSummaries(
   organizationId: string,
   filter?: { season: string | null; article: string | null },
+  view: "general" | "finishedGoods" | "materials" = "general",
 ) {
+  const includeFinishedGoods = view === "finishedGoods";
+  const includeBomItems = view === "materials";
   const orders = await prisma.merchandisingOrder.findMany({
     where: {
       organization_id: organizationId,
@@ -1613,7 +1758,7 @@ export async function getArticleOrderSummaries(
       deliveryDate: true,
       finalStatus: true,
       processStatus: true,
-      finishedGoods: {
+      ...(includeFinishedGoods ? { finishedGoods: {
         select: {
           id: true,
           buyerSize: true,
@@ -1623,8 +1768,8 @@ export async function getArticleOrderSummaries(
           excessQty: true,
           totalQty: true,
         },
-      },
-      bomItems: {
+      } } : {}),
+      ...(includeBomItems ? { bomItems: {
         select: {
           id: true,
           rawMaterialName: true,
@@ -1636,12 +1781,13 @@ export async function getArticleOrderSummaries(
         },
         orderBy: [{ rawMaterialName: "asc" }, { id: "asc" }],
       },
+    } : {}),
     },
     orderBy: [{ season: "asc" }, { article: "asc" }, { orderNo: "asc" }, { id: "asc" }],
   });
   const groupOrderByReference = await getSizeGroupSizeOrderMapForOrganization(
     organizationId,
-    orders.map((order) => order.sizeGroup ?? ""),
+    includeFinishedGoods ? orders.map((order) => order.sizeGroup ?? "") : [],
   );
 
   const grouped = new Map<string, {
@@ -1693,7 +1839,7 @@ export async function getArticleOrderSummaries(
     if (order.buyer?.trim()) summary.buyers.add(order.buyer.trim());
     summary.orderNumbers.push(order.orderNo);
     const orderedFinishedGoods = sortBySizeGroupOrder(
-      order.finishedGoods,
+      order.finishedGoods ?? [],
       sizeOrder,
       (row) => row.size ?? row.buyerSize,
     );
@@ -1731,7 +1877,7 @@ export async function getArticleOrderSummaries(
       summary.sizeTotals.set(size, (summary.sizeTotals.get(size) ?? 0) + Number(row.totalQty ?? 0));
     }
 
-    for (const item of order.bomItems) {
+    for (const item of order.bomItems ?? []) {
       const key = JSON.stringify([item.rawMaterialName, item.categoryType, item.category, item.subCategory, item.size]);
       let bomItem = summary.bomTotals.get(key);
       if (!bomItem) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import Button from "@/components/ui/Button";
@@ -8,43 +8,15 @@ import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import Table from "@/components/ui/Table";
 
-type FinishedGoodsRow = {
-  id: string;
-  buyerSize: string | null;
-  size: string | null;
-  beforeExcessQty: number | null;
-  excess: number | null;
-  excessQty: number | null;
-  totalQty: number | null;
-};
-
-type ReviewOrder = {
-  id: string;
-  orderNo: string;
-  entityName: string | null;
-  category: string | null;
-  subCategory: string | null;
-  season: string | null;
-  article: string | null;
-  styleName: string | null;
-  colors: string | null;
-  buyer: string | null;
-  brand: string | null;
-  sizeGroup: string | null;
-  orderQty: number | null;
-  deliveryDate: string | null;
-  finalStatus: string;
-  processStatus: string | null;
-  finishedGoods: FinishedGoodsRow[];
-};
-
 type ArticleSummary = {
   season: string | null;
   article: string | null;
+  articleCount: number;
   orderCount: number;
   totalOrderQty: number;
   buyers: string[];
-  orders: ReviewOrder[];
+  styles: string[];
+  statuses: string[];
 };
 
 type SeasonSelection = { value: string | null } | null;
@@ -59,82 +31,92 @@ export default function SeasonOrderSummaryPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const loadMoreController = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
+    loadMoreController.current?.abort();
+    const timeout = window.setTimeout(() => {
+      const query = new URLSearchParams({
+        organizationId,
+        workspaceId,
+        view: selectedSeason ? "articles" : "seasons",
+        limit: "50",
+        search,
+        status: statusFilter,
+      });
+      if (selectedSeason) query.set("selectedSeason", selectedSeason.value ?? "");
 
-    async function loadSummaries() {
       setLoading(true);
       setError("");
-      try {
-        const query = new URLSearchParams({ organizationId, workspaceId });
-        const response = await fetch(`/api/orders/article-summary?${query.toString()}`, {
-          cache: "no-store",
-          signal: controller.signal,
+      fetch(`/api/orders/article-summary?${query.toString()}`, { cache: "no-store", signal: controller.signal })
+        .then(async (response) => {
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Unable to load the order summary.");
+          if (controller.signal.aborted) return;
+          setSummaries(Array.isArray(data.summaries) ? data.summaries : []);
+          setNextOffset(typeof data.nextOffset === "number" ? data.nextOffset : null);
+        })
+        .catch((loadError) => {
+          if (!controller.signal.aborted) setError(loadError instanceof Error ? loadError.message : "Unable to load the order summary.");
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoading(false);
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Unable to load the order summary.");
-        setSummaries(Array.isArray(data.summaries) ? data.summaries : []);
-      } catch (loadError) {
-        if (controller.signal.aborted) return;
-        setError(loadError instanceof Error ? loadError.message : "Unable to load the order summary.");
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
-    }
-
-    if (organizationId && workspaceId) loadSummaries();
-    return () => controller.abort();
-  }, [organizationId, workspaceId]);
+    }, 250);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+      loadMoreController.current?.abort();
+    };
+  }, [organizationId, search, selectedSeason, statusFilter, workspaceId]);
 
   const statusOptions = useMemo(() => {
-    const statuses = new Set(summaries.flatMap((summary) => summary.orders.map((order) => order.finalStatus).filter(Boolean)));
+    const statuses = ["Draft", "Waiting For Approval", "Approved", "Waiting For Production Schedule", "Work Order", "Shipped", "Closed"];
     return [
       { value: "all", label: "All statuses" },
-      ...[...statuses].sort().map((status) => ({ value: status, label: status })),
+      ...statuses.map((status) => ({ value: status, label: status })),
     ];
-  }, [summaries]);
+  }, []);
 
-  const visibleSummaries = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase();
-    return summaries.flatMap((summary) => {
-      if (selectedSeason && summary.season !== selectedSeason.value) return [];
-      const seasonMatches = displayLabel(summary.season, "Unassigned Season").toLocaleLowerCase().includes(query);
-      const articleMatches = displayLabel(summary.article, "Unassigned Article").toLocaleLowerCase().includes(query);
-      const matchingOrders = summary.orders.filter((order) => {
-        if (statusFilter !== "all" && order.finalStatus !== statusFilter) return false;
-        if (!query || seasonMatches || articleMatches) return true;
-        return [
-          order.orderNo,
-          order.styleName,
-          order.buyer,
-          order.brand,
-          order.colors,
-          order.finalStatus,
-          order.processStatus,
-        ].some((value) => String(value ?? "").toLocaleLowerCase().includes(query));
+  const loadMore = async () => {
+    if (nextOffset === null || loadingMore) return;
+    loadMoreController.current?.abort();
+    const controller = new AbortController();
+    loadMoreController.current = controller;
+    setLoadingMore(true);
+    setError("");
+    try {
+      const query = new URLSearchParams({
+        organizationId,
+        workspaceId,
+        view: selectedSeason ? "articles" : "seasons",
+        limit: "50",
+        offset: String(nextOffset),
+        search,
+        status: statusFilter,
       });
-      return matchingOrders.length > 0 ? [{ summary, orders: matchingOrders }] : [];
-    });
-  }, [search, selectedSeason, statusFilter, summaries]);
-
-  const seasonRows = useMemo(() => {
-    const seasons = new Map<string, { value: string | null; articles: Set<string>; orders: ReviewOrder[] }>();
-    for (const { summary, orders } of visibleSummaries) {
-      const key = summary.season ?? "";
-      let season = seasons.get(key);
-      if (!season) {
-        season = { value: summary.season, articles: new Set(), orders: [] };
-        seasons.set(key, season);
+      if (selectedSeason) query.set("selectedSeason", selectedSeason.value ?? "");
+      const response = await fetch(`/api/orders/article-summary?${query.toString()}`, { cache: "no-store", signal: controller.signal });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Unable to load more order summaries.");
+      if (controller.signal.aborted) return;
+      setSummaries((current) => [...current, ...(Array.isArray(data.summaries) ? data.summaries : [])]);
+      setNextOffset(typeof data.nextOffset === "number" ? data.nextOffset : null);
+    } catch (loadError) {
+      if (!controller.signal.aborted) {
+        setError(loadError instanceof Error ? loadError.message : "Unable to load more order summaries.");
       }
-      season.articles.add(summary.article ?? "");
-      season.orders.push(...orders);
+    } finally {
+      if (loadMoreController.current === controller) {
+        loadMoreController.current = null;
+        setLoadingMore(false);
+      }
     }
-    return [...seasons.values()].sort((left, right) =>
-      displayLabel(left.value, "Unassigned Season").localeCompare(displayLabel(right.value, "Unassigned Season")),
-    );
-  }, [visibleSummaries]);
+  };
 
   if (loading) return <div className="p-6 text-sm text-slate-500">Loading order summary...</div>;
   if (error) return <div className="m-6 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
@@ -189,30 +171,26 @@ export default function SeasonOrderSummaryPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {seasonRows.map((season) => {
-              const statuses = [...new Set(season.orders.map((order) => order.finalStatus).filter(Boolean))].sort();
-              const quantity = season.orders.reduce((total, order) => total + Number(order.orderQty ?? 0), 0);
-              return (
-                <tr key={season.value ?? "unassigned-season"} className="hover:bg-slate-50">
+            {summaries.map((season) => (
+                <tr key={season.season ?? "unassigned-season"} className="hover:bg-slate-50">
                   <td className="p-3">
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setSelectedSeason({ value: season.value })}
+                      onClick={() => setSelectedSeason({ value: season.season })}
                       className="min-h-0 px-0 py-0 text-left font-semibold text-emerald-800 hover:bg-transparent hover:underline"
                     >
-                      {displayLabel(season.value, "Unassigned Season")}
+                      {displayLabel(season.season, "Unassigned Season")}
                     </Button>
                   </td>
-                  <td className="p-3 text-right tabular-nums">{season.articles.size.toLocaleString()}</td>
-                  <td className="p-3 text-right tabular-nums">{season.orders.length.toLocaleString()}</td>
-                  <td className="p-3 text-right font-semibold tabular-nums">{formatQuantity(quantity)}</td>
-                  <td className="p-3 text-slate-600">{statuses.join(", ") || "-"}</td>
+                  <td className="p-3 text-right tabular-nums">{season.articleCount.toLocaleString()}</td>
+                  <td className="p-3 text-right tabular-nums">{season.orderCount.toLocaleString()}</td>
+                  <td className="p-3 text-right font-semibold tabular-nums">{formatQuantity(season.totalOrderQty)}</td>
+                  <td className="p-3 text-slate-600">{season.statuses.join(", ") || "-"}</td>
                 </tr>
-              );
-            })}
-            {seasonRows.length === 0 && <EmptyRow colSpan={5} message="No season orders match these filters." />}
+              ))}
+            {summaries.length === 0 && !loading && <EmptyRow colSpan={5} message="No season orders match these filters." />}
           </tbody>
         </Table>
       ) : (
@@ -228,17 +206,13 @@ export default function SeasonOrderSummaryPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {visibleSummaries.map(({ summary, orders }) => {
+            {summaries.map((summary) => {
               const articleSegment = encodeURIComponent(summary.article ?? "__missing_article__");
               const query = new URLSearchParams({
                 season: summary.season ?? "",
                 article: summary.article ?? "",
               });
               const detailPath = `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order-summary/${articleSegment}?${query.toString()}`;
-              const buyers = [...new Set(orders.map((order) => order.buyer?.trim()).filter(Boolean))];
-              const styles = [...new Set(orders.map((order) => order.styleName?.trim()).filter(Boolean))];
-              const quantity = orders.reduce((total, order) => total + Number(order.orderQty ?? 0), 0);
-              const statuses = [...new Set(orders.map((order) => order.finalStatus).filter(Boolean))].sort();
               return (
                 <tr key={JSON.stringify([summary.season, summary.article])} className="hover:bg-slate-50">
                   <td className="p-3">
@@ -246,17 +220,25 @@ export default function SeasonOrderSummaryPage() {
                       {displayLabel(summary.article, "Unassigned Article")}
                     </Link>
                   </td>
-                  <td className="p-3 text-slate-700">{buyers.join(", ") || "-"}</td>
-                  <td className="p-3 text-slate-700">{styles.join(", ") || "-"}</td>
-                  <td className="p-3 text-right tabular-nums">{orders.length.toLocaleString()}</td>
-                  <td className="p-3 text-right font-semibold tabular-nums">{formatQuantity(quantity)}</td>
-                  <td className="p-3 text-slate-600">{statuses.join(", ") || "-"}</td>
+                  <td className="p-3 text-slate-700">{summary.buyers.join(", ") || "-"}</td>
+                  <td className="p-3 text-slate-700">{summary.styles.join(", ") || "-"}</td>
+                  <td className="p-3 text-right tabular-nums">{summary.orderCount.toLocaleString()}</td>
+                  <td className="p-3 text-right font-semibold tabular-nums">{formatQuantity(summary.totalOrderQty)}</td>
+                  <td className="p-3 text-slate-600">{summary.statuses.join(", ") || "-"}</td>
                 </tr>
               );
             })}
-            {visibleSummaries.length === 0 && <EmptyRow colSpan={6} message="No article orders match these filters." />}
+            {summaries.length === 0 && !loading && <EmptyRow colSpan={6} message="No article orders match these filters." />}
           </tbody>
         </Table>
+      )}
+      {loadingMore && <p role="status" className="text-center text-xs text-slate-500">Loading more summaries…</p>}
+      {nextOffset !== null && (
+        <div className="flex justify-center">
+          <Button type="button" variant="secondary" size="sm" disabled={loading || loadingMore} onClick={() => void loadMore()}>
+            {loadingMore ? "Loading…" : "Load more"}
+          </Button>
+        </div>
       )}
     </main>
   );

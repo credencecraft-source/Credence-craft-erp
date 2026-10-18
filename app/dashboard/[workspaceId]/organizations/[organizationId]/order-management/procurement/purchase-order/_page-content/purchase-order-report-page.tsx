@@ -16,7 +16,9 @@ type PurchaseOrder = {
   poDate: string;
   deliveryDate: string | null;
   total: number;
-  lines: Array<{ gst: number | null; hsnCode: string | null; buyingUom: string | null }>;
+  gstValues?: number[];
+  hsnCodes?: string[];
+  buyingUoms?: string[];
 };
 
 type PurchaseOrderField = "purchaseOrderNo" | "entityName" | "vendorName" | "poDate" | "deliveryDate" | "status" | "buyingUom" | "gst" | "hsnCode" | "total";
@@ -174,9 +176,9 @@ export default function PurchaseOrderReportPage() {
     () => orders.map((order) => ({
       ...order,
       vendorName: order.vendor?.name ?? "",
-      buyingUom: [...new Set(order.lines.map((line) => line.buyingUom).filter(Boolean))].join(", "),
-      gst: [...new Set(order.lines.map((line) => line.gst).filter((value): value is number => value !== null))].join(", "),
-      hsnCode: [...new Set(order.lines.map((line) => line.hsnCode).filter(Boolean))].join(", "),
+      buyingUom: [...new Set(order.buyingUoms ?? [])].join(", "),
+      gst: [...new Set(order.gstValues ?? [])].join(", "),
+      hsnCode: [...new Set(order.hsnCodes ?? [])].join(", "),
     })),
     [orders],
   );

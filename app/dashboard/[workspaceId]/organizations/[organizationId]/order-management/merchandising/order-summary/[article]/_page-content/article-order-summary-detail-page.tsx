@@ -78,6 +78,9 @@ export default function ArticleOrderSummaryDetailPage() {
   const [activeMaterialsTab, setActiveMaterialsTab] = useState<MaterialsTab>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [sectionLoading, setSectionLoading] = useState(false);
+  const [sectionError, setSectionError] = useState("");
+  const hasSummary = summary !== null;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -92,6 +95,7 @@ export default function ArticleOrderSummaryDetailPage() {
         const query = new URLSearchParams({
           organizationId,
           workspaceId,
+          view: "general",
           season: requestedSeason,
           article: requestedArticle,
         });
@@ -114,6 +118,36 @@ export default function ArticleOrderSummaryDetailPage() {
     if (organizationId && workspaceId) loadArticle();
     return () => controller.abort();
   }, [articleParam, articleSegment, organizationId, seasonParam, workspaceId]);
+
+  useEffect(() => {
+    if (!hasSummary || activeTab === "general") return;
+    const controller = new AbortController();
+    const requestedArticle = articleParam ?? (articleSegment === "__missing_article__" ? "" : articleSegment);
+    const requestedSeason = seasonParam ?? "";
+    const query = new URLSearchParams({
+      organizationId,
+      workspaceId,
+      view: activeTab,
+      season: requestedSeason,
+      article: requestedArticle,
+    });
+    fetch(`/api/orders/article-summary?${query.toString()}`, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Unable to load this order summary section.");
+        if (controller.signal.aborted || !data.summary) return;
+        setSummary((current) => current ? { ...current, ...data.summary } : data.summary);
+      })
+      .catch((loadError) => {
+        if (!controller.signal.aborted) {
+          setSectionError(loadError instanceof Error ? loadError.message : "Unable to load this order summary section.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setSectionLoading(false);
+      });
+    return () => controller.abort();
+  }, [activeTab, articleParam, articleSegment, hasSummary, organizationId, seasonParam, workspaceId]);
 
   const orders = summary?.orders ?? EMPTY_ORDERS;
   const sizeRows = useMemo(() => buildSizeRows(orders, summary?.sizeOrder ?? []), [orders, summary?.sizeOrder]);
@@ -150,13 +184,22 @@ export default function ArticleOrderSummaryDetailPage() {
             { value: "materials", label: "Materials", panelId: "article-review-panel" },
           ]}
           value={activeTab}
-          onChange={(value) => setActiveTab(value as ReviewTab)}
+          onChange={(value) => {
+            const nextTab = value as ReviewTab;
+            setActiveTab(nextTab);
+            if (nextTab !== "general") {
+              setSectionLoading(true);
+              setSectionError("");
+            }
+          }}
           ariaLabel="Article review sections"
         />
         <div id="article-review-panel" className="p-3 sm:p-4" role="tabpanel">
-          {activeTab === "general" && <GeneralTable orders={orders} workspaceId={workspaceId} organizationId={organizationId} />}
-          {activeTab === "finishedGoods" && <FinishedGoodsMatrix orders={orders} rows={sizeRows} />}
-          {activeTab === "materials" && (
+          {sectionError && <p role="alert" className="mb-3 text-sm text-[var(--erp-danger)]">{sectionError}</p>}
+          {sectionLoading ? <p role="status" className="py-8 text-center text-sm text-[var(--erp-text-muted)]">Loading this section…</p> : null}
+          {!sectionLoading && activeTab === "general" && <GeneralTable orders={orders} workspaceId={workspaceId} organizationId={organizationId} />}
+          {!sectionLoading && activeTab === "finishedGoods" && <FinishedGoodsMatrix orders={orders} rows={sizeRows} />}
+          {!sectionLoading && activeTab === "materials" && (
             <div className="space-y-3">
               <Tabs
                 tabs={[

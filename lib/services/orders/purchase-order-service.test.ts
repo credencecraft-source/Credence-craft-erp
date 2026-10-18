@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
@@ -14,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   approvalRequestFindFirst: vi.fn(),
   approvalRequestUpdateMany: vi.fn(),
   auditEventCreate: vi.fn(),
+  queryRaw: vi.fn(),
 }));
 
 const transaction = {
@@ -32,6 +32,7 @@ const transaction = {
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
     $transaction: mocks.transaction,
+    $queryRaw: mocks.queryRaw,
     purchaseOrder: { findMany: mocks.purchaseOrderFindMany, findFirst: mocks.purchaseOrderFindFirst },
   },
 }));
@@ -69,6 +70,7 @@ describe("vendor Purchase Order generation", () => {
     });
     mocks.approvalRequestUpdateMany.mockResolvedValue({ count: 1 });
     mocks.auditEventCreate.mockResolvedValue({});
+    mocks.queryRaw.mockResolvedValue([]);
   });
 
   it("rejects stock Master Groups so they must complete store verification instead", async () => {
@@ -171,25 +173,23 @@ describe("vendor Purchase Order generation", () => {
       delivery_date: null,
       created_at: new Date("2026-10-01T00:00:00Z"),
       vendor: { id: "vendor-1", vendor: "Vendor", legacy_metadata: null },
-      lines: [{
-        total: null,
-        quantity: new Prisma.Decimal("3"),
-        price: new Prisma.Decimal("2"),
-        gst: new Prisma.Decimal("5"),
-        hsn_code: "5208",
-        stock_uom: "PCS",
-        masterPurchaseOrder: { lines: [{ stock_uom: "MTR" }], sourceRecords: [{ groupedPurchaseOrder: { buying_uom: "ROLL" } }] },
-      }],
     });
     mocks.purchaseOrderFindMany.mockResolvedValue([
       reportOrder("po-1"),
       reportOrder("po-2"),
       reportOrder("po-3"),
     ]);
+    mocks.queryRaw.mockResolvedValue([
+      { purchase_order_id: "po-1", total: "6", gst_values: ["5"], hsn_codes: ["5208"], buying_uoms: ["ROLL"] },
+      { purchase_order_id: "po-2", total: "12.5", gst_values: ["5", "12"], hsn_codes: ["5208", "5512"], buying_uoms: ["ROLL", "PCS"] },
+    ]);
 
     await expect(listPurchaseOrderReportPage("org-1", { cursor: "previous-page", limit: 2, search: "Factory" }))
       .resolves.toMatchObject({
-        purchaseOrders: [{ id: "po-1", total: 6, lines: [{ buyingUom: "ROLL", hsnCode: "5208", stockUom: "PCS" }] }, { id: "po-2", total: 6 }],
+        purchaseOrders: [
+          { id: "po-1", total: 6, gstValues: [5], hsnCodes: ["5208"], buyingUoms: ["ROLL"] },
+          { id: "po-2", total: 12.5, gstValues: [5, 12], hsnCodes: ["5208", "5512"], buyingUoms: ["ROLL", "PCS"] },
+        ],
         nextCursor: "po-2",
       });
     expect(mocks.purchaseOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -204,7 +204,8 @@ describe("vendor Purchase Order generation", () => {
       cursor: { id: "previous-page" },
       skip: 1,
       orderBy: [{ created_at: "desc" }, { id: "desc" }],
-      select: expect.objectContaining({ lines: expect.any(Object) }),
+      select: expect.not.objectContaining({ lines: expect.anything() }),
     }));
+    expect(mocks.queryRaw).toHaveBeenCalledOnce();
   });
 });

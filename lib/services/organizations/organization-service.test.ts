@@ -72,6 +72,7 @@ import {
   createOrganization,
   deleteOrganizationFromPlatform,
   forceDeleteOrganizationFromPlatform,
+  getOrganizationInternalIdForUser,
   getOrganizationDeletionEligibility,
   listWorkspaceOrganizationPage,
   restoreOrganization,
@@ -102,6 +103,24 @@ beforeEach(() => {
   transactionMock.masterProcess.create.mockImplementation(({ data }: { data: { process_name: string } }) => Promise.resolve({ id: `process-${data.process_name}` }));
   transactionMock.masterOperationTemplate.create.mockImplementation(({ data }: { data: { operation_template_name: string } }) => Promise.resolve({ id: `operation-template-${data.operation_template_name}` }));
   transactionMock.masterProcessTemplate.create.mockResolvedValue({ id: "process-template-id" });
+});
+
+describe("getOrganizationInternalIdForUser", () => {
+  it("uses active organization membership and selects only the internal ID", async () => {
+    prismaMock.organization.findFirst.mockResolvedValue({ id: "org-internal-id" });
+
+    await expect(getOrganizationInternalIdForUser("user-1", "org-public-id"))
+      .resolves.toEqual({ id: "org-internal-id" });
+
+    expect(prismaMock.organization.findFirst).toHaveBeenCalledWith({
+      where: {
+        organization_id: "org-public-id",
+        is_active: true,
+        memberships: { some: { workspace_user_id: "user-1", is_active: true } },
+      },
+      select: { id: true },
+    });
+  });
 });
 
 describe("shared display-text normalization", () => {

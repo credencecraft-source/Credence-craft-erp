@@ -40,10 +40,14 @@ export async function GET(request: Request) {
       const normalizeLabel = (value: string | null) => value?.trim() || null;
       const requestedArticle = normalizeLabel(articleParam);
       const requestedSeason = normalizeLabel(seasonParam);
+      const requestedView = url.searchParams.get("view");
+      const view = requestedView === "finishedGoods" || requestedView === "materials"
+        ? requestedView
+        : "general";
       const summaries = await getArticleOrderSummaries(organization.id, {
         article: requestedArticle,
         season: requestedSeason,
-      });
+      }, view);
       const found = summaries.find((item) =>
         item.article === requestedArticle && item.season === requestedSeason,
       );
@@ -67,8 +71,18 @@ export async function GET(request: Request) {
       return NextResponse.json({ summary: enrichedSummary });
     }
 
-    const summaries = await getArticleOrderSummaryIndex(organization.id);
-    return NextResponse.json({ summaries });
+    const requestedView = url.searchParams.get("view") === "articles" ? "articles" : "seasons";
+    const requestedLimit = Number(url.searchParams.get("limit") ?? 50);
+    const requestedOffset = Number(url.searchParams.get("offset") ?? 0);
+    const summaries = await getArticleOrderSummaryIndex(organization.id, {
+      view: requestedView,
+      season: url.searchParams.get("selectedSeason"),
+      search: url.searchParams.get("search") ?? "",
+      status: url.searchParams.get("status") === "all" ? undefined : url.searchParams.get("status") ?? undefined,
+      limit: Number.isFinite(requestedLimit) ? requestedLimit : 50,
+      offset: Number.isFinite(requestedOffset) ? requestedOffset : 0,
+    });
+    return NextResponse.json(summaries);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     const status = message.includes("Access denied") ? 403 : 500;

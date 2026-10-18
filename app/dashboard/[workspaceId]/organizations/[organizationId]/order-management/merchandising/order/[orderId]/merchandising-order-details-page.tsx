@@ -16,6 +16,7 @@ import OrderDetailsTab from "./components/OrderDetailsTab";
 import { getProcessRows } from "./components/process-tab-state";
 import { getMissingRequiredOrderField } from "./components/order-form-validation";
 import type { OrderFormState } from "./components/order-form-types";
+import { buildOrderSavePayload, type OrderSection } from "./components/order-save-payload";
 
 const FinishedGoodsTab = React.lazy(() => import("./components/FinishedGoodsTab"));
 const BomTab = React.lazy(() => import("./components/BomTab"));
@@ -45,6 +46,24 @@ type OrderLookupDefinition = {
   lookupModuleKey?: string;
   dependsOn?: string;
 };
+
+const LOOKUP_KEYS_BY_TAB: Record<TabType, string[]> = {
+  details: ["article", "entity", "category", "sub-category", "season", "color", "buyer", "brand", "size-group"],
+  finishedGoods: ["size-group", "size"],
+  bom: ["raw-material-type", "raw-material-category", "raw-material-sub-category", "raw-material"],
+  costing: [],
+  techPack: [],
+  measurements: [],
+  process: [],
+  attachments: [],
+};
+
+const ORDER_SECTIONS_BY_TAB: Partial<Record<TabType, OrderSection>> = {
+  finishedGoods: "finishedGoods",
+  bom: "bom",
+  process: "process",
+};
+const ORDER_LOOKUP_KEYS = new Set(Object.values(LOOKUP_KEYS_BY_TAB).flat());
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -102,6 +121,37 @@ const parseOrderLookups = (value: unknown): OrderLookupDefinition[] => {
       key: candidate.key,
       ...(typeof candidate.lookupModuleKey === "string" ? { lookupModuleKey: candidate.lookupModuleKey } : {}),
       ...(typeof candidate.dependsOn === "string" ? { dependsOn: candidate.dependsOn } : {}),
+    }];
+  });
+};
+
+const parseOrderProcessRows = (value: unknown) => {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((stepValue) => {
+    if (!isRecord(stepValue)) return [];
+    const process = isRecord(stepValue.process) ? stepValue.process : {};
+    const operations = Array.isArray(stepValue.operations)
+      ? stepValue.operations.flatMap((operationValue) => {
+          if (!isRecord(operationValue)) return [];
+          return [{
+            id: getOptionalString(operationValue, "id"),
+            sourceOperationId: getOptionalString(operationValue, "source_operation_template_step_id"),
+            operation: getOptionalString(operationValue, "operation"),
+            slNo: typeof operationValue.sl_no === "number" ? operationValue.sl_no : undefined,
+            price: operationValue.price === null || operationValue.price === undefined
+              ? 0
+              : Number(operationValue.price),
+          }];
+        })
+      : [];
+
+    return [{
+      id: getOptionalString(stepValue, "id"),
+      processId: getOptionalString(stepValue, "process_id") ?? getOptionalString(process, "id"),
+      processName: getOptionalString(stepValue, "process_name") ?? getOptionalString(process, "process_name"),
+      operation: getOptionalString(stepValue, "process_name") ?? getOptionalString(process, "process_name"),
+      slNo: typeof stepValue.sl_no === "number" ? stepValue.sl_no : undefined,
+      operations,
     }];
   });
 };
@@ -167,10 +217,17 @@ export default function MerchandisingOrderDetailsPage() {
   const [isSharing, setIsSharing] = useState(false);
 
   // Master Data & Lookups State
-  const [masterOptions, setMasterOptions] = useState<Record<string, MasterDataOption[]>>({});
+  const [masterOptionsByOrganization, setMasterOptionsByOrganization] = useState<Record<string, Record<string, MasterDataOption[]>>>({});
   const [orderLookups, setOrderLookups] = useState<OrderLookupDefinition[]>([]);
-  const lastMasterFetchRef = useRef(0);
-  const hasLoadedLookupsRef = useRef(false);
+  const [lookupStatusByOrganization, setLookupStatusByOrganization] = useState<Record<string, { loading: boolean; errors: Record<string, string> }>>({});
+  const lookupCacheRef = useRef(new Map<string, Map<string, { options: MasterDataOption[]; loadedAt: number }>>());
+  const lookupRequestsRef = useRef(new Map<string, Promise<void>>());
+  const masterOptions = masterOptionsByOrganization[organizationId ?? ""] ?? {};
+  const [orderSectionStatus, setOrderSectionStatus] = useState<Record<string, { loading: boolean; error: string }>>({});
+  const loadedOrderSectionsRef = useRef(new Set<string>());
+  const orderSectionRequestsRef = useRef(new Map<string, Promise<void>>());
+  const currentOrderKeyRef = useRef("");
+  currentOrderKeyRef.current = `${organizationId ?? ""}:${orderId ?? ""}`;
 
   const [form, setForm] = useState<OrderFormState>({
     rows: [],
@@ -202,33 +259,119 @@ export default function MerchandisingOrderDetailsPage() {
     processStatus: "Draft",
   });
 
-  const fetchMasterData = useCallback(async (orgId: string) => {
+  const fetchMasterData = useCallback(async (orgId: string, requestedKeys: string[], forceRefresh = false) => {
+    const cache = lookupCacheRef.current.get(orgId) ?? new Map<string, { options: MasterDataOption[]; loadedAt: number }>();
+    lookupCacheRef.current.set(orgId, cache);
     const now = Date.now();
-    if (hasLoadedLookupsRef.current && now - lastMasterFetchRef.current < 60000) {
-      return;
+    const keys = [...new Set(requestedKeys)];
+    const staleKeys = keys.filter((key) => {
+      const entry = cache.get(key);
+      return forceRefresh || !entry || now - entry.loadedAt >= 60000;
+    });
+
+    if (staleKeys.length === 0) return true;
+
+    const newKeys = staleKeys.filter((key) => !lookupRequestsRef.current.has(`${orgId}:${key}`));
+    const requestPromises = new Set<Promise<void>>();
+    const requestKeys = new Set(newKeys);
+    let newRequestPromise: Promise<void> | undefined;
+
+    for (const key of staleKeys) {
+      const pendingRequest = lookupRequestsRef.current.get(`${orgId}:${key}`);
+      if (pendingRequest) requestPromises.add(pendingRequest);
     }
 
-    lastMasterFetchRef.current = now;
-    hasLoadedLookupsRef.current = true;
+    if (newKeys.length > 0) {
+      setLookupStatusByOrganization((current) => ({
+        ...current,
+        [orgId]: {
+          loading: true,
+          errors: Object.fromEntries(
+            Object.entries(current[orgId]?.errors ?? {}).filter(([key]) => !newKeys.includes(key)),
+          ),
+        },
+      }));
+      const query = new URLSearchParams({
+        shape: "compact",
+        keys: newKeys.join(","),
+        includeArticleDetails: "false",
+      });
+      newRequestPromise = (async () => {
+        const response = await fetch(
+          `/api/organizations/${encodeURIComponent(orgId)}/master-data/order-lookups?${query.toString()}`,
+          { cache: "no-store" },
+        );
+        const data: unknown = await response.json().catch(() => null);
+        if (!response.ok) {
+          const errorMessage = isRecord(data) && typeof data.error === "string"
+            ? data.error
+            : "Unable to load order lookups.";
+          throw new Error(errorMessage);
+        }
+        if (!isRecord(data) || !isRecord(data.masterOptions) || !Array.isArray(data.orderLookups)) {
+          throw new Error("The order lookup response was invalid.");
+        }
+
+        const options = parseMasterOptions(data.masterOptions);
+        for (const key of newKeys) {
+          cache.set(key, { options: options[key] ?? [], loadedAt: Date.now() });
+        }
+        setMasterOptionsByOrganization((current) => ({
+          ...current,
+          [orgId]: { ...(current[orgId] ?? {}), ...options },
+        }));
+        setOrderLookups(parseOrderLookups(data));
+      })();
+      for (const key of newKeys) {
+        lookupRequestsRef.current.set(`${orgId}:${key}`, newRequestPromise);
+      }
+      requestPromises.add(newRequestPromise);
+    }
 
     try {
-      const lookupsRes = await fetch(`/api/organizations/${orgId}/master-data/order-lookups?shape=compact`, { cache: "no-store" });
-      if (lookupsRes.ok) {
-        const lookupData: unknown = await lookupsRes.json();
-        setMasterOptions(parseMasterOptions(isRecord(lookupData) ? lookupData.masterOptions : undefined));
-        setOrderLookups(parseOrderLookups(lookupData));
-      }
+      await Promise.all(requestPromises);
+      setLookupStatusByOrganization((current) => ({
+        ...current,
+        [orgId]: {
+          loading: false,
+          errors: Object.fromEntries(
+            Object.entries(current[orgId]?.errors ?? {}).filter(([key]) => !staleKeys.includes(key)),
+          ),
+        },
+      }));
+      return true;
     } catch (error) {
-      console.error("Error fetching master options:", error);
-      hasLoadedLookupsRef.current = false;
+      console.error("Error fetching order lookups:", error);
+      const message = error instanceof Error ? error.message : "Unable to load order lookups.";
+      setLookupStatusByOrganization((current) => ({
+        ...current,
+        [orgId]: {
+          loading: false,
+          errors: {
+            ...(current[orgId]?.errors ?? {}),
+            ...Object.fromEntries(staleKeys.map((key) => [key, message])),
+          },
+        },
+      }));
+      return false;
+    } finally {
+      for (const key of requestKeys) {
+        if (lookupRequestsRef.current.get(`${orgId}:${key}`) === newRequestPromise) {
+          lookupRequestsRef.current.delete(`${orgId}:${key}`);
+        }
+      }
+      const loading = [...lookupRequestsRef.current.keys()].some((key) => key.startsWith(`${orgId}:`));
+      setLookupStatusByOrganization((current) => ({
+        ...current,
+        [orgId]: { ...(current[orgId] ?? { errors: {} }), loading },
+      }));
     }
   }, []);
 
   useEffect(() => {
-    if (!organizationId || hasLoadedLookupsRef.current) return;
-
-    void fetchMasterData(organizationId);
-  }, [fetchMasterData, organizationId]);
+    if (!organizationId) return;
+    void fetchMasterData(organizationId, LOOKUP_KEYS_BY_TAB[activeTab]);
+  }, [activeTab, fetchMasterData, organizationId]);
 
   useEffect(() => {
     const existingOrderId = orderId || variantFrom;
@@ -241,7 +384,7 @@ export default function MerchandisingOrderDetailsPage() {
     async function loadOrder() {
       try {
         const response = await fetch(
-          `/api/orders/${encodeURIComponent(sourceOrderId)}?organizationId=${encodeURIComponent(organizationId)}`,
+          `/api/orders/${encodeURIComponent(sourceOrderId)}?organizationId=${encodeURIComponent(organizationId)}${variantFrom ? "" : "&view=core"}`,
           { cache: "no-store" },
         );
         const data = await response.json();
@@ -275,6 +418,13 @@ export default function MerchandisingOrderDetailsPage() {
           const nextForm = {
           ...current,
           ...order,
+          ...(!variantFrom
+            ? {
+                rows: [],
+                bomRows: [],
+                processRows: [],
+              }
+            : {}),
           ...(variantFrom
             ? {
                 orderNo: "",
@@ -355,6 +505,112 @@ export default function MerchandisingOrderDetailsPage() {
     };
   }, [variantFrom, variantColors, variantRowsLookup, variantStyleName, orderId, organizationId]);
 
+  const loadOrderSection = useCallback(async (section: OrderSection, forceRefresh = false) => {
+    if (!orderId || !organizationId) return;
+    const requestOrderKey = `${organizationId}:${orderId}`;
+    const sectionKey = `${requestOrderKey}:${section}`;
+    if (!forceRefresh && loadedOrderSectionsRef.current.has(sectionKey)) return;
+    const pendingRequest = orderSectionRequestsRef.current.get(sectionKey);
+    if (pendingRequest) return pendingRequest;
+
+    setOrderSectionStatus((current) => ({
+      ...current,
+      [sectionKey]: { loading: true, error: "" },
+    }));
+    const requestPromise = (async () => {
+      const query = new URLSearchParams({
+        organizationId,
+        section,
+      });
+      const response = await fetch(
+        `/api/orders/${encodeURIComponent(orderId)}?${query.toString()}`,
+        { cache: "no-store" },
+      );
+      const data: unknown = await response.json().catch(() => null);
+      if (!response.ok || !isRecord(data) || !isRecord(data.order)) {
+        const errorMessage = isRecord(data) && typeof data.error === "string"
+          ? data.error
+          : `Unable to load ${section} order data.`;
+        throw new Error(errorMessage);
+      }
+      if (currentOrderKeyRef.current !== requestOrderKey) return;
+
+      const order = data.order;
+      const sectionField = section === "finishedGoods"
+        ? "finishedGoods"
+        : section === "bom"
+          ? "bomItems"
+          : "processSteps";
+      if (!Array.isArray(order[sectionField])) {
+        throw new Error(`The ${section} order response was invalid.`);
+      }
+      const sectionFormData: Partial<OrderFormState> = section === "finishedGoods"
+        ? {
+            rows: Array.isArray(order.finishedGoods)
+              ? order.finishedGoods.map((row) => ({
+                  ...row,
+                  beforeExcessQty: row.beforeExcessQty ?? "",
+                  excess: row.excess ?? "",
+                  excessQty: row.excessQty ?? "",
+                  totalQty: row.totalQty ?? "",
+                  buyerPoPrice: row.buyerPoPrice ?? "",
+                  exchangePrice: row.exchangePrice ?? "",
+                  priceInInr: row.priceInInr ?? "",
+                }))
+              : [],
+          }
+        : section === "bom"
+          ? { bomRows: Array.isArray(order.bomItems) ? order.bomItems : [] }
+          : {
+              processTemplateId: typeof order.process_template_id === "string"
+                ? order.process_template_id
+                : "",
+              processRows: parseOrderProcessRows(order.processSteps),
+            };
+
+      setForm((current) => {
+        const updatedForm = { ...current, ...sectionFormData };
+        if (originalFormRef.current) {
+          originalFormRef.current = { ...originalFormRef.current, ...sectionFormData };
+        }
+        return updatedForm;
+      });
+      loadedOrderSectionsRef.current.add(sectionKey);
+    })();
+
+    orderSectionRequestsRef.current.set(sectionKey, requestPromise);
+    try {
+      await requestPromise;
+      if (currentOrderKeyRef.current === requestOrderKey) {
+        setOrderSectionStatus((current) => ({
+          ...current,
+          [sectionKey]: { loading: false, error: "" },
+        }));
+      }
+    } catch (error) {
+      console.error(`Error fetching order ${section} section:`, error);
+      if (currentOrderKeyRef.current === requestOrderKey) {
+        setOrderSectionStatus((current) => ({
+          ...current,
+          [sectionKey]: {
+            loading: false,
+            error: error instanceof Error ? error.message : `Unable to load ${section} order data.`,
+          },
+        }));
+      }
+    } finally {
+      if (orderSectionRequestsRef.current.get(sectionKey) === requestPromise) {
+        orderSectionRequestsRef.current.delete(sectionKey);
+      }
+    }
+  }, [orderId, organizationId]);
+
+  useEffect(() => {
+    const section = ORDER_SECTIONS_BY_TAB[activeTab];
+    if (!section || !orderId || isOrderLoading) return;
+    void loadOrderSection(section);
+  }, [activeTab, isOrderLoading, loadOrderSection, orderId]);
+
   // Handler to open/redirect to create master view using the `+ New` button
   const handleOpenCreateMaster = async (masterKey: string, returnFieldKey?: string) => {
     const definition = getMasterDefinition(masterKey);
@@ -408,11 +664,8 @@ export default function MerchandisingOrderDetailsPage() {
         throw new Error(data?.error || "Unable to create master value.");
       }
 
-      const refreshedResponse = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups?shape=compact`, { cache: "no-store" });
-      if (refreshedResponse.ok) {
-        const refreshedData: unknown = await refreshedResponse.json();
-        setMasterOptions(parseMasterOptions(isRecord(refreshedData) ? refreshedData.masterOptions : undefined));
-        setOrderLookups(parseOrderLookups(refreshedData));
+      if (ORDER_LOOKUP_KEYS.has(newMasterKey)) {
+        await fetchMasterData(organizationId, [newMasterKey], true);
       }
 
       const formFieldByMasterKey: Record<string, string> = {
@@ -488,6 +741,9 @@ export default function MerchandisingOrderDetailsPage() {
           }).filter((row) => row.size)
         : [],
     }));
+    if (orderId && organizationId) {
+      loadedOrderSectionsRef.current.add(`${organizationId}:${orderId}:finishedGoods`);
+    }
   };
 
   const renderBomMasterSelect = (
@@ -658,13 +914,20 @@ export default function MerchandisingOrderDetailsPage() {
         ? `/api/orders/${encodeURIComponent(orderId)}?organizationId=${encodeURIComponent(organizationId)}`
         : `/api/orders?organizationId=${encodeURIComponent(organizationId)}`;
       const method = orderId ? "PUT" : "POST";
+      const sectionKey = `${organizationId}:${orderId}`;
+      const loadedSections = new Set<OrderSection>(
+        (["finishedGoods", "bom", "process"] as const).filter((section) =>
+          loadedOrderSectionsRef.current.has(`${sectionKey}:${section}`),
+        ),
+      );
+      const payload = buildOrderSavePayload(form, organizationId, orderId, loadedSections);
 
       const response = await fetch(endpoint, {
         method,
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(orderId ? { id: orderId, ...form, organizationId } : { ...form, organizationId }),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -732,6 +995,13 @@ export default function MerchandisingOrderDetailsPage() {
   );
 
   const renderActiveTabContent = () => {
+    if (orderId && isOrderLoading) return tabContentFallback;
+    const orderSection = ORDER_SECTIONS_BY_TAB[activeTab];
+    if (orderId && orderSection) {
+      const sectionKey = `${organizationId}:${orderId}:${orderSection}`;
+      if (!loadedOrderSectionsRef.current.has(sectionKey)) return null;
+    }
+
     if (activeTab === "details") {
       return (
         <OrderDetailsTab
@@ -758,6 +1028,10 @@ export default function MerchandisingOrderDetailsPage() {
       </Suspense>
     );
   };
+  const activeLookupKeys = LOOKUP_KEYS_BY_TAB[activeTab];
+  const activeLookupError = organizationId
+    ? activeLookupKeys.map((key) => lookupStatusByOrganization[organizationId]?.errors[key]).find(Boolean)
+    : undefined;
 
   return (
     <div className={`space-y-4 p-4 text-xs${orderId ? "" : " pb-20"}`}>
@@ -799,6 +1073,41 @@ export default function MerchandisingOrderDetailsPage() {
       {/* Tab Content Area */}
       <div id="merchandising-order-tab-panel" className="pt-2" role="tabpanel">
         {saveNotice && <p role="status" className="mb-3 rounded-md border border-[var(--erp-border)] bg-[var(--erp-brand-soft)] px-3 py-2 text-sm text-[var(--erp-brand)]">{saveNotice}</p>}
+        {organizationId && activeLookupKeys.length > 0 && lookupStatusByOrganization[organizationId]?.loading && (
+          <p role="status" className="mb-3 text-sm text-slate-600">Loading order lookups…</p>
+        )}
+        {organizationId && activeLookupError && (
+          <Card className="mb-3 space-y-3" role="alert">
+            <p>{activeLookupError}</p>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void fetchMasterData(organizationId, LOOKUP_KEYS_BY_TAB[activeTab], true)}
+            >
+              Retry lookup loading
+            </Button>
+          </Card>
+        )}
+        {orderId && ORDER_SECTIONS_BY_TAB[activeTab] && (() => {
+          const section = ORDER_SECTIONS_BY_TAB[activeTab] as OrderSection;
+          const sectionKey = `${organizationId}:${orderId}:${section}`;
+          const sectionStatus = orderSectionStatus[sectionKey];
+          if (loadedOrderSectionsRef.current.has(sectionKey)) return null;
+          if (sectionStatus?.loading) {
+            return <div className="mb-3">{tabContentFallback}</div>;
+          }
+          if (sectionStatus?.error) {
+            return (
+              <Card className="mb-3 space-y-3" role="alert">
+                <p>{sectionStatus.error}</p>
+                <Button type="button" variant="secondary" onClick={() => void loadOrderSection(section, true)}>
+                  Retry section loading
+                </Button>
+              </Card>
+            );
+          }
+          return null;
+        })()}
         <fieldset disabled={Boolean(orderId) && !isEditing} className="min-w-0 border-0 p-0">
           {renderActiveTabContent()}
         </fieldset>

@@ -8,7 +8,12 @@ import {
   requirePlatformSessionAdmin,
   requirePlatformSessionSuperAdmin,
 } from "@/lib/auth/platform-session-manager";
-import { hasOrganizationTrialAccess, startOrganizationTrialOnApproval, startOrganizationTrialOnFirstOpen } from "@/lib/services/platform/organization-trial-service";
+import {
+  hasOrganizationTrialAccess,
+  startOrganizationTrialOnApproval,
+  startOrganizationTrialOnFirstOpen,
+  type OrganizationTrialAccessSnapshot,
+} from "@/lib/services/platform/organization-trial-service";
 import { ensureDefaultProcessTemplate } from "./organization-process-template-service";
 
 export type OrganizationCreateInput = {
@@ -413,6 +418,22 @@ export async function getOrganizationShellContext(workspaceUserId: string, organ
   });
 }
 
+export async function getOrganizationInternalIdForUser(workspaceUserId: string, organizationId: string) {
+  return prisma.organization.findFirst({
+    where: {
+      organization_id: organizationId,
+      is_active: true,
+      memberships: {
+        some: {
+          workspace_user_id: workspaceUserId,
+          is_active: true,
+        },
+      },
+    },
+    select: { id: true },
+  });
+}
+
 export async function getOrganizationByPublicId(organizationId: string) {
   return prisma.organization.findUnique({
     where: { organization_id: organizationId },
@@ -647,6 +668,10 @@ export async function requireOrganizationContext(
     select: {
       id: true,
       organization_id: true,
+      approval_status: true,
+      trial_started_at: true,
+      trial_ends_at: true,
+      trial_enabled: true,
       memberships: {
         where: { workspace_user_id: workspaceUserId, is_active: true },
         select: { id: true, role: true },
@@ -660,8 +685,19 @@ export async function requireOrganizationContext(
     throw new Error("Access denied: organization not found or membership is inactive.");
   }
 
-  await startOrganizationTrialOnFirstOpen(organization.id, workspaceUserId);
-  if (!options.allowExpiredTrial && !await hasOrganizationTrialAccess(organization.id)) {
+  let trialSnapshot: OrganizationTrialAccessSnapshot = {
+    trial_started_at: organization.trial_started_at,
+    trial_ends_at: organization.trial_ends_at,
+    trial_enabled: organization.trial_enabled,
+  };
+  if (
+    organization.approval_status === "APPROVED"
+    && organization.trial_enabled
+    && !organization.trial_started_at
+  ) {
+    trialSnapshot = await startOrganizationTrialOnFirstOpen(organization.id, workspaceUserId) ?? trialSnapshot;
+  }
+  if (!options.allowExpiredTrial && !await hasOrganizationTrialAccess(organization.id, new Date(), trialSnapshot)) {
     throw new Error("This organization's trial has ended. Activate a subscription or contact the platform administrator.");
   }
 

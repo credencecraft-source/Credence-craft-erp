@@ -12,6 +12,12 @@ import { Prisma } from "@prisma/client";
 const DEFAULT_TRIAL_HOURS = 24;
 const MAX_TRIAL_EXTENSION_HOURS = 8760;
 const HOUR_IN_MS = 60 * 60 * 1000;
+export type OrganizationTrialAccessSnapshot = {
+  trial_started_at: Date | null;
+  trial_ends_at: Date | null;
+  trial_enabled: boolean;
+};
+
 export const ORGANIZATION_TRIAL_ACCESS_ENDED_MESSAGE =
   "Your 24-hour organization trial has ended. Activate a subscription or contact the platform administrator.";
 
@@ -230,17 +236,25 @@ async function startOrganizationTrial(
   transaction: Prisma.TransactionClient,
   organizationId: string,
   actor: { workspaceUserId: string } | { platformAdminId: string },
-) {
+): Promise<OrganizationTrialAccessSnapshot | null> {
   const organization = await transaction.organization.findUnique({
     where: { id: organizationId },
     select: {
       approval_status: true,
       trial_started_at: true,
+      trial_ends_at: true,
       trial_enabled: true,
       trial_extension_hours: true,
     },
   });
-  if (!organization || organization.approval_status !== "APPROVED" || !organization.trial_enabled || organization.trial_started_at) return;
+  if (!organization) return null;
+  if (organization.approval_status !== "APPROVED" || !organization.trial_enabled || organization.trial_started_at) {
+    return {
+      trial_started_at: organization.trial_started_at,
+      trial_ends_at: organization.trial_ends_at,
+      trial_enabled: organization.trial_enabled,
+    };
+  }
 
   const startedAt = new Date();
   const endsAt = new Date(startedAt.getTime() + (DEFAULT_TRIAL_HOURS + organization.trial_extension_hours) * HOUR_IN_MS);
@@ -248,7 +262,19 @@ async function startOrganizationTrial(
     where: { id: organizationId, approval_status: "APPROVED", trial_started_at: null, trial_enabled: true },
     data: { trial_started_at: startedAt, trial_ends_at: endsAt },
   });
-  if (started.count !== 1) return;
+  if (started.count !== 1) {
+    const currentOrganization = await transaction.organization.findUnique({
+      where: { id: organizationId },
+      select: { trial_started_at: true, trial_ends_at: true, trial_enabled: true },
+    });
+    return currentOrganization
+      ? {
+          trial_started_at: currentOrganization.trial_started_at,
+          trial_ends_at: currentOrganization.trial_ends_at,
+          trial_enabled: currentOrganization.trial_enabled,
+        }
+      : null;
+  }
 
   const details = { startedAt: startedAt.toISOString(), trialEnd: endsAt.toISOString() };
   if ("platformAdminId" in actor) {
@@ -274,6 +300,11 @@ async function startOrganizationTrial(
       },
     });
   }
+  return {
+    trial_started_at: startedAt,
+    trial_ends_at: endsAt,
+    trial_enabled: true,
+  };
 }
 
 export async function startOrganizationTrialOnApproval(
@@ -285,7 +316,7 @@ export async function startOrganizationTrialOnApproval(
 }
 
 export async function startOrganizationTrialOnFirstOpen(organizationId: string, workspaceUserId: string) {
-  await prisma.$transaction(
+  return prisma.$transaction(
     (transaction) => startOrganizationTrial(transaction, organizationId, { workspaceUserId }),
     { maxWait: 10000, timeout: 20000 },
   );
@@ -304,12 +335,6 @@ export async function isOrganizationTrialActive(organizationId: string, now = ne
     && organization.trial_ends_at > now,
   );
 }
-
-type OrganizationTrialAccessSnapshot = {
-  trial_started_at: Date | null;
-  trial_ends_at: Date | null;
-  trial_enabled: boolean;
-};
 
 export async function hasOrganizationTrialAccess(
   organizationId: string,

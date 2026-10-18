@@ -169,6 +169,7 @@ describe("organization trial lifecycle", () => {
     mocks.transaction.organization.findUnique.mockResolvedValue({
       approval_status: "PENDING_APPROVAL",
       trial_started_at: null,
+      trial_ends_at: null,
       trial_enabled: true,
       trial_extension_hours: 0,
     });
@@ -188,16 +189,22 @@ describe("organization trial lifecycle", () => {
     mocks.transaction.organization.findUnique.mockResolvedValue({
       approval_status: "APPROVED",
       trial_started_at: null,
+      trial_ends_at: null,
       trial_enabled: true,
       trial_extension_hours: 0,
     });
     mocks.transaction.organization.updateMany.mockResolvedValue({ count: 1 });
 
-    await startOrganizationTrialOnFirstOpen("internal-org-id", "workspace-user-id");
+    const snapshot = await startOrganizationTrialOnFirstOpen("internal-org-id", "workspace-user-id");
 
     expect(mocks.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
       maxWait: 10000,
       timeout: 20000,
+    });
+    expect(snapshot).toMatchObject({
+      trial_started_at: expect.any(Date),
+      trial_ends_at: expect.any(Date),
+      trial_enabled: true,
     });
     expect(mocks.transaction.organization.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "internal-org-id", approval_status: "APPROVED", trial_started_at: null, trial_enabled: true },
@@ -209,6 +216,49 @@ describe("organization trial lifecycle", () => {
         action: "ORGANIZATION_TRIAL_STARTED",
       }),
     }));
+  });
+
+  it("returns the winning trial snapshot when simultaneous first opens race to start it", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-02T10:00:00.000Z"));
+    const initialState = {
+      approval_status: "APPROVED",
+      trial_started_at: null,
+      trial_ends_at: null,
+      trial_enabled: true,
+      trial_extension_hours: 0,
+    };
+    const startedAt = new Date("2026-10-02T10:00:00.000Z");
+    const endsAt = new Date("2026-10-03T10:00:00.000Z");
+    const startedState = {
+      trial_started_at: startedAt,
+      trial_ends_at: endsAt,
+      trial_enabled: true,
+    };
+    let readCount = 0;
+    let claimCount = 0;
+    mocks.transaction.organization.findUnique.mockImplementation(async () => {
+      readCount += 1;
+      return readCount <= 2 ? initialState : startedState;
+    });
+    mocks.transaction.organization.updateMany.mockImplementation(async () => {
+      claimCount += 1;
+      return { count: claimCount === 1 ? 1 : 0 };
+    });
+
+    try {
+      const snapshots = await Promise.all([
+        startOrganizationTrialOnFirstOpen("internal-org-id", "workspace-user-a"),
+        startOrganizationTrialOnFirstOpen("internal-org-id", "workspace-user-b"),
+      ]);
+
+      expect(snapshots).toEqual([startedState, startedState]);
+      expect(mocks.transaction.organization.updateMany).toHaveBeenCalledTimes(2);
+      expect(mocks.transaction.auditEvent.create).toHaveBeenCalledTimes(1);
+      expect(mocks.prisma.$transaction).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("adds an extension to an active trial and audits the platform admin", async () => {

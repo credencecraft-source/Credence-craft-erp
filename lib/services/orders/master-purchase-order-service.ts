@@ -17,6 +17,11 @@ const masterPurchaseOrderInclude = {
   purchaseOrderSources: { select: { purchase_order_id: true } },
 } as const;
 
+const masterPurchaseOrderPageInclude = {
+  ...masterPurchaseOrderInclude,
+  lines: { orderBy: { created_at: "asc" as const }, take: 1 },
+} as const;
+
 const numberValue = (value: Prisma.Decimal | number | string | null | undefined) => value === null || value === undefined ? null : Number(value);
 
 function serializeMaster(order: Prisma.MasterPurchaseOrderGetPayload<{ include: typeof masterPurchaseOrderInclude }>) {
@@ -162,15 +167,32 @@ export async function listMasterPurchaseOrdersPage(
   const limit = Math.min(100, Math.max(1, Math.trunc(input.limit ?? 50)));
   const rows = await prisma.masterPurchaseOrder.findMany({
     where: { organization_id: organizationId },
-    include: masterPurchaseOrderInclude,
+    include: masterPurchaseOrderPageInclude,
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
     take: limit + 1,
     ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
   });
   const hasNextPage = rows.length > limit;
   const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
+  const lineTotals = pageRows.length === 0
+    ? []
+    : await prisma.$queryRaw<Array<{ master_purchase_order_id: string; total: Prisma.Decimal }>>`
+        SELECT
+          line.master_purchase_order_id,
+          COALESCE(SUM(COALESCE(line.total_spend, line.grouped_qty * COALESCE(line.vendor_price, 0))), 0)::numeric AS total
+        FROM master_purchase_order_lines AS line
+        INNER JOIN master_purchase_orders AS master
+          ON master.id = line.master_purchase_order_id
+        WHERE master.organization_id = ${organizationId}
+          AND line.master_purchase_order_id IN (${Prisma.join(pageRows.map((row) => row.id))})
+        GROUP BY line.master_purchase_order_id
+      `;
+  const totalByMasterId = new Map(lineTotals.map((row) => [row.master_purchase_order_id, numberValue(row.total) ?? 0]));
   return {
-    masterPurchaseOrders: pageRows.map(serializeMaster),
+    masterPurchaseOrders: pageRows.map((row) => ({
+      ...serializeMaster(row),
+      total: totalByMasterId.get(row.id) ?? 0,
+    })),
     nextCursor: hasNextPage ? pageRows[pageRows.length - 1]?.id ?? null : null,
   };
 }

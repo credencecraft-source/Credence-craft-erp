@@ -385,7 +385,7 @@ function GroupedPurchaseOrderPriceRow({
   );
   const lineGstValues = [
     ...new Set(
-      order.lines
+      (order.lineTaxDetails ?? order.lines)
         .map((line) => String(line.gst ?? "").trim())
         .filter((value) => value && value !== "-"),
     ),
@@ -398,7 +398,7 @@ function GroupedPurchaseOrderPriceRow({
       : String(order.gst);
   const lineHsnValues = [
     ...new Set(
-      order.lines
+      (order.lineTaxDetails ?? order.lines)
         .map((line) => String(line.hsnCode ?? "").trim())
         .filter((value) => value && value !== "-"),
     ),
@@ -452,13 +452,6 @@ function GroupedPurchaseOrderPriceRow({
     if (!validDraft) return;
     await onSave({ price, gst, gstMasterId, buyingUom, convertValue, hsnCode });
   };
-  const total = order.lines.reduce(
-    (sum, line) =>
-      sum +
-      Number(line.groupedQty ?? 0) *
-        (price.trim() !== "" ? Number(price) : Number(line.vendorPrice ?? 0)),
-    0,
-  );
   const quantity = Number(
     order.totalGroupedQty ??
       order.lines.reduce(
@@ -466,6 +459,12 @@ function GroupedPurchaseOrderPriceRow({
         0,
       ),
   );
+  const total =
+    quantity *
+    (price.trim() !== "" ? Number(price) : Number(firstLine?.vendorPrice ?? 0));
+  const displayedTotal = price.trim() !== ""
+    ? total
+    : order.lineVendorPriceTotal ?? total;
 
   return (
     <tr
@@ -594,7 +593,7 @@ function GroupedPurchaseOrderPriceRow({
         )}
       </td>
       <td className="px-3 py-3 text-right font-bold text-slate-900">
-        {formatNumber(total)}
+        {formatNumber(displayedTotal)}
       </td>
       <td className="px-3 py-3" onClick={(event) => event.stopPropagation()}>
         <div className="flex items-center gap-2">

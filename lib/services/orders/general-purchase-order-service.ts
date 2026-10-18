@@ -24,6 +24,38 @@ const generalPurchaseOrderRequestSelect = {
   purchase_order_id: true,
 } as const;
 
+const generalPurchaseOrderRequestListSelect = {
+  ...generalPurchaseOrderRequestSelect,
+  rawMaterial: {
+    select: {
+      id: true,
+      organization_id: true,
+      raw_material_name: true,
+      raw_material_category: {
+        select: { organization_id: true, raw_material_category: true },
+      },
+      raw_material_sub_category: {
+        select: { organization_id: true, raw_material_sub_category: true },
+      },
+      stock_uom: {
+        select: { organization_id: true, uom: true },
+      },
+    },
+  },
+  vendor: {
+    select: { id: true, organization_id: true, vendor: true },
+  },
+  purchaseOrder: {
+    select: {
+      id: true,
+      organization_id: true,
+      display_no: true,
+      purchase_order_no: true,
+      status: true,
+    },
+  },
+} satisfies Prisma.GeneralPurchaseOrderRequestSelect;
+
 export type GeneralPurchaseOrderRequestInput = {
   rawMaterialId: string;
   quantity: number | string;
@@ -90,86 +122,47 @@ export async function listGeneralPurchaseOrderRequests(
   }
   const requests = await prisma.generalPurchaseOrderRequest.findMany({
     where,
-    select: generalPurchaseOrderRequestSelect,
+    select: generalPurchaseOrderRequestListSelect,
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
     take: limit + 1,
     ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
   });
   const hasNextPage = requests.length > limit;
   const pageRequests = hasNextPage ? requests.slice(0, limit) : requests;
-  const materialIds = [...new Set(pageRequests.map((request) => request.raw_material_id))];
-  const vendorIds = [...new Set(pageRequests.flatMap((request) => request.vendor_id ? [request.vendor_id] : []))];
-  const purchaseOrderIds = [...new Set(pageRequests.flatMap((request) => request.purchase_order_id ? [request.purchase_order_id] : []))];
-  const [materials, vendors, purchaseOrders] = await Promise.all([
-    prisma.masterRawMaterial.findMany({
-    where: { organization_id: organizationId, id: { in: materialIds } },
-    select: {
-      id: true,
-      raw_material_name: true,
-      raw_material_category_id: true,
-      raw_material_sub_category_id: true,
-      stock_uom_id: true,
-    },
-    }),
-    prisma.masterVendor.findMany({
-    where: { organization_id: organizationId, id: { in: vendorIds } },
-    select: { id: true, vendor: true },
-    }),
-    prisma.purchaseOrder.findMany({
-    where: { organization_id: organizationId, id: { in: purchaseOrderIds } },
-    select: { id: true, display_no: true, purchase_order_no: true, status: true },
-    }),
-  ]);
-  if (materials.length !== materialIds.length || vendors.length !== vendorIds.length || purchaseOrders.length !== purchaseOrderIds.length) {
-    throw new Error("A General PO request references unavailable organization data.");
-  }
-  const categoryIds = [...new Set(materials.map((material) => material.raw_material_category_id))];
-  const subCategoryIds = [...new Set(materials.map((material) => material.raw_material_sub_category_id))];
-  const uomIds = [...new Set(materials.map((material) => material.stock_uom_id))];
-  const [categories, subCategories, uoms] = await Promise.all([
-    prisma.masterRawMaterialCategory.findMany({
-    where: { organization_id: organizationId, id: { in: categoryIds } },
-    select: { id: true, raw_material_category: true },
-    }),
-    prisma.masterRawMaterialSubCategory.findMany({
-    where: { organization_id: organizationId, id: { in: subCategoryIds } },
-    select: { id: true, raw_material_sub_category: true },
-    }),
-    prisma.masterUom.findMany({
-    where: { organization_id: organizationId, id: { in: uomIds } },
-    select: { id: true, uom: true },
-    }),
-  ]);
-  if (categories.length !== categoryIds.length || subCategories.length !== subCategoryIds.length || uoms.length !== uomIds.length) {
-    throw new Error("A General PO raw material references unavailable organization master data.");
-  }
-  const materialsById = new Map(materials.map((material) => [material.id, material]));
-  const categoriesById = new Map(categories.map((category) => [category.id, category.raw_material_category]));
-  const subCategoriesById = new Map(subCategories.map((category) => [category.id, category.raw_material_sub_category]));
-  const uomsById = new Map(uoms.map((uom) => [uom.id, uom.uom]));
-  const vendorsById = new Map(vendors.map((vendor) => [vendor.id, vendor.vendor]));
-  const purchaseOrdersById = new Map(purchaseOrders.map((order) => [order.id, order]));
   return {
     requests: pageRequests.map((request) => {
-    const material = materialsById.get(request.raw_material_id);
-    const purchaseOrder = request.purchase_order_id
-      ? purchaseOrdersById.get(request.purchase_order_id)
-      : null;
-    if (!material || !categoriesById.has(material.raw_material_category_id)
-      || !subCategoriesById.has(material.raw_material_sub_category_id)
-      || !uomsById.has(material.stock_uom_id)) {
+    const material = request.rawMaterial;
+    const vendor = request.vendor;
+    const purchaseOrder = request.purchaseOrder;
+    if (!material || material.id !== request.raw_material_id
+      || material.organization_id !== organizationId) {
+      throw new Error("A General PO request references unavailable organization data.");
+    }
+    if (!material.raw_material_category
+      || material.raw_material_category.organization_id !== organizationId
+      || !material.raw_material_sub_category
+      || material.raw_material_sub_category.organization_id !== organizationId
+      || !material.stock_uom
+      || material.stock_uom.organization_id !== organizationId) {
       throw new Error("A General PO raw material references unavailable organization master data.");
+    }
+    if (request.vendor_id && (!vendor || vendor.id !== request.vendor_id || vendor.organization_id !== organizationId)) {
+      throw new Error("A General PO request references unavailable organization data.");
+    }
+    if (request.purchase_order_id
+      && (!purchaseOrder || purchaseOrder.id !== request.purchase_order_id || purchaseOrder.organization_id !== organizationId)) {
+      throw new Error("A General PO request references unavailable organization data.");
     }
     return {
     id: request.id,
     status: request.status,
     rawMaterial: material.raw_material_name,
     rawMaterialId: request.raw_material_id,
-    category: categoriesById.get(material.raw_material_category_id) ?? null,
-    subCategory: subCategoriesById.get(material.raw_material_sub_category_id) ?? null,
-    stockUom: uomsById.get(material.stock_uom_id) ?? "",
+    category: material.raw_material_category.raw_material_category,
+    subCategory: material.raw_material_sub_category.raw_material_sub_category,
+    stockUom: material.stock_uom.uom,
     quantity: Number(request.quantity),
-    vendor: request.vendor_id ? { id: request.vendor_id, name: vendorsById.get(request.vendor_id) ?? "" } : null,
+    vendor: vendor ? { id: vendor.id, name: vendor.vendor } : null,
     vendorPrice: request.vendor_price === null ? null : Number(request.vendor_price),
     gst: request.gst === null ? null : Number(request.gst),
     hsnCode: request.hsn_code,

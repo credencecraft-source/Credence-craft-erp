@@ -4,6 +4,8 @@ import { Prisma } from "@prisma/client";
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   masterPurchaseOrderFindFirst: vi.fn(),
+  masterPurchaseOrderFindMany: vi.fn(),
+  queryRaw: vi.fn(),
   createAuditEvent: vi.fn(),
   transactionClient: {
     procurementDocumentCounter: { upsert: vi.fn() },
@@ -18,12 +20,16 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
     $transaction: mocks.transaction,
-    masterPurchaseOrder: { findFirst: mocks.masterPurchaseOrderFindFirst },
+    $queryRaw: mocks.queryRaw,
+    masterPurchaseOrder: {
+      findFirst: mocks.masterPurchaseOrderFindFirst,
+      findMany: mocks.masterPurchaseOrderFindMany,
+    },
   },
 }));
 vi.mock("@/lib/services/organizations/audit-event-service", () => ({ createAuditEvent: mocks.createAuditEvent }));
 
-import { createMasterPurchaseOrder, deleteMasterPurchaseOrder, getMasterPurchaseOrder } from "./master-purchase-order-service";
+import { createMasterPurchaseOrder, deleteMasterPurchaseOrder, getMasterPurchaseOrder, listMasterPurchaseOrdersPage } from "./master-purchase-order-service";
 
 describe("stock-origin grouped records", () => {
   beforeEach(() => {
@@ -352,5 +358,70 @@ describe("stock-origin grouped records", () => {
     expect(mocks.masterPurchaseOrderFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "master-1", organization_id: "org-1" },
     }));
+  });
+
+  it("loads compact tenant-scoped Master Group pages and aggregates line totals", async () => {
+    mocks.masterPurchaseOrderFindMany.mockResolvedValue([{
+      id: "master-1",
+      entity_id: "entity-1",
+      entity: { id: "entity-1", entity_name: "Factory" },
+      vendor: { id: "vendor-1", vendor: "Vendor" },
+      sourceRecords: [{
+        grouped_purchase_order_id: "group-1",
+        groupedPurchaseOrder: {
+          source_type: "VENDOR",
+          grouped_po_no: "group-internal",
+          display_no: 2,
+          vendor_price_inr: new Prisma.Decimal("5"),
+          vendor_price: null,
+          gst: new Prisma.Decimal("5"),
+          hsn_code: "5208",
+          buying_uom: "MTR",
+        },
+      }],
+      lines: [{
+        id: "line-1",
+        source_grouped_po_no: "group-internal",
+        source_order_id: "order-1",
+        source_order_no: "ORDER-1",
+        style_name: "Style",
+        brand: "Brand",
+        raw_material: "Cotton",
+        category: "Fabric",
+        sub_category: "Woven",
+        required_qty: new Prisma.Decimal("10"),
+        grouped_qty: new Prisma.Decimal("5"),
+        vendor_price: new Prisma.Decimal("5"),
+        total_spend: new Prisma.Decimal("25"),
+        stock_uom: "MTR",
+      }],
+      purchaseOrderSources: [],
+      master_po_no: "master-internal",
+      display_no: 1,
+      status: "MASTER_GROUPED",
+      created_at: new Date("2026-10-01T00:00:00Z"),
+      raw_material: "Cotton",
+      category: "Fabric",
+      sub_category: "Woven",
+      total_required_qty: new Prisma.Decimal("10"),
+      total_grouped_qty: new Prisma.Decimal("5"),
+      no_of_styles: 1,
+    }]);
+    mocks.queryRaw.mockResolvedValue([{
+      master_purchase_order_id: "master-1",
+      total: new Prisma.Decimal("25"),
+    }]);
+
+    await expect(listMasterPurchaseOrdersPage("org-1", { limit: 10 }))
+      .resolves.toMatchObject({
+        masterPurchaseOrders: [{ id: "master-1", total: 25, lines: [{ id: "line-1" }] }],
+        nextCursor: null,
+      });
+    expect(mocks.masterPurchaseOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-1" },
+      take: 11,
+      include: expect.objectContaining({ lines: { orderBy: { created_at: "asc" }, take: 1 } }),
+    }));
+    expect(mocks.queryRaw).toHaveBeenCalledOnce();
   });
 });

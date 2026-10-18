@@ -93,6 +93,12 @@ export type GroupedPurchaseOrder = {
   otherChargesInr?: number | null;
   organizationState?: string | null;
   organizationGstin?: string | null;
+  lineVendorPriceTotal?: number | null;
+  lineTaxDetails?: Array<{
+    itemName: string | null;
+    gst?: number | string | null;
+    hsnCode?: string | null;
+  }>;
   vendor: {
     id: string;
     name: string;
