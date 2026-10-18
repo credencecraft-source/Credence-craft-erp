@@ -1,14 +1,21 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { createRawMaterialStockBookings, listRawMaterialStockBookings } from "@/lib/services/inventory/rm-stock-booking-service";
+import { createRawMaterialStockBookings, getRawMaterialStockBooking, listRawMaterialStockBookings } from "@/lib/services/inventory/rm-stock-booking-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request) {
   try {
     const user = await requireSessionUser();
-    const organizationId = new URL(request.url).searchParams.get("organizationId") ?? "";
+    const params = new URL(request.url).searchParams;
+    const organizationId = params.get("organizationId") ?? "";
     const organization = await requireOrganizationContext(user.id, organizationId);
+    const bookingId = params.get("bookingId")?.trim();
+    if (bookingId) {
+      const booking = await getRawMaterialStockBooking(organization.id, bookingId);
+      if (!booking) return NextResponse.json({ error: "Booked stock record was not found." }, { status: 404 });
+      return NextResponse.json({ booking });
+    }
     return NextResponse.json({ bookings: await listRawMaterialStockBookings(organization.id) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load booked stock." }, { status: 400 });

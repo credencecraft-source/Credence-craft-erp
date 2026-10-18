@@ -75,7 +75,6 @@ export default function RawMaterialInventoryStatusPage({
             rowIdSelector={(row) => row.id}
             selectedIds={[]}
             selectable={false}
-            onRowClick={() => undefined}
             emptyMessage="No raw-material stock is available for this organization."
             getSearchValue={(fieldKey, row) => String(row[fieldKey as keyof RawMaterialInventoryStatusRow] ?? "")}
             renderCell={(fieldKey, row) => {

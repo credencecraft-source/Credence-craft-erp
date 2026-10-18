@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { filterIndexedReportRecords, type IndexedReportRow } from "./report-grid-filtering";
+import { describe, expect, it, vi } from "vitest";
+import {
+  filterIndexedReportRecords,
+  getReportSearchValue,
+  type IndexedReportRow,
+} from "./report-grid-filtering";
 
 const rows: IndexedReportRow<{ id: string }>[] = [
   {
@@ -38,5 +42,35 @@ describe("filterIndexedReportRecords", () => {
     expect(filterIndexedReportRecords(rows, "", {
       season: { operator: "empty", value: "" },
     }).map((row) => row.id)).toEqual(["3"]);
+  });
+});
+
+describe("getReportSearchValue", () => {
+  it("indexes primitive record values without rendering a cell", () => {
+    const renderCell = vi.fn(() => "rendered");
+
+    expect(getReportSearchValue({ orderNo: "OD-100" }, "orderNo", undefined, renderCell))
+      .toBe("od-100");
+    expect(renderCell).not.toHaveBeenCalled();
+  });
+
+  it("uses explicit searchable values before record properties", () => {
+    const renderCell = vi.fn(() => "rendered");
+
+    expect(getReportSearchValue(
+      { orderNo: "OD-100" },
+      "orderNo",
+      () => "Display Name",
+      renderCell,
+    )).toBe("display name");
+    expect(renderCell).not.toHaveBeenCalled();
+  });
+
+  it("falls back to rendered values for computed fields", () => {
+    const renderCell = vi.fn(() => "In Progress");
+
+    expect(getReportSearchValue({ orderNo: "OD-100" }, "status", undefined, renderCell))
+      .toBe("in progress");
+    expect(renderCell).toHaveBeenCalledOnce();
   });
 });

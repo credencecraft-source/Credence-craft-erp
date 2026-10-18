@@ -65,6 +65,7 @@ vi.mock("@/lib/services/organizations/organization-usage-statistics-service", ()
 import {
   deleteWorkspaceUser,
   listWorkspaceUsers,
+  refreshWorkspaceUserEmailFromOrganization,
   updateWorkspaceUser,
 } from "./workspace-user-service";
 
@@ -246,6 +247,89 @@ describe("platform workspace-user report service", () => {
 
     expect(platformAuditCreateMock).not.toHaveBeenCalled();
     expect(deleteUserMock).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the email from an active organization and marks it verified", async () => {
+    findUniqueUserMock.mockResolvedValueOnce({
+      id: "user-1",
+      email: null,
+      email_verified: false,
+      organizationMemberships: [
+        {
+          organization: {
+            id: "organization-1",
+            is_active: true,
+            organization_email: " Owner@Example.com ",
+          },
+        },
+      ],
+    });
+
+    await expect(refreshWorkspaceUserEmailFromOrganization(" user-1 "))
+      .resolves.toEqual({ changed: true, email: "owner@example.com" });
+
+    expect(updateUserMock).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: { email: "owner@example.com", email_verified: true },
+    });
+    expect(platformAuditCreateMock).toHaveBeenCalledWith({
+      data: {
+        platform_admin_id: "platform-admin-1",
+        action: "WORKSPACE_USER_EMAIL_REFRESHED_FROM_ORGANIZATION",
+        entity_type: "WorkspaceUser",
+        entity_id: "user-1",
+        details: {
+          changedFields: ["email", "emailVerification"],
+          sourceOrganizationIds: ["organization-1"],
+          emailVerified: true,
+        },
+      },
+    });
+  });
+
+  it("rejects refresh when the user has conflicting organization emails", async () => {
+    findUniqueUserMock.mockResolvedValueOnce({
+      id: "user-1",
+      email: null,
+      email_verified: false,
+      organizationMemberships: [
+        {
+          organization: {
+            id: "organization-1",
+            is_active: true,
+            organization_email: "one@example.com",
+          },
+        },
+        {
+          organization: {
+            id: "organization-2",
+            is_active: true,
+            organization_email: "two@example.com",
+          },
+        },
+      ],
+    });
+
+    await expect(refreshWorkspaceUserEmailFromOrganization("user-1"))
+      .rejects.toThrow("This user has multiple organization emails.");
+
+    expect(updateUserMock).not.toHaveBeenCalled();
+    expect(platformAuditCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when the user has no organization email", async () => {
+    findUniqueUserMock.mockResolvedValueOnce({
+      id: "user-1",
+      email: null,
+      email_verified: false,
+      organizationMemberships: [],
+    });
+
+    await expect(refreshWorkspaceUserEmailFromOrganization("user-1"))
+      .rejects.toThrow("No verified organization email is available");
+
+    expect(updateUserMock).not.toHaveBeenCalled();
+    expect(platformAuditCreateMock).not.toHaveBeenCalled();
   });
 
   it("updates account fields, resets affected verification, and records a platform audit event", async () => {

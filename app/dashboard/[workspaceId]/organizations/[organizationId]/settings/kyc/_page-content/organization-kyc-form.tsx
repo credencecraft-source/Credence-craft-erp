@@ -439,7 +439,7 @@ export default function OrganizationKycForm({
         size="2xl"
         className="p-0"
       >
-        <form ref={formRef} onSubmit={(event) => event.preventDefault()} className="min-w-0">
+        {open ? <form ref={formRef} onSubmit={(event) => event.preventDefault()} className="min-w-0">
           <header className="space-y-5 bg-[var(--erp-brand-hover)] px-6 py-6 text-white sm:px-8">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
@@ -912,7 +912,7 @@ export default function OrganizationKycForm({
               ) : null}
             </div>
           </footer>
-        </form>
+        </form> : null}
       </Modal>
       <Modal
         open={resetOpen}

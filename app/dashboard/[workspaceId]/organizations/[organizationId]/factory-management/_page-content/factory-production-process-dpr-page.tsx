@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Card from "@/components/ui/Card";
@@ -14,7 +14,7 @@ const money = (value: number | string | null | undefined) => value === null || v
 
 type GrnLine = { id: string; operation_name: string; actual_made_qty: number; received_qty: number; billable: boolean; vendor_name?: string | null; actual_price?: number | string | null };
 type Grn = { id: string; grn_no: string; grn_date: string; received_qty: number; status: string; fromProcess: { process_name: string }; toProcess: { process_name: string }; workOrder: { work_order_no: string }; lines: GrnLine[] };
-type DprReportRow = GrnLine & { grn_no: string; grn_date: string; work_order_no: string; to_process: string; status: string };
+type DprReportRow = GrnLine & { grn_id: string; grn_no: string; grn_date: string; work_order_no: string; to_process: string; status: string };
 
 const reportFields: Array<{ key: keyof DprReportRow; label: string }> = [
   { key: "grn_no", label: "GRN No" },
@@ -32,6 +32,7 @@ const reportFields: Array<{ key: keyof DprReportRow; label: string }> = [
 
 export default function FactoryProductionProcessDprPage() {
   const params = useParams<{ workspaceId: string; organizationId: string; process: string }>();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
@@ -67,6 +68,7 @@ export default function FactoryProductionProcessDprPage() {
   const reportRows = useMemo<DprReportRow[]>(
     () => visibleGroups.flatMap(([, dateGrns]) => dateGrns.flatMap((grn) => grn.lines.map((line) => ({
       ...line,
+      grn_id: grn.id,
       grn_no: grn.grn_no,
       grn_date: grn.grn_date,
       work_order_no: grn.workOrder.work_order_no,
@@ -99,7 +101,12 @@ export default function FactoryProductionProcessDprPage() {
             storageKey={`credence-craft-dpr-${organizationId}-${processName}`}
             rowIdSelector={(row) => row.id}
             selectedIds={[]}
-            onRowClick={() => undefined}
+            onRowClick={(recordId) => {
+              const selected = reportRows.find((row) => row.id === recordId);
+              if (selected) router.push(
+                `/dashboard/${workspaceId}/organizations/${organizationId}/factory-management/production/dpr-report/${encodeURIComponent(selected.grn_id)}`,
+              );
+            }}
             renderCell={(fieldKey, row) => {
               if (["actual_made_qty", "received_qty"].includes(fieldKey)) return quantity(Number(row[fieldKey as "actual_made_qty" | "received_qty"]));
               if (fieldKey === "actual_price") return money(row.actual_price);

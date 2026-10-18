@@ -292,7 +292,7 @@ function MultiLookupField({
             <p className="text-sm text-slate-500">Choose one or more values.</p>
           </div>
           <div className="grid max-h-72 gap-2 overflow-y-auto sm:grid-cols-2">
-            {options.map((option) => (
+            {open && options.map((option) => (
               <Checkbox
                 key={option.id}
                 label={option.label}

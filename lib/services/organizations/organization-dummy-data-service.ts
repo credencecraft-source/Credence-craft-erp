@@ -329,88 +329,114 @@ export async function getOrganizationDummyDataStatus(userId: string, routeOrgani
     throw error;
   }
 
-  let orderNo: string | null = null;
-  if (batch?.sample_order_id) {
-    const order = await prisma.merchandisingOrder.findFirst({
-      where: { id: batch.sample_order_id, organization_id: organization.id },
-      select: { orderNo: true },
-    });
-    orderNo = order?.orderNo ?? null;
-  }
-
   const batchRecords = batch ? readMasterRecordIds(batch.master_record_ids) : [];
   const orderCount = batchRecords.filter((record) => record.moduleKey === "sample-order").length
     || (batch?.sample_order_id ? 1 : 0);
   const groupedPurchaseOrderIds = batchRecords
     .filter((record) => record.moduleKey === "grouped-purchase-order")
     .map((record) => record.id);
-  const groupedPurchaseOrderRows = groupedPurchaseOrderIds.length === 0 ? [] : await prisma.groupedPurchaseOrder.findMany({
-    where: { organization_id: organization.id, id: { in: groupedPurchaseOrderIds } },
-    select: {
-      id: true,
-      grouped_po_no: true,
-      status: true,
-      vendor_price: true,
-      gst: true,
-      hsn_code: true,
-      buying_uom: true,
-    },
-    orderBy: { grouped_po_no: "asc" },
-  });
+  const sampleOrderIds = batchRecords
+    .filter((record) => record.moduleKey === "sample-order")
+    .map((record) => record.id);
+  const purchaseOrderIds = batchRecords
+    .filter((record) => record.moduleKey === "purchase-order")
+    .map((record) => record.id);
+  const gateEntryIds = batchRecords
+    .filter((record) => record.moduleKey === "gate-entry")
+    .map((record) => record.id);
+  const sampleGrnIds = batchRecords
+    .filter((record) => record.moduleKey === "inventory-receipt")
+    .map((record) => record.id);
+  const sampleWorkOrderIds = batchRecords
+    .filter((record) => record.moduleKey === "sample-work-order")
+    .map((record) => record.id);
+
+  const [sampleOrder, groupedPurchaseOrderRows, purchaseOrders, gateEntries, sampleGrns, sampleWorkOrders] =
+    await Promise.all([
+      batch?.sample_order_id
+        ? prisma.merchandisingOrder.findFirst({
+          where: { id: batch.sample_order_id, organization_id: organization.id },
+          select: { orderNo: true },
+        })
+        : Promise.resolve(null),
+      groupedPurchaseOrderIds.length === 0
+        ? Promise.resolve([])
+        : prisma.groupedPurchaseOrder.findMany({
+          where: { organization_id: organization.id, id: { in: groupedPurchaseOrderIds } },
+          select: {
+            id: true,
+            grouped_po_no: true,
+            status: true,
+            vendor_price: true,
+            gst: true,
+            hsn_code: true,
+            buying_uom: true,
+          },
+          orderBy: { grouped_po_no: "asc" },
+        }),
+      purchaseOrderIds.length === 0
+        ? Promise.resolve([])
+        : prisma.purchaseOrder.findMany({
+          where: { organization_id: organization.id, id: { in: purchaseOrderIds } },
+          select: { id: true, status: true },
+        }),
+      gateEntryIds.length === 0
+        ? Promise.resolve([])
+        : prisma.gateEntry.findMany({
+          where: { organization_id: organization.id, id: { in: gateEntryIds } },
+          select: { id: true, purchase_order_id: true },
+        }),
+      sampleGrnIds.length === 0
+        ? Promise.resolve([])
+        : prisma.inventoryReceipt.findMany({
+          where: { organization_id: organization.id, id: { in: sampleGrnIds } },
+          select: {
+            id: true,
+            purchase_order_id: true,
+            lines: {
+              select: {
+                id: true,
+                rmGrnVerification: {
+                  select: {
+                    id: true,
+                    allocations: {
+                      select: {
+                        id: true,
+                        verification_allocated: true,
+                        orderAllocations: { select: { allocated_quantity: true } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        }),
+      sampleWorkOrderIds.length === 0 || sampleOrderIds.length === 0
+        ? Promise.resolve([])
+        : prisma.factoryWorkOrder.findMany({
+          where: {
+            organization_id: organization.id,
+            id: { in: sampleWorkOrderIds },
+            order_id: { in: sampleOrderIds },
+          },
+          select: { id: true, order_id: true },
+        }),
+    ]);
+  const orderNo = sampleOrder?.orderNo ?? null;
   const groupedPurchaseOrders = groupedPurchaseOrderRows.map((order) => ({
     ...order,
     vendor_price: order.vendor_price?.toString() ?? null,
     gst: order.gst?.toString() ?? null,
   }));
   const masterGroupCount = batchRecords.filter((record) => record.moduleKey === "master-purchase-order").length;
-  const purchaseOrderIds = batchRecords
-    .filter((record) => record.moduleKey === "purchase-order")
-    .map((record) => record.id);
-  const purchaseOrders = purchaseOrderIds.length === 0 ? [] : await prisma.purchaseOrder.findMany({
-    where: { organization_id: organization.id, id: { in: purchaseOrderIds } },
-    select: { id: true, status: true },
-  });
   const purchaseOrderCount = purchaseOrders.length;
   const purchaseOrdersApproved = purchaseOrderCount === 10
     && purchaseOrders.every((order) => ["APPROVED", "SHARED"].includes(order.status));
-  const gateEntryIds = batchRecords
-    .filter((record) => record.moduleKey === "gate-entry")
-    .map((record) => record.id);
-  const gateEntries = gateEntryIds.length === 0 ? [] : await prisma.gateEntry.findMany({
-    where: { organization_id: organization.id, id: { in: gateEntryIds } },
-    select: { id: true, purchase_order_id: true },
-  });
   const requiredGatePurchaseOrderIds = new Set(purchaseOrderIds.slice(0, 5));
   const gateEntriesComplete = gateEntries.length === 5
     && new Set(gateEntries.map((entry) => entry.purchase_order_id)).size === 5
     && gateEntries.every((entry) => requiredGatePurchaseOrderIds.has(entry.purchase_order_id ?? ""));
-  const sampleGrnIds = batchRecords
-    .filter((record) => record.moduleKey === "inventory-receipt")
-    .map((record) => record.id);
-  const sampleGrns = sampleGrnIds.length === 0 ? [] : await prisma.inventoryReceipt.findMany({
-    where: { organization_id: organization.id, id: { in: sampleGrnIds } },
-    select: {
-      id: true,
-      purchase_order_id: true,
-      lines: {
-        select: {
-          id: true,
-          rmGrnVerification: {
-            select: {
-              id: true,
-              allocations: {
-                select: {
-                  id: true,
-                  verification_allocated: true,
-                  orderAllocations: { select: { allocated_quantity: true } },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  });
   const sampleGrnsComplete = sampleGrns.length === 5
     && new Set(sampleGrns.map((receipt) => receipt.purchase_order_id)).size === 5
     && sampleGrns.every((receipt) => requiredGatePurchaseOrderIds.has(receipt.purchase_order_id));
@@ -437,20 +463,6 @@ export async function getOrganizationDummyDataStatus(userId: string, routeOrgani
     && verificationLineCount > 0
     && sampleGrns.every((receipt) => receipt.lines.length > 0)
     && verifiedLineCount === verificationLineCount;
-  const sampleWorkOrderIds = batchRecords
-    .filter((record) => record.moduleKey === "sample-work-order")
-    .map((record) => record.id);
-  const sampleOrderIds = batchRecords
-    .filter((record) => record.moduleKey === "sample-order")
-    .map((record) => record.id);
-  const sampleWorkOrders = sampleWorkOrderIds.length === 0 ? [] : await prisma.factoryWorkOrder.findMany({
-    where: {
-      organization_id: organization.id,
-      id: { in: sampleWorkOrderIds },
-      order_id: { in: sampleOrderIds },
-    },
-    select: { id: true, order_id: true },
-  });
   const sampleWorkOrderOrderCount = new Set(sampleWorkOrders.map((workOrder) => workOrder.order_id)).size;
   const sampleWorkOrdersComplete = sampleWorkOrderOrderCount >= 5;
   const stepOneComplete = batch?.status !== "EMPTY"
@@ -670,6 +682,18 @@ async function createOrganizationDummyDataForUser(
     }
 
     const createdRecords: DemoMasterRecord[] = [];
+    const pendingApprovalRequests: Array<{
+      organization_id: string;
+      module_key: string;
+      module_name: string;
+      entity_type: string;
+      entity_key: string;
+      entity_label: string;
+      entity_ref_id: string;
+      requested_by: string;
+      status: "pending";
+      notes: string;
+    }> = [];
     const record = (moduleKey: string, id: string) => createdRecords.push({ moduleKey, id });
     const activeStockLocation = await transaction.masterLocation.findFirst({
       where: {
@@ -1305,19 +1329,17 @@ async function createOrganizationDummyDataForUser(
         },
         select: { id: true, purchase_order_no: true },
       });
-      await transaction.approvalRequest.create({
-        data: {
-          organization_id: organization.id,
-          module_key: "purchase-order",
-          module_name: "Purchase Order Approval",
-          entity_type: "purchase-order",
-          entity_key: purchaseOrder.purchase_order_no,
-          entity_label: purchaseOrder.purchase_order_no,
-          entity_ref_id: purchaseOrder.id,
-          requested_by: requestedBy,
-          status: "pending",
-          notes: `Purchase Order ${purchaseOrder.purchase_order_no} is waiting for approval.`,
-        },
+      pendingApprovalRequests.push({
+        organization_id: organization.id,
+        module_key: "purchase-order",
+        module_name: "Purchase Order Approval",
+        entity_type: "purchase-order",
+        entity_key: purchaseOrder.purchase_order_no,
+        entity_label: purchaseOrder.purchase_order_no,
+        entity_ref_id: purchaseOrder.id,
+        requested_by: requestedBy,
+        status: "pending",
+        notes: `Purchase Order ${purchaseOrder.purchase_order_no} is waiting for approval.`,
       });
       record("purchase-order", purchaseOrder.id);
     }
@@ -1352,10 +1374,28 @@ async function createOrganizationDummyDataForUser(
       },
     });
 
-    return { created: true, orderNo: sampleOrder.orderNo, orderCount: createdSampleOrders.length };
+    return {
+      created: true,
+      orderNo: sampleOrder.orderNo,
+      orderCount: createdSampleOrders.length,
+      pendingApprovalRequests,
+    };
   }, { maxWait: 20000, timeout: 150000 });
 
-  return result;
+  const { pendingApprovalRequests: approvalRequests = [], ...resultData } = result;
+  for (const approvalRequest of approvalRequests) {
+    await prisma.approvalRequest.deleteMany({
+      where: {
+        organization_id: approvalRequest.organization_id,
+        entity_type: approvalRequest.entity_type,
+        entity_ref_id: approvalRequest.entity_ref_id,
+        status: "pending",
+      },
+    });
+    await prisma.approvalRequest.create({ data: approvalRequest });
+  }
+
+  return resultData;
 }
 
 async function createSampleGroupedPurchaseOrders(

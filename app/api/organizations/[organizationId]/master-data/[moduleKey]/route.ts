@@ -69,6 +69,7 @@ export async function GET(
     const includeInactive = searchParams.get("includeInactive") !== "false";
     const includeDummyData = moduleKey === "vendor" && searchParams.get("includeDummyData") === "true";
     const entityId = moduleKey === "location" ? searchParams.get("entityId") || undefined : undefined;
+    const parentId = searchParams.get("parentId") || undefined;
     const search = searchParams.get("search") || undefined;
     const exactSearch = searchParams.get("exact") === "true";
     const compactOrderLookups = searchParams.get("shape") === "compact";
@@ -103,6 +104,7 @@ export async function GET(
       const lookupKeys = requestedKeys?.length
         ? allLookupKeys.filter((key) => requestedKeys.includes(key))
         : allLookupKeys;
+      const includeSizeGroupSizes = searchParams.get("includeSizeGroupSizes") !== "false";
       const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organization.id);
       const lookupValues = await Promise.all(
         lookupKeys.map(async (key) => {
@@ -111,7 +113,7 @@ export async function GET(
             limit,
             includeDummyData: true,
             activeDummyDataBatch,
-            ...(key === "size-group" ? {
+            ...(key === "size-group" && includeSizeGroupSizes ? {
               onRowsFetched: (rowIds) => {
                 sizeLinksPromise = getSizeGroupSizesForOrganization(organization.id, rowIds, true);
                 return sizeLinksPromise.then(() => undefined);
@@ -181,6 +183,7 @@ export async function GET(
       exactSearch,
       includeDummyData,
       entityId,
+      parentId,
       ...(activeDummyDataBatch ? { activeDummyDataBatch } : {}),
       ...(moduleKey === "size-group" ? {
         onRowsFetched: (rowIds) => {

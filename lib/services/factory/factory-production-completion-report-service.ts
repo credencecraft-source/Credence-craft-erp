@@ -6,6 +6,7 @@ const MAX_PAGE_SIZE = 100;
 type FactoryProductionCompletionReportOptions = {
   cursor?: string;
   limit?: number;
+  grnId?: string;
 };
 
 export async function listFactoryProductionCompletionReport(
@@ -23,6 +24,7 @@ export async function listFactoryProductionCompletionReport(
   const records = await prisma.factoryGrn.findMany({
     where: {
       organization_id: organizationId,
+      ...(options.grnId ? { id: options.grnId } : {}),
       workOrder: { organization_id: organizationId, order: { organization_id: organizationId } },
       bundleTransfer: { organization_id: organizationId },
     },

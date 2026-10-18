@@ -5,14 +5,29 @@ import { requireOrganizationContext } from "@/lib/services/organizations/organiz
 import { createPurchaseRecord, deletePurchaseRecords, listPurchaseRecords, updatePurchaseRecord } from "@/lib/services/pos/purchase-bill-service";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ organizationId: string }> },
 ) {
   try {
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "FINANCE", "MERCHANDISING"]);
-    return NextResponse.json({ records: await listPurchaseRecords(organization.id) });
+    const { searchParams } = new URL(request.url);
+    const recordId = searchParams.get("recordId")?.trim();
+    const rawLimit = searchParams.get("limit");
+    const rawOffset = searchParams.get("offset");
+    if (rawLimit !== null || rawOffset !== null) {
+      const limit = rawLimit === null ? 100 : Number(rawLimit);
+      const offset = rawOffset === null ? 0 : Number(rawOffset);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100
+        || !Number.isSafeInteger(offset) || offset < 0) {
+        return NextResponse.json({ error: "Purchase record pagination is invalid." }, { status: 400 });
+      }
+      return NextResponse.json({
+        records: await listPurchaseRecords(organization.id, recordId || undefined, { skip: offset, take: limit }),
+      });
+    }
+    return NextResponse.json({ records: await listPurchaseRecords(organization.id, recordId || undefined) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load purchase records." }, { status: 400 });
   }

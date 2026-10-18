@@ -12,6 +12,7 @@ import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import {
   filterIndexedReportRecords,
+  getReportSearchValue,
   type FilterOperator,
   type IndexedReportRow,
 } from "./report-grid-filtering";
@@ -34,7 +35,7 @@ interface ReportGridProps<T> {
   selectedIds: string[];
   selectable?: boolean;
   rowSelectable?: (record: T) => boolean;
-  onRowClick: (recordId: string) => void;
+  onRowClick?: (recordId: string) => void;
   onRecordClick?: (record: T) => void;
   onToggleSelectAll?: (checked: boolean, recordIds: string[]) => void;
   onToggleRowSelection?: (recordId: string, checked: boolean) => void;
@@ -119,6 +120,7 @@ function ReportGridImplementation<T>({
   emptyMessage = "No records found.",
 }: ReportGridProps<T>) {
   const hasRowActions = Boolean(onRowAction || onSecondaryRowAction || rowActions);
+  const hasRowClick = Boolean(onRowClick || onRecordClick);
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const tableContainerRef = useRef<HTMLDivElement>(null);
@@ -228,9 +230,7 @@ function ReportGridImplementation<T>({
     () => records.map<IndexedReportRow<T>>((record) => {
       const searchableValues: Record<string, string> = {};
       for (const fieldKey of indexedFieldKeys) {
-        searchableValues[fieldKey] = (
-          getSearchValue?.(fieldKey, record) ?? String(renderCell(fieldKey, record) ?? "")
-        ).toLowerCase();
+        searchableValues[fieldKey] = getReportSearchValue(record, fieldKey, getSearchValue, renderCell);
       }
       return {
         record,
@@ -443,11 +443,22 @@ function ReportGridImplementation<T>({
                   key={virtualizeRows ? key : recordId}
                   ref={virtualizeRows ? rowVirtualizer.measureElement : undefined}
                   data-index={virtualizeRows ? index : undefined}
+                  tabIndex={hasRowClick ? 0 : undefined}
+                  aria-label={hasRowClick ? `Open ${title} record ${recordId}` : undefined}
                   style={virtualizeRows ? { height: size } : undefined}
-                  onClick={() => { onRecordClick?.(record); onRowClick(recordId); }}
-                  className={`cursor-pointer transition-colors ${
+                  onClick={hasRowClick ? () => { onRecordClick?.(record); onRowClick?.(recordId); } : undefined}
+                  onKeyDown={hasRowClick ? (event) => {
+                    if (
+                      event.target !== event.currentTarget
+                      || (event.key !== "Enter" && event.key !== " ")
+                    ) return;
+                    event.preventDefault();
+                    onRecordClick?.(record);
+                    onRowClick?.(recordId);
+                  } : undefined}
+                  className={`${hasRowClick ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--erp-brand)]" : ""} transition-colors ${
                     index % 2 === 0 ? "bg-white" : "bg-slate-50/40"
-                  } ${isSelected ? "bg-emerald-50/60" : "hover:bg-slate-100/60"}`}
+                  } ${isSelected ? "bg-emerald-50/60" : hasRowClick ? "hover:bg-slate-100/60" : ""}`}
                 >
                   {selectable && (
                     <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>

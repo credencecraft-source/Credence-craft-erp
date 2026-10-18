@@ -154,6 +154,9 @@ describe("factory work-order batch creation", () => {
       id: "group-id",
       value_id: "group-value-id",
       size_group: "CORE",
+      size_links: ["XL", "S", "M"].map((size) => ({
+        size: { organization_id: "org-1", size },
+      })),
     }]);
     mocks.masterSizeGroupSizeFindMany.mockResolvedValueOnce([
       { size_group_id: "group-id", size: { id: "size-xl", value_id: "size-xl-value", organization_id: "org-1", size: "XL", is_active: true, status: "ACTIVE", legacy_metadata: null } },

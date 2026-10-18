@@ -19,13 +19,143 @@ export async function GET(request: Request) {
     const searchParams = new URL(request.url).searchParams;
     const organizationId = searchParams.get("organizationId") ?? "";
     const organization = await requireOrganizationContext(user.id, organizationId);
+    const recordId = searchParams.get("recordId")?.trim();
+    const recordType = searchParams.get("recordType");
+    if (recordId) {
+      if (!recordType || !["general", "allocated"].includes(recordType)) {
+        return NextResponse.json({ error: "Select a valid finished-goods stock record type." }, { status: 400 });
+      }
+
+      if (recordType === "general") {
+        const record = await prisma.finishedGoodsGeneralStockReceipt.findFirst({
+          where: { id: recordId, organization_id: organization.id },
+          include: { location: { select: { location_name: true } } },
+        });
+        if (!record) return NextResponse.json({ error: "Finished-goods stock record not found." }, { status: 404 });
+        const actors = await prisma.workspaceUser.findMany({
+          where: { id: { in: [record.created_by, record.verified_by] } },
+          select: { id: true, email: true },
+        });
+        const actorEmails = new Map(actors.map((actor) => [actor.id, actor.email || "Email unavailable"]));
+        const createdBy = resolveActorEmail(record.created_by, actorEmails);
+        return NextResponse.json({
+          record: {
+            id: record.id,
+            location_id: record.location_id,
+            location: record.location,
+            sku_code: null,
+            barcode: null,
+            style_name: record.style_name,
+            order_no: record.order_no,
+            article_no: record.article_no ?? "",
+            brand: record.brand,
+            size: record.size,
+            colour: record.colour,
+            product_category: record.product_category,
+            sub_product_category: null,
+            added_time: record.posted_at,
+            added_user: createdBy,
+            source: "WO_ORDER_GRN",
+            qty_in: record.quantity_in,
+            qty_out: record.quantity_out,
+            current_stock: record.current_stock,
+            gst_rate: null,
+            hsn_code: null,
+            purchase_price: null,
+            sales_price: null,
+            mrp: null,
+            inventory_bucket: "GENERAL",
+            grn_id: record.grn_id,
+            grn_line_id: record.grn_line_id,
+            grn_no: record.grn_no,
+            work_order_id: record.work_order_id,
+            work_order_no: record.work_order_no,
+            order_id: record.order_id,
+            buyer: record.buyer,
+            buyer_size: record.buyer_size,
+            received_quantity: record.received_quantity,
+            actual_received_quantity: record.actual_received_quantity,
+            approved_quantity: record.approved_quantity,
+            rejected_quantity: record.rejected_quantity,
+            created_by: createdBy,
+            verified_by: resolveActorEmail(record.verified_by, actorEmails),
+            posted_at: record.posted_at,
+          },
+        });
+      }
+
+      const record = await prisma.finishedGoodsAllocatedStockReceipt.findFirst({
+        where: { id: recordId, organization_id: organization.id },
+        include: { location: { select: { location_name: true } } },
+      });
+      if (!record) return NextResponse.json({ error: "Finished-goods stock record not found." }, { status: 404 });
+      const actors = await prisma.workspaceUser.findMany({
+        where: { id: { in: [record.created_by, record.verified_by] } },
+        select: { id: true, email: true },
+      });
+      const actorEmails = new Map(actors.map((actor) => [actor.id, actor.email || "Email unavailable"]));
+      const createdBy = resolveActorEmail(record.created_by, actorEmails);
+      return NextResponse.json({
+        record: {
+          id: record.id,
+          location_id: record.location_id,
+          location: record.location,
+          sku_code: null,
+          barcode: null,
+          style_name: record.style_name,
+          order_no: record.order_no,
+          article_no: record.article_no ?? "",
+          brand: record.brand,
+          size: record.size,
+          colour: record.colour,
+          product_category: record.product_category,
+          sub_product_category: null,
+          added_time: record.posted_at,
+          added_user: createdBy,
+          source: "WO_ORDER_GRN",
+          qty_in: record.quantity_in,
+          qty_out: record.quantity_out,
+          current_stock: record.current_stock,
+          gst_rate: null,
+          hsn_code: null,
+          purchase_price: null,
+          sales_price: null,
+          mrp: null,
+          inventory_bucket: "ALLOCATED",
+          grn_id: record.grn_id,
+          grn_line_id: record.grn_line_id,
+          grn_no: record.grn_no,
+          work_order_id: record.work_order_id,
+          work_order_no: record.work_order_no,
+          order_id: record.order_id,
+          booking_id: record.booking_id,
+          booking_size_line_id: record.booking_size_line_id,
+          booking_assignment_id: record.booking_assignment_id,
+          booking_no: record.booking_no,
+          buyer: record.buyer,
+          buyer_size: record.buyer_size,
+          received_quantity: record.received_quantity,
+          actual_received_quantity: record.actual_received_quantity,
+          approved_quantity: record.approved_quantity,
+          rejected_quantity: record.rejected_quantity,
+          created_by: createdBy,
+          verified_by: resolveActorEmail(record.verified_by, actorEmails),
+          posted_at: record.posted_at,
+        },
+      });
+    }
+
     const barcode = searchParams.get("barcode")?.trim();
     if (barcode) {
       const record = await prisma.finishedGoodsSkuStock.findFirst({
         where: { organization_id: organization.id, OR: [{ id: barcode }, { sku_code: barcode }, { barcode }] },
+        include: { location: { select: { location_name: true } } },
       });
       if (!record) return NextResponse.json({ error: "No finished goods stock record found for this barcode." }, { status: 404 });
-      return NextResponse.json({ record });
+      return NextResponse.json({
+        record,
+        canEdit: ["OWNER", "ADMIN", "INVENTORY"].includes(organization.role),
+      });
     }
 
     const bucket = searchParams.get("bucket");
@@ -35,6 +165,7 @@ export async function GET(request: Request) {
     const [skuRecords, generalReceipts, allocatedReceipts] = await Promise.all([
       prisma.finishedGoodsSkuStock.findMany({
         where: { organization_id: organization.id },
+        include: { location: { select: { location_name: true } } },
         orderBy: { added_time: "desc" },
       }),
       bucket === "ALLOCATED" ? Promise.resolve([]) : prisma.finishedGoodsGeneralStockReceipt.findMany({
@@ -256,7 +387,8 @@ export async function PUT(request: Request) {
     if (![qtyIn, qtyOut].every((value) => Number.isFinite(value) && value >= 0)) return NextResponse.json({ error: "Quantity values must be non-negative numbers." }, { status: 400 });
 
     const record = await prisma.finishedGoodsSkuStock.update({
-      where: { id: recordId },
+      where: { id: recordId, organization_id: organization.id },
+      include: { location: { select: { location_name: true } } },
       data: {
         entity_id: location.entity_id,
         location_id: location.id,

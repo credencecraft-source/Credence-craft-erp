@@ -98,7 +98,6 @@ export default function DeliveryChallanPage({
           onVisibleFieldsChange={setVisibleReportFields}
           rowIdSelector={(record) => `${record.id}-${record.documentNumber}`}
           selectedIds={[]}
-          onRowClick={() => undefined}
           renderCell={renderCell}
           emptyMessage="No delivery challan records found."
         />

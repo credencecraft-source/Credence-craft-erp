@@ -7,6 +7,7 @@ import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
 import Page from "@/components/ui/Page";
 import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
@@ -296,9 +297,15 @@ export default function FactoryProductionWipDetailPage() {
         {updateMessage && <Card className="border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{updateMessage}</Card>}
         {transferMessage && <Card className="border-sky-200 bg-sky-50 p-4 text-sm text-sky-800">{transferMessage}</Card>}
         {updateRecord && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
-            <Card className="max-h-[90vh] w-full max-w-5xl overflow-y-auto border-slate-200 p-6">
-              <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Production Update</p><h2 className="mt-1 text-xl font-bold text-slate-900">{updateRecord.processName} · {updateRecord.workOrderNo}</h2></div><Button type="button" variant="ghost" onClick={() => setUpdateRecord(null)} className="text-slate-500 hover:text-slate-900">Close</Button></div>
+          <Modal
+            open
+            onClose={() => setUpdateRecord(null)}
+            ariaLabelledBy="production-update-title"
+            closeOnBackdrop={false}
+            size="rectangle"
+            className="p-6"
+          >
+              <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Production Update</p><h2 id="production-update-title" className="mt-1 text-xl font-bold text-slate-900">{updateRecord.processName} · {updateRecord.workOrderNo}</h2></div><Button type="button" variant="ghost" onClick={() => setUpdateRecord(null)} className="text-slate-500 hover:text-slate-900">Close</Button></div>
               <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 <Select label="Update Level" value={updateLevel} onChange={(event) => setUpdateLevel(event.target.value as "PROCESS" | "OPERATION")} className="mt-1 rounded-lg border-slate-300 py-2 font-normal"><option value="PROCESS">Process level</option><option value="OPERATION">Operation level</option></Select>
                 {updateLevel === "OPERATION" && <Select label="Operation" value={operationId} onChange={(event) => setOperationId(event.target.value)} className="mt-1 rounded-lg border-slate-300 py-2 font-normal"><option value="">Select operation</option>{updateRecord.operations.map((operation) => <option key={operation.id} value={operation.id}>{operation.operation}</option>)}</Select>}
@@ -307,16 +314,21 @@ export default function FactoryProductionWipDetailPage() {
               {(updateRecord.sizeLines ?? []).length > 0 && <div className="mt-5"><p className="text-xs font-semibold text-slate-700">Size-wise Quantity</p><div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{(updateRecord.sizeLines ?? []).map((line, index) => <label key={`${line.size}-${index}`} className="text-xs text-slate-600">{line.size || line.buyerSize || "Size"}<Input type="number" min="0" value={sizeQuantities[`${line.size ?? line.buyerSize ?? "size"}-${index}`] || ""} onChange={(event) => setSizeQuantities((current) => ({ ...current, [`${line.size ?? line.buyerSize ?? "size"}-${index}`]: event.target.value }))} className="mt-1 rounded-lg border-slate-300 py-2 text-slate-900" /></label>)}</div></div>}
               <div className="mt-5 grid gap-4 rounded-lg border border-slate-200 p-4 sm:grid-cols-2 xl:grid-cols-4"><div className="flex items-center"><Checkbox label="Billable to vendor" checked={vendorBillable} onChange={(event) => setVendorBillable(event.target.checked)} className="text-xs font-semibold text-slate-700" /></div>{vendorBillable && <Input label="Vendor Name" value={vendorName} onChange={(event) => setVendorName(event.target.value)} className="rounded-lg border-slate-300 py-2 font-normal" />}<Input label="Employee / Assigned By" value={employeeName} onChange={(event) => setEmployeeName(event.target.value)} className="rounded-lg border-slate-300 py-2 font-normal" /><div className="sm:col-span-2"><Textarea label="Remarks" value={remarks} onChange={(event) => setRemarks(event.target.value)} className="min-h-20 rounded-lg border-slate-300 py-2 font-normal" /></div></div>
               <div className="mt-5 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setUpdateRecord(null)} className="border-slate-300 text-xs text-slate-700">Cancel</Button><Button type="button" onClick={() => void saveProductionUpdate()} disabled={savingUpdate} size="sm" className="border-emerald-600 bg-emerald-600 text-xs text-white">{savingUpdate ? "Saving..." : "Save Production Update"}</Button></div>
-            </Card>
-          </div>
+          </Modal>
         )}
         {transferRecord && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
-            <Card className="max-h-[90vh] w-full max-w-xl overflow-y-auto p-6">
+          <Modal
+            open
+            onClose={() => setTransferRecord(null)}
+            ariaLabelledBy="bundle-transfer-title"
+            closeOnBackdrop={false}
+            size="square"
+            className="p-6"
+          >
               <div className="flex justify-between">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700">Bundle Transfer</p>
-                  <h2 className="mt-1 text-xl font-bold text-slate-900">{transferRecord.processName} to next process</h2>
+                  <h2 id="bundle-transfer-title" className="mt-1 text-xl font-bold text-slate-900">{transferRecord.processName} to next process</h2>
                 </div>
                 <Button type="button" variant="ghost" onClick={() => setTransferRecord(null)} className="text-slate-500">Close</Button>
               </div>
@@ -350,16 +362,21 @@ export default function FactoryProductionWipDetailPage() {
                   {savingTransfer ? "Sending..." : "Issue Bundle"}
                 </Button>
               </div>
-            </Card>
-          </div>
+          </Modal>
         )}
         {acceptTransfer && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
-            <Card className="max-h-[90vh] w-full max-w-2xl overflow-y-auto p-6">
+          <Modal
+            open
+            onClose={() => setAcceptTransfer(null)}
+            ariaLabelledBy="accept-transfer-title"
+            closeOnBackdrop={false}
+            size="rectangle"
+            className="p-6"
+          >
               <div className="flex justify-between">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700">GRN Header + Subform</p>
-                  <h2 className="mt-1 text-xl font-bold text-slate-900">Verify receipt and actual made</h2>
+                  <h2 id="accept-transfer-title" className="mt-1 text-xl font-bold text-slate-900">Verify receipt and actual made</h2>
                 </div>
                 <Button type="button" variant="ghost" disabled={savingAccept} onClick={() => setAcceptTransfer(null)} className="text-slate-500 disabled:opacity-50">Close</Button>
               </div>
@@ -415,8 +432,7 @@ export default function FactoryProductionWipDetailPage() {
                   {savingAccept ? "Saving GRN..." : "Save GRN"}
                 </Button>
               </div>
-            </Card>
-          </div>
+          </Modal>
         )}
       </Section>
     </Page>

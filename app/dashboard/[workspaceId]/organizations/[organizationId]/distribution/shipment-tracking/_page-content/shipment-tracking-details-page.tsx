@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Modal from "@/components/ui/Modal";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
@@ -15,6 +16,7 @@ type ShipmentBooking = {
   bookingId: string;
   orderNo: string;
   quotationNo: string | null;
+  salesOrderNo: string | null;
   customer: string;
   quotationVendor: string | null;
   masterQuotationVendor: string | null;
@@ -55,6 +57,10 @@ export default function ShipmentTrackingDetailsPage() {
   const [booking, setBooking] = useState<ShipmentBooking | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showReversalConfirmation, setShowReversalConfirmation] = useState(false);
+  const [isReversingAllocation, setIsReversingAllocation] = useState(false);
+  const [reversalError, setReversalError] = useState("");
+  const [reversalSuccess, setReversalSuccess] = useState("");
 
   const loadBooking = useCallback(async () => {
     setLoading(true);
@@ -81,6 +87,46 @@ export default function ShipmentTrackingDetailsPage() {
     void Promise.resolve().then(loadBooking);
   }, [loadBooking]);
 
+  async function reverseAllocationToGeneralStock() {
+    if (!booking || isReversingAllocation) return;
+    setIsReversingAllocation(true);
+    setReversalError("");
+    setReversalSuccess("");
+    try {
+      const response = await fetch(
+        `/api/distribution/advance-bookings/${encodeURIComponent(booking.id)}/fulfillment/reversal`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ organizationId: params.organizationId }),
+        },
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.reversed) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to move allocated stock to general inventory.");
+      }
+      setShowReversalConfirmation(false);
+      const cancelledLineCount = data.reversed.cancelledRequestLineCount ?? 0;
+      const cancelledRequestCount = data.reversed.fullyCancelledRequestCount ?? 0;
+      const cancelledRequestNotice = cancelledLineCount > 0
+        ? ` ${cancelledLineCount} linked request line${cancelledLineCount === 1 ? "" : "s"} cancelled` +
+          (cancelledRequestCount > 0
+            ? `; ${cancelledRequestCount} full request${cancelledRequestCount === 1 ? "" : "s"} cancelled.`
+            : "; unrelated request lines remain active.")
+        : "";
+      setReversalSuccess(
+        `${data.reversed.reversedQuantity.toLocaleString()} PCS from ${data.reversed.bookingNo} moved to general inventory. On-hand stock was preserved.${cancelledRequestNotice}`,
+      );
+      await loadBooking();
+    } catch (reversalError) {
+      setReversalError(
+        reversalError instanceof Error ? reversalError.message : "Unable to move allocated stock to general inventory.",
+      );
+    } finally {
+      setIsReversingAllocation(false);
+    }
+  }
+
   const shipmentPath = `/dashboard/${params.workspaceId}/organizations/${params.organizationId}/advance-booking/shipment-tracking`;
 
   return (
@@ -106,6 +152,8 @@ export default function ShipmentTrackingDetailsPage() {
             </div>
           </Card>
         ) : null}
+        {reversalSuccess ? <p role="status" className="text-sm text-slate-700">{reversalSuccess}</p> : null}
+        {reversalError ? <Card role="alert" className="border-[var(--erp-danger)] p-4 text-sm">{reversalError}</Card> : null}
         {booking ? (
           <>
             <Card className="space-y-4">
@@ -139,6 +187,27 @@ export default function ShipmentTrackingDetailsPage() {
                 </div>
               </dl>
             </Card>
+            {booking.salesOrderNo && booking.totalFulfilled > 0 ? (
+              <Card className="flex flex-wrap items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <h2 className="text-base font-semibold text-slate-900">Sales Order allocation</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Return unused GRN-allocated quantities to general inventory before removing sales order {booking.salesOrderNo}.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => {
+                    setReversalError("");
+                    setShowReversalConfirmation(true);
+                  }}
+                  disabled={loading || isReversingAllocation}
+                >
+                  Revert allocation to general stock
+                </Button>
+              </Card>
+            ) : null}
             <Card className="space-y-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Size and Work Order Details</h2>
@@ -185,6 +254,46 @@ export default function ShipmentTrackingDetailsPage() {
           </>
         ) : null}
       </Section>
+      <Modal
+        open={showReversalConfirmation}
+        onClose={() => {
+          if (!isReversingAllocation) setShowReversalConfirmation(false);
+        }}
+        ariaLabelledBy="booking-allocation-reversal-title"
+        ariaDescribedBy="booking-allocation-reversal-description"
+        variant="danger"
+        size="sm"
+      >
+        <div className="space-y-4 p-6">
+          <header className="space-y-1">
+            <h2 id="booking-allocation-reversal-title" className="text-lg font-semibold text-slate-900">
+              Revert allocation to general stock?
+            </h2>
+            <p id="booking-allocation-reversal-description" className="text-sm text-slate-600">
+              Unused quantities fulfilled from this booking&apos;s Work Order GRNs will be released from this booking and returned to general inventory. On-hand stock and the GRN audit history are preserved. This is blocked if stock has been issued, reserved by an active request, or the GRN quantities cannot be reconciled.
+            </p>
+          </header>
+          {reversalError ? <p role="alert" className="text-sm text-[var(--erp-danger)]">{reversalError}</p> : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setShowReversalConfirmation(false)}
+              disabled={isReversingAllocation}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void reverseAllocationToGeneralStock()}
+              disabled={isReversingAllocation}
+            >
+              {isReversingAllocation ? "Reverting..." : "Confirm reversal"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </Page>
   );
 }

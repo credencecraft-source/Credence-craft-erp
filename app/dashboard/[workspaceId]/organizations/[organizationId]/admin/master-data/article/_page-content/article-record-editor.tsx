@@ -70,6 +70,7 @@ export default function ArticleRecordEditor({
   workspaceId,
   organizationId,
   record,
+  readOnly = false,
   lookupOptions,
   sizeGroupSizes,
   createAction,
@@ -80,6 +81,7 @@ export default function ArticleRecordEditor({
   workspaceId: string;
   organizationId: string;
   record: ArticleRecord | null;
+  readOnly?: boolean;
   lookupOptions: Record<string, ArticleOption[]>;
   sizeGroupSizes: Record<string, string[]>;
   createAction: ArticleFormAction;
@@ -232,6 +234,92 @@ export default function ArticleRecordEditor({
       : quickCreateTarget?.masterKey === "size-group"
         ? { Brand1: fields.Brand }
         : {};
+
+  if (readOnly && record) {
+    const detailHref = `${articlePath}/${encodeURIComponent(record.code || record.value_id)}`;
+    const displayValue = (value: string) => value.trim() || "—";
+    const detailField = (label: string, value: string) => (
+      <div key={label} className="min-w-0 space-y-1">
+        <dt className="text-xs font-medium text-[var(--erp-muted)]">{label}</dt>
+        <dd className="break-words text-sm text-[var(--erp-text)]">{displayValue(value)}</dd>
+      </div>
+    );
+
+    return (
+      <Page as="div">
+        <Section className="space-y-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => router.push(editing
+                  ? `${articlePath}/${encodeURIComponent(record.code || record.value_id)}`
+                  : articlePath)}
+                className="w-fit px-0"
+              >
+                {editing ? "Back to Article details" : "Back to Articles"}
+              </Button>
+              <p className="erp-eyebrow mt-4">Article master</p>
+              <h1 className="mt-1 break-words text-2xl font-bold text-[var(--erp-text)]">{record.label}</h1>
+              <p className="mt-1 text-sm text-[var(--erp-muted)]">{record.code}</p>
+            </div>
+            <Button type="button" onClick={() => router.push(`${detailHref}?mode=edit`)}>Edit</Button>
+          </div>
+          {error ? <p role="alert" className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">{error}</p> : null}
+          {saved ? <p role="status" className="rounded-xl border border-[var(--erp-success)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-success)]">Article saved successfully.</p> : null}
+          <Card className="space-y-6 p-6">
+            <Tabs tabs={TABS} value={activeTab} onChange={setActiveTab} ariaLabel="Article details" />
+            {activeTab === "general" ? (
+              <dl className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
+                {detailField("Article Name", fields.article)}
+                {detailField("Article Code", fields.article_code)}
+                {detailField("Brand", fields.Brand)}
+                {detailField("Finished Goods Type", fields.Product_Master)}
+                {detailField("Finished Goods Category", fields.Category)}
+                {detailField("Finished Goods Subcategory", fields.Subcategory)}
+                {detailField("Design By", fields.design_by)}
+                {detailField("Designed Date", fields.designed_date)}
+              </dl>
+            ) : null}
+            {activeTab === "colour" ? (
+              <section className="space-y-4">
+                <h2 className="text-base font-semibold text-[var(--erp-text)]">Color variants</h2>
+                {variants.length ? variants.map((variant, index) => (
+                  <dl key={variant.id ?? `${variant.color}-${index}`} className="grid min-w-0 grid-cols-1 gap-4 rounded-xl border border-[var(--erp-border)] p-4 sm:grid-cols-2">
+                    {detailField("Color", variant.color)}
+                    {detailField("Variant Code", variant.variant_code)}
+                    {detailField("SKU", variant.sku)}
+                    {detailField("Price Override", variant.price_override)}
+                  </dl>
+                )) : <p className="text-sm text-[var(--erp-muted)]">No color variants added.</p>}
+              </section>
+            ) : null}
+            {activeTab === "size" ? (
+              <section className="space-y-4">
+                <h2 className="text-base font-semibold text-[var(--erp-text)]">Size and pricing</h2>
+                <dl className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+                  {detailField("Size Group", fields.Size_Group)}
+                  {detailField("Default Price", fields.default_price)}
+                  {detailField("Sizes", fields.Sizes.join(", "))}
+                </dl>
+                {sizePriceRows.length ? (
+                  <div className="space-y-2">
+                    {sizePriceRows.map((row) => (
+                      <dl key={row.size} className="grid min-w-0 grid-cols-1 gap-3 rounded-lg border border-[var(--erp-border)] p-3 sm:grid-cols-2">
+                        {detailField("Size", row.size)}
+                        {detailField("Price", row.price ?? "")}
+                      </dl>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+          </Card>
+        </Section>
+      </Page>
+    );
+  }
 
   return (
     <Page as="div">

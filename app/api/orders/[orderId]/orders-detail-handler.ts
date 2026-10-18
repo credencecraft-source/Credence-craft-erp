@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrderById, updateOrderWithDetails } from "@/lib/services/orders/order-service";
+import {
+  getAdvanceBookingOrderDetails,
+  getOrderById,
+  updateOrderWithDetails,
+} from "@/lib/services/orders/order-service";
 import { getOrganizationForUser, requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request, { params }: { params: Promise<{ orderId: string }> }) {
@@ -16,7 +20,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ orde
     if (!organization) {
       return NextResponse.json({ error: "Access denied or organization not found." }, { status: 403 });
     }
-    const order = await getOrderById(orderId, organization.id);
+    const order = new URL(request.url).searchParams.get("purpose") === "advance-booking"
+      ? await getAdvanceBookingOrderDetails(orderId, organization.id)
+      : await getOrderById(orderId, organization.id);
     if (!order) {
       return NextResponse.json({ error: "Order not found." }, { status: 404 });
     }

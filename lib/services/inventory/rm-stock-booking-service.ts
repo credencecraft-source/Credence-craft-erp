@@ -27,30 +27,47 @@ function positiveQuantity(value: unknown) {
 
 export async function listRawMaterialStockBookings(organizationId: string) {
   const rows = await prisma.rawMaterialStockBooking.findMany({
-    where: { organization_id: organizationId },
-    include: {
-      takeFromStock: {
-        select: {
-          raw_material: true,
-          location: {
-            select: {
-              location_name: true,
-              entity: { select: { entity_name: true } },
-            },
-          },
-        },
-      },
-      currentStoreVendor: { select: { vendor: true } },
-      sourceBomItem: {
-        select: {
-          order: { select: { orderNo: true, styleName: true } },
-        },
-      },
-    },
+    where: { organization_id: organizationId, sourceBomItem: { order: { organization_id: organizationId } } },
+    include: rawMaterialStockBookingIncludes,
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
   });
 
-  return rows.map((row) => ({
+  return rows.map(mapRawMaterialStockBooking);
+}
+
+const rawMaterialStockBookingIncludes = {
+  takeFromStock: {
+    select: {
+      raw_material: true,
+      location: {
+        select: {
+          location_name: true,
+          entity: { select: { entity_name: true } },
+        },
+      },
+    },
+  },
+  currentStoreVendor: { select: { vendor: true } },
+  sourceBomItem: {
+    select: {
+      order: { select: { orderNo: true, styleName: true } },
+    },
+  },
+} as const;
+
+function mapRawMaterialStockBooking(row: {
+  id: string;
+  take_from_stock_id: string;
+  currentStoreVendor: { vendor: string };
+  takeFromStock: { raw_material: string; location: { location_name: string; entity: { entity_name: string } } };
+  sourceBomItem: { order: { orderNo: string; styleName: string | null } };
+  booked_quantity: Prisma.Decimal;
+  fulfilled_quantity: Prisma.Decimal;
+  status: string;
+  booked_by: string | null;
+  created_at: Date;
+}) {
+  return {
     id: row.id,
     takeFromStockId: row.take_from_stock_id,
     currentStoreVendor: row.currentStoreVendor.vendor,
@@ -64,7 +81,19 @@ export async function listRawMaterialStockBookings(organizationId: string) {
     status: row.status,
     bookedBy: row.booked_by,
     bookedAt: row.created_at,
-  }));
+  };
+}
+
+export async function getRawMaterialStockBooking(organizationId: string, bookingId: string) {
+  const row = await prisma.rawMaterialStockBooking.findFirst({
+    where: {
+      id: bookingId,
+      organization_id: organizationId,
+      sourceBomItem: { order: { organization_id: organizationId } },
+    },
+    include: rawMaterialStockBookingIncludes,
+  });
+  return row ? mapRawMaterialStockBooking(row) : null;
 }
 
 export async function createRawMaterialStockBookings(input: {

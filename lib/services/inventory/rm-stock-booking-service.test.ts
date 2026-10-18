@@ -12,16 +12,18 @@ const mocks = vi.hoisted(() => ({
     groupedPurchaseOrder: { findFirst: vi.fn(), create: vi.fn() },
     procurementDocumentCounter: { upsert: vi.fn() },
   },
+  findMany: vi.fn(),
+  findFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
     $transaction: mocks.transaction,
-    rawMaterialStockBooking: { findMany: vi.fn() },
+    rawMaterialStockBooking: { findMany: mocks.findMany, findFirst: mocks.findFirst },
   },
 }));
 
-import { createRawMaterialStockBookings } from "./rm-stock-booking-service";
+import { createRawMaterialStockBookings, getRawMaterialStockBooking } from "./rm-stock-booking-service";
 
 describe("raw-material stock booking", () => {
   beforeEach(() => {
@@ -65,6 +67,7 @@ describe("raw-material stock booking", () => {
       currentStoreVendorId: "store-1",
       lines: [{ bomItemId: "bom-1", takeFromStockId: "stock-1", bookedQuantity: "5" }],
     });
+
     expect(result).toEqual({ bookedLines: 1, groupedPurchaseOrderId: "grouped-stock-1" });
     expect(mocks.transactionClient.rawMaterialStock.update).toHaveBeenCalledWith({
       where: { id: "stock-1", organization_id: "organization-1" },
@@ -95,6 +98,38 @@ describe("raw-material stock booking", () => {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       maxWait: 10_000,
       timeout: 30_000,
+    });
+  });
+
+  it("loads a booking by ID with tenant scopes on the booking and linked order", async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: "booking-1",
+      take_from_stock_id: "stock-1",
+      currentStoreVendor: { vendor: "Current Store" },
+      takeFromStock: { raw_material: "Cotton", location: { location_name: "Main", entity: { entity_name: "Factory" } } },
+      sourceBomItem: { order: { orderNo: "ORD-1", styleName: "Style 1" } },
+      booked_quantity: new Prisma.Decimal("4.5"),
+      fulfilled_quantity: new Prisma.Decimal("1.5"),
+      status: "BOOKED",
+      booked_by: "Buyer",
+      created_at: new Date("2026-10-17T12:00:00.000Z"),
+    });
+
+    const booking = await getRawMaterialStockBooking("organization-1", "booking-1");
+
+    expect(mocks.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        id: "booking-1",
+        organization_id: "organization-1",
+        sourceBomItem: { order: { organization_id: "organization-1" } },
+      },
+    }));
+    expect(booking).toMatchObject({
+      id: "booking-1",
+      rawMaterial: "Cotton",
+      orderNo: "ORD-1",
+      bookedQuantity: 4.5,
+      fulfilledQuantity: 1.5,
     });
   });
 

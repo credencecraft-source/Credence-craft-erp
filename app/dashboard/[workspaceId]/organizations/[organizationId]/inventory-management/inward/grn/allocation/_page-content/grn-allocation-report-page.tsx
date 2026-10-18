@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState, type FormEvent } from "react";
+import { Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 
@@ -40,6 +40,7 @@ type AllocationRow = {
 
 type AllocationDetailRow = {
   id: string;
+  allocationId: string;
   grnNumber: string;
   purchaseOrderNumber: string;
   orderNo: string;
@@ -148,6 +149,7 @@ function GrnAllocationReportContent({
   const organizationId = params?.organizationId ?? "demo-org";
   const pickedHistoryLineId = allocationDetailsOnly ? searchParams.get("groupedPurchaseOrderLineId") ?? "" : "";
   const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/grn`;
+  const allocationReportPath = `${basePath}/allocation`;
   const [records, setRecords] = useState<AllocationRow[]>([]);
   const [allocationDetailRecords, setAllocationDetailRecords] = useState<AllocationDetailRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -174,8 +176,7 @@ function GrnAllocationReportContent({
     data?: PickHistory;
     error?: string;
   } | null>(null);
-
-  const loadGroupedOrderLines = async (row: AllocationRow) => {
+  const loadGroupedOrderLines = useCallback(async (row: AllocationRow) => {
     setAllocationLinesLoading(true);
     try {
       const response = await fetch(`/api/inventory/grn-order-allocations?organizationId=${encodeURIComponent(organizationId)}&allocationId=${encodeURIComponent(row.id)}`, {
@@ -192,7 +193,7 @@ function GrnAllocationReportContent({
     } finally {
       setAllocationLinesLoading(false);
     }
-  };
+  }, [organizationId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -211,6 +212,7 @@ function GrnAllocationReportContent({
           const detailRows = allocationRows.flatMap((row) =>
             row.orderAllocations.map((line): AllocationDetailRow => ({
               id: `${row.id}-${line.groupedPurchaseOrderLineId}`,
+              allocationId: row.id,
               grnNumber: row.grnNumber,
               purchaseOrderNumber: row.purchaseOrderNumber,
               orderNo: line.orderNo,
@@ -482,14 +484,12 @@ function GrnAllocationReportContent({
                 selectedIds={[]}
                 selectable={false}
                 storageKey={`rm-style-allocation-columns-${organizationId}`}
-                onRecordClick={(row) => {
-                  const query = new URLSearchParams({
-                    organizationId,
-                    groupedPurchaseOrderLineId: row.groupedPurchaseOrderLineId,
-                  });
-                  router.push(`${window.location.pathname}?${query.toString()}`);
+                onRowClick={(rowId) => {
+                  const row = allocationDetailRecords.find((record) => record.id === rowId);
+                  if (row) router.push(
+                    `${allocationReportPath}/${encodeURIComponent(row.allocationId)}?groupedPurchaseOrderLineId=${encodeURIComponent(row.groupedPurchaseOrderLineId)}`,
+                  );
                 }}
-                onRowClick={() => undefined}
                 renderCell={(fieldKey, row) => {
                   if (["alreadyAllocated", "balanceToAllocate", "grouped", "allocate", "pickedQuantity", "balanceStock"].includes(fieldKey)) {
                     return quantity(row[fieldKey as keyof AllocationDetailRow] as number | string);
@@ -511,7 +511,9 @@ function GrnAllocationReportContent({
                 storageKey={`grn-allocation-columns-${organizationId}`}
                 onRowAction={(recordId) => openAllocationModal(recordId)}
                 rowActionLabel="Allocate to Order"
-                onRowClick={() => undefined}
+                onRowClick={(recordId) => router.push(
+                  `${allocationReportPath}/${encodeURIComponent(recordId)}`,
+                )}
                 renderCell={(fieldKey, row) => {
                   const field = fieldKey as AllocationField;
                   if (field === "totalGroupedQty" || field === "verificationAllocated" || field === "balanceToAllocate") {
@@ -610,7 +612,7 @@ function GrnAllocationReportContent({
                   <tbody>
                     {allocationLinesLoading ? (
                       <tr><td colSpan={6} className="px-2 py-4 text-center text-slate-500">Loading grouped order lines...</td></tr>
-                    ) : allocationLines.map((line, index) => (
+                    ) : modalOpen && allocationLines.map((line, index) => (
                       <tr key={`${line.orderNo}-${index}`} className="bg-white">
                         <td className="border-b border-slate-200 px-2 py-2">
                           <Select

@@ -66,6 +66,30 @@ beforeEach(() => {
   );
 });
 
+describe("organization master record queries", () => {
+  it("omits unsupported legacy metadata from State lookup queries", async () => {
+    await getMasterValuesForOrganization("org-id", "state");
+
+    expect(models.masterState.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ organization_id: "org-id" }),
+      select: expect.not.objectContaining({ legacy_metadata: true }),
+    }));
+  });
+
+  it("filters child lookups by their authorized parent id", async () => {
+    await getMasterValuesForOrganization("org-id", "process-template-step", true, {
+      parentId: "process-template-id",
+    });
+
+    expect(models.masterProcessTemplateStep.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "org-id",
+        process_template_id: "process-template-id",
+      }),
+    }));
+  });
+});
+
 describe("create-only master insertion", () => {
   it("provides stable Size Group order for all lookup consumers", async () => {
     models.masterSizeGroup.findMany.mockResolvedValueOnce([{
@@ -679,6 +703,28 @@ describe("article creation", () => {
     });
 
     expect(articles[0].fields.Sizes).toEqual(["XL", "S", "M"]);
+  });
+
+  it("skips Size Group size-order queries when Article details are excluded", async () => {
+    models.masterArticle.findMany.mockResolvedValueOnce([{
+      id: "article-id",
+      value_id: "article-value-id",
+      organization_id: "org-id",
+      article: "Shirt",
+      article_code: "SH-01",
+      size_group_id: "group-id",
+      is_active: true,
+    }] as never);
+
+    const articles = await getMasterValuesForOrganization("org-id", "article", false, {
+      includeArticleDetails: false,
+      includeArticleMetrics: false,
+    });
+
+    expect(articles).toHaveLength(1);
+    expect(models.masterArticleVariant.findMany).not.toHaveBeenCalled();
+    expect(models.masterArticleSize.findMany).not.toHaveBeenCalled();
+    expect(models.masterSizeGroupSize.findMany).not.toHaveBeenCalled();
   });
 
   it("loads Article variants and size prices concurrently", async () => {

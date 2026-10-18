@@ -59,6 +59,8 @@ import {
   createContact,
   deactivateContacts,
   deleteUnusedContacts,
+  getContact,
+  listContacts,
   listContactLookupOptions,
   updateContact,
 } from "./contact-master-service";
@@ -96,6 +98,15 @@ describe("contact master numbering", () => {
       }));
       return { id: `contact-${created}` };
     });
+  });
+
+  it("loads a contact using both the organization and record ID", async () => {
+    const contact = await getContact("org-1", "contact-1");
+
+    expect(contact).toBeTruthy();
+    expect(mocks.tx.contact.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-1", id: "contact-1" },
+    }));
   });
 
   it("assigns sequential organization-scoped codes atomically", async () => {
@@ -178,23 +189,54 @@ describe("contact master numbering", () => {
     });
   });
 
-  it("lists every lightweight contact lookup option in one query when requested", async () => {
+  it("filters lightweight contact lookup options by organization and search term", async () => {
     mocks.tx.contact.findMany.mockResolvedValue([
       { id: "contact-1", code: "CT1", legal_name: "ACME GARMENTS", display_name: "ACME" },
       { id: "contact-2", code: "CT2", legal_name: "BETA GARMENTS", display_name: null },
     ]);
 
-    await expect(listContactLookupOptions("org-1", undefined, { all: true }))
+    await expect(listContactLookupOptions("org-1", undefined, { take: 100, search: " ACME " }))
       .resolves.toEqual([
         { id: "contact-1", code: "CT1", label: "ACME (CT1)" },
         { id: "contact-2", code: "CT2", label: "BETA GARMENTS (CT2)" },
       ]);
 
     expect(mocks.tx.contact.findMany).toHaveBeenCalledWith({
-      where: { organization_id: "org-1" },
+      where: {
+        organization_id: "org-1",
+        OR: [
+          { legal_name: { contains: "ACME", mode: "insensitive" } },
+          { display_name: { contains: "ACME", mode: "insensitive" } },
+          { code: { contains: "ACME", mode: "insensitive" } },
+        ],
+      },
       select: { id: true, code: true, legal_name: true, display_name: true },
       orderBy: [{ legal_name: "asc" }, { id: "asc" }],
+      skip: 0,
+      take: 100,
     });
+  });
+
+  it("loads a bounded, tenant-scoped contact report page", async () => {
+    mocks.tx.contact.findMany.mockResolvedValue([]);
+
+    await expect(listContacts("org-1", "ACME", undefined, { skip: 200, take: 200 }))
+      .resolves.toEqual([]);
+
+    expect(mocks.tx.contact.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "org-1",
+        OR: [
+          { code: { contains: "ACME", mode: "insensitive" } },
+          { legal_name: { contains: "ACME", mode: "insensitive" } },
+          { display_name: { contains: "ACME", mode: "insensitive" } },
+          { tax_registrations: { some: { gstin: { contains: "ACME" } } } },
+        ],
+      },
+      orderBy: [{ legal_name: "asc" }, { id: "asc" }],
+      skip: 200,
+      take: 200,
+    }));
   });
 
   it("creates a contact without role assignments when no role is provided", async () => {

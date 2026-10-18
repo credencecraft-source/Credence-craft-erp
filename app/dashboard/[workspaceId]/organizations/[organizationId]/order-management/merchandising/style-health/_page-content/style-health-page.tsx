@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { ArrowDownRight, Check, Circle, Factory, PackageCheck, ShoppingBag, X } from "lucide-react";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
@@ -182,6 +183,11 @@ export default function StyleHealthPage({
   orders: StyleHealthOrder[];
   organizationId: string;
 }) {
+  const params = useParams<{ workspaceId: string }>();
+  const router = useRouter();
+  const openOrder = (orderId: string) => router.push(
+    `/dashboard/${params.workspaceId}/organizations/${organizationId}/order-management/merchandising/order/${encodeURIComponent(orderId)}`,
+  );
   const [visibleFields, setVisibleFields] = useState<(keyof StyleHealthOrder | string)[]>(
     milestoneFields.map(({ key }) => key),
   );
@@ -216,7 +222,7 @@ export default function StyleHealthPage({
             rowIdSelector={(order) => order.id}
             selectedIds={[]}
             selectable={false}
-            onRowClick={() => undefined}
+            onRowClick={openOrder}
             emptyMessage="No merchandising orders found for this organization."
             getSearchValue={(fieldKey, order) => {
               if (fieldKey === "progress") {

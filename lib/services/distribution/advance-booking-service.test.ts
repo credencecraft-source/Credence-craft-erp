@@ -134,6 +134,9 @@ describe("advance-booking persistence", () => {
       id: "group-id",
       value_id: "group-value-id",
       size_group: "group-1",
+      size_links: ["S", "M", "L", "XL"].map((size) => ({
+        size: { organization_id: "internal-org-1", size },
+      })),
     }]);
     mocks.transaction.masterSizeGroupSize.findMany.mockResolvedValue(
       ["S", "M", "L", "XL"].map((size) => ({
@@ -168,9 +171,14 @@ describe("advance-booking persistence", () => {
       sizes: ["XL", "L", "M", "S"].map((size) => ({ size, quantity: 1 })),
     });
 
-    expect(mocks.transaction.masterSizeGroupSize.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { organization_id: "internal-org-1", size_group_id: { in: ["group-id"] } },
-      orderBy: [{ created_at: "asc" }, { id: "asc" }],
+    expect(mocks.transaction.masterSizeGroup.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ organization_id: "internal-org-1" }),
+      select: expect.objectContaining({
+        size_links: expect.objectContaining({
+          where: { organization_id: "internal-org-1" },
+          orderBy: [{ created_at: "asc" }, { id: "asc" }],
+        }),
+      }),
     }));
     expect(mocks.transaction.advanceBooking.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({

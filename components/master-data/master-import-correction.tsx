@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -22,6 +22,8 @@ export type MasterImportCorrectionRow = {
   errors: Record<string, string[]>;
   fields?: MasterImportCorrectionField[];
 };
+
+const CORRECTION_PAGE_SIZE = 50;
 
 export function MasterImportCorrection({
   open,
@@ -54,13 +56,19 @@ export function MasterImportCorrection({
   onRetry: () => void;
   retryLabel?: string;
 }) {
-  const fieldErrorCount = rows.reduce(
+  const [pageIndex, setPageIndex] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(rows.length / CORRECTION_PAGE_SIZE));
+  const currentPage = Math.min(pageIndex, pageCount - 1);
+  const visibleRows = open
+    ? rows.slice(currentPage * CORRECTION_PAGE_SIZE, (currentPage + 1) * CORRECTION_PAGE_SIZE)
+    : [];
+  const fieldErrorCount = open ? rows.reduce(
     (count, row) => count + Object.entries(row.errors)
       .filter(([key]) => key !== "_row")
       .reduce((fieldCount, [, errors]) => fieldCount + errors.length, 0),
     0,
-  );
-  const rowErrorCount = rows.reduce((count, row) => count + (row.errors._row?.length ?? 0), 0);
+  ) : 0;
+  const rowErrorCount = open ? rows.reduce((count, row) => count + (row.errors._row?.length ?? 0), 0) : 0;
 
   return (
     <Modal
@@ -85,10 +93,10 @@ export function MasterImportCorrection({
             {errorMessage}
           </p>
         ) : null}
-        {relatedMasterActions}
+        {open ? relatedMasterActions : null}
 
         <div className="max-h-[min(60dvh,40rem)] space-y-4 overflow-y-auto pr-1">
-          {rows.map((row) => {
+          {visibleRows.map((row) => {
             const safeId = row.id.replace(/[^A-Za-z0-9_-]/g, "_");
             const availableFields = row.fields ?? fields;
             const hasFieldErrors = availableFields.some((field) => row.errors[field.key]?.length);
@@ -168,6 +176,21 @@ export function MasterImportCorrection({
                   );
                 })}
               </div>
+              {rows.length > CORRECTION_PAGE_SIZE ? (
+                <nav aria-label="Correction rows" className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm text-[var(--erp-muted)]">
+                    Showing {currentPage * CORRECTION_PAGE_SIZE + 1}–{Math.min((currentPage + 1) * CORRECTION_PAGE_SIZE, rows.length)} of {rows.length} rows
+                  </p>
+                  <div className="flex gap-2">
+                    <Button type="button" variant="secondary" size="sm" onClick={() => setPageIndex(Math.max(0, currentPage - 1))} disabled={currentPage === 0}>
+                      Previous
+                    </Button>
+                    <Button type="button" variant="secondary" size="sm" onClick={() => setPageIndex(Math.min(pageCount - 1, currentPage + 1))} disabled={currentPage >= pageCount - 1}>
+                      Next
+                    </Button>
+                  </div>
+                </nav>
+              ) : null}
               </section>
             );
           })}

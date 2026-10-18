@@ -21,29 +21,24 @@ export async function GET(
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
     const searchParams = new URL(request.url).searchParams;
-    if (searchParams.get("all") === "true") {
-      return NextResponse.json(await listContactLookupOptions(
-        organization.id,
-        undefined,
-        { all: true },
-      ));
-    }
     const rawLimit = Number(searchParams.get("limit") ?? 200);
     const rawOffset = Number(searchParams.get("offset") ?? 0);
+    const search = searchParams.get("search")?.trim() ?? "";
     if (
       !Number.isSafeInteger(rawLimit) ||
       rawLimit < 1 ||
       rawLimit > 200 ||
       !Number.isSafeInteger(rawOffset) ||
-      rawOffset < 0
+      rawOffset < 0 ||
+      search.length > 100
     ) {
-      return NextResponse.json({ error: "Contact lookup pagination is invalid." }, { status: 400 });
+      return NextResponse.json({ error: "Contact lookup filters are invalid." }, { status: 400 });
     }
 
     return NextResponse.json(await listContactLookupOptions(
       organization.id,
       undefined,
-      { skip: rawOffset, take: rawLimit },
+      { skip: rawOffset, take: rawLimit, search },
     ));
   } catch (error) {
     if (isDatabaseUnavailableError(error)) {

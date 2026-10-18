@@ -32,12 +32,16 @@ type WorkspaceUserDetailsData = {
 };
 
 type SaveResult = { ok: true } | { ok: false; error: string };
+type RefreshEmailResult =
+  | { ok: true; changed: boolean; email: string }
+  | { ok: false; error: string };
 
 export default function WorkspaceUserDetails({
   user,
   deleteWorkspaceUser,
   deleteError,
   saveWorkspaceUser,
+  refreshOrganizationEmail,
 }: {
   user: WorkspaceUserDetailsData;
   deleteWorkspaceUser: () => Promise<void>;
@@ -45,11 +49,15 @@ export default function WorkspaceUserDetails({
   saveWorkspaceUser: (
     input: UpdateWorkspaceUserInput,
   ) => Promise<SaveResult>;
+  refreshOrganizationEmail: () => Promise<RefreshEmailResult>;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [refreshingEmail, setRefreshingEmail] = useState(false);
   const [error, setError] = useState("");
+  const [emailRefreshMessage, setEmailRefreshMessage] = useState("");
+  const [emailRefreshError, setEmailRefreshError] = useState("");
   const [resetEmailVerification, setResetEmailVerification] = useState(false);
   const [resetMobileVerification, setResetMobileVerification] = useState(false);
   const [fullName, setFullName] = useState(user.fullName);
@@ -132,6 +140,31 @@ export default function WorkspaceUserDetails({
     }
   }
 
+  async function refreshEmail() {
+    if (refreshingEmail) return;
+    setRefreshingEmail(true);
+    setEmailRefreshMessage("");
+    setEmailRefreshError("");
+    try {
+      const result = await refreshOrganizationEmail();
+      if (!result.ok) {
+        setEmailRefreshError(result.error);
+        return;
+      }
+      setEmail(result.email);
+      setEmailRefreshMessage(
+        result.changed
+          ? "Organization email refreshed and marked verified."
+          : "Email already matches the verified organization email.",
+      );
+      router.refresh();
+    } catch {
+      setEmailRefreshError("Unable to refresh the email from the organization. Please try again.");
+    } finally {
+      setRefreshingEmail(false);
+    }
+  }
+
   return (
     <Section className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -151,6 +184,13 @@ export default function WorkspaceUserDetails({
         {!editing && (
           <div className="flex flex-wrap gap-2">
             <Button onClick={beginEditing}>Edit details</Button>
+            <Button
+              variant="secondary"
+              onClick={refreshEmail}
+              disabled={refreshingEmail}
+            >
+              {refreshingEmail ? "Fetching email..." : "Fetch email from organisation"}
+            </Button>
             {user.canDelete && (
               <form
                 action={deleteWorkspaceUser}
@@ -179,6 +219,16 @@ export default function WorkspaceUserDetails({
       )}
 
       <Card className="p-5 sm:p-6">
+        {emailRefreshMessage && (
+          <p role="status" className="mb-4 text-sm text-slate-600">
+            {emailRefreshMessage}
+          </p>
+        )}
+        {emailRefreshError && (
+          <p role="alert" className="mb-4 text-sm font-medium text-red-700">
+            {emailRefreshError}
+          </p>
+        )}
         {deleteError && (
           <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">
             {deleteError}
@@ -260,6 +310,16 @@ export default function WorkspaceUserDetails({
                 completes OTP verification. Changing an email or mobile number
                 automatically resets its verification.
               </p>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="mt-3"
+                onClick={refreshEmail}
+                disabled={refreshingEmail}
+              >
+                {refreshingEmail ? "Fetching email..." : "Fetch email from organisation"}
+              </Button>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <Button
                   type="button"

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, startTransition, useCallback, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
@@ -219,7 +220,7 @@ export default function MerchandisingOrdersPage({
   const handleSelectOrder = useCallback((orderId: string) => {
     startTransition(() => {
       router.push(
-        `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/${orderId}`,
+        `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/${encodeURIComponent(orderId)}`,
       );
     });
   }, [organizationId, router, workspaceId]);
@@ -252,12 +253,9 @@ export default function MerchandisingOrdersPage({
     setVisibleReportFields(fields as FilterableOrderField[]);
   }, []);
 
-  const handleReportRowClick = useCallback((rowIdOrName: string) => {
-    const matchedOrder = filteredOrders.find(
-      (order) => order.id === rowIdOrName || order.orderNo === rowIdOrName,
-    );
-    handleSelectOrder(matchedOrder?.id ?? rowIdOrName);
-  }, [filteredOrders, handleSelectOrder]);
+  const handleReportRowClick = useCallback((orderId: string) => {
+    handleSelectOrder(orderId);
+  }, [handleSelectOrder]);
 
   const handleOpenDeleteConfirmation = useCallback(() => {
     setShowDeleteConfirmation(true);
@@ -549,7 +547,22 @@ export default function MerchandisingOrdersPage({
           bulkUploadDisabled={isPreparingBulkWorkbook}
           onRowAction={handleVariantOrder}
           rowActionLabel="Variant"
-          renderCell={renderOrderCell}
+          renderCell={(fieldKey, order) => {
+            if (fieldKey === "orderNo") {
+              return (
+                <Link
+                  href={`/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/${encodeURIComponent(order.id)}`}
+                  prefetch={false}
+                  onClick={(event) => event.stopPropagation()}
+                  aria-label={`Open order ${order.orderNo}`}
+                  className="font-semibold text-[var(--erp-brand)] underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--erp-brand)]"
+                >
+                  {normalizeUppercase(order.orderNo)}
+                </Link>
+              );
+            }
+            return renderOrderCell(fieldKey, order);
+          }}
         />
         {nextCursor && !loadError && (
           <div className="mt-3 flex justify-center">

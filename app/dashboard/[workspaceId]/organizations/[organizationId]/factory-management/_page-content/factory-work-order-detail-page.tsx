@@ -121,6 +121,8 @@ export default function FactoryWorkOrderDetailPage() {
   const workspaceId = params?.workspaceId;
   const workOrderId = params?.workOrderId;
   const orderNo = searchParams.get("orderNo")?.trim();
+  const isEditing = searchParams.get("mode") === "edit";
+  const detailPath = `/dashboard/${workspaceId}/organizations/${organizationId}/factory-management/pre-production/work-order/dashboard/work-orders/${encodeURIComponent(workOrderId ?? "")}?orderNo=${encodeURIComponent(orderNo ?? "")}`;
   const hasRequiredParams = Boolean(organizationId && orderNo && workOrderId);
 
   const [activeTab, setActiveTab] = useState<WorkOrderTab>("details");
@@ -143,6 +145,7 @@ export default function FactoryWorkOrderDetailPage() {
     totalQty: 0,
     status: "OPEN",
   });
+  const [originalForm, setOriginalForm] = useState<typeof form | null>(null);
 
   useEffect(() => {
     if (!organizationId || !orderNo || !workOrderId) return;
@@ -219,7 +222,7 @@ export default function FactoryWorkOrderDetailPage() {
                     })) : [],
                   }))
                 : mappedProcessRows;
-              setForm({
+              const loadedForm = {
                 processTemplateId: sourceOrder?.processTemplate?.id ?? sourceOrder?.process_template_id ?? "",
                 processRows: workOrderProcessRows,
                 rows: Array.isArray(sourceOrder?.finishedGoods) ? sourceOrder.finishedGoods : [],
@@ -230,7 +233,9 @@ export default function FactoryWorkOrderDetailPage() {
                 buyer: sourceOrder?.buyer ?? selectedWorkOrder.buyer ?? "",
                 totalQty: Number(selectedWorkOrder?.totalQty ?? 0),
                 status: selectedWorkOrder.status ?? "OPEN",
-              });
+              };
+              setForm(loadedForm);
+              setOriginalForm(loadedForm);
             }
           }
         }
@@ -281,8 +286,11 @@ export default function FactoryWorkOrderDetailPage() {
         sizeLines: data.workOrder.sizeLines,
         bomLines: data.workOrder.bomLines ?? current.bomLines,
       } : current);
-      setForm((current) => ({ ...current, totalQty: Number(data.workOrder.total_qty), status: data.workOrder.status }));
+      const updatedForm = { ...form, totalQty: Number(data.workOrder.total_qty), status: data.workOrder.status };
+      setForm(updatedForm);
+      setOriginalForm(updatedForm);
       setMessage("Work order updated successfully.");
+      router.replace(detailPath);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save work order.");
     } finally {
@@ -303,6 +311,12 @@ export default function FactoryWorkOrderDetailPage() {
       setError(deleteError instanceof Error ? deleteError.message : "Unable to delete work order.");
       setDeleting(false);
     }
+  }
+
+  function cancelEditing() {
+    if (originalForm) setForm(originalForm);
+    setMessage("");
+    router.replace(detailPath);
   }
 
   if (loading && hasRequiredParams) {
@@ -346,15 +360,22 @@ export default function FactoryWorkOrderDetailPage() {
               </div>
             </div>
 
-            <Button
-              type="button"
-              onClick={() => void saveWorkOrder()}
-              disabled={saving || deleting}
-              size="sm"
-              className="border-emerald-600 bg-emerald-600 text-xs text-white hover:bg-emerald-700"
-            >
-              {saving ? "Saving..." : "Save Work Order"}
-            </Button>
+            {!isEditing ? (
+              <Button type="button" onClick={() => router.push(`${detailPath}&mode=edit`)}>Edit</Button>
+            ) : (
+              <>
+                <Button type="button" variant="secondary" onClick={cancelEditing} disabled={saving || deleting}>Cancel</Button>
+                <Button
+                  type="button"
+                  onClick={() => void saveWorkOrder()}
+                  disabled={saving || deleting}
+                  size="sm"
+                  className="border-emerald-600 bg-emerald-600 text-xs text-white hover:bg-emerald-700"
+                >
+                  {saving ? "Saving..." : "Save Work Order"}
+                </Button>
+              </>
+            )}
             <Button
               type="button"
               onClick={() => void removeWorkOrder()}
@@ -390,6 +411,7 @@ export default function FactoryWorkOrderDetailPage() {
         {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
         {message && <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{message}</p>}
 
+        <fieldset disabled={!isEditing} className="min-w-0 border-0 p-0">
         {activeTab === "details" && (
           <Card className="border-slate-200 p-5">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -591,6 +613,7 @@ export default function FactoryWorkOrderDetailPage() {
             )}
           </div>
         )}
+        </fieldset>
       </Section>
     </Page>
   );

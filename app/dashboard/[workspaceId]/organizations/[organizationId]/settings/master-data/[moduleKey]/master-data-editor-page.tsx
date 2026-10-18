@@ -28,7 +28,10 @@ import {
 } from "@/lib/master-data/master-records-workbook";
 import type { MasterFieldValues } from "@/lib/master-data/master-data-constants";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
-import { validateArticleImportSupportingMasters } from "@/lib/services/master-data/master-import-service";
+import {
+  loadArticleImportSupportingMasterIndex,
+  validateArticleImportSupportingMasters,
+} from "@/lib/services/master-data/master-import-service";
 import { parseFinishedGoodsSizePrices } from "@/lib/services/master-data/finished-goods-size-service";
 
 function serializeDecimal(value: unknown): unknown {
@@ -207,17 +210,27 @@ function masterDataErrorRedirect(
   recordCode = "",
   returnToSizeGroupDetail = false,
   recordId = "",
+  returnToMasterRecord = false,
+  masterRecordCode = "",
 ): never {
   const message = error instanceof Error ? error.message : "Unable to save master data.";
+  if (returnToMasterRecord && moduleKey !== "article" && moduleKey !== "size-group") {
+    const recordPath = masterRecordCode
+      ? `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}/${encodeURIComponent(masterRecordCode)}`
+      : `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}/create`;
+    const editMode = masterRecordCode ? "&mode=edit" : "";
+    redirect(`${recordPath}?error=${encodeURIComponent(message)}${editMode}`);
+  }
   if (returnToSizeGroupDetail && moduleKey === "size-group" && recordId) {
     const recordPath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/size-group/${encodeURIComponent(recordId)}`;
-    redirect(`${recordPath}?error=${encodeURIComponent(message)}`);
+    redirect(`${recordPath}?error=${encodeURIComponent(message)}&mode=edit`);
   }
   if (returnToArticleDetail && moduleKey === "article") {
     const articlePath = recordCode
       ? `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/${encodeURIComponent(recordCode)}`
       : `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/create`;
-    redirect(`${articlePath}?error=${encodeURIComponent(message)}`);
+    const editMode = recordCode ? "&mode=edit" : "";
+    redirect(`${articlePath}?error=${encodeURIComponent(message)}${editMode}`);
   }
   redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent(message)}`);
 }
@@ -286,12 +299,13 @@ export async function createMasterValueAction(formData: FormData) {
   const organizationId = String(formData.get("organizationId") ?? "");
   const moduleKey = String(formData.get("moduleKey") ?? "");
   const returnToArticleDetail = formData.get("returnToArticleDetail") === "true";
+  const returnToMasterRecord = formData.get("returnToMasterRecord") === "true";
   const definition = getMasterDefinition(moduleKey);
   let fields: MasterFieldValues = {};
   try {
     fields = definition ? await readFields(formData, definition.fields) : {};
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail);
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, "", false, "", returnToMasterRecord);
   }
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
@@ -304,6 +318,11 @@ export async function createMasterValueAction(formData: FormData) {
     if (returnToArticleDetail && moduleKey === "article") {
       masterDataErrorRedirect(workspaceId, organizationId, moduleKey,
         new Error(`Complete all required ${definition.label.toLowerCase()} fields before saving.`), true);
+    }
+    if (returnToMasterRecord) {
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey,
+        new Error(`Complete all required ${definition.label.toLowerCase()} fields before saving.`),
+        false, "", false, "", true);
     }
     redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent(`Complete all required ${definition.label.toLowerCase()} fields before saving.`)}`);
   }
@@ -334,7 +353,7 @@ export async function createMasterValueAction(formData: FormData) {
         .map(({ id, fields: variantFields }) => ({ ...(id ? { id } : {}), fields: variantFields }));
     }
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail);
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, "", false, "", returnToMasterRecord);
   }
 
   let created;
@@ -351,7 +370,7 @@ export async function createMasterValueAction(formData: FormData) {
       } : {}),
     });
   } catch (error) {
-    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail);
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, "", false, "", returnToMasterRecord);
   }
 
   if (moduleKey !== "article") {
@@ -359,7 +378,7 @@ export async function createMasterValueAction(formData: FormData) {
       await saveChildValues(organization.id, created.id, definition, formData);
     } catch (error) {
       await deleteMasterValue(organization.id, created.id);
-      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail);
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, "", false, "", returnToMasterRecord);
     }
   }
 
@@ -377,6 +396,11 @@ export async function createMasterValueAction(formData: FormData) {
       redirect(`${articlePath}?saved=create`);
     }
   }
+  if (returnToMasterRecord) {
+    const recordPath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}/${encodeURIComponent(created.value_id)}`;
+    revalidatePath(recordPath);
+    redirect(`${recordPath}?saved=create`);
+  }
   redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=create`);
 }
 
@@ -388,6 +412,8 @@ export async function updateMasterValueAction(formData: FormData) {
   const moduleKey = String(formData.get("moduleKey") ?? "");
   const valueId = String(formData.get("valueId") ?? "");
   const returnToArticleDetail = formData.get("returnToArticleDetail") === "true";
+  const returnToMasterRecord = formData.get("returnToMasterRecord") === "true";
+  const masterRecordCode = String(formData.get("masterRecordCode") ?? "");
   const returnToSizeGroupDetail = moduleKey === "size-group"
     && formData.get("returnToSizeGroupDetail") === "true";
   const returnRecordCode = String(formData.get("field_article_code") ?? "");
@@ -405,6 +431,8 @@ export async function updateMasterValueAction(formData: FormData) {
       returnRecordCode,
       returnToSizeGroupDetail,
       valueId,
+      returnToMasterRecord,
+      masterRecordCode,
     );
   }
   const label = definition ? getRecordLabel(fields, definition) : "";
@@ -419,6 +447,11 @@ export async function updateMasterValueAction(formData: FormData) {
       masterDataErrorRedirect(workspaceId, organizationId, moduleKey,
         new Error(`Complete all required ${definition.label.toLowerCase()} fields before saving.`),
         false, "", true, valueId);
+    }
+    if (returnToMasterRecord && definition) {
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey,
+        new Error(`Complete all required ${definition.label.toLowerCase()} fields before saving.`),
+        false, "", false, "", true, masterRecordCode);
     }
     return;
   }
@@ -459,6 +492,8 @@ export async function updateMasterValueAction(formData: FormData) {
       returnRecordCode,
       returnToSizeGroupDetail,
       valueId,
+      returnToMasterRecord,
+      masterRecordCode,
     );
   }
 
@@ -485,6 +520,8 @@ export async function updateMasterValueAction(formData: FormData) {
       returnRecordCode,
       returnToSizeGroupDetail,
       valueId,
+      returnToMasterRecord,
+      masterRecordCode,
     );
   }
 
@@ -501,6 +538,8 @@ export async function updateMasterValueAction(formData: FormData) {
         returnRecordCode,
         returnToSizeGroupDetail,
         valueId,
+        returnToMasterRecord,
+        masterRecordCode,
       );
     }
   }
@@ -513,6 +552,11 @@ export async function updateMasterValueAction(formData: FormData) {
   }
   if (returnToSizeGroupDetail && moduleKey === "size-group") {
     const recordPath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/size-group/${encodeURIComponent(valueId)}`;
+    revalidatePath(recordPath);
+    redirect(`${recordPath}?saved=update`);
+  }
+  if (returnToMasterRecord) {
+    const recordPath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}/${encodeURIComponent(masterRecordCode || valueId)}`;
     revalidatePath(recordPath);
     redirect(`${recordPath}?saved=update`);
   }
@@ -696,39 +740,51 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
   ]);
   const failures: MasterRecordsImportResult["failures"] = [...parseFailures];
   const lookupValidRows: ParsedMasterWorkbookRow[] = [];
-  for (const row of rows) {
-    const validationMessages: string[] = [];
-    try {
-      await validateMasterWorkbookLookupValues(
-        definition,
-        [row],
-        createWorkbookLookupResolver(organization.id),
-      );
-    } catch (error) {
-      validationMessages.push(error instanceof Error
-        ? error.message
-        : "Unable to validate this row's lookup values.");
-    }
-    if (moduleKey === "article") {
-      const dependencies = await validateArticleImportSupportingMasters(
-        prisma,
-        organization.id,
-        row.fields,
-        Object.fromEntries(Object.entries(row.childRows).map(([key, value]) => [
-          key,
-          Array.isArray(value) ? value : [],
-        ])),
-      );
-      validationMessages.push(...dependencies.errors.map((error) => error.message));
-    }
-    if (validationMessages.length > 0) {
-      failures.push({
-        rowNumber: row.rowNumber,
-        message: [...new Set(validationMessages)].join(" "),
-        row: sourceRows.get(row.rowNumber),
-      });
-    } else {
-      lookupValidRows.push(row);
+  const workbookLookupResolver = createWorkbookLookupResolver(organization.id);
+  const articleValidationBatchSize = 250;
+  for (let start = 0; start < rows.length; start += articleValidationBatchSize) {
+    const validationBatch = rows.slice(start, start + articleValidationBatchSize);
+    const articleSupportingIndex = moduleKey === "article"
+      ? await loadArticleImportSupportingMasterIndex(
+          organization.id,
+          validationBatch.map((row) => ({ fields: row.fields, childRows: row.childRows })),
+        )
+      : undefined;
+    for (const row of validationBatch) {
+      const validationMessages: string[] = [];
+      try {
+        await validateMasterWorkbookLookupValues(
+          definition,
+          [row],
+          workbookLookupResolver,
+        );
+      } catch (error) {
+        validationMessages.push(error instanceof Error
+          ? error.message
+          : "Unable to validate this row's lookup values.");
+      }
+      if (moduleKey === "article") {
+        const dependencies = await validateArticleImportSupportingMasters(
+          prisma,
+          organization.id,
+          row.fields,
+          Object.fromEntries(Object.entries(row.childRows).map(([key, value]) => [
+            key,
+            Array.isArray(value) ? value : [],
+          ])),
+          articleSupportingIndex,
+        );
+        validationMessages.push(...dependencies.errors.map((error) => error.message));
+      }
+      if (validationMessages.length > 0) {
+        failures.push({
+          rowNumber: row.rowNumber,
+          message: [...new Set(validationMessages)].join(" "),
+          row: sourceRows.get(row.rowNumber),
+        });
+      } else {
+        lookupValidRows.push(row);
+      }
     }
   }
   rows = lookupValidRows;
@@ -846,9 +902,13 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
 export default async function MasterDataEditorPage({
   params,
   searchParams,
+  formMode,
+  recordCode,
 }: {
   params: Promise<{ workspaceId: string; organizationId: string; moduleKey: string }>;
   searchParams: Promise<{ error?: string; saved?: string; deletedCount?: string }>;
+  formMode?: "create" | "edit" | "view";
+  recordCode?: string;
 }) {
   const { workspaceId, organizationId, moduleKey } = await params;
   const { error, saved, deletedCount } = await searchParams;
@@ -878,38 +938,40 @@ export default async function MasterDataEditorPage({
     notFound();
   }
 
-  const lookupKeys = [...new Set(definition.fields.flatMap((field) => [
-    ...(field.lookupModuleKey ? [field.lookupModuleKey] : []),
-    ...(field.childFields ?? []).flatMap((child) => child.lookupModuleKey ? [child.lookupModuleKey] : []),
-  ]))];
   const childModuleKey = definition.fields.find((field) => field.type === "child-list")?.childModuleKey
     ?? definition.fields.find((field) => field.type === "lookup" && field.multiple)?.lookupModuleKey;
-  const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organization.id);
-  const [values, lookupOptions, childRecords] = await Promise.all([
-    getMasterValuesForOrganization(organization.id, moduleKey, true, { includeDummyData: true, activeDummyDataBatch }),
-    Promise.all(lookupKeys.map(async (lookupKey) => {
-      if (lookupKey === "article-size") {
-        const sizeLinks = await getSizeGroupSizesForOrganization(organization.id, undefined, true);
-        return [lookupKey, sizeLinks.map(({ groupId, size }) => ({
-          id: `${groupId}:${size.id}`,
-          value_id: size.value_id,
-          label: size.label,
-          parent_id: groupId,
-          fields: size.fields,
-        }))] as const;
-      }
-      return [lookupKey, (await getMasterValuesForOrganization(organization.id, lookupKey, true, { includeDummyData: true, activeDummyDataBatch }))
-        .map((item) => ({ id: item.id, value_id: item.value_id, label: item.label, parent_id: item.parent_id, fields: item.fields }))] as const;
-    })).then(Object.fromEntries),
-    moduleKey === "size-group"
-      ? getSizeGroupSizesForOrganization(organization.id, undefined, true)
-          .then((items) => items.map((item) => ({ parentId: item.groupId, label: item.size.label, fields: item.size.fields })))
-      : childModuleKey
-        ? getMasterValuesForOrganization(organization.id, childModuleKey, true, { includeDummyData: true, activeDummyDataBatch })
-            .then((items) => items.map((item) => ({ id: item.id, parentId: item.parent_id, label: item.label, fields: serializeDecimal(item.fields) as Record<string, unknown> })))
-        : Promise.resolve([]),
-  ]);
-  const shouldShowMasterHeader = moduleKey !== "article";
+  const activeDummyDataBatch = formMode === "create"
+    ? null
+    : getActiveOrganizationDummyDataBatch(organization.id);
+  const values = (formMode === "edit" || formMode === "view") && recordCode
+    ? await getMasterValuesForOrganization(organization.id, moduleKey, true, {
+        includeDummyData: true,
+        activeDummyDataBatch,
+        search: recordCode,
+        exactSearch: true,
+        limit: 2,
+      }).then((items) => {
+        const matches = items.filter((item) => item.value_id === recordCode || item.id === recordCode);
+        if (matches.length !== 1) notFound();
+        return matches;
+      })
+    : formMode
+      ? []
+      : await getMasterValuesForOrganization(organization.id, moduleKey, true, { includeDummyData: true, activeDummyDataBatch });
+  const shouldShowMasterHeader = !formMode && moduleKey !== "article";
+  const formRecord = formMode === "edit" || formMode === "view" ? values[0] : undefined;
+  const childRecords = formRecord && childModuleKey
+    ? (await getMasterValuesForOrganization(organization.id, childModuleKey, true, {
+        includeDummyData: true,
+        activeDummyDataBatch,
+        parentId: formRecord.id,
+      })).map((item) => ({
+        id: item.id,
+        parentId: item.parent_id,
+        label: item.label,
+        fields: serializeDecimal(item.fields) as Record<string, unknown>,
+      }))
+    : [];
 
   return (
     <div>
@@ -953,7 +1015,7 @@ export default async function MasterDataEditorPage({
           metadata: { fields: serializeDecimal(item.fields) as Record<string, unknown> },
         }))}
         fields={definition.fields}
-        lookupOptions={lookupOptions}
+        lookupOptions={{}}
         childRecords={childRecords}
         moduleLabel={definition.label}
         workspaceId={workspaceId}
@@ -964,6 +1026,18 @@ export default async function MasterDataEditorPage({
         deleteAction={deleteMasterValueAction}
         deleteSelectedAction={deleteSelectedMasterValuesAction}
         importAction={importMasterValuesAction}
+        formMode={formMode}
+        initialRecord={formRecord ? {
+          id: formRecord.id,
+          value_id: formRecord.value_id,
+          label: formRecord.label,
+          code: formRecord.code,
+          description: formRecord.description,
+          is_active: formRecord.is_active,
+          metadata: { fields: serializeDecimal(formRecord.fields) as Record<string, unknown> },
+        } : undefined}
+        formError={formMode ? error : undefined}
+        saved={formMode ? saved : undefined}
       />
     </div>
   );

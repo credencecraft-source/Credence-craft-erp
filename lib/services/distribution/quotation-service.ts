@@ -40,11 +40,105 @@ const quotationSummarySelect = {
   created_at: true,
 };
 
+const quotationPartyInclude = {
+  select: {
+    vendor: true,
+    gst_number: true,
+    registered_state: true,
+    contact: {
+      select: {
+        legal_name: true,
+        email: true,
+        phone: true,
+        addresses: {
+          where: { is_active: true },
+          orderBy: [
+            { is_default_billing: "desc" as const },
+            { is_default_shipping: "desc" as const },
+            { created_at: "asc" as const },
+          ],
+          select: {
+            usage: true,
+            address_line_1: true,
+            address_line_2: true,
+            city: true,
+            state_name: true,
+            postal_code: true,
+            country_code: true,
+            is_default_billing: true,
+            is_default_shipping: true,
+            tax_registration: { select: { gstin: true } },
+          },
+        },
+      },
+    },
+  },
+};
+
 const masterQuotationDetailInclude = {
   ...quotationInclude,
   lines: { ...quotationInclude.lines, take: 0 },
   childQuotations: { select: quotationSummarySelect },
 };
+
+const masterQuotationPdfInclude = {
+  ...masterQuotationDetailInclude,
+  childQuotations: {
+    orderBy: [{ quotation_date: "asc" as const }, { created_at: "asc" as const }],
+    include: { ...quotationInclude, vendor: quotationPartyInclude },
+  },
+  organization: {
+    select: {
+      organization_name: true,
+      organization_email: true,
+      gst_number: true,
+      mobile_number: true,
+      address_line_1: true,
+      address_line_2: true,
+      city: true,
+      state: true,
+      country: true,
+      pin_code: true,
+    },
+  },
+  vendor: quotationPartyInclude,
+};
+
+function mapQuotationParty(
+  vendor: Prisma.MasterVendorGetPayload<{ select: typeof quotationPartyInclude.select }> | null,
+  fallbackName: string,
+) {
+  const addresses = vendor?.contact?.addresses ?? [];
+  const billingAddress = addresses.find((address) =>
+    address.is_default_billing && (address.usage === "BILLING" || address.usage === "BOTH"),
+  ) ?? addresses.find((address) => address.usage === "BILLING" || address.usage === "BOTH");
+  const shippingAddress = addresses.find((address) =>
+    address.is_default_shipping && (address.usage === "SHIPPING" || address.usage === "BOTH"),
+  ) ?? addresses.find((address) => address.usage === "SHIPPING" || address.usage === "BOTH");
+  const formatAddress = (address: typeof billingAddress) => address ? {
+    lines: [
+      address.address_line_1,
+      address.address_line_2,
+      address.city,
+      address.state_name,
+      address.postal_code,
+      address.country_code,
+    ].filter((part): part is string => Boolean(part?.trim())),
+    gstin: address.tax_registration?.gstin ?? null,
+  } : null;
+
+  return {
+    name: vendor?.vendor ?? fallbackName,
+    legalName: vendor?.contact?.legal_name ?? null,
+    email: vendor?.contact?.email ?? null,
+    phone: vendor?.contact?.phone ?? null,
+    gstin: vendor?.gst_number ??
+      addresses.find((address) => address.tax_registration?.gstin)?.tax_registration?.gstin ?? null,
+    registeredState: vendor?.registered_state ?? null,
+    billingAddress: formatAddress(billingAddress),
+    shippingAddress: formatAddress(shippingAddress),
+  };
+}
 
 function isValidDateOnly(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -55,8 +149,9 @@ function isValidDateOnly(value: string) {
 async function mapQuotation(
   organizationId: string,
   record: Prisma.DistributionQuotationGetPayload<{ include: typeof quotationInclude }>,
+  suppliedSizeOrderByGroup?: Map<string, string[]>,
 ) {
-  const sizeOrderByGroup = await getSizeGroupSizeOrderMapForOrganization(
+  const sizeOrderByGroup = suppliedSizeOrderByGroup ?? await getSizeGroupSizeOrderMapForOrganization(
     organizationId,
     record.lines.map((line) => line.sourceBooking.order?.sizeGroup ?? ""),
   );
@@ -131,13 +226,54 @@ export async function listDistributionQuotations(organizationId: string) {
 export async function getDistributionQuotation(
   organizationId: string,
   quotationId: string,
-  options: { masterOrder?: boolean; includeChildren?: boolean } = {},
+  options: { masterOrder?: boolean; includeChildren?: boolean; salesOrderDocument?: boolean } = {},
 ) {
+  if (options.masterOrder && options.salesOrderDocument) {
+    const masterQuotation = await prisma.distributionQuotation.findFirst({
+      where: { organization_id: organizationId, id: quotationId, mode: "MASTER" },
+      include: masterQuotationPdfInclude,
+    });
+    if (masterQuotation) {
+      const linkedSizeGroups = masterQuotation.childQuotations.flatMap((child) =>
+        child.lines.map((line) => line.sourceBooking.order?.sizeGroup ?? ""),
+      );
+      const sizeOrderByGroup = await getSizeGroupSizeOrderMapForOrganization(organizationId, linkedSizeGroups);
+      const sellerAddress = [
+        masterQuotation.organization.address_line_1,
+        masterQuotation.organization.address_line_2,
+        masterQuotation.organization.city,
+        masterQuotation.organization.state,
+        masterQuotation.organization.pin_code,
+        masterQuotation.organization.country,
+      ].filter((part): part is string => Boolean(part?.trim())).join(", ");
+      return {
+        quotation: await mapQuotation(organizationId, masterQuotation, sizeOrderByGroup),
+        children: await Promise.all(masterQuotation.childQuotations.map((child) =>
+          mapQuotation(organizationId, child, sizeOrderByGroup).then((quotation) => ({
+            ...quotation,
+            quotationParty: mapQuotationParty(child.vendor, child.customer),
+          })),
+        )),
+        salesOrderDocument: {
+          seller: {
+            name: masterQuotation.organization.organization_name,
+            email: masterQuotation.organization.organization_email,
+            phone: masterQuotation.organization.mobile_number,
+            gstin: masterQuotation.organization.gst_number,
+            address: sellerAddress,
+          },
+          buyer: mapQuotationParty(masterQuotation.vendor, masterQuotation.customer),
+        },
+      };
+    }
+    throw new Error("The Sales Order was not found in this organization.");
+  }
+
   if (options.masterOrder) {
     const masterQuotation = await prisma.distributionQuotation.findFirst({
-        where: { organization_id: organizationId, id: quotationId, mode: "MASTER" },
-        include: masterQuotationDetailInclude,
-      });
+      where: { organization_id: organizationId, id: quotationId, mode: "MASTER" },
+      include: masterQuotationDetailInclude,
+    });
     if (masterQuotation) {
       return {
         quotation: await mapQuotation(organizationId, masterQuotation),

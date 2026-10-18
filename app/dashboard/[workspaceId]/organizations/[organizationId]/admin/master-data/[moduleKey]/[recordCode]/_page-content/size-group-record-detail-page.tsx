@@ -16,9 +16,11 @@ function firstSearchParam(value: string | string[] | undefined) {
 export default async function SizeGroupRecordDetailPage({
   params,
   searchParams,
+  readOnly,
 }: {
   params: Promise<{ workspaceId: string; organizationId: string; recordCode: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
+  readOnly: boolean;
 }) {
   const [{ workspaceId, organizationId, recordCode }, query] = await Promise.all([params, searchParams]);
   const user = await requireSessionUser();
@@ -29,16 +31,20 @@ export default async function SizeGroupRecordDetailPage({
   if (!organization) notFound();
   await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
-  const [records, brands, charts, availableSizes] = await Promise.all([
+  const [records, referenceData] = await Promise.all([
     getMasterValuesForOrganization(organization.id, "size-group", true, {
       search: recordCode,
       exactSearch: true,
       includeDummyData: true,
       limit: 1,
     }),
-    getMasterValuesForOrganization(organization.id, "brand", true, { includeDummyData: true, limit: 500 }),
-    getMasterValuesForOrganization(organization.id, "measurement-chart", true, { includeDummyData: true, limit: 500 }),
-    getMasterValuesForOrganization(organization.id, "size", true, { includeDummyData: true, limit: 500 }),
+    readOnly
+      ? Promise.resolve(null)
+      : Promise.all([
+          getMasterValuesForOrganization(organization.id, "brand", true, { includeDummyData: true, limit: 500 }),
+          getMasterValuesForOrganization(organization.id, "measurement-chart", true, { includeDummyData: true, limit: 500 }),
+          getMasterValuesForOrganization(organization.id, "size", true, { includeDummyData: true, limit: 500 }),
+        ]),
   ]);
   const record = records.find((item) => item.id === recordCode || item.value_id === recordCode);
   if (!record) notFound();
@@ -56,12 +62,13 @@ export default async function SizeGroupRecordDetailPage({
         measurementChart: String(record.fields.Measurement_Chart1 ?? ""),
         sizes: links.map((item) => item.size.label),
       }}
-      brandOptions={brands.map((item) => ({ label: item.label }))}
-      measurementChartOptions={charts.map((item) => ({ label: item.label }))}
-      sizeOptions={availableSizes.map((item) => ({ label: item.label }))}
+      brandOptions={referenceData?.[0].map((item) => ({ label: item.label })) ?? []}
+      measurementChartOptions={referenceData?.[1].map((item) => ({ label: item.label })) ?? []}
+      sizeOptions={referenceData?.[2].map((item) => ({ label: item.label })) ?? []}
       updateAction={updateMasterValueAction}
       error={firstSearchParam(query.error)}
       saved={firstSearchParam(query.saved)}
+      readOnly={readOnly && firstSearchParam(query.mode) !== "edit"}
     />
   );
 }

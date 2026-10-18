@@ -4,8 +4,11 @@ const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
   workspaceUserFindMany: vi.fn(),
+  skuFindFirst: vi.fn(),
   skuFindMany: vi.fn(),
+  generalReceiptFindFirst: vi.fn(),
   generalReceiptFindMany: vi.fn(),
+  allocatedReceiptFindFirst: vi.fn(),
   allocatedReceiptFindMany: vi.fn(),
 }));
 
@@ -18,9 +21,9 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
     workspaceUser: { findMany: mocks.workspaceUserFindMany },
-    finishedGoodsSkuStock: { findMany: mocks.skuFindMany },
-    finishedGoodsGeneralStockReceipt: { findMany: mocks.generalReceiptFindMany },
-    finishedGoodsAllocatedStockReceipt: { findMany: mocks.allocatedReceiptFindMany },
+    finishedGoodsSkuStock: { findFirst: mocks.skuFindFirst, findMany: mocks.skuFindMany },
+    finishedGoodsGeneralStockReceipt: { findFirst: mocks.generalReceiptFindFirst, findMany: mocks.generalReceiptFindMany },
+    finishedGoodsAllocatedStockReceipt: { findFirst: mocks.allocatedReceiptFindFirst, findMany: mocks.allocatedReceiptFindMany },
   },
 }));
 
@@ -68,9 +71,12 @@ describe("finished goods stock report", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
-    mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1", role: "INVENTORY" });
     mocks.skuFindMany.mockResolvedValue([]);
+    mocks.skuFindFirst.mockResolvedValue(null);
+    mocks.generalReceiptFindFirst.mockResolvedValue(null);
     mocks.generalReceiptFindMany.mockResolvedValue([createReceipt()]);
+    mocks.allocatedReceiptFindFirst.mockResolvedValue(null);
     mocks.allocatedReceiptFindMany.mockResolvedValue([
       createReceipt({ id: "receipt-2", grn_line_id: "line-2" }),
     ]);
@@ -114,6 +120,69 @@ describe("finished goods stock report", () => {
       added_user: "Email unavailable",
       created_by: "Email unavailable",
       verified_by: "Email unavailable",
+    });
+  });
+
+  it("loads one tenant-scoped SKU stock record for its detail page", async () => {
+    const skuRecord = {
+      id: "sku-record-1",
+      organization_id: "internal-org-1",
+      source: "DIRECT",
+      order_no: "",
+      location: { location_name: "Warehouse" },
+    };
+    mocks.skuFindFirst.mockResolvedValue(skuRecord);
+
+    const response = await GET(new Request("http://localhost/api/inventory/stock/fg-sku?organizationId=public-org&barcode=sku-record-1"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mocks.skuFindFirst).toHaveBeenCalledWith({
+      where: { organization_id: "internal-org-1", OR: [{ id: "sku-record-1" }, { sku_code: "sku-record-1" }, { barcode: "sku-record-1" }] },
+      include: { location: { select: { location_name: true } } },
+    });
+    expect(body.record).toMatchObject({ id: "sku-record-1", location: { location_name: "Warehouse" } });
+    expect(body.canEdit).toBe(true);
+  });
+
+  it("does not expose SKU editing to a read-only organization role", async () => {
+    mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1", role: "VIEWER" });
+    mocks.skuFindFirst.mockResolvedValue({ id: "sku-record-1", organization_id: "internal-org-1" });
+
+    const response = await GET(new Request("http://localhost/api/inventory/stock/fg-sku?organizationId=public-org&barcode=sku-record-1"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.canEdit).toBe(false);
+  });
+
+  it("loads a tenant-scoped posted receipt and resolves actor emails", async () => {
+    mocks.generalReceiptFindFirst.mockResolvedValue(createReceipt());
+
+    const response = await GET(new Request("http://localhost/api/inventory/stock/fg-sku?organizationId=public-org&recordType=general&recordId=receipt-1"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mocks.generalReceiptFindFirst).toHaveBeenCalledWith({
+      where: { id: "receipt-1", organization_id: "internal-org-1" },
+      include: { location: { select: { location_name: true } } },
+    });
+    expect(body.record).toMatchObject({
+      id: "receipt-1",
+      inventory_bucket: "GENERAL",
+      created_by: "submitter@example.test",
+      verified_by: "verifier@example.test",
+      location: { location_name: "Finished Goods" },
+    });
+  });
+
+  it("returns not found when the requested tenant-scoped record is absent", async () => {
+    const response = await GET(new Request("http://localhost/api/inventory/stock/fg-sku?organizationId=public-org&recordType=allocated&recordId=missing"));
+
+    expect(response.status).toBe(404);
+    expect(mocks.allocatedReceiptFindFirst).toHaveBeenCalledWith({
+      where: { id: "missing", organization_id: "internal-org-1" },
+      include: { location: { select: { location_name: true } } },
     });
   });
 });

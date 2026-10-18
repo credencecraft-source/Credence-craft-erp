@@ -53,7 +53,7 @@ const delegates = {
   "raw-material-type": prisma.masterRawMaterialType, "raw-material-category": prisma.masterRawMaterialCategory, "raw-material-sub-category": prisma.masterRawMaterialSubCategory,
 } as unknown as Record<string, MasterDelegate>;
 
-const masterModulesWithoutLegacyMetadata = new Set(["article-variant"]);
+const masterModulesWithoutLegacyMetadata = new Set(["article-variant", "state"]);
 
 const transactionDelegateNames: Record<string, string> = {
   entity: "masterEntity",
@@ -498,6 +498,7 @@ export async function getMasterValuesForOrganization(
     exactSearch?: boolean;
     includeDummyData?: boolean;
     entityId?: string;
+    parentId?: string;
     articleCode?: string;
     includeArticleMetrics?: boolean;
     includeArticleDetails?: boolean;
@@ -537,6 +538,7 @@ export async function getMasterValuesForOrganization(
         organization_id: organizationId,
         ...(moduleKey === "article" && options.articleCode ? { article_code: options.articleCode } : {}),
         ...(moduleKey === "location" && options.entityId ? { entity_id: options.entityId } : {}),
+        ...(options.parentId && parentColumns[moduleKey] ? { [parentColumns[moduleKey]]: options.parentId } : {}),
         ...(includeInactive ? {} : { is_active: true }),
         ...(search && labelFields[moduleKey]
           ? options.exactSearch
@@ -627,7 +629,9 @@ export async function getMasterValuesForOrganization(
         }),
       ])
     : Promise.resolve(null);
-  const articleSizeOrderPromise = moduleKey === "article" && rows.length > 0
+  const articleSizeOrderPromise = moduleKey === "article"
+    && options.includeArticleDetails !== false
+    && rows.length > 0
     ? getSizeGroupSizeOrderMapForOrganization(
         organizationId,
         rows.map((row) => String((row as Record<string, unknown>).size_group_id ?? "")),

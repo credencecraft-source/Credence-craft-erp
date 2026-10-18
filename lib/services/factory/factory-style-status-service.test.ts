@@ -43,7 +43,9 @@ describe("listFactoryStyleStatusOrders", () => {
             completed_qty: 70,
             received_qty: 60,
             status: "IN_PROGRESS",
-            productionUpdates: [{ created_at: new Date("2026-10-03T09:00:00.000Z") }],
+            productionUpdates: [
+              { created_at: new Date("2026-10-03T09:00:00.000Z") },
+            ],
           }],
         },
         shopFloorTransfers: [{
@@ -103,6 +105,25 @@ describe("listFactoryStyleStatusOrders", () => {
     );
     expect(mocks.orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: "internal-org-1" },
+      select: expect.objectContaining({
+        workOrders: expect.objectContaining({
+          select: expect.objectContaining({
+            processController: expect.objectContaining({
+              select: expect.objectContaining({
+                processes: expect.objectContaining({
+                  select: expect.objectContaining({
+                    productionUpdates: {
+                      orderBy: [{ created_at: "desc" }, { id: "desc" }],
+                      select: { created_at: true },
+                      take: 1,
+                    },
+                  }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      }),
     }));
     expect(rows[0]).toMatchObject({
       orderNo: "OD-100",
@@ -118,6 +139,7 @@ describe("listFactoryStyleStatusOrders", () => {
         completedQuantity: 70,
         receivedQuantity: 60,
         status: "IN_PROGRESS",
+        occurredAt: "2026-10-03T09:00:00.000Z",
       }],
       transfers: [
         { documentNo: "Stitching → Finishing", status: "RECEIVED" },
@@ -134,6 +156,10 @@ describe("listFactoryStyleStatusOrders", () => {
       where: expect.objectContaining({
         organization_id: "internal-org-1",
         entity_id: { in: ["order-1", "work-1"] },
+        OR: [
+          { action: "CREATE" },
+          { action: { startsWith: "CREATE_" } },
+        ],
       }),
     }));
   });

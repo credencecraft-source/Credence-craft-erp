@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Button from "@/components/ui/Button";
@@ -59,7 +59,8 @@ function formatCell(field: string, row: ProductionReportRow) {
 }
 
 export default function FactoryProductionDprReportPage() {
-  const params = useParams<{ organizationId: string }>();
+  const params = useParams<{ workspaceId: string; organizationId: string }>();
+  const router = useRouter();
   const organizationId = params?.organizationId ?? "";
   const [records, setRecords] = useState<ProductionReportRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -143,7 +144,9 @@ export default function FactoryProductionDprReportPage() {
               storageKey={`credence-craft-factory-dpr-${organizationId}`}
               rowIdSelector={(record) => record.id}
               selectedIds={[]}
-              onRowClick={() => undefined}
+              onRowClick={(recordId) => router.push(
+                `/dashboard/${params.workspaceId}/organizations/${organizationId}/factory-management/production/dpr-report/${encodeURIComponent(recordId)}`,
+              )}
               renderCell={formatCell}
               emptyMessage="No factory production receipts match this search."
             />

@@ -91,6 +91,7 @@ import {
   getValidatedMasterImportPlanRows,
   getMasterImportJob,
   listMasterImportJobs,
+  loadArticleImportSupportingMasterIndex,
   MASTER_IMPORT_PLAN_SIZE,
   MASTER_IMPORT_REPORT_PAGE_SIZE,
   MASTER_IMPORT_VALIDATION_BATCH_SIZE,
@@ -718,6 +719,28 @@ describe("master import service", () => {
     }));
     expect(JSON.stringify(detail)).not.toContain("encrypted_payload");
     expect(JSON.stringify(detail)).not.toContain("encrypted_source_file");
+  });
+
+  it("applies requested pagination to the all-rows import report", async () => {
+    mocks.prisma.masterImportJob.findFirst.mockResolvedValue({ ...baseJob });
+    mocks.prisma.masterImportJobRow.findMany.mockResolvedValue([
+      rowRecord("STAGED", { Season: "WINTER" }),
+    ]);
+    mocks.prisma.masterImportJobRow.groupBy.mockResolvedValue([]);
+
+    const detail = await getMasterImportJob("org-internal", "job-1", {
+      skip: 100,
+      take: 100,
+      tab: "all",
+    });
+
+    expect(detail.rows).toHaveLength(1);
+    expect(mocks.prisma.masterImportJobRow.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-internal", job_id: "job-1" },
+      orderBy: { row_number: "asc" },
+      skip: 100,
+      take: 100,
+    }));
   });
 
   it("returns commit-failed rows in the errors report with their actionable reason", async () => {
@@ -1556,6 +1579,28 @@ describe("master import service", () => {
       encrypted_payload: true,
     });
     expect(mocks.prisma.masterImportJobRow.updateMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("loads Article support lookups once for all rows in a bounded workbook batch", async () => {
+    await loadArticleImportSupportingMasterIndex("org-internal", [
+      { fields: { Brand: "BRAND A", Product_Master: "TYPE A" }, childRows: { variants: [{ color: "NAVY" }] } },
+      { fields: { Brand: "BRAND B", Product_Master: "TYPE B" }, childRows: { variants: [{ color: "BLACK" }] } },
+    ]);
+
+    expect(mocks.prisma.organizationDummyDataBatch.findFirst).toHaveBeenCalledTimes(1);
+    expect(mocks.prisma.masterBrand.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.prisma.masterBrand.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "org-internal",
+        OR: expect.arrayContaining([
+          { brand: { equals: "BRAND A", mode: "insensitive" } },
+          { brand: { equals: "BRAND B", mode: "insensitive" } },
+        ]),
+      }),
+    }));
+    expect(mocks.prisma.masterProduct.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.prisma.masterColor.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.prisma.masterBrand.findFirst).not.toHaveBeenCalled();
   });
 
   it("writes large validation batches with bounded set-based row updates", async () => {

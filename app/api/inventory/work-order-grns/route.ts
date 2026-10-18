@@ -42,6 +42,14 @@ export async function GET(request: Request) {
     if (status && status !== "PENDING_VERIFICATION" && status !== "VERIFIED") {
       return NextResponse.json({ error: "Select a valid Work Order GRN status." }, { status: 400 });
     }
+    const grnId = searchParams.get("grnId")?.trim();
+    if (grnId) {
+      const result = await listWorkOrderInventoryGrns(organization.id, { grnId, limit: 1 });
+      if (result.grns.length === 0) {
+        return NextResponse.json({ error: "Work Order GRN was not found." }, { status: 404 });
+      }
+      return NextResponse.json({ grns: result.grns, nextCursor: null });
+    }
     const limitValue = searchParams.get("limit");
     const limit = limitValue ? Number(limitValue) : undefined;
     if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 200)) {

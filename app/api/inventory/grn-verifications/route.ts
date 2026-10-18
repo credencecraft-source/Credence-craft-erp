@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getRmGrnVerification, getRmGrnVerificationDraftsForPurchaseOrder, InvalidActualCountError, listRmGrnVerificationAllocations, MasterGroupRequiredError, RmGrnVerificationNotFoundError, saveRmGrnVerification } from "@/lib/services/inventory/rm-grn-verification-service";
+import { getRmGrnVerification, getRmGrnVerificationAllocation, getRmGrnVerificationDraftsForPurchaseOrder, InvalidActualCountError, listRmGrnVerificationAllocations, MasterGroupRequiredError, RmGrnVerificationNotFoundError, saveRmGrnVerification } from "@/lib/services/inventory/rm-grn-verification-service";
 import { getStockVerificationDetails, listPendingStockVerificationTasks, saveStockGroupVerification } from "@/lib/services/inventory/rm-stock-verification-service";
 import { getRawMaterialPickSummariesForGroupedLines } from "@/lib/services/inventory/raw-material-outward-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
@@ -36,6 +36,15 @@ export async function GET(request: Request) {
     const user = await requireSessionUser();
     const searchParams = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "");
+    const allocationId = searchParams.get("allocationId")?.trim();
+    if (allocationId) {
+      const allocation = await getRmGrnVerificationAllocation(organization.id, allocationId);
+      if (!allocation) return NextResponse.json({ error: "GRN allocation was not found." }, { status: 404 });
+      return NextResponse.json({
+        allocation,
+        canEdit: ["OWNER", "ADMIN", "INVENTORY"].includes(organization.role),
+      });
+    }
     if (searchParams.get("verificationRegister") === "true") {
       const stockTasks = await listPendingStockVerificationTasks(organization.id);
       return NextResponse.json({ stockTasks });

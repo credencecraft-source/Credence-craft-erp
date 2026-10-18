@@ -312,7 +312,7 @@ export default function WorkOrderGrnVerificationPage() {
             selectable={false}
             onRowClick={(recordId) => {
               const task = records.find((record) => record.id === recordId);
-              if (task) openVerification(task);
+              if (task) router.push(`${basePath}/report/${encodeURIComponent(task.grnId)}`);
             }}
             onRowAction={(recordId) => {
               const task = records.find((record) => record.id === recordId);

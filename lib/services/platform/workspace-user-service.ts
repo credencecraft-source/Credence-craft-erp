@@ -188,6 +188,110 @@ export async function deleteWorkspaceUser(userId: string) {
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
+export async function refreshWorkspaceUserEmailFromOrganization(userId: string) {
+  const admin = await requirePlatformSessionAdmin();
+  const normalizedUserId = typeof userId === "string" ? userId.trim() : "";
+  if (!normalizedUserId) {
+    throw new WorkspaceUserServiceError("Workspace user ID is required.");
+  }
+
+  try {
+    return await prisma.$transaction(async (transaction) => {
+      const user = await transaction.workspaceUser.findUnique({
+        where: { id: normalizedUserId },
+        select: {
+          id: true,
+          email: true,
+          email_verified: true,
+          organizationMemberships: {
+            where: { is_active: true },
+            select: {
+              organization: {
+                select: {
+                  id: true,
+                  is_active: true,
+                  organization_email: true,
+                },
+              },
+            },
+          },
+        },
+      });
+      if (!user) throw new WorkspaceUserServiceError("Workspace user not found.");
+
+      const verifiedOrganizations = user.organizationMemberships
+        .filter(({ organization }) => organization.is_active)
+        .map(({ organization }) => ({
+          id: organization.id,
+          email: normalizeEmail(organization.organization_email ?? ""),
+        }))
+        .filter(({ email }) => isValidEmail(email));
+      const verifiedEmails = [...new Set(
+        verifiedOrganizations.map(({ email }) => email),
+      )];
+
+      if (verifiedEmails.length === 0) {
+        throw new WorkspaceUserServiceError(
+          "No verified organization email is available for this workspace user.",
+        );
+      }
+      if (verifiedEmails.length > 1) {
+        throw new WorkspaceUserServiceError(
+          "This user has multiple organization emails. Resolve the organization email before refreshing.",
+        );
+      }
+
+      const email = verifiedEmails[0];
+      const changedFields: string[] = [];
+      if (user.email !== email) changedFields.push("email");
+      if (!user.email_verified) changedFields.push("emailVerification");
+      if (changedFields.length === 0) return { changed: false, email };
+
+      const emailOwner = await transaction.workspaceUser.findFirst({
+        where: { email, id: { not: user.id } },
+        select: { id: true },
+      });
+      if (emailOwner) {
+        throw new WorkspaceUserServiceError(
+          "That organization email is already in use by another workspace user.",
+        );
+      }
+
+      await transaction.workspaceUser.update({
+        where: { id: user.id },
+        data: { email, email_verified: true },
+      });
+      await transaction.platformAuditEvent.create({
+        data: {
+          platform_admin_id: admin.id,
+          action: "WORKSPACE_USER_EMAIL_REFRESHED_FROM_ORGANIZATION",
+          entity_type: "WorkspaceUser",
+          entity_id: user.id,
+          details: {
+            changedFields,
+            sourceOrganizationIds: verifiedOrganizations
+              .filter((organization) => organization.email === email)
+              .map((organization) => organization.id),
+            emailVerified: true,
+          },
+        },
+      });
+
+      return { changed: true, email };
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      throw new WorkspaceUserServiceError(
+        "That organization email is already in use by another workspace user.",
+      );
+    }
+    throw error;
+  }
+}
+
 export type UpdateWorkspaceUserInput = {
   userId: string;
   fullName: string;

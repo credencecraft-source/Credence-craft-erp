@@ -158,7 +158,26 @@ html:has(.erp-platform-shell) {
   }
 
   .erp-popup-panel {
-    @apply overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.2)];
+    @apply overflow-hidden rounded-2xl;
+    border: 1px solid transparent;
+    background-image:
+      linear-gradient(var(--erp-surface), var(--erp-surface)),
+      linear-gradient(
+        135deg,
+        color-mix(in srgb, var(--erp-popup-accent, var(--erp-brand)) 30%, var(--erp-border)),
+        var(--erp-border) 48%,
+        color-mix(in srgb, var(--erp-popup-accent, var(--erp-brand)) 14%, var(--erp-surface))
+      );
+    background-origin: border-box;
+    background-clip: padding-box, border-box;
+    box-shadow:
+      var(--erp-shadow),
+      0 24px 70px color-mix(in srgb, var(--erp-text) 14%, transparent),
+      0 3px 16px color-mix(in srgb, var(--erp-popup-accent, var(--erp-brand)) 8%, transparent);
+  }
+
+  .erp-popup-panel[data-variant="danger"] {
+    --erp-popup-accent: var(--erp-danger);
   }
 
   :is(input, select, textarea):required:invalid,

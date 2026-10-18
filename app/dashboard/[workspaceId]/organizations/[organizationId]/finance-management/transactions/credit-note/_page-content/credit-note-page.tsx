@@ -98,7 +98,6 @@ export default function CreditNotePage({
           onVisibleFieldsChange={setVisibleReportFields}
           rowIdSelector={(record) => `${record.id}-${record.documentNumber}`}
           selectedIds={[]}
-          onRowClick={() => undefined}
           renderCell={renderCell}
           emptyMessage="No credit note records found."
         />

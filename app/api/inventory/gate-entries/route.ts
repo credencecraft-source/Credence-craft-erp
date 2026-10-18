@@ -25,6 +25,7 @@ export async function GET(request: Request) {
     const searchParams = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "");
     const challanNo = text(searchParams.get("challanNo"));
+    const entryId = text(searchParams.get("entryId"));
 
     if (challanNo) {
       const purchaseOrder = await prisma.purchaseOrder.findFirst({
@@ -37,11 +38,14 @@ export async function GET(request: Request) {
     }
 
     const entries = await prisma.gateEntry.findMany({
-      where: { organization_id: organization.id },
+      where: { organization_id: organization.id, ...(entryId ? { id: entryId } : {}) },
       orderBy: { entry_at: "desc" },
-      take: 100,
+      ...(entryId ? {} : { take: 100 }),
       include: { purchaseOrder: { select: { purchase_order_no: true } } },
     });
+    if (entryId && entries.length === 0) {
+      return NextResponse.json({ error: "Gate entry was not found." }, { status: 404 });
+    }
     return NextResponse.json({ entries });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load gate entries." }, { status: 400 });

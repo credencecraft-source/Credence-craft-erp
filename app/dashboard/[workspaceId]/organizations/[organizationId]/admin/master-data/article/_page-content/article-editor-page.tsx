@@ -28,6 +28,7 @@ export default async function ArticleEditorPage({ params, searchParams }: PagePr
   const [{ workspaceId, organizationId, recordCode, moduleKey }, query] = await Promise.all([params, searchParams]);
   if (moduleKey && moduleKey !== "article") notFound();
   const editing = Boolean(recordCode);
+  const editMode = !editing || firstSearchParam(query.mode) === "edit";
 
   const user = await requireSessionUser();
   if (!user.workspace_id) redirect("/");
@@ -55,22 +56,24 @@ export default async function ArticleEditorPage({ params, searchParams }: PagePr
 
   const lookupKeys = ["brand", "product-master", "category", "sub-category", "size-group", "color"];
   const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organization.id);
-  const [lookupEntries, sizeLinks] = await Promise.all([
-    Promise.all(lookupKeys.map(async (key) => {
-      const values = await getMasterValuesForOrganization(organization.id, key, true, { limit: 500, activeDummyDataBatch });
-      return [key, values.map((item) => ({
-        id: item.id,
-        value_id: item.value_id,
-        label: item.label,
-        parent_id: item.parent_id,
-        fields: {
-          Product_Master: item.fields.Product_Master ?? null,
-          category: item.fields.category ?? null,
-        },
-      }))] as const;
-    })),
-    getSizeGroupSizesForOrganization(organization.id),
-  ]);
+  const [lookupEntries, sizeLinks] = editMode
+    ? await Promise.all([
+        Promise.all(lookupKeys.map(async (key) => {
+          const values = await getMasterValuesForOrganization(organization.id, key, true, { limit: 500, activeDummyDataBatch });
+          return [key, values.map((item) => ({
+            id: item.id,
+            value_id: item.value_id,
+            label: item.label,
+            parent_id: item.parent_id,
+            fields: {
+              Product_Master: item.fields.Product_Master ?? null,
+              category: item.fields.category ?? null,
+            },
+          }))] as const;
+        })),
+        getSizeGroupSizesForOrganization(organization.id),
+      ])
+    : [[], []] as const;
   const sizeGroupSizes = sizeLinks.reduce<Record<string, string[]>>((groups, item) => {
     (groups[item.groupId] ??= []).push(item.size.label);
     return groups;
@@ -86,6 +89,7 @@ export default async function ArticleEditorPage({ params, searchParams }: PagePr
         label: record.label,
         fields: record.fields,
       } : null}
+      readOnly={editing && !editMode}
       lookupOptions={Object.fromEntries(lookupEntries)}
       sizeGroupSizes={sizeGroupSizes}
       createAction={createMasterValueAction}

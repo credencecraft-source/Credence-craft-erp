@@ -10,6 +10,14 @@ export async function GET(request: Request) {
     const user = await requireSessionUser();
     const params = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, params.get("organizationId") ?? "");
+    const grnId = params.get("grnId")?.trim();
+    if (grnId) {
+      const result = await listFactoryProductionCompletionReport(organization.id, { grnId, limit: 1 });
+      if (result.records.length === 0) {
+        return NextResponse.json({ error: "Factory production receipt was not found." }, { status: 404 });
+      }
+      return NextResponse.json({ record: result.records[0] });
+    }
     const cursor = params.get("cursor")?.trim() || undefined;
     const result = await listFactoryProductionCompletionReport(organization.id, { cursor });
     return NextResponse.json(result);

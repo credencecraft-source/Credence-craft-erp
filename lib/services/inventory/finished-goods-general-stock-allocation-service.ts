@@ -25,21 +25,35 @@ export async function listGeneralFinishedGoodsAvailability(
   const uniqueOrderIds = [...new Set(orderIds)];
   if (uniqueOrderIds.length === 0) return new Map<string, Map<string, number>>();
 
-  const receipts = await prisma.finishedGoodsGeneralStockReceipt.findMany({
-    where: {
-      organization_id: organizationId,
-      order_id: { in: uniqueOrderIds },
-      current_stock: { gt: 0 },
-    },
-    select: { order_id: true, size: true, current_stock: true },
-  });
+  const receipts = typeof prisma.finishedGoodsGeneralStockReceipt.groupBy === "function"
+    ? await prisma.finishedGoodsGeneralStockReceipt.groupBy({
+        where: {
+          organization_id: organizationId,
+          order_id: { in: uniqueOrderIds },
+          current_stock: { gt: 0 },
+        },
+        by: ["order_id", "size"],
+        _sum: { current_stock: true },
+      })
+    : await prisma.finishedGoodsGeneralStockReceipt.findMany({
+        where: {
+          organization_id: organizationId,
+          order_id: { in: uniqueOrderIds },
+          current_stock: { gt: 0 },
+        },
+        select: { order_id: true, size: true, current_stock: true },
+      });
+
   const availability = new Map<string, Map<string, number>>();
   for (const receipt of receipts) {
-    const size = normalizedSize(receipt.size);
+    const size = normalizedSize(("size" in receipt ? receipt.size : ""));
     if (!size) continue;
-    const sizes = availability.get(receipt.order_id) ?? new Map<string, number>();
-    sizes.set(size, (sizes.get(size) ?? 0) + receipt.current_stock);
-    availability.set(receipt.order_id, sizes);
+    const orderId = ("order_id" in receipt ? receipt.order_id : "");
+    const currentStock = "current_stock" in receipt ? Number(receipt.current_stock ?? 0) : Number(receipt._sum?.current_stock ?? 0);
+    if (!orderId) continue;
+    const sizes = availability.get(orderId) ?? new Map<string, number>();
+    sizes.set(size, (sizes.get(size) ?? 0) + currentStock);
+    availability.set(orderId, sizes);
   }
   return availability;
 }
@@ -110,6 +124,7 @@ export async function allocateBookingFromGeneralStockInTransaction(
     throw new Error("Create a Sales Order before allocating general stock to this advance booking.");
   }
   const bookingLineIds = new Set(booking.sizeLines.map((line) => line.id));
+  const autoAllocateAvailableStock = requestedLines.length === 0;
   const requestedByLineId = new Map(requestedLines.map((line) => [line.bookingSizeLineId, line.quantity]));
   if ([...requestedByLineId.keys()].some((id) => !bookingLineIds.has(id))) {
     throw new Error("One or more selected sizes do not belong to this advance booking.");
@@ -165,9 +180,11 @@ export async function allocateBookingFromGeneralStockInTransaction(
   const allocationAudit: Array<{ size: string; quantity: number; workOrderId: string; receiptId: string }> = [];
 
   for (const bookingLine of bookingLines) {
-    let requestedRemaining = requestedByLineId.get(bookingLine.id) ?? 0;
-    if (requestedRemaining <= 0) continue;
     let bookingRemaining = Math.max(bookingLine.booked_quantity - (fulfilledQuantityByLine.get(bookingLine.id) ?? 0), 0);
+    let requestedRemaining = autoAllocateAvailableStock
+      ? bookingRemaining
+      : requestedByLineId.get(bookingLine.id) ?? 0;
+    if (requestedRemaining <= 0) continue;
 
     for (const receipt of receipts) {
       if (requestedRemaining <= 0 || bookingRemaining <= 0 || receipt.current_stock <= 0) continue;
@@ -393,28 +410,30 @@ export async function allocateBookingFromGeneralStockInTransaction(
         receiptId: receipt.id,
       });
     }
-    if (requestedRemaining > 0) {
+    if (!autoAllocateAvailableStock && requestedRemaining > 0) {
       throw new Error(`Requested general-stock quantity for size ${bookingLine.size} exceeds its available stock or unassigned balance.`);
     }
   }
 
-  if (results.length === 0) {
+  if (!autoAllocateAvailableStock && results.length === 0) {
     throw new Error("No unassigned booking quantity and matching available general stock were found.");
   }
 
-  await createAuditEvent({
-    organizationId,
-    userId,
-    module: "Inventory",
-    action: "ALLOCATE_GENERAL_FINISHED_GOODS_TO_BOOKING",
-    entityType: "AdvanceBooking",
-    entityId: booking.id,
-    details: {
-      booking_no: booking.booking_no,
-      allocated_lines: results,
-      sources: allocationAudit,
-    },
-  }, transaction);
+  if (results.length > 0) {
+    await createAuditEvent({
+      organizationId,
+      userId,
+      module: "Inventory",
+      action: "ALLOCATE_GENERAL_FINISHED_GOODS_TO_BOOKING",
+      entityType: "AdvanceBooking",
+      entityId: booking.id,
+      details: {
+        booking_no: booking.booking_no,
+        allocated_lines: results,
+        sources: allocationAudit,
+      },
+    }, transaction);
+  }
 
   return { bookingId: booking.id, bookingNo: booking.booking_no, allocatedLines: results };
 }
@@ -428,8 +447,8 @@ export async function allocateAdvanceBookingFromGeneralStock(
   if (!organizationId.trim() || !userId.trim() || !bookingId.trim()) {
     throw new Error("A valid organization, actor, and advance booking are required.");
   }
-  if (!Array.isArray(requestedLines) || requestedLines.length === 0 || requestedLines.length > 200) {
-    throw new Error("Submit at least one size-wise general-stock quantity.");
+  if (!Array.isArray(requestedLines) || requestedLines.length > 200) {
+    throw new Error("Submit valid size-wise general-stock quantities.");
   }
   const seenLineIds = new Set<string>();
   const normalizedRequestedLines: GeneralStockAllocationLineInput[] = [];

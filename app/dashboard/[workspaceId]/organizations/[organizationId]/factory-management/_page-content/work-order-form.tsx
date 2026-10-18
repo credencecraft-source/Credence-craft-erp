@@ -327,11 +327,18 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
       if (!response.ok) throw new Error(data.error || "Unable to create work order.");
       setMessage(`${data.workOrder.work_order_no} created for ${data.workOrder.total_qty.toLocaleString("en-IN")} pieces.`);
       setQuantities(Object.fromEntries(allocation.sizes.map((size) => [size.id, ""])));
-      const refresh = await fetch(`/api/factory/work-orders?organizationId=${encodeURIComponent(organizationId)}&orderNo=${encodeURIComponent(allocation.order.orderNo)}`, { cache: "no-store" });
-      const refreshed = await refresh.json();
-      if (!refresh.ok) throw new Error(refreshed.error || "Work order was created, but its allocation view could not be refreshed.");
-      setAllocation(refreshed);
-      await refreshWorkOrderReport();
+      const [refreshedResponse] = await Promise.all([
+        fetch(`/api/factory/work-orders?organizationId=${encodeURIComponent(organizationId)}&orderNo=${encodeURIComponent(allocation.order.orderNo)}`, { cache: "no-store" })
+          .then(async (allocationResponse) => {
+            const allocationData = await allocationResponse.json();
+            if (!allocationResponse.ok) {
+              throw new Error(allocationData.error || "Work order was created, but its allocation view could not be refreshed.");
+            }
+            return allocationData;
+          }),
+        refreshWorkOrderReport(),
+      ]);
+      setAllocation(refreshedResponse);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "Unable to create work order.");
     } finally {
@@ -367,8 +374,7 @@ export default function WorkOrderForm({ organizationId, showReport = true }: { w
       if (!response.ok) throw new Error(data.error || "No work orders were created. Review the quantities and try again.");
       setMessage(`${requests.length} work order${requests.length === 1 ? "" : "s"} created successfully.`);
       setAllQuantities({});
-      await refreshWorkOrderReport();
-      await loadAllOrders(true);
+      await Promise.all([refreshWorkOrderReport(), loadAllOrders(true)]);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "Unable to create all work orders.");
     } finally {

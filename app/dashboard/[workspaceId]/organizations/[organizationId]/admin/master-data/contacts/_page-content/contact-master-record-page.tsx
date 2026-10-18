@@ -16,7 +16,7 @@ type RoleCode = "CUSTOMER" | "VENDOR" | "AGENT" | "DISTRIBUTOR" | "DEALER";
 type AddressUsage = "BILLING" | "SHIPPING" | "BOTH";
 type TabId = "contact" | "gst" | "addresses" | "bank";
 
-type ContactData = {
+export type ContactData = {
   id: string;
   code: string;
   legal_name: string;
@@ -24,7 +24,7 @@ type ContactData = {
   email: string | null;
   phone: string | null;
   is_active: boolean;
-  roles: Array<{ role_code: RoleCode }>;
+  roles: Array<{ role_code: string }>;
   tax_registrations: Array<{
     gstin: string;
     legal_name: string;
@@ -46,14 +46,14 @@ type ContactData = {
     is_default_billing: boolean;
     is_default_shipping: boolean;
   }>;
-  bank_accounts: Array<{
+  bank_accounts?: Array<{
     id: string;
-    account_holder_name: string;
+    account_holder_name?: string;
     account_number_masked: string;
-    ifsc_code: string;
-    bank_name: string;
-    branch: string | null;
-    is_default: boolean;
+    ifsc_code?: string;
+    bank_name?: string;
+    branch?: string | null;
+    is_default?: boolean;
   }>;
 };
 
@@ -64,7 +64,7 @@ type ContactForm = {
   email: string;
   phone: string;
   isActive: boolean;
-  roles: RoleCode[];
+  roles: string[];
   taxRegistrations: Array<{ gstin: string; legalName: string; registrationType: string; status: string }>;
   addresses: Array<{
     id?: string;
@@ -153,15 +153,15 @@ function toForm(contact: ContactData): ContactForm {
       isDefaultBilling: address.is_default_billing,
       isDefaultShipping: address.is_default_shipping,
     })),
-    bankAccounts: contact.bank_accounts.map((account) => ({
+    bankAccounts: (contact.bank_accounts ?? []).map((account) => ({
       id: account.id,
-      accountHolderName: account.account_holder_name,
+      accountHolderName: account.account_holder_name ?? "",
       accountNumber: "",
       accountNumberMasked: account.account_number_masked,
-      ifscCode: account.ifsc_code,
-      bankName: account.bank_name,
+      ifscCode: account.ifsc_code ?? "",
+      bankName: account.bank_name ?? "",
       branch: account.branch ?? "",
-      isDefault: account.is_default,
+      isDefault: account.is_default ?? false,
     })),
   };
 }
@@ -182,26 +182,28 @@ export default function ContactMasterRecordPage({
   workspaceId,
   contactId,
   createMode = false,
+  initialContact = null,
 }: {
   organizationId: string;
   workspaceId: string;
   contactId?: string;
   createMode?: boolean;
+  initialContact?: ContactData | null;
 }) {
   const router = useRouter();
   const endpoint = `/api/organizations/${encodeURIComponent(organizationId)}/contacts`;
-  const [contact, setContact] = useState<ContactData | null>(null);
-  const [form, setForm] = useState<ContactForm>(emptyForm);
+  const [contact, setContact] = useState<ContactData | null>(initialContact);
+  const [form, setForm] = useState<ContactForm>(() => initialContact ? toForm(initialContact) : emptyForm());
   const [activeTab, setActiveTab] = useState<TabId>("contact");
   const [editing, setEditing] = useState(createMode);
-  const [loading, setLoading] = useState(!createMode);
+  const [loading, setLoading] = useState(!createMode && !initialContact);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const roleLabels = useMemo(() => new Map(ROLE_OPTIONS.map((role) => [role.code, role.label])), []);
+  const roleLabels = useMemo(() => new Map<string, string>(ROLE_OPTIONS.map((role) => [role.code, role.label])), []);
 
   useEffect(() => {
-    if (!contactId) return;
+    if (!contactId || initialContact) return;
     let cancelled = false;
     void (async () => {
       setLoading(true);
@@ -221,7 +223,7 @@ export default function ContactMasterRecordPage({
       }
     })();
     return () => { cancelled = true; };
-  }, [contactId, endpoint]);
+  }, [contactId, endpoint, initialContact]);
 
   const title = contact?.display_name || contact?.legal_name || (createMode ? "New contact" : "Contact");
   const detailHref = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/contacts`;
@@ -390,7 +392,7 @@ export default function ContactMasterRecordPage({
             {activeTab === "bank" ? (
               <section className="space-y-4">
                 <h2 className="text-base font-semibold text-[var(--erp-text)]">Bank accounts</h2>
-                {contact.bank_accounts.length ? contact.bank_accounts.map((account) => (
+                {contact.bank_accounts?.length ? contact.bank_accounts.map((account) => (
                   <dl key={account.id} className="grid grid-cols-1 gap-4 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2 xl:grid-cols-4">
                     <DetailField label="Account holder" value={account.account_holder_name} />
                     <DetailField label="Account number" value={account.account_number_masked} />

@@ -457,10 +457,20 @@ export async function listContacts(
 export async function listContactLookupOptions(
   organizationId: string,
   database: ContactDatabase = prisma,
-  pagination: { skip?: number; take?: number; all?: boolean } = {},
+  pagination: { skip?: number; take?: number; search?: string } = {},
 ) {
+  const search = pagination.search?.trim();
   const contacts = await database.contact.findMany({
-    where: { organization_id: organizationId },
+    where: {
+      organization_id: organizationId,
+      ...(search ? {
+        OR: [
+          { legal_name: { contains: search, mode: "insensitive" } },
+          { display_name: { contains: search, mode: "insensitive" } },
+          { code: { contains: search, mode: "insensitive" } },
+        ],
+      } : {}),
+    },
     select: {
       id: true,
       code: true,
@@ -468,12 +478,8 @@ export async function listContactLookupOptions(
       display_name: true,
     },
     orderBy: [{ legal_name: "asc" }, { id: "asc" }],
-    ...(pagination.all
-      ? {}
-      : {
-          skip: pagination.skip ?? 0,
-          take: Math.min(Math.max(pagination.take ?? MAX_CONTACT_BULK_SELECTION, 1), MAX_CONTACT_BULK_SELECTION),
-        }),
+    skip: pagination.skip ?? 0,
+    take: Math.min(Math.max(pagination.take ?? MAX_CONTACT_BULK_SELECTION, 1), MAX_CONTACT_BULK_SELECTION),
   });
   return contacts.map((contact) => ({
     id: contact.id,

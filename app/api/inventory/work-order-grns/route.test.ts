@@ -63,6 +63,29 @@ describe("work-order GRN route", () => {
     });
   });
 
+  it("loads a single GRN by ID through the authorized internal organization", async () => {
+    mocks.listWorkOrderInventoryGrns.mockResolvedValue({ grns: [{ id: "grn-1" }], nextCursor: null });
+
+    const response = await GET(new Request(
+      "http://localhost/api/inventory/work-order-grns?organizationId=public-org&grnId=grn-1",
+    ));
+
+    expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.listWorkOrderInventoryGrns).toHaveBeenCalledWith("internal-org-1", {
+      grnId: "grn-1",
+      limit: 1,
+    });
+  });
+
+  it("returns not found when the tenant-scoped GRN ID does not exist", async () => {
+    const response = await GET(new Request(
+      "http://localhost/api/inventory/work-order-grns?organizationId=public-org&grnId=missing",
+    ));
+
+    expect(response.status).toBe(404);
+  });
+
   it("loads only receiving-eligible work orders through the internal organization", async () => {
     const response = await GET(new Request(
       "http://localhost/api/inventory/work-order-grns?organizationId=public-org&workOrders=true&limit=100",

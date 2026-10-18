@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import Button from "@/components/ui/Button";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import { formatNumber, text } from "./style-wise-purchase-order-format";
 import type { BomRow, VendorOption, RawMaterialStockOption, MaterialGroup, MaterialCategory } from "./style-wise-purchase-order-types";
@@ -447,13 +448,14 @@ export function GroupedPurchaseOrderForm({
   ));
   const noStockQuantity = rows.every((row) => Number(lines[row.id] ?? 0) <= 0);
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-3"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="grouped-po-title"
+    <Modal
+      open
+      onClose={onClose}
+      ariaLabelledBy="grouped-po-title"
+      closeOnBackdrop={false}
+      size="rectangle"
+      className="flex flex-col overflow-hidden p-0"
     >
-      <div className="flex max-h-[92vh] w-full max-w-[1250px] flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
         <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700">
@@ -641,7 +643,6 @@ export function GroupedPurchaseOrderForm({
             {takingFromStock ? "Book Stock" : "Submit grouped PO"}
           </Button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

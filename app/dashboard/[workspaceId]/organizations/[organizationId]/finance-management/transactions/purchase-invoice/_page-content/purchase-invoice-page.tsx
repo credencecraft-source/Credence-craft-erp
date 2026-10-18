@@ -102,7 +102,6 @@ export default function PurchaseInvoicePage({
           onVisibleFieldsChange={setVisibleReportFields}
           rowIdSelector={(record) => `${record.id}-${record.documentNumber}`}
           selectedIds={[]}
-          onRowClick={() => undefined}
           renderCell={renderCell}
           emptyMessage="No purchase invoice records found."
         />

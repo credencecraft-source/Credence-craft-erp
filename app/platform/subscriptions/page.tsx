@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import FormSubmitButton from "@/components/ui/FormSubmitButton";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
 import Page from "@/components/ui/Page";
 import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
@@ -161,10 +162,16 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
         {resolvedSearch.success && <p className="p-3 bg-emerald-50 text-emerald-700 text-xs rounded-xl">{resolvedSearch.success}</p>}
 
         {(isModalOpen || editId) && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-            <Card className="w-full max-w-md p-6 bg-white space-y-4">
+          <Modal
+            open
+            closeHref="/platform/subscriptions"
+            ariaLabelledBy="subscription-dialog-title"
+            closeOnBackdrop={false}
+            size="square"
+            className="space-y-4 p-6"
+          >
               <div className="flex justify-between border-b pb-3">
-                <h2 className="text-sm font-bold">{editId ? "Edit Subscription" : "New Subscription"}</h2>
+                <h2 id="subscription-dialog-title" className="text-sm font-bold">{editId ? "Edit Subscription" : "New Subscription"}</h2>
                 <a href="/platform/subscriptions" className="text-xs text-slate-400">✕</a>
               </div>
 
@@ -275,8 +282,7 @@ export default async function PlatformSubscriptionsPage({ searchParams }: PagePr
                   <FormSubmitButton pendingLabel="Saving...">Save</FormSubmitButton>
                 </div>
               </form>
-            </Card>
-          </div>
+          </Modal>
         )}
 
         <Card className="p-6">

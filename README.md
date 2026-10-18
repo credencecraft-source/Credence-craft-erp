@@ -16,6 +16,14 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+### Expo web preview
+
+The local development server allows credentialed API requests from HTTP
+`localhost` and `127.0.0.1` origins so the Expo web preview can use the local
+ERP session. For a production-hosted web preview, set
+`EXPO_WEB_ALLOWED_ORIGINS` to a comma-separated list of exact HTTPS origins.
+Do not use `*`; credentialed requests require an explicit origin.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

@@ -4,6 +4,7 @@ import { ArrowLeft, Check, ChevronRight, Eye, Filter, Loader2, PackageSearch, Se
 import Button from "@/components/ui/Button";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -331,8 +332,14 @@ function MaterialReport({ group, onBack }: { group: MaterialGroup; onBack: () =>
         </div>
       </div>
       {showVendorDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4" role="dialog" aria-modal="true" aria-labelledby="allocate-vendor-title">
-          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl">
+        <Modal
+          open
+          onClose={() => setShowVendorDialog(false)}
+          ariaLabelledBy="allocate-vendor-title"
+          closeOnBackdrop={false}
+          size="square"
+          className="p-5"
+        >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700">Stage 1 - Allocate Vendor</p>
@@ -394,8 +401,7 @@ function MaterialReport({ group, onBack }: { group: MaterialGroup; onBack: () =>
                 <Check className="h-3.5 w-3.5" /> Allocate Vendor
               </Button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </section>
   );

@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utilities/utility-helpers";
 
-interface ModalProps {
+type ModalProps = {
   open: boolean;
-  onClose: () => void;
   children: ReactNode;
   className?: string;
   ariaLabel?: string;
@@ -17,12 +17,26 @@ interface ModalProps {
   returnFocus?: boolean;
   closeOnBackdrop?: boolean;
   variant?: "default" | "success" | "danger" | "info";
-  size?: "sm" | "md" | "lg" | "xl" | "2xl";
-}
+  size?: "square" | "rectangle" | "sm" | "md" | "lg" | "xl" | "2xl";
+} & (
+  | { onClose: () => void; closeHref?: never }
+  | { closeHref: string; onClose?: never }
+);
+
+export const MODAL_SIZE_CLASSES = {
+  square: "aspect-square max-w-[40rem]",
+  rectangle: "aspect-[4/3] max-w-[72rem]",
+  sm: "aspect-square max-w-[40rem]",
+  md: "aspect-square max-w-[40rem]",
+  lg: "aspect-square max-w-[40rem]",
+  xl: "aspect-[4/3] max-w-[72rem]",
+  "2xl": "aspect-[4/3] max-w-[72rem]",
+} as const;
 
 export default function Modal({
   open,
   onClose,
+  closeHref,
   children,
   className,
   ariaLabel = "Dialog",
@@ -36,6 +50,15 @@ export default function Modal({
 }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const router = useRouter();
+
+  const closeDialog = () => {
+    if (closeHref) {
+      router.push(closeHref);
+      return;
+    }
+    onClose?.();
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -54,7 +77,7 @@ export default function Modal({
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
-      onClose();
+      closeDialog();
       return;
     }
 
@@ -81,24 +104,10 @@ export default function Modal({
 
   if (!open || typeof document === "undefined") return null;
 
-  const variants = {
-    default: "border-slate-200",
-    success: "border-emerald-200",
-    danger: "border-rose-200",
-    info: "border-sky-200",
-  };
-  const sizes = {
-    sm: "max-w-sm",
-    md: "max-w-lg",
-    lg: "max-w-2xl",
-    xl: "max-w-5xl",
-    "2xl": "max-w-7xl",
-  };
-
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 backdrop-blur-[2px] sm:items-center"
-      onClick={closeOnBackdrop ? onClose : undefined}
+      onClick={closeOnBackdrop ? closeDialog : undefined}
       onKeyDown={handleKeyDown}
       role="presentation"
     >
@@ -109,7 +118,8 @@ export default function Modal({
         aria-modal="true"
         ref={dialogRef}
         tabIndex={-1}
-        className={cn("max-h-[calc(100dvh-2rem)] w-full min-w-0 max-w-full overflow-x-hidden overflow-y-auto rounded-2xl border bg-white shadow-[0_24px_70px_rgba(15,23,42,0.2)]", variants[variant], sizes[size], className)}
+        data-variant={variant}
+        className={cn(className, "erp-popup-panel h-auto min-h-0 max-h-[calc(100dvh-2rem)] w-full min-w-0 max-w-full overflow-x-hidden overflow-y-auto bg-white", MODAL_SIZE_CLASSES[size])}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
       >

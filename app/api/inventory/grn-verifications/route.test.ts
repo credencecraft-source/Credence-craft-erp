@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
   getRmGrnVerification: vi.fn(),
+  getRmGrnVerificationAllocation: vi.fn(),
   saveRmGrnVerification: vi.fn(),
   listRmGrnVerificationAllocations: vi.fn(),
   getRawMaterialPickSummariesForGroupedLines: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 
 vi.mock("@/lib/services/inventory/rm-grn-verification-service", () => ({
   getRmGrnVerification: mocks.getRmGrnVerification,
+  getRmGrnVerificationAllocation: mocks.getRmGrnVerificationAllocation,
   saveRmGrnVerification: mocks.saveRmGrnVerification,
   listRmGrnVerificationAllocations: mocks.listRmGrnVerificationAllocations,
   listPendingStockVerificationTasks: mocks.listPendingStockVerificationTasks,
@@ -67,6 +69,37 @@ describe("RM GRN Verification route", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.listRmGrnVerificationAllocations).toHaveBeenCalledWith("internal-org-1");
+  });
+
+  it("loads one allocation through the authorized internal organization", async () => {
+    mocks.getRmGrnVerificationAllocation.mockResolvedValue({ id: "allocation-1" });
+    const response = await GET(new Request(
+      "http://localhost/api/inventory/grn-verifications?organizationId=public-org&allocationId=allocation-1",
+    ));
+
+    expect(response.status).toBe(200);
+    expect(mocks.getRmGrnVerificationAllocation).toHaveBeenCalledWith("internal-org-1", "allocation-1");
+    await expect(response.json()).resolves.toEqual({ allocation: { id: "allocation-1" }, canEdit: false });
+  });
+
+  it("exposes allocation editing only to inventory-capable roles", async () => {
+    mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1", role: "INVENTORY" });
+    mocks.getRmGrnVerificationAllocation.mockResolvedValue({ id: "allocation-1" });
+    const response = await GET(new Request(
+      "http://localhost/api/inventory/grn-verifications?organizationId=public-org&allocationId=allocation-1",
+    ));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ allocation: { id: "allocation-1" }, canEdit: true });
+  });
+
+  it("returns not found for an allocation outside the authorized tenant", async () => {
+    mocks.getRmGrnVerificationAllocation.mockResolvedValue(null);
+    const response = await GET(new Request(
+      "http://localhost/api/inventory/grn-verifications?organizationId=public-org&allocationId=missing",
+    ));
+
+    expect(response.status).toBe(404);
   });
 
   it("requests completed sample allocations for Style-wise Inventory", async () => {

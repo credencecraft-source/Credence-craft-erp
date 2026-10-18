@@ -98,7 +98,6 @@ export default function DebitNotePage({
           onVisibleFieldsChange={setVisibleReportFields}
           rowIdSelector={(record) => `${record.id}-${record.documentNumber}`}
           selectedIds={[]}
-          onRowClick={() => undefined}
           renderCell={renderCell}
           emptyMessage="No debit note records found."
         />

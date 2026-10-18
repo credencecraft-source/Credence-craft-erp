@@ -46,4 +46,30 @@ describe("factory production completion report route", () => {
     expect(mocks.listFactoryProductionCompletionReport).toHaveBeenCalledWith("internal-org-1", { cursor: "grn-1" });
     await expect(response.json()).resolves.toEqual({ records: [], nextCursor: null });
   });
+
+  it("loads one receipt with the authorized internal organization id", async () => {
+    mocks.listFactoryProductionCompletionReport.mockResolvedValue({
+      records: [{ id: "receipt-1" }],
+      nextCursor: null,
+    });
+
+    const response = await GET(new Request(
+      "http://localhost/api/factory/production/completion-report?organizationId=public-org&grnId=receipt-1",
+    ));
+
+    expect(response.status).toBe(200);
+    expect(mocks.listFactoryProductionCompletionReport).toHaveBeenCalledWith("internal-org-1", {
+      grnId: "receipt-1",
+      limit: 1,
+    });
+    await expect(response.json()).resolves.toEqual({ record: { id: "receipt-1" } });
+  });
+
+  it("returns not found for a receipt outside the tenant-scoped result", async () => {
+    const response = await GET(new Request(
+      "http://localhost/api/factory/production/completion-report?organizationId=public-org&grnId=missing",
+    ));
+
+    expect(response.status).toBe(404);
+  });
 });

@@ -60,6 +60,7 @@ type BackgroundImportRun = {
   error?: unknown;
 };
 const MAX_VISIBLE_CORRECTION_ROWS = 50;
+const IMPORT_DETAILS_PAGE_SIZE = 100;
 const UPLOAD_CHUNK_BYTES = 1024 * 1024;
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
@@ -150,12 +151,15 @@ export default function MasterImportHistory({
   const [notice, setNotice] = useState("");
   const [activeJob, setActiveJob] = useState<ImportJob | null>(null);
   const [activeRows, setActiveRows] = useState<ImportRow[]>([]);
+  const [activeRowsPage, setActiveRowsPage] = useState(0);
+  const [activeRowsLoading, setActiveRowsLoading] = useState(false);
   const [selectedValidationRowIds, setSelectedValidationRowIds] = useState<string[]>([]);
   const [deleteTargetJob, setDeleteTargetJob] = useState<ImportJob | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isCorrectionOpen, setIsCorrectionOpen] = useState(false);
   const [correctionRows, setCorrectionRows] = useState<MasterImportCorrectionRow[]>([]);
+  const [correctionSourceRows, setCorrectionSourceRows] = useState<ImportRow[]>([]);
   const [correctionEdits, setCorrectionEdits] = useState<Record<string, Record<string, string>>>({});
 
   const loadJobs = useCallback(async () => {
@@ -330,107 +334,136 @@ export default function MasterImportHistory({
     router.push(reportHref);
   };
 
-  const openJob = async (job: ImportJob) => {
+  const openJob = async (job: ImportJob, page?: number, clearSelection = true) => {
+    const requestedPage = page ?? (activeJob?.id === job.id ? activeRowsPage : 0);
     setError("");
+    setActiveRowsLoading(true);
     try {
-      const response = await fetch(`${endpoint}/${encodeURIComponent(job.id)}`, { cache: "no-store" });
+      const query = new URLSearchParams({
+        limit: String(IMPORT_DETAILS_PAGE_SIZE),
+        offset: String(requestedPage * IMPORT_DETAILS_PAGE_SIZE),
+        tab: "all",
+      });
+      const response = await fetch(`${endpoint}/${encodeURIComponent(job.id)}?${query}`, { cache: "no-store" });
       const payload: unknown = await response.json();
       if (!response.ok) throw new Error(errorMessage(payload, "Unable to open this import."));
       if (typeof payload !== "object" || payload === null || !("job" in payload)
-        || !("rows" in payload) || !Array.isArray(payload.rows)) {
+        || !("rows" in payload) || !Array.isArray(payload.rows)
+        || typeof payload.job !== "object" || payload.job === null
+        || !("totalRows" in payload.job) || typeof payload.job.totalRows !== "number") {
         throw new Error("Import details response is invalid.");
       }
       setActiveJob(payload.job as ImportJob);
       setActiveRows(payload.rows as ImportRow[]);
-      setSelectedValidationRowIds([]);
+      setActiveRowsPage(requestedPage);
+      if (clearSelection) setSelectedValidationRowIds([]);
     } catch (openError) {
       setError(openError instanceof Error ? openError.message : "Unable to open this import.");
+    } finally {
+      setActiveRowsLoading(false);
     }
   };
 
-  const openCorrections = () => {
+  const openCorrections = async () => {
     if (!activeJob) return;
-    const masterModule = modules.find((item) => item.key === activeJob.moduleKey);
-    const corrections = activeRows
-      .filter((row) => readRowErrors(row.payload).length > 0)
-      .slice(0, MAX_VISIBLE_CORRECTION_ROWS)
-      .map((row) => {
-        const rowErrors = readRowValidationErrors(row.payload);
-        const message = rowErrors.map((item) => item.message).join(" ");
-        const fieldPaths = [...new Set(rowErrors.flatMap((item) => item.fieldPaths))];
-        if (activeJob.moduleKey === "contact" && isRecord(row.payload)
-          && isRecord(row.payload.input) && Array.isArray(row.payload.input.roles)
-          && Array.isArray(row.payload.input.taxRegistrations)
-          && Array.isArray(row.payload.input.addresses)
-          && Array.isArray(row.payload.input.bankAccounts)) {
-          return {
-            ...createContactCorrectionRow(
-            typeof row.payload.contactKey === "string" ? row.payload.contactKey : `ROW-${row.rowNumber}`,
-            row.payload.input as unknown as ContactInput,
-            message,
-            fieldPaths,
-            ),
-            id: String(row.rowNumber),
-          };
-        }
-        const fields = masterModule?.fields ?? [];
-        const fieldErrors = new Map<string, string[]>();
-        const linkedFieldPaths = new Map<string, string[]>();
-        for (const field of fields) {
-          const paths = field.type === "child-list"
-            ? fieldPaths.filter((path: unknown): path is string =>
-              typeof path === "string" && path.startsWith(`${field.key}.`),
-            )
-            : fieldPaths.includes(field.key) ? [field.key] : [];
-          if (!paths.length) continue;
-          linkedFieldPaths.set(field.key, paths);
-          fieldErrors.set(field.key, rowErrors
-            .filter((item) => item.fieldPaths.some((path: string) => paths.includes(path)))
-            .map((item) => item.message));
-        }
-        const payloadFields = isRecord(row.payload) && isRecord(row.payload.fields) ? row.payload.fields : {};
-        const correctionFields = fields
-          .filter((field) => fieldErrors.has(field.key))
-          .map(({ key, label, type }) => ({
-            key,
-            label: type === "child-list" ? `${label} (JSON rows)` : label,
-            multiline: type === "child-list",
-          }));
-        const values = Object.fromEntries(correctionFields.map((field) => {
-          if (field.multiline) {
-            const children = isRecord(row.payload) && isRecord(row.payload.childRows)
-              ? row.payload.childRows[field.key]
-              : [];
-            return [field.key, JSON.stringify(children ?? [], null, 2)];
-          }
-          const value = payloadFields[field.key];
-          return [field.key, Array.isArray(value) ? value.join("; ") : String(value ?? "")];
-        }));
-        const errors = Object.fromEntries([...fieldErrors].map(([key, messages]) => [
-          key,
-          messages.map((item) => {
-            const paths = linkedFieldPaths.get(key) ?? [];
-            const causes = paths.filter((path) => rowErrors.some((errorItem) =>
-              errorItem.message === item && errorItem.fieldPaths.includes(path),
-            ));
-            return causes.length ? `${item} (${causes.join(", ")})` : item;
-          }),
-        ]));
-        if (correctionFields.length === 0) errors._row = [message];
-        return {
-          id: String(row.rowNumber),
-          identity: readRowIdentity(row.payload, row.rowNumber),
-          values,
-          errors,
-          fields: correctionFields,
-        };
+    setError("");
+    try {
+      const query = new URLSearchParams({
+        limit: String(MAX_VISIBLE_CORRECTION_ROWS),
+        offset: "0",
+        tab: "errors",
       });
-    setCorrectionRows(corrections);
-    setCorrectionEdits(Object.fromEntries(corrections.map((row) => [
-      Number(row.id),
-      { ...row.values },
-    ])));
-    setIsCorrectionOpen(true);
+      const response = await fetch(`${endpoint}/${encodeURIComponent(activeJob.id)}?${query}`, { cache: "no-store" });
+      const payload: unknown = await response.json();
+      if (!response.ok) throw new Error(errorMessage(payload, "Unable to open import corrections."));
+      if (!isRecord(payload) || !Array.isArray(payload.rows)) {
+        throw new Error("Import corrections response is invalid.");
+      }
+      const sourceRows = payload.rows as ImportRow[];
+      setCorrectionSourceRows(sourceRows);
+      const masterModule = modules.find((item) => item.key === activeJob.moduleKey);
+      const corrections = sourceRows
+        .filter((row) => readRowErrors(row.payload).length > 0)
+        .map((row) => {
+          const rowErrors = readRowValidationErrors(row.payload);
+          const message = rowErrors.map((item) => item.message).join(" ");
+          const fieldPaths = [...new Set(rowErrors.flatMap((item) => item.fieldPaths))];
+          if (activeJob.moduleKey === "contact" && isRecord(row.payload)
+            && isRecord(row.payload.input) && Array.isArray(row.payload.input.roles)
+            && Array.isArray(row.payload.input.taxRegistrations)
+            && Array.isArray(row.payload.input.addresses)
+            && Array.isArray(row.payload.input.bankAccounts)) {
+            return {
+              ...createContactCorrectionRow(
+                typeof row.payload.contactKey === "string" ? row.payload.contactKey : `ROW-${row.rowNumber}`,
+                row.payload.input as unknown as ContactInput,
+                message,
+                fieldPaths,
+              ),
+              id: String(row.rowNumber),
+            };
+          }
+          const fields = masterModule?.fields ?? [];
+          const fieldErrors = new Map<string, string[]>();
+          const linkedFieldPaths = new Map<string, string[]>();
+          for (const field of fields) {
+            const paths = field.type === "child-list"
+              ? fieldPaths.filter((path: unknown): path is string =>
+                typeof path === "string" && path.startsWith(`${field.key}.`),
+              )
+              : fieldPaths.includes(field.key) ? [field.key] : [];
+            if (!paths.length) continue;
+            linkedFieldPaths.set(field.key, paths);
+            fieldErrors.set(field.key, rowErrors
+              .filter((item) => item.fieldPaths.some((path: string) => paths.includes(path)))
+              .map((item) => item.message));
+          }
+          const payloadFields = isRecord(row.payload) && isRecord(row.payload.fields) ? row.payload.fields : {};
+          const correctionFields = fields
+            .filter((field) => fieldErrors.has(field.key))
+            .map(({ key, label, type }) => ({
+              key,
+              label: type === "child-list" ? `${label} (JSON rows)` : label,
+              multiline: type === "child-list",
+            }));
+          const values = Object.fromEntries(correctionFields.map((field) => {
+            if (field.multiline) {
+              const children = isRecord(row.payload) && isRecord(row.payload.childRows)
+                ? row.payload.childRows[field.key]
+                : [];
+              return [field.key, JSON.stringify(children ?? [], null, 2)];
+            }
+            const value = payloadFields[field.key];
+            return [field.key, Array.isArray(value) ? value.join("; ") : String(value ?? "")];
+          }));
+          const errors = Object.fromEntries([...fieldErrors].map(([key, messages]) => [
+            key,
+            messages.map((item) => {
+              const paths = linkedFieldPaths.get(key) ?? [];
+              const causes = paths.filter((path) => rowErrors.some((errorItem) =>
+                errorItem.message === item && errorItem.fieldPaths.includes(path),
+              ));
+              return causes.length ? `${item} (${causes.join(", ")})` : item;
+            }),
+          ]));
+          if (correctionFields.length === 0) errors._row = [message];
+          return {
+            id: String(row.rowNumber),
+            identity: readRowIdentity(row.payload, row.rowNumber),
+            values,
+            errors,
+            fields: correctionFields,
+          };
+        });
+      setCorrectionRows(corrections);
+      setCorrectionEdits(Object.fromEntries(corrections.map((row) => [
+        Number(row.id),
+        { ...row.values },
+      ])));
+      setIsCorrectionOpen(true);
+    } catch (correctionLoadError) {
+      setError(correctionLoadError instanceof Error ? correctionLoadError.message : "Unable to open import corrections.");
+    }
   };
 
   const updateCorrectionValue = (rowId: string, fieldKey: string, value: string) => {
@@ -441,7 +474,7 @@ export default function MasterImportHistory({
   };
 
   const buildCorrectedPayload = (rowNumber: number) => {
-    const sourceRow = activeRows.find((row) => row.rowNumber === rowNumber);
+    const sourceRow = [...correctionSourceRows, ...activeRows].find((row) => row.rowNumber === rowNumber);
     if (!sourceRow || !isRecord(sourceRow.payload) || !activeJob) return null;
     const payload = { ...sourceRow.payload };
     delete payload.validationErrors;
@@ -879,8 +912,8 @@ export default function MasterImportHistory({
             {error ? <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] px-3 py-2 text-sm text-[var(--erp-danger)]" role="alert">{error}</p> : null}
             {notice ? <p className="rounded-xl border border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] px-3 py-2 text-sm text-[var(--erp-brand)]" role="status">{notice}</p> : null}
             <div className="flex flex-wrap items-center gap-2">
-              {activeRows.some((row) => readRowErrors(row.payload).length > 0) ? (
-                <Button type="button" variant="secondary" onClick={openCorrections} disabled={isProcessing}>
+              {activeJob.failedRows > 0 ? (
+                <Button type="button" variant="secondary" onClick={openCorrections} disabled={isProcessing || activeRowsLoading}>
                   Correct invalid rows
                 </Button>
               ) : null}
@@ -904,8 +937,27 @@ export default function MasterImportHistory({
                 </Button>
               ) : null}
             </div>
+            {activeJob.totalRows > IMPORT_DETAILS_PAGE_SIZE ? (
+              <nav aria-label="Import detail rows" className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-[var(--erp-muted)]">
+                  Showing {activeRowsPage * IMPORT_DETAILS_PAGE_SIZE + 1}–{Math.min((activeRowsPage + 1) * IMPORT_DETAILS_PAGE_SIZE, activeJob.totalRows)} of {activeJob.totalRows} rows
+                </p>
+                <div className="flex gap-2">
+                  <Button type="button" variant="secondary" size="sm" onClick={() => void openJob(activeJob, activeRowsPage - 1, false)} disabled={activeRowsPage === 0 || activeRowsLoading}>
+                    Previous
+                  </Button>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => void openJob(activeJob, activeRowsPage + 1, false)} disabled={activeRowsPage >= Math.ceil(activeJob.totalRows / IMPORT_DETAILS_PAGE_SIZE) - 1 || activeRowsLoading}>
+                    Next
+                  </Button>
+                </div>
+              </nav>
+            ) : null}
             <div className="max-h-[min(60dvh,40rem)] space-y-3 overflow-y-auto">
-              {activeRows.map((row) => {
+              {activeRowsLoading ? (
+                <p className="rounded-xl border border-[var(--erp-border)] p-6 text-center text-sm text-[var(--erp-muted)]">
+                  Loading import rows...
+                </p>
+              ) : activeRows.map((row) => {
                 const validationErrors = readRowValidationErrors(row.payload);
                 const errors = validationErrors.map((item) => item.message);
                 const canSelectForValidation = row.status === "STAGED" || row.status === "CORRECTED";
@@ -948,9 +1000,9 @@ export default function MasterImportHistory({
                   </section>
                 );
               })}
-              {!activeRows.length ? (
+              {!activeRowsLoading && !activeRows.length ? (
                 <p className="rounded-xl border border-[var(--erp-border)] p-6 text-center text-sm text-[var(--erp-muted)]">
-                  No staged rows are available for this import.
+                  No rows are available for this import.
                 </p>
               ) : null}
             </div>

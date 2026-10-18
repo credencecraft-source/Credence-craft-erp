@@ -6,18 +6,22 @@ import { createPosGeneralStockSale } from "@/lib/services/pos/pos-general-stock-
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ organizationId: string }> },
 ) {
   try {
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "FINANCE", "INVENTORY"]);
+    const invoiceNumber = new URL(request.url).searchParams.get("invoiceNumber")?.trim();
     const invoices = await prisma.posSalesInvoice.findMany({
-      where: { organization_id: organization.id },
+      where: { organization_id: organization.id, ...(invoiceNumber ? { invoice_no: invoiceNumber } : {}) },
       include: { lines: true },
       orderBy: [{ posted_at: "desc" }, { id: "desc" }],
     });
+    if (invoiceNumber && invoices.length === 0) {
+      return NextResponse.json({ error: "POS invoice was not found." }, { status: 404 });
+    }
     return NextResponse.json({
       invoices: invoices.map((invoice) => ({
         invoiceNumber: invoice.invoice_no,

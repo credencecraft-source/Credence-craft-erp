@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
@@ -32,6 +33,7 @@ type SizeGroupRecordEditorProps = {
   updateAction: typeof updateMasterValueAction;
   error?: string;
   saved?: string;
+  readOnly: boolean;
 };
 
 export default function SizeGroupRecordEditor({
@@ -44,23 +46,74 @@ export default function SizeGroupRecordEditor({
   updateAction,
   error,
   saved,
+  readOnly,
 }: SizeGroupRecordEditorProps) {
+  const router = useRouter();
   const [sizes, setSizes] = useState(record.sizes.length > 0 ? record.sizes : [""]);
+  const recordPath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/size-group/${encodeURIComponent(record.id)}`;
+
+  if (readOnly) {
+    return (
+      <Page as="div">
+        <Section className="space-y-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <Link
+                href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/size-group`}
+                className="text-sm font-semibold text-[var(--erp-brand)] underline-offset-4 hover:underline"
+              >
+                Back to Size Groups
+              </Link>
+              <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--erp-brand)]">Master Data</p>
+              <h1 className="mt-1 break-words text-2xl font-bold text-[var(--erp-text)]">{record.label}</h1>
+            </div>
+            <Button type="button" onClick={() => router.push(`${recordPath}?mode=edit`)}>Edit</Button>
+          </div>
+          {error ? (
+            <p role="alert" className="rounded-lg border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">
+              {error}
+            </p>
+          ) : null}
+          {saved === "update" ? (
+            <p role="status" className="rounded-lg border border-[var(--erp-success)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-success)]">
+              Size Group updated successfully.
+            </p>
+          ) : null}
+          <Card className="space-y-5 p-6">
+            <h2 className="text-base font-semibold text-[var(--erp-text)]">Size Group details</h2>
+            <dl className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1">
+                <dt className="text-xs font-medium text-[var(--erp-muted)]">Brand</dt>
+                <dd className="break-words text-sm text-[var(--erp-text)]">{record.brand || "—"}</dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs font-medium text-[var(--erp-muted)]">Measurement Chart</dt>
+                <dd className="break-words text-sm text-[var(--erp-text)]">{record.measurementChart || "—"}</dd>
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <dt className="text-xs font-medium text-[var(--erp-muted)]">Sizes</dt>
+                <dd className="break-words text-sm text-[var(--erp-text)]">{record.sizes.join(", ") || "—"}</dd>
+              </div>
+            </dl>
+          </Card>
+        </Section>
+      </Page>
+    );
+  }
 
   return (
     <Page as="div">
       <Section className="space-y-6">
-        <Link
-          href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/size-group`}
-          className="text-sm font-semibold text-[var(--erp-brand)] underline-offset-4 hover:underline"
-        >
-          Back to Size Groups
-        </Link>
-
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-brand)]">Master Data</p>
-          <h1 className="mt-2 text-2xl font-bold text-[var(--erp-text)]">Edit Size Group</h1>
-          <p className="mt-1 text-sm text-slate-600">{record.label}</p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <Link href={recordPath} className="text-sm font-semibold text-[var(--erp-brand)] underline-offset-4 hover:underline">
+              Back to Size Group details
+            </Link>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--erp-brand)]">Master Data</p>
+            <h1 className="mt-1 text-2xl font-bold text-[var(--erp-text)]">Edit Size Group</h1>
+            <p className="mt-1 text-sm text-slate-600">{record.label}</p>
+          </div>
+          <Button type="button" variant="secondary" onClick={() => router.push(recordPath)}>Cancel edit</Button>
         </div>
 
         {error ? (
@@ -203,12 +256,7 @@ export default function SizeGroupRecordEditor({
             </fieldset>
 
             <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--erp-border)] pt-4">
-              <Link
-                href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/size-group`}
-                className="inline-flex min-h-9 items-center justify-center rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-3.5 py-2 text-sm font-semibold text-[var(--erp-text)] shadow-sm hover:bg-[var(--erp-surface-soft)]"
-              >
-                Cancel
-              </Link>
+              <Button type="button" variant="secondary" onClick={() => router.push(recordPath)}>Cancel</Button>
               <Button type="submit">Save Changes</Button>
             </div>
           </form>

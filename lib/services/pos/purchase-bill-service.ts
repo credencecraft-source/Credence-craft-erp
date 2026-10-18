@@ -221,11 +221,19 @@ export async function createPurchaseRecord(organizationId: string, actorId: stri
   return serializeRecord(record.created);
 }
 
-export async function listPurchaseRecords(organizationId: string) {
+export async function listPurchaseRecords(
+  organizationId: string,
+  recordId?: string,
+  pagination?: { skip: number; take: number },
+) {
   const records = await prisma.posPurchaseRecord.findMany({
-    where: { organization_id: organizationId, status: SAVED_STATUS },
+    where: { organization_id: organizationId, status: SAVED_STATUS, ...(recordId ? { id: recordId } : {}) },
     include: { lines: { orderBy: { created_at: "asc" } } },
-    orderBy: { created_at: "asc" },
+    orderBy: [{ created_at: "asc" }, { id: "asc" }],
+    ...(pagination && !recordId ? {
+      skip: Math.max(0, pagination.skip),
+      take: Math.min(Math.max(pagination.take, 1), 100),
+    } : {}),
   });
   return records.map(serializeRecord);
 }

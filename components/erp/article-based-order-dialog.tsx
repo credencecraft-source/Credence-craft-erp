@@ -115,17 +115,18 @@ export default function ArticleBasedOrderDialog({
   const [quantities, setQuantities] = useState<Record<string, Record<string, string>>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const isLoading = open && !lookups && !error;
+  const isLoadingLookups = open && !lookups && !error;
 
   useEffect(() => {
     if (!open || lookups) return;
     const controller = new AbortController();
     const query = new URLSearchParams({
       includeInactive: "false",
-      limit: "500",
+      limit: "200",
       keys: "article,entity,buyer,season,size-group",
       shape: "compact",
       includeArticleDetails: "false",
+      includeSizeGroupSizes: "false",
     });
     void fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups?${query.toString()}`, {
       cache: "no-store",
@@ -166,6 +167,7 @@ export default function ArticleBasedOrderDialog({
   const isLoadingArticleDetails = Boolean(
     selectedArticleId && selectedArticleOption && !selectedArticleDetails && !error,
   );
+  const isLoading = isLoadingLookups;
 
   useEffect(() => {
     if (!open || !selectedArticleId || !selectedArticleOption || selectedArticleDetails) return;
@@ -311,103 +313,108 @@ export default function ArticleBasedOrderDialog({
       </div>
 
       {error && <p role="alert" className="rounded-lg border border-[var(--erp-error-border)] bg-[var(--erp-error-bg)] px-3 py-2 text-sm text-[var(--erp-error-text)]">{error}</p>}
-      {isLoading ? <p role="status" className="text-sm text-[var(--erp-text-muted)]">Loading active order masters...</p> : null}
 
-      {!isLoading && lookups ? (
-        <div className="space-y-5">
-          <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <Select
-              label="Article"
-              required
-              value={selectedArticleId}
-              onChange={(event) => handleArticleChange(event.target.value)}
-              options={[
-                { value: "", label: "Select Article" },
-                ...lookups.articles.map((article) => ({ value: article.value_id, label: `${article.code ? `${article.code} · ` : ""}${article.label}` })),
-              ]}
-            />
-            <Select
-              label="Entity"
-              required
-              value={entityId}
-              onChange={(event) => setEntityId(event.target.value)}
-              options={[{ value: "", label: "Select Entity" }, ...lookups.entities.map((item) => ({ value: item.value_id, label: item.label }))]}
-            />
-            <Select
-              label="Buyer"
-              required
-              value={buyerId}
-              onChange={(event) => setBuyerId(event.target.value)}
-              options={[{ value: "", label: "Select Buyer" }, ...lookups.buyers.map((item) => ({ value: item.value_id, label: item.label }))]}
-            />
-            <Select
-              label="Season"
-              required
-              value={seasonId}
-              onChange={(event) => setSeasonId(event.target.value)}
-              options={[{ value: "", label: "Select Season" }, ...lookups.seasons.map((item) => ({ value: item.value_id, label: item.label }))]}
-            />
-            <Input label="Delivery Date" type="date" required value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} />
-            <Input label="Brand (from Article Size Group)" value={brand} readOnly />
-          </div>
-
-          {selectedArticleWithDetails ? (
-            <div className="space-y-3">
-              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
-                <p><span className="font-semibold">Category:</span> {String(selectedArticleWithDetails.fields.Category ?? "Not set")}</p>
-                <p><span className="font-semibold">Subcategory:</span> {String(selectedArticleWithDetails.fields.Subcategory ?? "Not set")}</p>
-                <p><span className="font-semibold">Size Group:</span> {articleSizeGroup || "Not set"}</p>
-              </div>
-              {isLoadingArticleDetails ? (
-                <p role="status" className="text-sm text-[var(--erp-text-muted)]">Loading this Article&apos;s colors and sizes...</p>
-              ) : selectedArticleWithDetails.variants.length === 0 || selectedArticleWithDetails.sizes.length === 0 ? (
-                <p className="rounded-lg border border-[var(--erp-warning-border)] bg-[var(--erp-warning-bg)] px-3 py-2 text-sm text-[var(--erp-warning-text)]">
-                  Add active color variants and available sizes to this Article before creating an order.
-                </p>
-              ) : (
-                <Table className="max-h-[45vh]" tableClassName="min-w-max">
-                  <thead className="bg-[var(--erp-surface-soft)] text-xs font-semibold text-[var(--erp-text-muted)]">
-                    <tr>
-                      <th scope="col" className="sticky left-0 bg-[var(--erp-surface-soft)] p-3">Select</th>
-                      <th scope="col" className="sticky left-16 bg-[var(--erp-surface-soft)] p-3">Color</th>
-                      {selectedArticleWithDetails.sizes.map((size) => <th key={size} scope="col" className="min-w-20 p-3 text-center">{size}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--erp-border)]">
-                    {selectedArticleWithDetails.variants.map((variant) => {
-                      const checked = selectedVariantIds.includes(variant.id);
-                      return (
-                        <tr key={variant.id}>
-                          <td className="sticky left-0 bg-[var(--erp-surface)] p-3">
-                            <Checkbox aria-label={`Select ${variant.color}`} checked={checked} onChange={(event) => handleVariantChange(variant.id, event.target.checked)} />
-                          </td>
-                          <th scope="row" className="sticky left-16 bg-[var(--erp-surface)] p-3 text-left font-medium text-[var(--erp-text)]">{variant.color}</th>
-                          {selectedArticleWithDetails.sizes.map((size) => (
-                            <td key={size} className="min-w-20 p-2">
-                              <Input
-                                aria-label={`${variant.color} ${size} quantity`}
-                                type="number"
-                                min="0"
-                                step="1"
-                                inputMode="numeric"
-                                placeholder="Qty"
-                                disabled={!checked}
-                                value={quantities[variant.id]?.[size] ?? ""}
-                                onChange={(event) => handleQuantityChange(variant.id, size, event.target.value)}
-                                className="w-20 px-2 text-center"
-                              />
-                            </td>
-                          ))}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </Table>
-              )}
-            </div>
-          ) : null}
+      <div className="space-y-5">
+        <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <Select
+            label="Article"
+            required
+            value={selectedArticleId}
+            onChange={(event) => handleArticleChange(event.target.value)}
+            options={[
+              { value: "", label: isLoading ? "Loading articles..." : "Select Article" },
+              ...((open ? lookups?.articles ?? [] : []).map((article) => ({ value: article.value_id, label: `${article.code ? `${article.code} · ` : ""}${article.label}` }))),
+            ]}
+            disabled={isLoading}
+          />
+          <Select
+            label="Entity"
+            required
+            value={entityId}
+            onChange={(event) => setEntityId(event.target.value)}
+            options={[{ value: "", label: isLoading ? "Loading entities..." : "Select Entity" }, ...((open ? lookups?.entities ?? [] : []).map((item) => ({ value: item.value_id, label: item.label })))]}
+            disabled={isLoading}
+          />
+          <Select
+            label="Buyer"
+            required
+            value={buyerId}
+            onChange={(event) => setBuyerId(event.target.value)}
+            options={[{ value: "", label: isLoading ? "Loading buyers..." : "Select Buyer" }, ...((open ? lookups?.buyers ?? [] : []).map((item) => ({ value: item.value_id, label: item.label })))]}
+            disabled={isLoading}
+          />
+          <Select
+            label="Season"
+            required
+            value={seasonId}
+            onChange={(event) => setSeasonId(event.target.value)}
+            options={[{ value: "", label: isLoading ? "Loading seasons..." : "Select Season" }, ...((open ? lookups?.seasons ?? [] : []).map((item) => ({ value: item.value_id, label: item.label })))]}
+            disabled={isLoading}
+          />
+          <Input label="Delivery Date" type="date" required value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} disabled={isLoading} />
+          <Input label="Brand (from Article Size Group)" value={brand} readOnly />
         </div>
-      ) : null}
+
+        {isLoading ? (
+          <p role="status" className="text-sm text-[var(--erp-text-muted)]">Loading active order masters...</p>
+        ) : null}
+
+        {selectedArticleWithDetails ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
+              <p><span className="font-semibold">Category:</span> {String(selectedArticleWithDetails.fields.Category ?? "Not set")}</p>
+              <p><span className="font-semibold">Subcategory:</span> {String(selectedArticleWithDetails.fields.Subcategory ?? "Not set")}</p>
+              <p><span className="font-semibold">Size Group:</span> {articleSizeGroup || "Not set"}</p>
+            </div>
+            {isLoadingArticleDetails ? (
+              <p role="status" className="text-sm text-[var(--erp-text-muted)]">Loading this Article&apos;s colors and sizes...</p>
+            ) : selectedArticleWithDetails.variants.length === 0 || selectedArticleWithDetails.sizes.length === 0 ? (
+              <p className="rounded-lg border border-[var(--erp-warning-border)] bg-[var(--erp-warning-bg)] px-3 py-2 text-sm text-[var(--erp-warning-text)]">
+                Add active color variants and available sizes to this Article before creating an order.
+              </p>
+            ) : (
+              <Table className="max-h-[45vh]" tableClassName="min-w-max">
+                <thead className="bg-[var(--erp-surface-soft)] text-xs font-semibold text-[var(--erp-text-muted)]">
+                  <tr>
+                    <th scope="col" className="sticky left-0 bg-[var(--erp-surface-soft)] p-3">Select</th>
+                    <th scope="col" className="sticky left-16 bg-[var(--erp-surface-soft)] p-3">Color</th>
+                    {selectedArticleWithDetails.sizes.map((size) => <th key={size} scope="col" className="min-w-20 p-3 text-center">{size}</th>)}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--erp-border)]">
+                  {selectedArticleWithDetails.variants.map((variant) => {
+                    const checked = selectedVariantIds.includes(variant.id);
+                    return (
+                      <tr key={variant.id}>
+                        <td className="sticky left-0 bg-[var(--erp-surface)] p-3">
+                          <Checkbox aria-label={`Select ${variant.color}`} checked={checked} onChange={(event) => handleVariantChange(variant.id, event.target.checked)} />
+                        </td>
+                        <th scope="row" className="sticky left-16 bg-[var(--erp-surface)] p-3 text-left font-medium text-[var(--erp-text)]">{variant.color}</th>
+                        {selectedArticleWithDetails.sizes.map((size) => (
+                          <td key={size} className="min-w-20 p-2">
+                            <Input
+                              aria-label={`${variant.color} ${size} quantity`}
+                              type="number"
+                              min="0"
+                              step="1"
+                              inputMode="numeric"
+                              placeholder="Qty"
+                              disabled={!checked}
+                              value={quantities[variant.id]?.[size] ?? ""}
+                              onChange={(event) => handleQuantityChange(variant.id, size, event.target.value)}
+                              className="w-20 px-2 text-center"
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            )}
+          </div>
+        ) : null}
+      </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--erp-border)] pt-4">
         <p className="text-xs text-[var(--erp-text-muted)]">{selectedVariants.length} color order{selectedVariants.length === 1 ? "" : "s"} will be created.</p>

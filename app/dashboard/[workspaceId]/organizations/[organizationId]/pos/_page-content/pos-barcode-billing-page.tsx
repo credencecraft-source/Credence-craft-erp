@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
 import Page from "@/components/ui/Page";
 import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
@@ -990,13 +991,14 @@ function StockDetailsDialog({
     ["Current Stock", record.current_stock],
   ];
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-3"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="stock-details-title"
+    <Modal
+      open
+      onClose={onClose}
+      ariaLabelledBy="stock-details-title"
+      closeOnBackdrop={false}
+      size="rectangle"
+      className="flex flex-col overflow-hidden p-0"
     >
-      <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">
@@ -1058,7 +1060,6 @@ function StockDetailsDialog({
             Add to bill
           </Button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

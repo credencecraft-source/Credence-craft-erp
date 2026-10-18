@@ -68,4 +68,21 @@ describe("factory production completion report service", () => {
     await expect(listFactoryProductionCompletionReport("org-1", { limit: 101 })).rejects.toThrow("Report page size must be between 1 and 100.");
     expect(mocks.factoryGrnFindMany).not.toHaveBeenCalled();
   });
+
+  it("filters one receipt by id while retaining all tenant relationship scopes", async () => {
+    mocks.factoryGrnFindMany.mockResolvedValue([]);
+
+    const result = await listFactoryProductionCompletionReport("org-internal-1", { grnId: "receipt-1", limit: 1 });
+
+    expect(mocks.factoryGrnFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "org-internal-1",
+        id: "receipt-1",
+        workOrder: { organization_id: "org-internal-1", order: { organization_id: "org-internal-1" } },
+        bundleTransfer: { organization_id: "org-internal-1" },
+      },
+      take: 2,
+    }));
+    expect(result.records).toEqual([]);
+  });
 });

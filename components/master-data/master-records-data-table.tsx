@@ -5,8 +5,11 @@ import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
+import Page from "@/components/ui/Page";
+import Section from "@/components/ui/Section";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import { ReportGrid } from "@/components/reports/report-grid-display";
@@ -62,6 +65,10 @@ type MasterRecordsTableProps = {
   fields: MasterFieldDefinition[];
   lookupOptions: Record<string, MasterLookupOption[]>;
   childRecords?: ChildRecord[];
+  formMode?: "create" | "edit" | "view";
+  initialRecord?: MasterRecord;
+  formError?: string;
+  saved?: string;
 };
 
 const rawMaterialShowAllFieldKeys = new Set([
@@ -126,10 +133,10 @@ function withArticleSizePrices(
   return updatedValues;
 }
 
-function SubmitButton({ children }: { children: string }) {
+function SubmitButton({ children, disabled = false }: { children: string; disabled?: boolean }) {
   const { pending } = useFormStatus();
   return (
-    <Button type="submit" variant="primary" size="sm" disabled={pending}>
+    <Button type="submit" variant="primary" size="sm" disabled={pending || disabled}>
       {pending ? "Saving..." : children}
     </Button>
   );
@@ -160,6 +167,15 @@ function getMasterSelectOptions(options: readonly MasterLookupOption[], placehol
   ];
   byPlaceholder.set(cacheKey, selectOptions);
   return selectOptions;
+}
+
+function getFormLookupKeys(fields: readonly MasterFieldDefinition[]) {
+  return [...new Set(fields
+    .filter((field) => !field.dependsOn)
+    .flatMap((field) => [
+      ...(field.lookupModuleKey ? [field.lookupModuleKey] : []),
+      ...(field.childFields ?? []).flatMap((child) => child.lookupModuleKey ? [child.lookupModuleKey] : []),
+    ]))];
 }
 
 const MasterLookupSelect = memo(function MasterLookupSelect({
@@ -268,14 +284,37 @@ export function MasterRecordsTable({
   fields,
   lookupOptions,
   childRecords = [],
+  formMode,
+  initialRecord,
+  formError,
+  saved,
 }: MasterRecordsTableProps) {
   const router = useRouter();
-  const [editingRecord, setEditingRecord] = useState<MasterRecord | null>(null);
+  const [editingRecord, setEditingRecord] = useState<MasterRecord | null>(() => formMode === "edit" ? initialRecord ?? null : null);
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
   const [deleteDialog, setDeleteDialog] = useState<{ kind: "single"; record: MasterRecord } | { kind: "selected" } | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createFields, setCreateFields] = useState<Record<string, unknown>>({});
-  const [editFields, setEditFields] = useState<Record<string, unknown>>({});
+  const [createFields, setCreateFields] = useState<Record<string, unknown>>(() => Object.fromEntries(fields.map((field) => [
+    field.key,
+    field.initialValue ?? (field.type === "checkbox" ? false : field.multiple ? [] : ""),
+  ])));
+  const [editFields, setEditFields] = useState<Record<string, unknown>>(() => {
+    if (formMode !== "edit" || !initialRecord?.metadata || typeof initialRecord.metadata !== "object") return {};
+    const metadata = initialRecord.metadata as Record<string, unknown>;
+    const recordFields = metadata.fields && typeof metadata.fields === "object"
+      ? { ...(metadata.fields as Record<string, unknown>) }
+      : { ...metadata };
+    for (const field of fields) {
+      if (recordFields[field.key] !== undefined) continue;
+      if (field.key === "label" || field === fields[0]) recordFields[field.key] = initialRecord.label;
+      else if (field.key === "code") recordFields[field.key] = initialRecord.code;
+      else if (field.key === "description") recordFields[field.key] = initialRecord.description;
+      else if (field.initialValue !== undefined) recordFields[field.key] = field.initialValue;
+      else if (field.type === "checkbox") recordFields[field.key] = false;
+      else if (field.multiple) recordFields[field.key] = [];
+    }
+    return recordFields;
+  });
   const [currentQuickMaster, setCurrentQuickMaster] = useState<string | null>(null);
   const [quickMasterFields, setQuickMasterFields] = useState<Record<string, unknown>>({});
   const [quickMasterLookupOptions, setQuickMasterLookupOptions] = useState<Record<string, MasterLookupOption[]>>({});
@@ -285,15 +324,143 @@ export function MasterRecordsTable({
   const [isSavingQuickMaster, setIsSavingQuickMaster] = useState(false);
   const [isLoadingQuickMasterOptions, setIsLoadingQuickMasterOptions] = useState(false);
   const [articleLookupOptions, setArticleLookupOptions] = useState(lookupOptions);
+  const [loadingMasterLookupKeys, setLoadingMasterLookupKeys] = useState<Set<string>>(
+    () => new Set(formMode === "create" || formMode === "edit" ? getFormLookupKeys(fields) : []),
+  );
+  const [masterLookupLoadError, setMasterLookupLoadError] = useState("");
+  const [masterLookupRetry, setMasterLookupRetry] = useState(0);
   const [visibleReportFields, setVisibleReportFields] = useState<string[]>([]);
   const quickMasterOptionsRequest = useRef<AbortController | null>(null);
   const quickMasterSaveInProgress = useRef(false);
+  const requestedDependentLookups = useRef(new Set<string>());
 
   useEffect(() => () => {
     const request = quickMasterOptionsRequest.current;
     quickMasterOptionsRequest.current = null;
     request?.abort();
   }, []);
+
+  useEffect(() => {
+    if (formMode !== "create" && formMode !== "edit") return;
+    const lookupKeys = getFormLookupKeys(fields);
+    if (lookupKeys.length === 0) return;
+
+    const controller = new AbortController();
+    const lookupKeysByEndpoint = new Map<string, string[]>();
+    for (const lookupKey of lookupKeys) {
+      const endpointKey = lookupKey === "article-size" ? "size-group" : lookupKey;
+      const mappedKeys = lookupKeysByEndpoint.get(endpointKey) ?? [];
+      mappedKeys.push(lookupKey);
+      lookupKeysByEndpoint.set(endpointKey, mappedKeys);
+    }
+    void Promise.all([...lookupKeysByEndpoint.entries()].map(async ([endpointKey, requestedKeys]) => {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(endpointKey)}?includeInactive=true&limit=200`,
+        { cache: "no-store", signal: controller.signal },
+      );
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        const message = typeof result === "object" && result !== null && "error" in result
+          ? String(result.error)
+          : "Unable to load master lookup options.";
+        throw new Error(message);
+      }
+      if (!Array.isArray(result)) throw new Error("The master lookup response was invalid.");
+      const endpointOptions = result as Array<MasterLookupOption & { sizes?: MasterLookupOption[] }>;
+      return requestedKeys.map((lookupKey) => {
+        const options = lookupKey === "article-size"
+          ? endpointOptions.flatMap((group) => (group.sizes ?? []).map((size) => ({
+              ...size,
+              parent_id: group.id,
+            })))
+          : endpointOptions;
+        return [lookupKey, options] as const;
+      });
+    })).then((loadedLookups) => {
+      setArticleLookupOptions((current) => ({
+        ...current,
+        ...Object.fromEntries(loadedLookups.flat()),
+      }));
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setMasterLookupLoadError(error instanceof Error ? error.message : "Unable to load master lookup options.");
+    }).finally(() => {
+      if (!controller.signal.aborted) {
+        setLoadingMasterLookupKeys((current) => new Set([...current].filter((key) => !lookupKeys.includes(key))));
+      }
+    });
+
+    return () => controller.abort();
+  }, [fields, formMode, masterLookupRetry, organizationId]);
+
+  const activeFormValues = formMode === "edit" ? editFields : createFields;
+  useEffect(() => {
+    if (formMode !== "create" && formMode !== "edit") return;
+    const requestedLookups = requestedDependentLookups.current;
+    const dependentLookups = fields.flatMap((field) => {
+      if (!field.dependsOn || !field.lookupModuleKey) return [];
+      const parentField = fields.find((candidate) => candidate.key === field.dependsOn);
+      if (!parentField?.lookupModuleKey) return [];
+      const parentValue = String(activeFormValues[field.dependsOn] ?? "");
+      if (!parentValue) return [];
+      const parentOption = (articleLookupOptions[parentField.lookupModuleKey] ?? [])
+        .find((option) => [option.id, option.value_id, option.label].some((value) => String(value ?? "") === parentValue));
+      if (!parentOption) return [];
+      const requestKey = `${field.lookupModuleKey}:${parentOption.id}`;
+      if (requestedLookups.has(requestKey)) return [];
+      requestedLookups.add(requestKey);
+      return [{ lookupKey: field.lookupModuleKey, parentId: parentOption.id, requestKey }];
+    });
+    if (dependentLookups.length === 0) return;
+
+    const controller = new AbortController();
+    const lookupKeys = dependentLookups.map(({ lookupKey }) => lookupKey);
+    let completed = false;
+    setLoadingMasterLookupKeys((current) => new Set([...current, ...lookupKeys]));
+    void Promise.all(dependentLookups.map(async ({ lookupKey, parentId }) => {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(lookupKey)}?includeInactive=true&limit=200&parentId=${encodeURIComponent(parentId)}`,
+        { cache: "no-store", signal: controller.signal },
+      );
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        const message = typeof result === "object" && result !== null && "error" in result
+          ? String(result.error)
+          : "Unable to load dependent master options.";
+        throw new Error(message);
+      }
+      if (!Array.isArray(result)) throw new Error("The dependent master lookup response was invalid.");
+      return [lookupKey, result as MasterLookupOption[]] as const;
+    })).then((lookups) => {
+      setArticleLookupOptions((current) => {
+        const next = { ...current };
+        for (const [lookupKey, options] of lookups) {
+          const existing = next[lookupKey] ?? [];
+          next[lookupKey] = [
+            ...existing.filter((option) => !options.some((loaded) => loaded.id === option.id)),
+            ...options,
+          ];
+        }
+        return next;
+      });
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        setMasterLookupLoadError(error instanceof Error ? error.message : "Unable to load dependent master options.");
+      }
+    }).finally(() => {
+      completed = true;
+      if (!controller.signal.aborted) {
+        setLoadingMasterLookupKeys((current) => new Set([...current].filter((key) => !lookupKeys.includes(key))));
+      }
+    });
+
+    return () => {
+      controller.abort();
+      if (!completed) {
+        for (const { requestKey } of dependentLookups) requestedLookups.delete(requestKey);
+      }
+    };
+  }, [activeFormValues, articleLookupOptions, fields, formMode, organizationId]);
 
   const orderedFields = useMemo(() => moduleKey === "raw-material"
     ? [...fields].sort((first, second) => {
@@ -308,46 +475,21 @@ export function MasterRecordsTable({
   const openRecordDetail = useCallback((record: MasterRecord) => {
     if (moduleKey === "article") {
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/${encodeURIComponent(record.code || record.value_id)}`);
+      return;
     }
     if (moduleKey === "size-group") {
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/size-group/${encodeURIComponent(record.id)}`);
+      return;
     }
     if (moduleKey === "gold-seal") {
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/gold-seals/${encodeURIComponent(record.value_id)}`);
-    }
-  }, [moduleKey, organizationId, router, workspaceId]);
-
-  const openEditor = useCallback((record: MasterRecord) => {
-    if (moduleKey === "article" || moduleKey === "size-group") {
-      openRecordDetail(record);
       return;
     }
-    setEditingRecord(record);
-
-    let extractedFields: Record<string, unknown> = {};
-    if (record.metadata && typeof record.metadata === "object") {
-      const meta = record.metadata as Record<string, unknown>;
-      if (meta.fields && typeof meta.fields === "object") {
-        extractedFields = { ...(meta.fields as Record<string, unknown>) };
-      } else {
-        extractedFields = { ...meta };
-      }
-    }
-
-    fields.forEach((field) => {
-      if (extractedFields[field.key] === undefined) {
-        if (field.key === "label" || field === fields[0]) {
-          extractedFields[field.key] = record.label;
-        } else if (field.key === "code") {
-          extractedFields[field.key] = record.code;
-        } else if (field.key === "description") {
-          extractedFields[field.key] = record.description;
-        }
-      }
-    });
-
-    setEditFields(extractedFields);
-  }, [fields, moduleKey, openRecordDetail]);
+    router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}/${encodeURIComponent(record.value_id)}`);
+  }, [moduleKey, organizationId, router, workspaceId]);
+  const openLegacyEditor = useCallback((record: MasterRecord) => {
+    router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}/${encodeURIComponent(record.value_id)}`);
+  }, [moduleKey, organizationId, router, workspaceId]);
 
   const closeEditor = () => {
     setEditingRecord(null);
@@ -748,6 +890,7 @@ export function MasterRecordsTable({
           return (
             <fieldset key={field.key} className="col-span-full min-w-0 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
               <legend className="px-1 text-sm font-semibold text-slate-800">{field.label}{field.required ? " *" : ""}</legend>
+              {loadingMasterLookupKeys.has(field.lookupModuleKey ?? "") ? <p role="status" className="text-sm text-[var(--erp-muted)]">Loading {field.label.toLowerCase()} options...</p> : null}
               <div className="flex items-center justify-end border-b border-slate-200 pb-3">
                 <Button
                   type="button"
@@ -933,9 +1076,12 @@ export function MasterRecordsTable({
       const linkedTypeValue = String(selectedCategory?.fields?.Raw_Material_Type1 ?? "");
       const linkedType = options.find((option) => [option.label, option.id, option.value_id].some((candidate) => String(candidate ?? "") === linkedTypeValue));
       const autoSelectedType = linkedType?.label;
+      const isLoadingLookup = loadingMasterLookupKeys.has(field.lookupModuleKey ?? "");
 
       return (
         <div key={field.key}>
+          {isLoadingLookup ? <p role="status" className="mb-1 text-xs text-[var(--erp-muted)]">Loading {field.label.toLowerCase()} options...</p> : null}
+          {!isLoadingLookup && options.length === 0 ? <p role="status" className="mb-1 text-xs text-[var(--erp-muted)]">No {field.label.toLowerCase()} options available.</p> : null}
           {allowQuickCreate && moduleKey === "article" && field.type === "lookup" && (
             <div className="flex justify-end">
               <Button
@@ -952,7 +1098,7 @@ export function MasterRecordsTable({
           <MasterLookupSelect
             articleLookupOptions={articleLookupOptions}
             className="rounded-lg p-2 text-sm"
-            disabled={field.readOnly || Boolean(autoSelectedType)}
+            disabled={field.readOnly || Boolean(autoSelectedType) || isLoadingLookup}
             field={field}
             fields={fields}
             moduleKey={moduleKey}
@@ -1016,6 +1162,7 @@ export function MasterRecordsTable({
                     if (childField.type === "lookup") {
                       return (
                         <div key={childField.key} className={allowQuickCreate && moduleKey === "article" && childField.lookupModuleKey ? "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2" : "min-w-0"}>
+                          {loadingMasterLookupKeys.has(childField.lookupModuleKey ?? "") ? <p role="status" className="text-xs text-[var(--erp-muted)]">Loading {childField.label.toLowerCase()} options...</p> : null}
                           <Select
                             label={childField.label}
                             required={childField.required}
@@ -1023,6 +1170,7 @@ export function MasterRecordsTable({
                               articleLookupOptions[childField.lookupModuleKey ?? ""] ?? [],
                               childValueForField,
                             )}
+                            disabled={loadingMasterLookupKeys.has(childField.lookupModuleKey ?? "")}
                             onChange={(event) => onChange(event.target.value)}
                             options={[
                               { value: "", label: `Select ${childField.label}` },
@@ -1144,8 +1292,8 @@ export function MasterRecordsTable({
   }, []);
   const handleBulkDeleteSelected = useCallback(() => setDeleteDialog({ kind: "selected" }), []);
   const handleRecordClick = useCallback((record: MasterRecord) => {
-    if (moduleKey === "article") openRecordDetail(record);
-  }, [moduleKey, openRecordDetail]);
+    openRecordDetail(record);
+  }, [openRecordDetail]);
   const getMetadataSearchValue = useCallback((key: string, record: MasterRecord) => {
     const field = masterFieldByKey.get(key);
     return field ? getFieldValue(record, field) : "\u2014";
@@ -1153,11 +1301,8 @@ export function MasterRecordsTable({
   const getReportSearchValue = useCallback((fieldKey: string, record: MasterRecord) =>
     getMasterRecordSearchValue(fieldKey, record, getMetadataSearchValue), [getMetadataSearchValue]);
   const handleNewOrder = useCallback(() => {
-    if (moduleKey === "article") {
-      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/create`);
-    } else {
-      setShowCreateModal(true);
-    }
+    const target = moduleKey === "article" ? "article/create" : `${moduleKey}/create`;
+    router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${target}`);
   }, [moduleKey, organizationId, router, workspaceId]);
   const renderReportCell = useCallback((fieldKey: string, record: MasterRecord): ReactNode => {
     if (fieldKey === "label" && moduleKey === "article") {
@@ -1177,14 +1322,14 @@ export function MasterRecordsTable({
     if (fieldKey === "actions") {
       return (
         <div className="flex items-center gap-1.5" onClick={(event) => event.stopPropagation()}>
-          {(moduleKey === "article" || moduleKey === "gold-seal") && (
-            <Button type="button" size="sm" variant="secondary" onClick={() => openRecordDetail(record)}>
-              Open
-            </Button>
-          )}
-          <Button type="button" size="sm" variant="secondary" onClick={() => openEditor(record)}>
-            Edit
+          <Button type="button" size="sm" variant="secondary" onClick={() => openRecordDetail(record)}>
+            Open
           </Button>
+          {moduleKey === "gold-seal" ? (
+            <Button type="button" size="sm" variant="secondary" onClick={() => openLegacyEditor(record)}>
+              Edit
+            </Button>
+          ) : null}
           <Button type="button" size="sm" variant="destructive" onClick={() => setDeleteDialog({ kind: "single", record })}>
             Delete
           </Button>
@@ -1193,7 +1338,173 @@ export function MasterRecordsTable({
     }
     const field = masterFieldByKey.get(fieldKey);
     return field ? getFieldValue(record, field) : "—";
-  }, [getFieldValue, masterFieldByKey, moduleKey, openEditor, openRecordDetail, organizationId, workspaceId]);
+  }, [getFieldValue, masterFieldByKey, moduleKey, openLegacyEditor, openRecordDetail, organizationId, workspaceId]);
+
+  if (formMode) {
+    if (formMode === "view" && initialRecord) {
+      const recordPath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`;
+      const editPath = `${recordPath}/${encodeURIComponent(initialRecord.value_id)}?mode=edit`;
+      const childField = fields.find((field) => field.type === "child-list")
+        ?? fields.find((field) => field.type === "lookup" && field.multiple);
+      const formatValue = (value: unknown) => {
+        if (value === null || value === undefined || value === "") return "—";
+        if (typeof value === "boolean") return value ? "Yes" : "No";
+        if (Array.isArray(value)) return value.map((item) => String(item)).join(", ") || "—";
+        if (typeof value === "object") return JSON.stringify(value);
+        return String(value);
+      };
+
+      return (
+        <Page as="div">
+          <Section className="space-y-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <Link href={recordPath} className="text-sm font-semibold text-[var(--erp-brand)] underline-offset-4 hover:underline">
+                  ← Back to {moduleLabel}
+                </Link>
+                <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--erp-brand)]">Master data</p>
+                <h1 className="mt-1 break-words text-2xl font-bold text-[var(--erp-text)]">{initialRecord.label}</h1>
+                <p className="mt-1 text-sm text-[var(--erp-muted)]">
+                  {[initialRecord.code, initialRecord.is_active ? "Active" : "Inactive"].filter(Boolean).join(" · ")}
+                </p>
+              </div>
+              <Button type="button" onClick={() => router.push(editPath)}>Edit</Button>
+            </div>
+            {formError ? (
+              <p role="alert" className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-danger)]">
+                {formError}
+              </p>
+            ) : null}
+            {saved ? (
+              <p role="status" className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-brand-soft)] px-4 py-3 text-sm text-[var(--erp-brand)]">
+                {`${moduleLabel} ${saved === "create" ? "created" : "updated"} successfully.`}
+              </p>
+            ) : null}
+            <Card className="space-y-5 p-6">
+              <h2 className="text-base font-semibold text-[var(--erp-text)]">{moduleLabel} details</h2>
+              <dl className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {fields.filter((field) => field.type !== "child-list").map((field) => {
+                  const value = field.type === "image"
+                    ? (getFieldValue(initialRecord, field) === "—" ? "—" : "Image attached")
+                    : getFieldValue(initialRecord, field);
+                  return (
+                    <div key={field.key} className="min-w-0 space-y-1">
+                      <dt className="text-xs font-medium text-[var(--erp-muted)]">{field.label}</dt>
+                      <dd className="break-words text-sm text-[var(--erp-text)]">{formatValue(value)}</dd>
+                    </div>
+                  );
+                })}
+                <div className="min-w-0 space-y-1">
+                  <dt className="text-xs font-medium text-[var(--erp-muted)]">Description</dt>
+                  <dd className="break-words text-sm text-[var(--erp-text)]">{initialRecord.description || "—"}</dd>
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <dt className="text-xs font-medium text-[var(--erp-muted)]">Status</dt>
+                  <dd className="text-sm text-[var(--erp-text)]">{initialRecord.is_active ? "Active" : "Inactive"}</dd>
+                </div>
+              </dl>
+              {childField ? (
+                <section className="space-y-3 border-t border-[var(--erp-border)] pt-4">
+                  <h3 className="text-sm font-semibold text-[var(--erp-text)]">{childField.label}</h3>
+                  {childRecords.length ? (
+                    <div className="space-y-2">
+                      {childRecords.map((child, index) => (
+                        <div key={child.id ?? `${child.label}-${index}`} className="rounded-lg border border-[var(--erp-border)] p-3">
+                          <p className="text-sm font-medium text-[var(--erp-text)]">{child.label}</p>
+                          {child.fields ? (
+                            <dl className="mt-2 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                              {Object.entries(child.fields).map(([key, value]) => (
+                                <div key={key} className="min-w-0 space-y-1">
+                                  <dt className="text-xs font-medium text-[var(--erp-muted)]">{key.replaceAll("_", " ")}</dt>
+                                  <dd className="break-words text-sm text-[var(--erp-text)]">{formatValue(value)}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : <p className="text-sm text-[var(--erp-muted)]">No {childField.label.toLowerCase()} recorded.</p>}
+                </section>
+              ) : null}
+            </Card>
+          </Section>
+        </Page>
+      );
+    }
+    const formValues = formMode === "edit" ? editFields : createFields;
+    const setFormValues = formMode === "edit" ? setEditFields : setCreateFields;
+    const recordPath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`;
+    const returnPath = formMode === "edit" && initialRecord
+      ? `${recordPath}/${encodeURIComponent(initialRecord.value_id)}`
+      : recordPath;
+    return (
+      <Page as="div">
+        <Section>
+          <Link href={returnPath} className="text-sm font-semibold text-[var(--erp-brand)] underline-offset-4 hover:underline">
+            ← Back to {formMode === "edit" ? initialRecord?.label ?? moduleLabel : moduleLabel}
+          </Link>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-brand)]">Master data</p>
+            <h1 className="mt-1 text-2xl font-bold text-[var(--erp-text)]">
+              {formMode === "create" ? `Create ${moduleLabel}` : `Edit ${initialRecord?.label ?? moduleLabel}`}
+            </h1>
+            <p className="mt-1 text-sm text-[var(--erp-muted)]">{moduleLabel} record</p>
+          </div>
+          {formError ? <p role="alert" className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-danger)]">{formError}</p> : null}
+          {saved ? <p role="status" className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-brand-soft)] px-4 py-3 text-sm text-[var(--erp-brand)]">{`${moduleLabel} ${saved === "create" ? "created" : "updated"} successfully.`}</p> : null}
+          {loadingMasterLookupKeys.size > 0 ? <p role="status" className="text-sm text-[var(--erp-muted)]">Loading lookup options. You can continue entering other fields.</p> : null}
+          {masterLookupLoadError ? (
+            <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-4 py-3">
+              <p className="text-sm text-[var(--erp-danger)]">{masterLookupLoadError}</p>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setMasterLookupLoadError("");
+                  requestedDependentLookups.current.clear();
+                  setLoadingMasterLookupKeys(new Set(getFormLookupKeys(fields)));
+                  setMasterLookupRetry((current) => current + 1);
+                }}
+              >
+                Retry lookups
+              </Button>
+            </div>
+          ) : null}
+          <Card className="p-6">
+            <form
+              action={formMode === "create" ? createAction : updateAction}
+              encType="multipart/form-data"
+              className="space-y-6"
+            >
+              <input type="hidden" name="workspaceId" value={workspaceId} />
+              <input type="hidden" name="organizationId" value={organizationId} />
+              <input type="hidden" name="moduleKey" value={moduleKey} />
+              <input type="hidden" name="returnToMasterRecord" value="true" />
+              {formMode === "edit" && initialRecord ? (
+                <>
+                  <input type="hidden" name="valueId" value={initialRecord.value_id} />
+                  <input type="hidden" name="masterRecordCode" value={initialRecord.code || initialRecord.value_id} />
+                </>
+              ) : null}
+              <input type="hidden" name="code" value={String(formValues.code ?? initialRecord?.code ?? "")} />
+              <input type="hidden" name="description" value={String(formValues.description ?? initialRecord?.description ?? "")} />
+              <div className={`grid min-w-0 grid-cols-1 content-start gap-x-6 gap-y-4 ${moduleKey === "raw-material" ? "sm:grid-cols-2" : "sm:grid-cols-2 xl:grid-cols-3"}`}>
+                {orderedFields.map((field) => moduleKey === "raw-material" && rawMaterialShowAllFieldKeys.has(field.key) && formValues.Show_All1 !== true
+                  ? <input key={field.key} type="hidden" name={`field_${field.key}`} value={String(formValues[field.key] ?? "")} />
+                  : renderField(field, formValues, setFormValues))}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--erp-border)] pt-4">
+                <Button type="button" variant="secondary" onClick={() => router.push(returnPath)}>Cancel</Button>
+                <SubmitButton disabled={loadingMasterLookupKeys.size > 0}>{formMode === "create" ? "Create record" : "Save changes"}</SubmitButton>
+              </div>
+            </form>
+          </Card>
+        </Section>
+      </Page>
+    );
+  }
 
   return (
     <div className="space-y-4">

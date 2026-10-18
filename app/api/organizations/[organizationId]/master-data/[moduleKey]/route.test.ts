@@ -52,7 +52,7 @@ describe("organization master-data lookup route", () => {
       _organizationId: string,
       moduleKey: string,
       _includeInactive: boolean,
-      options?: { onRowsFetched?: (rowIds: string[]) => Promise<void> | void },
+      options?: { onRowsFetched?: (rowIds: string[]) => Promise<void> | void; parentId?: string },
     ) => {
       if (moduleKey === "size-group") {
         await options?.onRowsFetched?.(["group-id"]);
@@ -100,6 +100,21 @@ describe("organization master-data lookup route", () => {
       groupId: "group-id",
       size: { id: "size-id", value_id: "size-value-id", label: "M", fields: {} },
     }]);
+  });
+
+  it("loads dependent master options within the authorized parent", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/master-data/raw-material-sub-category?parentId=category-id&limit=200"),
+      contextFor("raw-material-sub-category"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.getMasterValuesForOrganization).toHaveBeenCalledWith(
+      "internal-org-1",
+      "raw-material-sub-category",
+      true,
+      expect.objectContaining({ parentId: "category-id", limit: 200 }),
+    );
   });
 
   it("groups size links by group once and preserves group size options", async () => {
@@ -221,6 +236,18 @@ describe("organization master-data lookup route", () => {
     expect(batchPromises.every((batchPromise) => batchPromise === batchPromises[0])).toBe(true);
     expect(mocks.getActiveOrganizationDummyDataBatch).toHaveBeenCalledExactlyOnceWith("internal-org-1");
     expect(mocks.getSizeGroupSizesForOrganization).toHaveBeenCalledWith("internal-org-1", ["group-id"], true);
+  });
+
+  it("skips Size Group size-link loading when only Brand data is needed", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/master-data/order-lookups?keys=size-group&includeSizeGroupSizes=false&shape=compact"),
+      contextFor("order-lookups"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.masterOptions["size-group"][0].sizes).toEqual([]);
+    expect(mocks.getSizeGroupSizesForOrganization).not.toHaveBeenCalled();
   });
 
   it("returns a compact order lookup shape without duplicate top-level lists", async () => {

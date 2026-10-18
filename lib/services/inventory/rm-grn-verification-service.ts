@@ -500,6 +500,136 @@ export async function listRmGrnVerificationAllocations(
   });
 }
 
+export async function getRmGrnVerificationAllocation(organizationId: string, allocationId: string) {
+  const record = await prisma.rmGrnVerificationAllocation.findFirst({
+    where: {
+      id: allocationId,
+      organization_id: organizationId,
+      verification: { organization_id: organizationId },
+      groupedPurchaseOrder: { organization_id: organizationId },
+    },
+    select: {
+      id: true,
+      created_at: true,
+      verification_allocated: true,
+      groupedPurchaseOrder: {
+        select: {
+          id: true,
+          organization_id: true,
+          grouped_po_no: true,
+          display_no: true,
+          total_grouped_qty: true,
+        },
+      },
+      verification: {
+        select: {
+          id: true,
+          organization_id: true,
+          verified_quantity: true,
+          approved_quantity: true,
+          rejected_quantity: true,
+          masterPurchaseOrder: {
+            select: { organization_id: true, master_po_no: true, display_no: true },
+          },
+          sourceGroupedPurchaseOrder: {
+            select: {
+              id: true,
+              organization_id: true,
+              source_type: true,
+              grouped_po_no: true,
+              display_no: true,
+              raw_material: true,
+            },
+          },
+          inventoryReceiptLine: {
+            select: {
+              raw_material: true,
+              receipt: {
+                select: {
+                  organization_id: true,
+                  receipt_no: true,
+                  purchaseOrder: {
+                    select: { organization_id: true, purchase_order_no: true, display_no: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderAllocations: {
+        select: {
+          allocated_quantity: true,
+          groupedPurchaseOrderLine: {
+            select: {
+              id: true,
+              order_no: true,
+              style_name: true,
+              grouped_qty: true,
+              sourceOrder: { select: { organization_id: true, orderNo: true } },
+              groupedPurchaseOrder: { select: { id: true, organization_id: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (
+    !record
+    || record.groupedPurchaseOrder.organization_id !== organizationId
+    || record.verification.organization_id !== organizationId
+    || (record.verification.masterPurchaseOrder
+      && record.verification.masterPurchaseOrder.organization_id !== organizationId)
+  ) return null;
+
+  const receiptLine = record.verification.inventoryReceiptLine;
+  const receipt = receiptLine?.receipt;
+  const purchaseOrder = receipt?.purchaseOrder;
+  if (
+    (receipt && receipt.organization_id !== organizationId)
+    || (purchaseOrder && purchaseOrder.organization_id !== organizationId)
+  ) return null;
+
+  const sourceGroup = record.verification.sourceGroupedPurchaseOrder;
+  if (!receipt && (!sourceGroup || sourceGroup.organization_id !== organizationId || sourceGroup.source_type !== "STOCK")) return null;
+  if (sourceGroup && (sourceGroup.organization_id !== organizationId || sourceGroup.source_type !== "STOCK")) return null;
+  const orderAllocations = record.orderAllocations.flatMap((allocation) => {
+    const line = allocation.groupedPurchaseOrderLine;
+    if (
+      line.groupedPurchaseOrder.organization_id !== organizationId
+      || line.groupedPurchaseOrder.id !== record.groupedPurchaseOrder.id
+      || line.sourceOrder.organization_id !== organizationId
+    ) return [];
+    return [{
+      id: line.id,
+      orderNo: line.order_no?.trim() || line.sourceOrder.orderNo,
+      styleName: line.style_name ?? "",
+      groupedQuantity: line.grouped_qty.toString(),
+      allocatedQuantity: allocation.allocated_quantity.toString(),
+    }];
+  });
+  const master = record.verification.masterPurchaseOrder;
+  return {
+    id: record.id,
+    createdAt: record.created_at.toISOString(),
+    grnNumber: receipt?.receipt_no ?? (sourceGroup ? `STOCK-${serializeGroupingNumber(sourceGroup)}` : "-"),
+    purchaseOrderNumber: purchaseOrder
+      ? purchaseOrder.display_no ? `PO-${purchaseOrder.display_no}` : purchaseOrder.purchase_order_no
+      : "Internal Store Issue",
+    rawMaterialName: receiptLine?.raw_material ?? sourceGroup?.raw_material ?? "",
+    masterGroupingNumber: master
+      ? master.display_no ? `MGP-${master.display_no}` : master.master_po_no
+      : "",
+    groupingNumber: serializeGroupingNumber(record.groupedPurchaseOrder),
+    totalGroupedQuantity: record.groupedPurchaseOrder.total_grouped_qty?.toString() ?? "0",
+    verificationAllocated: record.verification_allocated.toString(),
+    verifiedQuantity: record.verification.verified_quantity.toString(),
+    approvedQuantity: record.verification.approved_quantity.toString(),
+    rejectedQuantity: record.verification.rejected_quantity.toString(),
+    orderAllocations,
+  };
+}
+
 export async function saveRmGrnVerificationInTransaction(
   transaction: Prisma.TransactionClient,
   organizationId: string,

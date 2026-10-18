@@ -6,6 +6,30 @@ export interface IndexedReportRow<T> {
   searchableValues: Record<string, string>;
 }
 
+export function getReportSearchValue<T>(
+  record: T,
+  fieldKey: string,
+  getSearchValue: ((fieldKey: string, record: T) => string) | undefined,
+  renderCell: (fieldKey: string, record: T) => unknown,
+) {
+  const customValue = getSearchValue?.(fieldKey, record);
+  if (customValue !== undefined) return customValue.toLowerCase();
+
+  const rawValue = typeof record === "object" && record !== null
+    ? Reflect.get(record, fieldKey)
+    : undefined;
+  if (
+    typeof rawValue === "string"
+    || typeof rawValue === "number"
+    || typeof rawValue === "boolean"
+    || typeof rawValue === "bigint"
+  ) {
+    return String(rawValue).toLowerCase();
+  }
+
+  return String(renderCell(fieldKey, record) ?? "").toLowerCase();
+}
+
 export function filterIndexedReportRecords<T>(
   indexedRecords: IndexedReportRow<T>[],
   searchQuery: string,

@@ -127,7 +127,7 @@ describe("distribution quotation persistence", () => {
     });
   });
 
-  it("omits unused booking detail relations when loading a master sales order", async () => {
+  it("keeps ordinary master sales order reads summary-only", async () => {
     mocks.prisma.distributionQuotation.findFirst.mockResolvedValueOnce({
       ...createdQuotation,
       mode: "MASTER",
@@ -141,8 +141,89 @@ describe("distribution quotation persistence", () => {
       where: { organization_id: "internal-org-1", id: "quotation-1", mode: "MASTER" },
       include: expect.objectContaining({ lines: expect.objectContaining({ take: 0 }) }),
     }));
+    expect(mocks.prisma.distributionQuotation.findFirst.mock.calls[0][0].include.childQuotations)
+      .toEqual({ select: expect.objectContaining({ quotation_no: true }) });
+    expect(mocks.prisma.distributionQuotation.findFirst.mock.calls[0][0].include).not.toHaveProperty("organization");
     expect(mocks.prisma.distributionQuotation.findFirst).toHaveBeenCalledTimes(1);
     expect(result.quotation.lines).toEqual([]);
+    expect(result.children).toEqual([]);
+    expect(result).not.toHaveProperty("salesOrderDocument");
+  });
+
+  it("loads linked line items and party details only for a Sales Order PDF", async () => {
+    mocks.prisma.distributionQuotation.findFirst.mockResolvedValueOnce({
+      ...createdQuotation,
+      mode: "MASTER",
+      lines: [],
+      childQuotations: [{
+        ...createdQuotation,
+        notes: "Delivery terms apply.",
+        lines: createdQuotation.lines,
+        vendor: {
+          vendor: "Quotation Vendor",
+          gst_number: "QUOTE-GST",
+          registered_state: "Quote State",
+          contact: {
+            legal_name: "Quotation Vendor Legal",
+            email: "quote@example.com",
+            phone: "0987654321",
+            addresses: [{
+              usage: "BILLING",
+              address_line_1: "20 Quote Road",
+              address_line_2: null,
+              city: "Quote City",
+              state_name: "Quote State",
+              postal_code: "654321",
+              country_code: "IN",
+              is_default_billing: true,
+              is_default_shipping: false,
+              tax_registration: { gstin: "ADDRESS-GST" },
+            }],
+          },
+        },
+      }],
+      organization: {
+        organization_name: "Seller Ltd",
+        organization_email: "sales@example.com",
+        gst_number: "SELLER-GST",
+        mobile_number: "1234567890",
+        address_line_1: "1 Main Street",
+        address_line_2: null,
+        city: "City",
+        state: "State",
+        country: "India",
+        pin_code: "123456",
+      },
+      vendor: null,
+    });
+
+    const result = await getDistributionQuotation("internal-org-1", "quotation-1", {
+      masterOrder: true,
+      salesOrderDocument: true,
+    });
+
+    const include = mocks.prisma.distributionQuotation.findFirst.mock.calls[0][0].include;
+    expect(include.childQuotations).toHaveProperty("include.lines");
+    expect(include).toHaveProperty("organization.select.organization_name", true);
+    expect(result.salesOrderDocument).toMatchObject({
+      seller: { name: "Seller Ltd", gstin: "SELLER-GST", address: "1 Main Street, City, State, 123456, India" },
+      buyer: { name: "Master Vendor A" },
+    });
+    expect(result.children[0]).toMatchObject({
+      quotationNo: "QT-1",
+      notes: "Delivery terms apply.",
+      lines: [{ description: "Brand Style", quantity: 30, lineTotal: "0.00" }],
+      quotationParty: {
+        name: "Quotation Vendor",
+        legalName: "Quotation Vendor Legal",
+        gstin: "QUOTE-GST",
+        billingAddress: {
+          lines: ["20 Quote Road", "Quote City", "Quote State", "654321", "IN"],
+          gstin: "ADDRESS-GST",
+        },
+      },
+    });
+    expect(include.childQuotations.include).toHaveProperty("vendor.select.contact.select.addresses");
   });
 
   it("skips child-quotation relations for a quotation detail", async () => {

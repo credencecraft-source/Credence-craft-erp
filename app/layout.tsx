@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import GlobalFormFieldState from "@/components/ui/global-form-field-state";
+import NavigationLoadingOverlay from "@/components/ui/NavigationLoadingOverlay";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,7 +14,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en" className="h-full antialiased">
       <body>
         <GlobalFormFieldState />
-        {children}
+        <Suspense fallback={<NavigationLoadingOverlay label="Loading application" />}>
+          {children}
+        </Suspense>
       </body>
     </html>
   );

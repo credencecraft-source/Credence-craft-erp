@@ -203,7 +203,6 @@ export default function PlatformWhatsAppSendHistoryPage({
           rowIdSelector={(recipient) => `${recipient.phone_number}-${recipient.customer_name}`}
           selectedIds={[]}
           selectable={false}
-          onRowClick={() => undefined}
           renderCell={(fieldKey, recipient) => {
             if (fieldKey === "delivered_at") return formatDateTime(recipient.delivered_at);
             return recipient[fieldKey as keyof typeof recipient] || "—";

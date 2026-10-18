@@ -401,7 +401,6 @@ export default function PlatformCampaignsPage({
             rowIdSelector={(lead) => lead.id}
             selectedIds={[]}
             selectable={false}
-            onRowClick={() => undefined}
             renderCell={(fieldKey, lead) => {
               if (fieldKey === "added_at") return formatDate(lead.added_at);
               if (fieldKey === "actions") {

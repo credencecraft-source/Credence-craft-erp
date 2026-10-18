@@ -10,9 +10,11 @@ import {
 import { proxy } from "./proxy";
 
 const originalAuthSecret = process.env.AUTH_SECRET;
+const originalExpoWebAllowedOrigins = process.env.EXPO_WEB_ALLOWED_ORIGINS;
 
 beforeEach(() => {
   process.env.AUTH_SECRET = "proxy-auth-test-secret";
+  process.env.EXPO_WEB_ALLOWED_ORIGINS = "http://localhost:8082";
 });
 
 afterEach(() => {
@@ -20,6 +22,11 @@ afterEach(() => {
     delete process.env.AUTH_SECRET;
   } else {
     process.env.AUTH_SECRET = originalAuthSecret;
+  }
+  if (originalExpoWebAllowedOrigins === undefined) {
+    delete process.env.EXPO_WEB_ALLOWED_ORIGINS;
+  } else {
+    process.env.EXPO_WEB_ALLOWED_ORIGINS = originalExpoWebAllowedOrigins;
   }
 });
 
@@ -30,6 +37,64 @@ function createRequest(path: string, cookieName: string, token: string) {
 }
 
 describe("API authentication proxy", () => {
+  it("allows credentialed CORS preflight from the configured Expo web origin", () => {
+    const response = proxy(
+      new NextRequest("http://localhost/api/auth/mobile-otp/email", {
+        method: "OPTIONS",
+        headers: {
+          Origin: "http://localhost:8082",
+          "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Headers": "content-type",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe(
+      "http://localhost:8082",
+    );
+    expect(response.headers.get("access-control-allow-credentials")).toBe(
+      "true",
+    );
+    expect(response.headers.get("access-control-allow-methods")).toBe(
+      "GET, POST, OPTIONS",
+    );
+    expect(response.headers.get("access-control-allow-headers")).toBe(
+      "Content-Type",
+    );
+  });
+
+  it("does not grant CORS access to an unconfigured origin", () => {
+    const response = proxy(
+      new NextRequest("http://localhost/api/auth/mobile-otp/email", {
+        method: "OPTIONS",
+        headers: {
+          Origin: "https://untrusted.example",
+          "Access-Control-Request-Method": "POST",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+    expect(response.headers.get("access-control-allow-credentials")).toBeNull();
+  });
+
+  it("includes CORS headers on API responses for the configured origin", () => {
+    const response = proxy(
+      new NextRequest("http://localhost/api/auth/mobile-otp/email", {
+        headers: { Origin: "http://localhost:8082" },
+      }),
+    );
+
+    expect(response.headers.get("access-control-allow-origin")).toBe(
+      "http://localhost:8082",
+    );
+    expect(response.headers.get("access-control-allow-credentials")).toBe(
+      "true",
+    );
+  });
+
   it("allows the platform root login page without a platform session", () => {
     const response = proxy(new NextRequest("http://localhost/platform"));
 

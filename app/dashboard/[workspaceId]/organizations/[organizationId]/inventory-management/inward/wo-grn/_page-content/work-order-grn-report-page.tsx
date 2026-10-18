@@ -128,8 +128,8 @@ export default function WorkOrderGrnReportPage() {
             rowIdSelector={(record) => record.id}
             selectedIds={[]}
             selectable={false}
-            onRowClick={() => undefined}
-            onRowAction={(recordId) => router.push(`${basePath}/verification?grnId=${encodeURIComponent(recordId)}`)}
+            onRowClick={(recordId) => router.push(`${basePath}/report/${encodeURIComponent(recordId)}`)}
+            onRowAction={() => router.push(`${basePath}/verification`)}
             rowActionLabel="Verify"
             rowActionLabelSelector={(record) => record.status === "PENDING_VERIFICATION" ? "Verify" : "View"}
             rowActionDisabledSelector={(record) => record.status !== "PENDING_VERIFICATION"}

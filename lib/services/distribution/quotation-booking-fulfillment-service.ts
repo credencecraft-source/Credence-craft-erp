@@ -5,42 +5,84 @@ import { createAuditEvent } from "@/lib/services/organizations/audit-event-servi
 
 type Database = Prisma.TransactionClient;
 
-const quotationBookingInclude = {
-  sizeLines: {
-    include: {
-      assignments: {
-        include: {
-          grnAllocations: {
-            include: {
-              grnLine: {
-                select: {
-                  id: true,
-                  advance_booked_quantity: true,
-                  grn: { select: { grn_no: true } },
+function quotationBookingInclude(organizationId: string) {
+  return {
+    sizeLines: {
+      include: {
+        assignments: {
+          include: {
+            grnAllocations: {
+              include: {
+                grnLine: {
+                  select: {
+                    id: true,
+                    advance_booked_quantity: true,
+                    approved_quantity: true,
+                    general_inventory_quantity: true,
+                    grn: { select: { grn_no: true } },
+                    bookingAllocations: {
+                      where: { organization_id: organizationId },
+                      select: { organization_id: true, allocated_quantity: true },
+                    },
+                    generalStockReceipt: {
+                      select: {
+                        id: true,
+                        organization_id: true,
+                        quantity_in: true,
+                        quantity_out: true,
+                        current_stock: true,
+                      },
+                    },
+                  },
                 },
-              },
-              finishedGoodsStockReceipt: {
-                select: {
-                  id: true,
-                  entity_id: true,
-                  location_id: true,
-                  style_name: true,
-                  size: true,
-                  quantity_in: true,
-                  current_stock: true,
-                  quantity_out: true,
+                finishedGoodsStockReceipt: {
+                  select: {
+                    id: true,
+                    organization_id: true,
+                    entity_id: true,
+                    location_id: true,
+                    grn_id: true,
+                    grn_line_id: true,
+                    work_order_id: true,
+                    order_id: true,
+                    grn_no: true,
+                    grn_date: true,
+                    work_order_no: true,
+                    order_no: true,
+                    article_no: true,
+                    style_name: true,
+                    brand: true,
+                    buyer: true,
+                    product_category: true,
+                    colour: true,
+                    size: true,
+                    buyer_size: true,
+                    received_quantity: true,
+                    actual_received_quantity: true,
+                    approved_quantity: true,
+                    rejected_quantity: true,
+                    quantity_in: true,
+                    current_stock: true,
+                    quantity_out: true,
+                    created_by: true,
+                    verified_by: true,
+                    posted_at: true,
+                    created_at: true,
+                  },
                 },
               },
             },
+            finishedGoodsStockReceipts: { select: { id: true } },
           },
-          finishedGoodsStockReceipts: { select: { id: true } },
         },
       },
     },
-  },
-} satisfies Prisma.AdvanceBookingInclude;
+  } satisfies Prisma.AdvanceBookingInclude;
+}
 
-type QuotationBooking = Prisma.AdvanceBookingGetPayload<{ include: typeof quotationBookingInclude }>;
+type QuotationBooking = Prisma.AdvanceBookingGetPayload<{
+  include: ReturnType<typeof quotationBookingInclude>;
+}>;
 type BookingAssignment = QuotationBooking["sizeLines"][number]["assignments"][number];
 type BookingAllocation = BookingAssignment["grnAllocations"][number];
 type AllocatedReceipt = NonNullable<BookingAllocation["finishedGoodsStockReceipt"]>;
@@ -100,7 +142,7 @@ export async function listQuotationBookingFulfillment(organizationId: string, qu
   if (bookingIds.length === 0) return { bookings: [] };
   const bookings = await prisma.advanceBooking.findMany({
     where: { organization_id: organizationId, id: { in: bookingIds } },
-    include: quotationBookingInclude,
+    include: quotationBookingInclude(organizationId),
   });
   return {
     bookings: bookings
@@ -129,12 +171,18 @@ function collectBookingAllocations(booking: QuotationBooking) {
   return [...allocationsById.values()];
 }
 
-function requireUnusedReceipt(allocation: BookingAllocation, bookingNo: string): AllocatedReceipt {
+function requireUnusedReceipt(
+  allocation: BookingAllocation,
+  bookingNo: string,
+  organizationId: string,
+): AllocatedReceipt {
   const receipt = allocation.finishedGoodsStockReceipt;
   if (!receipt) {
     throw new Error(`Booking ${bookingNo} has a GRN allocation without its allocated-stock receipt. Resolve the GRN in Inventory before reversing fulfillment.`);
   }
   if (
+    receipt.organization_id !== organizationId ||
+    receipt.quantity_in !== allocation.allocated_quantity ||
     receipt.quantity_out !== 0 ||
     receipt.current_stock !== receipt.quantity_in
   ) {
@@ -160,12 +208,14 @@ export async function reverseQuotationBookingFulfillment(
         }
         const booking = await transaction.advanceBooking.findFirst({
           where: { id: bookingId, organization_id: organizationId },
-          include: quotationBookingInclude,
+          include: quotationBookingInclude(organizationId),
         });
         if (!booking) throw new Error("The selected booking was not found in this organization.");
 
         const allocations = collectBookingAllocations(booking);
-        const receipts = allocations.map((allocation) => requireUnusedReceipt(allocation, booking.booking_no));
+        const receipts = allocations.map((allocation) =>
+          requireUnusedReceipt(allocation, booking.booking_no, organizationId),
+        );
         const receiptIds = receipts.map((receipt) => receipt.id);
         const activeRequests = await transaction.finishedGoodsOutwardRequestLine.findMany({
           where: {
@@ -175,16 +225,120 @@ export async function reverseQuotationBookingFulfillment(
             request: { organization_id: organizationId, status: { not: "CANCELLED" } },
           },
           select: {
+            id: true,
+            request_id: true,
+            status: true,
+            picked_quantity: true,
             source_stock_id: true,
-            requested_quantity: true,
             shipped_quantity: true,
+            boxLines: { select: { id: true } },
+            request: {
+              select: {
+                id: true,
+                request_no: true,
+                status: true,
+                lines: {
+                  select: {
+                    id: true,
+                    status: true,
+                    picked_quantity: true,
+                    shipped_quantity: true,
+                    boxLines: { select: { id: true } },
+                  },
+                },
+              },
+            },
           },
         });
-        const reservedRequest = activeRequests.find((line) =>
-          line.requested_quantity.minus(line.shipped_quantity).greaterThan(0),
-        );
-        if (reservedRequest) {
-          throw new Error("This booking's fulfilled inventory is reserved by an active finished-goods request. Cancel or reverse that request first.");
+        const requestsToCancel = new Map<string, {
+          request: typeof activeRequests[number]["request"];
+          lineIds: Set<string>;
+        }>();
+        for (const line of activeRequests) {
+          const request = line.request;
+          if (
+            !["REQUESTED", "ACCEPTED"].includes(request.status) ||
+            line.status !== request.status ||
+            line.picked_quantity.greaterThan(0) ||
+            line.shipped_quantity.greaterThan(0) ||
+            line.boxLines.length > 0
+          ) {
+            throw new Error(
+              `Finished-goods request ${request.request_no} has already been picked, packed, or shipped. Undo that work before reversing this booking's fulfillment.`,
+            );
+          }
+          const grouped = requestsToCancel.get(request.id) ?? {
+            request,
+            lineIds: new Set<string>(),
+          };
+          grouped.lineIds.add(line.id);
+          requestsToCancel.set(request.id, grouped);
+        }
+        const cancelledRequestIds: string[] = [];
+        const cancelledRequestLineIds: string[] = [];
+        let fullyCancelledRequestCount = 0;
+        for (const { request, lineIds } of requestsToCancel.values()) {
+          const cancelsWholeRequest = request.lines.length === lineIds.size &&
+            request.lines.every((line) => lineIds.has(line.id));
+          if (cancelsWholeRequest && request.lines.some((line) =>
+            line.status !== request.status ||
+            line.picked_quantity.greaterThan(0) ||
+            line.shipped_quantity.greaterThan(0) ||
+            line.boxLines.length > 0,
+          )) {
+            throw new Error(
+              `Finished-goods request ${request.request_no} contains picked, packed, or shipped items. Undo that work before cancelling the whole request.`,
+            );
+          }
+          const lineIdsToCancel = [...lineIds];
+          const cancelledLines = await transaction.finishedGoodsOutwardRequestLine.updateMany({
+            where: {
+              organization_id: organizationId,
+              request_id: request.id,
+              id: { in: lineIdsToCancel },
+              status: request.status,
+              picked_quantity: 0,
+              shipped_quantity: 0,
+            },
+            data: { status: "CANCELLED" },
+          });
+          if (cancelledLines.count !== lineIdsToCancel.length) {
+            throw new Error(
+              `Finished-goods request ${request.request_no} changed during booking reversal. Reload and try again.`,
+            );
+          }
+          if (cancelsWholeRequest) {
+            const cancelledRequest = await transaction.finishedGoodsOutwardRequest.updateMany({
+              where: {
+                organization_id: organizationId,
+                id: request.id,
+                status: request.status,
+              },
+              data: { status: "CANCELLED" },
+            });
+            if (cancelledRequest.count !== 1) {
+              throw new Error(
+                `Finished-goods request ${request.request_no} changed during booking reversal. Reload and try again.`,
+              );
+            }
+            fullyCancelledRequestCount += 1;
+          }
+          cancelledRequestIds.push(request.id);
+          cancelledRequestLineIds.push(...lineIdsToCancel);
+          await createAuditEvent({
+            organizationId,
+            userId,
+            module: "Inventory Management",
+            action: "FG_STOCK_OUTWARD_CANCELLED_FOR_BOOKING_REVERSAL",
+            entityType: "FinishedGoodsOutwardRequest",
+            entityId: request.id,
+            details: {
+              request_no: request.request_no,
+              booking_no: booking.booking_no,
+              cancelled_request_line_ids: lineIdsToCancel,
+              entire_request_cancelled: cancelsWholeRequest,
+            },
+          }, transaction);
         }
 
         const stockTotals = new Map<string, {
@@ -205,6 +359,66 @@ export async function reverseQuotationBookingFulfillment(
             quantity: (current?.quantity ?? 0) + receipt.quantity_in,
           });
         }
+        const allocationQuantityByGrnLine = new Map<string, number>();
+        for (const allocation of allocations) {
+          allocationQuantityByGrnLine.set(
+            allocation.grn_line_id,
+            (allocationQuantityByGrnLine.get(allocation.grn_line_id) ?? 0) + allocation.allocated_quantity,
+          );
+        }
+        const grnLineTotals = [...allocationQuantityByGrnLine].map(([grnLineId, quantity]) => {
+          const line = allocations.find((allocation) => allocation.grn_line_id === grnLineId)!.grnLine;
+          const allAllocations = line.bookingAllocations.filter((allocation) =>
+            allocation.organization_id === organizationId,
+          );
+          const allAllocatedQuantity = allAllocations.reduce(
+            (sum, allocation) => sum + allocation.allocated_quantity,
+            0,
+          );
+          const generalQuantity = line.general_inventory_quantity ?? 0;
+          const generalReceipt = line.generalStockReceipt;
+          if (
+            line.approved_quantity === null ||
+            !Number.isSafeInteger(allAllocatedQuantity) ||
+            !Number.isSafeInteger(generalQuantity) ||
+            generalQuantity < 0 ||
+            allAllocations.some((allocation) =>
+              !Number.isSafeInteger(allocation.allocated_quantity) || allocation.allocated_quantity < 0,
+            ) ||
+            allAllocatedQuantity + generalQuantity !== line.approved_quantity
+          ) {
+            throw new Error(`GRN ${line.grn.grn_no} booking allocation totals do not match its approved quantity. Reconcile the GRN before reversing fulfillment.`);
+          }
+          if (
+            (generalQuantity > 0 && !generalReceipt) ||
+            (generalReceipt && (
+              generalReceipt.organization_id !== organizationId ||
+              generalReceipt.quantity_in !== generalQuantity ||
+              generalReceipt.current_stock + generalReceipt.quantity_out !== generalReceipt.quantity_in
+            ))
+          ) {
+            throw new Error(`GRN ${line.grn.grn_no} general-stock receipt does not match its verified quantity. Reconcile the GRN before reversing fulfillment.`);
+          }
+          if (quantity > allAllocatedQuantity) {
+            throw new Error(`GRN ${line.grn.grn_no} has less allocated quantity than this booking's receipts. Reconcile the GRN before reversing fulfillment.`);
+          }
+          const allocation = allocations.find((candidate) => candidate.grn_line_id === grnLineId)!;
+          const receipt = allocation.finishedGoodsStockReceipt;
+          if (!receipt) {
+            throw new Error(`GRN ${line.grn.grn_no} has no reversible allocated-stock receipt.`);
+          }
+          return {
+            grnLineId,
+            grnNo: line.grn.grn_no,
+            quantity,
+            remainingAllocatedQuantity: allAllocatedQuantity - quantity,
+            generalQuantity,
+            line,
+            generalReceipt,
+            sourceReceipt: receipt,
+          };
+        });
+
         for (const stock of stockTotals.values()) {
           const updated = await transaction.finishedGoodsStock.updateMany({
             where: {
@@ -213,41 +427,83 @@ export async function reverseQuotationBookingFulfillment(
               location_id: stock.locationId,
               style_name: stock.styleName,
               size: stock.size,
-              quantity_on_hand: { gte: stock.quantity },
               quantity_reserved: { gte: stock.quantity },
             },
-            data: {
-              quantity_on_hand: { decrement: stock.quantity },
-              quantity_reserved: { decrement: stock.quantity },
-            },
+            data: { quantity_reserved: { decrement: stock.quantity } },
           });
           if (updated.count !== 1) {
-            throw new Error("The finished-goods inventory aggregate does not match this booking's unused receipts. Reconcile inventory before reversing fulfillment.");
+            throw new Error("The finished-goods reserved balance does not match this booking's unused receipts. Reconcile inventory before reversing fulfillment.");
           }
         }
 
-        const allocationQuantityByGrnLine = new Map<string, number>();
-        for (const allocation of allocations) {
-          allocationQuantityByGrnLine.set(
-            allocation.grn_line_id,
-            (allocationQuantityByGrnLine.get(allocation.grn_line_id) ?? 0) + allocation.allocated_quantity,
-          );
-        }
-        for (const [grnLineId, quantity] of allocationQuantityByGrnLine) {
-          const line = allocations.find((allocation) => allocation.grn_line_id === grnLineId)!.grnLine;
-          if (line.advance_booked_quantity === null || line.advance_booked_quantity < quantity) {
-            throw new Error(`GRN ${line.grn.grn_no} booking allocation totals do not match. Reconcile the GRN before reversing fulfillment.`);
+        for (const grnLine of grnLineTotals) {
+          const { sourceReceipt, generalReceipt, quantity, generalQuantity, line, grnLineId, grnNo } = grnLine;
+          if (generalReceipt) {
+            const updatedGeneralReceipt = await transaction.finishedGoodsGeneralStockReceipt.updateMany({
+              where: {
+                id: generalReceipt.id,
+                organization_id: organizationId,
+                quantity_in: generalReceipt.quantity_in,
+                current_stock: generalReceipt.current_stock,
+              },
+              data: {
+                quantity_in: { increment: quantity },
+                current_stock: { increment: quantity },
+              },
+            });
+            if (updatedGeneralReceipt.count !== 1) {
+              throw new Error(`GRN ${grnNo} general stock changed while reversing fulfillment. Reload and try again.`);
+            }
+          } else {
+            await transaction.finishedGoodsGeneralStockReceipt.create({
+              data: {
+                organization_id: organizationId,
+                entity_id: sourceReceipt.entity_id,
+                location_id: sourceReceipt.location_id,
+                grn_id: sourceReceipt.grn_id,
+                grn_line_id: sourceReceipt.grn_line_id,
+                work_order_id: sourceReceipt.work_order_id,
+                order_id: sourceReceipt.order_id,
+                grn_no: sourceReceipt.grn_no,
+                grn_date: sourceReceipt.grn_date,
+                work_order_no: sourceReceipt.work_order_no,
+                order_no: sourceReceipt.order_no,
+                article_no: sourceReceipt.article_no,
+                style_name: sourceReceipt.style_name,
+                brand: sourceReceipt.brand,
+                buyer: sourceReceipt.buyer,
+                product_category: sourceReceipt.product_category,
+                colour: sourceReceipt.colour,
+                size: sourceReceipt.size,
+                buyer_size: sourceReceipt.buyer_size,
+                received_quantity: sourceReceipt.received_quantity,
+                actual_received_quantity: sourceReceipt.actual_received_quantity,
+                approved_quantity: sourceReceipt.approved_quantity,
+                rejected_quantity: sourceReceipt.rejected_quantity,
+                quantity_in: quantity,
+                current_stock: quantity,
+                created_by: sourceReceipt.created_by,
+                verified_by: sourceReceipt.verified_by,
+                posted_at: sourceReceipt.posted_at,
+                created_at: sourceReceipt.created_at,
+              },
+            });
           }
+
           const updated = await transaction.workOrderInventoryGrnLine.updateMany({
             where: {
               id: grnLineId,
               grn: { organization_id: organizationId },
-              advance_booked_quantity: { gte: quantity },
+              advance_booked_quantity: line.advance_booked_quantity,
+              general_inventory_quantity: line.general_inventory_quantity,
             },
-            data: { advance_booked_quantity: { decrement: quantity } },
+            data: {
+              advance_booked_quantity: grnLine.remainingAllocatedQuantity,
+              general_inventory_quantity: generalQuantity + quantity,
+            },
           });
           if (updated.count !== 1) {
-            throw new Error(`GRN ${line.grn.grn_no} changed while reversing fulfillment. Reload and try again.`);
+            throw new Error(`GRN ${grnNo} changed while reversing fulfillment. Reload and try again.`);
           }
         }
 
@@ -279,6 +535,10 @@ export async function reverseQuotationBookingFulfillment(
             booking_no: booking.booking_no,
             grn_numbers: grnNumbers,
             reversed_quantity: reversedQuantity,
+            transferred_to_general_quantity: reversedQuantity,
+            cancelled_outward_request_ids: cancelledRequestIds,
+            cancelled_outward_request_line_ids: cancelledRequestLineIds,
+            stock_effect: "Moved unused allocated receipts to general stock without reducing on-hand quantity.",
             grn_allocation_ids: allocationIds,
             stock_receipt_ids: receiptIds,
           },
@@ -289,6 +549,8 @@ export async function reverseQuotationBookingFulfillment(
           bookingNo: booking.booking_no,
           reversedQuantity,
           grnNumbers,
+          cancelledRequestLineCount: cancelledRequestLineIds.length,
+          fullyCancelledRequestCount,
         };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
     } catch (error) {
@@ -298,4 +560,27 @@ export async function reverseQuotationBookingFulfillment(
     }
   }
   throw new Error("Booking inventory changed concurrently. Reload and try again.");
+}
+
+export async function reverseAdvanceBookingFulfillment(
+  organizationId: string,
+  userId: string,
+  bookingId: string,
+) {
+  const quotationLine = await prisma.distributionQuotationLine.findFirst({
+    where: { organization_id: organizationId, source_booking_id: bookingId },
+    select: {
+      quotation: {
+        select: {
+          id: true,
+          parentQuotation: { select: { id: true } },
+        },
+      },
+    },
+  });
+  if (!quotationLine) {
+    throw new Error("This advance booking is not linked to a quotation or sales order.");
+  }
+  const quotationId = quotationLine.quotation.parentQuotation?.id ?? quotationLine.quotation.id;
+  return reverseQuotationBookingFulfillment(organizationId, userId, quotationId, bookingId);
 }

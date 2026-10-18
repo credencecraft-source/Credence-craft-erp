@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ArrowRight, Boxes, ClipboardList, Plus } from "lucide-react";
 import { ReportGrid } from "@/components/reports/report-grid-display";
@@ -473,6 +473,8 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
 }
 
 function BookedStockReport({ records }: { records: BookedStockRow[] }) {
+  const params = useParams<{ workspaceId: string; organizationId: string }>();
+  const router = useRouter();
   const [visibleFields, setVisibleFields] = useState(bookedStockFields.map((field) => field.key));
   return <ReportGrid
     title="Booked Stock Report"
@@ -483,7 +485,9 @@ function BookedStockReport({ records }: { records: BookedStockRow[] }) {
     rowIdSelector={(record) => record.id}
     selectedIds={[]}
     selectable={false}
-    onRowClick={() => undefined}
+    onRowClick={(bookingId) => router.push(
+      `/dashboard/${params.workspaceId}/organizations/${params.organizationId}/inventory-management/stock/rm-stock/general-inventory/booked-stock/${encodeURIComponent(bookingId)}`,
+    )}
     renderCell={(fieldKey, record) => {
       if (fieldKey === "bookedQuantity") return Number(record.bookedQuantity).toLocaleString("en-IN", { maximumFractionDigits: 2 });
       if (fieldKey === "bookedAt") return new Date(record.bookedAt).toLocaleString("en-IN");

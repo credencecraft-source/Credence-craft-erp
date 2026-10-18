@@ -1758,6 +1758,50 @@ describe("organization dummy data service", () => {
       .resolves.toMatchObject({ status: "EMPTY", stage: "IDLE", completedSteps: [], currentStep: 1 });
   });
 
+  it("loads independent sample-data progress records concurrently", async () => {
+    prismaMock.organizationDummyDataBatch.findUnique.mockResolvedValue({
+      id: "batch-id",
+      status: "IN_PROGRESS",
+      stage: "RUNNING",
+      sample_order_id: "order-1",
+      master_record_ids: [
+        { moduleKey: "sample-order", id: "order-1" },
+        { moduleKey: "grouped-purchase-order", id: "grouped-po-1" },
+        { moduleKey: "purchase-order", id: "purchase-order-1" },
+        { moduleKey: "gate-entry", id: "gate-entry-1" },
+        { moduleKey: "inventory-receipt", id: "receipt-1" },
+        { moduleKey: "sample-work-order", id: "work-order-1" },
+      ],
+      checkpoint: {},
+      last_error: null,
+      created_at: new Date("2026-10-02T00:00:00Z"),
+    });
+    let finishGroupedPurchaseOrderQuery!: () => void;
+    const groupedPurchaseOrderQuery = new Promise<void>((resolve) => {
+      finishGroupedPurchaseOrderQuery = resolve;
+    });
+    prismaMock.groupedPurchaseOrder.findMany.mockImplementationOnce(async () => {
+      await groupedPurchaseOrderQuery;
+      return [];
+    });
+
+    const statusPromise = getOrganizationDummyDataStatus("user-id", "public-org-id");
+    await vi.waitFor(() => {
+      expect(prismaMock.merchandisingOrder.findFirst).toHaveBeenCalledOnce();
+      expect(prismaMock.purchaseOrder.findMany).toHaveBeenCalledOnce();
+      expect(prismaMock.gateEntry.findMany).toHaveBeenCalledOnce();
+      expect(prismaMock.inventoryReceipt.findMany).toHaveBeenCalledOnce();
+      expect(prismaMock.factoryWorkOrder.findMany).toHaveBeenCalledOnce();
+    });
+    finishGroupedPurchaseOrderQuery();
+
+    await expect(statusPromise).resolves.toMatchObject({
+      status: "IN_PROGRESS",
+      orderNo: null,
+      orderCount: 1,
+    });
+  });
+
   it("does not restart sample-data creation after approval when a batch already exists", async () => {
     prismaMock.organization.findFirst.mockResolvedValueOnce({
       organization_id: "public-org-id",

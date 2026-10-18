@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowUpRight } from "lucide-react";
 
 import Badge from "@/components/ui/Badge";
@@ -47,9 +47,11 @@ function formatQuotationDate(value: string) {
 export default function QuotationDetailPage() {
   const params = useParams<{ workspaceId: string; organizationId: string; quotationId?: string; salesOrderId?: string; masterQuotationId?: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const organizationId = params.organizationId;
   const quotationId = params.quotationId ?? params.salesOrderId ?? params.masterQuotationId ?? "";
   const isMasterOrder = params.salesOrderId !== undefined || params.masterQuotationId !== undefined;
+  const isEditing = searchParams.get("mode") === "edit";
   const [quotation, setQuotation] = useState<DistributionQuotation | null>(null);
   const [children, setChildren] = useState<DistributionQuotationSummary[]>([]);
   const [quotationDate, setQuotationDate] = useState("");
@@ -57,6 +59,7 @@ export default function QuotationDetailPage() {
   const [notes, setNotes] = useState("");
   const [unitPrices, setUnitPrices] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  const [saveNotice, setSaveNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -154,11 +157,21 @@ export default function QuotationDetailPage() {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to save quotation.");
       }
       setQuotation(data.quotation as DistributionQuotation);
+      setSaveNotice("Quotation updated successfully.");
+      router.replace(detailPath);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save quotation.");
     } finally {
       setIsSaving(false);
     }
+  }
+
+  const detailPath = `/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/${isMasterOrder ? "sales-order" : "quotation"}/${encodeURIComponent(quotationId)}`;
+  const canEditDraft = Boolean(quotation && quotation.mode !== "MASTER" && quotation.status === "DRAFT");
+
+  async function cancelEditing() {
+    await loadQuotation();
+    router.replace(detailPath);
   }
 
   async function deleteQuotation() {
@@ -241,7 +254,17 @@ export default function QuotationDetailPage() {
                 ? "Sales Order List"
                 : "Quotation List"}
           </Button>
-          {quotation?.mode !== "MASTER" && quotation?.status === "DRAFT" ? (
+          {!isEditing && canEditDraft ? (
+            <Button type="button" onClick={() => router.push(`${detailPath}?mode=edit`)}>
+              Edit
+            </Button>
+          ) : null}
+          {isEditing && canEditDraft ? (
+            <Button type="button" variant="secondary" onClick={() => void cancelEditing()} disabled={isSaving || isLoading}>
+              Cancel edit
+            </Button>
+          ) : null}
+          {isEditing && canEditDraft ? (
             <Button type="button" variant="primary" onClick={() => void saveDraft()} disabled={isSaving || isLoading}>
               {isSaving ? "Saving..." : "Save Draft"}
             </Button>
@@ -260,6 +283,7 @@ export default function QuotationDetailPage() {
       </header>
 
       {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
+      {saveNotice ? <p role="status" className="rounded-md border border-[var(--erp-border)] bg-[var(--erp-brand-soft)] px-3 py-2 text-sm text-[var(--erp-brand)]">{saveNotice}</p> : null}
       {isLoading ? <p role="status" className="text-sm text-slate-600">Loading quotation...</p> : null}
       {!isLoading && quotation ? (
         <>
@@ -277,8 +301,8 @@ export default function QuotationDetailPage() {
               <Input label={quotation.mode === "MASTER" ? "Sales Order No" : "Quotation No"} value={quotation.quotationNo} readOnly />
               <Input label="Customer / Contact" value={quotation.customer} readOnly />
               <Input label="Source Order(s)" value={quotation.orderNo} readOnly />
-              <Input label={quotation.mode === "MASTER" ? "Sales Order Date" : "Quotation Date"} type="date" value={quotationDate} onChange={(event) => setQuotationDate(event.target.value)} disabled={quotation.mode === "MASTER" || quotation.status !== "DRAFT"} />
-              <Input label="Valid Until" type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} disabled={quotation.mode === "MASTER" || quotation.status !== "DRAFT"} />
+              <Input label={quotation.mode === "MASTER" ? "Sales Order Date" : "Quotation Date"} type="date" value={quotationDate} onChange={(event) => setQuotationDate(event.target.value)} disabled={!isEditing || quotation.mode === "MASTER" || quotation.status !== "DRAFT"} />
+              <Input label="Valid Until" type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} disabled={!isEditing || quotation.mode === "MASTER" || quotation.status !== "DRAFT"} />
               <Input label="Total Quantity" value={String(quotation.totalQuantity)} readOnly />
               <Input label="Subtotal" value={displayedTotal} readOnly />
             </div>
@@ -287,7 +311,7 @@ export default function QuotationDetailPage() {
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
               maxLength={2000}
-              disabled={quotation.mode === "MASTER" || quotation.status !== "DRAFT"}
+              disabled={!isEditing || quotation.mode === "MASTER" || quotation.status !== "DRAFT"}
             />
           </Card>
 
@@ -383,7 +407,7 @@ export default function QuotationDetailPage() {
                             step="0.0001"
                             value={unitPrices[line.id] ?? "0"}
                             onChange={(event) => setUnitPrices((current) => ({ ...current, [line.id]: event.target.value }))}
-                            disabled={quotation.status !== "DRAFT"}
+                            disabled={!isEditing || quotation.status !== "DRAFT"}
                           />
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums">{amount === null ? "—" : formatCents(amount)}</td>

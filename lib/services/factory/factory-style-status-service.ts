@@ -72,7 +72,11 @@ export async function listFactoryStyleStatusOrders(
                   completed_qty: true,
                   received_qty: true,
                   status: true,
-                  productionUpdates: { select: { created_at: true } },
+                  productionUpdates: {
+                    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+                    select: { created_at: true },
+                    take: 1,
+                  },
                 },
               },
             },
@@ -139,6 +143,10 @@ export async function listFactoryStyleStatusOrders(
         organization_id: organizationId,
         entity_id: { in: [...orders.map(({ id }) => id), ...workOrderIds] },
         entity_type: { in: ["MerchandisingOrder", "FactoryWorkOrder"] },
+        OR: [
+          { action: "CREATE" },
+          { action: { startsWith: "CREATE_" } },
+        ],
       },
       select: {
         entity_type: true,
@@ -179,10 +187,7 @@ export async function listFactoryStyleStatusOrders(
       for (const process of workOrder.processController?.processes ?? []) {
         const key = process.process_name.trim().toLocaleLowerCase();
         if (!key) continue;
-        const latestUpdate = process.productionUpdates.reduce<Date | null>(
-          (latest, update) => !latest || update.created_at > latest ? update.created_at : latest,
-          null,
-        );
+        const latestUpdate = process.productionUpdates[0]?.created_at ?? null;
         const current = processProgress.get(key) ?? {
           id: key,
           processName: process.process_name,

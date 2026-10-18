@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Download, FileSpreadsheet, LoaderCircle, Upload } from "lucide-react";
 import { useParams } from "next/navigation";
 
@@ -87,6 +87,29 @@ export default function BulkOrderCreationPage() {
   const [createdMasterKeys, setCreatedMasterKeys] = useState<string[]>([]);
   const [masterCreationError, setMasterCreationError] = useState("");
   const [isCreatingMasters, setIsCreatingMasters] = useState(false);
+
+  const masterCreationOptions = useMemo(() => {
+    const orderCategories = rows.flatMap((row) => {
+      const order = row.order ?? row.candidateOrder;
+      return order ? [order.category] : [];
+    });
+    const orderBrands = rows.flatMap((row) => {
+      const order = row.order ?? row.candidateOrder;
+      return order ? [order.brand] : [];
+    });
+    return {
+      categories: [...new Set([
+        ...(masterOptions.category ?? []).map((option) => option.label),
+        ...orderCategories,
+      ])],
+      brands: [...new Set([
+        ...(masterOptions.brand ?? []).map((option) => option.label),
+        ...orderBrands,
+      ])],
+      sizes: [...new Set((masterOptions.size ?? []).map((option) => option.label))],
+      productTypes: (masterOptions["product-master"] ?? []).map((option) => option.label),
+    };
+  }, [masterOptions, rows]);
 
   const validRows = rows.filter((row) => row.order !== null);
   const successfulCount = results.filter((result) => result.success).length;
@@ -527,26 +550,9 @@ export default function BulkOrderCreationPage() {
           </div>
 
           <div className="max-h-[45vh] space-y-4 overflow-x-hidden overflow-y-auto rounded-lg border border-slate-200 p-4">
-            {missingMasters.map((master) => {
+            {showMasterApproval && missingMasters.map((master) => {
               const key = masterEntryKey(master);
               const choice = masterChoices[key];
-              const categories = [...new Set([
-                ...(masterOptions.category ?? []).map((option) => option.label),
-                ...rows.flatMap((row) => {
-                  const order = row.order ?? row.candidateOrder;
-                  return order ? [order.category] : [];
-                }),
-              ])];
-              const brands = [...new Set([
-                ...(masterOptions.brand ?? []).map((option) => option.label),
-                ...rows.flatMap((row) => {
-                  const order = row.order ?? row.candidateOrder;
-                  return order ? [order.brand] : [];
-                }),
-              ])];
-              const sizes = [...new Set((masterOptions.size ?? []).map((option) => option.label))];
-              const productTypes = (masterOptions["product-master"] ?? []).map((option) => option.label);
-
               return (
                 <div key={key} className="grid gap-3 border-b border-slate-100 pb-4 last:border-0 last:pb-0 md:grid-cols-[minmax(12rem,1fr)_minmax(15rem,2fr)]">
                   <div>
@@ -562,9 +568,9 @@ export default function BulkOrderCreationPage() {
                         onChange={(event) => updateMasterChoice(master, { categoryType: event.target.value })}
                         options={[
                           { label: "Choose a Finished Goods Type", value: "" },
-                          ...productTypes.map((label) => ({ label, value: label })),
+                          ...masterCreationOptions.productTypes.map((label) => ({ label, value: label })),
                         ]}
-                        hint={productTypes.length > 0
+                        hint={masterCreationOptions.productTypes.length > 0
                           ? undefined
                           : "Create a Finished Goods Type in Master Data before approving this category."}
                         disabled={isCreatingMasters || createdMasterKeys.includes(key)}
@@ -577,9 +583,9 @@ export default function BulkOrderCreationPage() {
                         onChange={(event) => updateMasterChoice(master, { parentCategory: event.target.value })}
                         options={[
                           { label: "Choose a Product Category", value: "" },
-                          ...categories.map((label) => ({ label, value: label })),
+                          ...masterCreationOptions.categories.map((label) => ({ label, value: label })),
                         ]}
-                        hint={categories.length > 0
+                        hint={masterCreationOptions.categories.length > 0
                           ? undefined
                           : "Create a Product Category in this upload or in Master Data before approving this subcategory."}
                         disabled={isCreatingMasters || createdMasterKeys.includes(key)}
@@ -593,9 +599,9 @@ export default function BulkOrderCreationPage() {
                           onChange={(event) => updateMasterChoice(master, { brand: event.target.value })}
                           options={[
                             { label: "Choose a Brand", value: "" },
-                            ...brands.map((label) => ({ label, value: label })),
+                            ...masterCreationOptions.brands.map((label) => ({ label, value: label })),
                           ]}
-                          hint={brands.length > 0
+                          hint={masterCreationOptions.brands.length > 0
                             ? undefined
                             : "Create a Brand in this upload or in Master Data before approving this Size Group."}
                           disabled={isCreatingMasters || createdMasterKeys.includes(key)}
@@ -603,16 +609,16 @@ export default function BulkOrderCreationPage() {
                         <Select
                           label="Sizes in this Size Group"
                           multiple
-                          size={Math.min(Math.max(sizes.length, 3), 6)}
+                          size={Math.min(Math.max(masterCreationOptions.sizes.length, 3), 6)}
                           value={choice.sizes}
                           onChange={(event) => updateMasterChoice(master, {
                             sizes: Array.from(event.target.selectedOptions, (option) => option.value),
                           })}
-                          options={sizes.map((label) => ({ label, value: label }))}
-                          hint={sizes.length > 0
+                          options={masterCreationOptions.sizes.map((label) => ({ label, value: label }))}
+                          hint={masterCreationOptions.sizes.length > 0
                             ? "Select the existing organization sizes that belong to this group."
                             : "No size master values are available. Add sizes in Master Data before creating this Size Group."}
-                          disabled={isCreatingMasters || createdMasterKeys.includes(key) || sizes.length === 0}
+                          disabled={isCreatingMasters || createdMasterKeys.includes(key) || masterCreationOptions.sizes.length === 0}
                         />
                       </>
                     )}

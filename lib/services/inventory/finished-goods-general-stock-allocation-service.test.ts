@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 const mocks = vi.hoisted(() => ({
   prisma: {
     $transaction: vi.fn(),
-    finishedGoodsGeneralStockReceipt: { findMany: vi.fn() },
+    finishedGoodsGeneralStockReceipt: { findMany: vi.fn(), groupBy: vi.fn() },
   },
   transaction: {
     advanceBooking: { findFirst: vi.fn() },
@@ -165,6 +165,28 @@ describe("finished-goods general-stock allocation", () => {
     }), mocks.transaction);
   });
 
+  it("automatically moves all matching available General Stock into booking-allocated stock", async () => {
+    const result = await allocateAdvanceBookingFromGeneralStock(
+      "organization-1",
+      "user-1",
+      "booking-1",
+      [],
+    );
+
+    expect(result.allocatedLines).toEqual([{ size: "M", quantity: 8 }]);
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).toHaveBeenCalledWith({
+      where: { id: "general-receipt-1", organization_id: "organization-1", current_stock: 8 },
+      data: { quantity_out: { increment: 8 }, current_stock: { decrement: 8 } },
+    });
+    expect(mocks.transaction.finishedGoodsAllocatedStockReceipt.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        booking_id: "booking-1",
+        quantity_in: 8,
+        current_stock: 8,
+      }),
+    }));
+  });
+
   it("returns allocated sizes in their Size Group order", async () => {
     mocks.transaction.advanceBooking.findFirst.mockResolvedValue({
       ...structuredClone(bookingRecord),
@@ -180,6 +202,10 @@ describe("finished-goods general-stock allocation", () => {
       id: "group-id",
       value_id: "group-value-id",
       size_group: "group-1",
+      size_links: ["S", "M"].map((size) => ({
+        size_group_id: "group-id",
+        size: { organization_id: "organization-1", size },
+      })),
     }]);
     mocks.transaction.masterSizeGroupSize.findMany.mockResolvedValue(["S", "M"].map((size) => ({
       size_group_id: "group-id",
@@ -456,21 +482,22 @@ describe("finished-goods general-stock allocation", () => {
   });
 
   it("does not expose another organization's general-stock balances", async () => {
-    mocks.prisma.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([{
+    mocks.prisma.finishedGoodsGeneralStockReceipt.groupBy.mockResolvedValue([{
       order_id: "order-1",
       size: "M",
-      current_stock: 5,
+      _sum: { current_stock: 5 },
     }]);
 
     const result = await listGeneralFinishedGoodsAvailability("organization-1", ["order-1", "order-1"]);
 
-    expect(mocks.prisma.finishedGoodsGeneralStockReceipt.findMany).toHaveBeenCalledWith({
+    expect(mocks.prisma.finishedGoodsGeneralStockReceipt.groupBy).toHaveBeenCalledWith({
       where: {
         organization_id: "organization-1",
         order_id: { in: ["order-1"] },
         current_stock: { gt: 0 },
       },
-      select: { order_id: true, size: true, current_stock: true },
+      by: ["order_id", "size"],
+      _sum: { current_stock: true },
     });
     expect(result.get("order-1")?.get("M")).toBe(5);
   });

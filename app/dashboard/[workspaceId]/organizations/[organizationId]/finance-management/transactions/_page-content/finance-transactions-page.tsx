@@ -193,7 +193,6 @@ export default function FinanceTransactionsPage({
             storageKey={`credence-craft-finance-transactions-${organizationId}`}
             rowIdSelector={(record) => record.id}
             selectedIds={[]}
-            onRowClick={() => undefined}
             renderCell={(fieldKey, record) => {
               if (["amount", "tax", "net"].includes(fieldKey)) return `Rs ${Number(record[fieldKey as "amount" | "tax" | "net"] ?? 0).toFixed(2)}`;
               return String(record[fieldKey as FinanceReportField] ?? "");

@@ -176,7 +176,7 @@ const grnIncludes = {
 
 export async function listWorkOrderInventoryGrns(
   organizationId: string,
-  options: { status?: string; cursor?: string; limit?: number } = {},
+  options: { status?: string; cursor?: string; limit?: number; grnId?: string } = {},
 ) {
   const take = Math.min(Math.max(options.limit ?? 100, 1), 200);
   if (options.cursor) {
@@ -193,6 +193,7 @@ export async function listWorkOrderInventoryGrns(
   const records = await prisma.workOrderInventoryGrn.findMany({
     where: {
       organization_id: organizationId,
+      ...(options.grnId ? { id: options.grnId } : {}),
       ...(options.status ? { status: options.status } : {}),
     },
     include: grnIncludes,

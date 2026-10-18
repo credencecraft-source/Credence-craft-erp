@@ -27,6 +27,7 @@ export async function GET(request: Request) {
       cursor: searchParams.get("cursor") || undefined,
       limit: Number(searchParams.get("limit") || 100),
       status: status || undefined,
+      includeArticleMetadata: searchParams.get("purpose") !== "advance-booking",
     });
     return NextResponse.json(page);
   } catch (error) {

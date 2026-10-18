@@ -54,13 +54,13 @@ describe("organization contact lookup API", () => {
     expect(mocks.listContactLookupOptions).toHaveBeenCalledWith(
       "internal-org-1",
       undefined,
-      { skip: 0, take: 200 },
+      { skip: 0, take: 200, search: "" },
     );
   });
 
-  it("returns all lightweight contact labels in one organization-scoped lookup", async () => {
+  it("passes a bounded search term to the organization-scoped lookup", async () => {
     const response = await GET(
-      new Request("http://localhost/api/organizations/public-org/contacts/lookup?all=true"),
+      new Request("http://localhost/api/organizations/public-org/contacts/lookup?limit=100&search=acme"),
       routeContext,
     );
 
@@ -68,13 +68,23 @@ describe("organization contact lookup API", () => {
     expect(mocks.listContactLookupOptions).toHaveBeenCalledWith(
       "internal-org-1",
       undefined,
-      { all: true },
+      { skip: 0, take: 100, search: "acme" },
     );
   });
 
   it("rejects invalid pagination before listing contacts", async () => {
     const response = await GET(
       new Request("http://localhost/api/organizations/public-org/contacts/lookup?limit=500"),
+      routeContext,
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.listContactLookupOptions).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized search input before listing contacts", async () => {
+    const response = await GET(
+      new Request(`http://localhost/api/organizations/public-org/contacts/lookup?search=${"a".repeat(101)}`),
       routeContext,
     );
 

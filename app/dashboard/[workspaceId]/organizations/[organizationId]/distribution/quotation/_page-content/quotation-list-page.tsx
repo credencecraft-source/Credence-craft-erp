@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
+import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import { ReportGrid } from "@/components/reports/report-grid-display";
@@ -55,6 +56,7 @@ export default function QuotationListPage() {
   const [selectedCounterparty, setSelectedCounterparty] = useState("");
   const [showAllContacts, setShowAllContacts] = useState(false);
   const [allContacts, setAllContacts] = useState<ContactOption[]>([]);
+  const [contactSearch, setContactSearch] = useState("");
   const [isLoadingAllContacts, setIsLoadingAllContacts] = useState(false);
   const [allContactsError, setAllContactsError] = useState("");
   const [isLoadingVendors, setIsLoadingVendors] = useState(true);
@@ -116,13 +118,15 @@ export default function QuotationListPage() {
     return () => controller.abort();
   }, [organizationId]);
 
-  const loadAllContacts = useCallback(async () => {
+  const loadAllContacts = useCallback(async (search: string, signal?: AbortSignal) => {
     setIsLoadingAllContacts(true);
     setAllContactsError("");
     try {
+      const query = new URLSearchParams({ limit: "100" });
+      if (search.trim()) query.set("search", search.trim());
       const response = await fetch(
-        `/api/organizations/${encodeURIComponent(organizationId)}/contacts/lookup?all=true`,
-        { cache: "no-store" },
+        `/api/organizations/${encodeURIComponent(organizationId)}/contacts/lookup?${query}`,
+        { cache: "no-store", signal },
       );
       const data = await response.json().catch(() => null);
       if (!response.ok || !Array.isArray(data)) {
@@ -138,11 +142,25 @@ export default function QuotationListPage() {
       }
       setAllContacts(data as ContactOption[]);
     } catch (loadError) {
-      setAllContactsError(loadError instanceof Error ? loadError.message : "Unable to load Contact Master.");
+      if (!signal?.aborted) {
+        setAllContactsError(loadError instanceof Error ? loadError.message : "Unable to load Contact Master.");
+      }
     } finally {
-      setIsLoadingAllContacts(false);
+      if (!signal?.aborted) setIsLoadingAllContacts(false);
     }
   }, [organizationId]);
+
+  useEffect(() => {
+    if (!isSalesOrderModalOpen || !showAllContacts) return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      void loadAllContacts(contactSearch, controller.signal);
+    }, 250);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [contactSearch, isSalesOrderModalOpen, loadAllContacts, showAllContacts]);
 
   const regularQuotations = useMemo(
     () => quotations.filter((quotation) => quotation.mode !== "MASTER" && !quotation.parentQuotationId),
@@ -281,10 +299,27 @@ export default function QuotationListPage() {
               setShowAllContacts(checked);
               setSelectedCounterparty("");
               setError("");
-              if (checked && allContacts.length === 0) void loadAllContacts();
+              setAllContacts([]);
+              setAllContactsError("");
             }}
             disabled={isCreatingSalesOrder}
           />
+          {showAllContacts ? (
+          <>
+            <Input
+              label="Search Contact Master"
+              value={contactSearch}
+              onChange={(event) => {
+                setContactSearch(event.target.value);
+                setAllContacts([]);
+                setSelectedCounterparty("");
+              }}
+              placeholder="Search name or code"
+              disabled={isCreatingSalesOrder}
+            />
+            <p className="text-xs text-slate-600">Showing up to 100 matches. Refine your search if the contact is not listed.</p>
+          </>
+          ) : null}
           <Select
             label="Vendor / Contact"
             required
@@ -294,7 +329,7 @@ export default function QuotationListPage() {
           >
             <option value="">
               {showAllContacts
-                ? isLoadingAllContacts ? "Loading all contacts..." : "Select a Contact"
+                ? isLoadingAllContacts ? "Searching contacts..." : "Select a Contact"
                 : isLoadingVendors ? "Loading vendors..." : "Select a Vendor"}
             </option>
             {showAllContacts
@@ -308,7 +343,7 @@ export default function QuotationListPage() {
           {showAllContacts && allContactsError ? (
             <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-700">
               <span>{allContactsError}</span>
-              <Button type="button" variant="secondary" size="sm" onClick={() => void loadAllContacts()} disabled={isLoadingAllContacts}>
+              <Button type="button" variant="secondary" size="sm" onClick={() => void loadAllContacts(contactSearch)} disabled={isLoadingAllContacts}>
                 Retry All Contacts
               </Button>
             </div>

@@ -48,6 +48,7 @@ describe("distribution quotation detail API", () => {
     expect(mocks.getDistributionQuotation).toHaveBeenCalledWith("internal-org-1", "quotation-1", {
       masterOrder: false,
       includeChildren: true,
+      salesOrderDocument: false,
     });
   });
 
@@ -58,6 +59,19 @@ describe("distribution quotation detail API", () => {
     expect(mocks.getDistributionQuotation).toHaveBeenCalledWith("internal-org-1", "quotation-1", {
       masterOrder: true,
       includeChildren: true,
+      salesOrderDocument: false,
+    });
+  });
+
+  it("loads complete authorized Sales Order data only for PDF requests", async () => {
+    const response = await GET(new Request("http://localhost/api/distribution/quotations/quotation-1?organizationId=public-org&mode=MASTER_PDF"), context);
+
+    expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.getDistributionQuotation).toHaveBeenCalledWith("internal-org-1", "quotation-1", {
+      masterOrder: true,
+      includeChildren: true,
+      salesOrderDocument: true,
     });
   });
 
@@ -68,6 +82,7 @@ describe("distribution quotation detail API", () => {
     expect(mocks.getDistributionQuotation).toHaveBeenCalledWith("internal-org-1", "quotation-1", {
       masterOrder: false,
       includeChildren: false,
+      salesOrderDocument: false,
     });
   });
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { Download, RefreshCw } from "lucide-react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
@@ -37,7 +37,8 @@ const reportFields: Array<{ key: GateEntryField; label: string }> = [
 ];
 
 export default function GateEntryReportsPage() {
-  const params = useParams<{ organizationId: string }>();
+  const params = useParams<{ workspaceId: string; organizationId: string }>();
+  const router = useRouter();
   const organizationId = params?.organizationId ?? "";
   const [entries, setEntries] = useState<Entry[]>([]);
   const [direction, setDirection] = useState("ALL");
@@ -179,7 +180,9 @@ export default function GateEntryReportsPage() {
           onVisibleFieldsChange={(next) => setVisibleFields(next as GateEntryField[])}
           rowIdSelector={(row) => row.id}
           selectedIds={selectedIds}
-          onRowClick={() => undefined}
+          onRowClick={(entryId) => router.push(
+            `/dashboard/${params.workspaceId}/organizations/${organizationId}/inventory-management/gate-entry/${encodeURIComponent(entryId)}`,
+          )}
           onToggleSelectAll={(checked) => setSelectedIds(checked ? filteredEntries.map((row) => row.id) : [])}
           onToggleRowSelection={(recordId, checked) =>
             setSelectedIds((current) => (checked ? [...new Set([...current, recordId])] : current.filter((id) => id !== recordId)))

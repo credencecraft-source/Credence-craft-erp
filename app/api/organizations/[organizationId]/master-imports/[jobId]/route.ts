@@ -16,7 +16,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const REPORT_TABS = ["staged", "validated", "errors", "created", "planned"] as const;
+const REPORT_TABS = ["all", "staged", "validated", "errors", "created", "planned"] as const;
 
 export async function GET(
   request: Request,

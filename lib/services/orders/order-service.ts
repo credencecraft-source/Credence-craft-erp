@@ -202,7 +202,7 @@ export async function listOrders(organizationId: string, limit = 100) {
 
 export async function listOrdersPage(
   organizationId: string,
-  options: { cursor?: string; limit?: number; status?: string } = {},
+  options: { cursor?: string; limit?: number; status?: string; includeArticleMetadata?: boolean } = {},
 ) {
   const cursor = decodeOrderCursor(options.cursor);
   const take = Math.min(Math.max(options.limit ?? 100, 1), 100);
@@ -251,7 +251,7 @@ export async function listOrdersPage(
   const articleNames = [...new Set(pageOrders
     .map((order) => order.article?.trim())
     .filter((article): article is string => Boolean(article)))];
-  const articleRows = articleNames.length > 0
+  const articleRows = options.includeArticleMetadata !== false && articleNames.length > 0
     ? await prisma.masterArticle.findMany({
         where: { organization_id: organizationId, article: { in: articleNames } },
         select: { id: true, article: true, article_code: true },
@@ -260,7 +260,7 @@ export async function listOrdersPage(
   const articleCodes = new Map(articleRows.map((article) => [article.article, article.article_code]));
   const articleIdsByName = new Map(articleRows.map((article) => [article.article, article.id]));
   const articleIds = [...new Set(articleRows.map((article) => article.id))];
-  const articleVariants = articleIds.length > 0
+  const articleVariants = options.includeArticleMetadata !== false && articleIds.length > 0
     ? await prisma.masterArticleVariant.findMany({
         where: {
           organization_id: organizationId,
@@ -296,6 +296,28 @@ export async function listOrdersPage(
       ? encodeOrderCursor({ createdAt: lastOrder.created_at.toISOString(), id: lastOrder.id })
       : null,
   };
+}
+
+export async function getAdvanceBookingOrderDetails(id: string, organizationId: string) {
+  return prisma.merchandisingOrder.findFirst({
+    where: { id, organization_id: organizationId },
+    select: {
+      id: true,
+      orderNo: true,
+      brand: true,
+      styleName: true,
+      deliveryDate: true,
+      finishedGoods: {
+        select: {
+          id: true,
+          buyerSize: true,
+          size: true,
+          beforeExcessQty: true,
+          totalQty: true,
+        },
+      },
+    },
+  });
 }
 
 /*

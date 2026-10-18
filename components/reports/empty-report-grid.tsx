@@ -29,7 +29,6 @@ export default function EmptyReportGrid({
       storageKey={storageKey}
       rowIdSelector={() => "empty-report-row"}
       selectedIds={[]}
-      onRowClick={() => undefined}
       renderCell={() => ""}
       emptyMessage={emptyMessage}
     />

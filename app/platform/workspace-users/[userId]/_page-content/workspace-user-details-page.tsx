@@ -7,6 +7,7 @@ import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager
 import {
   getWorkspaceUser,
   deleteWorkspaceUser,
+  refreshWorkspaceUserEmailFromOrganization,
   updateWorkspaceUser,
   WorkspaceUserServiceError,
   type UpdateWorkspaceUserInput,
@@ -64,6 +65,24 @@ export default async function WorkspaceUserDetailsPage({
     }
   }
 
+  async function refreshOrganizationEmail() {
+    "use server";
+
+    try {
+      const result = await refreshWorkspaceUserEmailFromOrganization(workspaceUserId);
+      revalidatePath(`/platform/workspace-users/${encodeURIComponent(workspaceUserId)}`);
+      return { ok: true as const, changed: result.changed, email: result.email };
+    } catch (error) {
+      if (error instanceof WorkspaceUserServiceError) {
+        return { ok: false as const, error: error.message };
+      }
+      return {
+        ok: false as const,
+        error: "Unable to refresh the email from the organization. Please try again.",
+      };
+    }
+  }
+
   return (
     <Page className="max-w-5xl">
       <Section>
@@ -89,6 +108,7 @@ export default async function WorkspaceUserDetailsPage({
           deleteWorkspaceUser={removeWorkspaceUser}
           deleteError={query.error}
           saveWorkspaceUser={saveWorkspaceUser}
+          refreshOrganizationEmail={refreshOrganizationEmail}
         />
       </Section>
     </Page>

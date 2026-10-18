@@ -7,6 +7,7 @@ import { CalendarDays, CheckCircle2, Clock3, Headset, X } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import Textarea from "@/components/ui/Textarea";
 
@@ -90,11 +91,16 @@ export function SupportTicketTrigger({ organizationId, callbackOnly = false }: S
         {callbackOnly ? "Book a demo" : <Headset className="h-4 w-4" aria-hidden="true" />}
       </Button>
 
-      {open && <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}>
-        <div className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/20 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+      {open && <Modal
+        open
+        onClose={() => setOpen(false)}
+        ariaLabelledBy="support-dialog-title"
+        size="rectangle"
+        className="overflow-hidden p-0"
+      >
           <div className="bg-slate-950 px-5 py-5 text-white sm:px-6">
             <div className="flex items-start justify-between gap-4">
-              <div><p className="text-xs font-bold uppercase tracking-[0.2em] text-emerald-400">Credence Craft Concierge</p><h2 className="mt-2 text-2xl font-bold tracking-tight">Book your activation call</h2><p className="mt-2 text-sm leading-6 text-slate-300">Choose a convenient 30-minute slot and our team will help activate your organization.</p></div>
+              <div><p className="text-xs font-bold uppercase tracking-[0.2em] text-emerald-400">Credence Craft Concierge</p><h2 id="support-dialog-title" className="mt-2 text-2xl font-bold tracking-tight">Book your activation call</h2><p className="mt-2 text-sm leading-6 text-slate-300">Choose a convenient 30-minute slot and our team will help activate your organization.</p></div>
               <Button type="button" variant="ghost" onClick={() => setOpen(false)} aria-label="Close booking dialog" className="rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white"><X className="h-5 w-5" /></Button>
             </div>
           </div>
@@ -129,8 +135,7 @@ export function SupportTicketTrigger({ organizationId, callbackOnly = false }: S
             {message && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">{message}</p>}
             <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-5"><a href="tel:9567048809" className="text-sm font-semibold text-slate-600 hover:text-emerald-700">Call 9567048809</a><Button variant="primary" disabled={saving} type="submit" className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-600/20 hover:bg-emerald-700 disabled:opacity-50">{saving ? "Booking..." : "Request appointment"}</Button></div>
           </form>}
-        </div>
-      </div>}
+      </Modal>}
     </>
   );
 }

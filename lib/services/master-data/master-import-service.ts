@@ -743,9 +743,7 @@ export async function getMasterImportJob(
             ...(pagination.tab === "validated" ? { plan_number: null } : {}),
           },
           orderBy: { row_number: "asc" },
-          ...(pagination.tab === "all"
-            ? {}
-            : { skip: pagination.skip, take: pagination.take }),
+          ...(pagination.take === undefined ? {} : { skip: pagination.skip, take: pagination.take }),
           select: {
             row_number: true,
             status: true,
@@ -1477,7 +1475,7 @@ function addArticleMasterLabels(target: Set<string>, value: unknown) {
   if (typeof value === "string" && value.trim()) target.add(value.trim());
 }
 
-async function loadArticleImportSupportingMasterIndex(
+export async function loadArticleImportSupportingMasterIndex(
   organizationId: string,
   payloads: unknown[],
 ): Promise<ArticleImportSupportingMasterIndex> {

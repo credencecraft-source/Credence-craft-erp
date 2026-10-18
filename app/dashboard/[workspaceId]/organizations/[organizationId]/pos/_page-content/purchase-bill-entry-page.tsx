@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
@@ -103,6 +103,17 @@ const numberValue = (value: string) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 };
 
+const PURCHASE_RECORD_PAGE_SIZE = 100;
+const recordFields = [
+  { key: "record", label: "Record" },
+  { key: "itemType", label: "Item Type" },
+  { key: "style", label: "Style / Material" },
+  { key: "sizeGroup", label: "Size Group" },
+  { key: "sizeCount", label: "Size Rows" },
+  { key: "totalQuantity", label: "Total Quantity" },
+  { key: "savedAt", label: "Saved At" },
+];
+
 export default function PurchaseBillEntryPage({
   workspaceId,
   organizationId,
@@ -137,6 +148,10 @@ export default function PurchaseBillEntryPage({
   const [taxMode, setTaxMode] = useState<"LOCAL" | "INTERSTATE">("LOCAL");
   const [lines, setLines] = useState<BillLine[]>([newLine()]);
   const [savedRecords, setSavedRecords] = useState<SavedPurchaseRecord[]>([]);
+  const [savedRecordsLoading, setSavedRecordsLoading] = useState(false);
+  const [hasMoreSavedRecords, setHasMoreSavedRecords] = useState(false);
+  const savedRecordsOffset = useRef(0);
+  const savedRecordsRequestSequence = useRef(0);
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
   const [visibleReviewFields, setVisibleReviewFields] = useState<string[]>([
     "record",
@@ -201,30 +216,58 @@ export default function PurchaseBillEntryPage({
       );
   }, [organizationId]);
 
-  useEffect(() => {
-    fetch(
-      `/api/organizations/${encodeURIComponent(organizationId)}/pos/purchase-bill/records`,
-      { cache: "no-store" },
-    )
-      .then(async (response) => {
-        const data = (await response.json()) as {
-          records?: SavedPurchaseRecord[];
-          error?: string;
-        };
-        if (!response.ok)
-          throw new Error(
-            data.error || "Unable to load saved purchase records.",
-          );
-        setSavedRecords(Array.isArray(data.records) ? data.records : []);
-      })
-      .catch((error) =>
-        setMessage(
-          error instanceof Error
-            ? error.message
-            : "Unable to load saved purchase records.",
-        ),
+  const loadSavedRecords = useCallback(async (append = false, signal?: AbortSignal) => {
+    const requestSequence = ++savedRecordsRequestSequence.current;
+    const offset = append ? savedRecordsOffset.current : 0;
+    const query = new URLSearchParams({
+      limit: String(PURCHASE_RECORD_PAGE_SIZE),
+      offset: String(offset),
+    });
+    if (append) setSavedRecordsLoading(true);
+    try {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/pos/purchase-bill/records?${query.toString()}`,
+        { cache: "no-store", signal },
       );
+      const data = await response.json() as {
+        records?: SavedPurchaseRecord[];
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || "Unable to load saved purchase records.");
+      if (!Array.isArray(data.records)) throw new Error("The saved purchase records response was invalid.");
+      if (signal?.aborted || requestSequence !== savedRecordsRequestSequence.current) return;
+      const loadedRecords = data.records;
+      setSavedRecords((current) => {
+        const currentIds = new Set(current.map(({ id }) => id));
+        const loadedIds = new Set(loadedRecords.map(({ id }) => id));
+        const mergedRecords = append
+          ? [...current, ...loadedRecords.filter(({ id }) => !currentIds.has(id))]
+          : [...loadedRecords, ...current.filter(({ id }) => !loadedIds.has(id))];
+        return mergedRecords.sort((left, right) => left.savedAt.localeCompare(right.savedAt) || left.id.localeCompare(right.id));
+      });
+      savedRecordsOffset.current = offset + loadedRecords.length;
+      setHasMoreSavedRecords(loadedRecords.length === PURCHASE_RECORD_PAGE_SIZE);
+    } catch (loadError) {
+      if (signal?.aborted || requestSequence !== savedRecordsRequestSequence.current) return;
+      if (loadError instanceof Error && loadError.name === "AbortError") return;
+      setMessage(loadError instanceof Error ? loadError.message : "Unable to load saved purchase records.");
+    } finally {
+      if (!signal?.aborted && requestSequence === savedRecordsRequestSequence.current) {
+        setSavedRecordsLoading(false);
+      }
+    }
   }, [organizationId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void loadSavedRecords(false, controller.signal);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [loadSavedRecords]);
 
   const updateLine = (id: string, key: keyof BillLine, value: string) => {
     setLines((current) =>
@@ -274,7 +317,10 @@ export default function PurchaseBillEntryPage({
           lines.length > 0 &&
           lines.every((line) => line.quantity),
         );
-  const billLines = savedRecords.flatMap((record) => record.lines);
+  const billLines = useMemo(
+    () => savedRecords.flatMap((record) => record.lines),
+    [savedRecords],
+  );
   const groupedBillLines = useMemo(
     () =>
       savedRecords.map((record) => {
@@ -392,38 +438,31 @@ export default function PurchaseBillEntryPage({
     }
   };
 
-  const recordRows: PurchaseRecordReportRow[] = savedRecords.map((record) => {
-    const recordQuantity = record.lines.reduce(
-      (total, line) => total + numberValue(line.quantity),
-      0,
-    );
-    const sizeGroup =
-      sizeGroups.find((option) => option.id === record.sizeGroupId)?.label ??
-      record.sizeGroupId;
-    return {
-      id: record.id,
-      record: record.recordNumber ?? "Pending number",
-      itemType:
-        record.itemType === "FINISHED_GOODS"
-          ? "Finished Goods"
-          : "Raw Material",
-      style: record.styleName || record.lines[0]?.itemName || "-",
-      sizeGroup: sizeGroup || "-",
-      sizeCount: String(record.lines.length),
-      totalQuantity: String(recordQuantity),
-      savedAt: new Date(record.savedAt).toLocaleString(),
-    };
-  });
-
-  const recordFields = [
-    { key: "record", label: "Record" },
-    { key: "itemType", label: "Item Type" },
-    { key: "style", label: "Style / Material" },
-    { key: "sizeGroup", label: "Size Group" },
-    { key: "sizeCount", label: "Size Rows" },
-    { key: "totalQuantity", label: "Total Quantity" },
-    { key: "savedAt", label: "Saved At" },
-  ];
+  const recordRows: PurchaseRecordReportRow[] = useMemo(
+    () => savedRecords.map((record) => {
+      const recordQuantity = record.lines.reduce(
+        (total, line) => total + numberValue(line.quantity),
+        0,
+      );
+      const sizeGroup =
+        sizeGroups.find((option) => option.id === record.sizeGroupId)?.label ??
+        record.sizeGroupId;
+      return {
+        id: record.id,
+        record: record.recordNumber ?? "Pending number",
+        itemType:
+          record.itemType === "FINISHED_GOODS"
+            ? "Finished Goods"
+            : "Raw Material",
+        style: record.styleName || record.lines[0]?.itemName || "-",
+        sizeGroup: sizeGroup || "-",
+        sizeCount: String(record.lines.length),
+        totalQuantity: String(recordQuantity),
+        savedAt: new Date(record.savedAt).toLocaleString(),
+      };
+    }),
+    [savedRecords, sizeGroups],
+  );
 
   const resetForNextRecord = (notice = "") => {
     setLines([newLine()]);
@@ -909,6 +948,17 @@ export default function PurchaseBillEntryPage({
               newActionLabel="New Record"
               emptyMessage="No purchase records saved."
             />{" "}
+            {hasMoreSavedRecords ? (
+              <div className="flex justify-center">
+                <Button
+                  variant="secondary"
+                  disabled={savedRecordsLoading}
+                  onClick={() => void loadSavedRecords(true)}
+                >
+                  {savedRecordsLoading ? "Loading records..." : "Load more purchase records"}
+                </Button>
+              </div>
+            ) : null}
             <div className="flex justify-end">
               <Button
                 onClick={continueToBillDetails}

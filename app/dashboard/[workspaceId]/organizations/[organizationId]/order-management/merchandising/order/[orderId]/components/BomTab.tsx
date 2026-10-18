@@ -343,68 +343,40 @@ export default function BomTab({
 
   const renderSizePicker = (row: BomRow, index: number) => {
     const selectedSizes = splitBomSizes(row.size);
-    const availableSizes = (masterOptions?.size ?? [])
-      .map((option) => String(option.label ?? option.name ?? "").trim())
-      .filter((size) => size && !selectedSizes.includes(size));
-    const filteredSizes = availableSizes.filter((size) => size.toLowerCase().includes(sizeSearch.trim().toLowerCase()));
-    const addSize = (size: string) => {
-      if (!size || selectedSizes.includes(size)) return;
-      updateBomRow(index, "size", [...selectedSizes, size].join(", "));
-    };
-    const removeSize = (size: string) => updateBomRow(index, "size", selectedSizes.filter((item) => item !== size).join(", "));
-
     return (
-      <>
-        <Button
-          type="button"
-          variant="secondary"
-          onClick={() => { setSizePickerRowIndex(index); setSizeSearch(""); }}
-          aria-label={selectedSizes.length > 0 ? `Edit sizes: ${selectedSizes.join(", ")}` : "Select sizes"}
-          className="flex min-h-10 w-full flex-wrap items-center justify-start gap-1 rounded-xl p-1.5 text-left"
-        >
-          {selectedSizes.length === 0 ? (
-            <span className="px-1 text-[12px] font-normal text-slate-400">Select sizes</span>
-          ) : selectedSizes.map((size) => (
-            <span key={size} className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold leading-4 text-emerald-800">
-              {size}
-            </span>
-          ))}
-        </Button>
-        <Modal
-          open={sizePickerRowIndex === index}
-          onClose={() => setSizePickerRowIndex(null)}
-          ariaLabel="Select BOM sizes"
-          size="sm"
-          className="p-4"
-        >
-          <div className="space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">Select sizes</h3>
-                <p className="text-[10px] text-slate-500">Search and select sizes for this raw material.</p>
-              </div>
-              <Button type="button" variant="ghost" size="sm" onClick={() => setSizePickerRowIndex(null)} aria-label="Close size selector">X</Button>
-            </div>
-            <Input value={sizeSearch} onChange={(event) => setSizeSearch(event.target.value)} placeholder="Type to search sizes..." autoFocus className="h-8 px-2 text-xs" />
-            <div className="max-h-48 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-1">
-              {filteredSizes.length === 0 ? (
-                <p className="p-2 text-[10px] text-slate-500">No matching sizes.</p>
-              ) : filteredSizes.map((size) => (
-                <Button key={size} type="button" variant="ghost" onClick={() => addSize(size)} className="w-full justify-start px-2 py-1.5 text-xs">{size}</Button>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-1 rounded-md border border-slate-200 bg-white p-1.5">
-              {selectedSizes.length === 0 ? <span className="text-[10px] text-slate-400">No sizes selected</span> : selectedSizes.map((size) => (
-                <span key={size} className="inline-flex items-center gap-0.5 rounded-full border border-emerald-200 bg-emerald-50 py-0.5 pl-1.5 pr-0.5 text-[10px] font-semibold text-emerald-800">
-                  {size}
-                  <Button type="button" variant="ghost" size="sm" onClick={() => removeSize(size)} aria-label={`Remove ${size}`} className="h-4 min-h-0 rounded-full px-0.5 text-[10px] leading-3">x</Button>
-                </span>
-              ))}
-            </div>
-          </div>
-        </Modal>
-      </>
+      <Button
+        type="button"
+        variant="secondary"
+        onClick={() => { setSizePickerRowIndex(index); setSizeSearch(""); }}
+        aria-label={selectedSizes.length > 0 ? `Edit sizes: ${selectedSizes.join(", ")}` : "Select sizes"}
+        className="flex min-h-10 w-full flex-wrap items-center justify-start gap-1 rounded-xl p-1.5 text-left"
+      >
+        {selectedSizes.length === 0 ? (
+          <span className="px-1 text-[12px] font-normal text-slate-400">Select sizes</span>
+        ) : selectedSizes.map((size) => (
+          <span key={size} className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold leading-4 text-emerald-800">
+            {size}
+          </span>
+        ))}
+      </Button>
     );
+  };
+
+  const sizePickerRow = sizePickerRowIndex === null ? null : calculatedBomRows[sizePickerRowIndex] ?? null;
+  const selectedSizes = sizePickerRow ? splitBomSizes(sizePickerRow.size) : [];
+  const availableSizes = sizePickerRow
+    ? (masterOptions?.size ?? [])
+      .map((option) => String(option.label ?? option.name ?? "").trim())
+      .filter((size) => size && !selectedSizes.includes(size))
+    : [];
+  const filteredSizes = availableSizes.filter((size) => size.toLowerCase().includes(sizeSearch.trim().toLowerCase()));
+  const addSize = (size: string) => {
+    if (sizePickerRowIndex === null || !size || selectedSizes.includes(size)) return;
+    updateBomRow(sizePickerRowIndex, "size", [...selectedSizes, size].join(", "));
+  };
+  const removeSize = (size: string) => {
+    if (sizePickerRowIndex === null) return;
+    updateBomRow(sizePickerRowIndex, "size", selectedSizes.filter((item) => item !== size).join(", "));
   };
 
   const downloadBomPdf = async () => {
@@ -901,6 +873,41 @@ export default function BomTab({
         </Table>
       </fieldset>
     </Section>
+    <Modal
+        open={sizePickerRow !== null}
+        onClose={() => setSizePickerRowIndex(null)}
+        ariaLabelledBy="bom-size-picker-title"
+        size="sm"
+        className="p-4"
+    >
+        {sizePickerRow ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <div>
+                <h3 id="bom-size-picker-title" className="text-sm font-bold text-slate-900">Select sizes</h3>
+                <p className="text-[10px] text-slate-500">Search and select sizes for this raw material.</p>
+              </div>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setSizePickerRowIndex(null)} aria-label="Close size selector">X</Button>
+            </div>
+            <Input value={sizeSearch} onChange={(event) => setSizeSearch(event.target.value)} placeholder="Type to search sizes..." autoFocus className="h-8 px-2 text-xs" />
+            <div className="max-h-48 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-1">
+              {filteredSizes.length === 0 ? (
+                <p className="p-2 text-[10px] text-slate-500">No matching sizes.</p>
+              ) : filteredSizes.map((size) => (
+                <Button key={size} type="button" variant="ghost" onClick={() => addSize(size)} className="w-full justify-start px-2 py-1.5 text-xs">{size}</Button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-1 rounded-md border border-slate-200 bg-white p-1.5">
+              {selectedSizes.length === 0 ? <span className="text-[10px] text-slate-400">No sizes selected</span> : selectedSizes.map((size) => (
+                <span key={size} className="inline-flex items-center gap-0.5 rounded-full border border-emerald-200 bg-emerald-50 py-0.5 pl-1.5 pr-0.5 text-[10px] font-semibold text-emerald-800">
+                  {size}
+                  <Button type="button" variant="ghost" size="sm" onClick={() => removeSize(size)} aria-label={`Remove ${size}`} className="h-4 min-h-0 rounded-full px-0.5 text-[10px] leading-3">x</Button>
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+    </Modal>
     <div className="hidden print:block print:bg-white print:p-0">
       <header className="border-b-2 border-emerald-700 pb-4">
         <div className="flex items-start justify-between gap-6">

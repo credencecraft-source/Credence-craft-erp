@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   verificationCreate: vi.fn(),
   verificationUpdate: vi.fn(),
   allocationGroupBy: vi.fn(),
+  allocationFindFirst: vi.fn(),
   allocationFindMany: vi.fn(),
   allocationUpsert: vi.fn(),
   allocationDeleteMany: vi.fn(),
@@ -26,7 +27,11 @@ vi.mock("@/lib/database/prisma-client", () => ({
     inventoryReceiptLine: { findFirst: mocks.lineFindFirst },
     purchaseOrder: { findFirst: mocks.purchaseOrderFindFirst },
     rmGrnVerification: { findFirst: mocks.savedFindFirst },
-    rmGrnVerificationAllocation: { groupBy: mocks.allocationGroupBy, findMany: mocks.allocationFindMany },
+    rmGrnVerificationAllocation: {
+      groupBy: mocks.allocationGroupBy,
+      findFirst: mocks.allocationFindFirst,
+      findMany: mocks.allocationFindMany,
+    },
     $transaction: mocks.transaction,
   },
 }));
@@ -35,7 +40,7 @@ vi.mock("@/lib/services/organizations/audit-event-service", () => ({
   createAuditEvent: mocks.createAuditEvent,
 }));
 
-import { getRmGrnVerification, getRmGrnVerificationDraftsForPurchaseOrder, listRmGrnVerificationAllocations, MasterGroupRequiredError, RmGrnVerificationNotFoundError, saveRmGrnVerification } from "./rm-grn-verification-service";
+import { getRmGrnVerification, getRmGrnVerificationAllocation, getRmGrnVerificationDraftsForPurchaseOrder, listRmGrnVerificationAllocations, MasterGroupRequiredError, RmGrnVerificationNotFoundError, saveRmGrnVerification } from "./rm-grn-verification-service";
 
 const transaction = {
   inventoryReceiptLine: {
@@ -717,5 +722,67 @@ describe("RM GRN Verification", () => {
     }, "user-1")).rejects.toBeInstanceOf(RmGrnVerificationNotFoundError);
     expect(mocks.verificationCreate).not.toHaveBeenCalled();
     expect(mocks.createAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("loads an allocation detail with scoped receipt, grouping, verification, and order lines", async () => {
+    mocks.allocationFindFirst.mockResolvedValue({
+      id: "allocation-1",
+      created_at: new Date("2026-10-17T10:00:00.000Z"),
+      verification_allocated: new Prisma.Decimal("5"),
+      groupedPurchaseOrder: {
+        id: "group-1",
+        organization_id: "org-1",
+        grouped_po_no: "GPO-1",
+        display_no: 1,
+        total_grouped_qty: new Prisma.Decimal("12"),
+      },
+      verification: {
+        id: "verification-1",
+        organization_id: "org-1",
+        verified_quantity: new Prisma.Decimal("6"),
+        approved_quantity: new Prisma.Decimal("5"),
+        rejected_quantity: new Prisma.Decimal("1"),
+        masterPurchaseOrder: { organization_id: "org-1", master_po_no: "MPO-1", display_no: 1 },
+        sourceGroupedPurchaseOrder: null,
+        inventoryReceiptLine: {
+          raw_material: "Cotton",
+          receipt: {
+            organization_id: "org-1",
+            receipt_no: "GRN-1",
+            purchaseOrder: { organization_id: "org-1", purchase_order_no: "PO-1", display_no: 1 },
+          },
+        },
+      },
+      orderAllocations: [{
+        allocated_quantity: new Prisma.Decimal("5"),
+        groupedPurchaseOrderLine: {
+          id: "order-line-1",
+          order_no: "ORD-1",
+          style_name: "STYLE-1",
+          grouped_qty: new Prisma.Decimal("8"),
+          sourceOrder: { organization_id: "org-1", orderNo: "ORD-1" },
+          groupedPurchaseOrder: { id: "group-1", organization_id: "org-1" },
+        },
+      }],
+    });
+
+    const result = await getRmGrnVerificationAllocation("org-1", "allocation-1");
+
+    expect(mocks.allocationFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        id: "allocation-1",
+        organization_id: "org-1",
+        verification: { organization_id: "org-1" },
+        groupedPurchaseOrder: { organization_id: "org-1" },
+      },
+    }));
+    expect(result).toMatchObject({
+      id: "allocation-1",
+      grnNumber: "GRN-1",
+      purchaseOrderNumber: "PO-1",
+      rawMaterialName: "Cotton",
+      verificationAllocated: "5",
+      orderAllocations: [{ orderNo: "ORD-1", allocatedQuantity: "5" }],
+    });
   });
 });

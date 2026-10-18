@@ -21,9 +21,15 @@ export async function GET(request: Request, context: RouteContext) {
       url.searchParams.get("organizationId") ?? "",
     );
     const { quotationId } = await context.params;
-    const masterOrder = url.searchParams.get("mode") === "MASTER";
+    const mode = url.searchParams.get("mode");
+    const salesOrderDocument = mode === "MASTER_PDF";
+    const masterOrder = mode === "MASTER" || salesOrderDocument;
     const includeChildren = url.searchParams.get("mode") !== "QUOTATION";
-    return NextResponse.json(await getDistributionQuotation(organization.id, quotationId, { masterOrder, includeChildren }));
+    return NextResponse.json(await getDistributionQuotation(organization.id, quotationId, {
+      masterOrder,
+      includeChildren,
+      salesOrderDocument,
+    }));
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2021", "P2022"].includes(error.code)) {
       return NextResponse.json({ error: "Advance Booking quotations are unavailable until their database migration is deployed." }, { status: 503 });

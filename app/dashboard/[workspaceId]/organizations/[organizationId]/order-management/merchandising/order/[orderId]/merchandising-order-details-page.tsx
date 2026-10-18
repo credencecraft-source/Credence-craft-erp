@@ -123,6 +123,10 @@ export default function MerchandisingOrderDetailsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const orderId = params?.orderId && params.orderId !== "create" ? params.orderId : undefined;
+  const isEditing = !orderId || searchParams.get("mode") === "edit";
+  const detailPath = orderId
+    ? `/dashboard/${params.workspaceId}/organizations/${params.organizationId}/order-management/merchandising/order/${encodeURIComponent(orderId)}`
+    : "";
   const variantFrom = searchParams.get("variantFrom");
   const variantDataParam = searchParams.get("variantData");
   const variantConfig = useMemo(() => {
@@ -146,6 +150,8 @@ export default function MerchandisingOrderDetailsPage() {
 
   const [activeTab, setActiveTab] = useState<TabType>("details");
   const [isSaving, setIsSaving] = useState(false);
+  const [saveNotice, setSaveNotice] = useState("");
+  const originalFormRef = useRef<OrderFormState | null>(null);
   const [completedOrderLoadKey, setCompletedOrderLoadKey] = useState<string | null>(null);
   const orderLoadKey = orderId || variantFrom
     ? `${organizationId ?? ""}:${orderId || variantFrom}`
@@ -265,7 +271,8 @@ export default function MerchandisingOrderDetailsPage() {
           };
         });
 
-        setForm((current) => ({
+        setForm((current) => {
+          const nextForm = {
           ...current,
           ...order,
           ...(variantFrom
@@ -329,7 +336,10 @@ export default function MerchandisingOrderDetailsPage() {
                   price: operation.price !== null && operation.price !== undefined ? Number(operation.price) : 0,
                 })),
               })),
-        }));
+          };
+          originalFormRef.current = nextForm;
+          return nextForm;
+        });
       } catch (error) {
         if (isMounted) {
           alert(error instanceof Error ? error.message : "Unable to load order.");
@@ -663,7 +673,13 @@ export default function MerchandisingOrderDetailsPage() {
         throw new Error(`Blocking Error: ${serverMessage}`);
       }
 
-      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order`);
+      if (orderId) {
+        originalFormRef.current = form;
+        setSaveNotice("Order updated successfully.");
+        router.replace(detailPath);
+      } else {
+        router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order`);
+      }
     } catch (error) {
       console.error("Error saving order:", error);
       alert(error instanceof Error ? error.message : "Failed to save order. Please check your inputs and try again.");
@@ -673,6 +689,12 @@ export default function MerchandisingOrderDetailsPage() {
   };
 
   const openShareDialog = () => setShareOpen(true);
+
+  const cancelEditing = () => {
+    if (originalFormRef.current) setForm(originalFormRef.current);
+    setSaveNotice("");
+    router.replace(detailPath);
+  };
 
   const handleShare = async () => {
     if (!orderId) return;
@@ -752,13 +774,15 @@ export default function MerchandisingOrderDetailsPage() {
               ← Back
             </Button>
             <h2 className="text-lg font-bold text-slate-900">
-              {orderId ? "Edit Order" : "Create New Order"}
+              {orderId ? isEditing ? "Edit Order" : "Order Details" : "Create New Order"}
             </h2>
           </div>
 
           <div className="flex items-center gap-2">
             {orderId && <Button type="button" variant="secondary" onClick={openShareDialog} className="px-4 py-2">Share with Buyer</Button>}
-            {orderId && <Button type="button" onClick={handleSave} disabled={isSaving} className="px-4 py-2">{isSaving ? "Saving..." : "Save Order"}</Button>}
+            {orderId && !isEditing && <Button type="button" onClick={() => router.push(`${detailPath}?mode=edit`)}>Edit</Button>}
+            {orderId && isEditing && <Button type="button" variant="secondary" onClick={cancelEditing} disabled={isSaving}>Cancel</Button>}
+            {orderId && isEditing && <Button type="button" onClick={handleSave} disabled={isSaving} className="px-4 py-2">{isSaving ? "Saving..." : "Save Order"}</Button>}
           </div>
         </div>
 
@@ -774,7 +798,10 @@ export default function MerchandisingOrderDetailsPage() {
 
       {/* Tab Content Area */}
       <div id="merchandising-order-tab-panel" className="pt-2" role="tabpanel">
-        {renderActiveTabContent()}
+        {saveNotice && <p role="status" className="mb-3 rounded-md border border-[var(--erp-border)] bg-[var(--erp-brand-soft)] px-3 py-2 text-sm text-[var(--erp-brand)]">{saveNotice}</p>}
+        <fieldset disabled={Boolean(orderId) && !isEditing} className="min-w-0 border-0 p-0">
+          {renderActiveTabContent()}
+        </fieldset>
       </div>
 
       {!orderId && (

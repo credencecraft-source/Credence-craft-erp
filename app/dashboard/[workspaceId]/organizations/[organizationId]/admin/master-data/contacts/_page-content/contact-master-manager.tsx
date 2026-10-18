@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
@@ -29,6 +29,8 @@ const ROLE_LABELS: Record<string, string> = {
   DEALER: "Dealer",
 };
 
+const CONTACT_PAGE_SIZE = 200;
+
 export default function ContactMasterManager({ organizationId, workspaceId }: { organizationId: string; workspaceId: string }) {
   const router = useRouter();
   const [contacts, setContacts] = useState<ContactRecord[]>([]);
@@ -38,30 +40,55 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const contactRequestSequence = useRef(0);
+  const contactOffset = useRef(0);
+  const [hasMoreContacts, setHasMoreContacts] = useState(false);
 
   const endpoint = `/api/organizations/${encodeURIComponent(organizationId)}/contacts`;
   const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/contacts`;
 
-  const loadContacts = useCallback(async (query: string) => {
+  const loadContacts = useCallback(async (query: string, signal?: AbortSignal, append = false) => {
+    const requestSequence = ++contactRequestSequence.current;
+    const offset = append ? contactOffset.current : 0;
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`${endpoint}${query ? `?search=${encodeURIComponent(query)}` : ""}`);
+      const queryParams = new URLSearchParams({
+        limit: String(CONTACT_PAGE_SIZE),
+        offset: String(offset),
+      });
+      if (query) queryParams.set("search", query);
+      const response = await fetch(
+        `${endpoint}?${queryParams.toString()}`,
+        { signal },
+      );
       const data = await response.json() as ContactRecord[] | { error?: string };
       if (!response.ok) throw new Error(!Array.isArray(data) ? data.error ?? "Unable to load contacts." : "Unable to load contacts.");
-      setContacts(data as ContactRecord[]);
-      const loadedContactIds = new Set((data as ContactRecord[]).map((contact) => contact.id));
-      setSelectedIds((current) => current.filter((id) => loadedContactIds.has(id)));
+      if (signal?.aborted || requestSequence !== contactRequestSequence.current) return;
+      const loadedContacts = data as ContactRecord[];
+      setContacts((current) => {
+        if (!append) return loadedContacts;
+        const existingIds = new Set(current.map(({ id }) => id));
+        return [...current, ...loadedContacts.filter(({ id }) => !existingIds.has(id))];
+      });
+      contactOffset.current = offset + loadedContacts.length;
+      setHasMoreContacts(loadedContacts.length === CONTACT_PAGE_SIZE);
     } catch (loadError) {
+      if (signal?.aborted || requestSequence !== contactRequestSequence.current) return;
+      if (loadError instanceof Error && loadError.name === "AbortError") return;
       setError(loadError instanceof Error ? loadError.message : "Unable to load contacts.");
     } finally {
-      setLoading(false);
+      if (!signal?.aborted && requestSequence === contactRequestSequence.current) setLoading(false);
     }
   }, [endpoint]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadContacts(search), 200);
-    return () => window.clearTimeout(timer);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => void loadContacts(search, controller.signal), 200);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [loadContacts, search]);
 
   const deactivateContact = async (contact: ContactRecord) => {
@@ -286,6 +313,17 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
         isLoading={loading}
         emptyMessage={search ? "No matching contacts." : "No contacts yet. Create a contact to start assigning business roles and tax registrations."}
       />
+      {hasMoreContacts ? (
+        <div className="flex justify-center">
+          <Button
+            variant="secondary"
+            disabled={loading}
+            onClick={() => void loadContacts(search, undefined, true)}
+          >
+            {loading ? "Loading contacts..." : "Load more contacts"}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

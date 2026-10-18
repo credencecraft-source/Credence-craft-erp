@@ -108,15 +108,14 @@ export default async function OrganizationShellLayout({
     && trialOrganization.trial_ends_at
     && trialOrganization.trial_ends_at > now,
   );
-  const organizationHasTrialAccess = await hasOrganizationTrialAccess(organization.id, now, trialOrganization);
-  if (!organizationHasTrialAccess
-    && shouldRedirectExpiredTrialRequest(currentPath, organizationPath)) {
-    redirect(
-      `${organizationPath}/access-blocked?message=${encodeURIComponent(ORGANIZATION_TRIAL_ACCESS_ENDED_MESSAGE)}`,
-    );
-  }
-
   if (currentPath === organizationPath) {
+    const organizationHasTrialAccess = await hasOrganizationTrialAccess(organization.id, now, trialOrganization);
+    if (!organizationHasTrialAccess
+      && shouldRedirectExpiredTrialRequest(currentPath, organizationPath)) {
+      redirect(
+        `${organizationPath}/access-blocked?message=${encodeURIComponent(ORGANIZATION_TRIAL_ACCESS_ENDED_MESSAGE)}`,
+      );
+    }
     return children;
   }
 
@@ -181,7 +180,25 @@ export default async function OrganizationShellLayout({
       )
     : Promise.resolve();
 
-  const [scopedRestrictions, activeBusinessTypes, dummyDataStatus] = await Promise.all([
+  const kycProfilePromise = isOrganizationSettingsRoute
+    ? Promise.resolve({ kycProfile: null as OrganizationKycProfile | null, canManageKyc: true })
+    : getOrganizationKycProfileForUser(user.id, organization.id)
+      .then((kycProfile) => ({ kycProfile, canManageKyc: true }))
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.message.startsWith("Access denied:")) {
+          return { kycProfile: null, canManageKyc: false };
+        }
+        throw error;
+      });
+
+  const [
+    scopedRestrictions,
+    activeBusinessTypes,
+    dummyDataStatus,
+    ,
+    organizationHasTrialAccess,
+    kycResult,
+  ] = await Promise.all([
     validateOrganizationAccess(organization, currentPath, trialIsActive),
     activeBusinessTypesPromise,
     getOrganizationDummyDataStatus(user.id, organizationId).catch(() => ({
@@ -192,7 +209,16 @@ export default async function OrganizationShellLayout({
       masterCount: 0,
     })),
     permissionCheck,
+    hasOrganizationTrialAccess(organization.id, now, trialOrganization),
+    kycProfilePromise,
   ]);
+
+  if (!organizationHasTrialAccess
+    && shouldRedirectExpiredTrialRequest(currentPath, organizationPath)) {
+    redirect(
+      `${organizationPath}/access-blocked?message=${encodeURIComponent(ORGANIZATION_TRIAL_ACCESS_ENDED_MESSAGE)}`,
+    );
+  }
 
   const businessTypes = activeBusinessTypes.map((businessType) => ({
     ...businessType,
@@ -205,16 +231,7 @@ export default async function OrganizationShellLayout({
     return children;
   }
 
-  let kycProfile: OrganizationKycProfile | null = null;
-  let canManageKyc = true;
-  try {
-    kycProfile = await getOrganizationKycProfileForUser(user.id, organization.id);
-  } catch (error) {
-    if (!(error instanceof Error) || !error.message.startsWith("Access denied:")) {
-      throw error;
-    }
-    canManageKyc = false;
-  }
+  const { kycProfile, canManageKyc } = kycResult;
 
   const kycToolbarControl = canManageKyc && kycProfile?.status !== "SUBMITTED" && kycProfile?.status !== "APPROVED" ? (
     <OrganizationKycForm

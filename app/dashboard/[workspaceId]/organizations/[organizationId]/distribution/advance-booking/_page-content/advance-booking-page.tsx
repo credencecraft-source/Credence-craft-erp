@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { useParams, usePathname, useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
 import Badge from "@/components/ui/Badge";
@@ -203,7 +203,6 @@ const emptySizes = (): Record<string, number> => ({});
 
 export default function AdvanceBookingPage({ view = "booking" }: { view?: "booking" | "fulfillment" | "shipment" } = {}) {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
-  const pathname = usePathname();
   const router = useRouter();
   const organizationId = params?.organizationId ?? "demo-org";
 
@@ -216,8 +215,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [vendors, setVendors] = useState<VendorOption[]>([]);
   const [allContactVendors, setAllContactVendors] = useState<{
     organizationId: string;
+    search: string;
     options: VendorOption[];
   } | null>(null);
+  const [contactLookupSearch, setContactLookupSearch] = useState("");
   const [isLoadingVendors, setIsLoadingVendors] = useState(true);
   const [isLoadingAllContacts, setIsLoadingAllContacts] = useState(false);
   const [vendorsError, setVendorsError] = useState("");
@@ -311,6 +312,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
 
   const selectedOrder = orderDetails?.id === selectedOrderId ? orderDetails.order : null;
   const currentAllContactVendors = allContactVendors?.organizationId === organizationId
+    && allContactVendors.search === contactLookupSearch.trim()
     ? allContactVendors.options
     : null;
   const selectedAllContactVendor = currentAllContactVendors?.find((vendor) => vendor.id === selectedVendorId) ?? null;
@@ -386,8 +388,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     (workOrder) => workOrder.id === selectedAssignmentWorkOrderId,
   ) ?? null;
   const handleOpenShipmentDetails = useCallback((booking: BookingReportRow) => {
-    router.push(`${pathname}/${encodeURIComponent(booking.id)}`);
-  }, [pathname, router]);
+    router.push(
+      `/dashboard/${params.workspaceId}/organizations/${organizationId}/distribution/shipment-tracking/${encodeURIComponent(booking.id)}`,
+    );
+  }, [organizationId, params.workspaceId, router]);
   const renderShipmentBookingCell = useCallback((fieldKey: string, booking: BookingReportRow) => {
     if (fieldKey === "bookingId") {
       return (
@@ -480,12 +484,14 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     }
   }, [organizationId]);
 
-  const loadAllContacts = useCallback(async (signal?: AbortSignal) => {
+  const loadAllContacts = useCallback(async (search: string, signal?: AbortSignal) => {
     setIsLoadingAllContacts(true);
     setAllContactsError("");
     try {
+      const query = new URLSearchParams({ limit: "100" });
+      if (search.trim()) query.set("search", search.trim());
       const response = await fetch(
-        `/api/organizations/${encodeURIComponent(organizationId)}/contacts/lookup?all=true`,
+        `/api/organizations/${encodeURIComponent(organizationId)}/contacts/lookup?${query}`,
         { cache: "no-store", signal },
       );
       const data = await response.json().catch(() => null);
@@ -504,7 +510,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         .map((contact) => ({ ...contact, contactId: contact.id }))
         .filter((contact) => contact.label.trim())
         .sort((left, right) => left.label.localeCompare(right.label));
-      setAllContactVendors({ organizationId, options });
+      setAllContactVendors({ organizationId, search: search.trim(), options });
     } catch (loadError) {
       if (signal?.aborted) return;
       setAllContactsError(loadError instanceof Error ? loadError.message : "Unable to load all contacts.");
@@ -525,16 +531,18 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   }, [isCreating, isQuotationVendorModalOpen, loadVendors, view]);
 
   useEffect(() => {
-    if ((!showAllContacts && !showAllQuotationContacts) || currentAllContactVendors !== null) return;
-
+    const contactLookupRequested = view === "booking"
+      && ((isCreating && showAllContacts) || (isQuotationVendorModalOpen && showAllQuotationContacts));
+    if (!contactLookupRequested || currentAllContactVendors !== null) return;
     const controller = new AbortController();
-    void Promise.resolve().then(() => {
-      if (!controller.signal.aborted) void loadAllContacts(controller.signal);
-    });
+    const timeout = window.setTimeout(() => {
+      void loadAllContacts(contactLookupSearch, controller.signal);
+    }, 250);
     return () => {
+      window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [currentAllContactVendors, loadAllContacts, showAllContacts, showAllQuotationContacts]);
+  }, [contactLookupSearch, currentAllContactVendors, isCreating, isQuotationVendorModalOpen, loadAllContacts, showAllContacts, showAllQuotationContacts, view]);
 
   useEffect(() => {
     if (view !== "booking" || !isCreating || !selectedOrderId) return;
@@ -1055,7 +1063,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                           label: isLoadingVendors
                             ? "Loading Vendor Master..."
                             : showAllContacts && isLoadingAllContacts
-                              ? "Loading all contacts..."
+                              ? "Searching contacts..."
                               : "No End Customer",
                           value: "",
                         },
@@ -1071,10 +1079,25 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                       const checked = event.target.checked;
                       if (!checked && selectedAllContactVendor) setSelectedVendorId("");
                       setShowAllContacts(checked);
+                      setContactLookupSearch("");
                     }}
                     className="mt-0.5 shrink-0"
                   />
                 </div>
+                {showAllContacts ? (
+                  <>
+                    <Input
+                      label="Search Contact Master"
+                      value={contactLookupSearch}
+                      onChange={(event) => {
+                        setContactLookupSearch(event.target.value);
+                        setSelectedVendorId("");
+                      }}
+                      placeholder="Search name or code"
+                    />
+                    <p className="text-xs text-slate-600">Showing up to 100 matches. Refine your search if the contact is not listed.</p>
+                  </>
+                ) : null}
                 <Input label="Brand" value={selectedOrder?.brand ?? ""} readOnly />
                 <Input label="Style" value={selectedOrder?.styleName ?? ""} readOnly />
                 <Input label="Delivery Date" type="date" value={selectedOrder?.deliveryDate?.slice(0, 10) ?? ""} readOnly />
@@ -1090,8 +1113,8 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               {showAllContacts && allContactsError ? (
                 <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-700">
                   <span>{allContactsError}</span>
-                  <Button type="button" variant="secondary" size="sm" onClick={() => void loadAllContacts()} disabled={isLoadingAllContacts}>
-                    Retry All Contacts
+                  <Button type="button" variant="secondary" size="sm" onClick={() => void loadAllContacts(contactLookupSearch)} disabled={isLoadingAllContacts}>
+                    Retry Contact Search
                   </Button>
                 </div>
               ) : null}
@@ -1267,7 +1290,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                 ? current.includes(bookingId) ? current : [...current, bookingId]
                 : current.filter((id) => id !== bookingId),
             )}
-            onRowClick={() => undefined}
+            onRowClick={(bookingId) => {
+              const booking = workOrderTrackingRows.find((record) => record.bookingId === bookingId);
+              if (booking) handleOpenShipmentDetails(booking);
+            }}
             onRowAction={view === "fulfillment" ? (bookingId) => {
               const booking = workOrderTrackingRows.find((record) => record.bookingId === bookingId);
               if (booking) void openAssignment(booking);
@@ -1354,7 +1380,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   : current.filter((id) => id !== bookingId),
               )}
               onRecordClick={handleOpenShipmentDetails}
-              onRowClick={() => undefined}
+              onRowClick={(bookingId) => {
+                const booking = shipmentTrackingRows.find((record) => record.bookingId === bookingId);
+                if (booking) handleOpenShipmentDetails(booking);
+              }}
               toolbarActions={(
                 <>
                   <Button
@@ -1433,7 +1462,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--erp-border)]">
-                {selectedShipmentBookings.flatMap((booking) => booking.sizes.map((size) => (
+                {isFinishedGoodsRequestOpen && selectedShipmentBookings.flatMap((booking) => booking.sizes.map((size) => (
                   <tr key={size.id}>
                     <td className="p-3 font-medium">{booking.bookingId}</td>
                     <td className="p-3">{booking.styleName || "-"}<span className="block text-xs text-slate-500">{booking.orderNo}</span></td>
@@ -1501,9 +1530,25 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               setShowAllQuotationContacts(event.target.checked);
               setSelectedQuotationVendorId("");
               setError("");
+              setContactLookupSearch("");
             }}
             disabled={isCreatingQuotation}
           />
+          {showAllQuotationContacts ? (
+            <>
+              <Input
+                label="Search Contact Master"
+                value={contactLookupSearch}
+                onChange={(event) => {
+                  setContactLookupSearch(event.target.value);
+                  setSelectedQuotationVendorId("");
+                }}
+                placeholder="Search name or code"
+                disabled={isCreatingQuotation}
+              />
+              <p className="text-xs text-slate-600">Showing up to 100 matches. Refine your search if the contact is not listed.</p>
+            </>
+          ) : null}
           <Select
             label="Dealer / Contact"
             required
@@ -1515,7 +1560,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             options={[
               {
                 label: showAllQuotationContacts
-                  ? isLoadingAllContacts ? "Loading all contacts..." : "Select a Contact"
+                  ? isLoadingAllContacts ? "Searching contacts..." : "Select a Contact"
                   : isLoadingVendors ? "Loading vendors..." : "Select a Dealer",
                 value: "",
               },
@@ -1531,8 +1576,8 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
           {showAllQuotationContacts && allContactsError ? (
             <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-700">
               <span>{allContactsError}</span>
-              <Button type="button" variant="secondary" size="sm" onClick={() => void loadAllContacts()} disabled={isLoadingAllContacts}>
-                Retry All Contacts
+              <Button type="button" variant="secondary" size="sm" onClick={() => void loadAllContacts(contactLookupSearch)} disabled={isLoadingAllContacts}>
+                Retry Contact Search
               </Button>
             </div>
           ) : null}
