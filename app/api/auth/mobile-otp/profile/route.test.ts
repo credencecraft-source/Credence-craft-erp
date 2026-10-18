@@ -1,8 +1,15 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { findUniqueMock, updateMock, getSessionUserMock, verifyTokenMock } =
+const {
+  findUniqueMock,
+  platformFindUniqueMock,
+  updateMock,
+  getSessionUserMock,
+  verifyTokenMock,
+} =
   vi.hoisted(() => ({
     findUniqueMock: vi.fn(),
+    platformFindUniqueMock: vi.fn(),
     updateMock: vi.fn(),
     getSessionUserMock: vi.fn(),
     verifyTokenMock: vi.fn(),
@@ -18,6 +25,9 @@ vi.mock("@/lib/database/prisma-client", () => ({
       findUnique: findUniqueMock,
       update: updateMock,
     },
+    platformAdmin: {
+      findUnique: platformFindUniqueMock,
+    },
   },
 }));
 
@@ -26,20 +36,70 @@ vi.mock("@/lib/services/platform/platform-mobile-otp-configuration-service", () 
 }));
 
 describe("mobile OTP profile route", () => {
+  let get: () => Promise<Response>;
   let post: (request: Request) => Promise<Response>;
 
   beforeAll(async () => {
     vi.stubEnv("NODE_ENV", "test");
     vi.stubEnv("DATABASE_URL", "postgresql://test.invalid/test");
-    ({ POST: post } = await import("./route"));
-  });
+    ({ GET: get, POST: post } = await import("./route"));
+  }, 30_000);
 
   beforeEach(() => {
     vi.clearAllMocks();
     getSessionUserMock.mockResolvedValue({ id: "user-1", workspace_id: "workspace-1" });
     verifyTokenMock.mockResolvedValue("919876543210");
     findUniqueMock.mockResolvedValue(null);
+    platformFindUniqueMock.mockResolvedValue(null);
     updateMock.mockResolvedValue({ id: "user-1" });
+  });
+
+  it("reports platform access for an active platform account with the same email", async () => {
+    getSessionUserMock.mockResolvedValue({
+      id: "user-1",
+      workspace_id: "workspace-1",
+      email: "credencecraft@gmail.com",
+    });
+    findUniqueMock.mockResolvedValue({
+      email: "credencecraft@gmail.com",
+      mobile_number: "919876543210",
+      mobile_verified_at: new Date(),
+    });
+    platformFindUniqueMock.mockResolvedValue({ is_active: true });
+
+    const response = await get();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      verified: true,
+      platformAccess: true,
+    });
+    expect(platformFindUniqueMock).toHaveBeenCalledWith({
+      where: { email: "credencecraft@gmail.com" },
+      select: { is_active: true },
+    });
+  });
+
+  it("does not report platform access for inactive or unlinked platform accounts", async () => {
+    getSessionUserMock.mockResolvedValue({
+      id: "user-1",
+      workspace_id: "workspace-1",
+      email: "user@example.com",
+    });
+    findUniqueMock.mockResolvedValue({
+      email: "user@example.com",
+      mobile_number: "919876543210",
+      mobile_verified_at: null,
+    });
+    platformFindUniqueMock.mockResolvedValue({ is_active: false });
+
+    const response = await get();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      verified: false,
+      platformAccess: false,
+    });
   });
 
   it("links the provider-verified identifier to the authenticated account", async () => {

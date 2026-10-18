@@ -32,6 +32,19 @@ export type PlatformViewMode = "SUPER_ADMIN" | "ADMIN" | "CMO" | "CTO";
 
 export const PLATFORM_VIEW_COOKIE_NAME = "cc_platform_view";
 
+export function getAvailablePlatformViews(
+  actualRole: "SUPER_ADMIN" | "ADMIN",
+  teamRole: "CMO" | "CTO" | null,
+): PlatformViewMode[] {
+  if (actualRole === "SUPER_ADMIN") {
+    return ["SUPER_ADMIN", "ADMIN", "CTO", "CMO"];
+  }
+  if (teamRole === "CMO" || teamRole === "CTO") {
+    return [teamRole];
+  }
+  return ["ADMIN"];
+}
+
 export function getEffectivePlatformRole(
   actualRole: "SUPER_ADMIN" | "ADMIN",
   requestedView: string | undefined,

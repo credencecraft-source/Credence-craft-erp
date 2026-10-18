@@ -18,6 +18,154 @@ function normalizedSize(value: string | null | undefined) {
   return value?.trim().toLocaleUpperCase() ?? "";
 }
 
+async function findGeneralStockReceipts(
+  transaction: Database,
+  organizationId: string,
+  orderIds: string[],
+) {
+  return transaction.finishedGoodsGeneralStockReceipt.findMany({
+    where: {
+      organization_id: organizationId,
+      order_id: { in: orderIds },
+      current_stock: { gt: 0 },
+    },
+    include: {
+      grnLine: {
+        select: {
+          workOrderSizeLine: {
+            select: {
+              id: true,
+              work_order_id: true,
+              quantity: true,
+              bookingAssignments: {
+                where: { organization_id: organizationId },
+                select: {
+                  id: true,
+                  booking_size_line_id: true,
+                  assigned_quantity: true,
+                },
+              },
+            },
+          },
+          bookingAllocations: {
+            where: { organization_id: organizationId },
+            select: {
+              id: true,
+              booking_assignment_id: true,
+              allocated_quantity: true,
+              finishedGoodsStockReceipt: {
+                select: { id: true, current_stock: true },
+              },
+            },
+          },
+        },
+      },
+    },
+    orderBy: [{ posted_at: "asc" }, { id: "asc" }],
+  });
+}
+
+type GeneralStockReceipt = Awaited<ReturnType<typeof findGeneralStockReceipts>>[number];
+
+export type GeneralStockAllocationContext = {
+  receiptsByOrderId: Map<string, GeneralStockReceipt[]>;
+  bookingById: Map<string, GeneralStockAllocationBooking>;
+  sizeGroupOrderByReference: Map<string, string[]>;
+  verifiedLegacyArticleNames: Set<string>;
+};
+
+function generalStockAllocationBookingSelect(organizationId: string) {
+  return {
+    id: true,
+    booking_no: true,
+    order_id: true,
+    order: { select: { sourceStatus: true, article: true, sizeGroup: true } },
+    quotationLines: {
+      select: { quotation: { select: { parentQuotation: { select: { id: true } } } } },
+      take: 1,
+    },
+    sizeLines: {
+      select: {
+        id: true,
+        size: true,
+        booked_quantity: true,
+        assignments: {
+          where: { organization_id: organizationId },
+          select: {
+            id: true,
+            work_order_id: true,
+            work_order_size_line_id: true,
+            assigned_quantity: true,
+            grnAllocations: {
+              where: { organization_id: organizationId },
+              select: { allocated_quantity: true },
+            },
+          },
+        },
+      },
+    },
+  } as const;
+}
+
+type GeneralStockAllocationBooking = Prisma.AdvanceBookingGetPayload<{
+  select: ReturnType<typeof generalStockAllocationBookingSelect>;
+}>;
+
+export async function loadGeneralStockAllocationContext(
+  transaction: Database,
+  organizationId: string,
+  bookingIds: string[],
+): Promise<GeneralStockAllocationContext> {
+  const uniqueBookingIds = [...new Set(bookingIds)];
+  const bookings = uniqueBookingIds.length > 0
+    ? await transaction.advanceBooking.findMany({
+        where: { id: { in: uniqueBookingIds }, organization_id: organizationId },
+        select: generalStockAllocationBookingSelect(organizationId),
+      })
+    : [];
+  if (bookings.length !== uniqueBookingIds.length) {
+    throw new Error("One or more advance bookings were not found in this organization.");
+  }
+  const legacyArticleNames = [...new Set(bookings
+    .filter((booking) => booking.order.sourceStatus !== "ARTICLE_BASED")
+    .map((booking) => booking.order.article?.trim() ?? "")
+    .filter(Boolean))];
+  const legacyArticles = legacyArticleNames.length > 0
+    ? await transaction.masterArticle.findMany({
+        where: { organization_id: organizationId, article: { in: legacyArticleNames } },
+        select: { article: true },
+      })
+    : [];
+  const verifiedLegacyArticleNames = new Set(legacyArticles.map((article) => article.article));
+  const eligibleBookings = bookings.filter((booking) =>
+    booking.order.sourceStatus === "ARTICLE_BASED" ||
+    Boolean(booking.order.article?.trim() && verifiedLegacyArticleNames.has(booking.order.article.trim())),
+  );
+  const eligibleOrderIds = [...new Set(eligibleBookings.map((booking) => booking.order_id))];
+  const receiptsByOrderId = new Map(eligibleOrderIds.map((orderId) => [orderId, [] as GeneralStockReceipt[]]));
+  const receipts = eligibleOrderIds.length > 0
+    ? await findGeneralStockReceipts(transaction, organizationId, eligibleOrderIds)
+    : [];
+  for (const receipt of receipts) {
+    const orderReceipts = receiptsByOrderId.get(receipt.order_id);
+    if (orderReceipts) orderReceipts.push(receipt);
+  }
+  const sizeGroupReferences = [...new Set(eligibleBookings
+    .map((booking) => booking.order.sizeGroup?.trim() ?? "")
+    .filter(Boolean))];
+  const sizeGroupOrderByReference = await getSizeGroupSizeOrderMapForOrganization(
+    organizationId,
+    sizeGroupReferences,
+    transaction,
+  );
+  return {
+    receiptsByOrderId,
+    bookingById: new Map(eligibleBookings.map((booking) => [booking.id, booking])),
+    sizeGroupOrderByReference,
+    verifiedLegacyArticleNames,
+  };
+}
+
 export async function listGeneralFinishedGoodsAvailability(
   organizationId: string,
   orderIds: string[],
@@ -64,54 +212,60 @@ export async function allocateBookingFromGeneralStockInTransaction(
   userId: string,
   bookingId: string,
   requestedLines: GeneralStockAllocationLineInput[],
+  allocationContext?: GeneralStockAllocationContext,
 ) {
-  const booking = await transaction.advanceBooking.findFirst({
-    where: { id: bookingId, organization_id: organizationId },
-    select: {
-      id: true,
-      booking_no: true,
-      order_id: true,
-      order: { select: { sourceStatus: true, article: true, sizeGroup: true } },
-      quotationLines: {
-        select: {
-          quotation: {
-            select: { parentQuotation: { select: { id: true } } },
-          },
-        },
-        take: 1,
-      },
-      sizeLines: {
+  const booking = allocationContext
+    ? allocationContext.bookingById.get(bookingId) ?? null
+    : await transaction.advanceBooking.findFirst({
+        where: { id: bookingId, organization_id: organizationId },
         select: {
           id: true,
-          size: true,
-          booked_quantity: true,
-          assignments: {
-            where: { organization_id: organizationId },
+          booking_no: true,
+          order_id: true,
+          order: { select: { sourceStatus: true, article: true, sizeGroup: true } },
+          quotationLines: {
+            select: { quotation: { select: { parentQuotation: { select: { id: true } } } } },
+            take: 1,
+          },
+          sizeLines: {
             select: {
               id: true,
-              work_order_id: true,
-              work_order_size_line_id: true,
-              assigned_quantity: true,
-              grnAllocations: { select: { allocated_quantity: true } },
+              size: true,
+              booked_quantity: true,
+              assignments: {
+                where: { organization_id: organizationId },
+                select: {
+                  id: true,
+                  work_order_id: true,
+                  work_order_size_line_id: true,
+                  assigned_quantity: true,
+                  grnAllocations: {
+                    where: { organization_id: organizationId },
+                    select: { allocated_quantity: true },
+                  },
+                },
+              },
             },
           },
         },
-      },
-    },
-  });
+      });
   if (!booking) throw new Error("Advance booking was not found in this organization.");
-  const sizeGroupOrderByReference = await getSizeGroupSizeOrderMapForOrganization(
-    organizationId,
-    booking.order.sizeGroup ? [booking.order.sizeGroup] : [],
-    transaction,
-  );
+  const sizeGroupOrderByReference = allocationContext?.sizeGroupOrderByReference ??
+    await getSizeGroupSizeOrderMapForOrganization(
+      organizationId,
+      booking.order.sizeGroup ? [booking.order.sizeGroup] : [],
+      transaction,
+    );
   const sizeGroupOrder = sizeGroupOrderByReference.get(booking.order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
   if (booking.order.sourceStatus !== "ARTICLE_BASED") {
-    const matchingArticle = booking.order.article?.trim()
+    const articleName = booking.order.article?.trim() ?? "";
+    const matchingArticle = allocationContext
+      ? allocationContext.verifiedLegacyArticleNames.has(articleName)
+      : articleName
       ? await transaction.masterArticle.findFirst({
           where: {
             organization_id: organizationId,
-            article: booking.order.article.trim(),
+            article: articleName,
           },
           select: { id: true },
         })
@@ -130,45 +284,21 @@ export async function allocateBookingFromGeneralStockInTransaction(
     throw new Error("One or more selected sizes do not belong to this advance booking.");
   }
 
-  const receipts = await transaction.finishedGoodsGeneralStockReceipt.findMany({
-    where: {
-      organization_id: organizationId,
-      order_id: booking.order_id,
-      current_stock: { gt: 0 },
-    },
-    include: {
-      grnLine: {
-        select: {
-          workOrderSizeLine: {
-            select: {
-              id: true,
-              work_order_id: true,
-              quantity: true,
-              bookingAssignments: {
-                where: { organization_id: organizationId },
-                select: {
-                  id: true,
-                  booking_size_line_id: true,
-                  assigned_quantity: true,
-                },
-              },
-            },
-          },
-          bookingAllocations: {
-            select: {
-              id: true,
-              booking_assignment_id: true,
-              allocated_quantity: true,
-              finishedGoodsStockReceipt: {
-                select: { id: true, current_stock: true },
-              },
-            },
-          },
-        },
-      },
-    },
-    orderBy: [{ posted_at: "asc" }, { id: "asc" }],
-  });
+  const receipts = allocationContext
+    ? allocationContext.receiptsByOrderId.get(booking.order_id) ?? []
+    : await findGeneralStockReceipts(transaction, organizationId, [booking.order_id]);
+  const receiptsBySize = new Map<string, GeneralStockReceipt[]>();
+  const receiptsByWorkOrderSizeLine = new Map<string, GeneralStockReceipt[]>();
+  for (const receipt of receipts) {
+    const size = normalizedSize(receipt.size);
+    const sizeReceipts = receiptsBySize.get(size) ?? [];
+    sizeReceipts.push(receipt);
+    receiptsBySize.set(size, sizeReceipts);
+    const workOrderSizeLineId = receipt.grnLine.workOrderSizeLine.id;
+    const relatedReceipts = receiptsByWorkOrderSizeLine.get(workOrderSizeLineId) ?? [];
+    relatedReceipts.push(receipt);
+    receiptsByWorkOrderSizeLine.set(workOrderSizeLineId, relatedReceipts);
+  }
 
   const bookingLines = sortBySizeGroupOrder(booking.sizeLines, sizeGroupOrder, (line) => line.size);
   const fulfilledQuantityByLine = new Map(bookingLines.map((line) => [
@@ -186,9 +316,8 @@ export async function allocateBookingFromGeneralStockInTransaction(
       : requestedByLineId.get(bookingLine.id) ?? 0;
     if (requestedRemaining <= 0) continue;
 
-    for (const receipt of receipts) {
+    for (const receipt of receiptsBySize.get(normalizedSize(bookingLine.size)) ?? []) {
       if (requestedRemaining <= 0 || bookingRemaining <= 0 || receipt.current_stock <= 0) continue;
-      if (normalizedSize(receipt.size) !== normalizedSize(bookingLine.size)) continue;
 
       const workOrderSizeLine = receipt.grnLine.workOrderSizeLine;
       const assignments = workOrderSizeLine.bookingAssignments;
@@ -373,8 +502,7 @@ export async function allocateBookingFromGeneralStockInTransaction(
         bookingLine.id,
         (fulfilledQuantityByLine.get(bookingLine.id) ?? 0) + allocationQuantity,
       );
-      for (const relatedReceipt of receipts) {
-        if (relatedReceipt.grnLine.workOrderSizeLine.id !== workOrderSizeLine.id) continue;
+      for (const relatedReceipt of receiptsByWorkOrderSizeLine.get(workOrderSizeLine.id) ?? []) {
         const relatedAssignment = relatedReceipt.grnLine.workOrderSizeLine.bookingAssignments.find(
           (assignment) => assignment.id === assignmentId,
         );

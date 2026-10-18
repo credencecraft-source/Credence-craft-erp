@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertPlatformConfigurationAccess,
   assertPlatformSuperAdmin,
+  getAvailablePlatformViews,
   getEffectivePlatformRole,
   getEffectivePlatformTeamRole,
   type PlatformSessionAdmin,
@@ -23,6 +24,18 @@ function makeAdmin(role: PlatformSessionAdmin["role"]): PlatformSessionAdmin {
 }
 
 describe("platform view permissions", () => {
+  it("shows only platform views granted to the current account", () => {
+    expect(getAvailablePlatformViews("SUPER_ADMIN", null)).toEqual([
+      "SUPER_ADMIN",
+      "ADMIN",
+      "CTO",
+      "CMO",
+    ]);
+    expect(getAvailablePlatformViews("ADMIN", null)).toEqual(["ADMIN"]);
+    expect(getAvailablePlatformViews("ADMIN", "CTO")).toEqual(["CTO"]);
+    expect(getAvailablePlatformViews("ADMIN", "CMO")).toEqual(["CMO"]);
+  });
+
   it("allows Super Admin to switch down to Admin, CMO, or CTO views", () => {
     expect(getEffectivePlatformRole("SUPER_ADMIN", "ADMIN")).toBe("ADMIN");
     expect(getEffectivePlatformRole("SUPER_ADMIN", "CMO")).toBe("ADMIN");

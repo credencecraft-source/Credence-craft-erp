@@ -6,26 +6,34 @@ const mocks = vi.hoisted(() => ({
     distributionQuotation: { findFirst: vi.fn() },
     advanceBooking: { findMany: vi.fn() },
     factoryWorkOrder: { findMany: vi.fn() },
+    advanceBookingWorkOrderAssignment: { groupBy: vi.fn() },
   },
   assignBookingInTransaction: vi.fn(),
+  assignBookingsInTransaction: vi.fn(),
+  getAdvanceBookingAssignmentSummary: vi.fn(),
   allocateBookingFromGeneralStockInTransaction: vi.fn(),
   listGeneralFinishedGoodsAvailability: vi.fn(),
+  loadGeneralStockAllocationContext: vi.fn(),
   requireOrganizationAccess: vi.fn(),
   transaction: {
     distributionQuotation: { findFirst: vi.fn() },
     advanceBooking: { findMany: vi.fn() },
     factoryWorkOrder: { findMany: vi.fn() },
     masterArticle: { findMany: vi.fn() },
+    advanceBookingWorkOrderAssignment: { groupBy: vi.fn() },
   },
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({ prisma: mocks.prisma }));
 vi.mock("@/lib/services/distribution/advance-booking-service", () => ({
   assignBookingInTransaction: mocks.assignBookingInTransaction,
+  assignBookingsInTransaction: mocks.assignBookingsInTransaction,
+  getAdvanceBookingAssignmentSummary: mocks.getAdvanceBookingAssignmentSummary,
 }));
 vi.mock("@/lib/services/inventory/finished-goods-general-stock-allocation-service", () => ({
   allocateBookingFromGeneralStockInTransaction: mocks.allocateBookingFromGeneralStockInTransaction,
   listGeneralFinishedGoodsAvailability: mocks.listGeneralFinishedGoodsAvailability,
+  loadGeneralStockAllocationContext: mocks.loadGeneralStockAllocationContext,
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationAccess: mocks.requireOrganizationAccess,
@@ -89,6 +97,10 @@ describe("advance-booking combined allocation", () => {
     });
     mocks.prisma.advanceBooking.findMany.mockResolvedValue(structuredClone(salesOrderBookings));
     mocks.prisma.factoryWorkOrder.findMany.mockResolvedValue(structuredClone(salesOrderWorkOrders));
+    mocks.prisma.advanceBookingWorkOrderAssignment.groupBy.mockResolvedValue([{
+      work_order_size_line_id: "work-order-size-m",
+      _sum: { assigned_quantity: 4 },
+    }]);
     mocks.transaction.distributionQuotation.findFirst.mockResolvedValue({
       id: "sales-order-1",
       quotation_no: "SO-1",
@@ -96,6 +108,7 @@ describe("advance-booking combined allocation", () => {
     mocks.transaction.advanceBooking.findMany.mockResolvedValue(structuredClone(salesOrderBookings));
     mocks.transaction.factoryWorkOrder.findMany.mockResolvedValue(structuredClone(salesOrderWorkOrders));
     mocks.transaction.masterArticle.findMany.mockResolvedValue([]);
+    mocks.transaction.advanceBookingWorkOrderAssignment.groupBy.mockResolvedValue([]);
     mocks.requireOrganizationAccess.mockResolvedValue({ organization_id: "organization-1" });
     mocks.listGeneralFinishedGoodsAvailability.mockResolvedValue(new Map([
       ["order-1", new Map([["M", 3]])],
@@ -103,7 +116,18 @@ describe("advance-booking combined allocation", () => {
     mocks.allocateBookingFromGeneralStockInTransaction.mockResolvedValue({
       allocatedLines: [{ size: "M", quantity: 100 }],
     });
+    mocks.loadGeneralStockAllocationContext.mockResolvedValue({
+      receiptsByOrderId: new Map([["order-1", []]]),
+      bookingById: new Map([["booking-1", {}], ["booking-2", {}]]),
+      sizeGroupOrderByReference: new Map(),
+      verifiedLegacyArticleNames: new Set(),
+    });
     mocks.assignBookingInTransaction.mockResolvedValue({ workOrderId: "work-order-1" });
+    mocks.assignBookingsInTransaction.mockResolvedValue([]);
+    mocks.getAdvanceBookingAssignmentSummary.mockResolvedValue({
+      assignedBySizeLineId: new Map([["size-m-1", 2], ["size-m-2", 1]]),
+      fulfilledBySizeLineId: new Map(),
+    });
   });
 
   it("allocates stock and assigns the remainder in the same transaction", async () => {
@@ -194,7 +218,33 @@ describe("advance-booking combined allocation", () => {
         organization_id: "organization-1",
         quotationLines: expect.any(Object),
       }),
+      select: expect.objectContaining({
+        sizeLines: expect.objectContaining({
+          select: { id: true, size: true, booked_quantity: true },
+        }),
+      }),
     }));
+    expect(mocks.prisma.advanceBooking.findMany.mock.calls[0][0]).not.toHaveProperty("include");
+    expect(mocks.getAdvanceBookingAssignmentSummary).toHaveBeenCalledWith(
+      mocks.prisma,
+      "organization-1",
+      ["size-m-1", "size-m-2"],
+    );
+    expect(mocks.prisma.factoryWorkOrder.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "organization-1", order_id: { in: ["order-1"] } },
+      select: expect.objectContaining({
+        sizeLines: { select: { id: true, size: true, buyer_size: true, quantity: true } },
+      }),
+    }));
+    expect(mocks.prisma.advanceBookingWorkOrderAssignment.groupBy).toHaveBeenCalledWith({
+      by: ["work_order_size_line_id"],
+      where: {
+        organization_id: "organization-1",
+        work_order_id: { in: ["work-order-1"] },
+        work_order_size_line_id: { in: ["work-order-size-m"] },
+      },
+      _sum: { assigned_quantity: true },
+    });
   });
 
   it("allocates general stock across all linked bookings in one transaction", async () => {
@@ -223,6 +273,21 @@ describe("advance-booking combined allocation", () => {
       "user-1",
       "booking-1",
       [],
+      expect.objectContaining({
+        receiptsByOrderId: expect.any(Map),
+        bookingById: expect.any(Map),
+        sizeGroupOrderByReference: expect.any(Map),
+        verifiedLegacyArticleNames: expect.any(Set),
+      }),
+    );
+    expect(mocks.allocateBookingFromGeneralStockInTransaction).toHaveBeenCalledTimes(2);
+    expect(mocks.allocateBookingFromGeneralStockInTransaction.mock.calls[0][5])
+      .toBe(mocks.allocateBookingFromGeneralStockInTransaction.mock.calls[1][5]);
+    expect(mocks.loadGeneralStockAllocationContext).toHaveBeenCalledTimes(1);
+    expect(mocks.loadGeneralStockAllocationContext).toHaveBeenCalledWith(
+      mocks.transaction,
+      "organization-1",
+      ["booking-1", "booking-2"],
     );
     expect(mocks.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({
       isolationLevel: "Serializable",
@@ -249,28 +314,28 @@ describe("advance-booking combined allocation", () => {
       "public-org",
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
-    expect(mocks.assignBookingInTransaction).toHaveBeenNthCalledWith(
-      1,
+    expect(mocks.assignBookingsInTransaction).toHaveBeenCalledWith(
       mocks.transaction,
       "organization-1",
       "user-1",
-      "booking-1",
-      {
-        workOrderId: "work-order-1",
-        lines: [{ bookingSizeLineId: "size-m-1", assignedQuantity: 3 }],
-      },
+      [
+        {
+          bookingId: "booking-1",
+          input: {
+            workOrderId: "work-order-1",
+            lines: [{ bookingSizeLineId: "size-m-1", assignedQuantity: 3 }],
+          },
+        },
+        {
+          bookingId: "booking-2",
+          input: {
+            workOrderId: "work-order-1",
+            lines: [{ bookingSizeLineId: "size-m-2", assignedQuantity: 6 }],
+          },
+        },
+      ],
     );
-    expect(mocks.assignBookingInTransaction).toHaveBeenNthCalledWith(
-      2,
-      mocks.transaction,
-      "organization-1",
-      "user-1",
-      "booking-2",
-      {
-        workOrderId: "work-order-1",
-        lines: [{ bookingSizeLineId: "size-m-2", assignedQuantity: 6 }],
-      },
-    );
+    expect(mocks.assignBookingInTransaction).not.toHaveBeenCalled();
   });
 
   it("rejects a selected work order with insufficient size capacity before assigning", async () => {
@@ -291,6 +356,6 @@ describe("advance-booking combined allocation", () => {
       [{ orderId: "order-1", workOrderId: "work-order-1" }],
     )).rejects.toThrow("needs 9. Select another work order");
 
-    expect(mocks.assignBookingInTransaction).not.toHaveBeenCalled();
+    expect(mocks.assignBookingsInTransaction).not.toHaveBeenCalled();
   });
 });

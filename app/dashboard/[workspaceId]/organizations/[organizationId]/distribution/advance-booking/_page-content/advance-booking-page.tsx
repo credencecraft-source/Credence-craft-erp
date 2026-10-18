@@ -207,12 +207,14 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const organizationId = params?.organizationId ?? "demo-org";
 
   const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [ordersLoadedFor, setOrdersLoadedFor] = useState("");
   const [nextOrderCursor, setNextOrderCursor] = useState<string | null>(null);
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
   const [isLoadingMoreOrders, setIsLoadingMoreOrders] = useState(false);
   const [ordersError, setOrdersError] = useState("");
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [vendors, setVendors] = useState<VendorOption[]>([]);
+  const [vendorsLoadedFor, setVendorsLoadedFor] = useState("");
   const [allContactVendors, setAllContactVendors] = useState<{
     organizationId: string;
     search: string;
@@ -228,7 +230,11 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [selectedVendorId, setSelectedVendorId] = useState("");
   const [selectedQuotationVendorId, setSelectedQuotationVendorId] = useState("");
   const [orderDetailsRetry, setOrderDetailsRetry] = useState(0);
-  const [orderDetails, setOrderDetails] = useState<{ id: string; order: OrderDetails } | null>(null);
+  const [orderDetails, setOrderDetails] = useState<{
+    organizationId: string;
+    id: string;
+    order: OrderDetails;
+  } | null>(null);
   const [orderDetailsError, setOrderDetailsError] = useState("");
   const [entry, setEntry] = useState<Record<string, number>>(emptySizes());
   const [isCreating, setIsCreating] = useState(false);
@@ -247,6 +253,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [isLoadingBookings, setIsLoadingBookings] = useState(true);
   const [isLoadingMoreBookings, setIsLoadingMoreBookings] = useState(false);
   const [nextBookingCursor, setNextBookingCursor] = useState<string | null>(null);
+  const [bookingSearch, setBookingSearch] = useState("");
   const [assignmentBooking, setAssignmentBooking] = useState<BookingRecord | null>(null);
   const [assignableWorkOrders, setAssignableWorkOrders] = useState<AssignableWorkOrder[]>([]);
   const [selectedAssignmentWorkOrderId, setSelectedAssignmentWorkOrderId] = useState("");
@@ -262,7 +269,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
 
   const loadBookings = useCallback(async (
     signal?: AbortSignal,
-    options: { silent?: boolean; cursor?: string; preservePages?: boolean } = {},
+    options: { silent?: boolean; cursor?: string; preservePages?: boolean; search?: string } = {},
   ) => {
     if (options.cursor) setIsLoadingMoreBookings(true);
     else if (!options.silent) setIsLoadingBookings(true);
@@ -270,6 +277,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     try {
       const query = new URLSearchParams({ organizationId, limit: String(ADVANCE_BOOKING_PAGE_SIZE), view });
       if (options.cursor) query.set("cursor", options.cursor);
+      if (options.search?.trim()) query.set("search", options.search.trim());
       const response = await fetch(`/api/distribution/advance-bookings?${query}`, {
         cache: "no-store",
         signal,
@@ -302,15 +310,19 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   useEffect(() => {
     if (view === "booking" && isCreating) return;
     const controller = new AbortController();
-    void Promise.resolve().then(() => {
-      if (!controller.signal.aborted) void loadBookings(controller.signal);
-    });
+    const load = () => {
+      if (!controller.signal.aborted) void loadBookings(controller.signal, { search: bookingSearch });
+    };
+    const timer = bookingSearch.trim() ? window.setTimeout(load, 250) : window.setTimeout(load, 0);
     return () => {
+      window.clearTimeout(timer);
       controller.abort();
     };
-  }, [isCreating, loadBookings, view]);
+  }, [bookingSearch, isCreating, loadBookings, view]);
 
-  const selectedOrder = orderDetails?.id === selectedOrderId ? orderDetails.order : null;
+  const selectedOrder = orderDetails?.organizationId === organizationId && orderDetails.id === selectedOrderId
+    ? orderDetails.order
+    : null;
   const currentAllContactVendors = allContactVendors?.organizationId === organizationId
     && allContactVendors.search === contactLookupSearch.trim()
     ? allContactVendors.options
@@ -434,8 +446,11 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to load organization orders.");
       }
       setOrders(data.orders);
+      setOrdersLoadedFor(organizationId);
       setNextOrderCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
-      setSelectedOrderId((current) => current || data.orders[0]?.id || "");
+      setSelectedOrderId((current) =>
+        data.orders.some((order: OrderRecord) => order.id === current) ? current : data.orders[0]?.id || "",
+      );
     } catch (loadError) {
       if (signal?.aborted) return;
       setOrdersError(loadError instanceof Error ? loadError.message : "Unable to load organization orders.");
@@ -446,6 +461,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
 
   useEffect(() => {
     if (view !== "booking" || !isCreating) return;
+    if (ordersLoadedFor === organizationId) return;
     const controller = new AbortController();
     void Promise.resolve().then(() => {
       if (!controller.signal.aborted) void loadInitialOrders(controller.signal);
@@ -453,7 +469,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     return () => {
       controller.abort();
     };
-  }, [isCreating, loadInitialOrders, view]);
+  }, [isCreating, loadInitialOrders, organizationId, ordersLoadedFor, view]);
 
   const loadVendors = useCallback(async (signal?: AbortSignal) => {
     setIsLoadingVendors(true);
@@ -475,6 +491,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         .map((value: { id: string; label: string }) => ({ id: value.id, label: value.label.trim() }))
         .sort((left: VendorOption, right: VendorOption) => left.label.localeCompare(right.label));
       setVendors(options);
+      setVendorsLoadedFor(organizationId);
       setSelectedVendorId((current) => options.some((vendor: VendorOption) => vendor.id === current) ? current : "");
     } catch (loadError) {
       if (signal?.aborted) return;
@@ -521,6 +538,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
 
   useEffect(() => {
     if (view !== "booking" || (!isCreating && !isQuotationVendorModalOpen)) return;
+    if (vendorsLoadedFor === organizationId) return;
     const controller = new AbortController();
     void Promise.resolve().then(() => {
       if (!controller.signal.aborted) void loadVendors(controller.signal);
@@ -528,7 +546,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     return () => {
       controller.abort();
     };
-  }, [isCreating, isQuotationVendorModalOpen, loadVendors, view]);
+  }, [isCreating, isQuotationVendorModalOpen, loadVendors, organizationId, vendorsLoadedFor, view]);
 
   useEffect(() => {
     const contactLookupRequested = view === "booking"
@@ -546,6 +564,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
 
   useEffect(() => {
     if (view !== "booking" || !isCreating || !selectedOrderId) return;
+    if (orderDetails?.organizationId === organizationId && orderDetails.id === selectedOrderId) return;
 
     const controller = new AbortController();
     const query = new URLSearchParams({ organizationId, purpose: "advance-booking" });
@@ -559,7 +578,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
           throw new Error("Unable to load the selected order’s finished-goods sizes.");
         }
         if (!controller.signal.aborted) {
-          setOrderDetails({ id: selectedOrderId, order: data.order });
+          setOrderDetails({ organizationId, id: selectedOrderId, order: data.order });
         }
       })
       .catch(() => {
@@ -569,7 +588,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       });
 
     return () => controller.abort();
-  }, [isCreating, organizationId, orderDetailsRetry, selectedOrderId, view]);
+  }, [isCreating, organizationId, orderDetails, orderDetailsRetry, selectedOrderId, view]);
 
   async function loadMoreOrders() {
     if (!nextOrderCursor || isLoadingMoreOrders) return;
@@ -602,7 +621,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
 
   async function loadMoreBookings() {
     if (!nextBookingCursor || isLoadingMoreBookings || isLoadingBookings) return;
-    await loadBookings(undefined, { cursor: nextBookingCursor });
+    await loadBookings(undefined, { cursor: nextBookingCursor, search: bookingSearch });
   }
 
   function updateEntry(size: SizeKey, value: string) {
@@ -1276,6 +1295,8 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
           <ReportGrid
             title={view === "fulfillment" ? "Work Order Tracking Report" : "Advance Bookings"}
             records={workOrderTrackingRows}
+            onSearchQueryChange={setBookingSearch}
+            serverSideSearch
             isLoading={isLoadingBookings}
             fields={view === "fulfillment" ? fulfillmentReportFields : advanceBookingReportFields}
             visibleFields={visibleReportFields}
@@ -1334,7 +1355,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                     {isCreatingQuotation ? "Creating Quotation..." : `Create & Save Quotation${selectedBookingIds.length > 0 ? ` (${selectedBookingIds.length})` : ""}`}
                   </Button>
                 ) : null}
-                <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings(undefined, { preservePages: true })} disabled={isLoadingBookings}>
+                <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings(undefined, { preservePages: true, search: bookingSearch })} disabled={isLoadingBookings}>
                   Refresh bookings
                 </Button>
                 {nextBookingCursor ? (
@@ -1365,6 +1386,8 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             <ReportGrid
               title="Shipment Tracking"
               records={shipmentTrackingRows}
+              onSearchQueryChange={setBookingSearch}
+              serverSideSearch
               isLoading={isLoadingBookings}
               fields={shipmentTrackingReportFields}
               visibleFields={visibleReportFields}
@@ -1407,7 +1430,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   >
                     Request FG Quantity{selectedShipmentBookings.length > 0 ? ` (${selectedShipmentBookings.length})` : ""}
                   </Button>
-                  <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings(undefined, { preservePages: true })} disabled={isLoadingBookings}>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings(undefined, { preservePages: true, search: bookingSearch })} disabled={isLoadingBookings}>
                     Refresh bookings
                   </Button>
                   {nextBookingCursor ? (

@@ -26,6 +26,9 @@ export default async function PlatformRootLayout({
     if (currentPath === "/platform" || currentPath === "/platform/") {
       return children;
     }
+    if (currentPath === "/platform/control-panel") {
+      redirect("/platform?returnTo=%2Fplatform%2Fcontrol-panel");
+    }
     redirect("/platform");
   }
 

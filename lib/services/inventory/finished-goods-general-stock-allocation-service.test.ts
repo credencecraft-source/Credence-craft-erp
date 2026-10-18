@@ -7,10 +7,10 @@ const mocks = vi.hoisted(() => ({
     finishedGoodsGeneralStockReceipt: { findMany: vi.fn(), groupBy: vi.fn() },
   },
   transaction: {
-    advanceBooking: { findFirst: vi.fn() },
+    advanceBooking: { findFirst: vi.fn(), findMany: vi.fn() },
     masterSizeGroup: { findMany: vi.fn() },
     masterSizeGroupSize: { findMany: vi.fn() },
-    masterArticle: { findFirst: vi.fn() },
+    masterArticle: { findFirst: vi.fn(), findMany: vi.fn() },
     finishedGoodsGeneralStockReceipt: { findMany: vi.fn(), updateMany: vi.fn() },
     advanceBookingWorkOrderAssignment: { create: vi.fn(), updateMany: vi.fn() },
     workOrderInventoryGrnBookingAllocation: { create: vi.fn(), updateMany: vi.fn() },
@@ -25,7 +25,9 @@ vi.mock("@/lib/services/organizations/audit-event-service", () => ({ createAudit
 
 import {
   allocateAdvanceBookingFromGeneralStock,
+  allocateBookingFromGeneralStockInTransaction,
   listGeneralFinishedGoodsAvailability,
+  loadGeneralStockAllocationContext,
 } from "./finished-goods-general-stock-allocation-service";
 
 const bookingRecord = {
@@ -92,7 +94,9 @@ describe("finished-goods general-stock allocation", () => {
       (callback: (transaction: typeof mocks.transaction) => Promise<unknown>) => callback(mocks.transaction),
     );
     mocks.transaction.advanceBooking.findFirst.mockResolvedValue(structuredClone(bookingRecord));
+    mocks.transaction.advanceBooking.findMany.mockResolvedValue([]);
     mocks.transaction.masterArticle.findFirst.mockResolvedValue(null);
+    mocks.transaction.masterArticle.findMany.mockResolvedValue([]);
     mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([
       structuredClone(generalStockReceipt),
     ]);
@@ -198,6 +202,7 @@ describe("finished-goods general-stock allocation", () => {
         assignments: [],
       })),
     });
+
     mocks.transaction.masterSizeGroup.findMany.mockResolvedValue([{
       id: "group-id",
       value_id: "group-value-id",
@@ -235,6 +240,88 @@ describe("finished-goods general-stock allocation", () => {
     );
 
     expect(result.allocatedLines.map(({ size }) => size)).toEqual(["S", "M"]);
+  });
+
+  it("loads general-stock receipts once and groups them by authorized source order", async () => {
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([
+      structuredClone(generalStockReceipt),
+    ]);
+    mocks.transaction.advanceBooking.findMany.mockResolvedValue([
+      {
+        ...structuredClone(bookingRecord),
+        order: { sourceStatus: "ARTICLE_BASED", article: null, sizeGroup: null },
+        quotationLines: [{ quotation: { parentQuotation: { id: "sales-order-1" } } }],
+      },
+      {
+        ...structuredClone(bookingRecord),
+        id: "booking-2",
+        order_id: "order-2",
+        order: { sourceStatus: "ARTICLE_BASED", article: null, sizeGroup: null },
+        quotationLines: [{ quotation: { parentQuotation: { id: "sales-order-1" } } }],
+      },
+    ]);
+
+    const context = await loadGeneralStockAllocationContext(
+      mocks.transaction as never,
+      "organization-1",
+      ["booking-1", "booking-2", "booking-1"],
+    );
+
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "organization-1",
+        order_id: { in: ["order-1", "order-2"] },
+        current_stock: { gt: 0 },
+      },
+      orderBy: [{ posted_at: "asc" }, { id: "asc" }],
+    }));
+    expect(context.receiptsByOrderId.get("order-1")).toHaveLength(1);
+    expect(context.receiptsByOrderId.get("order-2")).toEqual([]);
+    expect(mocks.transaction.advanceBooking.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: { in: ["booking-1", "booking-2"] }, organization_id: "organization-1" },
+      select: expect.objectContaining({
+        sizeLines: expect.objectContaining({
+          select: expect.objectContaining({
+            assignments: expect.objectContaining({
+              where: { organization_id: "organization-1" },
+            }),
+          }),
+        }),
+      }),
+    }));
+    expect(context.bookingById.has("booking-1")).toBe(true);
+    expect(context.bookingById.has("booking-2")).toBe(true);
+  });
+
+  it("reuses preloaded booking and stock state during a Sales Order general-stock allocation", async () => {
+    mocks.transaction.advanceBooking.findMany.mockResolvedValue([{
+      ...structuredClone(bookingRecord),
+      order: { sourceStatus: "ARTICLE_BASED", article: null, sizeGroup: null },
+      quotationLines: [{ quotation: { parentQuotation: { id: "sales-order-1" } } }],
+    }]);
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([
+      structuredClone(generalStockReceipt),
+    ]);
+
+    const context = await loadGeneralStockAllocationContext(
+      mocks.transaction as never,
+      "organization-1",
+      ["booking-1"],
+    );
+    const result = await allocateBookingFromGeneralStockInTransaction(
+      mocks.transaction as never,
+      "organization-1",
+      "user-1",
+      "booking-1",
+      [],
+      context,
+    );
+
+    expect(result.allocatedLines).toEqual([{ size: "M", quantity: 8 }]);
+    expect(mocks.transaction.advanceBooking.findFirst).not.toHaveBeenCalled();
+    expect(mocks.transaction.advanceBooking.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.findMany).toHaveBeenCalledTimes(1);
   });
 
   it("rejects general-stock allocation for Direct orders before reading or moving stock", async () => {
@@ -295,6 +382,43 @@ describe("finished-goods general-stock allocation", () => {
     expect(mocks.transaction.finishedGoodsStock.upsert).toHaveBeenCalledWith(expect.objectContaining({
       update: { quantity_reserved: { increment: new Prisma.Decimal(3) } },
     }));
+  });
+
+  it("allocates matching receipts in FIFO order without scanning unrelated sizes", async () => {
+    const firstReceipt = structuredClone(generalStockReceipt);
+    firstReceipt.current_stock = 3;
+    const secondReceipt = structuredClone(generalStockReceipt);
+    secondReceipt.id = "general-receipt-2";
+    secondReceipt.grn_line_id = "grn-line-2";
+    secondReceipt.current_stock = 5;
+    secondReceipt.grnLine.bookingAllocations = [];
+    const otherSizeReceipt = structuredClone(generalStockReceipt);
+    otherSizeReceipt.id = "general-receipt-s";
+    otherSizeReceipt.size = "S";
+    otherSizeReceipt.current_stock = 10;
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([
+      firstReceipt,
+      secondReceipt,
+      otherSizeReceipt,
+    ]);
+
+    const result = await allocateAdvanceBookingFromGeneralStock(
+      "organization-1",
+      "user-1",
+      "booking-1",
+      [{ bookingSizeLineId: "booking-size-1", quantity: 7 }],
+    );
+
+    expect(result.allocatedLines).toEqual([{ size: "M", quantity: 7 }]);
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: "general-receipt-1", organization_id: "organization-1", current_stock: 3 },
+      data: { quantity_out: { increment: 3 }, current_stock: { decrement: 3 } },
+    });
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: "general-receipt-2", organization_id: "organization-1", current_stock: 5 },
+      data: { quantity_out: { increment: 4 }, current_stock: { decrement: 4 } },
+    });
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).toHaveBeenCalledTimes(2);
   });
 
   it("caps allocation at the remaining booking and work-order size balances", async () => {

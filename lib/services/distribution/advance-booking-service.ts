@@ -35,7 +35,16 @@ function fulfillmentStatusFor(fulfilled: number, assigned: number) {
   return fulfilled >= assigned ? "FULFILLED" : "PARTIALLY_FULFILLED";
 }
 
-const bookingInclude = {
+const bookingReportSelect = {
+  id: true,
+  booking_no: true,
+  order_id: true,
+  vendor_id: true,
+  customer: true,
+  brand: true,
+  style_name: true,
+  delivery_date: true,
+  created_at: true,
   order: { select: { orderNo: true, sourceStatus: true, article: true, sizeGroup: true } },
   quotationLines: {
     select: {
@@ -60,6 +69,64 @@ const bookingInclude = {
     orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
     include: {
       assignments: {
+        select: {
+          id: true,
+          work_order_size_line_id: true,
+          assigned_quantity: true,
+          workOrderSizeLine: {
+            select: {
+              workOrder: { select: { id: true, work_order_no: true } },
+            },
+          },
+          grnAllocations: { select: { allocated_quantity: true } },
+        },
+        orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
+      },
+    },
+  },
+};
+
+const bookingRegisterInclude = {
+  id: true,
+  booking_no: true,
+  order_id: true,
+  vendor_id: true,
+  customer: true,
+  brand: true,
+  style_name: true,
+  delivery_date: true,
+  created_at: true,
+  order: bookingReportSelect.order,
+  quotationLines: bookingReportSelect.quotationLines,
+  sizeLines: {
+    select: {
+      id: true,
+      size: true,
+      booked_quantity: true,
+    },
+    orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
+  },
+};
+
+const bookingListSelect = {
+  ...bookingReportSelect,
+  sizeLines: {
+    select: {
+      id: true,
+      size: true,
+      booked_quantity: true,
+    },
+    orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
+  },
+};
+
+const bookingInclude = {
+  order: bookingReportSelect.order,
+  quotationLines: bookingReportSelect.quotationLines,
+  sizeLines: {
+    orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
+    include: {
+      assignments: {
         include: {
           workOrderSizeLine: {
             include: { workOrder: { select: { id: true, work_order_no: true } } },
@@ -72,21 +139,8 @@ const bookingInclude = {
   },
 };
 
-const bookingRegisterInclude = {
-  ...bookingInclude,
-  sizeLines: {
-    orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
-    include: {
-      assignments: {
-        select: { assigned_quantity: true },
-        orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
-      },
-    },
-  },
-};
-
 function mapBooking(
-  record: Prisma.AdvanceBookingGetPayload<{ include: typeof bookingInclude }>,
+  record: Prisma.AdvanceBookingGetPayload<{ select: typeof bookingReportSelect }>,
   isLegacyArticleBased = false,
   sizeOrder: string[] = [],
 ) {
@@ -200,15 +254,105 @@ function decodeBookingCursor(value: string | undefined) {
   return { createdAt, id: decoded.id };
 }
 
+export async function getAdvanceBookingAssignmentSummary(
+  database: Database,
+  organizationId: string,
+  sizeLineIds: string[],
+) {
+  const uniqueSizeLineIds = [...new Set(sizeLineIds)];
+  const assignedBySizeLineId = new Map<string, number>();
+  const fulfilledBySizeLineId = new Map<string, number>();
+  if (uniqueSizeLineIds.length === 0) {
+    return { assignedBySizeLineId, fulfilledBySizeLineId };
+  }
+
+  const assignments = await database.advanceBookingWorkOrderAssignment.findMany({
+    where: {
+      organization_id: organizationId,
+      booking_size_line_id: { in: uniqueSizeLineIds },
+    },
+    select: { id: true, booking_size_line_id: true, assigned_quantity: true },
+  });
+  const sizeLineByAssignmentId = new Map<string, string>();
+  for (const assignment of assignments) {
+    sizeLineByAssignmentId.set(assignment.id, assignment.booking_size_line_id);
+    assignedBySizeLineId.set(
+      assignment.booking_size_line_id,
+      (assignedBySizeLineId.get(assignment.booking_size_line_id) ?? 0) + assignment.assigned_quantity,
+    );
+  }
+  if (assignments.length === 0) {
+    return { assignedBySizeLineId, fulfilledBySizeLineId };
+  }
+
+  const allocations = await database.workOrderInventoryGrnBookingAllocation.groupBy({
+    by: ["booking_assignment_id"],
+    where: {
+      organization_id: organizationId,
+      booking_assignment_id: { in: assignments.map((assignment) => assignment.id) },
+    },
+    _sum: { allocated_quantity: true },
+  });
+  for (const allocation of allocations) {
+    const sizeLineId = sizeLineByAssignmentId.get(allocation.booking_assignment_id);
+    if (!sizeLineId) continue;
+    fulfilledBySizeLineId.set(
+      sizeLineId,
+      (fulfilledBySizeLineId.get(sizeLineId) ?? 0) + (allocation._sum.allocated_quantity ?? 0),
+    );
+  }
+  return { assignedBySizeLineId, fulfilledBySizeLineId };
+}
+
+function bookingSearchFilter(organizationId: string, search: string | undefined) {
+  const normalizedSearch = search?.trim();
+  if (!normalizedSearch) return undefined;
+  if (normalizedSearch.length > 100) {
+    throw new Error("Advance Booking search must be 100 characters or fewer.");
+  }
+  const contains = { contains: normalizedSearch, mode: "insensitive" as const };
+  return {
+    AND: [
+      {
+        OR: [
+          { booking_no: contains },
+          { customer: contains },
+          { brand: contains },
+          { style_name: contains },
+          { order: { is: { organization_id: organizationId, orderNo: contains } } },
+          {
+            quotationLines: {
+              some: {
+                organization_id: organizationId,
+                quotation: {
+                  is: {
+                    organization_id: organizationId,
+                    OR: [
+                      { quotation_no: contains },
+                      { parentQuotation: { is: { quotation_no: contains } } },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
 async function listAdvanceBookingRegister(
   organizationId: string,
   cursor: ReturnType<typeof decodeBookingCursor>,
   take: number,
+  search?: string,
 ) {
   const rows = await prisma.advanceBooking.findMany({
     where: {
       organization_id: organizationId,
       quotationLines: { none: {} },
+      ...(bookingSearchFilter(organizationId, search) ?? {}),
       ...(cursor
         ? {
             OR: [
@@ -225,18 +369,23 @@ async function listAdvanceBookingRegister(
   const hasNextPage = rows.length > take;
   const pageRows = hasNextPage ? rows.slice(0, take) : rows;
   const lastRow = pageRows.at(-1);
-  const [legacyArticleBasedOrderIds, sizeOrderByGroup] = await Promise.all([
+  const [legacyArticleBasedOrderIds, sizeOrderByGroup, assignmentSummary] = await Promise.all([
     getLegacyArticleBasedOrderIds(organizationId, pageRows),
     getSizeGroupSizeOrderMapForOrganization(
       organizationId,
       pageRows.map((row) => row.order.sizeGroup ?? ""),
+    ),
+    getAdvanceBookingAssignmentSummary(
+      prisma,
+      organizationId,
+      pageRows.flatMap((row) => row.sizeLines.map((line) => line.id)),
     ),
   ]);
   return {
     bookings: pageRows.map((record) => {
       const sizeOrder = sizeOrderByGroup.get(record.order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
       const sizes = sortBySizeGroupOrder(record.sizeLines, sizeOrder, (line) => line.size).map((line) => {
-        const assignedQuantity = line.assignments.reduce((sum, assignment) => sum + assignment.assigned_quantity, 0);
+        const assignedQuantity = assignmentSummary.assignedBySizeLineId.get(line.id) ?? 0;
         return {
           id: line.id,
           size: line.size,
@@ -289,17 +438,18 @@ async function listAdvanceBookingRegister(
 
 export async function listAdvanceBookings(
   organizationId: string,
-  options: { cursor?: string; limit?: number; view?: string } = {},
+  options: { cursor?: string; limit?: number; view?: string; search?: string } = {},
 ) {
   const requestedLimit = options.limit ?? 100;
   const take = Math.min(Math.max(Number.isFinite(requestedLimit) ? Math.trunc(requestedLimit) : 100, 1), 200);
   const cursor = decodeBookingCursor(options.cursor);
   if (options.view === "booking") {
-    return listAdvanceBookingRegister(organizationId, cursor, take);
+    return listAdvanceBookingRegister(organizationId, cursor, take, options.search);
   }
   const rows = await prisma.advanceBooking.findMany({
     where: {
       organization_id: organizationId,
+      ...(bookingSearchFilter(organizationId, options.search) ?? {}),
       ...(cursor
         ? {
             OR: [
@@ -309,29 +459,80 @@ export async function listAdvanceBookings(
           }
         : {}),
     },
-    include: bookingInclude,
+    select: bookingListSelect,
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
     take: take + 1,
   });
   const hasNextPage = rows.length > take;
   const pageRows = hasNextPage ? rows.slice(0, take) : rows;
   const lastRow = pageRows.at(-1);
-  const [legacyArticleBasedOrderIds, sizeOrderByGroup, generalStockAvailability] = await Promise.all([
+  const [legacyArticleBasedOrderIds, sizeOrderByGroup, generalStockAvailability, assignmentSummary] = await Promise.all([
     getLegacyArticleBasedOrderIds(organizationId, pageRows),
     getSizeGroupSizeOrderMapForOrganization(
       organizationId,
       pageRows.map((row) => row.order.sizeGroup ?? ""),
     ),
     listGeneralFinishedGoodsAvailability(organizationId, pageRows.map((row) => row.order_id)),
+    getAdvanceBookingAssignmentSummary(
+      prisma,
+      organizationId,
+      pageRows.flatMap((row) => row.sizeLines.map((line) => line.id)),
+    ),
   ]);
   return {
     bookings: pageRows.map((record) => {
       const sizeOrder = sizeOrderByGroup.get(record.order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
-      const booking = mapBooking(record, legacyArticleBasedOrderIds.has(record.order_id), sizeOrder);
+      const sizes = sortBySizeGroupOrder(record.sizeLines, sizeOrder, (line) => line.size).map((line) => {
+        const assignedQuantity = assignmentSummary.assignedBySizeLineId.get(line.id) ?? 0;
+        const fulfilledQuantity = assignmentSummary.fulfilledBySizeLineId.get(line.id) ?? 0;
+        return {
+          id: line.id,
+          size: line.size,
+          bookedQuantity: line.booked_quantity,
+          assignedQuantity,
+          unassignedQuantity: Math.max(line.booked_quantity - assignedQuantity, 0),
+          fulfilledQuantity,
+          generalInventoryAvailableQuantity: 0,
+          assignmentStatus: statusFor(assignedQuantity, line.booked_quantity),
+          fulfillmentStatus: fulfillmentStatusFor(fulfilledQuantity, assignedQuantity),
+          assignments: [],
+        };
+      });
+      const totalBooked = sizes.reduce((sum, line) => sum + line.bookedQuantity, 0);
+      const totalAssigned = sizes.reduce((sum, line) => sum + line.assignedQuantity, 0);
+      const totalFulfilled = sizes.reduce((sum, line) => sum + line.fulfilledQuantity, 0);
+      const booking = {
+        id: record.id,
+        bookingId: record.booking_no,
+        orderId: record.order_id,
+        orderNo: record.order.orderNo,
+        orderSourceStatus: record.order.sourceStatus === "ARTICLE_BASED" ||
+          legacyArticleBasedOrderIds.has(record.order_id) ? "ARTICLE_BASED" : "DIRECT",
+        vendorId: record.vendor_id,
+        customer: record.customer ?? "",
+        quotationNo: record.quotationLines[0]?.quotation.quotation_no ?? null,
+        salesOrderNo: record.quotationLines[0]?.quotation.parentQuotation?.quotation_no ?? null,
+        quotationVendor: record.quotationLines[0]?.quotation.vendor?.vendor ??
+          record.quotationLines[0]?.quotation.customer ?? null,
+        masterQuotationVendor: record.quotationLines[0]?.quotation.parentQuotation?.vendor?.vendor ??
+          record.quotationLines[0]?.quotation.parentQuotation?.customer ?? null,
+        brand: record.brand ?? "",
+        styleName: record.style_name ?? "",
+        deliveryDate: record.delivery_date?.toISOString().slice(0, 10) ?? "",
+        createdAt: record.created_at.toISOString(),
+        totalBooked,
+        totalAssigned,
+        totalAllocated: totalAssigned,
+        totalUnassigned: Math.max(totalBooked - totalAssigned, 0),
+        totalFulfilled,
+        assignmentStatus: statusFor(totalAssigned, totalBooked),
+        fulfillmentStatus: fulfillmentStatusFor(totalFulfilled, totalAssigned),
+        sizes,
+      };
       const availabilityBySize = generalStockAvailability.get(booking.orderId);
       return {
         ...booking,
-        sizes: booking.sizes.map((line) => ({
+        sizes: sizes.map((line) => ({
           ...line,
           generalInventoryAvailableQuantity: availabilityBySize?.get(normalizedSize(line.size)) ?? 0,
         })),
@@ -670,19 +871,35 @@ export async function listAssignableWorkOrders(organizationId: string, bookingId
   if (!booking) throw new Error("Advance booking was not found in this organization.");
   const workOrders = await prisma.factoryWorkOrder.findMany({
     where: { organization_id: organizationId, order_id: booking.order_id },
-    include: {
+    select: {
+      id: true,
+      work_order_no: true,
+      status: true,
       sizeLines: {
-        include: {
-          bookingAssignments: {
-            where: { organization_id: organizationId },
-            select: { assigned_quantity: true },
-          },
-        },
+        select: { id: true, size: true, buyer_size: true, quantity: true },
       },
     },
     orderBy: [{ created_at: "desc" }, { work_order_no: "desc" }],
     take: 200,
   });
+  const sizeLineIds = workOrders.flatMap((workOrder) => workOrder.sizeLines.map((line) => line.id));
+  const assignedQuantities = sizeLineIds.length > 0
+    ? await prisma.advanceBookingWorkOrderAssignment.groupBy({
+        by: ["work_order_size_line_id"],
+        where: {
+          organization_id: organizationId,
+          work_order_id: { in: workOrders.map((workOrder) => workOrder.id) },
+          work_order_size_line_id: { in: sizeLineIds },
+        },
+        _sum: { assigned_quantity: true },
+      })
+    : [];
+  const assignedQuantityBySizeLineId = new Map(
+    assignedQuantities.map((assignment) => [
+      assignment.work_order_size_line_id,
+      assignment._sum.assigned_quantity ?? 0,
+    ]),
+  );
   return {
     workOrders: workOrders.map((workOrder) => ({
       id: workOrder.id,
@@ -692,22 +909,32 @@ export async function listAssignableWorkOrders(organizationId: string, bookingId
         id: line.id,
         size: line.size || line.buyer_size || "Unspecified",
         quantity: line.quantity,
-        assignedQuantity: line.bookingAssignments.reduce((sum, assignment) => sum + assignment.assigned_quantity, 0),
-        availableQuantity: Math.max(line.quantity - line.bookingAssignments.reduce((sum, assignment) => sum + assignment.assigned_quantity, 0), 0),
+        assignedQuantity: assignedQuantityBySizeLineId.get(line.id) ?? 0,
+        availableQuantity: Math.max(line.quantity - (assignedQuantityBySizeLineId.get(line.id) ?? 0), 0),
       })),
     })),
   };
 }
 
-export async function assignBookingInTransaction(
+export type AdvanceBookingAssignmentRequest = {
+  bookingId: string;
+  input: { workOrderId: string; lines: AdvanceBookingAssignmentInput[] };
+};
+
+export async function assignBookingsInTransaction(
   transaction: Database,
   organizationId: string,
   userId: string,
-  bookingId: string,
-  input: { workOrderId: string; lines: AdvanceBookingAssignmentInput[] },
+  requests: AdvanceBookingAssignmentRequest[],
 ) {
-  const booking = await transaction.advanceBooking.findFirst({
-    where: { id: bookingId, organization_id: organizationId },
+  if (requests.length === 0) throw new Error("Enter at least one booking to assign.");
+  const bookingIds = requests.map((request) => request.bookingId);
+  if (new Set(bookingIds).size !== bookingIds.length) {
+    throw new Error("Each advance booking can only be assigned once per request.");
+  }
+
+  const bookings = await transaction.advanceBooking.findMany({
+    where: { id: { in: bookingIds }, organization_id: organizationId },
     include: {
       quotationLines: {
         select: {
@@ -720,75 +947,117 @@ export async function assignBookingInTransaction(
       sizeLines: { include: { assignments: { select: { assigned_quantity: true } } } },
     },
   });
-  if (!booking) throw new Error("Advance booking was not found in this organization.");
-  if (!booking.quotationLines[0]?.quotation.parentQuotation) {
-    throw new Error("Create a Sales Order before assigning this advance booking to a work order.");
+  if (bookings.length !== requests.length) {
+    throw new Error("One or more advance bookings were not found in this organization.");
   }
-  const workOrder = await transaction.factoryWorkOrder.findFirst({
-    where: { id: input.workOrderId, organization_id: organizationId, order_id: booking.order_id },
-    include: { sizeLines: { include: { bookingAssignments: { select: { assigned_quantity: true } } } } },
+  const bookingById = new Map(bookings.map((booking) => [booking.id, booking]));
+  for (const booking of bookings) {
+    if (!booking.quotationLines[0]?.quotation.parentQuotation) {
+      throw new Error("Create a Sales Order before assigning this advance booking to a work order.");
+    }
+  }
+
+  const workOrderIds = [...new Set(requests.map((request) => request.input.workOrderId))];
+  if (workOrderIds.some((id) => !id.trim())) throw new Error("Select a work order.");
+  const workOrders = await transaction.factoryWorkOrder.findMany({
+    where: {
+      id: { in: workOrderIds },
+      organization_id: organizationId,
+      order_id: { in: [...new Set(bookings.map((booking) => booking.order_id))] },
+    },
+    include: {
+      sizeLines: {
+        include: {
+          bookingAssignments: {
+            where: { organization_id: organizationId },
+            select: { assigned_quantity: true },
+          },
+        },
+      },
+    },
   });
-  if (!workOrder) throw new Error("Select a work order linked to this advance booking's order.");
-  if (!Array.isArray(input.lines) || input.lines.length === 0 || input.lines.length > 200) {
-    throw new Error("Enter at least one size quantity to assign.");
-  }
-
-  const bookingLines = new Map(booking.sizeLines.map((line) => [line.id, line]));
-  const seen = new Set<string>();
-  const workOrderLineBySize = new Map(
-    workOrder.sizeLines.map((line) => [
-      normalizedSize(line.size || line.buyer_size),
-      line,
-    ]),
+  const workOrderById = new Map(workOrders.map((workOrder) => [workOrder.id, workOrder]));
+  const remainingByWorkOrderLineId = new Map(
+    workOrders.flatMap((workOrder) => workOrder.sizeLines.map((line) => [
+      line.id,
+      Math.max(
+        line.quantity - line.bookingAssignments.reduce((sum, assignment) => sum + assignment.assigned_quantity, 0),
+        0,
+      ),
+    ] as const)),
   );
-  const assignmentPairs: Array<{ bookingSizeLineId: string; workOrderSizeLineId: string }> = [];
-  const validatedLines: Array<{
-    bookingLine: (typeof booking.sizeLines)[number];
-    workOrderLine: (typeof workOrder.sizeLines)[number] | null;
-    quantity: number;
-  }> = [];
-  for (const line of input.lines) {
-    if (!Number.isSafeInteger(line.assignedQuantity) || line.assignedQuantity < 0 || line.assignedQuantity > 2147483647) {
-      throw new Error("Assigned quantities must be whole numbers greater than or equal to zero.");
-    }
-    if (seen.has(line.bookingSizeLineId)) throw new Error("Each booking size must be assigned only once per request.");
-    seen.add(line.bookingSizeLineId);
-    const bookingLine = bookingLines.get(line.bookingSizeLineId);
-    if (!bookingLine) throw new Error("A selected booking size does not belong to this booking.");
-    const workOrderLine = workOrderLineBySize.get(normalizedSize(bookingLine.size)) ?? null;
-    if (!workOrderLine) {
-      if (line.assignedQuantity > 0) throw new Error(`Work order ${workOrder.work_order_no} has no ${bookingLine.size} size line.`);
-      validatedLines.push({ bookingLine, workOrderLine: null, quantity: 0 });
-      continue;
-    }
-    const alreadyAssigned = bookingLine.assignments.reduce((sum, assignment) => sum + assignment.assigned_quantity, 0);
-    const bookingRemaining = Math.max(bookingLine.booked_quantity - alreadyAssigned, 0);
-    const workOrderAlreadyAssigned = workOrderLine.bookingAssignments.reduce((sum, assignment) => sum + assignment.assigned_quantity, 0);
-    const workOrderRemaining = Math.max(workOrderLine.quantity - workOrderAlreadyAssigned, 0);
-    const quantity = line.assignedQuantity;
-    if (quantity > bookingRemaining) {
-      throw new Error(`Size ${bookingLine.size} quantity exceeds this booking's unassigned balance of ${bookingRemaining}.`);
-    }
-    if (quantity > workOrderRemaining) {
-      throw new Error(`Size ${bookingLine.size} quantity exceeds work order ${workOrder.work_order_no}'s available assignment balance of ${workOrderRemaining}.`);
-    }
-    if (quantity > 0) {
-      assignmentPairs.push({
-        bookingSizeLineId: bookingLine.id,
-        workOrderSizeLineId: workOrderLine.id,
-      });
-    }
-    validatedLines.push({ bookingLine, workOrderLine, quantity });
-  }
 
-  const existingAssignments = assignmentPairs.length > 0
+  const validatedRequests = requests.map((request) => {
+    const booking = bookingById.get(request.bookingId);
+    if (!booking) throw new Error("Advance booking was not found in this organization.");
+    const workOrder = workOrderById.get(request.input.workOrderId);
+    if (!workOrder || workOrder.order_id !== booking.order_id) {
+      throw new Error("Select a work order linked to this advance booking's order.");
+    }
+    if (!Array.isArray(request.input.lines) || request.input.lines.length === 0 || request.input.lines.length > 200) {
+      throw new Error("Enter at least one size quantity to assign.");
+    }
+
+    const bookingLines = new Map(booking.sizeLines.map((line) => [line.id, line]));
+    const workOrderLineBySize = new Map(
+      workOrder.sizeLines.map((line) => [normalizedSize(line.size || line.buyer_size), line]),
+    );
+    const seen = new Set<string>();
+    const assignmentPairs: Array<{ bookingSizeLineId: string; workOrderSizeLineId: string }> = [];
+    const validatedLines: Array<{
+      bookingLine: (typeof booking.sizeLines)[number];
+      workOrderLine: (typeof workOrder.sizeLines)[number] | null;
+      quantity: number;
+    }> = [];
+    for (const line of request.input.lines) {
+      if (!Number.isSafeInteger(line.assignedQuantity) || line.assignedQuantity < 0 || line.assignedQuantity > 2147483647) {
+        throw new Error("Assigned quantities must be whole numbers greater than or equal to zero.");
+      }
+      if (seen.has(line.bookingSizeLineId)) throw new Error("Each booking size must be assigned only once per request.");
+      seen.add(line.bookingSizeLineId);
+      const bookingLine = bookingLines.get(line.bookingSizeLineId);
+      if (!bookingLine) throw new Error("A selected booking size does not belong to this booking.");
+      const workOrderLine = workOrderLineBySize.get(normalizedSize(bookingLine.size)) ?? null;
+      if (!workOrderLine) {
+        if (line.assignedQuantity > 0) {
+          throw new Error(`Work order ${workOrder.work_order_no} has no ${bookingLine.size} size line.`);
+        }
+        validatedLines.push({ bookingLine, workOrderLine: null, quantity: 0 });
+        continue;
+      }
+
+      const alreadyAssigned = bookingLine.assignments.reduce((sum, assignment) => sum + assignment.assigned_quantity, 0);
+      const bookingRemaining = Math.max(bookingLine.booked_quantity - alreadyAssigned, 0);
+      const workOrderRemaining = remainingByWorkOrderLineId.get(workOrderLine.id) ?? 0;
+      const quantity = line.assignedQuantity;
+      if (quantity > bookingRemaining) {
+        throw new Error(`Size ${bookingLine.size} quantity exceeds this booking's unassigned balance of ${bookingRemaining}.`);
+      }
+      if (quantity > workOrderRemaining) {
+        throw new Error(`Size ${bookingLine.size} quantity exceeds work order ${workOrder.work_order_no}'s available assignment balance of ${workOrderRemaining}.`);
+      }
+      if (quantity > 0) {
+        remainingByWorkOrderLineId.set(workOrderLine.id, workOrderRemaining - quantity);
+        assignmentPairs.push({
+          bookingSizeLineId: bookingLine.id,
+          workOrderSizeLineId: workOrderLine.id,
+        });
+      }
+      validatedLines.push({ bookingLine, workOrderLine, quantity });
+    }
+
+    const positiveLines = validatedLines.filter((line) => line.quantity > 0 && line.workOrderLine);
+    if (positiveLines.length === 0) throw new Error("Enter a positive assignment quantity for at least one size.");
+    return { booking, workOrder, assignmentPairs, positiveLines };
+  });
+
+  const allAssignmentPairs = validatedRequests.flatMap((request) => request.assignmentPairs);
+  const existingAssignments = allAssignmentPairs.length > 0
     ? await transaction.advanceBookingWorkOrderAssignment.findMany({
         where: {
           organization_id: organizationId,
-          OR: assignmentPairs.map((pair) => ({
-            booking_size_line_id: pair.bookingSizeLineId,
-            work_order_size_line_id: pair.workOrderSizeLineId,
-          })),
+          booking_size_line_id: { in: [...new Set(allAssignmentPairs.map((pair) => pair.bookingSizeLineId))] },
+          work_order_size_line_id: { in: [...new Set(allAssignmentPairs.map((pair) => pair.workOrderSizeLineId))] },
         },
         select: {
           booking_size_line_id: true,
@@ -803,56 +1072,68 @@ export async function assignBookingInTransaction(
       assignment,
     ]),
   );
-  const normalized = validatedLines.map((line) => ({
-    ...line,
-    existingForPair: line.workOrderLine
-      ? existingAssignmentByPair.get(JSON.stringify([line.bookingLine.id, line.workOrderLine.id])) ?? null
-      : null,
-  }));
 
-  const positiveLines = normalized.filter((line) => line.quantity > 0 && line.workOrderLine);
-  if (positiveLines.length === 0) throw new Error("Enter a positive assignment quantity for at least one size.");
-  for (const line of positiveLines) {
-    const existing = line.existingForPair;
-    if (existing) {
-      await transaction.advanceBookingWorkOrderAssignment.updateMany({
-        where: {
-          organization_id: organizationId,
-          booking_size_line_id: line.bookingLine.id,
-          work_order_size_line_id: line.workOrderLine!.id,
-        },
-        data: { assigned_quantity: { increment: line.quantity } },
-      });
-    } else {
-      await transaction.advanceBookingWorkOrderAssignment.create({
-        data: {
-          organization_id: organizationId,
-          booking_size_line_id: line.bookingLine.id,
-          work_order_id: workOrder.id,
-          work_order_size_line_id: line.workOrderLine!.id,
-          assigned_quantity: line.quantity,
-          created_by: userId,
-        },
-      });
+  for (const request of validatedRequests) {
+    for (const line of request.positiveLines) {
+      const existing = existingAssignmentByPair.get(JSON.stringify([line.bookingLine.id, line.workOrderLine!.id]));
+      if (existing) {
+        await transaction.advanceBookingWorkOrderAssignment.updateMany({
+          where: {
+            organization_id: organizationId,
+            booking_size_line_id: line.bookingLine.id,
+            work_order_size_line_id: line.workOrderLine!.id,
+          },
+          data: { assigned_quantity: { increment: line.quantity } },
+        });
+      } else {
+        await transaction.advanceBookingWorkOrderAssignment.create({
+          data: {
+            organization_id: organizationId,
+            booking_size_line_id: line.bookingLine.id,
+            work_order_id: request.workOrder.id,
+            work_order_size_line_id: line.workOrderLine!.id,
+            assigned_quantity: line.quantity,
+            created_by: userId,
+          },
+        });
+      }
     }
+    await createAuditEvent({
+      organizationId,
+      userId,
+      module: "Distribution",
+      action: "ASSIGN_ADVANCE_BOOKING_TO_WORK_ORDER",
+      entityType: "AdvanceBooking",
+      entityId: request.booking.id,
+      details: {
+        booking_no: request.booking.booking_no,
+        work_order_no: request.workOrder.work_order_no,
+        assigned_lines: request.positiveLines.map((line) => ({
+          size: line.bookingLine.size,
+          quantity: line.quantity,
+        })),
+      },
+    }, transaction);
   }
-  await createAuditEvent({
-    organizationId,
-    userId,
-    module: "Distribution",
-    action: "ASSIGN_ADVANCE_BOOKING_TO_WORK_ORDER",
-    entityType: "AdvanceBooking",
-    entityId: booking.id,
-    details: {
-      booking_no: booking.booking_no,
-      work_order_no: workOrder.work_order_no,
-      assigned_lines: positiveLines.map((line) => ({
-        size: line.bookingLine.size,
-        quantity: line.quantity,
-      })),
-    },
-  }, transaction);
-  return { bookingId: booking.id, workOrderId: workOrder.id };
+
+  return validatedRequests.map(({ booking, workOrder }) => ({
+    bookingId: booking.id,
+    workOrderId: workOrder.id,
+  }));
+}
+
+export async function assignBookingInTransaction(
+  transaction: Database,
+  organizationId: string,
+  userId: string,
+  bookingId: string,
+  input: { workOrderId: string; lines: AdvanceBookingAssignmentInput[] },
+) {
+  const [result] = await assignBookingsInTransaction(transaction, organizationId, userId, [{
+    bookingId,
+    input,
+  }]);
+  return result;
 }
 
 export async function assignAdvanceBookingToWorkOrder(

@@ -66,6 +66,7 @@ interface ReportGridProps<T> {
   wrapCells?: boolean;
   toolbarActions?: ReactNode;
   onSearchQueryChange?: (query: string) => void;
+  serverSideSearch?: boolean;
   getSearchValue?: (fieldKey: string, record: T) => string;
   renderCell: (fieldKey: string, record: T) => React.ReactNode;
   isLoading?: boolean;
@@ -114,6 +115,7 @@ function ReportGridImplementation<T>({
   wrapCells = false,
   toolbarActions,
   onSearchQueryChange,
+  serverSideSearch = false,
   getSearchValue,
   renderCell,
   isLoading = false,
@@ -244,8 +246,8 @@ function ReportGridImplementation<T>({
   );
 
   const filteredRecords = useMemo(
-    () => filterIndexedReportRecords(indexedRecords, deferredSearchQuery, columnFilters),
-    [columnFilters, deferredSearchQuery, indexedRecords],
+    () => filterIndexedReportRecords(indexedRecords, serverSideSearch ? "" : deferredSearchQuery, columnFilters),
+    [columnFilters, deferredSearchQuery, indexedRecords, serverSideSearch],
   );
   const selectableRecords = filteredRecords.filter((record) => rowSelectable?.(record) ?? true);
   const allFilteredSelected = selectableRecords.length > 0

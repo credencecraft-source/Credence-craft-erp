@@ -4,25 +4,33 @@ import { prisma } from "@/lib/database/prisma-client";
 import { requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import {
   assignBookingInTransaction,
+  assignBookingsInTransaction,
+  getAdvanceBookingAssignmentSummary,
   type AdvanceBookingAssignmentInput,
+  type AdvanceBookingAssignmentRequest,
 } from "@/lib/services/distribution/advance-booking-service";
 import {
   allocateBookingFromGeneralStockInTransaction,
   listGeneralFinishedGoodsAvailability,
+  loadGeneralStockAllocationContext,
   type GeneralStockAllocationLineInput,
 } from "@/lib/services/inventory/finished-goods-general-stock-allocation-service";
 
 type Database = Prisma.TransactionClient;
 type AllocationMode = "GENERAL" | "PRODUCTION";
-type AllocationWorkOrder = Prisma.FactoryWorkOrderGetPayload<{
-  include: {
-    sizeLines: {
-      include: {
-        bookingAssignments: { select: { assigned_quantity: true } };
-      };
-    };
-  };
-}>;
+type AllocationWorkOrder = {
+  id: string;
+  order_id: string;
+  work_order_no: string;
+  status: string;
+  sizeLines: Array<{
+    id: string;
+    size: string | null;
+    buyer_size: string | null;
+    quantity: number;
+    assigned_quantity: number;
+  }>;
+};
 
 const salesOrderBookingInclude = {
   order: { select: { id: true, orderNo: true, sourceStatus: true, article: true } },
@@ -82,11 +90,55 @@ async function getSalesOrderBookings(
   return { salesOrder, bookings };
 }
 
+async function getSalesOrderBookingHeaders(
+  database: Database,
+  organizationId: string,
+  salesOrderId: string,
+) {
+  const salesOrder = await database.distributionQuotation.findFirst({
+    where: { id: salesOrderId, organization_id: organizationId, mode: "MASTER" },
+    select: { id: true, quotation_no: true },
+  });
+  if (!salesOrder) throw new Error("The Sales Order was not found in this organization.");
+  const bookings = await database.advanceBooking.findMany({
+    where: {
+      organization_id: organizationId,
+      quotationLines: {
+        some: {
+          organization_id: organizationId,
+          quotation: {
+            is: { organization_id: organizationId, parent_quotation_id: salesOrderId },
+          },
+        },
+      },
+    },
+    select: {
+      id: true,
+      order_id: true,
+      order: { select: { id: true, orderNo: true, sourceStatus: true, article: true } },
+      sizeLines: {
+        select: { id: true, size: true, booked_quantity: true },
+        orderBy: [{ created_at: "asc" }, { id: "asc" }],
+      },
+    },
+    orderBy: [{ created_at: "asc" }, { id: "asc" }],
+  });
+  return { salesOrder, bookings };
+}
+
 function summarizeOrderBookings(
-  bookings: Awaited<ReturnType<typeof getSalesOrderBookings>>["bookings"],
+  bookings: Awaited<ReturnType<typeof getSalesOrderBookingHeaders>>["bookings"],
   workOrders: AllocationWorkOrder[],
   generalStock: Map<string, Map<string, number>>,
+  assignedBySizeLineId: Map<string, number>,
+  fulfilledBySizeLineId: Map<string, number>,
 ) {
+  const workOrdersByOrderId = new Map<string, AllocationWorkOrder[]>();
+  for (const workOrder of workOrders) {
+    const orderWorkOrders = workOrdersByOrderId.get(workOrder.order_id) ?? [];
+    orderWorkOrders.push(workOrder);
+    workOrdersByOrderId.set(workOrder.order_id, orderWorkOrders);
+  }
   const groups = new Map<string, {
     orderId: string;
     orderNo: string;
@@ -118,14 +170,8 @@ function summarizeOrderBookings(
     for (const line of booking.sizeLines) {
       const key = normalizedSize(line.size);
       if (!key) continue;
-      const assignedQuantity = line.assignments.reduce((sum, assignment) => sum + assignment.assigned_quantity, 0);
-      const fulfilledQuantity = line.assignments.reduce(
-        (sum, assignment) => sum + assignment.grnAllocations.reduce(
-          (lineSum, allocation) => lineSum + allocation.allocated_quantity,
-          0,
-        ),
-        0,
-      );
+      const assignedQuantity = assignedBySizeLineId.get(line.id) ?? 0;
+      const fulfilledQuantity = fulfilledBySizeLineId.get(line.id) ?? 0;
       const bookedQuantity = line.booked_quantity;
       const unassignedQuantity = Math.max(bookedQuantity - assignedQuantity, 0);
       const allocatableQuantity = Math.max(bookedQuantity - fulfilledQuantity, 0);
@@ -148,18 +194,13 @@ function summarizeOrderBookings(
       ...size,
       generalStockQuantity: generalStock.get(group.orderId)?.get(normalizedSize(size.size)) ?? 0,
     }));
-    const groupWorkOrders = workOrders
-      .filter((workOrder) => workOrder.order_id === group.orderId)
+    const groupWorkOrders = (workOrdersByOrderId.get(group.orderId) ?? [])
       .map((workOrder) => {
         const sizeLines = new Map<string, number>();
         for (const line of workOrder.sizeLines) {
           const size = normalizedSize(line.size || line.buyer_size);
           if (!size) continue;
-          const assignedQuantity = line.bookingAssignments.reduce(
-            (sum, assignment) => sum + assignment.assigned_quantity,
-            0,
-          );
-          sizeLines.set(size, (sizeLines.get(size) ?? 0) + Math.max(line.quantity - assignedQuantity, 0));
+          sizeLines.set(size, (sizeLines.get(size) ?? 0) + Math.max(line.quantity - line.assigned_quantity, 0));
         }
         return {
           id: workOrder.id,
@@ -194,30 +235,62 @@ export async function getSalesOrderAllocationData(organizationId: string, salesO
   if (!organizationId.trim() || !salesOrderId.trim()) {
     throw new Error("A valid organization and Sales Order are required.");
   }
-  const { salesOrder, bookings } = await getSalesOrderBookings(prisma, organizationId, salesOrderId);
+  const { salesOrder, bookings } = await getSalesOrderBookingHeaders(prisma, organizationId, salesOrderId);
   const orderIds = [...new Set(bookings.map((booking) => booking.order_id))];
-  const [generalStock, workOrders] = await Promise.all([
+  const sizeLineIds = bookings.flatMap((booking) => booking.sizeLines.map((line) => line.id));
+  const [generalStock, assignmentSummary, rawWorkOrders] = await Promise.all([
     listGeneralFinishedGoodsAvailability(organizationId, orderIds),
+    getAdvanceBookingAssignmentSummary(prisma, organizationId, sizeLineIds),
     orderIds.length > 0
       ? prisma.factoryWorkOrder.findMany({
           where: { organization_id: organizationId, order_id: { in: orderIds } },
-          include: {
+          select: {
+            id: true,
+            order_id: true,
+            work_order_no: true,
+            status: true,
             sizeLines: {
-              include: {
-                bookingAssignments: {
-                  where: { organization_id: organizationId },
-                  select: { assigned_quantity: true },
-                },
-              },
+              select: { id: true, size: true, buyer_size: true, quantity: true },
             },
           },
           orderBy: [{ created_at: "desc" }, { work_order_no: "desc" }],
         })
       : Promise.resolve([]),
   ]);
+  const workOrderSizeLineIds = rawWorkOrders.flatMap((workOrder) => workOrder.sizeLines.map((line) => line.id));
+  const assignedQuantities = workOrderSizeLineIds.length > 0
+    ? await prisma.advanceBookingWorkOrderAssignment.groupBy({
+        by: ["work_order_size_line_id"],
+        where: {
+          organization_id: organizationId,
+          work_order_id: { in: rawWorkOrders.map((workOrder) => workOrder.id) },
+          work_order_size_line_id: { in: workOrderSizeLineIds },
+        },
+        _sum: { assigned_quantity: true },
+      })
+    : [];
+  const assignedQuantityBySizeLineId = new Map(
+    assignedQuantities.map((assignment) => [
+      assignment.work_order_size_line_id,
+      assignment._sum.assigned_quantity ?? 0,
+    ]),
+  );
+  const workOrders: AllocationWorkOrder[] = rawWorkOrders.map((workOrder) => ({
+    ...workOrder,
+    sizeLines: workOrder.sizeLines.map((line) => ({
+      ...line,
+      assigned_quantity: assignedQuantityBySizeLineId.get(line.id) ?? 0,
+    })),
+  }));
   return {
     salesOrderNo: salesOrder.quotation_no,
-    orders: summarizeOrderBookings(bookings, workOrders, generalStock),
+    orders: summarizeOrderBookings(
+      bookings,
+      workOrders,
+      generalStock,
+      assignmentSummary.assignedBySizeLineId,
+      assignmentSummary.fulfilledBySizeLineId,
+    ),
   };
 }
 
@@ -271,32 +344,20 @@ export async function allocateSalesOrder(
         if (mode === "GENERAL") {
           let allocatedQuantity = 0;
           let allocatedBookings = 0;
-          const legacyArticleNumbers = orderIds.length > 0
-            ? await transaction.masterArticle.findMany({
-                where: {
-                  organization_id: organizationId,
-                  article: {
-                    in: [...new Set(bookings
-                      .filter((booking) => booking.order.sourceStatus !== "ARTICLE_BASED")
-                      .map((booking) => booking.order.article?.trim() ?? "")
-                      .filter(Boolean))],
-                  },
-                },
-                select: { article: true },
-              })
-            : [];
-          const legacyArticleSet = new Set(legacyArticleNumbers.map((article) => article.article));
+          const allocationContext = await loadGeneralStockAllocationContext(
+            transaction,
+            organizationId,
+            bookings.map((booking) => booking.id),
+          );
           for (const booking of bookings) {
-            if (
-              booking.order.sourceStatus !== "ARTICLE_BASED" &&
-              (!booking.order.article?.trim() || !legacyArticleSet.has(booking.order.article.trim()))
-            ) continue;
+            if (!allocationContext.bookingById.has(booking.id)) continue;
             const result = await allocateBookingFromGeneralStockInTransaction(
               transaction,
               organizationId,
               userId,
               booking.id,
               [],
+              allocationContext,
             );
             const quantity = result.allocatedLines.reduce((sum, line) => sum + line.quantity, 0);
             if (quantity > 0) allocatedBookings += 1;
@@ -383,6 +444,7 @@ export async function allocateSalesOrder(
             }
           }
 
+          const assignmentRequests: AdvanceBookingAssignmentRequest[] = [];
           for (const booking of orderBookings) {
             const lines = booking.sizeLines.flatMap((line) => {
               const assignedQuantity = line.assignments.reduce(
@@ -395,15 +457,23 @@ export async function allocateSalesOrder(
                 : [];
             });
             if (lines.length === 0) continue;
-            await assignBookingInTransaction(
+            assignmentRequests.push({
+              bookingId: booking.id,
+              input: { workOrderId: workOrder.id, lines },
+            });
+          }
+          if (assignmentRequests.length > 0) {
+            await assignBookingsInTransaction(
               transaction,
               organizationId,
               userId,
-              booking.id,
-              { workOrderId: workOrder.id, lines },
+              assignmentRequests,
             );
-            allocatedBookings += 1;
-            allocatedQuantity += lines.reduce((sum, line) => sum + line.assignedQuantity, 0);
+            allocatedBookings += assignmentRequests.length;
+            allocatedQuantity += assignmentRequests.reduce(
+              (sum, request) => sum + request.input.lines.reduce((lineSum, line) => lineSum + line.assignedQuantity, 0),
+              0,
+            );
           }
         }
         return { mode, allocatedBookings, allocatedOrders: bookingsByOrder.size, allocatedQuantity };

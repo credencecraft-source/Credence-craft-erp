@@ -17,7 +17,11 @@ async function readResponse(response: Response) {
   }
 }
 
-export default function PlatformSupportLogin() {
+export default function PlatformSupportLogin({
+  returnTo,
+}: {
+  returnTo?: string;
+}) {
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
@@ -55,7 +59,7 @@ export default function PlatformSupportLogin() {
         return;
       }
 
-      window.location.assign(payload.redirectTo || "/platform/organisations");
+      window.location.assign(returnTo || payload.redirectTo || "/platform/organisations");
     } catch (error) {
       setIsError(true);
       setMessage(

@@ -24,6 +24,13 @@ export default async function WorkspaceHomePage({
 }) {
   const { workspaceId } = await params;
   const user = await requireSessionUser();
+  const platformAccount = user.email
+    ? await prisma.platformAdmin.findUnique({
+        where: { email: user.email.trim().toLowerCase() },
+        select: { is_active: true },
+      })
+    : null;
+  const hasPlatformAccess = platformAccount?.is_active === true;
   const search = await searchParams;
   const successMessage = search?.success;
   const errorMessage = search?.error;
@@ -110,6 +117,13 @@ export default async function WorkspaceHomePage({
 
           <div className="erp-action-group">
             <WorkspaceInvitationBell />
+            {hasPlatformAccess && (
+              <Link href="/platform/control-panel">
+                <Button variant="ghost" className="erp-btn-secondary-alt">
+                  Control Panel
+                </Button>
+              </Link>
+            )}
             <Link href="/dashboard/organizations/create">
               <Button>Create Organization</Button>
             </Link>

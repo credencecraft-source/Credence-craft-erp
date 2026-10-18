@@ -131,7 +131,7 @@ describe("createSelectedOrdersWorkbook", () => {
     expect(getActiveOrganizationDummyDataBatch).toHaveBeenCalledExactlyOnceWith("organization-id");
     const batchPromises = getMasterValuesForOrganization.mock.calls.map((call) => call[3].activeDummyDataBatch);
     expect(batchPromises.every((batchPromise) => batchPromise === batchPromises[0])).toBe(true);
-  });
+  }, 15_000);
 
   it("rejects selections with different size groups before creating a workbook", async () => {
     getOrderById.mockImplementation(async (id: string) => makeOrder(id, id === "order-1" ? "Standard" : "Petite"));

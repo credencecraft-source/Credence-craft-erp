@@ -29,19 +29,28 @@ export async function GET() {
       const user = getDevUserById(sessionUser.id);
       return NextResponse.json({
         verified: Boolean(user?.mobile_verified_at),
+        platformAccess: false,
       });
     }
 
     const user = await prisma.workspaceUser.findUnique({
       where: { id: sessionUser.id },
-      select: { mobile_number: true, mobile_verified_at: true },
+      select: { email: true, mobile_number: true, mobile_verified_at: true },
     });
     if (!user) {
       return NextResponse.json({ error: "Account is not available." }, { status: 404 });
     }
 
+    const platformAccount = user.email
+      ? await prisma.platformAdmin.findUnique({
+          where: { email: user.email.trim().toLowerCase() },
+          select: { is_active: true },
+        })
+      : null;
+
     return NextResponse.json({
       verified: Boolean(user.mobile_verified_at),
+      platformAccess: Boolean(platformAccount?.is_active),
     });
   } catch (error) {
     if (isDatabaseUnavailableError(error)) {

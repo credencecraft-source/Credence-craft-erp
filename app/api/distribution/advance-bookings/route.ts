@@ -51,6 +51,7 @@ export async function GET(request: Request) {
       cursor: search.get("cursor") || undefined,
       limit: Number.isFinite(limit) ? limit : 100,
       view: search.get("view") ?? undefined,
+      search: search.get("search") ?? undefined,
     }));
   } catch (error) {
     return errorResponse(error, "Unable to load advance bookings.");

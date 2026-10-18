@@ -5,6 +5,9 @@ const mocks = vi.hoisted(() => ({
     $transaction: vi.fn(),
     advanceBooking: { findFirst: vi.fn(), findMany: vi.fn() },
     masterArticle: { findMany: vi.fn() },
+    factoryWorkOrder: { findMany: vi.fn() },
+    advanceBookingWorkOrderAssignment: { findMany: vi.fn(), groupBy: vi.fn() },
+    workOrderInventoryGrnBookingAllocation: { groupBy: vi.fn() },
     finishedGoodsGeneralStockReceipt: { findMany: vi.fn(), groupBy: vi.fn() },
   },
   transaction: {
@@ -15,7 +18,7 @@ const mocks = vi.hoisted(() => ({
     masterVendor: { findFirst: vi.fn() },
     advanceBookingSizeLine: { findMany: vi.fn(), groupBy: vi.fn() },
     advanceBooking: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
-    factoryWorkOrder: { findFirst: vi.fn() },
+    factoryWorkOrder: { findFirst: vi.fn(), findMany: vi.fn() },
     advanceBookingWorkOrderAssignment: { findMany: vi.fn(), updateMany: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
   },
   createAuditEvent: vi.fn(),
@@ -29,10 +32,13 @@ vi.mock("@/lib/services/orders/procurement-document-number-service", () => ({
 }));
 
 import {
+  assignBookingsInTransaction,
   assignAdvanceBookingToWorkOrder,
   createAdvanceBooking,
   deleteAdvanceBookings,
+  getAdvanceBookingAssignmentSummary,
   getAdvanceBookingById,
+  listAssignableWorkOrders,
   listAdvanceBookings,
 } from "./advance-booking-service";
 
@@ -42,6 +48,10 @@ describe("advance-booking persistence", () => {
     mocks.prisma.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
     mocks.prisma.finishedGoodsGeneralStockReceipt.groupBy.mockResolvedValue([]);
     mocks.prisma.masterArticle.findMany.mockResolvedValue([]);
+    mocks.prisma.factoryWorkOrder.findMany.mockResolvedValue([]);
+    mocks.prisma.advanceBookingWorkOrderAssignment.groupBy.mockResolvedValue([]);
+    mocks.prisma.advanceBookingWorkOrderAssignment.findMany.mockResolvedValue([]);
+    mocks.prisma.workOrderInventoryGrnBookingAllocation.groupBy.mockResolvedValue([]);
     mocks.prisma.$transaction.mockImplementation((callback: (transaction: typeof mocks.transaction) => Promise<unknown>) =>
       callback(mocks.transaction));
     mocks.transaction.merchandisingOrder.findFirst.mockResolvedValue({
@@ -563,6 +573,11 @@ describe("advance-booking persistence", () => {
       bookingRow,
       { ...bookingRow, id: "booking-record-2", booking_no: "BK-2" },
     ]);
+    mocks.prisma.advanceBookingWorkOrderAssignment.findMany.mockResolvedValue([{
+      id: "assignment-1",
+      booking_size_line_id: "size-1",
+      assigned_quantity: 30,
+    }]);
     mocks.prisma.finishedGoodsGeneralStockReceipt.groupBy.mockResolvedValue([{
       order_id: "order-1",
       size: "m",
@@ -599,8 +614,8 @@ describe("advance-booking persistence", () => {
       where: { organization_id: "internal-org-1" },
       orderBy: [{ created_at: "desc" }, { id: "desc" }],
       take: 2,
-      include: expect.objectContaining({
-        quotationLines: expect.objectContaining({
+      select: expect.objectContaining({
+        quotationLines: {
           select: {
             quotation: {
               select: {
@@ -618,19 +633,71 @@ describe("advance-booking persistence", () => {
             },
           },
           take: 1,
-        }),
-        sizeLines: expect.objectContaining({
-          include: expect.objectContaining({
-            assignments: expect.objectContaining({
-              include: expect.objectContaining({
-                grnAllocations: { select: { allocated_quantity: true } },
-                workOrderSizeLine: expect.any(Object),
-              }),
-            }),
-          }),
-        }),
+        },
+        sizeLines: {
+          orderBy: [{ created_at: "asc" }, { id: "asc" }],
+          select: { id: true, size: true, booked_quantity: true },
+        },
       }),
     }));
+  });
+
+  it("applies tenant-scoped server search before keyset pagination", async () => {
+    await listAdvanceBookings("internal-org-1", { limit: 25, search: "Oxford Shirt" });
+
+    expect(mocks.prisma.advanceBooking.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "internal-org-1",
+        AND: [{
+          OR: expect.arrayContaining([
+            { booking_no: { contains: "Oxford Shirt", mode: "insensitive" } },
+            { order: { is: { organization_id: "internal-org-1", orderNo: { contains: "Oxford Shirt", mode: "insensitive" } } } },
+          ]),
+        }],
+      }),
+      take: 26,
+    }));
+  });
+
+  it("aggregates assignment and fulfillment totals without including child allocation rows", async () => {
+    mocks.prisma.advanceBookingWorkOrderAssignment.findMany.mockResolvedValue([
+      { id: "assignment-m", booking_size_line_id: "size-m", assigned_quantity: 6 },
+      { id: "assignment-s", booking_size_line_id: "size-m", assigned_quantity: 4 },
+    ]);
+    mocks.prisma.workOrderInventoryGrnBookingAllocation.groupBy.mockResolvedValue([
+      { booking_assignment_id: "assignment-m", _sum: { allocated_quantity: 3 } },
+      { booking_assignment_id: "assignment-s", _sum: { allocated_quantity: 2 } },
+    ]);
+
+    const summary = await getAdvanceBookingAssignmentSummary(
+      mocks.prisma as never,
+      "internal-org-1",
+      ["size-m", "size-m"],
+    );
+
+    expect(summary.assignedBySizeLineId.get("size-m")).toBe(10);
+    expect(summary.fulfilledBySizeLineId.get("size-m")).toBe(5);
+    expect(mocks.prisma.advanceBookingWorkOrderAssignment.findMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: "internal-org-1",
+        booking_size_line_id: { in: ["size-m"] },
+      },
+      select: { id: true, booking_size_line_id: true, assigned_quantity: true },
+    });
+    expect(mocks.prisma.workOrderInventoryGrnBookingAllocation.groupBy).toHaveBeenCalledWith({
+      by: ["booking_assignment_id"],
+      where: {
+        organization_id: "internal-org-1",
+        booking_assignment_id: { in: ["assignment-m", "assignment-s"] },
+      },
+      _sum: { allocated_quantity: true },
+    });
+  });
+
+  it("rejects overlong server search terms before querying", async () => {
+    await expect(listAdvanceBookings("internal-org-1", { search: "x".repeat(101) }))
+      .rejects.toThrow("100 characters or fewer");
+    expect(mocks.prisma.advanceBooking.findMany).not.toHaveBeenCalled();
   });
 
   it("filters quoted bookings in the order register query before pagination", async () => {
@@ -663,8 +730,68 @@ describe("advance-booking persistence", () => {
     expect(mocks.prisma.advanceBooking.findMany).not.toHaveBeenCalled();
   });
 
+  it("aggregates assignment balances for the bounded, tenant-scoped work-order lookup", async () => {
+    mocks.prisma.advanceBooking.findFirst.mockResolvedValue({
+      id: "booking-record-1",
+      order_id: "order-1",
+    });
+    mocks.prisma.factoryWorkOrder.findMany.mockResolvedValue([{
+      id: "work-order-1",
+      work_order_no: "WO-1",
+      status: "OPEN",
+      sizeLines: [
+        { id: "work-order-size-m", size: "M", buyer_size: null, quantity: 20 },
+        { id: "work-order-size-s", size: null, buyer_size: "S", quantity: 10 },
+      ],
+    }]);
+    mocks.prisma.advanceBookingWorkOrderAssignment.groupBy.mockResolvedValue([{
+      work_order_size_line_id: "work-order-size-m",
+      _sum: { assigned_quantity: 4 },
+    }]);
+
+    const result = await listAssignableWorkOrders("internal-org-1", "booking-record-1");
+
+    expect(result.workOrders).toEqual([{
+      id: "work-order-1",
+      workOrderNo: "WO-1",
+      status: "OPEN",
+      sizeLines: [
+        {
+          id: "work-order-size-m",
+          size: "M",
+          quantity: 20,
+          assignedQuantity: 4,
+          availableQuantity: 16,
+        },
+        {
+          id: "work-order-size-s",
+          size: "S",
+          quantity: 10,
+          assignedQuantity: 0,
+          availableQuantity: 10,
+        },
+      ],
+    }]);
+    expect(mocks.prisma.factoryWorkOrder.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "internal-org-1", order_id: "order-1" },
+      select: expect.objectContaining({
+        sizeLines: { select: { id: true, size: true, buyer_size: true, quantity: true } },
+      }),
+      take: 200,
+    }));
+    expect(mocks.prisma.advanceBookingWorkOrderAssignment.groupBy).toHaveBeenCalledWith({
+      by: ["work_order_size_line_id"],
+      where: {
+        organization_id: "internal-org-1",
+        work_order_id: { in: ["work-order-1"] },
+        work_order_size_line_id: { in: ["work-order-size-m", "work-order-size-s"] },
+      },
+      _sum: { assigned_quantity: true },
+    });
+  });
+
   it("checks existing work-order assignments with one tenant-scoped lookup for all sizes", async () => {
-    mocks.transaction.advanceBooking.findFirst.mockResolvedValue({
+    mocks.transaction.advanceBooking.findMany.mockResolvedValue([{
       id: "booking-record-1",
       booking_no: "BK-1",
       order_id: "order-1",
@@ -673,15 +800,16 @@ describe("advance-booking persistence", () => {
         { id: "booking-size-m", size: "M", booked_quantity: 10, assignments: [] },
         { id: "booking-size-s", size: "S", booked_quantity: 12, assignments: [] },
       ],
-    });
-    mocks.transaction.factoryWorkOrder.findFirst.mockResolvedValue({
+    }]);
+    mocks.transaction.factoryWorkOrder.findMany.mockResolvedValue([{
       id: "work-order-1",
       work_order_no: "WO-1",
+      order_id: "order-1",
       sizeLines: [
         { id: "work-order-size-m", size: "M", buyer_size: null, quantity: 20, bookingAssignments: [{ assigned_quantity: 2 }] },
         { id: "work-order-size-s", size: "S", buyer_size: null, quantity: 20, bookingAssignments: [] },
       ],
-    });
+    }]);
     mocks.transaction.advanceBookingWorkOrderAssignment.findMany.mockResolvedValue([{
       booking_size_line_id: "booking-size-m",
       work_order_size_line_id: "work-order-size-m",
@@ -696,8 +824,8 @@ describe("advance-booking persistence", () => {
       ],
     });
 
-    expect(mocks.transaction.advanceBooking.findFirst).toHaveBeenCalledWith({
-      where: { id: "booking-record-1", organization_id: "internal-org-1" },
+    expect(mocks.transaction.advanceBooking.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ["booking-record-1"] }, organization_id: "internal-org-1" },
       include: {
         quotationLines: {
           select: {
@@ -711,13 +839,18 @@ describe("advance-booking persistence", () => {
       },
     });
     expect(mocks.transaction.advanceBookingWorkOrderAssignment.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.transaction.factoryWorkOrder.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        id: { in: ["work-order-1"] },
+        organization_id: "internal-org-1",
+        order_id: { in: ["order-1"] },
+      },
+    }));
     expect(mocks.transaction.advanceBookingWorkOrderAssignment.findMany).toHaveBeenCalledWith({
       where: {
         organization_id: "internal-org-1",
-        OR: [
-          { booking_size_line_id: "booking-size-m", work_order_size_line_id: "work-order-size-m" },
-          { booking_size_line_id: "booking-size-s", work_order_size_line_id: "work-order-size-s" },
-        ],
+        booking_size_line_id: { in: ["booking-size-m", "booking-size-s"] },
+        work_order_size_line_id: { in: ["work-order-size-m", "work-order-size-s"] },
       },
       select: {
         booking_size_line_id: true,
@@ -739,19 +872,127 @@ describe("advance-booking persistence", () => {
   });
 
   it("rejects work-order assignment until the booking belongs to a sales order", async () => {
-    mocks.transaction.advanceBooking.findFirst.mockResolvedValue({
+    mocks.transaction.advanceBooking.findMany.mockResolvedValue([{
       id: "booking-record-1",
       booking_no: "BK-1",
       order_id: "order-1",
       quotationLines: [{ quotation: { parentQuotation: null } }],
       sizeLines: [],
-    });
+    }]);
 
     await expect(assignAdvanceBookingToWorkOrder("internal-org-1", "user-1", "booking-record-1", {
       workOrderId: "work-order-1",
       lines: [{ bookingSizeLineId: "booking-size-m", assignedQuantity: 1 }],
     })).rejects.toThrow("Create a Sales Order before assigning this advance booking to a work order.");
-    expect(mocks.transaction.factoryWorkOrder.findFirst).not.toHaveBeenCalled();
+    expect(mocks.transaction.factoryWorkOrder.findMany).not.toHaveBeenCalled();
+  });
+
+  it("loads bookings and work-order state once when assigning several bookings together", async () => {
+    mocks.transaction.advanceBooking.findMany.mockResolvedValue([
+      {
+        id: "booking-record-1",
+        booking_no: "BK-1",
+        order_id: "order-1",
+        quotationLines: [{ quotation: { parentQuotation: { quotation_no: "SO-1" } } }],
+        sizeLines: [{ id: "booking-size-1", size: "M", booked_quantity: 5, assignments: [] }],
+      },
+      {
+        id: "booking-record-2",
+        booking_no: "BK-2",
+        order_id: "order-1",
+        quotationLines: [{ quotation: { parentQuotation: { quotation_no: "SO-1" } } }],
+        sizeLines: [{ id: "booking-size-2", size: "M", booked_quantity: 5, assignments: [] }],
+      },
+    ]);
+    mocks.transaction.factoryWorkOrder.findMany.mockResolvedValue([{
+      id: "work-order-1",
+      work_order_no: "WO-1",
+      order_id: "order-1",
+      sizeLines: [{
+        id: "work-order-size-m",
+        size: "M",
+        buyer_size: null,
+        quantity: 12,
+        bookingAssignments: [{ assigned_quantity: 2 }],
+      }],
+    }]);
+    mocks.transaction.advanceBookingWorkOrderAssignment.findMany.mockResolvedValue([]);
+
+    const result = await assignBookingsInTransaction(
+      mocks.transaction as never,
+      "internal-org-1",
+      "user-1",
+      [
+        {
+          bookingId: "booking-record-1",
+          input: { workOrderId: "work-order-1", lines: [{ bookingSizeLineId: "booking-size-1", assignedQuantity: 5 }] },
+        },
+        {
+          bookingId: "booking-record-2",
+          input: { workOrderId: "work-order-1", lines: [{ bookingSizeLineId: "booking-size-2", assignedQuantity: 5 }] },
+        },
+      ],
+    );
+
+    expect(result).toEqual([
+      { bookingId: "booking-record-1", workOrderId: "work-order-1" },
+      { bookingId: "booking-record-2", workOrderId: "work-order-1" },
+    ]);
+    expect(mocks.transaction.advanceBooking.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.transaction.factoryWorkOrder.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.transaction.advanceBookingWorkOrderAssignment.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.transaction.advanceBookingWorkOrderAssignment.create).toHaveBeenCalledTimes(2);
+    expect(mocks.createAuditEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it("prevents combined batch assignments from exceeding work-order capacity", async () => {
+    mocks.transaction.advanceBooking.findMany.mockResolvedValue([
+      {
+        id: "booking-record-1",
+        booking_no: "BK-1",
+        order_id: "order-1",
+        quotationLines: [{ quotation: { parentQuotation: { quotation_no: "SO-1" } } }],
+        sizeLines: [{ id: "booking-size-1", size: "M", booked_quantity: 5, assignments: [] }],
+      },
+      {
+        id: "booking-record-2",
+        booking_no: "BK-2",
+        order_id: "order-1",
+        quotationLines: [{ quotation: { parentQuotation: { quotation_no: "SO-1" } } }],
+        sizeLines: [{ id: "booking-size-2", size: "M", booked_quantity: 5, assignments: [] }],
+      },
+    ]);
+    mocks.transaction.factoryWorkOrder.findMany.mockResolvedValue([{
+      id: "work-order-1",
+      work_order_no: "WO-1",
+      order_id: "order-1",
+      sizeLines: [{
+        id: "work-order-size-m",
+        size: "M",
+        buyer_size: null,
+        quantity: 11,
+        bookingAssignments: [{ assigned_quantity: 2 }],
+      }],
+    }]);
+
+    await expect(assignBookingsInTransaction(
+      mocks.transaction as never,
+      "internal-org-1",
+      "user-1",
+      [
+        {
+          bookingId: "booking-record-1",
+          input: { workOrderId: "work-order-1", lines: [{ bookingSizeLineId: "booking-size-1", assignedQuantity: 5 }] },
+        },
+        {
+          bookingId: "booking-record-2",
+          input: { workOrderId: "work-order-1", lines: [{ bookingSizeLineId: "booking-size-2", assignedQuantity: 5 }] },
+        },
+      ],
+    )).rejects.toThrow("available assignment balance of 4");
+
+    expect(mocks.transaction.advanceBookingWorkOrderAssignment.create).not.toHaveBeenCalled();
+    expect(mocks.createAuditEvent).not.toHaveBeenCalled();
   });
 });
 

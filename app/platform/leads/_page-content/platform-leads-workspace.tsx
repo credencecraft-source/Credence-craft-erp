@@ -417,6 +417,30 @@ export default function PlatformLeadsWorkspace({
       : activeTab === "NOT_INTERESTED"
         ? PLATFORM_LEAD_NOT_INTERESTED_STAGES
         : PLATFORM_LEAD_THIRD_PARTY_STAGES;
+  const leadStageTabs = [
+    {
+      value: "ALL",
+      label: "All leads",
+      count: countLeadStages(PLATFORM_LEAD_THIRD_PARTY_STAGES),
+    },
+    { value: "1-new", step: "Stage 1", label: "New", count: leadCountsByStage["1-new"] ?? 0 },
+    { value: "Verification", step: "Stage 2", label: "Verified", count: leadCountsByStage.Verification ?? 0 },
+    {
+      value: "NEED_TO_CALL",
+      step: "Stage 3",
+      label: "Need To Call",
+      count: countLeadStages(PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES),
+    },
+    {
+      value: "Interested For Demo",
+      step: "Stage 4",
+      label: "Interested For Demo",
+      count: leadCountsByStage["Interested For Demo"] ?? 0,
+    },
+    { value: "Demo Booked", step: "Stage 5", label: "Demo Booked", count: leadCountsByStage["Demo Booked"] ?? 0 },
+    { value: "Demo Attended", step: "Stage 6", label: "Demo Attended", count: leadCountsByStage["Demo Attended"] ?? 0 },
+    { value: "2-Potential", step: "Stage 7", label: "Potential", count: leadCountsByStage["2-Potential"] ?? 0 },
+  ];
   const tabs: Array<{ id: LeadTab; label: string; count: number }> = [
     {
       id: "THIRD_PARTY",
@@ -978,7 +1002,35 @@ export default function PlatformLeadsWorkspace({
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden lg:flex-row">
         <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
-          {activeTab !== "APP_LOGIN" && (
+          {activeTab === "THIRD_PARTY" && (
+            <Tabs
+              tabs={leadStageTabs.map((tab) => ({
+                value: tab.value,
+                label: (
+                  <>
+                    {"step" in tab && (
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--erp-brand)]">
+                        {tab.step}
+                      </span>
+                    )}
+                    <span className="text-sm leading-tight">{tab.label}</span>
+                    <span className="text-xs font-medium tabular-nums text-slate-500">
+                      {tab.count}
+                    </span>
+                  </>
+                ),
+              }))}
+              value={stageFilter}
+              onChange={(value) => {
+                setStageFilter(value);
+                setCallFollowUpFilter("Need To Call");
+                setSelectedLeadIds([]);
+              }}
+              ariaLabel="Filter leads by stage"
+              cardStyle
+            />
+          )}
+          {activeTab !== "APP_LOGIN" && activeTab !== "THIRD_PARTY" && (
             <div className="mb-3 flex flex-wrap gap-1.5" role="group" aria-label="Filter leads by status">
               <Button
                 type="button"
