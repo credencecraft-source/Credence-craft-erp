@@ -1,3 +1,5 @@
+"use client";
+
 import { forwardRef, useId, type ChangeEvent, type InputHTMLAttributes } from "react";
 
 import { cn } from "@/lib/utilities/utility-helpers";

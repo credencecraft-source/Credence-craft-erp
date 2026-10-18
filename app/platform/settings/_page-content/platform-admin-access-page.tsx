@@ -249,31 +249,6 @@ export default async function PlatformAdminAccessPage({
                         )}
                       </div>
                     </td>
-                    <td className="px-5 py-3 text-right">
-                      <div className="flex min-w-48 flex-col items-end gap-2">
-                        <form action={updateAccountStatus}>
-                          <input type="hidden" name="accountId" value={account.id} />
-                          <input type="hidden" name="isActive" value={String(!account.is_active)} />
-                          <Button type="submit" size="sm" variant="secondary">
-                            {account.is_active ? "Deactivate" : "Reactivate"}
-                          </Button>
-                        </form>
-                        {mayCreatePlatformAdmin && (
-                          <form action={deleteAccount} className="flex items-end gap-2">
-                            <input type="hidden" name="accountId" value={account.id} />
-                            <Input
-                              aria-label={`Type ${account.email} to confirm deletion`}
-                              name="confirmationEmail"
-                              type="email"
-                              required
-                              placeholder="Confirm account email"
-                              className="max-w-48"
-                            />
-                            <Button type="submit" size="sm" variant="danger">Delete</Button>
-                          </form>
-                        )}
-                      </div>
-                    </td>
                   </tr>
                 ))}
                 {accounts.length === 0 && (

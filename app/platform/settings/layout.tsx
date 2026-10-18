@@ -1,11 +1,15 @@
 import type { ReactNode } from "react";
-import { requirePlatformConfigurationAccess } from "@/lib/auth/platform-session-manager";
+import { redirect } from "next/navigation";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 
 export default async function PlatformSettingsLayout({
   children,
 }: {
   children: ReactNode;
 }) {
-  await requirePlatformConfigurationAccess();
+  const admin = await requirePlatformSessionAdmin();
+  if (admin.team_role) {
+    redirect("/platform/organisations");
+  }
   return children;
 }
