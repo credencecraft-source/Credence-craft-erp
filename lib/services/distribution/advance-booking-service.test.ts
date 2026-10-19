@@ -719,8 +719,13 @@ describe("advance-booking persistence", () => {
         organization_id: "internal-org-1",
         quotationLines: { none: {} },
       },
+      select: expect.objectContaining({
+        id: true,
+        sizeLines: expect.any(Object),
+      }),
       take: 2,
     }));
+    expect(mocks.prisma.advanceBooking.findMany.mock.calls[0][0]).not.toHaveProperty("include");
     expect(mocks.prisma.finishedGoodsGeneralStockReceipt.groupBy).not.toHaveBeenCalled();
   });
 

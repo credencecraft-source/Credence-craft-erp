@@ -32,6 +32,8 @@ async function findGeneralStockReceipts(
     include: {
       grnLine: {
         select: {
+          advance_booked_quantity: true,
+          general_inventory_quantity: true,
           workOrderSizeLine: {
             select: {
               id: true,
@@ -308,6 +310,10 @@ export async function allocateBookingFromGeneralStockInTransaction(
   ]));
   const results: Array<{ size: string; quantity: number }> = [];
   const allocationAudit: Array<{ size: string; quantity: number; workOrderId: string; receiptId: string }> = [];
+  const grnLineCounters = new Map<string, {
+    advanceBookedQuantity: number | null;
+    generalInventoryQuantity: number | null;
+  }>();
 
   for (const bookingLine of bookingLines) {
     let bookingRemaining = Math.max(bookingLine.booked_quantity - (fulfilledQuantityByLine.get(bookingLine.id) ?? 0), 0);
@@ -388,6 +394,41 @@ export async function allocateBookingFromGeneralStockInTransaction(
       if (stockUpdate.count !== 1) {
         throw new Error("General finished-goods stock changed during allocation. Reload and try again.");
       }
+
+      const grnLineCountersBefore = grnLineCounters.get(receipt.grn_line_id) ?? {
+        advanceBookedQuantity: receipt.grnLine.advance_booked_quantity,
+        generalInventoryQuantity: receipt.grnLine.general_inventory_quantity,
+      };
+      const advanceBookedQuantity = grnLineCountersBefore.advanceBookedQuantity ?? 0;
+      const generalInventoryQuantity = grnLineCountersBefore.generalInventoryQuantity;
+      if (
+        !Number.isSafeInteger(advanceBookedQuantity) ||
+        advanceBookedQuantity < 0 ||
+        generalInventoryQuantity === null ||
+        !Number.isSafeInteger(generalInventoryQuantity) ||
+        generalInventoryQuantity < allocationQuantity
+      ) {
+        throw new Error("The GRN general-stock balance cannot cover this allocation. Reconcile the GRN before allocating stock.");
+      }
+      const grnLineCounterUpdate = await transaction.workOrderInventoryGrnLine.updateMany({
+        where: {
+          id: receipt.grn_line_id,
+          grn: { organization_id: organizationId },
+          advance_booked_quantity: grnLineCountersBefore.advanceBookedQuantity,
+          general_inventory_quantity: grnLineCountersBefore.generalInventoryQuantity,
+        },
+        data: {
+          advance_booked_quantity: advanceBookedQuantity + allocationQuantity,
+          general_inventory_quantity: generalInventoryQuantity - allocationQuantity,
+        },
+      });
+      if (grnLineCounterUpdate.count !== 1) {
+        throw new Error("The GRN allocation balance changed during general-stock allocation. Reload and try again.");
+      }
+      grnLineCounters.set(receipt.grn_line_id, {
+        advanceBookedQuantity: advanceBookedQuantity + allocationQuantity,
+        generalInventoryQuantity: generalInventoryQuantity - allocationQuantity,
+      });
 
       const existingGrnAllocation = receipt.grnLine.bookingAllocations.find(
         (allocation) => allocation.booking_assignment_id === assignmentId,

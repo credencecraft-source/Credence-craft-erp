@@ -86,7 +86,7 @@ const bookingReportSelect = {
   },
 };
 
-const bookingRegisterInclude = {
+const bookingRegisterSelect = {
   id: true,
   booking_no: true,
   order_id: true,
@@ -362,7 +362,7 @@ async function listAdvanceBookingRegister(
           }
         : {}),
     },
-    include: bookingRegisterInclude,
+    select: bookingRegisterSelect,
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
     take: take + 1,
   });

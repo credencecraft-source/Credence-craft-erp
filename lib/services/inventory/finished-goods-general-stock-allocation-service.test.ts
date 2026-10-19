@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     finishedGoodsGeneralStockReceipt: { findMany: vi.fn(), updateMany: vi.fn() },
     advanceBookingWorkOrderAssignment: { create: vi.fn(), updateMany: vi.fn() },
     workOrderInventoryGrnBookingAllocation: { create: vi.fn(), updateMany: vi.fn() },
+    workOrderInventoryGrnLine: { updateMany: vi.fn() },
     finishedGoodsAllocatedStockReceipt: { create: vi.fn(), updateMany: vi.fn() },
     finishedGoodsStock: { upsert: vi.fn() },
   },
@@ -65,9 +66,9 @@ const generalStockReceipt = {
   colour: "Blue",
   size: "M",
   buyer_size: "M",
-  received_quantity: 10,
-  actual_received_quantity: 10,
-  approved_quantity: 10,
+  received_quantity: 8,
+  actual_received_quantity: 8,
+  approved_quantity: 8,
   rejected_quantity: 0,
   quantity_in: 8,
   quantity_out: 0,
@@ -77,6 +78,8 @@ const generalStockReceipt = {
   posted_at: new Date("2026-10-02T00:00:00.000Z"),
   created_at: new Date("2026-10-02T00:00:00.000Z"),
   grnLine: {
+    advance_booked_quantity: 0,
+    general_inventory_quantity: 8,
     workOrderSizeLine: {
       id: "work-order-size-1",
       work_order_id: "work-order-1",
@@ -105,6 +108,7 @@ describe("finished-goods general-stock allocation", () => {
     mocks.transaction.advanceBookingWorkOrderAssignment.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.workOrderInventoryGrnBookingAllocation.create.mockResolvedValue({ id: "grn-allocation-1" });
     mocks.transaction.workOrderInventoryGrnBookingAllocation.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.workOrderInventoryGrnLine.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.finishedGoodsAllocatedStockReceipt.create.mockResolvedValue({ id: "allocated-receipt-1" });
     mocks.transaction.finishedGoodsAllocatedStockReceipt.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.finishedGoodsStock.upsert.mockResolvedValue({});
@@ -138,6 +142,15 @@ describe("finished-goods general-stock allocation", () => {
     expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).toHaveBeenCalledWith({
       where: { id: "general-receipt-1", organization_id: "organization-1", current_stock: 8 },
       data: { quantity_out: { increment: 8 }, current_stock: { decrement: 8 } },
+    });
+    expect(mocks.transaction.workOrderInventoryGrnLine.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "grn-line-1",
+        grn: { organization_id: "organization-1" },
+        advance_booked_quantity: 0,
+        general_inventory_quantity: 8,
+      },
+      data: { advance_booked_quantity: 8, general_inventory_quantity: 0 },
     });
     expect(mocks.transaction.workOrderInventoryGrnBookingAllocation.create).toHaveBeenCalledWith({
       data: {
@@ -182,6 +195,7 @@ describe("finished-goods general-stock allocation", () => {
       where: { id: "general-receipt-1", organization_id: "organization-1", current_stock: 8 },
       data: { quantity_out: { increment: 8 }, current_stock: { decrement: 8 } },
     });
+
     expect(mocks.transaction.finishedGoodsAllocatedStockReceipt.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         booking_id: "booking-1",
@@ -189,6 +203,38 @@ describe("finished-goods general-stock allocation", () => {
         current_stock: 8,
       }),
     }));
+  });
+
+  it("keeps the verified GRN split reconciled when 20 of 30 general units are allocated", async () => {
+    const receipt = structuredClone(generalStockReceipt);
+    receipt.received_quantity = 30;
+    receipt.actual_received_quantity = 30;
+    receipt.approved_quantity = 30;
+    receipt.quantity_in = 30;
+    receipt.current_stock = 30;
+    receipt.grnLine.general_inventory_quantity = 30;
+    receipt.grnLine.workOrderSizeLine.quantity = 30;
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([receipt]);
+    const booking = structuredClone(bookingRecord);
+    booking.sizeLines[0].booked_quantity = 30;
+    mocks.transaction.advanceBooking.findFirst.mockResolvedValue(booking);
+
+    await allocateAdvanceBookingFromGeneralStock(
+      "organization-1",
+      "user-1",
+      "booking-1",
+      [{ bookingSizeLineId: "booking-size-1", quantity: 20 }],
+    );
+
+    expect(mocks.transaction.workOrderInventoryGrnLine.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "grn-line-1",
+        grn: { organization_id: "organization-1" },
+        advance_booked_quantity: 0,
+        general_inventory_quantity: 30,
+      },
+      data: { advance_booked_quantity: 20, general_inventory_quantity: 10 },
+    });
   });
 
   it("returns allocated sizes in their Size Group order", async () => {
@@ -387,10 +433,20 @@ describe("finished-goods general-stock allocation", () => {
   it("allocates matching receipts in FIFO order without scanning unrelated sizes", async () => {
     const firstReceipt = structuredClone(generalStockReceipt);
     firstReceipt.current_stock = 3;
+    firstReceipt.received_quantity = 3;
+    firstReceipt.actual_received_quantity = 3;
+    firstReceipt.quantity_in = 3;
+    firstReceipt.approved_quantity = 3;
+    firstReceipt.grnLine.general_inventory_quantity = 3;
     const secondReceipt = structuredClone(generalStockReceipt);
     secondReceipt.id = "general-receipt-2";
     secondReceipt.grn_line_id = "grn-line-2";
     secondReceipt.current_stock = 5;
+    secondReceipt.received_quantity = 5;
+    secondReceipt.actual_received_quantity = 5;
+    secondReceipt.quantity_in = 5;
+    secondReceipt.approved_quantity = 5;
+    secondReceipt.grnLine.general_inventory_quantity = 5;
     secondReceipt.grnLine.bookingAllocations = [];
     const otherSizeReceipt = structuredClone(generalStockReceipt);
     otherSizeReceipt.id = "general-receipt-s";
@@ -419,6 +475,24 @@ describe("finished-goods general-stock allocation", () => {
       data: { quantity_out: { increment: 4 }, current_stock: { decrement: 4 } },
     });
     expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.transaction.workOrderInventoryGrnLine.updateMany).toHaveBeenNthCalledWith(1, {
+      where: {
+        id: "grn-line-1",
+        grn: { organization_id: "organization-1" },
+        advance_booked_quantity: 0,
+        general_inventory_quantity: 3,
+      },
+      data: { advance_booked_quantity: 3, general_inventory_quantity: 0 },
+    });
+    expect(mocks.transaction.workOrderInventoryGrnLine.updateMany).toHaveBeenNthCalledWith(2, {
+      where: {
+        id: "grn-line-2",
+        grn: { organization_id: "organization-1" },
+        advance_booked_quantity: 0,
+        general_inventory_quantity: 5,
+      },
+      data: { advance_booked_quantity: 4, general_inventory_quantity: 1 },
+    });
   });
 
   it("caps allocation at the remaining booking and work-order size balances", async () => {
