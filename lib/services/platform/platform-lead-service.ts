@@ -228,7 +228,7 @@ export async function testPlatformGoogleSheetsLeadConnection(webAppUrl: string) 
 export async function listPlatformLeads() {
   await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   return prisma.platformLead.findMany({
-    orderBy: [{ updated_at: "desc" }, { name: "asc" }],
+    orderBy: [{ created_at: "desc" }, { name: "asc" }],
     include: {
       campaignEntries: {
         orderBy: { added_at: "desc" },
@@ -246,7 +246,7 @@ export async function listPlatformLeadAppLogins() {
   await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const users = await prisma.workspaceUser.findMany({
     where: { last_login_at: { not: null } },
-    orderBy: [{ last_login_at: "desc" }, { full_name: "asc" }],
+    orderBy: [{ created_at: "desc" }, { full_name: "asc" }],
     select: {
       id: true,
       full_name: true,

@@ -389,7 +389,7 @@ describe("platform lead management", () => {
     await expect(listPlatformLeads()).resolves.toEqual([]);
     expect(requirePlatformNavigationPermissionMock).toHaveBeenCalledWith("canAccessLeadsAndSubscriptions");
     expect(findLeadsMock).toHaveBeenCalledWith({
-      orderBy: [{ updated_at: "desc" }, { name: "asc" }],
+      orderBy: [{ created_at: "desc" }, { name: "asc" }],
       include: {
         campaignEntries: {
           orderBy: { added_at: "desc" },
@@ -432,7 +432,7 @@ describe("platform lead management", () => {
     expect(requirePlatformNavigationPermissionMock).toHaveBeenCalledWith("canAccessLeadsAndSubscriptions");
     expect(findWorkspaceUsersMock).toHaveBeenCalledWith(expect.objectContaining({
       where: { last_login_at: { not: null } },
-      orderBy: [{ last_login_at: "desc" }, { full_name: "asc" }],
+      orderBy: [{ created_at: "desc" }, { full_name: "asc" }],
       select: expect.objectContaining({ created_at: true }),
     }));
   });
