@@ -1,4 +1,4 @@
-import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { requirePlatformNavigationPermission } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 
 const MAX_CAMPAIGN_LEADS = 500;
@@ -63,7 +63,7 @@ function getCampaignActionEligibility(messages: Array<{
 }
 
 export async function listPlatformCampaigns() {
-  await requirePlatformSessionAdmin();
+  await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const campaigns = await prisma.platformCampaign.findMany({
     orderBy: [{ campaign_date: "desc" }, { created_at: "desc" }],
     select: {
@@ -87,7 +87,7 @@ export async function listPlatformCampaigns() {
 }
 
 export async function getPlatformCampaign(campaignId: string) {
-  await requirePlatformSessionAdmin();
+  await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const id = campaignId.trim();
   if (!id || id.length > 255) throw new Error("Select a valid campaign.");
 
@@ -117,7 +117,7 @@ export async function getPlatformCampaign(campaignId: string) {
 }
 
 export async function createPlatformCampaign(input: { name: string; campaignDate: string }) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const name = normalizeCampaignName(input.name);
   const campaignDate = normalizeCampaignDate(input.campaignDate);
 
@@ -139,7 +139,7 @@ export async function createPlatformCampaign(input: { name: string; campaignDate
 }
 
 export async function addPlatformLeadsToCampaign(campaignId: string, values: string[]) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const id = campaignId.trim();
   if (!id || id.length > 255) throw new Error("Select a valid campaign.");
   const leadIds = normalizeLeadIds(values);
@@ -189,7 +189,7 @@ export async function addPlatformLeadsToCampaign(campaignId: string, values: str
 }
 
 export async function removePlatformLeadFromCampaign(campaignId: string, leadId: string) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const normalizedCampaignId = campaignId.trim();
   const normalizedLeadId = leadId.trim();
   if (!normalizedCampaignId || normalizedCampaignId.length > 255) {
@@ -256,7 +256,7 @@ function assertCampaignHasNoDeliveredOrInFlightMessages(messages: Array<{
 }
 
 export async function cancelScheduledPlatformCampaignMessages(campaignId: string) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const id = normalizeCampaignId(campaignId);
 
   return prisma.$transaction(async (transaction) => {
@@ -297,7 +297,7 @@ export async function cancelScheduledPlatformCampaignMessages(campaignId: string
 }
 
 export async function deletePlatformCampaign(campaignId: string) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const id = normalizeCampaignId(campaignId);
 
   return prisma.$transaction(async (transaction) => {

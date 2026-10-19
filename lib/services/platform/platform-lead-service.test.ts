@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
-  requirePlatformSessionAdminMock,
+  requirePlatformNavigationPermissionMock,
   prismaMock,
   findLeadsMock,
   findWorkspaceUsersMock,
@@ -51,7 +51,7 @@ const {
     ),
   };
   return {
-    requirePlatformSessionAdminMock: vi.fn(),
+    requirePlatformNavigationPermissionMock: vi.fn(),
     prismaMock: prisma,
     findLeadsMock: findLeads,
     findWorkspaceUsersMock: findWorkspaceUsers,
@@ -67,7 +67,7 @@ const {
 });
 
 vi.mock("@/lib/auth/platform-session-manager", () => ({
-  requirePlatformSessionAdmin: requirePlatformSessionAdminMock,
+  requirePlatformNavigationPermission: requirePlatformNavigationPermissionMock,
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -113,7 +113,7 @@ describe("platform lead management", () => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
     vi.clearAllMocks();
-    requirePlatformSessionAdminMock.mockResolvedValue({ id: "admin-1" });
+    requirePlatformNavigationPermissionMock.mockResolvedValue({ id: "admin-1" });
   });
 
   it("keeps only canonical stages in the retired status groups", () => {
@@ -304,7 +304,7 @@ describe("platform lead management", () => {
     });
 
     vi.clearAllMocks();
-    requirePlatformSessionAdminMock.mockResolvedValue({ id: "admin-1" });
+    requirePlatformNavigationPermissionMock.mockResolvedValue({ id: "admin-1" });
     findLeadStagesMock.mockResolvedValue([{ id: "lead-3", stage: "1-new" }]);
     updateLeadStagesMock.mockResolvedValue({ count: 1 });
     createAuditEventsMock.mockResolvedValue({ count: 1 });
@@ -387,7 +387,7 @@ describe("platform lead management", () => {
     findLeadsMock.mockResolvedValue([]);
 
     await expect(listPlatformLeads()).resolves.toEqual([]);
-    expect(requirePlatformSessionAdminMock).toHaveBeenCalledOnce();
+    expect(requirePlatformNavigationPermissionMock).toHaveBeenCalledWith("canAccessLeadsAndSubscriptions");
     expect(findLeadsMock).toHaveBeenCalledWith({
       orderBy: [{ updated_at: "desc" }, { name: "asc" }],
       include: {
@@ -429,7 +429,7 @@ describe("platform lead management", () => {
       created_at: new Date("2025-01-15T08:00:00Z"),
       last_login_at: new Date("2026-10-02T10:30:00Z"),
     }]);
-    expect(requirePlatformSessionAdminMock).toHaveBeenCalledOnce();
+    expect(requirePlatformNavigationPermissionMock).toHaveBeenCalledWith("canAccessLeadsAndSubscriptions");
     expect(findWorkspaceUsersMock).toHaveBeenCalledWith(expect.objectContaining({
       where: { last_login_at: { not: null } },
       orderBy: [{ last_login_at: "desc" }, { full_name: "asc" }],
@@ -553,7 +553,7 @@ describe("platform lead management", () => {
     vi.stubEnv("GOOGLE_SHEETS_LEADS_WEB_APP_URL", "https://script.google.com/macros/s/deployment-id/exec");
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    requirePlatformSessionAdminMock.mockRejectedValue(new Error("Not authorized."));
+    requirePlatformNavigationPermissionMock.mockRejectedValue(new Error("Not authorized."));
 
     await expect(syncPlatformLeadsFromGoogleSheet("https://script.google.com/macros/s/deployment-id/exec")).rejects.toThrow("Not authorized.");
     expect(fetchMock).not.toHaveBeenCalled();

@@ -31,13 +31,13 @@ const mocks = vi.hoisted(() => {
       subscription: { count: vi.fn() },
     },
     requireOrganizationAccess: vi.fn(),
-    requirePlatformSessionAdmin: vi.fn(),
+    requirePlatformNavigationPermission: vi.fn(),
   };
 });
 
 vi.mock("@/lib/database/prisma-client", () => ({ prisma: mocks.prisma }));
 vi.mock("@/lib/auth/platform-session-manager", () => ({
-  requirePlatformSessionAdmin: mocks.requirePlatformSessionAdmin,
+  requirePlatformNavigationPermission: mocks.requirePlatformNavigationPermission,
 }));
 vi.mock("./organization-service", () => ({ requireOrganizationAccess: mocks.requireOrganizationAccess }));
 
@@ -59,7 +59,7 @@ beforeEach(() => {
     Array.isArray(operation) ? Promise.all(operation) : operation(mocks.transaction),
   );
   mocks.requireOrganizationAccess.mockResolvedValue({ organization_id: "internal-org-id" });
-  mocks.requirePlatformSessionAdmin.mockResolvedValue({ id: "admin-id" });
+  mocks.requirePlatformNavigationPermission.mockResolvedValue({ id: "admin-id" });
   mocks.transaction.supportTicket.create.mockResolvedValue({ id: "ticket-id" });
   mocks.transaction.ticketMessage.create.mockResolvedValue({ id: "message-id" });
   mocks.transaction.supportTicket.update.mockResolvedValue({ id: "ticket-id", status: "CLOSED" });
@@ -142,7 +142,7 @@ describe("support ticket access and internal notes", () => {
   it("stores platform notes with a non-customer-visible sender type", async () => {
     mocks.transaction.ticketMessage.create.mockResolvedValue({ id: "note-id" });
 
-    await addPlatformTicketMessage("ticket-id", "admin-id", "  Internal investigation  ", true);
+    await addPlatformTicketMessage("ticket-id", "  Internal investigation  ", true);
 
     expect(mocks.transaction.ticketMessage.create).toHaveBeenCalledWith({
       data: { support_ticket_id: "ticket-id", body: "Internal investigation", sender_type: "INTERNAL", platform_admin_id: "admin-id" },
@@ -162,7 +162,6 @@ describe("support ticket access and internal notes", () => {
     await expect(createPlatformSupportTicket({
       organizationId: "public-org-id",
       submittedByUserId: "member-id",
-      platformAdminId: "admin-id",
       subject: "Demo meeting",
       description: "Please coordinate a product demonstration with the organization.",
       requestType: "TICKET",
@@ -181,7 +180,6 @@ describe("support ticket access and internal notes", () => {
     await createPlatformSupportTicket({
       organizationId: "public-org-id",
       submittedByUserId: "member-id",
-      platformAdminId: "admin-id",
       subject: "Demo meeting",
       description: "Please coordinate a product demonstration with the organization.",
     });
@@ -209,7 +207,7 @@ describe("support ticket access and internal notes", () => {
       callbackTime: "14:30",
     });
 
-    expect(mocks.requirePlatformSessionAdmin).toHaveBeenCalledOnce();
+    expect(mocks.requirePlatformNavigationPermission).toHaveBeenCalledWith("canAccessLeadsAndSubscriptions");
     expect(mocks.prisma.platformLead.findUnique).toHaveBeenCalledWith({
       where: { id: "lead-id" },
       select: { id: true },
@@ -318,7 +316,7 @@ describe("support ticket access and internal notes", () => {
     mocks.transaction.supportTicket.findUnique.mockResolvedValue({ id: "ticket-id", status: "OPEN" });
     mocks.transaction.supportTicket.update.mockResolvedValue({ id: "ticket-id", status: "CLOSED" });
 
-    await updateSupportTicketStatus("ticket-id", "CLOSED", "admin-id");
+    await updateSupportTicketStatus("ticket-id", "CLOSED");
 
     expect(mocks.transaction.platformAuditEvent.create).toHaveBeenCalledWith({
       data: {

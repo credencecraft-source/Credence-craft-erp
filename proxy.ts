@@ -6,7 +6,7 @@ import {
   verifySessionToken,
 } from "@/lib/auth/session-token";
 
-const apiCorsMethods = "GET, POST, OPTIONS";
+const apiCorsMethods = "GET, POST, PATCH, DELETE, OPTIONS";
 
 function isAllowedApiOrigin(origin: string) {
   const configuredOrigins = process.env.EXPO_WEB_ALLOWED_ORIGINS

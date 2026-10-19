@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
-  requirePlatformSessionAdminMock,
+  requirePlatformNavigationPermissionMock,
   findCampaignsMock,
   findCampaignMock,
   createCampaignMock,
@@ -61,7 +61,7 @@ const {
     ),
   };
   return {
-    requirePlatformSessionAdminMock: vi.fn(),
+    requirePlatformNavigationPermissionMock: vi.fn(),
     findCampaignsMock: findCampaigns,
     findCampaignMock: findCampaign,
     createCampaignMock: createCampaign,
@@ -80,7 +80,7 @@ const {
 });
 
 vi.mock("@/lib/auth/platform-session-manager", () => ({
-  requirePlatformSessionAdmin: requirePlatformSessionAdminMock,
+  requirePlatformNavigationPermission: requirePlatformNavigationPermissionMock,
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -99,14 +99,14 @@ import {
 describe("platform campaign management", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    requirePlatformSessionAdminMock.mockResolvedValue({ id: "admin-1" });
+    requirePlatformNavigationPermissionMock.mockResolvedValue({ id: "admin-1" });
   });
 
   it("lists campaigns only after authenticating the platform admin", async () => {
     findCampaignsMock.mockResolvedValue([]);
 
     await expect(listPlatformCampaigns()).resolves.toEqual([]);
-    expect(requirePlatformSessionAdminMock).toHaveBeenCalledOnce();
+    expect(requirePlatformNavigationPermissionMock).toHaveBeenCalledWith("canAccessLeadsAndSubscriptions");
     expect(findCampaignsMock).toHaveBeenCalledWith(expect.objectContaining({
       orderBy: [{ campaign_date: "desc" }, { created_at: "desc" }],
     }));

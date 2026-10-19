@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { cache } from "react";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { getPlatformNavigationAccess } from "@/lib/auth/platform-navigation-access";
 import {
   createPlatformSessionToken,
   PLATFORM_SESSION_COOKIE_NAME,
@@ -114,6 +115,12 @@ export const getPlatformSessionAdmin = cache(async (): Promise<PlatformSessionAd
   }
 
   const availableViews = getAvailablePlatformViews(admin.role, admin.team_role);
+  if (
+    requestedViewHeader &&
+    !availableViews.includes(requestedViewHeader as PlatformViewMode)
+  ) {
+    return null;
+  }
   const requestedView = [requestedViewHeader, cookieRequestedView].find(
     (view): view is PlatformViewMode =>
       Boolean(view && availableViews.includes(view as PlatformViewMode)),
@@ -151,6 +158,16 @@ export async function requirePlatformSessionSuperAdmin(): Promise<PlatformSessio
 export async function requirePlatformConfigurationAccess(): Promise<PlatformSessionAdmin> {
   const admin = await requirePlatformSessionAdmin();
   assertPlatformConfigurationAccess(admin);
+  return admin;
+}
+
+export async function requirePlatformNavigationPermission(
+  permission: keyof ReturnType<typeof getPlatformNavigationAccess>,
+): Promise<PlatformSessionAdmin> {
+  const admin = await requirePlatformSessionAdmin();
+  if (!getPlatformNavigationAccess(admin.team_role)[permission]) {
+    throw new Error("You do not have access to this platform module.");
+  }
   return admin;
 }
 

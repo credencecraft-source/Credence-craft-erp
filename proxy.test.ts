@@ -43,8 +43,8 @@ describe("API authentication proxy", () => {
         method: "OPTIONS",
         headers: {
           Origin: "http://localhost:8082",
-          "Access-Control-Request-Method": "POST",
-          "Access-Control-Request-Headers": "content-type",
+          "Access-Control-Request-Method": "DELETE",
+          "Access-Control-Request-Headers": "authorization, x-platform-view",
         },
       }),
     );
@@ -57,11 +57,29 @@ describe("API authentication proxy", () => {
       "true",
     );
     expect(response.headers.get("access-control-allow-methods")).toBe(
-      "GET, POST, OPTIONS",
+      "GET, POST, PATCH, DELETE, OPTIONS",
     );
     expect(response.headers.get("access-control-allow-headers")).toBe(
       "Content-Type, Authorization, X-Platform-View",
     );
+  });
+
+  it("allows the native platform session DELETE preflight and authorization headers", () => {
+    const response = proxy(
+      new NextRequest("http://localhost/api/platform/mobile-session", {
+        method: "OPTIONS",
+        headers: {
+          Origin: "http://localhost:8082",
+          "Access-Control-Request-Method": "DELETE",
+          "Access-Control-Request-Headers": "authorization, x-platform-view",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-methods")).toContain("DELETE");
+    expect(response.headers.get("access-control-allow-headers")).toContain("Authorization");
+    expect(response.headers.get("access-control-allow-headers")).toContain("X-Platform-View");
   });
 
   it("does not grant CORS access to an unconfigured origin", () => {

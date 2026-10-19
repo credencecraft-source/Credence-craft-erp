@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { prisma } from "@/lib/database/prisma-client";
-import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { requirePlatformNavigationPermission } from "@/lib/auth/platform-session-manager";
 import { normalizeSystemStatusKey } from "@/lib/auth/validation-rules";
 import { requireOrganizationAccess } from "./organization-service";
 import { PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES } from "@/lib/services/platform/platform-lead-constants";
@@ -121,7 +121,6 @@ export async function listSupportTicketOrganizations() {
 export async function createPlatformSupportTicket(input: {
   organizationId: string;
   submittedByUserId: string;
-  platformAdminId: string;
   subject: string;
   description: string;
   priority?: string;
@@ -129,6 +128,7 @@ export async function createPlatformSupportTicket(input: {
   callbackDate?: string;
   callbackTime?: string;
 }) {
+  const admin = await requirePlatformNavigationPermission("canAccessSupport");
   const normalized = normalizeTicketInput(input);
   const organization = await prisma.organization.findFirst({
     where: {
@@ -147,13 +147,13 @@ export async function createPlatformSupportTicket(input: {
         ticket_number: randomUUID(),
         organization_id: organization.id,
         submitted_by_user_id: input.submittedByUserId,
-        created_by_platform_admin_id: input.platformAdminId,
+        created_by_platform_admin_id: admin.id,
         ...normalized,
       },
     });
     await transaction.platformAuditEvent.create({
       data: {
-        platform_admin_id: input.platformAdminId,
+        platform_admin_id: admin.id,
         action: "SUPPORT_TICKET_CREATED_FOR_ORGANIZATION",
         entity_type: "SupportTicket",
         entity_id: ticket.id,
@@ -179,7 +179,7 @@ export async function createPlatformLeadSupportTicket(input: {
   callbackTime?: string;
   markCallBackLater?: boolean;
 }) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const normalized = normalizeTicketInput(input);
   const leadId = input.leadId.trim();
   if (!leadId || leadId.length > 255) throw new Error("Select a valid lead.");
@@ -280,7 +280,7 @@ export async function createPlatformLeadSupportTicket(input: {
 }
 
 export async function listPlatformLeadSupportTickets(leadId: string) {
-  await requirePlatformSessionAdmin();
+  await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const id = leadId.trim();
   if (!id || id.length > 255) throw new Error("Select a valid lead.");
   const lead = await prisma.platformLead.findUnique({
@@ -417,6 +417,7 @@ export async function requestExpiredTrialExtension(
 }
 
 export async function listSupportTickets() {
+  await requirePlatformNavigationPermission("canAccessSupport");
   return prisma.supportTicket.findMany({
     select: {
       id: true,
@@ -439,6 +440,7 @@ export async function listSupportTickets() {
 }
 
 export async function getSupportTicket(id: string) {
+  await requirePlatformNavigationPermission("canAccessSupport");
   return prisma.supportTicket.findUnique({
     where: { id },
     include: {
@@ -568,12 +570,17 @@ export async function addWorkspaceTicketMessage(organizationId: string, ticketId
   });
 }
 
-export async function addPlatformTicketMessage(ticketId: string, platformAdminId: string, body: string, internal = false) {
+export async function addPlatformTicketMessage(ticketId: string, body: string, internal = false) {
   const ticket = await prisma.supportTicket.findUnique({
     where: { id: ticketId },
     select: { id: true, organization_id: true, platform_lead_id: true },
   });
   if (!ticket) throw new Error("Support ticket not found.");
+  const admin = await requirePlatformNavigationPermission(
+    ticket.platform_lead_id
+      ? "canAccessLeadsAndSubscriptions"
+      : "canAccessSupport",
+  );
   if (ticket.platform_lead_id && !internal) {
     throw new Error("Lead follow-up tickets only support private platform notes.");
   }
@@ -585,13 +592,13 @@ export async function addPlatformTicketMessage(ticketId: string, platformAdminId
         support_ticket_id: ticketId,
         body: cleanBody,
         sender_type: internal ? "INTERNAL" : "PLATFORM",
-        platform_admin_id: platformAdminId,
+        platform_admin_id: admin.id,
       },
     });
     await transaction.supportTicket.update({ where: { id: ticketId }, data: { updated_at: new Date() } });
     await transaction.platformAuditEvent.create({
       data: {
-        platform_admin_id: platformAdminId,
+        platform_admin_id: admin.id,
         action: internal ? "SUPPORT_TICKET_PRIVATE_NOTE_ADDED" : "SUPPORT_TICKET_REPLY_SENT",
         entity_type: "SupportTicket",
         entity_id: ticketId,
@@ -602,7 +609,8 @@ export async function addPlatformTicketMessage(ticketId: string, platformAdminId
   });
 }
 
-export async function updateSupportTicketStatus(id: string, status: string, platformAdminId: string) {
+export async function updateSupportTicketStatus(id: string, status: string) {
+  const admin = await requirePlatformNavigationPermission("canAccessSupport");
   const normalizedStatus = normalizeSystemStatusKey(status) as SupportTicketStatus;
   if (!TICKET_STATUSES.includes(normalizedStatus)) throw new Error("Select a valid ticket status.");
 
@@ -615,7 +623,7 @@ export async function updateSupportTicketStatus(id: string, status: string, plat
     });
     await transaction.platformAuditEvent.create({
       data: {
-        platform_admin_id: platformAdminId,
+        platform_admin_id: admin.id,
         action: "SUPPORT_TICKET_STATUS_UPDATED",
         entity_type: "SupportTicket",
         entity_id: id,

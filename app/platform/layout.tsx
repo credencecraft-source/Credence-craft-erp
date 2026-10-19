@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { connection } from "next/server";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { ArrowUpRight, Bell, Home } from "lucide-react";
@@ -20,6 +21,7 @@ export default async function PlatformRootLayout({
 }: {
   children: ReactNode;
 }) {
+  await connection();
   const admin = await getPlatformSessionAdmin();
   if (!admin) {
     const currentPath = (await headers()).get("x-current-path");

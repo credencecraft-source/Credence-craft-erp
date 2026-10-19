@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getPlatformNavigationAccess } from "@/lib/auth/platform-navigation-access";
-import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { getPlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { listOrganizationClients } from "@/lib/services/platform/client-service";
 import { listBusinessTypes } from "@/lib/services/platform/business-type-service";
 import { listPlans } from "@/lib/services/platform/plan-service";
@@ -30,7 +30,10 @@ const CONFIGURATION_MODULES = new Set([
 
 export async function GET(request: Request) {
   try {
-    const admin = await requirePlatformSessionAdmin();
+    const admin = await getPlatformSessionAdmin();
+    if (!admin) {
+      return NextResponse.json({ error: "Platform sign-in is required." }, { status: 401 });
+    }
     const moduleName = new URL(request.url).searchParams.get("module") ?? "";
     const access = getPlatformNavigationAccess(admin.team_role);
     const isSuperAdminView = admin.role === "SUPER_ADMIN";
@@ -39,7 +42,10 @@ export async function GET(request: Request) {
       (CONFIGURATION_MODULES.has(moduleName) &&
         (!access.canAccessConfiguration ||
           (moduleName !== "platform-access" && isSuperAdminView))) ||
-      (moduleName === "subscriptions" && !access.canAccessConfiguration) ||
+      (moduleName === "subscriptions" &&
+        !access.canAccessConfiguration &&
+        !access.canAccessLeadsAndSubscriptions) ||
+      (moduleName === "organisations" && !access.canAccessWorkspace) ||
       (moduleName === "workspace-users" && !access.canAccessWorkspace) ||
       ((moduleName === "leads" || moduleName === "campaigns") &&
         !access.canAccessLeadsAndSubscriptions) ||

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
+import { requirePlatformNavigationPermission } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
 import {
@@ -213,14 +213,14 @@ async function requestGoogleSheetsLeads(endpoint: URL) {
 }
 
 export async function testPlatformGoogleSheetsLeadConnection(webAppUrl: string) {
-  await requirePlatformSessionAdmin();
+  await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const endpoint = validateGoogleSheetsConfiguration(webAppUrl);
   const leads = await requestGoogleSheetsLeads(endpoint);
   return { connected: true, availableLeads: leads.length };
 }
 
 export async function listPlatformLeads() {
-  await requirePlatformSessionAdmin();
+  await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   return prisma.platformLead.findMany({
     orderBy: [{ updated_at: "desc" }, { name: "asc" }],
     include: {
@@ -237,7 +237,7 @@ export async function listPlatformLeads() {
 }
 
 export async function listPlatformLeadAppLogins() {
-  await requirePlatformSessionAdmin();
+  await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const users = await prisma.workspaceUser.findMany({
     where: { last_login_at: { not: null } },
     orderBy: [{ last_login_at: "desc" }, { full_name: "asc" }],
@@ -287,7 +287,7 @@ export async function listPlatformLeadAppLogins() {
 }
 
 export async function importPlatformLeads(inputs: PlatformLeadInput[]) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   if (inputs.length === 0) throw new Error("The workbook does not contain any lead rows.");
   if (inputs.length > MAX_IMPORTED_LEADS) {
     throw new Error(`Import up to ${MAX_IMPORTED_LEADS} leads at a time.`);
@@ -311,7 +311,7 @@ export async function importPlatformLeads(inputs: PlatformLeadInput[]) {
 }
 
 export async function syncPlatformLeadsFromGoogleSheet(webAppUrl: string) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const endpoint = validateGoogleSheetsConfiguration(webAppUrl);
   const inputs = await requestGoogleSheetsLeads(endpoint);
   if (inputs.length === 0) {
@@ -363,7 +363,7 @@ export async function syncPlatformLeadsFromGoogleSheet(webAppUrl: string) {
 }
 
 export async function createPlatformLead(input: PlatformLeadInput) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const normalized = normalizePlatformLeadInput(input);
 
   return prisma.$transaction(async (transaction) => {
@@ -382,7 +382,7 @@ export async function createPlatformLead(input: PlatformLeadInput) {
 }
 
 export async function updatePlatformLead(leadId: string, input: PlatformLeadInput) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const id = leadId.trim();
   if (!id || id.length > 255) throw new Error("Select a valid lead.");
   const normalized = normalizePlatformLeadInput(input);
@@ -419,7 +419,7 @@ export async function updatePlatformLead(leadId: string, input: PlatformLeadInpu
 }
 
 export async function updatePlatformLeadStage(leadId: string, stage: string) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const id = leadId.trim();
   const normalizedStage = stage.trim();
   if (!id || id.length > 255) throw new Error("Select a valid lead.");
@@ -454,7 +454,7 @@ export async function movePlatformLeadStages(
   leadIds: string[],
   direction: "NEXT" | "PREVIOUS",
 ) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   if (!Array.isArray(leadIds) || leadIds.length === 0 || leadIds.length > 500) {
     throw new Error("Select between 1 and 500 leads to move.");
   }
@@ -520,7 +520,7 @@ export async function movePlatformLeadStages(
 }
 
 export async function updateNewPlatformLeadStages(leadIds: string[], stage: string) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   if (!Array.isArray(leadIds) || leadIds.length === 0 || leadIds.length > 500) {
     throw new Error("Select between 1 and 500 new leads.");
   }
@@ -562,7 +562,7 @@ export async function updateNewPlatformLeadStages(leadIds: string[], stage: stri
 }
 
 export async function updatePlatformLeadStages(leadIds: string[], stage: string) {
-  const admin = await requirePlatformSessionAdmin();
+  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   if (!Array.isArray(leadIds) || leadIds.length === 0 || leadIds.length > 500) {
     throw new Error("Select between 1 and 500 leads.");
   }

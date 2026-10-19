@@ -25,13 +25,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const admin = await requirePlatformSessionAdmin();
     const payload: unknown = await request.json();
     const body = typeof payload === "object" && payload !== null ? payload as Record<string, unknown> : {};
     const ticket = await createPlatformSupportTicket({
       organizationId: typeof body.organizationId === "string" ? body.organizationId : "",
       submittedByUserId: typeof body.submittedByUserId === "string" ? body.submittedByUserId : "",
-      platformAdminId: admin.id,
       subject: typeof body.subject === "string" ? body.subject : "",
       description: typeof body.description === "string" ? body.description : "",
       priority: typeof body.priority === "string" ? body.priority : undefined,
