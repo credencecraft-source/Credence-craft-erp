@@ -60,7 +60,7 @@ describe("API authentication proxy", () => {
       "GET, POST, OPTIONS",
     );
     expect(response.headers.get("access-control-allow-headers")).toBe(
-      "Content-Type",
+      "Content-Type, Authorization, X-Platform-View",
     );
   });
 
@@ -119,6 +119,31 @@ describe("API authentication proxy", () => {
     ));
 
     expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("allows platform API requests with a valid native bearer session", () => {
+    const response = proxy(
+      new NextRequest("http://localhost/api/platform/mobile-session", {
+        headers: {
+          Authorization: `Bearer ${createPlatformSessionToken("admin-123")}`,
+        },
+      }),
+    );
+
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("rejects an invalid native bearer session on platform API requests", async () => {
+    const response = proxy(
+      new NextRequest("http://localhost/api/platform/mobile-session", {
+        headers: { Authorization: "Bearer invalid-token" },
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      error: "Authentication required.",
+    });
   });
 
   it("rejects a regular user session on platform API requests", async () => {

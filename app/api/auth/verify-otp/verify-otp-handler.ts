@@ -18,7 +18,10 @@ import {
   DATABASE_UNAVAILABLE_MESSAGE,
   isDatabaseUnavailableError,
 } from "@/lib/database/database-errors";
-import { setPlatformSessionCookie } from "@/lib/auth/platform-session-manager";
+import {
+  createPlatformSessionToken,
+  setPlatformSessionCookie,
+} from "@/lib/auth/platform-session-manager";
 
 const USE_DEV_USER_STORE = process.env.USE_DEV_USER_STORE === "true";
 const isDevBypass =
@@ -96,7 +99,13 @@ export async function POST(request: Request) {
 
       await prisma.platformAdmin.update({ where: { id: admin.id }, data: { last_login_at: new Date() } });
       await setPlatformSessionCookie(admin.id);
-      return NextResponse.json({ ok: true, redirectTo: "/platform/organisations" });
+      return NextResponse.json({
+        ok: true,
+        redirectTo: "/platform/organisations",
+        ...(body.mobileClient === true
+          ? { sessionToken: createPlatformSessionToken(admin.id) }
+          : {}),
+      });
     }
 
     if (!process.env.DATABASE_URL && !isDevBypass) {

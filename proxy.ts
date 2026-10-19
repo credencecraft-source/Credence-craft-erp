@@ -38,7 +38,10 @@ function addApiCorsHeaders(request: NextRequest, response: NextResponse) {
   response.headers.set("Access-Control-Allow-Origin", origin);
   response.headers.set("Access-Control-Allow-Credentials", "true");
   response.headers.set("Access-Control-Allow-Methods", apiCorsMethods);
-  response.headers.set("Access-Control-Allow-Headers", "Content-Type");
+  response.headers.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-Platform-View",
+  );
   response.headers.append("Vary", "Origin");
   return response;
 }
@@ -74,9 +77,14 @@ export function proxy(request: NextRequest) {
   const isPlatformLoginPage = pathname === "/platform" || pathname === "/platform/";
   const isPlatformApiRoute = pathname.startsWith("/api/platform/");
   const isPlatformProtectedRoute = isPlatformPageRoute || isPlatformApiRoute;
-  const sessionToken = request.cookies.get(
-    isPlatformProtectedRoute ? PLATFORM_SESSION_COOKIE_NAME : SESSION_COOKIE_NAME,
-  )?.value;
+  const bearerToken = isPlatformProtectedRoute
+    ? request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]
+    : undefined;
+  const sessionToken =
+    bearerToken ??
+    request.cookies.get(
+      isPlatformProtectedRoute ? PLATFORM_SESSION_COOKIE_NAME : SESSION_COOKIE_NAME,
+    )?.value;
   const authenticatedUserId = isPlatformProtectedRoute
     ? verifyPlatformSessionToken(sessionToken)
     : verifySessionToken(sessionToken);

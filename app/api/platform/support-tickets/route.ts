@@ -1,7 +1,27 @@
 import { NextResponse } from "next/server";
 
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
-import { createPlatformSupportTicket } from "@/lib/services/organizations/support-ticket-service";
+import {
+  createPlatformSupportTicket,
+  listSupportTickets,
+} from "@/lib/services/organizations/support-ticket-service";
+import { getPlatformNavigationAccess } from "@/lib/auth/platform-navigation-access";
+
+export async function GET() {
+  try {
+    const admin = await requirePlatformSessionAdmin();
+    if (!getPlatformNavigationAccess(admin.team_role).canAccessSupport) {
+      return NextResponse.json({ error: "You do not have access to platform support." }, { status: 403 });
+    }
+    const tickets = await listSupportTickets();
+    return NextResponse.json({ tickets });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to load support tickets." },
+      { status: 400 },
+    );
+  }
+}
 
 export async function POST(request: Request) {
   try {

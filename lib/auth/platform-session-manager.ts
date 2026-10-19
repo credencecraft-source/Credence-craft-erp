@@ -1,4 +1,4 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 
@@ -95,8 +95,12 @@ export async function setPlatformSessionCookie(adminId: string) {
 
 export const getPlatformSessionAdmin = cache(async (): Promise<PlatformSessionAdmin | null> => {
   const cookieStore = await cookies();
-  const token = cookieStore.get(PLATFORM_SESSION_COOKIE_NAME)?.value ?? null;
-  const requestedView = cookieStore.get(PLATFORM_VIEW_COOKIE_NAME)?.value;
+  const requestHeaders = await headers();
+  const authorization = requestHeaders.get("authorization");
+  const bearerToken = authorization?.match(/^Bearer\s+(.+)$/i)?.[1] ?? null;
+  const token = bearerToken ?? cookieStore.get(PLATFORM_SESSION_COOKIE_NAME)?.value ?? null;
+  const requestedViewHeader = requestHeaders.get("x-platform-view")?.trim();
+  const cookieRequestedView = cookieStore.get(PLATFORM_VIEW_COOKIE_NAME)?.value;
   const adminId = verifyPlatformSessionToken(token);
 
   if (!adminId) {
@@ -108,6 +112,12 @@ export const getPlatformSessionAdmin = cache(async (): Promise<PlatformSessionAd
   if (!admin || !admin.is_active) {
     return null;
   }
+
+  const availableViews = getAvailablePlatformViews(admin.role, admin.team_role);
+  const requestedView = [requestedViewHeader, cookieRequestedView].find(
+    (view): view is PlatformViewMode =>
+      Boolean(view && availableViews.includes(view as PlatformViewMode)),
+  );
 
   return {
     id: admin.id,

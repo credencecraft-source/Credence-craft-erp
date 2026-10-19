@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   ensurePlatformDefaults: vi.fn(),
   issueEmailOtp: vi.fn(),
   verifyEmailOtp: vi.fn(),
+  createPlatformSessionToken: vi.fn(),
   setPlatformSessionCookie: vi.fn(),
 }));
 
@@ -29,6 +30,7 @@ vi.mock("@/lib/services/platform/platform-email-configuration-service", () => ({
 }));
 
 vi.mock("@/lib/auth/platform-session-manager", () => ({
+  createPlatformSessionToken: mocks.createPlatformSessionToken,
   setPlatformSessionCookie: mocks.setPlatformSessionCookie,
 }));
 
@@ -51,11 +53,16 @@ vi.mock("@/lib/auth/session-manager", () => ({
 import { POST as sendOtp } from "./send-otp/send-otp-handler";
 import { POST as verifyOtp } from "./verify-otp/verify-otp-handler";
 
-function supportRequest(email: string, otp?: string) {
+function supportRequest(email: string, otp?: string, mobileClient = false) {
   return new Request("https://app.credencecraft.in/api/auth/verify-otp", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode: "support", email, ...(otp ? { otp } : {}) }),
+    body: JSON.stringify({
+      mode: "support",
+      email,
+      ...(otp ? { otp } : {}),
+      ...(mobileClient ? { mobileClient: true } : {}),
+    }),
   });
 }
 
@@ -88,11 +95,31 @@ describe("platform Support email login", () => {
     const response = await verifyOtp(supportRequest("sales-admin@example.com", "123456"));
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
+    const payload = await response.json();
+    expect(payload).toMatchObject({
       ok: true,
       redirectTo: "/platform/organisations",
     });
+    expect(payload).not.toHaveProperty("sessionToken");
     expect(mocks.setPlatformSessionCookie).toHaveBeenCalledWith("admin-1");
+  });
+
+  it("returns a signed platform session token only to the native app", async () => {
+    mocks.verifyEmailOtp.mockResolvedValue(true);
+    mocks.findPlatformAdmin.mockResolvedValue({ id: "admin-1", is_active: true });
+    mocks.updatePlatformAdmin.mockResolvedValue({});
+    mocks.createPlatformSessionToken.mockReturnValue("signed-platform-token");
+
+    const response = await verifyOtp(
+      supportRequest("sales-admin@example.com", "123456", true),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      sessionToken: "signed-platform-token",
+    });
+    expect(mocks.createPlatformSessionToken).toHaveBeenCalledWith("admin-1");
   });
 
   it("does not create a platform session for an inactive account", async () => {

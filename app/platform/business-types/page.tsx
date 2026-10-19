@@ -15,6 +15,8 @@ import Section from "@/components/ui/Section";
 import Table from "@/components/ui/Table";
 import { getErpBusinessTypeDisplayName } from "@/components/erp/erp-config-registry";
 
+export const dynamic = "force-dynamic";
+
 function getBusinessTypeLabel(name: string) {
   return name.trim().toLowerCase() === "settings" ? "Admin" : getErpBusinessTypeDisplayName(name);
 }
