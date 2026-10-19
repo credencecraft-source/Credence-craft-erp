@@ -293,6 +293,69 @@ describe("support ticket access and internal notes", () => {
     expect(mocks.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function));
   });
 
+  it("books a demo, records its date and time, and moves the interested lead atomically", async () => {
+    mocks.transaction.platformLead.findUnique.mockResolvedValue({
+      id: "lead-id",
+      stage: "Interested For Demo",
+    });
+    mocks.transaction.supportTicket.create.mockResolvedValue({ id: "demo-ticket-id" });
+
+    await createPlatformLeadSupportTicket({
+      leadId: "lead-id",
+      subject: "Demo booking for Taylor Reed",
+      description: "Product demo scheduled for 2026-11-10 at 14:30.",
+      requestType: "DEMO_BOOKING",
+      callbackDate: "2026-11-10",
+      callbackTime: "14:30",
+      markDemoBooked: true,
+    });
+
+    expect(mocks.transaction.platformLead.updateMany).toHaveBeenCalledWith({
+      where: { id: "lead-id", stage: "Interested For Demo" },
+      data: { stage: "Demo Booked" },
+    });
+    expect(mocks.transaction.supportTicket.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        platform_lead_id: "lead-id",
+        request_type: "DEMO_BOOKING",
+        callback_date: "2026-11-10",
+        callback_time: "14:30",
+      }),
+    }));
+    expect(mocks.transaction.platformAuditEvent.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          action: "PLATFORM_LEAD_SUPPORT_TICKET_CREATED",
+          entity_id: "demo-ticket-id",
+        }),
+        expect.objectContaining({
+          action: "PLATFORM_LEAD_STAGE_UPDATED",
+          entity_id: "lead-id",
+          details: { previousStage: "Interested For Demo", stage: "Demo Booked" },
+        }),
+      ]),
+    });
+  });
+
+  it("rejects demo bookings when a lead is not in Interested For Demo", async () => {
+    mocks.transaction.platformLead.findUnique.mockResolvedValue({
+      id: "lead-id",
+      stage: "Need To Call",
+    });
+
+    await expect(createPlatformLeadSupportTicket({
+      leadId: "lead-id",
+      subject: "Demo booking for Taylor Reed",
+      description: "Product demo scheduled for 2026-11-10 at 14:30.",
+      requestType: "DEMO_BOOKING",
+      callbackDate: "2026-11-10",
+      callbackTime: "14:30",
+      markDemoBooked: true,
+    })).rejects.toThrow("Only leads interested in a demo can book one.");
+    expect(mocks.transaction.platformLead.updateMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.supportTicket.create).not.toHaveBeenCalled();
+  });
+
   it("does not schedule callbacks for leads outside the Need To Call group", async () => {
     mocks.transaction.platformLead.findUnique.mockResolvedValue({
       id: "lead-id",

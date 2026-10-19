@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, CheckCircle2, Download, LoaderCircle, RefreshCw, Settings2, Upload, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, Download, LoaderCircle, Mic, RefreshCw, Settings2, Square, Upload, X } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -30,6 +30,7 @@ type PlatformLead = {
   source: string | null;
   stage: string;
   nature_of_business: string | null;
+  quick_note: string | null;
   created_at: string;
   updated_at: string;
   campaign_date: string | null;
@@ -48,12 +49,38 @@ const LEAD_FIELDS = [
   { key: "created_at", label: "Added date & time" },
   { key: "source", label: "Source" },
   { key: "stage", label: "Stage" },
-  { key: "campaign_date", label: "Campaign date" },
-  { key: "last_campaign_date", label: "Last campaign date" },
-  { key: "last_login_at", label: "Last login" },
 ];
 
+const LEAD_ROW_STAGE_ACTIONS: Record<
+  string,
+  Array<{ label: string; stage: string; variant: "primary" | "secondary" | "destructive" }>
+> = {
+  Verification: [
+    { label: "Need To Call", stage: "Need To Call", variant: "primary" },
+    { label: "Not Interested", stage: "3-Dead", variant: "secondary" },
+    { label: "Mark as Fraud", stage: "MARK AS FROUD", variant: "destructive" },
+  ],
+  "Demo Booked": [
+    { label: "Demo Attended", stage: "Demo Attended", variant: "primary" },
+    { label: "Not Interested", stage: "3-Dead", variant: "secondary" },
+    { label: "Mark as Fraud", stage: "MARK AS FROUD", variant: "destructive" },
+  ],
+  "Demo Attended": [
+    { label: "Potential", stage: "2-Potential", variant: "primary" },
+    { label: "Not Interested", stage: "3-Dead", variant: "secondary" },
+    { label: "Mark as Fraud", stage: "MARK AS FROUD", variant: "destructive" },
+  ],
+};
+
 type LeadTab = "THIRD_PARTY" | "APP_LOGIN" | "DEAD" | "PAID" | "NOT_INTERESTED";
+type PlatformLeadVoiceNote = {
+  id: string;
+  content_type: string;
+  byte_size: number;
+  duration_ms: number;
+  created_at: string;
+};
+
 type LeadTicket = {
   id: string;
   ticket_number: string;
@@ -78,6 +105,15 @@ function LeadEditor({
   tickets,
   ticketsLoading,
   ticketLoadError,
+  voiceNotes,
+  voiceNotesLoading,
+  voiceNotesError,
+  voiceNoteRecording,
+  voiceNoteSaving,
+  voiceNoteError,
+  onRecordVoiceNote,
+  onStopVoiceNote,
+  onReloadVoiceNotes,
   onClose,
   onSaved,
 }: {
@@ -85,6 +121,15 @@ function LeadEditor({
   tickets: LeadTicket[];
   ticketsLoading: boolean;
   ticketLoadError: string;
+  voiceNotes: PlatformLeadVoiceNote[];
+  voiceNotesLoading: boolean;
+  voiceNotesError: string;
+  voiceNoteRecording: boolean;
+  voiceNoteSaving: boolean;
+  voiceNoteError: string;
+  onRecordVoiceNote: () => void;
+  onStopVoiceNote: () => void;
+  onReloadVoiceNotes: () => void;
   onClose: () => void;
   onSaved: (lead: PlatformLead, movedToThirdParty?: boolean) => void;
 }) {
@@ -96,7 +141,8 @@ function LeadEditor({
   const [source, setSource] = useState(lead?.source ?? "");
   const [stage, setStage] = useState(lead?.stage ?? PLATFORM_LEAD_STAGES[0]);
   const [natureOfBusiness, setNatureOfBusiness] = useState(lead?.nature_of_business ?? "");
-  const [detailsTab, setDetailsTab] = useState<"business" | "details" | "activity">("business");
+  const [quickNote, setQuickNote] = useState(lead?.quick_note ?? "");
+  const [detailsTab, setDetailsTab] = useState<"quick-note" | "business" | "details" | "activity">("quick-note");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -114,7 +160,7 @@ function LeadEditor({
         {
           method: lead ? "PATCH" : "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, email, mobile, companyName, city, source, stage: nextStage, natureOfBusiness }),
+          body: JSON.stringify({ name, email, mobile, companyName, city, source, stage: nextStage, natureOfBusiness, quickNote }),
         },
       );
       const payload = await response.json();
@@ -147,6 +193,7 @@ function LeadEditor({
       </header>
       <Tabs
         tabs={[
+          { value: "quick-note", label: "Quick Note" },
           { value: "business", label: "Nature of Business" },
           { value: "details", label: "Lead Details" },
           { value: "activity", label: "Activity & Callbacks" },
@@ -156,6 +203,74 @@ function LeadEditor({
         ariaLabel="Lead details"
       />
       <form onSubmit={submit} className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
+        {detailsTab === "quick-note" && (
+          <div className="space-y-4">
+            <Textarea
+              label="Quick Note"
+              maxLength={2000}
+              rows={5}
+              value={quickNote}
+              onChange={(event) => setQuickNote(event.target.value)}
+              placeholder="Add a note about this lead"
+            />
+            {lead ? (
+              <section aria-label="Voice notes" className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-slate-900">Voice notes</h3>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={voiceNoteRecording ? "destructive" : "secondary"}
+                    disabled={voiceNoteSaving}
+                    onClick={voiceNoteRecording ? onStopVoiceNote : onRecordVoiceNote}
+                  >
+                    {voiceNoteRecording
+                      ? <Square className="h-4 w-4" aria-hidden="true" />
+                      : <Mic className="h-4 w-4" aria-hidden="true" />}
+                    {voiceNoteRecording ? "Finish recording" : voiceNoteSaving ? "Saving recording..." : "Record voice note"}
+                  </Button>
+                </div>
+                {voiceNoteRecording && <p role="status" className="text-xs text-slate-600">Recording. Select Finish recording when you are done.</p>}
+                {voiceNoteError && <p role="alert" className="text-sm text-red-700">{voiceNoteError}</p>}
+                {voiceNotesError && (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p role="alert" className="text-sm text-red-700">{voiceNotesError}</p>
+                    <Button type="button" size="sm" variant="secondary" onClick={onReloadVoiceNotes}>Retry</Button>
+                  </div>
+                )}
+                {voiceNotesLoading ? (
+                  <p role="status" className="text-sm text-slate-500">Loading voice notes...</p>
+                ) : voiceNotes.length > 0 ? (
+                  <ul className="space-y-2">
+                    {voiceNotes.map((note) => (
+                      <li key={note.id} className="space-y-2 rounded-lg border border-slate-200 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-sm font-semibold text-slate-900">Voice note</p>
+                          <span className="text-xs text-slate-500">{Math.ceil(note.duration_ms / 1000)} sec</span>
+                        </div>
+                        <audio
+                          controls
+                          preload="none"
+                          className="w-full"
+                          src={`/api/platform/leads/${encodeURIComponent(lead.id)}/voice-notes/${encodeURIComponent(note.id)}/audio`}
+                        />
+                        <p className="text-xs text-slate-500">
+                          {new Date(note.created_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="rounded-lg border border-dashed border-slate-300 p-4 text-center text-sm text-slate-500">
+                    No voice notes yet.
+                  </p>
+                )}
+              </section>
+            ) : (
+              <p className="text-sm text-slate-500">Save the lead before recording a voice note.</p>
+            )}
+          </div>
+        )}
         {detailsTab === "business" && (
           <>
             <p className="text-xs text-slate-500">Describe the lead’s business, products, and manufacturing or sourcing needs.</p>
@@ -186,6 +301,18 @@ function LeadEditor({
               <LeadActivityInfo label="Lead created" value={lead ? new Date(lead.created_at).toLocaleString() : "Not saved"} />
               <LeadActivityInfo label="Last lead update" value={lead ? new Date(lead.updated_at).toLocaleString() : "Not saved"} />
               <LeadActivityInfo
+                label="Campaign date"
+                value={lead?.campaign_date ? new Date(lead.campaign_date).toLocaleDateString() : "Not available"}
+              />
+              <LeadActivityInfo
+                label="Last campaign date"
+                value={lead?.last_campaign_date ? new Date(lead.last_campaign_date).toLocaleDateString() : "Not available"}
+              />
+              <LeadActivityInfo
+                label="Last login"
+                value={lead?.last_login_at ? new Date(lead.last_login_at).toLocaleString() : "Not available"}
+              />
+              <LeadActivityInfo
                 label="Last call marked complete"
                 value={completedCallback ? new Date(completedCallback.updated_at).toLocaleString() : "Not marked complete"}
               />
@@ -213,7 +340,11 @@ function LeadEditor({
                       <p className="text-sm font-semibold text-slate-900">{ticket.subject}</p>
                       <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-700">{ticket.status.replaceAll("_", " ")}</span>
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">{ticket.request_type === "CALLBACK" ? `Callback · ${ticket.callback_date ?? "Date not set"} ${ticket.callback_time ?? ""}` : "Support ticket"} · Created {new Date(ticket.created_at).toLocaleString()}</p>
+                    <p className="mt-1 text-xs text-slate-500">{ticket.request_type === "CALLBACK"
+                      ? `Callback · ${ticket.callback_date ?? "Date not set"} ${ticket.callback_time ?? ""}`
+                      : ticket.request_type === "DEMO_BOOKING"
+                        ? `Demo booking · ${ticket.callback_date ?? "Date not set"} ${ticket.callback_time ?? ""}`
+                        : "Support ticket"} · Created {new Date(ticket.created_at).toLocaleString()}</p>
                     <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{ticket.description}</p>
                   </li>
                 ))}
@@ -285,7 +416,20 @@ export default function PlatformLeadsWorkspace({
   const [leadTickets, setLeadTickets] = useState<LeadTicket[]>([]);
   const [ticketsLoadedForLeadId, setTicketsLoadedForLeadId] = useState<string | null>(null);
   const [ticketLoadFailure, setTicketLoadFailure] = useState<{ leadId: string; error: string } | null>(null);
-  const [stageFilter, setStageFilter] = useState("ALL");
+  const [leadVoiceNotes, setLeadVoiceNotes] = useState<Record<string, PlatformLeadVoiceNote[]>>({});
+  const [voiceNotesLoadedForLeadId, setVoiceNotesLoadedForLeadId] = useState<string | null>(null);
+  const [voiceNotesLoadFailure, setVoiceNotesLoadFailure] = useState<{ leadId: string; error: string } | null>(null);
+  const [recordingLeadId, setRecordingLeadId] = useState<string | null>(null);
+  const [voiceNoteStartingLeadId, setVoiceNoteStartingLeadId] = useState<string | null>(null);
+  const [voiceNoteSavingLeadId, setVoiceNoteSavingLeadId] = useState<string | null>(null);
+  const [voiceNoteFailure, setVoiceNoteFailure] = useState<{ leadId: string; error: string } | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const voiceNoteChunksRef = useRef<Blob[]>([]);
+  const voiceNoteRecordingLeadIdRef = useRef<string | null>(null);
+  const voiceNoteStartedAtRef = useRef(0);
+  const voiceNoteLimitTimerRef = useRef<number | null>(null);
+  const [stageFilter, setStageFilter] = useState("NEED_TO_CALL");
   const [callFollowUpFilter, setCallFollowUpFilter] = useState<
     "Need To Call" | "Not Picked" | "Call Back Later"
   >("Need To Call");
@@ -316,6 +460,12 @@ export default function PlatformLeadsWorkspace({
   const [callbackLeadId, setCallbackLeadId] = useState<string | null>(null);
   const [callbackSaving, setCallbackSaving] = useState(false);
   const [callbackError, setCallbackError] = useState("");
+  const [demoBookingLeadId, setDemoBookingLeadId] = useState<string | null>(null);
+  const [demoBookingDate, setDemoBookingDate] = useState("");
+  const [demoBookingTime, setDemoBookingTime] = useState("");
+  const [demoBookingLanguage, setDemoBookingLanguage] = useState("English");
+  const [demoBookingSaving, setDemoBookingSaving] = useState(false);
+  const [demoBookingError, setDemoBookingError] = useState("");
   const [visibleFields, setVisibleFields] = useState<string[]>(LEAD_FIELDS.map(({ key }) => key));
   const [uploading, setUploading] = useState(false);
   const [refreshingSheet, setRefreshingSheet] = useState(false);
@@ -331,6 +481,17 @@ export default function PlatformLeadsWorkspace({
   const activeSelectedLead = leads.find((lead) => lead.id === selectedLeadId) ?? null;
   const ticketsLoading = Boolean(selectedLeadId && selectedLeadId !== ticketsLoadedForLeadId);
   const ticketLoadError = ticketLoadFailure?.leadId === selectedLeadId ? ticketLoadFailure.error : "";
+  const voiceNotesLoading = Boolean(
+    selectedLeadId
+    && !leadVoiceNotes[selectedLeadId]
+    && selectedLeadId !== voiceNotesLoadedForLeadId
+    && voiceNotesLoadFailure?.leadId !== selectedLeadId,
+  );
+  const selectedVoiceNotes = selectedLeadId ? leadVoiceNotes[selectedLeadId] ?? [] : [];
+  const selectedVoiceNotesError = voiceNotesLoadFailure?.leadId === selectedLeadId ? voiceNotesLoadFailure.error : "";
+  const selectedVoiceNoteError = voiceNoteFailure?.leadId === selectedLeadId ? voiceNoteFailure.error : "";
+  const voiceNoteRecording = recordingLeadId === selectedLeadId;
+  const voiceNoteSaving = voiceNoteStartingLeadId === selectedLeadId || voiceNoteSavingLeadId === selectedLeadId;
 
   function applyLeadStageChanges(changes: Array<{ leadId: string; stage: string }>) {
     const updatedAt = new Date().toISOString();
@@ -368,12 +529,49 @@ export default function PlatformLeadsWorkspace({
 
     return () => controller.abort();
   }, [selectedLeadId, ticketsLoadedForLeadId]);
+
+  useEffect(() => {
+    if (!selectedLeadId || selectedLeadId.startsWith("app-login:") || selectedLeadId === voiceNotesLoadedForLeadId) return;
+
+    const controller = new AbortController();
+    void fetch(`/api/platform/leads/${encodeURIComponent(selectedLeadId)}/voice-notes`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Unable to load voice notes.");
+        setLeadVoiceNotes((current) => ({ ...current, [selectedLeadId]: payload.notes as PlatformLeadVoiceNote[] }));
+        setVoiceNotesLoadFailure(null);
+        setVoiceNotesLoadedForLeadId(selectedLeadId);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setVoiceNotesLoadFailure({
+          leadId: selectedLeadId,
+          error: error instanceof Error ? error.message : "Unable to load voice notes.",
+        });
+        setVoiceNotesLoadedForLeadId(selectedLeadId);
+      });
+
+    return () => controller.abort();
+  }, [selectedLeadId, voiceNotesLoadedForLeadId]);
+
+  useEffect(() => () => {
+    if (voiceNoteLimitTimerRef.current !== null) window.clearTimeout(voiceNoteLimitTimerRef.current);
+    const recorder = mediaRecorderRef.current;
+    if (recorder?.state === "recording") {
+      recorder.onstop = null;
+      recorder.stop();
+    }
+    for (const track of mediaStreamRef.current?.getTracks() ?? []) track.stop();
+  }, []);
   const filteredLeads = useMemo<PlatformLead[]>(() => {
     if (activeTab === "APP_LOGIN") {
       return appLogins.map((user) => ({
         ...user,
         id: `app-login:${user.id}`,
         nature_of_business: null,
+        quick_note: null,
         campaign_date: null,
         last_campaign_date: null,
         created_at: user.created_at,
@@ -469,11 +667,13 @@ export default function PlatformLeadsWorkspace({
   }, []);
 
   function closeEditor() {
+    stopVoiceNoteRecording();
     setNewLead(false);
     window.history.pushState(null, "", "/platform/leads");
   }
 
   function openLead(leadId: string) {
+    if (recordingLeadId && recordingLeadId !== leadId) stopVoiceNoteRecording();
     if (activeTab === "APP_LOGIN") {
       const workspaceUserId = leadId.replace(/^app-login:/, "");
       router.push(`/platform/workspace-users/${encodeURIComponent(workspaceUserId)}`);
@@ -481,6 +681,129 @@ export default function PlatformLeadsWorkspace({
     }
     setNewLead(false);
     window.history.pushState(null, "", `/platform/leads?leadId=${encodeURIComponent(leadId)}`);
+  }
+
+  function reloadVoiceNotes() {
+    setVoiceNotesLoadFailure(null);
+    setVoiceNotesLoadedForLeadId(null);
+  }
+
+  function stopVoiceNoteRecording() {
+    const recorder = mediaRecorderRef.current;
+    if (recorder?.state === "recording") recorder.stop();
+  }
+
+  async function startVoiceNoteRecording(leadId: string) {
+    if (recordingLeadId || voiceNoteStartingLeadId || voiceNoteSavingLeadId) return;
+    setVoiceNoteFailure(null);
+    openLead(leadId);
+
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setVoiceNoteFailure({ leadId, error: "Audio recording is not supported in this browser." });
+      return;
+    }
+
+    setVoiceNoteStartingLeadId(leadId);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const supportedTypes = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"];
+      const mimeType = supportedTypes.find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      voiceNoteRecordingLeadIdRef.current = leadId;
+      voiceNoteStartedAtRef.current = Date.now();
+      voiceNoteChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) voiceNoteChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        if (voiceNoteLimitTimerRef.current !== null) {
+          window.clearTimeout(voiceNoteLimitTimerRef.current);
+          voiceNoteLimitTimerRef.current = null;
+        }
+        const audioBlob = new Blob(voiceNoteChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        const durationMs = Math.min(180_000, Date.now() - voiceNoteStartedAtRef.current);
+        const recordedLeadId = voiceNoteRecordingLeadIdRef.current;
+        for (const track of mediaStreamRef.current?.getTracks() ?? []) track.stop();
+        mediaStreamRef.current = null;
+        mediaRecorderRef.current = null;
+        voiceNoteChunksRef.current = [];
+        voiceNoteRecordingLeadIdRef.current = null;
+        setRecordingLeadId(null);
+        if (recordedLeadId) void saveVoiceNoteRecording(recordedLeadId, audioBlob, durationMs);
+      };
+      recorder.start(250);
+      setRecordingLeadId(leadId);
+      voiceNoteLimitTimerRef.current = window.setTimeout(stopVoiceNoteRecording, 180_000);
+    } catch (error) {
+      for (const track of mediaStreamRef.current?.getTracks() ?? []) track.stop();
+      mediaStreamRef.current = null;
+      setVoiceNoteFailure({
+        leadId,
+        error: error instanceof Error ? error.message : "Unable to access the microphone.",
+      });
+    } finally {
+      setVoiceNoteStartingLeadId(null);
+    }
+  }
+
+  async function saveVoiceNoteRecording(leadId: string, audioBlob: Blob, durationMs: number) {
+    if (audioBlob.size === 0) {
+      setVoiceNoteFailure({ leadId, error: "No audio was captured. Check microphone access and try again." });
+      return;
+    }
+    if (audioBlob.size > 5 * 1024 * 1024) {
+      setVoiceNoteFailure({ leadId, error: "This recording exceeds the 5 MB limit. Record a shorter note." });
+      return;
+    }
+
+    setVoiceNoteSavingLeadId(leadId);
+    setVoiceNoteFailure(null);
+    try {
+      const formData = new FormData();
+      formData.append("audio", audioBlob, "lead-voice-note");
+      formData.append("durationMs", String(Math.max(1, durationMs)));
+      const response = await fetch(`/api/platform/leads/${encodeURIComponent(leadId)}/voice-notes`, {
+        method: "POST",
+        body: formData,
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to save voice note.");
+      const note = payload.note as PlatformLeadVoiceNote;
+      setLeadVoiceNotes((current) => ({
+        ...current,
+        [leadId]: [note, ...(current[leadId] ?? [])],
+      }));
+      setVoiceNotesLoadFailure(null);
+      setVoiceNotesLoadedForLeadId(leadId);
+    } catch (error) {
+      setVoiceNoteFailure({
+        leadId,
+        error: error instanceof Error ? error.message : "Unable to save voice note.",
+      });
+    } finally {
+      setVoiceNoteSavingLeadId(null);
+    }
+  }
+
+  function renderVoiceNoteAction(lead: PlatformLead) {
+    const isRecording = recordingLeadId === lead.id;
+    const isBusy = voiceNoteStartingLeadId === lead.id || voiceNoteSavingLeadId === lead.id;
+    return (
+      <Button
+        type="button"
+        size="sm"
+        variant={isRecording ? "destructive" : "outline"}
+        disabled={isBusy || (Boolean(recordingLeadId) && !isRecording)}
+        onClick={() => isRecording ? stopVoiceNoteRecording() : void startVoiceNoteRecording(lead.id)}
+        aria-label={isRecording ? `Finish voice note for ${lead.name}` : `Record voice note for ${lead.name}`}
+        aria-pressed={isRecording}
+        title={isRecording ? "Finish voice note" : "Record voice note"}
+      >
+        {isRecording ? <Square className="h-4 w-4" aria-hidden="true" /> : <Mic className="h-4 w-4" aria-hidden="true" />}
+      </Button>
+    );
   }
 
   function openNewLead() {
@@ -493,6 +816,50 @@ export default function PlatformLeadsWorkspace({
     setCallbackDate("");
     setCallbackTime("");
     setCallbackError("");
+  }
+
+  function openDemoBooking(leadId: string) {
+    setDemoBookingLeadId(leadId);
+    setDemoBookingDate("");
+    setDemoBookingTime("");
+    setDemoBookingLanguage("English");
+    setDemoBookingError("");
+  }
+
+  async function bookLeadDemo(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!demoBookingLeadId || demoBookingSaving) return;
+    const lead = leads.find((item) => item.id === demoBookingLeadId);
+    if (!lead) {
+      setDemoBookingError("Lead not found. Refresh the page and try again.");
+      return;
+    }
+
+    setDemoBookingSaving(true);
+    setDemoBookingError("");
+    try {
+      const response = await fetch(`/api/platform/leads/${encodeURIComponent(lead.id)}/tickets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject: `Demo booking · ${lead.name}`,
+          description: `Product demo booked for ${demoBookingDate} at ${demoBookingTime}. Demo language: ${demoBookingLanguage}.`,
+          requestType: "DEMO_BOOKING",
+          callbackDate: demoBookingDate,
+          callbackTime: demoBookingTime,
+          markDemoBooked: true,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to book the demo.");
+      applyLeadStageChanges([{ leadId: lead.id, stage: "Demo Booked" }]);
+      setStageMovementMessage(`Demo booked for ${lead.name} on ${demoBookingDate} at ${demoBookingTime}.`);
+      setDemoBookingLeadId(null);
+    } catch (error) {
+      setDemoBookingError(error instanceof Error ? error.message : "Unable to book the demo.");
+    } finally {
+      setDemoBookingSaving(false);
+    }
   }
 
   async function scheduleLeadCallback(event: React.FormEvent<HTMLFormElement>) {
@@ -1209,15 +1576,16 @@ export default function PlatformLeadsWorkspace({
               if (lead.stage === "1-new") {
                 return (
                   <>
+                    {renderVoiceNoteAction(lead)}
                     <Button
                       type="button"
                       size="sm"
                       variant="primary"
                       disabled={movingSelectedLeads}
                       onClick={() => void updateNewLeadStage("Verification", [lead.id])}
-                      aria-label={`Approve ${lead.name}`}
+                      aria-label={`Move ${lead.name} to Verified`}
                     >
-                      Approve
+                      Verified
                     </Button>
                     <Button
                       type="button"
@@ -1232,11 +1600,66 @@ export default function PlatformLeadsWorkspace({
                   </>
                 );
               }
+              const stageActions = LEAD_ROW_STAGE_ACTIONS[lead.stage];
+              if (stageActions) {
+                return (
+                  <>
+                    {renderVoiceNoteAction(lead)}
+                    {stageActions.map((action) => (
+                      <Button
+                        key={action.stage}
+                        type="button"
+                        size="sm"
+                        variant={action.variant}
+                        disabled={movingSelectedLeads}
+                        onClick={() => void updateSelectedLeadStage(action.stage, [lead.id])}
+                      >
+                        {action.label}
+                      </Button>
+                    ))}
+                  </>
+                );
+              }
+              if (lead.stage === "Interested For Demo") {
+                return (
+                  <>
+                    {renderVoiceNoteAction(lead)}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="primary"
+                      disabled={movingSelectedLeads || demoBookingSaving}
+                      onClick={() => openDemoBooking(lead.id)}
+                    >
+                      Book Demo
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={movingSelectedLeads}
+                      onClick={() => void updateSelectedLeadStage("3-Dead", [lead.id])}
+                    >
+                      Not Interested
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="destructive"
+                      disabled={movingSelectedLeads}
+                      onClick={() => void updateSelectedLeadStage("MARK AS FROUD", [lead.id])}
+                    >
+                      Mark as Fraud
+                    </Button>
+                  </>
+                );
+              }
               if (PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES.includes(
                 lead.stage as (typeof PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES)[number],
               )) {
                 return (
                   <>
+                    {renderVoiceNoteAction(lead)}
                     <Button
                       type="button"
                       size="sm"
@@ -1246,6 +1669,17 @@ export default function PlatformLeadsWorkspace({
                     >
                       Need To Call
                     </Button>
+                    {lead.stage === "Need To Call" ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={movingSelectedLeads}
+                        onClick={() => void updateSelectedLeadStage("Interested For Demo", [lead.id])}
+                      >
+                        Interested For Demo
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       size="sm"
@@ -1285,7 +1719,7 @@ export default function PlatformLeadsWorkspace({
                   </>
                 );
               }
-              return null;
+              return renderVoiceNoteAction(lead);
             }}
             onNewOrder={activeTab === "THIRD_PARTY" ? openNewLead : undefined}
             newActionLabel="Add lead"
@@ -1295,10 +1729,6 @@ export default function PlatformLeadsWorkspace({
                 return lead.created_at
                   ? new Date(lead.created_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
                   : "—";
-              }
-              if (fieldKey === "last_login_at") return lead.last_login_at ? new Date(lead.last_login_at).toLocaleString() : "—";
-              if (fieldKey === "campaign_date" || fieldKey === "last_campaign_date") {
-                return lead[fieldKey] ? new Date(lead[fieldKey]).toLocaleDateString() : "—";
               }
               return lead[fieldKey as keyof PlatformLead] || "—";
             }}
@@ -1314,6 +1744,17 @@ export default function PlatformLeadsWorkspace({
             tickets={newLead ? [] : selectedLeadId === ticketsLoadedForLeadId ? leadTickets : []}
             ticketsLoading={ticketsLoading}
             ticketLoadError={ticketLoadError}
+            voiceNotes={selectedVoiceNotes}
+            voiceNotesLoading={voiceNotesLoading}
+            voiceNotesError={selectedVoiceNotesError}
+            voiceNoteRecording={voiceNoteRecording}
+            voiceNoteSaving={voiceNoteSaving}
+            voiceNoteError={selectedVoiceNoteError}
+            onRecordVoiceNote={() => {
+              if (selectedLeadId) void startVoiceNoteRecording(selectedLeadId);
+            }}
+            onStopVoiceNote={stopVoiceNoteRecording}
+            onReloadVoiceNotes={reloadVoiceNotes}
             onClose={closeEditor}
             onSaved={handleSaved}
           />
@@ -1475,6 +1916,66 @@ export default function PlatformLeadsWorkspace({
             </Button>
           </div>
         </div>
+      </Modal>
+      <Modal
+        open={Boolean(demoBookingLeadId)}
+        onClose={() => {
+          if (!demoBookingSaving) {
+            setDemoBookingLeadId(null);
+            setDemoBookingError("");
+          }
+        }}
+        ariaLabel="Book a demo"
+        ariaLabelledBy="lead-demo-booking-title"
+        size="square"
+      >
+        <form onSubmit={bookLeadDemo} className="space-y-4 p-5">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Lead appointment</p>
+            <h2 id="lead-demo-booking-title" className="mt-1 text-lg font-bold text-slate-900">
+              Book Demo{demoBookingLeadId ? ` · ${leads.find((lead) => lead.id === demoBookingLeadId)?.name ?? ""}` : ""}
+            </h2>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Input
+              label="Demo date"
+              required
+              type="date"
+              min={new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date())}
+              value={demoBookingDate}
+              disabled={demoBookingSaving}
+              onChange={(event) => setDemoBookingDate(event.target.value)}
+            />
+            <Input
+              label="Demo time"
+              required
+              type="time"
+              value={demoBookingTime}
+              disabled={demoBookingSaving}
+              onChange={(event) => setDemoBookingTime(event.target.value)}
+            />
+          </div>
+          <Select
+            label="Demo language"
+            required
+            value={demoBookingLanguage}
+            disabled={demoBookingSaving}
+            onChange={(event) => setDemoBookingLanguage(event.target.value)}
+            options={[
+              { label: "English", value: "English" },
+              { label: "Hindi", value: "Hindi" },
+            ]}
+          />
+          {demoBookingError && <p role="alert" className="rounded-lg border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">{demoBookingError}</p>}
+          <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+            <Button type="button" variant="secondary" onClick={() => setDemoBookingLeadId(null)} disabled={demoBookingSaving}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={demoBookingSaving || !demoBookingDate || !demoBookingTime}>
+              {demoBookingSaving ? "Booking..." : "Confirm demo"}
+            </Button>
+          </div>
+        </form>
       </Modal>
       <Modal
         open={Boolean(callbackLeadId)}

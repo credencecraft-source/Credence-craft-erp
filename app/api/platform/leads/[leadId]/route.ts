@@ -21,6 +21,7 @@ export async function PATCH(
       source: typeof body.source === "string" ? body.source : "",
       stage: typeof body.stage === "string" ? body.stage : "",
       natureOfBusiness: typeof body.natureOfBusiness === "string" ? body.natureOfBusiness : "",
+      ...(typeof body.quickNote === "string" ? { quickNote: body.quickNote } : {}),
     });
     return NextResponse.json({ lead });
   } catch (error) {

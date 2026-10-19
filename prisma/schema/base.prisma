@@ -561,14 +561,30 @@ model PlatformLead {
   source              String?         @db.VarChar(120)
   stage               String          @default("1-new") @db.VarChar(80)
   nature_of_business  String?         @db.VarChar(2000)
+  quick_note          String?         @db.VarChar(2000)
   created_at          DateTime        @default(now())
   updated_at          DateTime        @updatedAt
   supportTickets      SupportTicket[]
   campaignEntries     PlatformCampaignLead[]
   whatsappRecipients  PlatformWhatsAppCampaignMessageRecipient[]
+  voiceNotes          PlatformLeadVoiceNote[]
 
   @@index([updated_at])
   @@map("platform_leads")
+}
+
+model PlatformLeadVoiceNote {
+  id           String       @id @default(cuid())
+  lead_id      String
+  content_type String       @db.VarChar(100)
+  byte_size    Int
+  duration_ms  Int
+  audio_data   Bytes
+  created_at   DateTime     @default(now())
+  lead         PlatformLead @relation(fields: [lead_id], references: [id], onDelete: Cascade)
+
+  @@index([lead_id, created_at])
+  @@map("platform_lead_voice_notes")
 }
 
 model PlatformCampaign {

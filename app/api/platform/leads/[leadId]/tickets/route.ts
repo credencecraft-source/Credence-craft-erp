@@ -39,6 +39,7 @@ export async function POST(
       callbackDate: typeof body.callbackDate === "string" ? body.callbackDate : undefined,
       callbackTime: typeof body.callbackTime === "string" ? body.callbackTime : undefined,
       markCallBackLater: body.markCallBackLater === true,
+      markDemoBooked: body.markDemoBooked === true,
     });
     return NextResponse.json({ ok: true, ticket }, { status: 201 });
   } catch (error) {

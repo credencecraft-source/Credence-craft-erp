@@ -477,6 +477,25 @@ describe("platform lead management", () => {
       .rejects.toThrow("Nature of business must be 2000 characters or fewer.");
   });
 
+  it("normalizes quick notes, enforces their size limit, and preserves omitted notes", async () => {
+    createLeadMock.mockResolvedValue({ id: "lead-1", name: "Taylor Reed" });
+    await createPlatformLead({ ...validInput, quickNote: "  call back next week  " });
+    expect(createLeadMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ quick_note: "CALL BACK NEXT WEEK" }),
+    }));
+
+    await expect(createPlatformLead({ ...validInput, quickNote: "x".repeat(2001) }))
+      .rejects.toThrow("Quick note must be 2000 characters or fewer.");
+
+    findLeadMock.mockResolvedValue({ id: "lead-1", quick_note: "EXISTING NOTE" });
+    updateLeadMock.mockResolvedValue({ id: "lead-1" });
+    await updatePlatformLead("lead-1", validInput);
+    expect(updateLeadMock).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "lead-1" },
+      data: expect.not.objectContaining({ quick_note: expect.anything() }),
+    }));
+  });
+
   it("imports validated rows and audits every created lead", async () => {
     createLeadsMock.mockResolvedValue({ count: 2 });
     createAuditEventsMock.mockResolvedValue({ count: 2 });

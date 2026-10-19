@@ -18,6 +18,7 @@ export type PlatformLeadInput = {
   source: string;
   stage: string;
   natureOfBusiness?: string;
+  quickNote?: string;
 };
 
 const MAX_IMPORTED_LEADS = 500;
@@ -32,6 +33,7 @@ function normalizePlatformLeadInput(input: PlatformLeadInput) {
   const source = input.source.trim();
   const stage = input.stage.trim();
   const natureOfBusiness = input.natureOfBusiness?.trim() ?? "";
+  const quickNote = normalizeUppercase(input.quickNote?.trim() ?? "");
 
   if (name.length < 2 || name.length > 255) {
     throw new Error("Enter a name between 2 and 255 characters.");
@@ -57,6 +59,9 @@ function normalizePlatformLeadInput(input: PlatformLeadInput) {
   if (natureOfBusiness.length > 2000) {
     throw new Error("Nature of business must be 2000 characters or fewer.");
   }
+  if (quickNote.length > 2000) {
+    throw new Error("Quick note must be 2000 characters or fewer.");
+  }
   if (!PLATFORM_LEAD_STAGES.includes(stage as PlatformLeadStage)) {
     throw new Error("Select a valid lead stage.");
   }
@@ -70,6 +75,7 @@ function normalizePlatformLeadInput(input: PlatformLeadInput) {
     source: source || null,
     stage: stage as PlatformLeadStage,
     nature_of_business: natureOfBusiness || null,
+    ...(input.quickNote === undefined ? {} : { quick_note: quickNote || null }),
   };
 }
 
@@ -404,6 +410,7 @@ export async function updatePlatformLead(leadId: string, input: PlatformLeadInpu
       normalized.source !== existing.source ? "source" : null,
       normalized.stage !== existing.stage ? "stage" : null,
       normalized.nature_of_business !== existing.nature_of_business ? "natureOfBusiness" : null,
+      normalized.quick_note !== undefined && normalized.quick_note !== existing.quick_note ? "quickNote" : null,
     ].filter((field): field is string => field !== null);
     await transaction.platformAuditEvent.create({
       data: {

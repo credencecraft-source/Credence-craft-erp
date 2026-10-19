@@ -74,9 +74,13 @@ function normalizeTicketInput(input: {
   if (subject.length < 3 || subject.length > 255) throw new Error("Subject must be between 3 and 255 characters.");
   if (description.length < 10 || description.length > 5000) throw new Error("Description must be between 10 and 5000 characters.");
   if (!TICKET_PRIORITIES.includes(priority as (typeof TICKET_PRIORITIES)[number])) throw new Error("Select a valid priority.");
-  if (requestType !== "TICKET" && requestType !== "CALLBACK") throw new Error("Select a valid support request type.");
-  if (requestType === "CALLBACK") {
-    if (!input.callbackDate || !input.callbackTime) throw new Error("Callback date and time are required.");
+  if (requestType !== "TICKET" && requestType !== "CALLBACK" && requestType !== "DEMO_BOOKING") {
+    throw new Error("Select a valid support request type.");
+  }
+  if (requestType === "CALLBACK" || requestType === "DEMO_BOOKING") {
+    if (!input.callbackDate || !input.callbackTime) {
+      throw new Error(requestType === "DEMO_BOOKING" ? "Demo date and time are required." : "Callback date and time are required.");
+    }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.callbackDate) || Number.isNaN(Date.parse(`${input.callbackDate}T00:00:00Z`))) {
       throw new Error("Select a valid callback date.");
     }
@@ -90,8 +94,8 @@ function normalizeTicketInput(input: {
     description,
     priority,
     request_type: requestType,
-    callback_date: requestType === "CALLBACK" ? input.callbackDate : null,
-    callback_time: requestType === "CALLBACK" ? input.callbackTime : null,
+    callback_date: requestType === "CALLBACK" || requestType === "DEMO_BOOKING" ? input.callbackDate : null,
+    callback_time: requestType === "CALLBACK" || requestType === "DEMO_BOOKING" ? input.callbackTime : null,
   };
 }
 
@@ -178,6 +182,7 @@ export async function createPlatformLeadSupportTicket(input: {
   callbackDate?: string;
   callbackTime?: string;
   markCallBackLater?: boolean;
+  markDemoBooked?: boolean;
 }) {
   const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const normalized = normalizeTicketInput(input);
@@ -237,6 +242,64 @@ export async function createPlatformLeadSupportTicket(input: {
             entity_type: "PlatformLead",
             entity_id: lead.id,
             details: { previousStage: lead.stage, stage: "Call Back Later" },
+          },
+        ],
+      });
+      return ticket;
+    });
+  }
+
+  if (input.markDemoBooked) {
+    if (normalized.request_type !== "DEMO_BOOKING") {
+      throw new Error("Booking a demo requires a demo booking request.");
+    }
+    return prisma.$transaction(async (transaction) => {
+      const lead = await transaction.platformLead.findUnique({
+        where: { id: leadId },
+        select: { id: true, stage: true },
+      });
+      if (!lead) throw new Error("Lead not found.");
+      if (lead.stage !== "Interested For Demo") {
+        throw new Error("Only leads interested in a demo can book one.");
+      }
+      const updatedLead = await transaction.platformLead.updateMany({
+        where: { id: lead.id, stage: "Interested For Demo" },
+        data: { stage: "Demo Booked" },
+      });
+      if (updatedLead.count !== 1) {
+        throw new Error("The lead status changed. Refresh and try again.");
+      }
+
+      const ticket = await transaction.supportTicket.create({
+        data: {
+          id: randomUUID(),
+          ticket_number: randomUUID(),
+          organization_id: null,
+          submitted_by_user_id: null,
+          platform_lead_id: lead.id,
+          created_by_platform_admin_id: admin.id,
+          ...normalized,
+        },
+      });
+      await transaction.platformAuditEvent.createMany({
+        data: [
+          {
+            platform_admin_id: admin.id,
+            action: "PLATFORM_LEAD_SUPPORT_TICKET_CREATED",
+            entity_type: "SupportTicket",
+            entity_id: ticket.id,
+            details: {
+              requestType: normalized.request_type,
+              demoDate: normalized.callback_date,
+              demoTime: normalized.callback_time,
+            },
+          },
+          {
+            platform_admin_id: admin.id,
+            action: "PLATFORM_LEAD_STAGE_UPDATED",
+            entity_type: "PlatformLead",
+            entity_id: lead.id,
+            details: { previousStage: lead.stage, stage: "Demo Booked" },
           },
         ],
       });
