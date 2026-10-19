@@ -103,14 +103,31 @@ describe("platform lead voice notes", () => {
   });
 
   it("lists metadata without audio and scopes playback by both lead and note", async () => {
+    findLeadMock.mockResolvedValue({ id: "lead-1" });
     listVoiceNotesMock.mockResolvedValue([{ id: "note-1", byte_size: 3 }]);
     findVoiceNoteMock.mockResolvedValue({ audio_data: new Uint8Array([1, 2, 3]), content_type: "audio/webm", byte_size: 3 });
 
     await expect(listPlatformLeadVoiceNotes("lead-1")).resolves.toEqual([{ id: "note-1", byte_size: 3 }]);
     expect(listVoiceNotesMock).toHaveBeenCalledWith(expect.objectContaining({ where: { lead_id: "lead-1" } }));
+    expect(listVoiceNotesMock).toHaveBeenCalledWith(expect.objectContaining({
+      orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    }));
     await getPlatformLeadVoiceNoteAudio("lead-1", "note-1");
     expect(findVoiceNoteMock).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "note-1", lead_id: "lead-1" },
+    }));
+  });
+
+  it("rejects voice-note lists for unknown leads and playback for unknown notes", async () => {
+    findLeadMock.mockResolvedValue(null);
+    await expect(listPlatformLeadVoiceNotes("missing-lead")).rejects.toThrow("Lead not found.");
+    expect(listVoiceNotesMock).not.toHaveBeenCalled();
+
+    findVoiceNoteMock.mockResolvedValue(null);
+    await expect(getPlatformLeadVoiceNoteAudio("lead-1", "missing-note"))
+      .rejects.toThrow("Voice note not found.");
+    expect(findVoiceNoteMock).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "missing-note", lead_id: "lead-1" },
     }));
   });
 

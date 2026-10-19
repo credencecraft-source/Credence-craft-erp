@@ -44,8 +44,13 @@ function normalizeVoiceNote(input: PlatformLeadVoiceNoteInput) {
 export async function listPlatformLeadVoiceNotes(leadId: string) {
   await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
   const id = validateId(leadId, "lead");
+  const lead = await prisma.platformLead.findUnique({
+    where: { id },
+    select: { id: true },
+  });
+  if (!lead) throw new Error("Lead not found.");
   return prisma.platformLeadVoiceNote.findMany({
-    where: { lead_id: id },
+    where: { lead_id: lead.id },
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
     select: {
       id: true,
