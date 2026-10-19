@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { after } from "next/server";
+import { after, connection } from "next/server";
 import Link from "next/link";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
@@ -14,6 +14,7 @@ import { updateOrganizationApprovalStatusWithTransition } from "@/lib/services/o
 import { startOrganizationDummyDataAfterApproval } from "@/lib/services/organizations/organization-dummy-data-service";
 
 export default async function PlatformClientsPage({ searchParams }: { searchParams?: Promise<{ cursor?: string; error?: string; success?: string; status?: string }> }) {
+  await connection();
   await ensurePlatformDefaults();
   const query = (await searchParams) ?? {};
   const statusFilter = query.status === "pending" ? "PENDING_APPROVAL" : query.status === "approved" ? "APPROVED" : undefined;
