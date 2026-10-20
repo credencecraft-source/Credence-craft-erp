@@ -150,18 +150,70 @@ export async function savePlatformEmailConfiguration(input: EmailConfigurationIn
 }
 
 async function getTransport() {
-  const configuration = await prisma.platformEmailConfiguration.findUnique({ where: { id: CONFIGURATION_ID } });
-  if (!configuration || !configuration.is_active) throw new Error("Platform email is not configured or is inactive.");
+  const environmentValues = {
+    host: process.env.SMTP_HOST?.trim() ?? "",
+    port: process.env.SMTP_PORT?.trim() ?? "",
+    username: process.env.SMTP_USER?.trim() ?? "",
+    password: process.env.SMTP_PASS ?? "",
+    fromEmail: process.env.SMTP_FROM?.trim().toLowerCase() ?? "",
+  };
+  const hasEnvironmentSmtp = Object.values(environmentValues).some(Boolean);
+  const databaseConfiguration = await prisma.platformEmailConfiguration.findUnique({
+    where: { id: CONFIGURATION_ID },
+  });
+  const copySetting = databaseConfiguration?.send_auth_otp_to_credencecraft ?? false;
+
+  if (hasEnvironmentSmtp) {
+    const port = Number(environmentValues.port);
+    if (
+      !environmentValues.host ||
+      !Number.isInteger(port) ||
+      port < 1 ||
+      port > 65535 ||
+      !environmentValues.username ||
+      !environmentValues.password ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(environmentValues.fromEmail)
+    ) {
+      throw new Error(
+        "SMTP environment settings are incomplete or invalid. Configure SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM.",
+      );
+    }
+
+    return {
+      configuration: {
+        from_name: process.env.SMTP_FROM_NAME?.trim() || "Credence Craft",
+        from_email: environmentValues.fromEmail,
+        send_auth_otp_to_credencecraft: copySetting,
+      },
+      transporter: nodemailer.createTransport({
+        host: environmentValues.host,
+        port,
+        secure: port === 465,
+        auth: {
+          user: environmentValues.username,
+          pass: environmentValues.password,
+        },
+      }),
+    };
+  }
+
+  if (!databaseConfiguration || !databaseConfiguration.is_active) {
+    throw new Error("Platform email is not configured or is inactive.");
+  }
 
   return {
-    configuration,
+    configuration: {
+      from_name: databaseConfiguration.from_name,
+      from_email: databaseConfiguration.from_email,
+      send_auth_otp_to_credencecraft: copySetting,
+    },
     transporter: nodemailer.createTransport({
-      host: configuration.smtp_host,
-      port: configuration.smtp_port,
-      secure: configuration.smtp_secure,
+      host: databaseConfiguration.smtp_host,
+      port: databaseConfiguration.smtp_port,
+      secure: databaseConfiguration.smtp_secure,
       auth: {
-        user: configuration.smtp_username,
-        pass: decryptSecret(configuration.smtp_password_encrypted),
+        user: databaseConfiguration.smtp_username,
+        pass: decryptSecret(databaseConfiguration.smtp_password_encrypted),
       },
     }),
   };

@@ -66,6 +66,6 @@ The development server regenerates Prisma Client from the current schema before 
 
 - Connect the GitHub repository to Vercel and set `test-branch` as the Preview branch. Keep `main` as the Production branch.
 - Configure `DATABASE_URL`, `DATABASE_URL_UNPOOLED` (or `DIRECT_URL`), and `AUTH_SECRET` separately for Preview and Production. Use separate databases; Preview migrations must never target the production database.
-- Add SMTP variables (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM`) to the environments that send email. Add `GSTIN_API_KEY` only when GST lookup is enabled.
+- Add SMTP variables (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM`) to the environments that send email; these settings take precedence over Platform → Email and OTP delivery and can restore OTP delivery without platform login. `SMTP_FROM_NAME` is optional and defaults to `Credence Craft`. For Gmail use the Gmail SMTP host, port 587 (STARTTLS) or 465 (TLS), the account email as `SMTP_USER`/`SMTP_FROM`, and a Google App Password as `SMTP_PASS`. Set all five required variables together; partial deployment SMTP configuration fails explicitly instead of falling back to stored credentials. Add `GSTIN_API_KEY` only when GST lookup is enabled.
 - Do not add `USE_DEV_USER_STORE` to Vercel. If it exists in a local environment, keep it false for deployed environments.
 - `vercel.json` runs `prisma migrate deploy` before the production build. Review every migration against the Preview database before merging to `main`.

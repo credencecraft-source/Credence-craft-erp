@@ -106,6 +106,66 @@ afterEach(() => {
 });
 
 describe("email OTP delivery", () => {
+  it("uses complete deployment SMTP settings to send OTPs without platform email configuration", async () => {
+    vi.stubEnv("SMTP_HOST", "smtp.gmail.com");
+    vi.stubEnv("SMTP_PORT", "587");
+    vi.stubEnv("SMTP_USER", "platform@example.com");
+    vi.stubEnv("SMTP_PASS", "deployment-app-password");
+    vi.stubEnv("SMTP_FROM", "platform@example.com");
+    vi.stubEnv("SMTP_FROM_NAME", "Platform Mail");
+    mocks.findConfiguration.mockResolvedValue(null);
+
+    await issueEmailOtp(normalizedEmail, "SUPPORT");
+
+    expect(mocks.createTransport).toHaveBeenCalledWith({
+      host: "smtp.gmail.com",
+      port: 587,
+      secure: false,
+      auth: {
+        user: "platform@example.com",
+        pass: "deployment-app-password",
+      },
+    });
+    expect(mocks.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: "Platform Mail <platform@example.com>",
+        to: normalizedEmail,
+        subject: "Your Credence Craft verification code",
+      }),
+    );
+  });
+
+  it("rejects incomplete deployment SMTP settings instead of silently using database credentials", async () => {
+    vi.stubEnv("SMTP_HOST", "smtp.gmail.com");
+    vi.stubEnv("SMTP_PORT", "587");
+
+    await expect(issueEmailOtp(normalizedEmail, "SUPPORT")).rejects.toThrow(
+      "SMTP environment settings are incomplete or invalid.",
+    );
+    expect(mocks.createTransport).not.toHaveBeenCalled();
+    expect(mocks.sendMail).not.toHaveBeenCalled();
+  });
+
+  it("prefers deployment SMTP settings over the platform database configuration", async () => {
+    vi.stubEnv("SMTP_HOST", "smtp.gmail.com");
+    vi.stubEnv("SMTP_PORT", "465");
+    vi.stubEnv("SMTP_USER", "platform@example.com");
+    vi.stubEnv("SMTP_PASS", "deployment-app-password");
+    vi.stubEnv("SMTP_FROM", "platform@example.com");
+
+    await issueEmailOtp(normalizedEmail, "SUPPORT");
+
+    expect(mocks.createTransport).toHaveBeenCalledWith({
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
+      auth: {
+        user: "platform@example.com",
+        pass: "deployment-app-password",
+      },
+    });
+  });
+
   it("privately copies customer authentication OTPs when enabled", async () => {
     mocks.findConfiguration.mockResolvedValue({
       ...emailConfiguration,
