@@ -23,7 +23,7 @@ export default function PlatformAccessDeleteForm({
       }}
     >
       <input type="hidden" name="accountId" value={accountId} />
-      <Button type="submit" size="sm" variant="danger">Delete</Button>
+      <Button type="submit" size="sm" variant="destructive">Delete</Button>
     </form>
   );
 }

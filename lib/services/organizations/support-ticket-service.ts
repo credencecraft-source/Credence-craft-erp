@@ -6,6 +6,10 @@ import { normalizeSystemStatusKey } from "@/lib/auth/validation-rules";
 import { requireOrganizationAccess } from "./organization-service";
 import { PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES } from "@/lib/services/platform/platform-lead-constants";
 import {
+  getPlatformLeadScope,
+  requirePlatformLeadAccess,
+} from "@/lib/services/platform/platform-lead-access";
+import {
   AUTOMATIC_TRIAL_EXTENSION_DESCRIPTION_PREFIX,
   LEGACY_TRIAL_EXTENSION_REQUEST_DESCRIPTION,
   PLATFORM_REVIEW_TRIAL_EXTENSION_DESCRIPTION_PREFIX,
@@ -184,7 +188,8 @@ export async function createPlatformLeadSupportTicket(input: {
   markCallBackLater?: boolean;
   markDemoBooked?: boolean;
 }) {
-  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
+  const admin = await requirePlatformLeadAccess();
+  const leadScope = getPlatformLeadScope(admin);
   const normalized = normalizeTicketInput(input);
   const leadId = input.leadId.trim();
   if (!leadId || leadId.length > 255) throw new Error("Select a valid lead.");
@@ -194,8 +199,8 @@ export async function createPlatformLeadSupportTicket(input: {
       throw new Error("Call Back Later requires a callback request.");
     }
     return prisma.$transaction(async (transaction) => {
-      const lead = await transaction.platformLead.findUnique({
-        where: { id: leadId },
+      const lead = await transaction.platformLead.findFirst({
+        where: { id: leadId, ...leadScope },
         select: { id: true, stage: true },
       });
       if (!lead) throw new Error("Lead not found.");
@@ -205,7 +210,7 @@ export async function createPlatformLeadSupportTicket(input: {
         throw new Error("Only leads under Need To Call can schedule a callback.");
       }
       const updatedLead = await transaction.platformLead.updateMany({
-        where: { id: lead.id, stage: lead.stage },
+        where: { id: lead.id, stage: lead.stage, ...leadScope },
         data: { stage: "Call Back Later" },
       });
       if (updatedLead.count !== 1) {
@@ -254,8 +259,8 @@ export async function createPlatformLeadSupportTicket(input: {
       throw new Error("Booking a demo requires a demo booking request.");
     }
     return prisma.$transaction(async (transaction) => {
-      const lead = await transaction.platformLead.findUnique({
-        where: { id: leadId },
+      const lead = await transaction.platformLead.findFirst({
+        where: { id: leadId, ...leadScope },
         select: { id: true, stage: true },
       });
       if (!lead) throw new Error("Lead not found.");
@@ -263,7 +268,7 @@ export async function createPlatformLeadSupportTicket(input: {
         throw new Error("Only leads interested in a demo can book one.");
       }
       const updatedLead = await transaction.platformLead.updateMany({
-        where: { id: lead.id, stage: "Interested For Demo" },
+        where: { id: lead.id, stage: "Interested For Demo", ...leadScope },
         data: { stage: "Demo Booked" },
       });
       if (updatedLead.count !== 1) {
@@ -307,8 +312,8 @@ export async function createPlatformLeadSupportTicket(input: {
     });
   }
 
-  const lead = await prisma.platformLead.findUnique({
-    where: { id: leadId },
+  const lead = await prisma.platformLead.findFirst({
+    where: { id: leadId, ...leadScope },
     select: { id: true },
   });
   if (!lead) throw new Error("Lead not found.");
@@ -343,11 +348,12 @@ export async function createPlatformLeadSupportTicket(input: {
 }
 
 export async function listPlatformLeadSupportTickets(leadId: string) {
-  await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
+  const admin = await requirePlatformLeadAccess();
+  const leadScope = getPlatformLeadScope(admin);
   const id = leadId.trim();
   if (!id || id.length > 255) throw new Error("Select a valid lead.");
-  const lead = await prisma.platformLead.findUnique({
-    where: { id },
+  const lead = await prisma.platformLead.findFirst({
+    where: { id, ...leadScope },
     select: { id: true },
   });
   if (!lead) throw new Error("Lead not found.");

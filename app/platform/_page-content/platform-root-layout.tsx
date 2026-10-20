@@ -18,18 +18,32 @@ type NavigationItem = {
 
 const NAV_SECTIONS: Array<{ title: string; items: NavigationItem[] }> = [
   {
+    title: "CMO",
+    items: [
+      { label: "Leads", href: "/platform/leads" },
+      { label: "Sales team", href: "/platform/leads/sales-team" },
+    ],
+  },
+  {
+    title: "Sales",
+    items: [
+      { label: "Leads", href: "/platform/leads" },
+    ],
+  },
+  {
+    title: "Admin",
+    items: [
+      { label: "Leads", href: "/platform/leads" },
+      { label: "Sales team", href: "/platform/leads/sales-team" },
+      { label: "Campaigns", href: "/platform/campaigns" },
+    ],
+  },
+  {
     title: "Organisations",
     items: [
       { label: "Organisations", href: "/platform/organisations" },
       { label: "Subscriptions", href: "/platform/subscriptions" },
       { label: "Workspace Users", href: "/platform/workspace-users" },
-    ],
-  },
-  {
-    title: "CMO",
-    items: [
-      { label: "Leads", href: "/platform/leads" },
-      { label: "Campaigns", href: "/platform/campaigns" },
     ],
   },
   {
@@ -68,6 +82,8 @@ export default function PlatformRootLayoutClient({
   canManageAccounts,
   canAccessConfiguration,
   canAccessLeadsAndSubscriptions,
+  canAccessLeads,
+  canManageSalesTeam,
   canAccessWorkspace,
   canAccessSupport,
   attentionCounts,
@@ -77,6 +93,8 @@ export default function PlatformRootLayoutClient({
   canManageAccounts: boolean;
   canAccessConfiguration: boolean;
   canAccessLeadsAndSubscriptions: boolean;
+  canAccessLeads: boolean;
+  canManageSalesTeam: boolean;
   canAccessWorkspace: boolean;
   canAccessSupport: boolean;
   attentionCounts: {
@@ -147,7 +165,13 @@ export default function PlatformRootLayoutClient({
     }
 
     if (section.title === "CMO") {
-      return canAccessLeadsAndSubscriptions;
+      return canAccessLeadsAndSubscriptions && !canManageAccounts;
+    }
+    if (section.title === "Admin") {
+      return canManageAccounts;
+    }
+    if (section.title === "Sales") {
+      return canAccessLeads && !canAccessLeadsAndSubscriptions && !canManageAccounts;
     }
     if (section.title === "Subscriptions") {
       return canAccessConfiguration;
@@ -181,6 +205,7 @@ export default function PlatformRootLayoutClient({
         {visibleSections.map((section) => {
           const items = section.items
             .filter((item) => item.href !== "/platform/settings/access" || canManageAccounts)
+            .filter((item) => item.href !== "/platform/leads/sales-team" || canManageSalesTeam)
             .filter((item) => item.href !== "/platform/whatsapp" || canAccessConfiguration)
             .filter((item) => item.href !== "/platform/subscriptions" || canAccessConfiguration)
             .filter((item) => item.href !== "/platform/workspace-users" || canAccessWorkspace)

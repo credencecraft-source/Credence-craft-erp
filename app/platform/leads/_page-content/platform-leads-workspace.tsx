@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, CheckCircle2, Download, LoaderCircle, Mic, RefreshCw, Settings2, Square, Upload, X } from "lucide-react";
+import Link from "next/link";
+import { ArrowLeft, ArrowRight, Bell, CheckCircle2, Download, LoaderCircle, Mic, RefreshCw, Settings2, Square, Upload, X } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -12,8 +14,13 @@ import Tabs from "@/components/ui/Tabs";
 import Textarea from "@/components/ui/Textarea";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import {
+  formatIndianMobileNumber,
+  normalizeIndianMobileNumber,
+} from "@/lib/phone/indian-mobile-number";
+import {
   PLATFORM_LEAD_DEAD_STAGES,
   PLATFORM_LEAD_NOT_INTERESTED_STAGES,
+  PLATFORM_LEAD_OLD_STAGES,
   PLATFORM_LEAD_PAID_STAGES,
   PLATFORM_LEAD_STAGES,
   PLATFORM_LEAD_THIRD_PARTY_STAGES,
@@ -31,6 +38,8 @@ type PlatformLead = {
   stage: string;
   nature_of_business: string | null;
   quick_note: string | null;
+  assigned_sales_manager_id: string | null;
+  assignedSalesManager: { id: string; full_name: string; email: string } | null;
   created_at: string;
   updated_at: string;
   campaign_date: string | null;
@@ -51,33 +60,23 @@ const LEAD_FIELDS = [
   { key: "stage", label: "Stage" },
 ];
 
-const LEAD_ROW_STAGE_ACTIONS: Record<
-  string,
-  Array<{ label: string; stage: string; variant: "primary" | "secondary" | "destructive" }>
-> = {
-  Verification: [
-    { label: "Need To Call", stage: "Need To Call", variant: "primary" },
-    { label: "Not Interested", stage: "3-Dead", variant: "secondary" },
-    { label: "Mark as Fraud", stage: "MARK AS FROUD", variant: "destructive" },
-  ],
-  "Demo Booked": [
-    { label: "Demo Attended", stage: "Demo Attended", variant: "primary" },
-    { label: "Not Interested", stage: "3-Dead", variant: "secondary" },
-    { label: "Mark as Fraud", stage: "MARK AS FROUD", variant: "destructive" },
-  ],
-  "Demo Attended": [
-    { label: "Potential", stage: "2-Potential", variant: "primary" },
-    { label: "Not Interested", stage: "3-Dead", variant: "secondary" },
-    { label: "Mark as Fraud", stage: "MARK AS FROUD", variant: "destructive" },
-  ],
-};
+const MAX_BULK_STAGE_LEADS = 500;
 
-type LeadTab = "THIRD_PARTY" | "APP_LOGIN" | "DEAD" | "PAID" | "NOT_INTERESTED";
+type LeadTab = "THIRD_PARTY" | "APP_LOGIN" | "DEAD" | "PAID" | "NOT_INTERESTED" | "OLD";
 type PlatformLeadVoiceNote = {
   id: string;
   content_type: string;
   byte_size: number;
   duration_ms: number;
+  source: "RECORDED" | "UPLOADED";
+  created_at: string;
+};
+
+type PlatformLeadStatusHistoryItem = {
+  id: string;
+  previousStage: string | null;
+  stage: string | null;
+  actor: string;
   created_at: string;
 };
 
@@ -110,12 +109,20 @@ function LeadEditor({
   voiceNotesError,
   voiceNoteRecording,
   voiceNoteSaving,
+  voiceNoteUploading,
   voiceNoteError,
+  statusHistory,
+  statusHistoryLoading,
+  statusHistoryError,
   onRecordVoiceNote,
+  onUploadVoiceNote,
   onStopVoiceNote,
   onReloadVoiceNotes,
+  onReloadStatusHistory,
   onClose,
   onSaved,
+  fullPage = false,
+  statusActions = null,
 }: {
   lead: PlatformLead | null;
   tickets: LeadTicket[];
@@ -126,29 +133,39 @@ function LeadEditor({
   voiceNotesError: string;
   voiceNoteRecording: boolean;
   voiceNoteSaving: boolean;
+  voiceNoteUploading: boolean;
   voiceNoteError: string;
+  statusHistory: PlatformLeadStatusHistoryItem[];
+  statusHistoryLoading: boolean;
+  statusHistoryError: string;
   onRecordVoiceNote: () => void;
+  onUploadVoiceNote: (file: File) => void;
   onStopVoiceNote: () => void;
   onReloadVoiceNotes: () => void;
+  onReloadStatusHistory: () => void;
   onClose: () => void;
   onSaved: (lead: PlatformLead, movedToThirdParty?: boolean) => void;
+  fullPage?: boolean;
+  statusActions?: ReactNode;
 }) {
+  const voiceNoteFileInputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(lead?.name ?? "");
   const [email, setEmail] = useState(lead?.email ?? "");
-  const [mobile, setMobile] = useState(lead?.mobile ?? "");
+  const [mobile, setMobile] = useState(formatIndianMobileNumber(lead?.mobile ?? null) ?? "");
+  const [mobileError, setMobileError] = useState("");
   const [companyName, setCompanyName] = useState(lead?.company_name ?? "");
   const [city, setCity] = useState(lead?.city ?? "");
   const [source, setSource] = useState(lead?.source ?? "");
   const [stage, setStage] = useState(lead?.stage ?? PLATFORM_LEAD_STAGES[0]);
   const [natureOfBusiness, setNatureOfBusiness] = useState(lead?.nature_of_business ?? "");
   const [quickNote, setQuickNote] = useState(lead?.quick_note ?? "");
-  const [detailsTab, setDetailsTab] = useState<"quick-note" | "business" | "details" | "activity">("quick-note");
+  const [detailsTab, setDetailsTab] = useState<"status" | "quick-note" | "business" | "details" | "activity">("status");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await saveLead(stage);
+    await saveLead(lead?.stage ?? stage);
   }
 
   async function saveLead(nextStage: string, movedToThirdParty = false) {
@@ -181,18 +198,19 @@ function LeadEditor({
   );
 
   return (
-    <aside aria-label={lead ? "Edit lead" : "Create lead"} className="flex min-h-0 w-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-white lg:w-[min(42%,34rem)]">
+    <aside aria-label={lead ? "Edit lead" : "Create lead"} className={`flex min-h-0 w-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-white ${fullPage ? "flex-1" : "lg:w-[min(42%,34rem)]"}`}>
       <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Platform leads</p>
-          <h2 className="mt-1 text-sm font-bold text-slate-900">{lead ? "Edit lead" : "Add lead"}</h2>
+          <h2 className="mt-1 text-sm font-bold text-slate-900">{lead ? "Lead details" : "Add lead"}</h2>
         </div>
-        <Button type="button" variant="secondary" size="sm" onClick={onClose} aria-label="Close lead form" title="Close">
-          <X className="h-4 w-4" />
+        <Button type="button" variant="secondary" size="sm" onClick={onClose} aria-label={fullPage ? "Back to leads" : "Close lead form"} title={fullPage ? "Back to leads" : "Close"}>
+          {fullPage ? <ArrowLeft className="h-4 w-4" /> : <X className="h-4 w-4" />}
         </Button>
       </header>
       <Tabs
         tabs={[
+          { value: "status", label: "Status" },
           { value: "quick-note", label: "Quick Note" },
           { value: "business", label: "Nature of Business" },
           { value: "details", label: "Lead Details" },
@@ -202,9 +220,62 @@ function LeadEditor({
         onChange={(value) => setDetailsTab(value as typeof detailsTab)}
         ariaLabel="Lead details"
       />
-      <form onSubmit={submit} className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
-        {detailsTab === "quick-note" && (
-          <div className="space-y-4">
+      <form onSubmit={submit} className="min-h-0 flex-1 space-y-6 overflow-y-auto p-4 sm:p-6">
+          {detailsTab === "status" && <section className="space-y-4">
+            <h3 className="text-sm font-semibold text-slate-900">Lead status</h3>
+            {lead ? (
+              <p className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
+                {lead.stage}
+              </p>
+            ) : (
+              <Select
+                label="Status"
+                required
+                value={stage}
+                onChange={(event) => setStage(event.target.value)}
+                options={PLATFORM_LEAD_STAGES.map((value) => ({ label: value, value }))}
+              />
+            )}
+            {lead && statusActions && (
+              <div className="flex flex-wrap gap-2" aria-label="Lead status actions">
+                {statusActions}
+              </div>
+            )}
+            {lead && (
+              <section aria-label="Status history" className="space-y-3 border-t border-slate-200 pt-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-slate-900">Status history</h3>
+                  {statusHistoryError && (
+                    <Button type="button" size="sm" variant="secondary" onClick={onReloadStatusHistory}>
+                      Retry
+                    </Button>
+                  )}
+                </div>
+                {statusHistoryError ? (
+                  <p role="alert" className="text-sm text-red-700">{statusHistoryError}</p>
+                ) : statusHistoryLoading ? (
+                  <p role="status" className="text-sm text-slate-500">Loading status history...</p>
+                ) : statusHistory.length > 0 ? (
+                  <ol className="space-y-2">
+                    {statusHistory.map((item) => (
+                      <li key={item.id} className="rounded-lg border border-slate-200 px-3 py-2">
+                        <p className="text-sm font-medium text-slate-900">
+                          {item.previousStage ? `${item.previousStage} → ${item.stage ?? "Status updated"}` : `Status set to ${item.stage ?? "updated"}`}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {item.actor} · {new Date(item.created_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
+                        </p>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="text-sm text-slate-500">No status changes have been recorded yet.</p>
+                )}
+              </section>
+            )}
+          </section>}
+          {detailsTab === "quick-note" && <section className="space-y-4">
+            <h3 className="text-sm font-semibold text-slate-900">Quick note</h3>
             <Textarea
               label="Quick Note"
               maxLength={2000}
@@ -217,18 +288,43 @@ function LeadEditor({
               <section aria-label="Voice notes" className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold text-slate-900">Voice notes</h3>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={voiceNoteRecording ? "destructive" : "secondary"}
-                    disabled={voiceNoteSaving}
-                    onClick={voiceNoteRecording ? onStopVoiceNote : onRecordVoiceNote}
-                  >
-                    {voiceNoteRecording
-                      ? <Square className="h-4 w-4" aria-hidden="true" />
-                      : <Mic className="h-4 w-4" aria-hidden="true" />}
-                    {voiceNoteRecording ? "Finish recording" : voiceNoteSaving ? "Saving recording..." : "Record voice note"}
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={voiceNoteRecording ? "destructive" : "secondary"}
+                      disabled={voiceNoteSaving}
+                      onClick={voiceNoteRecording ? onStopVoiceNote : onRecordVoiceNote}
+                    >
+                      {voiceNoteRecording
+                        ? <Square className="h-4 w-4" aria-hidden="true" />
+                        : <Mic className="h-4 w-4" aria-hidden="true" />}
+                      {voiceNoteRecording ? "Finish recording" : voiceNoteSaving ? "Saving recording..." : "Record voice note"}
+                    </Button>
+                    <Input
+                      ref={voiceNoteFileInputRef}
+                      type="file"
+                      accept="audio/webm,audio/ogg,audio/mp4,audio/mpeg,audio/wav,audio/x-wav"
+                      className="sr-only"
+                      aria-label="Choose audio file to upload"
+                      disabled={voiceNoteSaving}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) onUploadVoiceNote(file);
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={voiceNoteSaving || voiceNoteUploading || voiceNoteRecording}
+                      onClick={() => voiceNoteFileInputRef.current?.click()}
+                    >
+                      <Upload className="h-4 w-4" aria-hidden="true" />
+                      {voiceNoteUploading ? "Uploading..." : "Upload audio"}
+                    </Button>
+                  </div>
                 </div>
                 {voiceNoteRecording && <p role="status" className="text-xs text-slate-600">Recording. Select Finish recording when you are done.</p>}
                 {voiceNoteError && <p role="alert" className="text-sm text-red-700">{voiceNoteError}</p>}
@@ -245,7 +341,12 @@ function LeadEditor({
                     {voiceNotes.map((note) => (
                       <li key={note.id} className="space-y-2 rounded-lg border border-slate-200 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="text-sm font-semibold text-slate-900">Voice note</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-semibold text-slate-900">Voice note</p>
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${note.source === "UPLOADED" ? "bg-slate-100 text-slate-700" : "bg-emerald-50 text-emerald-700"}`}>
+                              {note.source === "UPLOADED" ? "Uploaded" : "Recorded"}
+                            </span>
+                          </div>
                           <span className="text-xs text-slate-500">{Math.ceil(note.duration_ms / 1000)} sec</span>
                         </div>
                         <audio
@@ -269,10 +370,9 @@ function LeadEditor({
             ) : (
               <p className="text-sm text-slate-500">Save the lead before recording a voice note.</p>
             )}
-          </div>
-        )}
-        {detailsTab === "business" && (
-          <>
+          </section>}
+          {detailsTab === "business" && <section className="space-y-4">
+            <h3 className="text-sm font-semibold text-slate-900">Nature of business</h3>
             <p className="text-xs text-slate-500">Describe the lead’s business, products, and manufacturing or sourcing needs.</p>
             <Textarea
               label="Nature of Business"
@@ -282,21 +382,47 @@ function LeadEditor({
               onChange={(event) => setNatureOfBusiness(event.target.value)}
               placeholder="Business type, products, production scale, and requirements"
             />
-          </>
-        )}
-        {detailsTab === "details" && (
-          <>
+          </section>}
+          {detailsTab === "details" && <section className="space-y-4">
+            <h3 className="text-sm font-semibold text-slate-900">Lead details</h3>
+            <div className="grid gap-4 md:grid-cols-2">
             <Input label="Name" required minLength={2} maxLength={255} value={name} onChange={(event) => setName(event.target.value)} />
             <Input label="Email" type="email" maxLength={255} value={email} onChange={(event) => setEmail(event.target.value)} />
-            <Input label="Mobile" type="tel" maxLength={30} value={mobile} onChange={(event) => setMobile(event.target.value)} hint="Include country code. Provide an email or mobile number." />
+            <Input
+              label="Mobile"
+              type="tel"
+              inputMode="numeric"
+              maxLength={12}
+              pattern="[0-9]{12}"
+              value={mobile}
+              onChange={(event) => {
+                setMobile(event.target.value.replace(/\D/g, "").slice(0, 12));
+                setMobileError("");
+              }}
+              onBlur={() => {
+                if (!mobile) {
+                  setMobileError("");
+                  return;
+                }
+                try {
+                  setMobile(normalizeIndianMobileNumber(mobile));
+                  setMobileError("");
+                } catch (error) {
+                  setMobileError(error instanceof Error
+                    ? error.message
+                    : "Enter a valid 12-digit Indian mobile number.");
+                }
+              }}
+              error={mobileError}
+              hint="12 digits only: 91 followed by the 10-digit mobile number. Do not include +."
+            />
             <Input label="Company name" maxLength={255} value={companyName} onChange={(event) => setCompanyName(event.target.value)} />
             <Input label="City" maxLength={120} value={city} onChange={(event) => setCity(event.target.value)} />
             <Input label="Source" maxLength={120} value={source} onChange={(event) => setSource(event.target.value)} placeholder="e.g. Website, referral, event" />
-            <Select label="Stage" required value={stage} onChange={(event) => setStage(event.target.value)} options={PLATFORM_LEAD_STAGES.map((value) => ({ label: value, value }))} />
-          </>
-        )}
-        {detailsTab === "activity" && (
-          <div className="space-y-4">
+            </div>
+          </section>}
+          {detailsTab === "activity" && <section className="space-y-4">
+            <h3 className="text-sm font-semibold text-slate-900">Activity &amp; callbacks</h3>
             <div className="grid gap-3 sm:grid-cols-2">
               <LeadActivityInfo label="Lead created" value={lead ? new Date(lead.created_at).toLocaleString() : "Not saved"} />
               <LeadActivityInfo label="Last lead update" value={lead ? new Date(lead.updated_at).toLocaleString() : "Not saved"} />
@@ -350,11 +476,9 @@ function LeadEditor({
                 ))}
               </ul>
             )}
-          </div>
-        )}
+          </section>}
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-        {detailsTab !== "activity" && (
-          <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
+        {detailsTab !== "activity" && <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
             {lead && PLATFORM_LEAD_DEAD_STAGES.some((deadStage) => deadStage === lead.stage) && (
               <Button
                 type="button"
@@ -369,8 +493,7 @@ function LeadEditor({
             <Button type="submit" disabled={saving} className="bg-emerald-600 text-white hover:bg-emerald-700">
               {saving ? "Saving..." : lead ? "Save changes" : "Create lead"}
             </Button>
-          </div>
-        )}
+        </div>}
       </form>
     </aside>
   );
@@ -383,8 +506,16 @@ function LeadActivityInfo({ label, value }: { label: string; value: string }) {
 export default function PlatformLeadsWorkspace({
   leads: initialLeads,
   appLogins,
+  canManageCampaigns,
+  canManageSalesTeam,
+  isSalesManager,
+  salesManagers,
 }: {
   leads: PlatformLead[];
+  canManageCampaigns: boolean;
+  canManageSalesTeam: boolean;
+  isSalesManager: boolean;
+  salesManagers: Array<{ id: string; full_name: string; email: string; is_active: boolean }>;
   appLogins: Array<{
     id: string;
     name: string;
@@ -402,6 +533,9 @@ export default function PlatformLeadsWorkspace({
   const searchParams = useSearchParams();
   const leadIdFromUrl = searchParams.get("leadId");
   const [leadOverrides, setLeadOverrides] = useState<Record<string, PlatformLead>>({});
+  const [assignmentSavingLeadId, setAssignmentSavingLeadId] = useState<string | null>(null);
+  const [assignmentMessage, setAssignmentMessage] = useState("");
+  const [assignmentError, setAssignmentError] = useState("");
   const leads = useMemo(() => {
     const merged = initialLeads.map((lead) => leadOverrides[lead.id] ?? lead);
     const initialIds = new Set(initialLeads.map((lead) => lead.id));
@@ -416,12 +550,16 @@ export default function PlatformLeadsWorkspace({
   const [leadTickets, setLeadTickets] = useState<LeadTicket[]>([]);
   const [ticketsLoadedForLeadId, setTicketsLoadedForLeadId] = useState<string | null>(null);
   const [ticketLoadFailure, setTicketLoadFailure] = useState<{ leadId: string; error: string } | null>(null);
+  const [leadStatusHistory, setLeadStatusHistory] = useState<Record<string, PlatformLeadStatusHistoryItem[]>>({});
+  const [statusHistoryLoadFailure, setStatusHistoryLoadFailure] = useState<{ leadId: string; error: string } | null>(null);
+  const [statusHistoryRetryCount, setStatusHistoryRetryCount] = useState(0);
   const [leadVoiceNotes, setLeadVoiceNotes] = useState<Record<string, PlatformLeadVoiceNote[]>>({});
   const [voiceNotesLoadedForLeadId, setVoiceNotesLoadedForLeadId] = useState<string | null>(null);
   const [voiceNotesLoadFailure, setVoiceNotesLoadFailure] = useState<{ leadId: string; error: string } | null>(null);
   const [recordingLeadId, setRecordingLeadId] = useState<string | null>(null);
   const [voiceNoteStartingLeadId, setVoiceNoteStartingLeadId] = useState<string | null>(null);
   const [voiceNoteSavingLeadId, setVoiceNoteSavingLeadId] = useState<string | null>(null);
+  const [voiceNoteUploadingLeadId, setVoiceNoteUploadingLeadId] = useState<string | null>(null);
   const [voiceNoteFailure, setVoiceNoteFailure] = useState<{ leadId: string; error: string } | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -429,7 +567,7 @@ export default function PlatformLeadsWorkspace({
   const voiceNoteRecordingLeadIdRef = useRef<string | null>(null);
   const voiceNoteStartedAtRef = useRef(0);
   const voiceNoteLimitTimerRef = useRef<number | null>(null);
-  const [stageFilter, setStageFilter] = useState("NEED_TO_CALL");
+  const [stageFilter, setStageFilter] = useState(isSalesManager ? "ALL" : "NEED_TO_CALL");
   const [callFollowUpFilter, setCallFollowUpFilter] = useState<
     "Need To Call" | "Not Picked" | "Call Back Later"
   >("Need To Call");
@@ -481,6 +619,15 @@ export default function PlatformLeadsWorkspace({
   const activeSelectedLead = leads.find((lead) => lead.id === selectedLeadId) ?? null;
   const ticketsLoading = Boolean(selectedLeadId && selectedLeadId !== ticketsLoadedForLeadId);
   const ticketLoadError = ticketLoadFailure?.leadId === selectedLeadId ? ticketLoadFailure.error : "";
+  const statusHistoryLoading = Boolean(
+    selectedLeadId
+    && !(selectedLeadId in leadStatusHistory)
+    && statusHistoryLoadFailure?.leadId !== selectedLeadId,
+  );
+  const selectedStatusHistory = selectedLeadId ? leadStatusHistory[selectedLeadId] ?? [] : [];
+  const selectedStatusHistoryError = statusHistoryLoadFailure?.leadId === selectedLeadId
+    ? statusHistoryLoadFailure.error
+    : "";
   const voiceNotesLoading = Boolean(
     selectedLeadId
     && !leadVoiceNotes[selectedLeadId]
@@ -531,6 +678,36 @@ export default function PlatformLeadsWorkspace({
   }, [selectedLeadId, ticketsLoadedForLeadId]);
 
   useEffect(() => {
+    if (
+      !selectedLeadId
+      || selectedLeadId in leadStatusHistory
+      || statusHistoryLoadFailure?.leadId === selectedLeadId
+    ) return;
+
+    const controller = new AbortController();
+    void fetch(`/api/platform/leads/${encodeURIComponent(selectedLeadId)}/history`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Unable to load lead status history.");
+        setLeadStatusHistory((current) => ({
+          ...current,
+          [selectedLeadId]: payload.history as PlatformLeadStatusHistoryItem[],
+        }));
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setStatusHistoryLoadFailure({
+          leadId: selectedLeadId,
+          error: error instanceof Error ? error.message : "Unable to load lead status history.",
+        });
+      });
+
+    return () => controller.abort();
+  }, [selectedLeadId, leadStatusHistory, statusHistoryLoadFailure, statusHistoryRetryCount]);
+
+  useEffect(() => {
     if (!selectedLeadId || selectedLeadId.startsWith("app-login:") || selectedLeadId === voiceNotesLoadedForLeadId) return;
 
     const controller = new AbortController();
@@ -572,6 +749,8 @@ export default function PlatformLeadsWorkspace({
         id: `app-login:${user.id}`,
         nature_of_business: null,
         quick_note: null,
+        assigned_sales_manager_id: null,
+        assignedSalesManager: null,
         campaign_date: null,
         last_campaign_date: null,
         created_at: user.created_at,
@@ -586,7 +765,9 @@ export default function PlatformLeadsWorkspace({
         ? PLATFORM_LEAD_PAID_STAGES
         : activeTab === "NOT_INTERESTED"
           ? PLATFORM_LEAD_NOT_INTERESTED_STAGES
-          : PLATFORM_LEAD_THIRD_PARTY_STAGES;
+          : activeTab === "OLD"
+            ? PLATFORM_LEAD_OLD_STAGES
+            : PLATFORM_LEAD_THIRD_PARTY_STAGES;
     return leads
       .filter((lead) => allowedStages.some((stage) => stage === lead.stage))
       .filter((lead) => {
@@ -614,7 +795,9 @@ export default function PlatformLeadsWorkspace({
       ? PLATFORM_LEAD_PAID_STAGES
       : activeTab === "NOT_INTERESTED"
         ? PLATFORM_LEAD_NOT_INTERESTED_STAGES
-        : PLATFORM_LEAD_THIRD_PARTY_STAGES;
+        : activeTab === "OLD"
+          ? PLATFORM_LEAD_OLD_STAGES
+          : PLATFORM_LEAD_THIRD_PARTY_STAGES;
   const leadStageTabs = [
     {
       value: "ALL",
@@ -639,7 +822,7 @@ export default function PlatformLeadsWorkspace({
     { value: "Demo Attended", step: "Stage 6", label: "Demo Attended", count: leadCountsByStage["Demo Attended"] ?? 0 },
     { value: "2-Potential", step: "Stage 7", label: "Potential", count: leadCountsByStage["2-Potential"] ?? 0 },
   ];
-  const tabs: Array<{ id: LeadTab; label: string; count: number }> = [
+  const allTabs: Array<{ id: LeadTab; label: string; count: number }> = [
     {
       id: "THIRD_PARTY",
       label: "3rd Party Leads",
@@ -661,7 +844,13 @@ export default function PlatformLeadsWorkspace({
       label: "Not Interested",
       count: countLeadStages(PLATFORM_LEAD_NOT_INTERESTED_STAGES),
     },
+    {
+      id: "OLD",
+      label: "Old",
+      count: countLeadStages(PLATFORM_LEAD_OLD_STAGES),
+    },
   ];
+  const tabs = allTabs.filter((tab) => !isSalesManager || tab.id !== "APP_LOGIN");
   const changeVisibleFields = useCallback((next: (string | keyof PlatformLead)[]) => {
     setVisibleFields(next.map(String));
   }, []);
@@ -669,23 +858,94 @@ export default function PlatformLeadsWorkspace({
   function closeEditor() {
     stopVoiceNoteRecording();
     setNewLead(false);
-    window.history.pushState(null, "", "/platform/leads");
+    router.push("/platform/leads");
+  }
+
+  async function claimLead(leadId: string) {
+    if (assignmentSavingLeadId) return;
+    setAssignmentSavingLeadId(leadId);
+    setAssignmentError("");
+    setAssignmentMessage("");
+    try {
+      const response = await fetch(`/api/platform/leads/${encodeURIComponent(leadId)}/assignment`, {
+        method: "POST",
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to accept this lead.");
+      setAssignmentMessage("Lead accepted and added to your assigned leads.");
+      router.refresh();
+    } catch (error) {
+      setAssignmentError(error instanceof Error ? error.message : "Unable to accept this lead.");
+    } finally {
+      setAssignmentSavingLeadId(null);
+    }
+  }
+
+  async function changeLeadAssignment(leadId: string, managerId: string) {
+    if (assignmentSavingLeadId) return;
+    setAssignmentSavingLeadId(leadId);
+    setAssignmentError("");
+    setAssignmentMessage("");
+    try {
+      const response = await fetch(`/api/platform/leads/${encodeURIComponent(leadId)}/assignment`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ managerId: managerId || null }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to assign this lead.");
+      const manager = salesManagers.find((item) => item.id === managerId) ?? null;
+      setLeadOverrides((current) => {
+        const lead = current[leadId] ?? initialLeads.find((item) => item.id === leadId);
+        if (!lead) return current;
+        return {
+          ...current,
+          [leadId]: {
+            ...lead,
+            assigned_sales_manager_id: managerId || null,
+            assignedSalesManager: manager,
+          },
+        };
+      });
+      setAssignmentMessage("Lead assignment updated.");
+      router.refresh();
+    } catch (error) {
+      setAssignmentError(error instanceof Error ? error.message : "Unable to assign this lead.");
+    } finally {
+      setAssignmentSavingLeadId(null);
+    }
   }
 
   function openLead(leadId: string) {
     if (recordingLeadId && recordingLeadId !== leadId) stopVoiceNoteRecording();
+    const lead = leads.find((item) => item.id === leadId);
+    if (isSalesManager && lead && !lead.assigned_sales_manager_id) {
+      setStageMovementError("Accept this unassigned lead before opening it.");
+      return;
+    }
     if (activeTab === "APP_LOGIN") {
       const workspaceUserId = leadId.replace(/^app-login:/, "");
       router.push(`/platform/workspace-users/${encodeURIComponent(workspaceUserId)}`);
       return;
     }
     setNewLead(false);
-    window.history.pushState(null, "", `/platform/leads?leadId=${encodeURIComponent(leadId)}`);
+    router.push(`/platform/leads?leadId=${encodeURIComponent(leadId)}`);
   }
 
   function reloadVoiceNotes() {
     setVoiceNotesLoadFailure(null);
     setVoiceNotesLoadedForLeadId(null);
+  }
+
+  function reloadStatusHistory() {
+    if (!selectedLeadId) return;
+    setLeadStatusHistory((current) => {
+      const next = { ...current };
+      delete next[selectedLeadId];
+      return next;
+    });
+    setStatusHistoryLoadFailure(null);
+    setStatusHistoryRetryCount((count) => count + 1);
   }
 
   function stopVoiceNoteRecording() {
@@ -748,7 +1008,13 @@ export default function PlatformLeadsWorkspace({
     }
   }
 
-  async function saveVoiceNoteRecording(leadId: string, audioBlob: Blob, durationMs: number) {
+  async function saveVoiceNoteRecording(
+    leadId: string,
+    audioBlob: Blob,
+    durationMs: number,
+    source: "RECORDED" | "UPLOADED" = "RECORDED",
+    fileName = "lead-voice-note",
+  ) {
     if (audioBlob.size === 0) {
       setVoiceNoteFailure({ leadId, error: "No audio was captured. Check microphone access and try again." });
       return;
@@ -762,8 +1028,9 @@ export default function PlatformLeadsWorkspace({
     setVoiceNoteFailure(null);
     try {
       const formData = new FormData();
-      formData.append("audio", audioBlob, "lead-voice-note");
+      formData.append("audio", audioBlob, fileName);
       formData.append("durationMs", String(Math.max(1, durationMs)));
+      formData.append("source", source);
       const response = await fetch(`/api/platform/leads/${encodeURIComponent(leadId)}/voice-notes`, {
         method: "POST",
         body: formData,
@@ -787,6 +1054,45 @@ export default function PlatformLeadsWorkspace({
     }
   }
 
+  async function uploadVoiceNoteFile(leadId: string, file: File) {
+    if (file.size < 1 || file.size > 5 * 1024 * 1024) {
+      setVoiceNoteFailure({ leadId, error: "Voice files must be smaller than 5 MB." });
+      return;
+    }
+    if (voiceNoteRecording || voiceNoteStartingLeadId || voiceNoteSavingLeadId || voiceNoteUploadingLeadId) return;
+
+    setVoiceNoteUploadingLeadId(leadId);
+    setVoiceNoteFailure(null);
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const durationMs = await new Promise<number>((resolve, reject) => {
+        const audio = new Audio();
+        audio.preload = "metadata";
+        audio.onloadedmetadata = () => {
+          if (!Number.isFinite(audio.duration) || audio.duration <= 0) {
+            reject(new Error("Could not read the audio file duration."));
+            return;
+          }
+          resolve(Math.ceil(audio.duration * 1000));
+        };
+        audio.onerror = () => reject(new Error("Could not read this audio file. Choose a supported audio format."));
+        audio.src = objectUrl;
+      });
+      if (durationMs > 180_000) {
+        throw new Error("Voice files must be 3 minutes or shorter.");
+      }
+      await saveVoiceNoteRecording(leadId, file, durationMs, "UPLOADED", file.name);
+    } catch (error) {
+      setVoiceNoteFailure({
+        leadId,
+        error: error instanceof Error ? error.message : "Unable to upload voice file.",
+      });
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+      setVoiceNoteUploadingLeadId(null);
+    }
+  }
+
   function renderVoiceNoteAction(lead: PlatformLead) {
     const isRecording = recordingLeadId === lead.id;
     const isBusy = voiceNoteStartingLeadId === lead.id || voiceNoteSavingLeadId === lead.id;
@@ -803,6 +1109,59 @@ export default function PlatformLeadsWorkspace({
       >
         {isRecording ? <Square className="h-4 w-4" aria-hidden="true" /> : <Mic className="h-4 w-4" aria-hidden="true" />}
       </Button>
+    );
+  }
+
+  function renderLeadStatusActions(lead: PlatformLead): ReactNode {
+    const statusButtons = PLATFORM_LEAD_STAGES.map((nextStage) => (
+      <Button
+        key={nextStage}
+        type="button"
+        size="sm"
+        variant={nextStage === "MARK AS FROUD"
+          ? "destructive"
+          : lead.stage === nextStage ? "primary" : "secondary"}
+        disabled={movingSelectedLeads || lead.stage === nextStage}
+        aria-pressed={lead.stage === nextStage}
+        onClick={() => void updateSelectedLeadStage(nextStage, [lead.id])}
+      >
+        {nextStage === "1-new" ? "New"
+          : nextStage === "Verification" ? "Verified"
+            : nextStage === "2-Potential" ? "Potential"
+              : nextStage === "3-Dead" ? "Not Interested"
+                : nextStage === "MARK AS FROUD" ? "Mark as Fraud"
+                  : nextStage}
+      </Button>
+    ));
+
+    return (
+      <>
+        {statusButtons}
+        {lead.stage === "Interested For Demo" && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={movingSelectedLeads || demoBookingSaving}
+            onClick={() => openDemoBooking(lead.id)}
+          >
+            Book Demo
+          </Button>
+        )}
+        {PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES.includes(
+          lead.stage as (typeof PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES)[number],
+        ) && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={movingSelectedLeads || callbackSaving}
+            onClick={() => openCallbackScheduler(lead.id)}
+          >
+            Schedule callback
+          </Button>
+        )}
+      </>
     );
   }
 
@@ -1002,34 +1361,6 @@ export default function PlatformLeadsWorkspace({
     }
   }
 
-  async function updateNewLeadStage(
-    stage: "Verification" | "MARK AS FROUD",
-    leadIds: string[] = selectedLeadIds,
-  ) {
-    if (leadIds.length === 0 || movingSelectedLeads) return;
-    setMovingSelectedLeads(true);
-    setStageMovementMessage("");
-    setStageMovementError("");
-    try {
-      const response = await fetch("/api/platform/leads/stages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadIds, newLeadStage: stage }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Unable to update new leads.");
-      applyLeadStageChanges(leadIds.map((leadId) => ({ leadId, stage })));
-      setStageMovementMessage(
-        `${payload.updatedCount} lead${payload.updatedCount === 1 ? "" : "s"} ${stage === "Verification" ? "approved and moved to Verified" : "moved to Mark as Fraud"}.`,
-      );
-      setSelectedLeadIds([]);
-    } catch (error) {
-      setStageMovementError(error instanceof Error ? error.message : "Unable to update new leads.");
-    } finally {
-      setMovingSelectedLeads(false);
-    }
-  }
-
   async function updateSelectedLeadStage(stageOverride?: string, leadIds: string[] = selectedLeadIds) {
     const nextStage = stageOverride ?? bulkTargetStage;
     if (leadIds.length === 0 || movingSelectedLeads || !nextStage) return;
@@ -1045,6 +1376,15 @@ export default function PlatformLeadsWorkspace({
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Unable to update lead stages.");
       applyLeadStageChanges(leadIds.map((leadId) => ({ leadId, stage: nextStage })));
+      if (selectedLeadId && leadIds.includes(selectedLeadId)) {
+        setLeadStatusHistory((current) => {
+          const next = { ...current };
+          delete next[selectedLeadId];
+          return next;
+        });
+        setStatusHistoryLoadFailure(null);
+        setStatusHistoryRetryCount((count) => count + 1);
+      }
       setStageMovementMessage(
         `${payload.updatedCount} lead${payload.updatedCount === 1 ? "" : "s"} changed to ${nextStage}${payload.unchangedCount ? `; ${payload.unchangedCount} already had this stage` : ""}.`,
       );
@@ -1075,7 +1415,7 @@ export default function PlatformLeadsWorkspace({
       setActiveTab("THIRD_PARTY");
       setStageFilter("ALL");
     }
-    window.history.pushState(null, "", `/platform/leads?leadId=${encodeURIComponent(lead.id)}`);
+    router.replace(`/platform/leads?leadId=${encodeURIComponent(lead.id)}`);
   }
 
   async function openCampaignDialog() {
@@ -1220,39 +1560,78 @@ export default function PlatformLeadsWorkspace({
     }
   }
 
+  const leadActivityButton = (
+    <Button
+      type="button"
+      variant="secondary"
+      size="sm"
+      className="min-h-0 px-2 py-1.5"
+      aria-label="Open lead activity and notifications"
+      title="Open lead activity and notifications in a new tab"
+      onClick={() => window.open("/platform/leads/activity", "_blank", "noopener,noreferrer")}
+    >
+      <Bell className="h-4 w-4" aria-hidden="true" />
+      <span className="sr-only">Lead activity</span>
+    </Button>
+  );
+
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
       <header className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
-          <h1 className="text-xl font-bold text-slate-900">Leads</h1>
-          <Tabs
-            tabs={tabs.map((tab) => ({
-              value: tab.id,
-              label: (
-                <>
-                  {tab.label}
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] tabular-nums">
-                    {tab.count}
-                  </span>
-                </>
-              ),
-            }))}
-            value={activeTab}
-            onChange={(value) => {
-              const nextTab = value as LeadTab;
-              setActiveTab(nextTab);
-              setStageFilter("ALL");
-              setCallFollowUpFilter("Need To Call");
-              setSelectedLeadIds([]);
-              setNewLead(false);
-              window.history.pushState(null, "", "/platform/leads");
-            }}
-            ariaLabel="Lead categories"
-          />
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <p className="text-xs text-slate-500">{filteredLeads.length} records</p>
-          <Button
+        {selectedLeadId ? (
+          <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <Button type="button" variant="secondary" size="sm" onClick={closeEditor}>
+                <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                Back to Leads
+              </Button>
+              <h1 className="truncate text-xl font-bold text-slate-900">
+                {activeSelectedLead?.name ?? "Lead details"}
+              </h1>
+            </div>
+            {leadActivityButton}
+          </div>
+        ) : (
+          <>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+              <h1 className="text-xl font-bold text-slate-900">Leads</h1>
+              <Tabs
+                tabs={tabs.map((tab) => ({
+                  value: tab.id,
+                  label: (
+                    <>
+                      {tab.label}
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] tabular-nums">
+                        {tab.count}
+                      </span>
+                    </>
+                  ),
+                }))}
+                value={activeTab}
+                onChange={(value) => {
+                  const nextTab = value as LeadTab;
+                  setActiveTab(nextTab);
+                  setStageFilter("ALL");
+                  setCallFollowUpFilter("Need To Call");
+                  setSelectedLeadIds([]);
+                  setNewLead(false);
+                  router.push("/platform/leads");
+                }}
+                ariaLabel="Lead categories"
+              />
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {canManageSalesTeam && (
+                <Link
+                  href="/platform/leads/sales-team"
+                  className="inline-flex min-h-8 items-center rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] px-3 py-1.5 text-xs font-semibold text-[var(--erp-text)] shadow-sm hover:bg-[var(--erp-surface-soft)]"
+                >
+                  Sales team
+                </Link>
+              )}
+              {leadActivityButton}
+              <p className="text-xs text-slate-500">{filteredLeads.length} records</p>
+          {!isSalesManager && <Button
             type="button"
             variant="secondary"
             size="sm"
@@ -1262,8 +1641,8 @@ export default function PlatformLeadsWorkspace({
           >
             <RefreshCw className={`h-4 w-4 ${refreshingSheet ? "animate-spin" : ""}`} aria-hidden="true" />
             {refreshingSheet ? "Refreshing..." : "Refresh Sheet"}
-          </Button>
-          <Button
+          </Button>}
+          {!isSalesManager && <Button
             type="button"
             variant="ghost"
             size="sm"
@@ -1274,41 +1653,47 @@ export default function PlatformLeadsWorkspace({
             className="min-h-0 px-2 py-1.5"
           >
             <Settings2 className="h-4 w-4" aria-hidden="true" />
-          </Button>
+          </Button>}
           {activeTab === "THIRD_PARTY" && (
             <>
-              <form action="/api/platform/leads/export" method="get">
-                <Button type="submit" variant="ghost" size="sm" aria-label="Download leads Excel" title="Download leads Excel" className="min-h-0 px-2 py-1.5">
-                  <Download className="h-4 w-4" aria-hidden="true" />
-                </Button>
-              </form>
-              <Input
-                ref={uploadInputRef}
-                type="file"
-                accept=".xlsx,.xls"
-                onChange={uploadWorkbook}
-                className="hidden"
-                aria-label="Upload leads workbook"
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-label="Upload leads Excel"
-                title={uploading ? "Uploading leads Excel" : "Upload leads Excel"}
-                disabled={uploading}
-                onClick={() => uploadInputRef.current?.click()}
-                className="min-h-0 px-2 py-1.5"
-              >
-                <Upload className="h-4 w-4" aria-hidden="true" />
-              </Button>
+              {!isSalesManager && (
+                <>
+                  <form action="/api/platform/leads/export" method="get">
+                    <Button type="submit" variant="ghost" size="sm" aria-label="Download leads Excel" title="Download leads Excel" className="min-h-0 px-2 py-1.5">
+                      <Download className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                  </form>
+                  <Input
+                    ref={uploadInputRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={uploadWorkbook}
+                    className="hidden"
+                    aria-label="Upload leads workbook"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Upload leads Excel"
+                    title={uploading ? "Uploading leads Excel" : "Upload leads Excel"}
+                    disabled={uploading}
+                    onClick={() => uploadInputRef.current?.click()}
+                    className="min-h-0 px-2 py-1.5"
+                  >
+                    <Upload className="h-4 w-4" aria-hidden="true" />
+                  </Button>
+                </>
+              )}
             </>
           )}
-        </div>
+            </div>
+          </>
+        )}
       </header>
 
-      {uploadMessage && <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{uploadMessage}</p>}
-      {uploadError && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{uploadError}</p>}
+      {!selectedLeadId && uploadMessage && <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{uploadMessage}</p>}
+      {!selectedLeadId && uploadError && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{uploadError}</p>}
 
       <Modal
         open={sheetSettingsOpen}
@@ -1367,8 +1752,8 @@ export default function PlatformLeadsWorkspace({
         </form>
       </Modal>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden lg:flex-row">
-        <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
+      <div className={`flex min-h-0 flex-1 flex-col gap-3 overflow-hidden ${selectedLeadId ? "" : "lg:flex-row"}`}>
+        {!selectedLeadId && <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
           {activeTab === "THIRD_PARTY" && (
             <Tabs
               tabs={leadStageTabs.map((tab) => ({
@@ -1472,30 +1857,45 @@ export default function PlatformLeadsWorkspace({
             storageKey="platform-leads-report-columns-v2"
             rowIdSelector={(lead) => lead.id}
             selectedIds={activeTab === "THIRD_PARTY" ? selectedLeadIds : []}
-            selectable={activeTab === "THIRD_PARTY"}
+            selectable={activeTab === "THIRD_PARTY" && !isSalesManager}
             onToggleRowSelection={(leadId, checked) => {
-              setSelectedLeadIds((current) =>
-                checked
-                  ? [...new Set([...current, leadId])]
-                  : current.filter((id) => id !== leadId),
-              );
+              setStageMovementError("");
+              setSelectedLeadIds((current) => {
+                if (!checked) return current.filter((id) => id !== leadId);
+                if (current.includes(leadId)) return current;
+                if (current.length >= MAX_BULK_STAGE_LEADS) {
+                  setStageMovementError(`You can select up to ${MAX_BULK_STAGE_LEADS} leads for a bulk status change.`);
+                  return current;
+                }
+                return [...current, leadId];
+              });
             }}
             onToggleSelectAll={(checked) => {
-              setSelectedLeadIds(checked ? filteredLeads.map((lead) => lead.id) : []);
+              setStageMovementError("");
+              setSelectedLeadIds(checked
+                ? filteredLeads.slice(0, MAX_BULK_STAGE_LEADS).map((lead) => lead.id)
+                : []);
+              if (checked && filteredLeads.length > MAX_BULK_STAGE_LEADS) {
+                setStageMovementError(
+                  `Only the first ${MAX_BULK_STAGE_LEADS} visible leads were selected for bulk status changes.`,
+                );
+              }
             }}
             toolbarActions={activeTab === "THIRD_PARTY" ? (
               <>
-                <Button
-                  type="button"
-                  variant="primary"
-                  size="sm"
-                  disabled={selectedLeadIds.length === 0 || movingSelectedLeads || addingToCampaign}
-                  onClick={() => void openCampaignDialog()}
-                  title="Add selected leads to a campaign"
-                  className="h-7 px-2 text-[11px]"
-                >
-                  Add to campaign{selectedLeadIds.length ? ` (${selectedLeadIds.length})` : ""}
-                </Button>
+                {canManageCampaigns && (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    disabled={selectedLeadIds.length === 0 || movingSelectedLeads || addingToCampaign}
+                    onClick={() => void openCampaignDialog()}
+                    title="Add selected leads to a campaign"
+                    className="h-7 px-2 text-[11px]"
+                  >
+                    Add to campaign{selectedLeadIds.length ? ` (${selectedLeadIds.length})` : ""}
+                  </Button>
+                )}
                 <Button
                   type="button"
                   variant="secondary"
@@ -1573,153 +1973,46 @@ export default function PlatformLeadsWorkspace({
             onRowClick={openLead}
             rowActions={(lead) => {
               if (lead.recordType === "APP_LOGIN") return null;
-              if (lead.stage === "1-new") {
+              if (isSalesManager && !lead.assigned_sales_manager_id) {
                 return (
-                  <>
-                    {renderVoiceNoteAction(lead)}
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="primary"
-                      disabled={movingSelectedLeads}
-                      onClick={() => void updateNewLeadStage("Verification", [lead.id])}
-                      aria-label={`Move ${lead.name} to Verified`}
-                    >
-                      Verified
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="destructive"
-                      disabled={movingSelectedLeads}
-                      onClick={() => void updateNewLeadStage("MARK AS FROUD", [lead.id])}
-                      aria-label={`Mark ${lead.name} as fraud`}
-                    >
-                      Mark as Fraud
-                    </Button>
-                  </>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="primary"
+                    disabled={assignmentSavingLeadId === lead.id}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void claimLead(lead.id);
+                    }}
+                    aria-label={`Accept lead ${lead.name}`}
+                  >
+                    {assignmentSavingLeadId === lead.id ? "Accepting..." : "Accept lead"}
+                  </Button>
                 );
               }
-              const stageActions = LEAD_ROW_STAGE_ACTIONS[lead.stage];
-              if (stageActions) {
-                return (
-                  <>
-                    {renderVoiceNoteAction(lead)}
-                    {stageActions.map((action) => (
-                      <Button
-                        key={action.stage}
-                        type="button"
-                        size="sm"
-                        variant={action.variant}
-                        disabled={movingSelectedLeads}
-                        onClick={() => void updateSelectedLeadStage(action.stage, [lead.id])}
-                      >
-                        {action.label}
-                      </Button>
-                    ))}
-                  </>
-                );
-              }
-              if (lead.stage === "Interested For Demo") {
-                return (
-                  <>
-                    {renderVoiceNoteAction(lead)}
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="primary"
-                      disabled={movingSelectedLeads || demoBookingSaving}
-                      onClick={() => openDemoBooking(lead.id)}
+              return (
+                <div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
+                  {canManageSalesTeam && (
+                    <Select
+                      aria-label={`Assign ${lead.name} to a Sales Manager`}
+                      value={lead.assigned_sales_manager_id ?? ""}
+                      disabled={assignmentSavingLeadId === lead.id}
+                      onChange={(event) => void changeLeadAssignment(lead.id, event.target.value)}
+                      className="w-44 py-1.5 text-xs"
                     >
-                      Book Demo
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      disabled={movingSelectedLeads}
-                      onClick={() => void updateSelectedLeadStage("3-Dead", [lead.id])}
-                    >
-                      Not Interested
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="destructive"
-                      disabled={movingSelectedLeads}
-                      onClick={() => void updateSelectedLeadStage("MARK AS FROUD", [lead.id])}
-                    >
-                      Mark as Fraud
-                    </Button>
-                  </>
-                );
-              }
-              if (PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES.includes(
-                lead.stage as (typeof PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES)[number],
-              )) {
-                return (
-                  <>
-                    {renderVoiceNoteAction(lead)}
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="primary"
-                      disabled={movingSelectedLeads}
-                      onClick={() => void updateSelectedLeadStage("Need To Call", [lead.id])}
-                    >
-                      Need To Call
-                    </Button>
-                    {lead.stage === "Need To Call" ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        disabled={movingSelectedLeads}
-                        onClick={() => void updateSelectedLeadStage("Interested For Demo", [lead.id])}
-                      >
-                        Interested For Demo
-                      </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      disabled={movingSelectedLeads}
-                      onClick={() => void updateSelectedLeadStage("Not Picked", [lead.id])}
-                    >
-                      Not Picked
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="destructive"
-                      disabled={movingSelectedLeads}
-                      onClick={() => void updateSelectedLeadStage("MARK AS FROUD", [lead.id])}
-                    >
-                      Mark as Fraud
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      disabled={callbackSaving}
-                      onClick={() => openCallbackScheduler(lead.id)}
-                    >
-                      Call Back Later
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={movingSelectedLeads}
-                      onClick={() => void updateSelectedLeadStage("3-Dead", [lead.id])}
-                    >
-                      Not Interested
-                    </Button>
-                  </>
-                );
-              }
-              return renderVoiceNoteAction(lead);
+                      <option value="">Unassigned</option>
+                      {salesManagers
+                        .filter((manager) => manager.is_active || manager.id === lead.assigned_sales_manager_id)
+                        .map((manager) => (
+                        <option key={manager.id} value={manager.id}>
+                          {manager.full_name}{manager.is_active ? "" : " (inactive)"}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                  {renderVoiceNoteAction(lead)}
+                </div>
+              );
             }}
             onNewOrder={activeTab === "THIRD_PARTY" ? openNewLead : undefined}
             newActionLabel="Add lead"
@@ -1730,18 +2023,54 @@ export default function PlatformLeadsWorkspace({
                   ? new Date(lead.created_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
                   : "—";
               }
-              return lead[fieldKey as keyof PlatformLead] || "—";
+              if (fieldKey === "mobile" && lead.recordType === "THIRD_PARTY") {
+                return formatIndianMobileNumber(lead.mobile) || "—";
+              }
+              const value = lead[fieldKey as keyof PlatformLead];
+              return typeof value === "string" || typeof value === "number" ? value : "—";
             }}
           />
           {stageMovementMessage && <p role="status" className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">{stageMovementMessage}</p>}
           {stageMovementError && <p role="alert" className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{stageMovementError}</p>}
+          {assignmentMessage && <p role="status" className="mt-2 rounded-lg border border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] px-3 py-2 text-xs text-[var(--erp-brand)]">{assignmentMessage}</p>}
+          {assignmentError && <p role="alert" className="mt-2 rounded-lg border border-[var(--erp-danger)] px-3 py-2 text-xs text-[var(--erp-danger)]">{assignmentError}</p>}
           {campaignMessage && <p role="status" className="mt-2 rounded-lg border border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] px-3 py-2 text-xs text-[var(--erp-brand)]">{campaignMessage}</p>}
-        </div>
-        {activeTab !== "APP_LOGIN" && (newLead || activeSelectedLead) && (
+        </div>}
+        {!selectedLeadId && activeTab !== "APP_LOGIN" && newLead && (
           <LeadEditor
-            key={newLead ? "new-lead" : activeSelectedLead?.id}
-            lead={newLead ? null : activeSelectedLead}
-            tickets={newLead ? [] : selectedLeadId === ticketsLoadedForLeadId ? leadTickets : []}
+            key="new-lead"
+            lead={null}
+            tickets={[]}
+            ticketsLoading={false}
+            ticketLoadError=""
+            voiceNotes={[]}
+            voiceNotesLoading={false}
+            voiceNotesError=""
+            voiceNoteRecording={false}
+            voiceNoteSaving={false}
+            voiceNoteUploading={false}
+            voiceNoteError=""
+            statusHistory={[]}
+            statusHistoryLoading={false}
+            statusHistoryError=""
+            onRecordVoiceNote={() => {
+              return;
+            }}
+            onUploadVoiceNote={() => {
+              return;
+            }}
+            onStopVoiceNote={stopVoiceNoteRecording}
+            onReloadVoiceNotes={reloadVoiceNotes}
+            onReloadStatusHistory={reloadStatusHistory}
+            onClose={closeEditor}
+            onSaved={handleSaved}
+          />
+        )}
+        {selectedLeadId && activeSelectedLead && (
+          <LeadEditor
+            key={activeSelectedLead.id}
+            lead={activeSelectedLead}
+            tickets={selectedLeadId === ticketsLoadedForLeadId ? leadTickets : []}
             ticketsLoading={ticketsLoading}
             ticketLoadError={ticketLoadError}
             voiceNotes={selectedVoiceNotes}
@@ -1749,15 +2078,26 @@ export default function PlatformLeadsWorkspace({
             voiceNotesError={selectedVoiceNotesError}
             voiceNoteRecording={voiceNoteRecording}
             voiceNoteSaving={voiceNoteSaving}
+            voiceNoteUploading={voiceNoteUploadingLeadId === selectedLeadId}
             voiceNoteError={selectedVoiceNoteError}
-            onRecordVoiceNote={() => {
-              if (selectedLeadId) void startVoiceNoteRecording(selectedLeadId);
-            }}
+            statusHistory={selectedStatusHistory}
+            statusHistoryLoading={statusHistoryLoading}
+            statusHistoryError={selectedStatusHistoryError}
+            onRecordVoiceNote={() => void startVoiceNoteRecording(selectedLeadId)}
+            onUploadVoiceNote={(file) => void uploadVoiceNoteFile(selectedLeadId, file)}
             onStopVoiceNote={stopVoiceNoteRecording}
             onReloadVoiceNotes={reloadVoiceNotes}
+            onReloadStatusHistory={reloadStatusHistory}
             onClose={closeEditor}
             onSaved={handleSaved}
+            statusActions={renderLeadStatusActions(activeSelectedLead)}
+            fullPage
           />
+        )}
+        {selectedLeadId && !activeSelectedLead && (
+          <div role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
+            This lead could not be found. It may have been deleted or you may not have access to it.
+          </div>
         )}
       </div>
       <Modal

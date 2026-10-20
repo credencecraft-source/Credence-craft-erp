@@ -5,16 +5,27 @@ import {
   listPlatformLeadAppLogins,
   listPlatformLeads,
 } from "@/lib/services/platform/platform-lead-service";
+import { listPlatformSalesManagers } from "@/lib/services/platform/platform-sales-manager-service";
 import PlatformLeadsWorkspace from "./platform-leads-workspace";
 
 export default async function PlatformLeadsPage() {
   const admin = await requirePlatformSessionAdmin();
-  if (admin.role !== "ADMIN" && admin.role !== "SUPER_ADMIN" && admin.team_role !== "CMO" && admin.team_role !== "CTO") {
+  if (
+    admin.actualRole !== "SUPER_ADMIN"
+    && admin.team_role !== "CMO"
+    && admin.team_role !== "SALES_MANAGER"
+    && !(admin.role === "ADMIN" && admin.team_role === null)
+  ) {
     redirect("/platform/organisations");
   }
-  const [leadRows, appLoginRows] = await Promise.all([
+  const [leadRows, appLoginRows, salesManagers] = await Promise.all([
     listPlatformLeads(),
-    listPlatformLeadAppLogins(),
+    admin.actualRole === "SUPER_ADMIN" || admin.team_role !== "SALES_MANAGER"
+      ? listPlatformLeadAppLogins()
+      : Promise.resolve([]),
+    admin.actualRole === "SUPER_ADMIN" || admin.team_role === "CMO" || admin.team_role === null
+      ? listPlatformSalesManagers()
+      : Promise.resolve([]),
   ]);
   const leads = leadRows.map(({ campaignEntries, ...lead }) => ({
     ...lead,
@@ -34,6 +45,10 @@ export default async function PlatformLeadsPage() {
     <PlatformLeadsWorkspace
       leads={leads}
       appLogins={appLogins}
+      canManageCampaigns={admin.actualRole === "SUPER_ADMIN" || admin.team_role === null}
+      canManageSalesTeam={admin.actualRole === "SUPER_ADMIN" || admin.team_role === "CMO" || admin.team_role === null}
+      isSalesManager={admin.actualRole !== "SUPER_ADMIN" && admin.team_role === "SALES_MANAGER"}
+      salesManagers={salesManagers.map(({ id, full_name, email, is_active }) => ({ id, full_name, email, is_active }))}
     />
   );
 }

@@ -28,6 +28,14 @@ async function requireWhatsAppPlatformAdmin() {
   return admin;
 }
 
+async function requireCampaignPlatformAdmin() {
+  const admin = await requireWhatsAppPlatformAdmin();
+  if (admin.team_role !== null) {
+    throw new Error("Campaign management is available to platform Admin accounts only.");
+  }
+  return admin;
+}
+
 function normalizeTemplate(input: PlatformWhatsAppTemplateInput) {
   const templateName = input.templateName.trim();
   const sampleTemplateText = input.sampleTemplateText.trim();
@@ -240,7 +248,7 @@ export async function schedulePlatformWhatsAppCampaignMessage(input: {
   scheduledAt: string | Date;
   consentConfirmed: boolean;
 }) {
-  const admin = await requireWhatsAppPlatformAdmin();
+  const admin = await requireCampaignPlatformAdmin();
   if (input.consentConfirmed !== true) {
     throw new Error("Confirm that campaign recipients have opted in to receive WhatsApp messages.");
   }
@@ -324,7 +332,7 @@ export async function schedulePlatformWhatsAppCampaignMessage(input: {
 }
 
 export async function listPlatformWhatsAppCampaignMessages(campaignId: string) {
-  await requireWhatsAppPlatformAdmin();
+  await requireCampaignPlatformAdmin();
   const id = campaignId.trim();
   if (!id || id.length > 255) throw new Error("Select a valid campaign.");
   return prisma.platformWhatsAppCampaignMessage.findMany({
@@ -379,7 +387,7 @@ function assertCampaignMessageHasNoDelivery(message: {
 }
 
 export async function cancelPlatformWhatsAppCampaignMessage(campaignId: string, messageId: string) {
-  const admin = await requireWhatsAppPlatformAdmin();
+  const admin = await requireCampaignPlatformAdmin();
   const ids = normalizeCampaignMessageIdentifiers(campaignId, messageId);
 
   return prisma.$transaction(async (transaction) => {
@@ -421,7 +429,7 @@ export async function cancelPlatformWhatsAppCampaignMessage(campaignId: string, 
 }
 
 export async function deletePlatformWhatsAppCampaignMessage(campaignId: string, messageId: string) {
-  const admin = await requireWhatsAppPlatformAdmin();
+  const admin = await requireCampaignPlatformAdmin();
   const ids = normalizeCampaignMessageIdentifiers(campaignId, messageId);
 
   return prisma.$transaction(async (transaction) => {

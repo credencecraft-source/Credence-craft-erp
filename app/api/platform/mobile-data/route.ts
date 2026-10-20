@@ -36,20 +36,20 @@ export async function GET(request: Request) {
     }
     const moduleName = new URL(request.url).searchParams.get("module") ?? "";
     const access = getPlatformNavigationAccess(admin.team_role);
-    const isSuperAdminView = admin.role === "SUPER_ADMIN";
+    const hasAccess = (permission: keyof typeof access) =>
+      admin.actualRole === "SUPER_ADMIN" || access[permission];
 
     if (
       (CONFIGURATION_MODULES.has(moduleName) &&
-        (!access.canAccessConfiguration ||
-          (moduleName !== "platform-access" && isSuperAdminView))) ||
+        !hasAccess("canAccessConfiguration")) ||
       (moduleName === "subscriptions" &&
-        !access.canAccessConfiguration &&
-        !access.canAccessLeadsAndSubscriptions) ||
-      (moduleName === "organisations" && !access.canAccessWorkspace) ||
-      (moduleName === "workspace-users" && !access.canAccessWorkspace) ||
-      ((moduleName === "leads" || moduleName === "campaigns") &&
-        !access.canAccessLeadsAndSubscriptions) ||
-      (moduleName === "support-tickets" && !access.canAccessSupport)
+        !hasAccess("canAccessConfiguration") &&
+        !hasAccess("canAccessLeadsAndSubscriptions")) ||
+      (moduleName === "organisations" && !hasAccess("canAccessWorkspace")) ||
+      (moduleName === "workspace-users" && !hasAccess("canAccessWorkspace")) ||
+      (moduleName === "leads" && !hasAccess("canAccessLeads")) ||
+      (moduleName === "campaigns" && !hasAccess("canAccessLeadsAndSubscriptions")) ||
+      (moduleName === "support-tickets" && !hasAccess("canAccessSupport"))
     ) {
       return NextResponse.json({ error: "You do not have access to this platform module." }, { status: 403 });
     }
@@ -65,7 +65,9 @@ export async function GET(request: Request) {
         {
           const [leadRows, appLogins] = await Promise.all([
             listPlatformLeads(),
-            listPlatformLeadAppLogins(),
+            admin.actualRole === "SUPER_ADMIN" || admin.team_role !== "SALES_MANAGER"
+              ? listPlatformLeadAppLogins()
+              : Promise.resolve([]),
           ]);
           const leads = leadRows.map(({ campaignEntries, ...lead }) => ({
             ...lead,

@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 
+import { requirePlatformNavigationPermission } from "@/lib/auth/platform-session-manager";
 import { listPlatformLeads } from "@/lib/services/platform/platform-lead-service";
 import { createPlatformLeadsWorkbook } from "@/lib/services/platform/platform-lead-workbook-service";
 
 export async function GET() {
   try {
+    await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
     const leads = await listPlatformLeads();
     const workbook = await createPlatformLeadsWorkbook(leads);
     return new NextResponse(new Uint8Array(workbook), {

@@ -1,7 +1,20 @@
 import { randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
 
 import { requirePlatformNavigationPermission } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
+import {
+  getPlatformLeadReadScope,
+  getPlatformLeadScope,
+  isPlatformSalesManager,
+  requirePlatformLeadAccess,
+} from "./platform-lead-access";
+import {
+  formatIndianMobileNumber,
+  getCanonicalIndianMobileNumber,
+  getIndianMobileNumberLookupVariants,
+  normalizeIndianMobileNumber,
+} from "@/lib/phone/indian-mobile-number";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
 import {
   PLATFORM_LEAD_STAGES,
@@ -27,7 +40,8 @@ const GOOGLE_SHEETS_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
 function normalizePlatformLeadInput(input: PlatformLeadInput) {
   const name = input.name.trim();
   const email = input.email.trim().toLowerCase();
-  const mobile = input.mobile.trim().replace(/^p:/i, "").replace(/[()\s.-]/g, "");
+  const mobileInput = input.mobile.trim().replace(/^p:/i, "");
+  const mobile = mobileInput ? normalizeIndianMobileNumber(mobileInput) : "";
   const companyName = input.companyName.trim();
   const city = input.city.trim();
   const source = input.source.trim();
@@ -40,9 +54,6 @@ function normalizePlatformLeadInput(input: PlatformLeadInput) {
   }
   if (email.length > 255 || (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
     throw new Error("Enter a valid email address.");
-  }
-  if (mobile.length > 20 || (mobile && !/^\+?[1-9]\d{6,14}$/.test(mobile))) {
-    throw new Error("Enter a valid mobile number with country code.");
   }
   if (!email && !mobile) {
     throw new Error("Provide an email address or mobile number.");
@@ -112,6 +123,9 @@ function readGoogleSheetsLeads(payload: unknown): PlatformLeadInput[] {
     const readText = (key: string) => {
       const cell = row[key];
       if (cell === undefined || cell === null) return "";
+      if (key === "mobile" && typeof cell === "number" && Number.isSafeInteger(cell)) {
+        return String(cell);
+      }
       if (typeof cell !== "string") {
         throw new Error(`Google Sheets row ${index + 2} has an invalid ${key} value.`);
       }
@@ -226,10 +240,12 @@ export async function testPlatformGoogleSheetsLeadConnection(webAppUrl: string) 
 }
 
 export async function listPlatformLeads() {
-  await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
-  return prisma.platformLead.findMany({
+  const admin = await requirePlatformLeadAccess();
+  const leads = await prisma.platformLead.findMany({
+    where: getPlatformLeadReadScope(admin),
     orderBy: [{ created_at: "desc" }, { name: "asc" }],
     include: {
+      assignedSalesManager: { select: { id: true, full_name: true, email: true } },
       campaignEntries: {
         orderBy: { added_at: "desc" },
         take: 1,
@@ -240,6 +256,10 @@ export async function listPlatformLeads() {
       },
     },
   });
+  return leads.map((lead) => ({
+    ...lead,
+    mobile: formatIndianMobileNumber(lead.mobile),
+  }));
 }
 
 export async function listPlatformLeadAppLogins() {
@@ -328,17 +348,20 @@ export async function syncPlatformLeadsFromGoogleSheet(webAppUrl: string) {
   );
   const emails = [...new Set(normalizedRows.map(({ email }) => email).filter((value): value is string => value !== null))];
   const mobiles = [...new Set(normalizedRows.map(({ mobile }) => mobile).filter((value): value is string => value !== null))];
+  const mobileLookupVariants = [...new Set(mobiles.flatMap(getIndianMobileNumberLookupVariants))];
   const existingContacts = await prisma.platformLead.findMany({
     where: {
       OR: [
         ...(emails.length ? [{ email: { in: emails } }] : []),
-        ...(mobiles.length ? [{ mobile: { in: mobiles } }] : []),
+        ...(mobileLookupVariants.length ? [{ mobile: { in: mobileLookupVariants } }] : []),
       ],
     },
     select: { email: true, mobile: true },
   });
   const seenEmails = new Set(existingContacts.map(({ email }) => email).filter((value): value is string => Boolean(value)));
-  const seenMobiles = new Set(existingContacts.map(({ mobile }) => mobile).filter((value): value is string => Boolean(value)));
+  const seenMobiles = new Set(existingContacts
+    .map(({ mobile }) => getCanonicalIndianMobileNumber(mobile))
+    .filter((value): value is string => value !== null));
   const newRows: ReturnType<typeof normalizePlatformLeadInput>[] = [];
   let skippedDuplicates = 0;
 
@@ -369,11 +392,16 @@ export async function syncPlatformLeadsFromGoogleSheet(webAppUrl: string) {
 }
 
 export async function createPlatformLead(input: PlatformLeadInput) {
-  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
+  const admin = await requirePlatformLeadAccess();
   const normalized = normalizePlatformLeadInput(input);
 
   return prisma.$transaction(async (transaction) => {
-    const lead = await transaction.platformLead.create({ data: normalized });
+    const lead = await transaction.platformLead.create({
+      data: {
+        ...normalized,
+        ...(isPlatformSalesManager(admin) ? { assigned_sales_manager_id: admin.id } : {}),
+      },
+    });
     await transaction.platformAuditEvent.create({
       data: {
         platform_admin_id: admin.id,
@@ -388,19 +416,23 @@ export async function createPlatformLead(input: PlatformLeadInput) {
 }
 
 export async function updatePlatformLead(leadId: string, input: PlatformLeadInput) {
-  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
+  const admin = await requirePlatformLeadAccess();
+  const scope = getPlatformLeadScope(admin);
   const id = leadId.trim();
   if (!id || id.length > 255) throw new Error("Select a valid lead.");
   const normalized = normalizePlatformLeadInput(input);
 
   return prisma.$transaction(async (transaction) => {
-    const existing = await transaction.platformLead.findUnique({ where: { id } });
+    const existing = await transaction.platformLead.findFirst({ where: { id, ...scope } });
     if (!existing) throw new Error("Lead not found.");
 
-    const lead = await transaction.platformLead.update({
-      where: { id: existing.id },
+    const updated = await transaction.platformLead.updateMany({
+      where: { id: existing.id, ...scope },
       data: normalized,
     });
+    if (updated.count !== 1) throw new Error("Lead assignment changed. Refresh and try again.");
+    const lead = await transaction.platformLead.findFirst({ where: { id: existing.id, ...scope } });
+    if (!lead) throw new Error("Lead not found.");
     const changedFields = [
       normalized.name !== existing.name ? "name" : null,
       normalized.email !== existing.email ? "email" : null,
@@ -418,7 +450,12 @@ export async function updatePlatformLead(leadId: string, input: PlatformLeadInpu
         action: "PLATFORM_LEAD_UPDATED",
         entity_type: "PlatformLead",
         entity_id: lead.id,
-        details: { changedFields },
+        details: {
+          changedFields,
+          ...(normalized.stage !== existing.stage
+            ? { previousStage: existing.stage, stage: normalized.stage }
+            : {}),
+        },
       },
     });
     return lead;
@@ -426,7 +463,8 @@ export async function updatePlatformLead(leadId: string, input: PlatformLeadInpu
 }
 
 export async function updatePlatformLeadStage(leadId: string, stage: string) {
-  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
+  const admin = await requirePlatformLeadAccess();
+  const scope = getPlatformLeadScope(admin);
   const id = leadId.trim();
   const normalizedStage = stage.trim();
   if (!id || id.length > 255) throw new Error("Select a valid lead.");
@@ -434,34 +472,333 @@ export async function updatePlatformLeadStage(leadId: string, stage: string) {
     throw new Error("Select a valid lead stage.");
   }
 
-  const existing = await prisma.platformLead.findUnique({
-    where: { id },
+  return prisma.$transaction(async (transaction) => {
+    const existing = await transaction.platformLead.findFirst({
+      where: { id, ...scope },
+      select: { id: true, stage: true },
+    });
+    if (!existing) throw new Error("Lead not found.");
+
+    const result = await transaction.platformLead.updateMany({
+      where: { id: existing.id, stage: existing.stage, ...scope },
+      data: { stage: normalizedStage as PlatformLeadStage },
+    });
+    if (result.count !== 1) {
+      throw new Error("This lead status changed. Refresh and try again.");
+    }
+    const lead = await transaction.platformLead.findFirst({ where: { id: existing.id, ...scope } });
+    if (!lead) throw new Error("Lead not found.");
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: admin.id,
+        action: "PLATFORM_LEAD_STAGE_UPDATED",
+        entity_type: "PlatformLead",
+        entity_id: existing.id,
+        details: { previousStage: existing.stage, stage: normalizedStage },
+      },
+    });
+    return lead;
+  });
+}
+
+export async function assignPlatformLead(leadId: string, salesManagerId: string | null) {
+  const admin = await requirePlatformNavigationPermission("canManageSalesTeam");
+  const id = leadId.trim();
+  const managerId = salesManagerId?.trim() || null;
+  if (!id || id.length > 255 || (managerId && managerId.length > 255)) {
+    throw new Error("Select a valid lead and sales manager.");
+  }
+
+  return prisma.$transaction(async (transaction) => {
+    const lead = await transaction.platformLead.findFirst({
+      where: { id, ...getPlatformLeadScope(admin) },
+      select: { id: true, assigned_sales_manager_id: true },
+    });
+    if (!lead) throw new Error("Lead not found.");
+
+    if (managerId) {
+      const manager = await transaction.platformAdmin.findFirst({
+        where: {
+          id: managerId,
+          role: "ADMIN",
+          team_role: "SALES_MANAGER",
+          is_active: true,
+          ...(admin.actualRole === "SUPER_ADMIN" ? {} : { manager_id: admin.id }),
+        },
+        select: { id: true },
+      });
+      if (!manager) throw new Error("Select an active sales manager on your team.");
+    }
+
+    const updated = await transaction.platformLead.updateMany({
+      where: { id, assigned_sales_manager_id: lead.assigned_sales_manager_id },
+      data: { assigned_sales_manager_id: managerId },
+    });
+    if (updated.count !== 1) throw new Error("This lead assignment changed. Refresh and try again.");
+
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: admin.id,
+        action: managerId ? "PLATFORM_LEAD_ASSIGNED" : "PLATFORM_LEAD_UNASSIGNED",
+        entity_type: "PlatformLead",
+        entity_id: id,
+        details: {
+          previousSalesManagerId: lead.assigned_sales_manager_id,
+          salesManagerId: managerId,
+        },
+      },
+    });
+    return { id, assigned_sales_manager_id: managerId };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function claimPlatformLead(leadId: string) {
+  const admin = await requirePlatformLeadAccess();
+  if (!isPlatformSalesManager(admin)) {
+    throw new Error("Only a Sales Manager can accept an unassigned lead.");
+  }
+  const id = leadId.trim();
+  if (!id || id.length > 255) throw new Error("Select a valid lead.");
+
+  return prisma.$transaction(async (transaction) => {
+    const result = await transaction.platformLead.updateMany({
+      where: { id, assigned_sales_manager_id: null },
+      data: { assigned_sales_manager_id: admin.id },
+    });
+    if (result.count !== 1) {
+      throw new Error("This lead is no longer unassigned. Refresh the list.");
+    }
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: admin.id,
+        action: "PLATFORM_LEAD_CLAIMED",
+        entity_type: "PlatformLead",
+        entity_id: id,
+        details: { salesManagerId: admin.id },
+      },
+    });
+    const lead = await transaction.platformLead.findFirst({
+      where: { id, assigned_sales_manager_id: admin.id },
+      include: {
+        assignedSalesManager: { select: { id: true, full_name: true, email: true } },
+        campaignEntries: {
+          orderBy: { added_at: "desc" },
+          take: 1,
+          select: { added_at: true, campaign: { select: { campaign_date: true } } },
+        },
+      },
+    });
+    if (!lead) throw new Error("The lead was accepted, but could not be reloaded.");
+    return { ...lead, mobile: formatIndianMobileNumber(lead.mobile) };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function listPlatformLeadStatusHistory(leadId: string) {
+  const admin = await requirePlatformLeadAccess();
+  const scope = getPlatformLeadScope(admin);
+  const id = leadId.trim();
+  if (!id || id.length > 255) throw new Error("Select a valid lead.");
+
+  const lead = await prisma.platformLead.findFirst({
+    where: { id, ...scope },
     select: { id: true },
   });
-  if (!existing) throw new Error("Lead not found.");
+  if (!lead) throw new Error("Lead not found.");
 
-  const update = prisma.platformLead.update({
-    where: { id: existing.id },
-    data: { stage: normalizedStage as PlatformLeadStage },
-  });
-  const audit = prisma.platformAuditEvent.create({
-    data: {
-      platform_admin_id: admin.id,
-      action: "PLATFORM_LEAD_STAGE_UPDATED",
+  const events = await prisma.platformAuditEvent.findMany({
+    where: {
       entity_type: "PlatformLead",
-      entity_id: existing.id,
-      details: { stage: normalizedStage },
+      entity_id: lead.id,
+      action: {
+        in: [
+          "PLATFORM_LEAD_STAGE_UPDATED",
+          "PLATFORM_LEAD_STAGE_MOVED",
+          "PLATFORM_LEAD_UPDATED",
+        ],
+      },
+    },
+    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    take: 100,
+    select: {
+      id: true,
+      action: true,
+      details: true,
+      created_at: true,
+      platformAdmin: { select: { full_name: true } },
     },
   });
-  const [lead] = await prisma.$transaction([update, audit]);
-  return lead;
+
+  return events.flatMap((event) => {
+    const details = typeof event.details === "object"
+      && event.details !== null
+      && !Array.isArray(event.details)
+      ? event.details
+      : {};
+    const changedFields = "changedFields" in details && Array.isArray(details.changedFields)
+      ? details.changedFields
+      : [];
+    if (event.action === "PLATFORM_LEAD_UPDATED" && !changedFields.includes("stage")) {
+      return [];
+    }
+
+    return [{
+      id: event.id,
+      previousStage: "previousStage" in details && typeof details.previousStage === "string"
+        ? details.previousStage
+        : null,
+      stage: "stage" in details && typeof details.stage === "string" ? details.stage : null,
+      actor: event.platformAdmin?.full_name ?? "Platform team",
+      created_at: event.created_at,
+    }];
+  });
+}
+
+export async function listPlatformLeadActivity() {
+  const admin = await requirePlatformLeadAccess();
+  const scope = getPlatformLeadScope(admin);
+  const scopedLeadIds = isPlatformSalesManager(admin)
+    ? (await prisma.platformLead.findMany({ where: scope, select: { id: true } })).map(({ id }) => id)
+    : null;
+  const scopedVoiceNoteIds = scopedLeadIds
+    ? scopedLeadIds.length
+      ? (await prisma.platformLeadVoiceNote.findMany({
+        where: { lead_id: { in: scopedLeadIds } },
+        select: { id: true },
+      })).map(({ id }) => id)
+      : []
+    : null;
+
+  const events = await prisma.platformAuditEvent.findMany({
+    where: {
+      entity_type: { in: ["PlatformLead", "PlatformLeadVoiceNote"] },
+      ...(scopedLeadIds
+        ? {
+          OR: [
+            { entity_type: "PlatformLead", entity_id: { in: scopedLeadIds } },
+            { entity_type: "PlatformLeadVoiceNote", entity_id: { in: scopedVoiceNoteIds ?? [] } },
+          ],
+        }
+        : {}),
+    },
+    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    take: 100,
+    select: {
+      id: true,
+      action: true,
+      entity_type: true,
+      entity_id: true,
+      details: true,
+      created_at: true,
+      platformAdmin: { select: { full_name: true, email: true } },
+    },
+  });
+
+  const activity = events.map((event) => {
+    const details = typeof event.details === "object"
+      && event.details !== null
+      && !Array.isArray(event.details)
+      ? event.details
+      : {};
+    const leadId = event.entity_type === "PlatformLead"
+      ? event.entity_id
+      : "leadId" in details && typeof details.leadId === "string"
+        ? details.leadId
+        : null;
+    const changedFields = "changedFields" in details && Array.isArray(details.changedFields)
+      ? details.changedFields.filter((field): field is string => typeof field === "string")
+      : [];
+    const previousStage = "previousStage" in details && typeof details.previousStage === "string"
+      ? details.previousStage
+      : null;
+    const stage = "stage" in details && typeof details.stage === "string"
+      ? details.stage
+      : null;
+
+    let category: "STATUS" | "VOICE_NOTE" | "LEAD" | "IMPORT" | "OTHER" = "OTHER";
+    let summary = event.action
+      .replace(/^PLATFORM_LEAD_/, "")
+      .toLowerCase()
+      .replace(/_/g, " ");
+    if (event.action === "PLATFORM_LEAD_VOICE_NOTE_CREATED") {
+      category = "VOICE_NOTE";
+      summary = "Voice note uploaded";
+      if ("source" in details && details.source === "RECORDED") {
+        summary = "Voice note recorded";
+      }
+    } else if (
+      event.action === "PLATFORM_LEAD_STAGE_UPDATED"
+      || event.action === "PLATFORM_LEAD_STAGE_MOVED"
+      || (event.action === "PLATFORM_LEAD_UPDATED" && changedFields.includes("stage"))
+    ) {
+      category = "STATUS";
+      summary = previousStage && stage
+        ? `Status changed from ${previousStage} to ${stage}`
+        : `Status set to ${stage ?? "updated"}`;
+    } else if (event.action === "PLATFORM_LEAD_CREATED") {
+      category = "LEAD";
+      summary = "Lead created";
+    } else if (
+      event.action === "PLATFORM_LEAD_IMPORTED"
+      || event.action === "PLATFORM_LEAD_GOOGLE_SHEET_IMPORTED"
+    ) {
+      category = "IMPORT";
+      summary = event.action === "PLATFORM_LEAD_GOOGLE_SHEET_IMPORTED"
+        ? "Lead imported from Google Sheets"
+        : "Lead imported";
+    } else if (event.action === "PLATFORM_LEAD_UPDATED") {
+      category = "LEAD";
+      const fieldLabels: Record<string, string> = {
+        name: "name",
+        email: "email",
+        mobile: "mobile",
+        companyName: "company",
+        city: "city",
+        source: "source",
+        natureOfBusiness: "business details",
+        quickNote: "quick note",
+      };
+      const changedLabels = changedFields
+        .map((field) => fieldLabels[field])
+        .filter((field): field is string => Boolean(field));
+      summary = changedLabels.length
+        ? `Lead updated: ${changedLabels.join(", ")}`
+        : "Lead updated";
+    }
+
+    return {
+      id: event.id,
+      leadId,
+      category,
+      summary,
+      leadName: null as string | null,
+      actor: event.platformAdmin?.full_name ?? "Platform team",
+      actorEmail: event.platformAdmin?.email ?? null,
+      created_at: event.created_at,
+    };
+  });
+  const leadIds = [...new Set(activity
+    .map(({ leadId }) => leadId)
+    .filter((leadId): leadId is string => leadId !== null))];
+  const leads = leadIds.length
+    ? await prisma.platformLead.findMany({
+      where: { id: { in: leadIds } },
+      select: { id: true, name: true },
+    })
+    : [];
+  const namesByLeadId = new Map(leads.map((lead) => [lead.id, lead.name]));
+
+  return activity.map((item) => ({
+    ...item,
+    leadName: item.leadId ? namesByLeadId.get(item.leadId) ?? null : null,
+  }));
 }
 
 export async function movePlatformLeadStages(
   leadIds: string[],
   direction: "NEXT" | "PREVIOUS",
 ) {
-  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
+  const admin = await requirePlatformLeadAccess();
+  const scope = getPlatformLeadScope(admin);
   if (!Array.isArray(leadIds) || leadIds.length === 0 || leadIds.length > 500) {
     throw new Error("Select between 1 and 500 leads to move.");
   }
@@ -475,7 +812,7 @@ export async function movePlatformLeadStages(
 
   return prisma.$transaction(async (transaction) => {
     const records = await transaction.platformLead.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: ids }, ...scope },
       select: { id: true, stage: true },
     });
     if (records.length !== ids.length) throw new Error("One or more selected leads were not found.");
@@ -505,6 +842,7 @@ export async function movePlatformLeadStages(
         where: {
           id: { in: group.map(({ leadId }) => leadId) },
           stage: previousStage,
+          ...scope,
         },
         data: { stage: group[0].nextStage },
       });
@@ -527,7 +865,8 @@ export async function movePlatformLeadStages(
 }
 
 export async function updateNewPlatformLeadStages(leadIds: string[], stage: string) {
-  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
+  const admin = await requirePlatformLeadAccess();
+  const scope = getPlatformLeadScope(admin);
   if (!Array.isArray(leadIds) || leadIds.length === 0 || leadIds.length > 500) {
     throw new Error("Select between 1 and 500 new leads.");
   }
@@ -541,7 +880,7 @@ export async function updateNewPlatformLeadStages(leadIds: string[], stage: stri
 
   return prisma.$transaction(async (transaction) => {
     const records = await transaction.platformLead.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: ids }, ...scope },
       select: { id: true, stage: true },
     });
     if (records.length !== ids.length || records.some((lead) => lead.stage !== "1-new")) {
@@ -549,7 +888,7 @@ export async function updateNewPlatformLeadStages(leadIds: string[], stage: stri
     }
 
     const result = await transaction.platformLead.updateMany({
-      where: { id: { in: ids }, stage: "1-new" },
+      where: { id: { in: ids }, stage: "1-new", ...scope },
       data: { stage },
     });
     if (result.count !== ids.length) {
@@ -569,7 +908,8 @@ export async function updateNewPlatformLeadStages(leadIds: string[], stage: stri
 }
 
 export async function updatePlatformLeadStages(leadIds: string[], stage: string) {
-  const admin = await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
+  const admin = await requirePlatformLeadAccess();
+  const scope = getPlatformLeadScope(admin);
   if (!Array.isArray(leadIds) || leadIds.length === 0 || leadIds.length > 500) {
     throw new Error("Select between 1 and 500 leads.");
   }
@@ -584,7 +924,7 @@ export async function updatePlatformLeadStages(leadIds: string[], stage: string)
 
   return prisma.$transaction(async (transaction) => {
     const records = await transaction.platformLead.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: ids }, ...scope },
       select: { id: true, stage: true },
     });
     if (records.length !== ids.length) throw new Error("One or more selected leads were not found.");
@@ -605,6 +945,7 @@ export async function updatePlatformLeadStages(leadIds: string[], stage: string)
         where: {
           id: { in: group.map(({ id }) => id) },
           stage: previousStage,
+          ...scope,
         },
         data: { stage: normalizedStage },
       });

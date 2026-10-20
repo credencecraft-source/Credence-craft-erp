@@ -8,7 +8,9 @@ describe("getPlatformNavigationAccess", () => {
       teamRole: null,
       expected: {
         canAccessConfiguration: true,
-        canAccessLeadsAndSubscriptions: false,
+        canAccessLeadsAndSubscriptions: true,
+        canAccessLeads: true,
+        canManageSalesTeam: true,
         canAccessWorkspace: true,
         canAccessSupport: false,
       },
@@ -18,6 +20,8 @@ describe("getPlatformNavigationAccess", () => {
       expected: {
         canAccessConfiguration: false,
         canAccessLeadsAndSubscriptions: true,
+        canAccessLeads: true,
+        canManageSalesTeam: true,
         canAccessWorkspace: false,
         canAccessSupport: false,
       },
@@ -27,11 +31,24 @@ describe("getPlatformNavigationAccess", () => {
       expected: {
         canAccessConfiguration: false,
         canAccessLeadsAndSubscriptions: false,
+        canAccessLeads: false,
+        canManageSalesTeam: false,
         canAccessWorkspace: false,
         canAccessSupport: true,
       },
     },
   ])("returns the configured platform navigation for $teamRole", ({ teamRole, expected }) => {
     expect(getPlatformNavigationAccess(teamRole)).toEqual(expected);
+  });
+
+  it("allows Sales Managers into Leads without granting subscriptions or team management", () => {
+    expect(getPlatformNavigationAccess("SALES_MANAGER")).toEqual({
+      canAccessConfiguration: false,
+      canAccessLeadsAndSubscriptions: false,
+      canAccessLeads: true,
+      canManageSalesTeam: false,
+      canAccessWorkspace: false,
+      canAccessSupport: false,
+    });
   });
 });

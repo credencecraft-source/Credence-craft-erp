@@ -25,22 +25,22 @@ export type PlatformSessionAdmin = {
   is_active: boolean;
   role: "SUPER_ADMIN" | "ADMIN";
   actualRole: "SUPER_ADMIN" | "ADMIN";
-  team_role: "CMO" | "CTO" | null;
+  team_role: "CMO" | "CTO" | "SALES_MANAGER" | null;
   mobile_number: string | null;
 };
 
-export type PlatformViewMode = "SUPER_ADMIN" | "ADMIN" | "CMO" | "CTO";
+export type PlatformViewMode = "SUPER_ADMIN" | "ADMIN" | "CMO" | "CTO" | "SALES_MANAGER";
 
 export const PLATFORM_VIEW_COOKIE_NAME = "cc_platform_view";
 
 export function getAvailablePlatformViews(
   actualRole: "SUPER_ADMIN" | "ADMIN",
-  teamRole: "CMO" | "CTO" | null,
+  teamRole: "CMO" | "CTO" | "SALES_MANAGER" | null,
 ): PlatformViewMode[] {
   if (actualRole === "SUPER_ADMIN") {
-    return ["SUPER_ADMIN", "ADMIN", "CTO", "CMO"];
+    return ["SUPER_ADMIN", "ADMIN", "CTO", "CMO", "SALES_MANAGER"];
   }
-  if (teamRole === "CMO" || teamRole === "CTO") {
+  if (teamRole === "CMO" || teamRole === "CTO" || teamRole === "SALES_MANAGER") {
     return [teamRole];
   }
   return ["ADMIN"];
@@ -51,7 +51,7 @@ export function getEffectivePlatformRole(
   requestedView: string | undefined,
 ): "SUPER_ADMIN" | "ADMIN" {
   return actualRole === "SUPER_ADMIN" &&
-    (requestedView === "ADMIN" || requestedView === "CMO" || requestedView === "CTO")
+    (requestedView === "ADMIN" || requestedView === "CMO" || requestedView === "CTO" || requestedView === "SALES_MANAGER")
     ? "ADMIN"
     : actualRole;
 }
@@ -59,23 +59,25 @@ export function getEffectivePlatformRole(
 export function getEffectivePlatformTeamRole(
   actualRole: "SUPER_ADMIN" | "ADMIN",
   requestedView: string | undefined,
-  actualTeamRole: "CMO" | "CTO" | null,
-): "CMO" | "CTO" | null {
+  actualTeamRole: "CMO" | "CTO" | "SALES_MANAGER" | null,
+): "CMO" | "CTO" | "SALES_MANAGER" | null {
   if (actualRole !== "SUPER_ADMIN") {
     return actualTeamRole;
   }
 
-  return requestedView === "CMO" || requestedView === "CTO" ? requestedView : null;
+  return requestedView === "CMO" || requestedView === "CTO" || requestedView === "SALES_MANAGER"
+    ? requestedView
+    : null;
 }
 
 export function assertPlatformSuperAdmin(admin: PlatformSessionAdmin) {
-  if (admin.role !== "SUPER_ADMIN") {
+  if (admin.actualRole !== "SUPER_ADMIN") {
     throw new Error("This action requires Super Admin access.");
   }
 }
 
 export function assertPlatformConfigurationAccess(admin: PlatformSessionAdmin) {
-  if (admin.team_role) {
+  if (admin.actualRole !== "SUPER_ADMIN" && admin.team_role) {
     throw new Error("CMO and CTO team accounts cannot access platform settings, plans, or databases.");
   }
 }
@@ -165,7 +167,7 @@ export async function requirePlatformNavigationPermission(
   permission: keyof ReturnType<typeof getPlatformNavigationAccess>,
 ): Promise<PlatformSessionAdmin> {
   const admin = await requirePlatformSessionAdmin();
-  if (!getPlatformNavigationAccess(admin.team_role)[permission]) {
+  if (admin.actualRole !== "SUPER_ADMIN" && !getPlatformNavigationAccess(admin.team_role)[permission]) {
     throw new Error("You do not have access to this platform module.");
   }
   return admin;
@@ -176,7 +178,7 @@ export async function setPlatformViewMode(mode: PlatformViewMode) {
   if (admin.actualRole !== "SUPER_ADMIN") {
     throw new Error("Only a Super Admin can switch platform views.");
   }
-  if (mode !== "SUPER_ADMIN" && mode !== "ADMIN" && mode !== "CMO" && mode !== "CTO") {
+  if (mode !== "SUPER_ADMIN" && mode !== "ADMIN" && mode !== "CMO" && mode !== "CTO" && mode !== "SALES_MANAGER") {
     throw new Error("Select a valid platform view.");
   }
 

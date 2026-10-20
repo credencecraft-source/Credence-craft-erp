@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   const transaction = {
-    platformLead: { findUnique: vi.fn(), updateMany: vi.fn() },
+    platformLead: { findUnique: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
     supportTicket: {
       create: vi.fn(),
       findUnique: vi.fn(),
@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => {
     transaction,
     prisma: {
       $transaction: vi.fn(),
-      platformLead: { findUnique: vi.fn() },
+      platformLead: { findUnique: vi.fn(), findFirst: vi.fn() },
       platformAuditEvent: { create: vi.fn() },
       supportTicket: {
         create: vi.fn(),
@@ -67,8 +67,10 @@ beforeEach(() => {
   mocks.prisma.supportTicket.findUnique.mockResolvedValue({ id: "ticket-id", organization_id: "internal-org-id" });
   mocks.prisma.organization.findFirst.mockResolvedValue({ id: "internal-org-id" });
   mocks.transaction.platformLead.findUnique.mockResolvedValue({ id: "lead-id", name: "Taylor Reed" });
+  mocks.transaction.platformLead.findFirst.mockResolvedValue({ id: "lead-id", name: "Taylor Reed" });
   mocks.transaction.platformLead.updateMany.mockResolvedValue({ count: 1 });
   mocks.prisma.platformLead.findUnique.mockResolvedValue({ id: "lead-id", name: "Taylor Reed" });
+  mocks.prisma.platformLead.findFirst.mockResolvedValue({ id: "lead-id", name: "Taylor Reed" });
   mocks.prisma.supportTicket.create.mockResolvedValue({ id: "ticket-id" });
   mocks.prisma.platformAuditEvent.create.mockResolvedValue({ id: "audit-id" });
 });
@@ -207,8 +209,8 @@ describe("support ticket access and internal notes", () => {
       callbackTime: "14:30",
     });
 
-    expect(mocks.requirePlatformNavigationPermission).toHaveBeenCalledWith("canAccessLeadsAndSubscriptions");
-    expect(mocks.prisma.platformLead.findUnique).toHaveBeenCalledWith({
+    expect(mocks.requirePlatformNavigationPermission).toHaveBeenCalledWith("canAccessLeads");
+    expect(mocks.prisma.platformLead.findFirst).toHaveBeenCalledWith({
       where: { id: "lead-id" },
       select: { id: true },
     });
@@ -236,6 +238,33 @@ describe("support ticket access and internal notes", () => {
     ]);
   });
 
+  it("prevents a Sales Manager from creating follow-up tickets for another manager's lead", async () => {
+    mocks.requirePlatformNavigationPermission.mockResolvedValue({
+      id: "sales-manager-1",
+      actualRole: "ADMIN",
+      team_role: "SALES_MANAGER",
+    });
+    mocks.prisma.platformLead.findFirst.mockResolvedValue(null);
+
+    await expect(createPlatformLeadSupportTicket({
+      leadId: "lead-owned-by-another-manager",
+      subject: "Follow up with the lead",
+      description: "Discuss the lead's request and agree on the next steps.",
+      requestType: "CALLBACK",
+      callbackDate: "2026-10-14",
+      callbackTime: "10:30",
+    })).rejects.toThrow("Lead not found.");
+
+    expect(mocks.prisma.platformLead.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: "lead-owned-by-another-manager",
+        assigned_sales_manager_id: "sales-manager-1",
+      },
+      select: { id: true },
+    });
+    expect(mocks.prisma.supportTicket.create).not.toHaveBeenCalled();
+  });
+
   it("requires a valid callback date and time before creating a lead callback", async () => {
     await expect(createPlatformLeadSupportTicket({
       leadId: "lead-id",
@@ -249,7 +278,7 @@ describe("support ticket access and internal notes", () => {
   });
 
   it("schedules a lead callback and moves the lead to Call Back Later atomically", async () => {
-    mocks.transaction.platformLead.findUnique.mockResolvedValue({
+    mocks.transaction.platformLead.findFirst.mockResolvedValue({
       id: "lead-id",
       stage: "Need To Call",
     });
@@ -294,7 +323,7 @@ describe("support ticket access and internal notes", () => {
   });
 
   it("books a demo, records its date and time, and moves the interested lead atomically", async () => {
-    mocks.transaction.platformLead.findUnique.mockResolvedValue({
+    mocks.transaction.platformLead.findFirst.mockResolvedValue({
       id: "lead-id",
       stage: "Interested For Demo",
     });
@@ -338,7 +367,7 @@ describe("support ticket access and internal notes", () => {
   });
 
   it("rejects demo bookings when a lead is not in Interested For Demo", async () => {
-    mocks.transaction.platformLead.findUnique.mockResolvedValue({
+    mocks.transaction.platformLead.findFirst.mockResolvedValue({
       id: "lead-id",
       stage: "Need To Call",
     });
@@ -357,7 +386,7 @@ describe("support ticket access and internal notes", () => {
   });
 
   it("does not schedule callbacks for leads outside the Need To Call group", async () => {
-    mocks.transaction.platformLead.findUnique.mockResolvedValue({
+    mocks.transaction.platformLead.findFirst.mockResolvedValue({
       id: "lead-id",
       stage: "Interested For Demo",
     });

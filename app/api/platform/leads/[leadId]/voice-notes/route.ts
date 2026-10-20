@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requirePlatformNavigationPermission } from "@/lib/auth/platform-session-manager";
+import { requirePlatformLeadAccess } from "@/lib/services/platform/platform-lead-access";
 import {
   createPlatformLeadVoiceNote,
   listPlatformLeadVoiceNotes,
@@ -24,7 +24,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
 export async function POST(request: Request, context: RouteContext) {
   try {
-    await requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions");
+    await requirePlatformLeadAccess();
     const declaredLength = Number(request.headers.get("content-length"));
     if (Number.isFinite(declaredLength) && declaredLength > PLATFORM_LEAD_VOICE_NOTE_MAX_BYTES + 64 * 1024) {
       return NextResponse.json({ error: "Voice notes must be smaller than 5 MB." }, { status: 413 });
@@ -33,8 +33,12 @@ export async function POST(request: Request, context: RouteContext) {
     const formData = await request.formData();
     const audio = formData.get("audio");
     const durationValue = formData.get("durationMs");
+    const sourceValue = formData.get("source");
     if (!(audio instanceof File) || typeof durationValue !== "string") {
       return NextResponse.json({ error: "Record a voice note before saving." }, { status: 400 });
+    }
+    if (sourceValue !== null && sourceValue !== "RECORDED" && sourceValue !== "UPLOADED") {
+      return NextResponse.json({ error: "Select a valid voice note source." }, { status: 400 });
     }
     if (audio.size > PLATFORM_LEAD_VOICE_NOTE_MAX_BYTES) {
       return NextResponse.json({ error: "Voice notes must be smaller than 5 MB." }, { status: 400 });
@@ -44,6 +48,7 @@ export async function POST(request: Request, context: RouteContext) {
       audioData: new Uint8Array(await audio.arrayBuffer()),
       contentType: audio.type,
       durationMs: Number(durationValue),
+      source: sourceValue === "UPLOADED" ? "UPLOADED" : "RECORDED",
     });
     return NextResponse.json({ note }, { status: 201 });
   } catch (error) {

@@ -39,12 +39,23 @@ export default async function PlatformRootLayout({
     ? "CMO · Sales"
     : admin.team_role === "CTO"
       ? "CTO · Support"
+      : admin.team_role === "SALES_MANAGER"
+        ? "Sales Manager"
       : admin.role === "SUPER_ADMIN"
         ? "Super Admin"
         : "Admin";
   const mobileNumber = admin.mobile_number ?? "Mobile not set";
   const contactDetails = `${admin.full_name} - ${admin.email} - ${mobileNumber}`;
-  const navigationAccess = getPlatformNavigationAccess(admin.team_role);
+  const navigationAccess = admin.actualRole === "SUPER_ADMIN" && admin.role === "SUPER_ADMIN"
+    ? {
+      canAccessConfiguration: true,
+      canAccessLeadsAndSubscriptions: true,
+      canAccessLeads: true,
+      canManageSalesTeam: true,
+      canAccessWorkspace: true,
+      canAccessSupport: true,
+    }
+    : getPlatformNavigationAccess(admin.team_role);
 
   async function logoutAction() {
     "use server";
@@ -55,7 +66,7 @@ export default async function PlatformRootLayout({
   async function switchPlatformView(formData: FormData) {
     "use server";
     const mode = String(formData.get("mode") ?? "");
-    if (mode !== "ADMIN" && mode !== "SUPER_ADMIN" && mode !== "CMO" && mode !== "CTO") {
+    if (mode !== "ADMIN" && mode !== "SUPER_ADMIN" && mode !== "CMO" && mode !== "CTO" && mode !== "SALES_MANAGER") {
       throw new Error("Select a valid platform view.");
     }
     await setPlatformViewMode(mode);

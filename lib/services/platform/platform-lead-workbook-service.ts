@@ -1,5 +1,6 @@
 import XlsxPopulate from "xlsx-populate";
 
+import { formatIndianMobileNumber } from "@/lib/phone/indian-mobile-number";
 import { PLATFORM_LEAD_STAGES } from "./platform-lead-constants";
 
 const LEAD_HEADERS = ["Name", "Email", "Mobile", "Company name", "Nature of business", "City", "Source", "Stage", "Added date & time"] as const;
@@ -30,11 +31,12 @@ export async function createPlatformLeadsWorkbook(leads: PlatformLeadWorkbookRow
   });
 
   if (leads.length > 0) {
+    leadsSheet.range(`C2:C${leads.length + 1}`).style({ numberFormat: "@" });
     leadsSheet.range(`A2:I${leads.length + 1}`).value(
       leads.map((lead) => [
         lead.name,
         lead.email ?? "",
-        lead.mobile ?? "",
+        formatIndianMobileNumber(lead.mobile) ?? "",
         lead.company_name ?? "",
         lead.nature_of_business ?? "",
         lead.city ?? "",

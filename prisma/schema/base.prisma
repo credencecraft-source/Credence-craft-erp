@@ -457,6 +457,7 @@ enum PlatformAdminRole {
 enum PlatformTeamRole {
   CMO
   CTO
+  SALES_MANAGER
 }
 
 model OrganizationInvitation {
@@ -514,12 +515,13 @@ model PlatformAdmin {
   last_login_at  DateTime?
   manager        PlatformAdmin?     @relation("PlatformAdminTeam", fields: [manager_id], references: [id], onDelete: SetNull)
   teamMembers    PlatformAdmin[]    @relation("PlatformAdminTeam")
+  assignedPlatformLeads PlatformLead[] @relation("PlatformLeadSalesManager")
   ticketMessages TicketMessage[]
   createdSupportTickets SupportTicket[] @relation("SupportTicketPlatformCreator")
   auditEvents    PlatformAuditEvent[]
   reviewedKycProfiles OrganizationKycProfile[]
 
-  @@unique([manager_id, team_role])
+  @@index([manager_id, team_role])
   @@index([manager_id, role, is_active])
   @@map("platform_admins")
 }
@@ -568,7 +570,10 @@ model PlatformLead {
   campaignEntries     PlatformCampaignLead[]
   whatsappRecipients  PlatformWhatsAppCampaignMessageRecipient[]
   voiceNotes          PlatformLeadVoiceNote[]
+  assigned_sales_manager_id String?
+  assignedSalesManager PlatformAdmin? @relation("PlatformLeadSalesManager", fields: [assigned_sales_manager_id], references: [id], onDelete: SetNull)
 
+  @@index([assigned_sales_manager_id, created_at])
   @@index([updated_at])
   @@map("platform_leads")
 }
@@ -580,6 +585,7 @@ model PlatformLeadVoiceNote {
   byte_size    Int
   duration_ms  Int
   audio_data   Bytes
+  source       String       @default("RECORDED") @db.VarChar(20)
   created_at   DateTime     @default(now())
   lead         PlatformLead @relation(fields: [lead_id], references: [id], onDelete: Cascade)
 

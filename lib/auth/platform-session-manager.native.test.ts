@@ -108,11 +108,68 @@ describe("native platform session authentication", () => {
       .resolves.toMatchObject({ team_role: "CMO" });
   });
 
-  it("denies CTO view access to the Leads module", async () => {
-    setNativeHeaders("CTO");
+  it("allows Admin view to access the Leads module", async () => {
+    setNativeHeaders();
     const { requirePlatformNavigationPermission } = await import("./platform-session-manager");
 
     await expect(requirePlatformNavigationPermission("canAccessLeadsAndSubscriptions"))
+      .resolves.toMatchObject({ team_role: null });
+  });
+
+  it("keeps Super Admin access across the selected platform view", async () => {
+    setNativeHeaders("CTO");
+    const { requirePlatformNavigationPermission } = await import("./platform-session-manager");
+
+    await expect(requirePlatformNavigationPermission("canAccessLeads"))
+      .resolves.toMatchObject({ actualRole: "SUPER_ADMIN", team_role: "CTO" });
+  });
+
+  it("preserves Super Admin configuration access while viewing another role", async () => {
+    setNativeHeaders("CMO");
+    const {
+      requirePlatformConfigurationAccess,
+      requirePlatformSessionSuperAdmin,
+    } = await import("./platform-session-manager");
+
+    await expect(requirePlatformConfigurationAccess())
+      .resolves.toMatchObject({ actualRole: "SUPER_ADMIN", team_role: "CMO" });
+    await expect(requirePlatformSessionSuperAdmin())
+      .resolves.toMatchObject({ actualRole: "SUPER_ADMIN", role: "ADMIN" });
+  });
+
+  it("allows Sales Managers to access Leads", async () => {
+    mocks.findPlatformAdmin.mockResolvedValue({
+      id: "admin-1",
+      admin_id: "platform-1",
+      full_name: "Sales Manager",
+      email: "sales@example.com",
+      is_active: true,
+      role: "ADMIN",
+      team_role: "SALES_MANAGER",
+      mobile_number: null,
+    });
+    setNativeHeaders();
+    const { requirePlatformNavigationPermission } = await import("./platform-session-manager");
+
+    await expect(requirePlatformNavigationPermission("canAccessLeads"))
+      .resolves.toMatchObject({ team_role: "SALES_MANAGER" });
+  });
+
+  it("does not give CTO leads access", async () => {
+    mocks.findPlatformAdmin.mockResolvedValue({
+      id: "admin-1",
+      admin_id: "platform-1",
+      full_name: "CTO",
+      email: "cto@example.com",
+      is_active: true,
+      role: "ADMIN",
+      team_role: "CTO",
+      mobile_number: null,
+    });
+    setNativeHeaders("CTO");
+    const { requirePlatformNavigationPermission } = await import("./platform-session-manager");
+
+    await expect(requirePlatformNavigationPermission("canAccessLeads"))
       .rejects.toThrow("You do not have access to this platform module.");
   });
 });

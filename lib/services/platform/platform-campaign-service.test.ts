@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
-  requirePlatformNavigationPermissionMock,
+  requirePlatformSessionAdminMock,
   findCampaignsMock,
   findCampaignMock,
   createCampaignMock,
@@ -61,7 +61,7 @@ const {
     ),
   };
   return {
-    requirePlatformNavigationPermissionMock: vi.fn(),
+    requirePlatformSessionAdminMock: vi.fn(),
     findCampaignsMock: findCampaigns,
     findCampaignMock: findCampaign,
     createCampaignMock: createCampaign,
@@ -80,7 +80,7 @@ const {
 });
 
 vi.mock("@/lib/auth/platform-session-manager", () => ({
-  requirePlatformNavigationPermission: requirePlatformNavigationPermissionMock,
+  requirePlatformSessionAdmin: requirePlatformSessionAdminMock,
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -99,17 +99,33 @@ import {
 describe("platform campaign management", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    requirePlatformNavigationPermissionMock.mockResolvedValue({ id: "admin-1" });
+    requirePlatformSessionAdminMock.mockResolvedValue({
+      id: "admin-1",
+      role: "ADMIN",
+      team_role: null,
+    });
   });
 
   it("lists campaigns only after authenticating the platform admin", async () => {
     findCampaignsMock.mockResolvedValue([]);
 
     await expect(listPlatformCampaigns()).resolves.toEqual([]);
-    expect(requirePlatformNavigationPermissionMock).toHaveBeenCalledWith("canAccessLeadsAndSubscriptions");
+    expect(requirePlatformSessionAdminMock).toHaveBeenCalled();
     expect(findCampaignsMock).toHaveBeenCalledWith(expect.objectContaining({
       orderBy: [{ campaign_date: "desc" }, { created_at: "desc" }],
     }));
+  });
+
+  it("blocks campaign access for CMO and CTO team sessions", async () => {
+    requirePlatformSessionAdminMock.mockResolvedValue({
+      id: "admin-1",
+      role: "ADMIN",
+      team_role: "CMO",
+    });
+
+    await expect(listPlatformCampaigns())
+      .rejects.toThrow("Campaign management is available to platform Admin accounts only.");
+    expect(findCampaignsMock).not.toHaveBeenCalled();
   });
 
   it("disables campaign actions for delivered or in-flight sends in the report", async () => {

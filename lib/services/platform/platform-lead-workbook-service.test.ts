@@ -25,8 +25,13 @@ describe("createPlatformLeadsWorkbook", () => {
     expect(parsed.SheetNames).toEqual(["Leads", "Stages"]);
     expect(leadsSheet.range("A1:I2").value()).toEqual([
       ["Name", "Email", "Mobile", "Company name", "Nature of business", "City", "Source", "Stage", "Added date & time"],
-      ["Taylor Reed", "taylor@example.com", "+919876543210", "Acme Apparel", "Garment manufacturing", "Bengaluru", "Referral", "2-Potential", new Date("2026-10-02T10:30:00.000Z").toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })],
+      ["Taylor Reed", "taylor@example.com", 919876543210, "Acme Apparel", "Garment manufacturing", "Bengaluru", "Referral", "2-Potential", new Date("2026-10-02T10:30:00.000Z").toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })],
     ]);
+    expect(XLSX.utils.sheet_to_json<unknown[]>(parsed.Sheets.Leads, {
+      header: 1,
+      defval: "",
+      raw: false,
+    })[1][2]).toBe("919876543210");
     expect(leadsSheet.range("H2:H501").dataValidation()).toMatchObject({
       type: "list",
       allowBlank: "false",

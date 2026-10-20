@@ -10,12 +10,15 @@ export const PLATFORM_LEAD_STAGES = [
   "2-Potential",
   "3-Dead",
   "Paid",
+  "Old",
   "MARK AS FROUD",
 ] as const;
 
 export const PLATFORM_LEAD_DEAD_STAGES = ["MARK AS FROUD"] as const;
 
 export const PLATFORM_LEAD_PAID_STAGES = ["Paid"] as const;
+
+export const PLATFORM_LEAD_OLD_STAGES = ["Old"] as const;
 
 export const PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES = [
   "Need To Call",
@@ -42,6 +45,7 @@ export const PLATFORM_LEAD_THIRD_PARTY_STAGES = PLATFORM_LEAD_STAGES.filter(
   (stage) =>
     !PLATFORM_LEAD_DEAD_STAGES.includes(stage as (typeof PLATFORM_LEAD_DEAD_STAGES)[number]) &&
     !PLATFORM_LEAD_PAID_STAGES.includes(stage as (typeof PLATFORM_LEAD_PAID_STAGES)[number]) &&
+    !PLATFORM_LEAD_OLD_STAGES.includes(stage as (typeof PLATFORM_LEAD_OLD_STAGES)[number]) &&
     !PLATFORM_LEAD_NOT_INTERESTED_STAGES.includes(stage as (typeof PLATFORM_LEAD_NOT_INTERESTED_STAGES)[number]),
 );
 

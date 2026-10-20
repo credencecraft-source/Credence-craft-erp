@@ -23,6 +23,7 @@ export default function PlatformViewSelector({ action, value }: PlatformViewSele
           <option value="ADMIN">Admin</option>
           <option value="CTO">CTO</option>
           <option value="CMO">CMO</option>
+          <option value="SALES_MANAGER">Sales Manager</option>
         </optgroup>
       </Select>
     </form>

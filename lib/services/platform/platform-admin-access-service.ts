@@ -10,7 +10,7 @@ export type PlatformAccountKind = "ADMIN" | "CMO" | "CTO";
 export type CreatePlatformAccountInput = {
   fullName: string;
   email: string;
-  mobileNumber: string;
+  mobileNumber?: string;
   kind: PlatformAccountKind;
 };
 
@@ -21,7 +21,7 @@ export type UpdatePlatformAccountInput = CreatePlatformAccountInput & {
 function normalizePlatformAccountInput(input: CreatePlatformAccountInput) {
   const fullName = input.fullName.trim();
   const email = input.email.trim().toLowerCase();
-  const mobileNumber = input.mobileNumber.trim();
+  const mobileNumber = input.mobileNumber?.trim() ?? "";
 
   if (fullName.length < 2 || fullName.length > 255) {
     throw new Error("Enter a name between 2 and 255 characters.");
@@ -29,24 +29,25 @@ function normalizePlatformAccountInput(input: CreatePlatformAccountInput) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 255) {
     throw new Error("Enter a valid email address.");
   }
-  if (!/^\+?[1-9]\d{7,14}$/.test(mobileNumber)) {
+  if (mobileNumber && !/^\+?[1-9]\d{7,14}$/.test(mobileNumber)) {
     throw new Error("Enter a valid mobile number with country code, such as +919876543210.");
   }
   if (input.kind !== "ADMIN" && input.kind !== "CMO" && input.kind !== "CTO") {
     throw new Error("Select a valid platform account type.");
   }
 
-  return { fullName, email, mobileNumber };
+  return { fullName, email, mobileNumber: mobileNumber || null };
 }
 
 export async function listPlatformAccessAccounts() {
   const actor = await requirePlatformSessionAdmin();
-  if (actor.role === "ADMIN" && actor.team_role) {
+  const isSuperAdmin = actor.actualRole === "SUPER_ADMIN" || actor.role === "SUPER_ADMIN";
+  if (!isSuperAdmin && actor.role === "ADMIN" && actor.team_role) {
     throw new Error("CMO and CTO team accounts cannot manage platform accounts.");
   }
 
   return prisma.platformAdmin.findMany({
-    where: actor.role === "SUPER_ADMIN"
+    where: isSuperAdmin
       ? { role: "ADMIN" }
       : { manager_id: actor.id, team_role: { not: null } },
     select: {
@@ -67,17 +68,18 @@ export async function listPlatformAccessAccounts() {
 
 export async function createPlatformAccessAccount(input: CreatePlatformAccountInput) {
   const actor = await requirePlatformSessionAdmin();
-  if (actor.team_role) {
+  const isSuperAdmin = actor.actualRole === "SUPER_ADMIN" || actor.role === "SUPER_ADMIN";
+  if (!isSuperAdmin && actor.team_role) {
     throw new Error("CMO and CTO team accounts cannot manage platform accounts.");
   }
   const { fullName, email, mobileNumber } = normalizePlatformAccountInput(input);
   const teamRole = input.kind === "ADMIN" ? null : input.kind;
   const isCreatingAdmin = teamRole === null;
 
-  if (isCreatingAdmin && actor.role !== "SUPER_ADMIN") {
+  if (isCreatingAdmin && !isSuperAdmin) {
     throw new Error("Only a Super Admin can add a Platform Admin.");
   }
-  if (!isCreatingAdmin && actor.role !== "ADMIN") {
+  if (!isCreatingAdmin && !isSuperAdmin && actor.role !== "ADMIN") {
     throw new Error("An Admin account is required to assign CMO or CTO team seats.");
   }
 
@@ -102,26 +104,13 @@ export async function createPlatformAccessAccount(input: CreatePlatformAccountIn
       throw new Error("A platform account already uses this email address.");
     }
 
-    const existingTeamSeat = teamRole
-      ? await transaction.platformAdmin.findUnique({
-          where: { manager_id_team_role: { manager_id: actor.id, team_role: teamRole } },
-        })
-      : null;
-
-    if (existingTeamSeat?.is_active) {
-      throw new Error(`Your ${teamRole} team seat is already active.`);
-    }
-    if (existingTeamSeat && existingTeamSeat.id !== existingAccount?.id) {
-      throw new Error(`Your ${teamRole} team seat already exists. Reactivate it from the account list.`);
-    }
-
-    const account = existingTeamSeat
+    const account = canReactivateTeamSeat && existingAccount
       ? await transaction.platformAdmin.update({
-          where: { id: existingTeamSeat.id },
+          where: { id: existingAccount.id },
           data: {
             full_name: fullName,
             email,
-            mobile_number: mobileNumber,
+            ...(mobileNumber ? { mobile_number: mobileNumber } : {}),
             is_active: true,
           },
         })
@@ -140,7 +129,7 @@ export async function createPlatformAccessAccount(input: CreatePlatformAccountIn
     await transaction.platformAuditEvent.create({
       data: {
         platform_admin_id: actor.id,
-        action: existingTeamSeat ? "PLATFORM_ACCOUNT_REACTIVATED" : "PLATFORM_ACCOUNT_CREATED",
+        action: canReactivateTeamSeat ? "PLATFORM_ACCOUNT_REACTIVATED" : "PLATFORM_ACCOUNT_CREATED",
         entity_type: "PlatformAdmin",
         entity_id: account.id,
         details: { role: account.role, teamRole: account.team_role },
@@ -153,7 +142,8 @@ export async function createPlatformAccessAccount(input: CreatePlatformAccountIn
 
 export async function setPlatformAccessAccountActive(accountId: string, isActive: boolean) {
   const actor = await requirePlatformSessionAdmin();
-  if (actor.team_role) {
+  const isSuperAdmin = actor.actualRole === "SUPER_ADMIN" || actor.role === "SUPER_ADMIN";
+  if (!isSuperAdmin && actor.team_role) {
     throw new Error("CMO and CTO team accounts cannot manage platform accounts.");
   }
   const account = await prisma.platformAdmin.findUnique({
@@ -163,7 +153,7 @@ export async function setPlatformAccessAccountActive(accountId: string, isActive
   if (!account || account.role !== "ADMIN") {
     throw new Error("Platform account not found.");
   }
-  if (actor.role === "SUPER_ADMIN") {
+  if (isSuperAdmin) {
     if (account.id === actor.id) {
       throw new Error("You cannot deactivate your own account.");
     }
@@ -229,7 +219,8 @@ export async function updatePlatformAccessAccount(
   input: UpdatePlatformAccountInput,
 ) {
   const actor = await requirePlatformSessionAdmin();
-  if (actor.team_role) {
+  const isSuperAdmin = actor.actualRole === "SUPER_ADMIN" || actor.role === "SUPER_ADMIN";
+  if (!isSuperAdmin && actor.team_role) {
     throw new Error("CMO and CTO team accounts cannot manage platform accounts.");
   }
   if (!accountId.trim()) throw new Error("Select a platform account.");
@@ -239,7 +230,7 @@ export async function updatePlatformAccessAccount(
   }
   const { fullName, email, mobileNumber } = normalizePlatformAccountInput(input);
   const teamRole = input.kind === "ADMIN" ? null : input.kind;
-  if (actor.role !== "SUPER_ADMIN" && !teamRole) {
+  if (!isSuperAdmin && !teamRole) {
     throw new Error("Only a Super Admin can assign Platform Admin access.");
   }
 
@@ -268,49 +259,48 @@ export async function updatePlatformAccessAccount(
     if (!account || account.role !== "ADMIN") {
       throw new Error("Platform account not found.");
     }
-    if (actor.role === "ADMIN" && (!account.team_role || account.manager_id !== actor.id)) {
+    if (!isSuperAdmin && actor.role === "ADMIN" && (!account.team_role || account.manager_id !== actor.id)) {
       throw new Error("You can only manage your own CMO and CTO team seats.");
     }
     if (actor.id === account.id) {
       throw new Error("You cannot edit your own platform access.");
     }
 
-    const duplicateEmail = await transaction.platformAdmin.findUnique({
-      where: { email },
-      select: { id: true },
-    });
-    if (duplicateEmail && duplicateEmail.id !== account.id) {
-      throw new Error("A platform account already uses this email address.");
+    if (email !== account.email.toLowerCase()) {
+      const duplicateEmail = await transaction.platformAdmin.findUnique({
+        where: { email },
+        select: { id: true },
+      });
+      if (duplicateEmail && duplicateEmail.id !== account.id) {
+        throw new Error("A platform account already uses this email address.");
+      }
     }
 
     let managerId: string | null = null;
     if (teamRole) {
-      managerId = actor.role === "SUPER_ADMIN" ? input.managerId?.trim() || actor.id : actor.id;
+      managerId = isSuperAdmin ? input.managerId?.trim() || actor.id : actor.id;
       if (!managerId) throw new Error("Select the Admin responsible for this team seat.");
-      const manager = await transaction.platformAdmin.findUnique({
-        where: { id: managerId },
-        select: { id: true, role: true, team_role: true, is_active: true },
-      });
-      const isSuperAdminFallback = manager?.id === actor.id && manager.role === "SUPER_ADMIN";
-      if (!manager || (manager.role !== "ADMIN" && !isSuperAdminFallback) || manager.team_role !== null) {
-        throw new Error("Select a valid Admin account to manage this team seat.");
-      }
-      if (!manager.is_active && manager.id !== account.manager_id) {
-        throw new Error("Select an active Admin account to manage this team seat.");
-      }
-      if (manager.id === account.id) {
-        throw new Error("An account cannot manage its own platform team seat.");
-      }
-      if (actor.role === "ADMIN" && manager.id !== actor.id) {
-        throw new Error("You can only assign team seats to your own Admin account.");
-      }
+      const keepsExistingAssignment =
+        teamRole === account.team_role && managerId === account.manager_id;
+      if (!keepsExistingAssignment) {
+        const manager = await transaction.platformAdmin.findUnique({
+          where: { id: managerId },
+          select: { id: true, role: true, team_role: true, is_active: true },
+        });
+        const isSuperAdminFallback = manager?.id === actor.id && manager.role === "SUPER_ADMIN";
+        if (!manager || (manager.role !== "ADMIN" && !isSuperAdminFallback) || manager.team_role !== null) {
+          throw new Error("Select a valid Admin account to manage this team seat.");
+        }
+        if (!manager.is_active && manager.id !== account.manager_id) {
+          throw new Error("Select an active Admin account to manage this team seat.");
+        }
+        if (manager.id === account.id) {
+          throw new Error("An account cannot manage its own platform team seat.");
+        }
+        if (!isSuperAdmin && actor.role === "ADMIN" && manager.id !== actor.id) {
+          throw new Error("You can only assign team seats to your own Admin account.");
+        }
 
-      const existingSeat = await transaction.platformAdmin.findUnique({
-        where: { manager_id_team_role: { manager_id: managerId, team_role: teamRole } },
-        select: { id: true },
-      });
-      if (existingSeat && existingSeat.id !== account.id) {
-        throw new Error(`This Admin already has a ${teamRole} team seat.`);
       }
     } else if (account.team_role === null) {
       const teamMembers = await transaction.platformAdmin.findMany({
@@ -327,7 +317,7 @@ export async function updatePlatformAccessAccount(
       data: {
         full_name: fullName,
         email,
-        mobile_number: mobileNumber,
+        ...(mobileNumber !== null ? { mobile_number: mobileNumber } : {}),
         role: "ADMIN",
         team_role: teamRole,
         manager_id: managerId,
@@ -360,12 +350,16 @@ export async function updatePlatformAccessAccount(
       },
     });
     return updated;
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    timeout: 15_000,
+  });
 }
 
-export async function deletePlatformAccessAccount(accountId: string, confirmationEmail: string) {
+export async function deletePlatformAccessAccount(accountId: string) {
   const actor = await requirePlatformSessionAdmin();
-  if (actor.team_role) {
+  const isSuperAdmin = actor.actualRole === "SUPER_ADMIN" || actor.role === "SUPER_ADMIN";
+  if (!isSuperAdmin && actor.team_role) {
     throw new Error("CMO and CTO team accounts cannot manage platform accounts.");
   }
   if (!accountId.trim()) throw new Error("Select a platform account.");
@@ -397,11 +391,8 @@ export async function deletePlatformAccessAccount(accountId: string, confirmatio
     if (actor.id === account.id) {
       throw new Error("You cannot delete your own platform access.");
     }
-    if (actor.role === "ADMIN" && (!account.team_role || account.manager_id !== actor.id)) {
+    if (!isSuperAdmin && actor.role === "ADMIN" && (!account.team_role || account.manager_id !== actor.id)) {
       throw new Error("You can only manage your own CMO and CTO team seats.");
-    }
-    if (confirmationEmail.trim().toLowerCase() !== account.email.toLowerCase()) {
-      throw new Error("Enter the account email exactly to confirm deletion.");
     }
     if (account.team_role === null) {
       const teamMembers = await transaction.platformAdmin.findMany({
@@ -409,16 +400,9 @@ export async function deletePlatformAccessAccount(accountId: string, confirmatio
         select: { id: true, team_role: true, manager_id: true },
       });
       for (const teamMember of teamMembers) {
-        const existingSeat = teamMember.team_role
-          ? await transaction.platformAdmin.findUnique({
-              where: { manager_id_team_role: { manager_id: actor.id, team_role: teamMember.team_role } },
-              select: { id: true },
-            })
-          : null;
-        const managerId = existingSeat && existingSeat.id !== teamMember.id ? null : actor.id;
         const updatedTeamMember = await transaction.platformAdmin.update({
           where: { id: teamMember.id },
-          data: { manager_id: managerId },
+          data: { manager_id: actor.id },
           select: { team_role: true },
         });
         await transaction.platformAuditEvent.create({
@@ -430,11 +414,19 @@ export async function deletePlatformAccessAccount(accountId: string, confirmatio
             details: {
               teamRole: updatedTeamMember.team_role,
               before: { managerId: account.id },
-              after: { managerId },
+              after: { managerId: actor.id },
               reason: "The managing Admin account was deleted.",
             },
           },
         });
+      }
+    }
+    if (account.team_role === "SALES_MANAGER") {
+      const assignedLeadCount = await transaction.platformLead.count({
+        where: { assigned_sales_manager_id: account.id },
+      });
+      if (assignedLeadCount > 0) {
+        throw new Error("Reassign or unassign this Sales Manager's leads before deleting the account.");
       }
     }
 

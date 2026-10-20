@@ -5,6 +5,7 @@ const {
   prismaMock,
   findLeadsMock,
   findWorkspaceUsersMock,
+  findPlatformAdminMock,
   createLeadMock,
   createLeadsMock,
   findLeadMock,
@@ -13,9 +14,12 @@ const {
   updateLeadStagesMock,
   createAuditEventMock,
   createAuditEventsMock,
+  findLeadAuditEventsMock,
 } = vi.hoisted(() => {
   const findLeads = vi.fn();
   const findWorkspaceUsers = vi.fn();
+  const findPlatformAdmin = vi.fn();
+  const findLeadVoiceNotes = vi.fn();
   const createLead = vi.fn();
   const createLeads = vi.fn();
   const findLead = vi.fn();
@@ -24,26 +28,40 @@ const {
   const updateLeadStages = vi.fn();
   const createAuditEvent = vi.fn();
   const createAuditEvents = vi.fn();
+  const findLeadAuditEvents = vi.fn();
   const transaction = {
     platformLead: {
       create: createLead,
       createMany: createLeads,
       findUnique: findLead,
+      findFirst: findLead,
       findMany: findLeadStages,
       update: updateLead,
       updateMany: updateLeadStages,
     },
-    platformAuditEvent: { create: createAuditEvent, createMany: createAuditEvents },
+    platformAuditEvent: {
+      create: createAuditEvent,
+      createMany: createAuditEvents,
+      findMany: findLeadAuditEvents,
+    },
+    platformAdmin: { findFirst: findPlatformAdmin },
   };
   const prisma = {
     platformLead: {
       findMany: findLeads,
       findUnique: findLead,
+      findFirst: findLead,
       createMany: createLeads,
       update: updateLead,
     },
     workspaceUser: { findMany: findWorkspaceUsers },
-    platformAuditEvent: { create: createAuditEvent, createMany: createAuditEvents },
+    platformAdmin: { findFirst: findPlatformAdmin },
+    platformLeadVoiceNote: { findMany: findLeadVoiceNotes },
+    platformAuditEvent: {
+      create: createAuditEvent,
+      createMany: createAuditEvents,
+      findMany: findLeadAuditEvents,
+    },
     $transaction: vi.fn((operation: unknown) =>
       Array.isArray(operation)
         ? Promise.all(operation)
@@ -55,6 +73,7 @@ const {
     prismaMock: prisma,
     findLeadsMock: findLeads,
     findWorkspaceUsersMock: findWorkspaceUsers,
+    findPlatformAdminMock: findPlatformAdmin,
     createLeadMock: createLead,
     createLeadsMock: createLeads,
     findLeadMock: findLead,
@@ -63,6 +82,7 @@ const {
     updateLeadStagesMock: updateLeadStages,
     createAuditEventMock: createAuditEvent,
     createAuditEventsMock: createAuditEvents,
+    findLeadAuditEventsMock: findLeadAuditEvents,
   };
 });
 
@@ -76,6 +96,8 @@ vi.mock("@/lib/database/prisma-client", () => ({
 
 import {
   createPlatformLead,
+  assignPlatformLead,
+  claimPlatformLead,
   importPlatformLeads,
   listPlatformLeadAppLogins,
   listPlatformLeads,
@@ -84,6 +106,8 @@ import {
   updatePlatformLeadStages,
   movePlatformLeadStages,
   updatePlatformLead,
+  listPlatformLeadStatusHistory,
+  listPlatformLeadActivity,
   syncPlatformLeadsFromGoogleSheet,
   testPlatformGoogleSheetsLeadConnection,
 } from "@/lib/services/platform/platform-lead-service";
@@ -121,6 +145,8 @@ describe("platform lead management", () => {
     expect(PLATFORM_LEAD_THIRD_PARTY_STAGES).not.toContain("3-Dead");
     expect(PLATFORM_LEAD_DEAD_STAGES).not.toContain("3-Dead");
     expect(PLATFORM_LEAD_DEAD_STAGES).toEqual(["MARK AS FROUD"]);
+    expect(PLATFORM_LEAD_STAGES).toContain("Old");
+    expect(PLATFORM_LEAD_THIRD_PARTY_STAGES).not.toContain("Old");
     expect(PLATFORM_LEAD_STAGES).not.toContain("Potential Dead");
     expect(PLATFORM_LEAD_STAGES).not.toContain("Testing WhatsApp msg");
     expect(PLATFORM_LEAD_STAGES).not.toContain("Froud Verfication");
@@ -168,29 +194,227 @@ describe("platform lead management", () => {
   });
 
   it("updates a lead status and audits it in a short atomic batch", async () => {
-    findLeadMock.mockResolvedValue({ id: "lead-1" });
-    updateLeadMock.mockResolvedValue({ id: "lead-1", stage: "Verification" });
+    findLeadMock
+      .mockResolvedValueOnce({ id: "lead-1", stage: "1-new" })
+      .mockResolvedValueOnce({ id: "lead-1", stage: "Verification" });
+    updateLeadStagesMock.mockResolvedValue({ count: 1 });
     createAuditEventMock.mockResolvedValue({ id: "audit-1" });
 
     await expect(updatePlatformLeadStage("lead-1", " Verification ")).resolves.toEqual({
       id: "lead-1",
       stage: "Verification",
     });
-    expect(updateLeadMock).toHaveBeenCalledWith({
-      where: { id: "lead-1" },
+    expect(updateLeadStagesMock).toHaveBeenCalledWith({
+      where: { id: "lead-1", stage: "1-new" },
       data: { stage: "Verification" },
     });
-    expect(prismaMock.$transaction).toHaveBeenCalledWith([
-      expect.anything(),
-      expect.anything(),
-    ]);
     expect(createAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         action: "PLATFORM_LEAD_STAGE_UPDATED",
         entity_id: "lead-1",
-        details: { stage: "Verification" },
+        details: { previousStage: "1-new", stage: "Verification" },
       }),
     }));
+  });
+
+  it("lists recent lead status changes and excludes unrelated lead edits", async () => {
+    findLeadMock.mockResolvedValue({ id: "lead-1" });
+    findLeadAuditEventsMock.mockResolvedValue([
+      {
+        id: "event-1",
+        action: "PLATFORM_LEAD_STAGE_MOVED",
+        details: { previousStage: "Verification", stage: "Old" },
+        created_at: new Date("2026-10-20T12:00:00Z"),
+        platformAdmin: { full_name: "Admin User" },
+      },
+      {
+        id: "event-2",
+        action: "PLATFORM_LEAD_UPDATED",
+        details: { changedFields: ["quickNote"] },
+        created_at: new Date("2026-10-20T11:00:00Z"),
+        platformAdmin: null,
+      },
+    ]);
+
+    await expect(listPlatformLeadStatusHistory("lead-1")).resolves.toEqual([
+      {
+        id: "event-1",
+        previousStage: "Verification",
+        stage: "Old",
+        actor: "Admin User",
+        created_at: new Date("2026-10-20T12:00:00Z"),
+      },
+    ]);
+    expect(findLeadAuditEventsMock).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        entity_type: "PlatformLead",
+        entity_id: "lead-1",
+      }),
+      take: 100,
+    }));
+  });
+
+  it("lists lead status and voice-note activity with lead and actor labels", async () => {
+    const voiceCreatedAt = new Date("2026-10-20T13:00:00Z");
+    const statusChangedAt = new Date("2026-10-20T12:00:00Z");
+    findLeadAuditEventsMock.mockResolvedValue([
+      {
+        id: "event-voice",
+        action: "PLATFORM_LEAD_VOICE_NOTE_CREATED",
+        entity_type: "PlatformLeadVoiceNote",
+        entity_id: "voice-1",
+        details: { leadId: "lead-1", source: "UPLOADED" },
+        created_at: voiceCreatedAt,
+        platformAdmin: { full_name: "Admin User", email: "admin@example.com" },
+      },
+      {
+        id: "event-status",
+        action: "PLATFORM_LEAD_STAGE_UPDATED",
+        entity_type: "PlatformLead",
+        entity_id: "lead-1",
+        details: { previousStage: "Need To Call", stage: "Old" },
+        created_at: statusChangedAt,
+        platformAdmin: null,
+      },
+    ]);
+    findLeadsMock.mockResolvedValue([{ id: "lead-1", name: "Taylor Reed" }]);
+
+    await expect(listPlatformLeadActivity()).resolves.toEqual([
+      {
+        id: "event-voice",
+        leadId: "lead-1",
+        category: "VOICE_NOTE",
+        summary: "Voice note uploaded",
+        leadName: "Taylor Reed",
+        actor: "Admin User",
+        actorEmail: "admin@example.com",
+        created_at: voiceCreatedAt,
+      },
+      {
+        id: "event-status",
+        leadId: "lead-1",
+        category: "STATUS",
+        summary: "Status changed from Need To Call to Old",
+        leadName: "Taylor Reed",
+        actor: "Platform team",
+        actorEmail: null,
+        created_at: statusChangedAt,
+      },
+    ]);
+    expect(findLeadAuditEventsMock).toHaveBeenCalledWith(expect.objectContaining({
+      where: { entity_type: { in: ["PlatformLead", "PlatformLeadVoiceNote"] } },
+      take: 100,
+    }));
+    expect(findLeadsMock).toHaveBeenCalledWith({
+      where: { id: { in: ["lead-1"] } },
+      select: { id: true, name: true },
+    });
+  });
+
+  it("limits Sales Managers to assigned and unassigned leads for claiming", async () => {
+      requirePlatformNavigationPermissionMock.mockResolvedValue({
+        id: "sales-manager-1",
+        actualRole: "ADMIN",
+        team_role: "SALES_MANAGER",
+      });
+      findLeadsMock.mockResolvedValue([]);
+
+      await expect(listPlatformLeads()).resolves.toEqual([]);
+
+      expect(findLeadsMock).toHaveBeenCalledWith(expect.objectContaining({
+        where: {
+          OR: [
+            { assigned_sales_manager_id: null },
+            { assigned_sales_manager_id: "sales-manager-1" },
+          ],
+        },
+      }));
+  });
+
+  it("prevents a Sales Manager from opening another manager's lead", async () => {
+      requirePlatformNavigationPermissionMock.mockResolvedValue({
+        id: "sales-manager-1",
+        actualRole: "ADMIN",
+        team_role: "SALES_MANAGER",
+      });
+      findLeadMock.mockResolvedValue(null);
+
+      await expect(updatePlatformLead("lead-owned-by-another-manager", validInput))
+        .rejects.toThrow("Lead not found.");
+
+      expect(findLeadMock).toHaveBeenCalledWith({
+        where: {
+          id: "lead-owned-by-another-manager",
+          assigned_sales_manager_id: "sales-manager-1",
+        },
+      });
+      expect(updateLeadStagesMock).not.toHaveBeenCalled();
+  });
+
+  it("claims an unassigned lead atomically and records the Sales Manager", async () => {
+      requirePlatformNavigationPermissionMock.mockResolvedValue({
+        id: "sales-manager-1",
+        actualRole: "ADMIN",
+        team_role: "SALES_MANAGER",
+      });
+      updateLeadStagesMock.mockResolvedValue({ count: 1 });
+      findLeadMock.mockResolvedValue({
+        id: "lead-1",
+        assigned_sales_manager_id: "sales-manager-1",
+        assignedSalesManager: { id: "sales-manager-1", full_name: "SALES MANAGER", email: "sales@example.com" },
+        campaignEntries: [],
+        mobile: null,
+      });
+      createAuditEventMock.mockResolvedValue({ id: "audit-1" });
+
+      await expect(claimPlatformLead("lead-1")).resolves.toMatchObject({
+        id: "lead-1",
+        assigned_sales_manager_id: "sales-manager-1",
+      });
+
+      expect(updateLeadStagesMock).toHaveBeenCalledWith({
+        where: { id: "lead-1", assigned_sales_manager_id: null },
+        data: { assigned_sales_manager_id: "sales-manager-1" },
+      });
+      expect(createAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          platform_admin_id: "sales-manager-1",
+          action: "PLATFORM_LEAD_CLAIMED",
+          entity_id: "lead-1",
+        }),
+      }));
+  });
+
+  it("allows a CMO to assign a lead only to an active manager on their team", async () => {
+      requirePlatformNavigationPermissionMock.mockResolvedValue({
+        id: "cmo-1",
+        actualRole: "ADMIN",
+        team_role: "CMO",
+      });
+      findLeadMock.mockResolvedValue({ id: "lead-1", assigned_sales_manager_id: null });
+      findPlatformAdminMock.mockResolvedValue({ id: "sales-manager-1" });
+      updateLeadStagesMock.mockResolvedValue({ count: 1 });
+      createAuditEventMock.mockResolvedValue({ id: "audit-1" });
+
+      await expect(assignPlatformLead("lead-1", "sales-manager-1")).resolves.toEqual({
+        id: "lead-1",
+        assigned_sales_manager_id: "sales-manager-1",
+      });
+
+      expect(findPlatformAdminMock).toHaveBeenCalledWith({
+        where: {
+          id: "sales-manager-1",
+          role: "ADMIN",
+          team_role: "SALES_MANAGER",
+          is_active: true,
+          manager_id: "cmo-1",
+        },
+        select: { id: true },
+      });
+      expect(updateLeadStagesMock).toHaveBeenCalledWith({
+        where: { id: "lead-1", assigned_sales_manager_id: null },
+        data: { assigned_sales_manager_id: "sales-manager-1" },
+    });
   });
 
   it("rejects invalid lead status before database writes", async () => {
@@ -387,10 +611,12 @@ describe("platform lead management", () => {
     findLeadsMock.mockResolvedValue([]);
 
     await expect(listPlatformLeads()).resolves.toEqual([]);
-    expect(requirePlatformNavigationPermissionMock).toHaveBeenCalledWith("canAccessLeadsAndSubscriptions");
+    expect(requirePlatformNavigationPermissionMock).toHaveBeenCalledWith("canAccessLeads");
     expect(findLeadsMock).toHaveBeenCalledWith({
+      where: {},
       orderBy: [{ created_at: "desc" }, { name: "asc" }],
       include: {
+        assignedSalesManager: { select: { id: true, full_name: true, email: true } },
         campaignEntries: {
           orderBy: { added_at: "desc" },
           take: 1,
@@ -448,7 +674,7 @@ describe("platform lead management", () => {
       data: {
         name: "Taylor Reed",
         email: "taylor@example.com",
-        mobile: "+919876543210",
+        mobile: "919876543210",
         company_name: "Acme Apparel",
         city: "Bengaluru",
         source: "Referral",
@@ -464,6 +690,24 @@ describe("platform lead management", () => {
         entity_id: "lead-1",
       }),
     });
+  });
+
+  it("adds the Indian country code on creation and workbook import, and rejects other lengths", async () => {
+    createLeadMock.mockResolvedValue({ id: "lead-1" });
+    await createPlatformLead({ ...validInput, mobile: "9876543210" });
+    expect(createLeadMock).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ mobile: "919876543210" }),
+    }));
+
+    createLeadsMock.mockResolvedValue({ count: 1 });
+    createAuditEventsMock.mockResolvedValue({ count: 1 });
+    await importPlatformLeads([{ ...validInput, mobile: "9876543210" }]);
+    expect(createLeadsMock.mock.calls.at(-1)?.[0].data[0]).toEqual(
+      expect.objectContaining({ mobile: "919876543210" }),
+    );
+
+    await expect(createPlatformLead({ ...validInput, mobile: "987654321" }))
+      .rejects.toThrow("Mobile number must be 12 digits");
   });
 
   it("saves the lead's nature of business after trimming and enforces its size limit", async () => {
@@ -487,10 +731,12 @@ describe("platform lead management", () => {
     await expect(createPlatformLead({ ...validInput, quickNote: "x".repeat(2001) }))
       .rejects.toThrow("Quick note must be 2000 characters or fewer.");
 
-    findLeadMock.mockResolvedValue({ id: "lead-1", quick_note: "EXISTING NOTE" });
-    updateLeadMock.mockResolvedValue({ id: "lead-1" });
+    findLeadMock
+      .mockResolvedValueOnce({ id: "lead-1", quick_note: "EXISTING NOTE" })
+      .mockResolvedValueOnce({ id: "lead-1", quick_note: "EXISTING NOTE" });
+    updateLeadStagesMock.mockResolvedValue({ count: 1 });
     await updatePlatformLead("lead-1", validInput);
-    expect(updateLeadMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(updateLeadStagesMock).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "lead-1" },
       data: expect.not.objectContaining({ quick_note: expect.anything() }),
     }));
@@ -557,7 +803,7 @@ describe("platform lead management", () => {
       expect.objectContaining({
         name: "MORGAN LEE",
         email: "morgan@example.com",
-        mobile: "+919812345678",
+        mobile: "919812345678",
         stage: "1-new",
       }),
     ]);
@@ -566,6 +812,32 @@ describe("platform lead management", () => {
       action: "PLATFORM_LEAD_GOOGLE_SHEET_IMPORTED",
       details: { stage: "1-new" },
     });
+  });
+
+  it("accepts numeric Google Sheets mobile cells and stores the canonical 12 digits", async () => {
+    vi.stubEnv("GOOGLE_SHEETS_LEADS_WEB_APP_URL", "https://script.google.com/macros/s/deployment-id/exec");
+    findLeadsMock.mockResolvedValue([]);
+    createLeadsMock.mockResolvedValue({ count: 1 });
+    createAuditEventsMock.mockResolvedValue({ count: 1 });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      leads: [{
+        name: "Taylor Reed",
+        email: "taylor@example.com",
+        mobile: 9876543210,
+        companyName: "Acme Apparel",
+        city: "Bengaluru",
+        source: "Google Sheets",
+        natureOfBusiness: "",
+      }],
+    }), { status: 200 })));
+
+    await expect(syncPlatformLeadsFromGoogleSheet(
+      "https://script.google.com/macros/s/deployment-id/exec",
+    )).resolves.toEqual({ imported: 1, skippedDuplicates: 0 });
+    expect(createLeadsMock.mock.calls[0][0].data[0]).toEqual(
+      expect.objectContaining({ mobile: "919876543210" }),
+    );
   });
 
   it("does not contact the sheet when platform authorization fails", async () => {
@@ -664,7 +936,8 @@ describe("platform lead management", () => {
   });
 
   it("updates the selected lead and records changed fields", async () => {
-    findLeadMock.mockResolvedValue({
+    findLeadMock
+      .mockResolvedValueOnce({
       id: "lead-1",
       name: "Taylor Reed",
       email: "taylor@example.com",
@@ -674,17 +947,18 @@ describe("platform lead management", () => {
       source: "Referral",
       stage: "1-new",
       nature_of_business: null,
-    });
-    updateLeadMock.mockResolvedValue({ id: "lead-1", name: "Taylor R." });
+      })
+      .mockResolvedValueOnce({ id: "lead-1", name: "Taylor R." });
+    updateLeadStagesMock.mockResolvedValue({ count: 1 });
 
     await expect(updatePlatformLead("lead-1", { ...validInput, name: "Taylor R." }))
       .resolves.toEqual({ id: "lead-1", name: "Taylor R." });
-    expect(updateLeadMock).toHaveBeenCalledWith({
+    expect(updateLeadStagesMock).toHaveBeenCalledWith({
       where: { id: "lead-1" },
       data: {
         name: "Taylor R.",
         email: "taylor@example.com",
-        mobile: "+919876543210",
+        mobile: "919876543210",
         company_name: "Acme Apparel",
         city: "Bengaluru",
         source: "Referral",
@@ -696,7 +970,7 @@ describe("platform lead management", () => {
       data: expect.objectContaining({
         action: "PLATFORM_LEAD_UPDATED",
         entity_id: "lead-1",
-        details: { changedFields: ["name"] },
+        details: { changedFields: ["name", "mobile"] },
       }),
     });
   });
@@ -711,7 +985,7 @@ describe("platform lead management", () => {
     findLeadMock.mockResolvedValue(null);
 
     await expect(updatePlatformLead("missing-lead", validInput)).rejects.toThrow("Lead not found.");
-    expect(updateLeadMock).not.toHaveBeenCalled();
+    expect(updateLeadStagesMock).not.toHaveBeenCalled();
     expect(createAuditEventMock).not.toHaveBeenCalled();
   });
 });

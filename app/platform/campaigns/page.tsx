@@ -6,7 +6,7 @@ import PlatformCampaignsPage from "./_page-content/platform-campaigns-page";
 
 export default async function PlatformCampaignsRoute() {
   const admin = await requirePlatformSessionAdmin();
-  if (admin.role !== "ADMIN" && admin.role !== "SUPER_ADMIN" && admin.team_role !== "CMO" && admin.team_role !== "CTO") {
+  if (admin.actualRole !== "SUPER_ADMIN" && (admin.role !== "ADMIN" || admin.team_role !== null)) {
     redirect("/platform/organisations");
   }
 

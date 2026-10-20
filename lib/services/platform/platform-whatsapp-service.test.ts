@@ -78,7 +78,7 @@ describe("platform WhatsApp campaign service", () => {
     mocks.prisma.$transaction.mockImplementation((operation: unknown) =>
       (operation as (tx: typeof mocks.transaction) => unknown)(mocks.transaction),
     );
-    mocks.requireAdmin.mockResolvedValue({ id: "admin-1", team_role: "CMO" });
+    mocks.requireAdmin.mockResolvedValue({ id: "admin-1", team_role: null });
     mocks.createAuditEvent.mockResolvedValue({});
   });
 
@@ -104,6 +104,17 @@ describe("platform WhatsApp campaign service", () => {
       consentConfirmed: false,
     })).rejects.toThrow("Confirm that campaign recipients have opted in");
 
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("restricts WhatsApp campaign scheduling to platform Admin accounts", async () => {
+    mocks.requireAdmin.mockResolvedValue({ id: "admin-1", team_role: "CMO" });
+    await expect(schedulePlatformWhatsAppCampaignMessage({
+      campaignId: "campaign-1",
+      templateId: "template-1",
+      scheduledAt: new Date(Date.now() + 60_000),
+      consentConfirmed: true,
+    })).rejects.toThrow("Campaign management is available to platform Admin accounts only.");
     expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
   });
 

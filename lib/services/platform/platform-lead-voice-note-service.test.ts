@@ -15,7 +15,7 @@ const {
   const findVoiceNote = vi.fn();
   const createAuditEvent = vi.fn();
   const transaction = {
-    platformLead: { findUnique: findLead },
+    platformLead: { findUnique: findLead, findFirst: findLead },
     platformLeadVoiceNote: { create: createVoiceNote },
     platformAuditEvent: { create: createAuditEvent },
   };
@@ -27,7 +27,7 @@ const {
     findVoiceNoteMock: findVoiceNote,
     createAuditEventMock: createAuditEvent,
     prismaMock: {
-      platformLead: { findUnique: findLead },
+      platformLead: { findUnique: findLead, findFirst: findLead },
       platformLeadVoiceNote: {
         findMany: listVoiceNotes,
         findFirst: findVoiceNote,
@@ -78,7 +78,13 @@ describe("platform lead voice notes", () => {
     expect(createAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         action: "PLATFORM_LEAD_VOICE_NOTE_CREATED",
-        details: { leadId: "lead-1", contentType: "audio/webm", byteSize: 3, durationMs: 1200 },
+        details: {
+          leadId: "lead-1",
+          contentType: "audio/webm",
+          byteSize: 3,
+          durationMs: 1200,
+          source: "RECORDED",
+        },
       }),
     }));
   });
@@ -123,6 +129,7 @@ describe("platform lead voice notes", () => {
     await expect(listPlatformLeadVoiceNotes("missing-lead")).rejects.toThrow("Lead not found.");
     expect(listVoiceNotesMock).not.toHaveBeenCalled();
 
+    findLeadMock.mockResolvedValue({ id: "lead-1" });
     findVoiceNoteMock.mockResolvedValue(null);
     await expect(getPlatformLeadVoiceNoteAudio("lead-1", "missing-note"))
       .rejects.toThrow("Voice note not found.");
@@ -145,5 +152,26 @@ describe("platform lead voice notes", () => {
     })).rejects.toThrow("Lead not found.");
     expect(createVoiceNoteMock).not.toHaveBeenCalled();
     expect(createAuditEventMock).not.toHaveBeenCalled();
+  });
+
+  it("scopes Sales Manager voice-note access to leads they own", async () => {
+    requirePlatformNavigationPermissionMock.mockResolvedValue({
+      id: "sales-manager-1",
+      actualRole: "ADMIN",
+      team_role: "SALES_MANAGER",
+    });
+    findLeadMock.mockResolvedValue(null);
+
+    await expect(listPlatformLeadVoiceNotes("lead-owned-by-another-manager"))
+      .rejects.toThrow("Lead not found.");
+
+    expect(findLeadMock).toHaveBeenCalledWith({
+      where: {
+        id: "lead-owned-by-another-manager",
+        assigned_sales_manager_id: "sales-manager-1",
+      },
+      select: { id: true },
+    });
+    expect(listVoiceNotesMock).not.toHaveBeenCalled();
   });
 });

@@ -13,7 +13,11 @@ export default async function PlatformWhatsAppSendHistoryRoute({
   params: Promise<{ campaignId: string }>;
 }) {
   const admin = await requirePlatformSessionAdmin();
-  if (admin.role !== "ADMIN" && admin.role !== "SUPER_ADMIN" && admin.team_role !== "CMO") {
+  if (
+    admin.actualRole !== "SUPER_ADMIN"
+    && admin.team_role !== "CMO"
+    && (admin.role !== "ADMIN" || admin.team_role !== null)
+  ) {
     redirect("/platform/organisations");
   }
 
