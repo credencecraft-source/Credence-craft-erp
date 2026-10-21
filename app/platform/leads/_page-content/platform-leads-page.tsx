@@ -47,6 +47,7 @@ export default async function PlatformLeadsPage() {
       appLogins={appLogins}
       canManageCampaigns={admin.actualRole === "SUPER_ADMIN" || admin.team_role === null}
       canManageSalesTeam={admin.actualRole === "SUPER_ADMIN" || admin.team_role === "CMO" || admin.team_role === null}
+      showSalesManagerQueues={admin.team_role === "SALES_MANAGER" || admin.team_role === "CMO"}
       isSalesManager={admin.actualRole !== "SUPER_ADMIN" && admin.team_role === "SALES_MANAGER"}
       salesManagers={salesManagers.map(({ id, full_name, email, is_active }) => ({ id, full_name, email, is_active }))}
     />

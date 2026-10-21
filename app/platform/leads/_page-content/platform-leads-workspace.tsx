@@ -14,6 +14,12 @@ import Tabs from "@/components/ui/Tabs";
 import Textarea from "@/components/ui/Textarea";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import {
+  countLeadsByAssignmentQueue,
+  filterLeadStageTabs,
+  filterLeadsByAssignmentQueue,
+  type LeadAssignmentQueue,
+} from "./platform-lead-queue";
+import {
   formatIndianMobileNumber,
   normalizeIndianMobileNumber,
 } from "@/lib/phone/indian-mobile-number";
@@ -508,12 +514,14 @@ export default function PlatformLeadsWorkspace({
   appLogins,
   canManageCampaigns,
   canManageSalesTeam,
+  showSalesManagerQueues,
   isSalesManager,
   salesManagers,
 }: {
   leads: PlatformLead[];
   canManageCampaigns: boolean;
   canManageSalesTeam: boolean;
+  showSalesManagerQueues: boolean;
   isSalesManager: boolean;
   salesManagers: Array<{ id: string; full_name: string; email: string; is_active: boolean }>;
   appLogins: Array<{
@@ -536,6 +544,7 @@ export default function PlatformLeadsWorkspace({
   const [assignmentSavingLeadId, setAssignmentSavingLeadId] = useState<string | null>(null);
   const [assignmentMessage, setAssignmentMessage] = useState("");
   const [assignmentError, setAssignmentError] = useState("");
+  const [leadQueue, setLeadQueue] = useState<LeadAssignmentQueue>("ASSIGNED");
   const leads = useMemo(() => {
     const merged = initialLeads.map((lead) => leadOverrides[lead.id] ?? lead);
     const initialIds = new Set(initialLeads.map((lead) => lead.id));
@@ -639,6 +648,20 @@ export default function PlatformLeadsWorkspace({
   const selectedVoiceNoteError = voiceNoteFailure?.leadId === selectedLeadId ? voiceNoteFailure.error : "";
   const voiceNoteRecording = recordingLeadId === selectedLeadId;
   const voiceNoteSaving = voiceNoteStartingLeadId === selectedLeadId || voiceNoteSavingLeadId === selectedLeadId;
+  const queueLeads = useMemo(
+    () => !showSalesManagerQueues
+      ? leads
+      : filterLeadsByAssignmentQueue(leads, leadQueue),
+    [leadQueue, leads, showSalesManagerQueues],
+  );
+  const assignedLeadCount = useMemo(
+    () => countLeadsByAssignmentQueue(leads, "ASSIGNED", PLATFORM_LEAD_THIRD_PARTY_STAGES),
+    [leads],
+  );
+  const unassignedLeadCount = useMemo(
+    () => countLeadsByAssignmentQueue(leads, "UNASSIGNED", PLATFORM_LEAD_THIRD_PARTY_STAGES),
+    [leads],
+  );
 
   function applyLeadStageChanges(changes: Array<{ leadId: string; stage: string }>) {
     const updatedAt = new Date().toISOString();
@@ -768,7 +791,7 @@ export default function PlatformLeadsWorkspace({
           : activeTab === "OLD"
             ? PLATFORM_LEAD_OLD_STAGES
             : PLATFORM_LEAD_THIRD_PARTY_STAGES;
-    return leads
+    return queueLeads
       .filter((lead) => allowedStages.some((stage) => stage === lead.stage))
       .filter((lead) => {
         if (stageFilter === "NEED_TO_CALL") {
@@ -779,14 +802,14 @@ export default function PlatformLeadsWorkspace({
         return stageFilter === "ALL" || lead.stage === stageFilter;
       })
       .map((lead) => ({ ...lead, recordType: "THIRD_PARTY" as const }));
-  }, [activeTab, appLogins, callFollowUpFilter, leads, stageFilter]);
+  }, [activeTab, appLogins, callFollowUpFilter, queueLeads, stageFilter]);
   const leadCountsByStage = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const lead of leads) {
+    for (const lead of queueLeads) {
       counts[lead.stage] = (counts[lead.stage] ?? 0) + 1;
     }
     return counts;
-  }, [leads]);
+  }, [queueLeads]);
   const countLeadStages = (stages: readonly string[]) =>
     stages.reduce((total, stage) => total + (leadCountsByStage[stage] ?? 0), 0);
   const stageOptions = activeTab === "DEAD"
@@ -873,6 +896,9 @@ export default function PlatformLeadsWorkspace({
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Unable to accept this lead.");
       setAssignmentMessage("Lead accepted and added to your assigned leads.");
+      setLeadQueue("ASSIGNED");
+      setStageFilter("ALL");
+      setCallFollowUpFilter("Need To Call");
       router.refresh();
     } catch (error) {
       setAssignmentError(error instanceof Error ? error.message : "Unable to accept this lead.");
@@ -1754,9 +1780,51 @@ export default function PlatformLeadsWorkspace({
 
       <div className={`flex min-h-0 flex-1 flex-col gap-3 overflow-hidden ${selectedLeadId ? "" : "lg:flex-row"}`}>
         {!selectedLeadId && <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
+          {showSalesManagerQueues && activeTab === "THIRD_PARTY" && (
+            <Tabs
+              tabs={[
+                {
+                  value: "ASSIGNED",
+                  label: (
+                    <>
+                      {isSalesManager ? "My assigned leads" : "Assigned leads"}
+                      <span className="ml-1 text-xs tabular-nums text-slate-500">
+                        {assignedLeadCount}
+                      </span>
+                    </>
+                  ),
+                },
+                {
+                  value: "UNASSIGNED",
+                  label: (
+                    <>
+                      Unassigned
+                      <span className="ml-1 text-xs tabular-nums text-slate-500">
+                        {unassignedLeadCount}
+                      </span>
+                    </>
+                  ),
+                },
+              ]}
+              value={leadQueue}
+              onChange={(value) => {
+                setLeadQueue(value);
+                setStageFilter("ALL");
+                setCallFollowUpFilter("Need To Call");
+                setSelectedLeadIds([]);
+                setAssignmentMessage("");
+                setAssignmentError("");
+              }}
+              ariaLabel="Filter assigned and unassigned leads"
+              compact
+            />
+          )}
           {activeTab === "THIRD_PARTY" && (
             <Tabs
-              tabs={leadStageTabs.map((tab) => ({
+              tabs={filterLeadStageTabs(
+                leadStageTabs,
+                isSalesManager && leadQueue === "UNASSIGNED",
+              ).map((tab) => ({
                 value: tab.value,
                 label: (
                   <>
