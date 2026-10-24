@@ -65,6 +65,7 @@ const LEAD_FIELDS = [
   { key: "source", label: "Source" },
   { key: "stage", label: "Stage" },
 ];
+const LEAD_REPORT_LEGACY_FIELDS = ["email"];
 
 const MAX_BULK_STAGE_LEADS = 500;
 
@@ -544,7 +545,9 @@ export default function PlatformLeadsWorkspace({
   const [assignmentSavingLeadId, setAssignmentSavingLeadId] = useState<string | null>(null);
   const [assignmentMessage, setAssignmentMessage] = useState("");
   const [assignmentError, setAssignmentError] = useState("");
-  const [leadQueue, setLeadQueue] = useState<LeadAssignmentQueue>("ASSIGNED");
+  const [leadQueue, setLeadQueue] = useState<LeadAssignmentQueue>(
+    isSalesManager ? "ASSIGNED" : "ALL",
+  );
   const leads = useMemo(() => {
     const merged = initialLeads.map((lead) => leadOverrides[lead.id] ?? lead);
     const initialIds = new Set(initialLeads.map((lead) => lead.id));
@@ -576,7 +579,7 @@ export default function PlatformLeadsWorkspace({
   const voiceNoteRecordingLeadIdRef = useRef<string | null>(null);
   const voiceNoteStartedAtRef = useRef(0);
   const voiceNoteLimitTimerRef = useRef<number | null>(null);
-  const [stageFilter, setStageFilter] = useState(isSalesManager ? "ALL" : "NEED_TO_CALL");
+  const [stageFilter, setStageFilter] = useState("ALL");
   const [callFollowUpFilter, setCallFollowUpFilter] = useState<
     "Need To Call" | "Not Picked" | "Call Back Later"
   >("Need To Call");
@@ -655,11 +658,11 @@ export default function PlatformLeadsWorkspace({
     [leadQueue, leads, showSalesManagerQueues],
   );
   const assignedLeadCount = useMemo(
-    () => countLeadsByAssignmentQueue(leads, "ASSIGNED", PLATFORM_LEAD_THIRD_PARTY_STAGES),
+    () => countLeadsByAssignmentQueue(leads, "ASSIGNED", PLATFORM_LEAD_STAGES),
     [leads],
   );
   const unassignedLeadCount = useMemo(
-    () => countLeadsByAssignmentQueue(leads, "UNASSIGNED", PLATFORM_LEAD_THIRD_PARTY_STAGES),
+    () => countLeadsByAssignmentQueue(leads, "UNASSIGNED", PLATFORM_LEAD_STAGES),
     [leads],
   );
 
@@ -1783,6 +1786,19 @@ export default function PlatformLeadsWorkspace({
           {showSalesManagerQueues && activeTab === "THIRD_PARTY" && (
             <Tabs
               tabs={[
+                ...(!isSalesManager
+                  ? [{
+                    value: "ALL",
+                    label: (
+                      <>
+                        All leads
+                        <span className="ml-1 text-xs tabular-nums text-slate-500">
+                          {leads.length}
+                        </span>
+                      </>
+                    ),
+                  }]
+                  : []),
                 {
                   value: "ASSIGNED",
                   label: (
@@ -1808,14 +1824,14 @@ export default function PlatformLeadsWorkspace({
               ]}
               value={leadQueue}
               onChange={(value) => {
-                setLeadQueue(value);
+                setLeadQueue(value as LeadAssignmentQueue);
                 setStageFilter("ALL");
                 setCallFollowUpFilter("Need To Call");
                 setSelectedLeadIds([]);
                 setAssignmentMessage("");
                 setAssignmentError("");
               }}
-              ariaLabel="Filter assigned and unassigned leads"
+              ariaLabel="Filter leads by assignment"
               compact
             />
           )}
@@ -1922,7 +1938,9 @@ export default function PlatformLeadsWorkspace({
             fields={LEAD_FIELDS}
             visibleFields={visibleFields}
             onVisibleFieldsChange={changeVisibleFields}
-            storageKey="platform-leads-report-columns-v2"
+            storageKey="platform-leads-report-columns-v3"
+            legacyStorageKey="platform-leads-report-columns-v2"
+            legacyFieldsToAdd={LEAD_REPORT_LEGACY_FIELDS}
             rowIdSelector={(lead) => lead.id}
             selectedIds={activeTab === "THIRD_PARTY" ? selectedLeadIds : []}
             selectable={activeTab === "THIRD_PARTY" && !isSalesManager}

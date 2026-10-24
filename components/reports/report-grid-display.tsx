@@ -16,6 +16,7 @@ import {
   type FilterOperator,
   type IndexedReportRow,
 } from "./report-grid-filtering";
+import { migrateReportGridVisibleFields } from "./report-grid-column-preferences";
 
 export type { FilterOperator } from "./report-grid-filtering";
 
@@ -31,6 +32,8 @@ interface ReportGridProps<T> {
   visibleFields: (keyof T | string)[];
   onVisibleFieldsChange: (fields: (keyof T | string)[]) => void;
   storageKey?: string;
+  legacyStorageKey?: string;
+  legacyFieldsToAdd?: (keyof T | string)[];
   rowIdSelector: (record: T) => string;
   selectedIds: string[];
   selectable?: boolean;
@@ -80,6 +83,8 @@ function ReportGridImplementation<T>({
   visibleFields,
   onVisibleFieldsChange,
   storageKey,
+  legacyStorageKey,
+  legacyFieldsToAdd,
   rowIdSelector,
   selectedIds,
   selectable = true,
@@ -138,11 +143,25 @@ function ReportGridImplementation<T>({
     if (!storageKey) return;
 
     try {
-      const storedFields = JSON.parse(localStorage.getItem(storageKey) ?? "null") as unknown;
+      const currentPreferences = localStorage.getItem(storageKey);
+      const migratingLegacyPreferences = currentPreferences === null && Boolean(legacyStorageKey);
+      const storedPreferences = currentPreferences
+        ?? (legacyStorageKey ? localStorage.getItem(legacyStorageKey) : null);
+      const storedFields = JSON.parse(storedPreferences ?? "null") as unknown;
       if (Array.isArray(storedFields)) {
-        const validFields = storedFields.filter((field): field is keyof T | string =>
-          fields.some((definition) => String(definition.key) === String(field)),
-        );
+        const availableFields = fields.map(({ key }) => String(key));
+        const validFields = migratingLegacyPreferences
+          ? migrateReportGridVisibleFields(
+              storedFields,
+              availableFields,
+              (legacyFieldsToAdd ?? []).map(String),
+            )
+          : storedFields.filter((field): field is keyof T | string =>
+              availableFields.includes(String(field)),
+            );
+        if (migratingLegacyPreferences && validFields.length > 0) {
+          localStorage.setItem(storageKey, JSON.stringify(validFields));
+        }
         if (
           validFields.length > 0 &&
           (validFields.length !== visibleFields.length || validFields.some((field, index) => field !== visibleFields[index]))
@@ -153,7 +172,7 @@ function ReportGridImplementation<T>({
     } catch {
       // Ignore invalid local preferences and keep the report defaults.
     }
-  }, [fields, onVisibleFieldsChange, storageKey, visibleFields]);
+  }, [fields, legacyFieldsToAdd, legacyStorageKey, onVisibleFieldsChange, storageKey, visibleFields]);
 
   const handleOpenColumnModal = (e: React.MouseEvent) => {
     e.preventDefault();

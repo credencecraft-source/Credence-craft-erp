@@ -1,4 +1,4 @@
-export type LeadAssignmentQueue = "ASSIGNED" | "UNASSIGNED";
+export type LeadAssignmentQueue = "ALL" | "ASSIGNED" | "UNASSIGNED";
 
 export function filterLeadStageTabs<T extends { value: string }>(
   tabs: readonly T[],
@@ -15,6 +15,8 @@ export function filterLeadsByAssignmentQueue<T extends LeadAssignment>(
   leads: T[],
   queue: LeadAssignmentQueue,
 ) {
+  if (queue === "ALL") return leads;
+
   return leads.filter(({ assigned_sales_manager_id }) =>
     queue === "UNASSIGNED"
       ? assigned_sales_manager_id === null

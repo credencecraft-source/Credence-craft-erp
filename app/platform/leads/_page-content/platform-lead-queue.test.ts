@@ -13,6 +13,11 @@ const leads = [
 ];
 
 describe("filterLeadsByAssignmentQueue", () => {
+  it("returns all leads without regard to assignment", () => {
+    expect(filterLeadsByAssignmentQueue(leads, "ALL").map(({ id }) => id))
+      .toEqual(["assigned-a", "unassigned", "assigned-b"]);
+  });
+
   it("returns assigned leads for the All/status tabs", () => {
     expect(filterLeadsByAssignmentQueue(leads, "ASSIGNED").map(({ id }) => id))
       .toEqual(["assigned-a", "assigned-b"]);
@@ -24,9 +29,14 @@ describe("filterLeadsByAssignmentQueue", () => {
   });
 
   it("keeps each queue badge count independent of the currently selected queue", () => {
-    const allStages = ["1-new", "Verification"];
-    expect(countLeadsByAssignmentQueue(leads, "ASSIGNED", allStages)).toBe(2);
-    expect(countLeadsByAssignmentQueue(leads, "UNASSIGNED", allStages)).toBe(1);
+    const leadsWithArchivedStage = [
+      ...leads,
+      { id: "old-unassigned", assigned_sales_manager_id: null, stage: "Old" },
+    ];
+    const allStages = ["1-new", "Verification", "Old"];
+    expect(countLeadsByAssignmentQueue(leadsWithArchivedStage, "ASSIGNED", allStages)).toBe(2);
+    expect(countLeadsByAssignmentQueue(leadsWithArchivedStage, "UNASSIGNED", allStages)).toBe(2);
+    expect(countLeadsByAssignmentQueue(leadsWithArchivedStage, "ALL", allStages)).toBe(4);
   });
 });
 
