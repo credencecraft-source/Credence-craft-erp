@@ -6,6 +6,7 @@ import { normalizeSystemStatusKey } from "@/lib/auth/validation-rules";
 import { requireOrganizationAccess } from "./organization-service";
 import { PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES } from "@/lib/services/platform/platform-lead-constants";
 import {
+  getPlatformLeadAssignedReadScope,
   getPlatformLeadScope,
   requirePlatformLeadAccess,
 } from "@/lib/services/platform/platform-lead-access";
@@ -349,7 +350,7 @@ export async function createPlatformLeadSupportTicket(input: {
 
 export async function listPlatformLeadSupportTickets(leadId: string) {
   const admin = await requirePlatformLeadAccess();
-  const leadScope = getPlatformLeadScope(admin);
+  const leadScope = getPlatformLeadAssignedReadScope(admin);
   const id = leadId.trim();
   if (!id || id.length > 255) throw new Error("Select a valid lead.");
   const lead = await prisma.platformLead.findFirst({

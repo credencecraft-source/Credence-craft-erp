@@ -49,6 +49,7 @@ import {
   getSupportTicketForOrganization,
   getSupportTicketForUser,
   listSupportTickets,
+  listPlatformLeadSupportTickets,
   listSupportTicketsForUser,
   updateSupportTicketStatus,
 } from "./support-ticket-service";
@@ -76,6 +77,25 @@ beforeEach(() => {
 });
 
 describe("support ticket access and internal notes", () => {
+  it("allows assigned-lead Sales Managers to read activity without granting write access", async () => {
+    mocks.requirePlatformNavigationPermission.mockResolvedValue({
+      id: "sales-manager-1",
+      actualRole: "ADMIN",
+      team_role: "SALES_MANAGER",
+    });
+    mocks.prisma.platformLead.findFirst.mockResolvedValue({ id: "other-lead" });
+    mocks.prisma.supportTicket.findMany.mockResolvedValue([]);
+
+    await expect(listPlatformLeadSupportTickets("other-lead")).resolves.toEqual([]);
+    expect(mocks.prisma.platformLead.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: "other-lead",
+        assigned_sales_manager_id: { not: null },
+      },
+      select: { id: true },
+    });
+  });
+
   it("loads only report fields for the platform ticket list", async () => {
     await listSupportTickets();
 

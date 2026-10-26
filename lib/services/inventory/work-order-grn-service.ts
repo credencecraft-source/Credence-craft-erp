@@ -25,6 +25,14 @@ function parseGrnDate(value: string) {
   return date;
 }
 
+type WorkOrderGrnOutwardLine = {
+  source_stock_type: string;
+  source_stock_id: string;
+  requested_quantity: Prisma.Decimal;
+  shipped_quantity: Prisma.Decimal;
+  request: { status: string };
+};
+
 function mapGrnPayload(record: {
   id: string;
   grn_no: string;
@@ -59,6 +67,26 @@ function mapGrnPayload(record: {
     rejected_quantity: number | null;
     advance_booked_quantity: number | null;
     general_inventory_quantity: number | null;
+    generalStockReceipt?: {
+      id: string;
+      organization_id: string;
+      quantity_in: number;
+      quantity_out: number;
+      current_stock: number;
+    } | null;
+    bookingAllocations?: Array<{
+      id: string;
+      organization_id: string;
+      allocated_quantity: number;
+      finishedGoodsStockReceipt: {
+        id: string;
+        organization_id: string;
+        grn_allocation_id: string;
+        quantity_in: number;
+        quantity_out: number;
+        current_stock: number;
+      } | null;
+    }>;
     workOrderSizeLine: {
       bookingAssignments: Array<{
         id: string;
@@ -72,7 +100,7 @@ function mapGrnPayload(record: {
       }>;
     };
   }>;
-}, sizeOrder: string[] = []) {
+}, sizeOrder: string[] = [], organizationId = "", outwardLinesByStock = new Map<string, WorkOrderGrnOutwardLine[]>()) {
   return {
     id: record.id,
     grnNo: record.grn_no,
@@ -108,6 +136,13 @@ function mapGrnPayload(record: {
       rejectedQuantity: line.rejected_quantity,
       advanceBookedQuantity: line.advance_booked_quantity,
       generalInventoryQuantity: line.general_inventory_quantity,
+      ...(line.generalStockReceipt !== undefined && line.bookingAllocations !== undefined
+        ? calculateWorkOrderGrnStockSummary({
+            ...line,
+            generalStockReceipt: line.generalStockReceipt ?? null,
+            bookingAllocations: line.bookingAllocations ?? [],
+          }, organizationId, outwardLinesByStock)
+        : {}),
       bookingAssignments: line.workOrderSizeLine.bookingAssignments.map((assignment) => ({
         assignmentId: assignment.id,
         bookingNo: assignment.bookingSizeLine.booking.booking_no,
@@ -119,8 +154,132 @@ function mapGrnPayload(record: {
   };
 }
 
-function mapGrn(record: Parameters<typeof mapGrnPayload>[0], sizeOrder: string[] = []) {
-  return mapGrnPayload(record, sizeOrder);
+function validGrnStockLedger(receipt: {
+  quantity_in: number;
+  quantity_out: number;
+  current_stock: number;
+}) {
+  return Number.isSafeInteger(receipt.quantity_in)
+    && Number.isSafeInteger(receipt.quantity_out)
+    && Number.isSafeInteger(receipt.current_stock)
+    && receipt.quantity_in >= 0
+    && receipt.quantity_out >= 0
+    && receipt.current_stock >= 0
+    && receipt.current_stock + receipt.quantity_out === receipt.quantity_in;
+}
+
+export function calculateWorkOrderGrnStockSummary(
+  line: {
+    approved_quantity: number | null;
+    advance_booked_quantity: number | null;
+    general_inventory_quantity: number | null;
+    generalStockReceipt: {
+      id: string;
+      organization_id: string;
+      quantity_in: number;
+      quantity_out: number;
+      current_stock: number;
+    } | null;
+    bookingAllocations: Array<{
+      id: string;
+      organization_id: string;
+      allocated_quantity: number;
+      finishedGoodsStockReceipt: {
+        id: string;
+        organization_id: string;
+        grn_allocation_id: string;
+        quantity_in: number;
+        quantity_out: number;
+        current_stock: number;
+      } | null;
+    }>;
+  },
+  organizationId: string,
+  outwardLinesByStock: Map<string, WorkOrderGrnOutwardLine[]>,
+) {
+  const receipts = [
+    ...(line.generalStockReceipt
+      ? [{ stockType: "GENERAL", receipt: line.generalStockReceipt }]
+      : []),
+    ...line.bookingAllocations.flatMap((allocation) =>
+      allocation.finishedGoodsStockReceipt
+        ? [{ stockType: "ALLOCATED", receipt: allocation.finishedGoodsStockReceipt }]
+        : [],
+    ),
+  ];
+  const outwardLines = receipts.flatMap(({ stockType, receipt }) =>
+    outwardLinesByStock.get(`${stockType}:${receipt.id}`) ?? [],
+  );
+  const requestedQuantity = outwardLines.reduce((total, outwardLine) => {
+    if (outwardLine.request.status === "CANCELLED") return total;
+    return total.plus(Prisma.Decimal.max(
+      outwardLine.requested_quantity.minus(outwardLine.shipped_quantity),
+      0,
+    ));
+  }, new Prisma.Decimal(0));
+  const issuedQuantity = outwardLines.reduce(
+    (total, outwardLine) => total.plus(outwardLine.shipped_quantity),
+    new Prisma.Decimal(0),
+  );
+  const generalStockQuantity = line.generalStockReceipt?.current_stock ?? 0;
+  const allocatedStockQuantity = line.bookingAllocations.reduce(
+    (total, allocation) => total + (allocation.finishedGoodsStockReceipt?.current_stock ?? 0),
+    0,
+  );
+  const stockTally = line.approved_quantity === null
+    ? "PENDING"
+    : (() => {
+        const allocatedFromRecords = line.bookingAllocations.reduce(
+          (total, allocation) => total + allocation.allocated_quantity,
+          0,
+        );
+        const countersValid = Number.isSafeInteger(line.approved_quantity)
+          && Number.isSafeInteger(allocatedFromRecords)
+          && Number.isSafeInteger(line.advance_booked_quantity)
+          && Number.isSafeInteger(line.general_inventory_quantity)
+          && (line.advance_booked_quantity ?? -1) >= 0
+          && (line.general_inventory_quantity ?? -1) >= 0
+          && line.advance_booked_quantity === allocatedFromRecords
+          && line.advance_booked_quantity !== null
+          && line.general_inventory_quantity !== null
+          && line.advance_booked_quantity + line.general_inventory_quantity === line.approved_quantity;
+        const allocationReceiptsValid = line.bookingAllocations.every((allocation) => {
+          const receipt = allocation.finishedGoodsStockReceipt;
+          return allocation.organization_id === organizationId
+            && Number.isSafeInteger(allocation.allocated_quantity)
+            && allocation.allocated_quantity >= 0
+            && receipt !== null
+            && receipt.organization_id === organizationId
+            && receipt.grn_allocation_id === allocation.id
+            && receipt.quantity_in === allocation.allocated_quantity
+            && validGrnStockLedger(receipt);
+        });
+        const generalReceiptValid = line.generalStockReceipt === null
+          ? line.general_inventory_quantity === 0
+          : line.generalStockReceipt.organization_id === organizationId
+            && validGrnStockLedger(line.generalStockReceipt);
+        return countersValid && allocationReceiptsValid && generalReceiptValid
+          ? "TALLY"
+          : "NOT TALLY";
+      })();
+
+  return {
+    requestedQuantity: requestedQuantity.toNumber(),
+    issuedQuantity: issuedQuantity.toNumber(),
+    generalStockQuantity,
+    allocatedStockQuantity,
+    totalStockQuantity: generalStockQuantity + allocatedStockQuantity,
+    stockTally,
+  };
+}
+
+function mapGrn(
+  record: Parameters<typeof mapGrnPayload>[0],
+  sizeOrder: string[] = [],
+  organizationId = "",
+  outwardLinesByStock = new Map<string, WorkOrderGrnOutwardLine[]>(),
+) {
+  return mapGrnPayload(record, sizeOrder, organizationId, outwardLinesByStock);
 }
 
 const grnIncludes = {
@@ -174,11 +333,94 @@ const grnIncludes = {
   },
 };
 
+const grnDetailIncludes = {
+  ...grnIncludes,
+  lines: {
+    ...grnIncludes.lines,
+    include: {
+      ...grnIncludes.lines.include,
+      generalStockReceipt: {
+        select: {
+          id: true,
+          organization_id: true,
+          quantity_in: true,
+          quantity_out: true,
+          current_stock: true,
+        },
+      },
+      bookingAllocations: {
+        select: {
+          id: true,
+          organization_id: true,
+          allocated_quantity: true,
+          finishedGoodsStockReceipt: {
+            select: {
+              id: true,
+              organization_id: true,
+              grn_allocation_id: true,
+              quantity_in: true,
+              quantity_out: true,
+              current_stock: true,
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 export async function listWorkOrderInventoryGrns(
   organizationId: string,
   options: { status?: string; cursor?: string; limit?: number; grnId?: string } = {},
 ) {
   const take = Math.min(Math.max(options.limit ?? 100, 1), 200);
+  if (options.grnId) {
+    const record = await prisma.workOrderInventoryGrn.findFirst({
+      where: { id: options.grnId, organization_id: organizationId },
+      include: grnDetailIncludes,
+    });
+    if (!record) return { grns: [], nextCursor: null };
+    const sizeOrderByGroup = await getSizeGroupSizeOrderMapForOrganization(
+      organizationId,
+      record.workOrder.order.sizeGroup ? [record.workOrder.order.sizeGroup] : [],
+    );
+    const sizeOrder = sizeOrderByGroup.get(record.workOrder.order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
+    const stockIds = record.lines.flatMap((line) => [
+      ...(line.generalStockReceipt ? [{ stockType: "GENERAL", id: line.generalStockReceipt.id }] : []),
+      ...line.bookingAllocations.flatMap((allocation) => allocation.finishedGoodsStockReceipt
+        ? [{ stockType: "ALLOCATED", id: allocation.finishedGoodsStockReceipt.id }]
+        : []),
+    ]);
+    const outwardLines: WorkOrderGrnOutwardLine[] = stockIds.length > 0
+      ? await prisma.finishedGoodsOutwardRequestLine.findMany({
+          where: {
+            organization_id: organizationId,
+            OR: stockIds.map(({ stockType, id }) => ({
+              source_stock_type: stockType,
+              source_stock_id: id,
+            })),
+          },
+          select: {
+            source_stock_type: true,
+            source_stock_id: true,
+            requested_quantity: true,
+            shipped_quantity: true,
+            request: { select: { status: true } },
+          },
+        })
+      : [];
+    const outwardLinesByStock = new Map<string, WorkOrderGrnOutwardLine[]>();
+    for (const outwardLine of outwardLines) {
+      const key = `${outwardLine.source_stock_type}:${outwardLine.source_stock_id}`;
+      const linked = outwardLinesByStock.get(key) ?? [];
+      linked.push(outwardLine);
+      outwardLinesByStock.set(key, linked);
+    }
+    return {
+      grns: [mapGrn(record, sizeOrder, organizationId, outwardLinesByStock)],
+      nextCursor: null,
+    };
+  }
   if (options.cursor) {
     const cursorRecord = await prisma.workOrderInventoryGrn.findFirst({
       where: {
@@ -193,7 +435,6 @@ export async function listWorkOrderInventoryGrns(
   const records = await prisma.workOrderInventoryGrn.findMany({
     where: {
       organization_id: organizationId,
-      ...(options.grnId ? { id: options.grnId } : {}),
       ...(options.status ? { status: options.status } : {}),
     },
     include: grnIncludes,
@@ -383,7 +624,7 @@ async function createInTransaction(
         })),
       },
     },
-    include: grnIncludes,
+    include: grnDetailIncludes,
   });
   await createAuditEvent({
     organizationId,
@@ -427,7 +668,7 @@ export async function createWorkOrderInventoryGrn(
         record.workOrder.order.sizeGroup ? [record.workOrder.order.sizeGroup] : [],
       );
       const sizeOrder = sizeOrderByGroup.get(record.workOrder.order.sizeGroup?.trim().toLocaleLowerCase() ?? "") ?? [];
-      return mapGrn(record, sizeOrder);
+      return mapGrn(record, sizeOrder, organizationId);
     } catch (error) {
       if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2034" || attempt === 2) {
         throw error;

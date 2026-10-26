@@ -24,6 +24,7 @@ import {
   normalizeIndianMobileNumber,
 } from "@/lib/phone/indian-mobile-number";
 import {
+  canAcceptPlatformLead,
   PLATFORM_LEAD_DEAD_STAGES,
   PLATFORM_LEAD_NOT_INTERESTED_STAGES,
   PLATFORM_LEAD_OLD_STAGES,
@@ -900,7 +901,7 @@ export default function PlatformLeadsWorkspace({
       if (!response.ok) throw new Error(payload.error || "Unable to accept this lead.");
       setAssignmentMessage("Lead accepted and added to your assigned leads.");
       setLeadQueue("ASSIGNED");
-      setStageFilter("ALL");
+      setStageFilter("NEED_TO_CALL");
       setCallFollowUpFilter("Need To Call");
       router.refresh();
     } catch (error) {
@@ -2060,6 +2061,7 @@ export default function PlatformLeadsWorkspace({
             rowActions={(lead) => {
               if (lead.recordType === "APP_LOGIN") return null;
               if (isSalesManager && !lead.assigned_sales_manager_id) {
+                if (!canAcceptPlatformLead(lead.stage)) return null;
                 return (
                   <Button
                     type="button"

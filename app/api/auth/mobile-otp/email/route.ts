@@ -14,6 +14,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function getSafeFailureCategory(error: unknown) {
+  if (isDatabaseUnavailableError(error)) return "DATABASE_UNAVAILABLE";
+  if (
+    error instanceof Error &&
+    error.message === "AUTH_SECRET must be configured before using email OTP."
+  ) {
+    return "AUTH_SECRET_NOT_CONFIGURED";
+  }
+  if (
+    isRecord(error) &&
+    typeof error.code === "string" &&
+    /^P\d{4}$/.test(error.code)
+  ) {
+    return `PRISMA_${error.code}`;
+  }
+  return error instanceof Error ? "APPLICATION_ERROR" : "UNKNOWN_ERROR";
+}
+
 export async function POST(request: Request) {
   let body: unknown;
   try {
@@ -85,6 +103,11 @@ export async function POST(request: Request) {
     });
     return response;
   } catch (error) {
+    console.error("Mobile email OTP operation failed.", {
+      action: body.action,
+      category: getSafeFailureCategory(error),
+    });
+
     if (isDatabaseUnavailableError(error)) {
       return NextResponse.json(
         { error: DATABASE_UNAVAILABLE_MESSAGE },

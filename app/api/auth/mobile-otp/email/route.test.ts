@@ -4,10 +4,12 @@ const {
   sendEmailOtpMock,
   verifyEmailOtpMock,
   createSessionTokenMock,
+  consoleErrorMock,
 } = vi.hoisted(() => ({
   sendEmailOtpMock: vi.fn(),
   verifyEmailOtpMock: vi.fn(),
   createSessionTokenMock: vi.fn(() => "session-token"),
+  consoleErrorMock: vi.fn(),
 }));
 
 vi.mock("@/lib/services/auth/mobile-email-otp-auth-service", () => ({
@@ -19,6 +21,8 @@ vi.mock("@/lib/auth/session-manager", () => ({
   createSessionToken: createSessionTokenMock,
   SESSION_COOKIE_NAME: "test-session",
 }));
+
+vi.spyOn(console, "error").mockImplementation(consoleErrorMock);
 
 describe("mobile email OTP route", () => {
   let post: (request: Request) => Promise<Response>;
@@ -121,6 +125,39 @@ describe("mobile email OTP route", () => {
     expect(createSessionTokenMock).toHaveBeenCalledWith("user-1");
     expect(response.headers.get("set-cookie")).toContain(
       "test-session=session-token",
+    );
+  });
+
+  it("logs a safe failure category without exposing exception details", async () => {
+    verifyEmailOtpMock.mockRejectedValue(
+      new Error("Sensitive database detail must not be logged."),
+    );
+
+    const response = await post(
+      new Request("http://localhost/api/auth/mobile-otp/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "verify",
+          mobileNumber: "919876543210",
+          otp: "123456",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: "Unable to complete email verification. Please try again.",
+    });
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      "Mobile email OTP operation failed.",
+      { action: "verify", category: "APPLICATION_ERROR" },
+    );
+    expect(consoleErrorMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        category: "Sensitive database detail must not be logged.",
+      }),
     );
   });
 });

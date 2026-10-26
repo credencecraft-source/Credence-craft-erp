@@ -393,7 +393,6 @@ export async function reverseQuotationBookingFulfillment(
             (generalQuantity > 0 && !generalReceipt) ||
             (generalReceipt && (
               generalReceipt.organization_id !== organizationId ||
-              generalReceipt.quantity_in !== generalQuantity ||
               generalReceipt.current_stock + generalReceipt.quantity_out !== generalReceipt.quantity_in
             ))
           ) {

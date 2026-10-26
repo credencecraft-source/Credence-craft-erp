@@ -154,24 +154,42 @@ describe("platform lead voice notes", () => {
     expect(createAuditEventMock).not.toHaveBeenCalled();
   });
 
-  it("scopes Sales Manager voice-note access to leads they own", async () => {
+  it("allows read-only voice-note access to assigned leads while keeping uploads owner-scoped", async () => {
     requirePlatformNavigationPermissionMock.mockResolvedValue({
       id: "sales-manager-1",
       actualRole: "ADMIN",
       team_role: "SALES_MANAGER",
     });
-    findLeadMock.mockResolvedValue(null);
+    findLeadMock
+      .mockResolvedValueOnce({ id: "lead-owned-by-another-manager" })
+      .mockResolvedValueOnce(null);
+    listVoiceNotesMock.mockResolvedValue([]);
 
-    await expect(listPlatformLeadVoiceNotes("lead-owned-by-another-manager"))
-      .rejects.toThrow("Lead not found.");
+    await expect(listPlatformLeadVoiceNotes("lead-owned-by-another-manager")).resolves.toEqual([]);
 
-    expect(findLeadMock).toHaveBeenCalledWith({
+    expect(findLeadMock).toHaveBeenNthCalledWith(1, {
+      where: {
+        id: "lead-owned-by-another-manager",
+        assigned_sales_manager_id: { not: null },
+      },
+      select: { id: true },
+    });
+    expect(listVoiceNotesMock).toHaveBeenCalledWith(expect.objectContaining({
+      where: { lead_id: "lead-owned-by-another-manager" },
+    }));
+
+    await expect(createPlatformLeadVoiceNote("lead-owned-by-another-manager", {
+      audioData: new Uint8Array([1]),
+      contentType: "audio/mpeg",
+      durationMs: 1000,
+      source: "UPLOADED",
+    })).rejects.toThrow("Lead not found.");
+    expect(findLeadMock).toHaveBeenNthCalledWith(2, {
       where: {
         id: "lead-owned-by-another-manager",
         assigned_sales_manager_id: "sales-manager-1",
       },
       select: { id: true },
     });
-    expect(listVoiceNotesMock).not.toHaveBeenCalled();
   });
 });

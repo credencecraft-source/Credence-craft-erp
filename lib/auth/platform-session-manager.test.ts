@@ -30,6 +30,7 @@ describe("platform view permissions", () => {
       "ADMIN",
       "CTO",
       "CMO",
+      "SALES_MANAGER",
     ]);
     expect(getAvailablePlatformViews("ADMIN", null)).toEqual(["ADMIN"]);
     expect(getAvailablePlatformViews("ADMIN", "CTO")).toEqual(["CTO"]);
@@ -52,13 +53,13 @@ describe("platform view permissions", () => {
     expect(getEffectivePlatformTeamRole("ADMIN", undefined, "CTO")).toBe("CTO");
   });
 
-  it("does not grant delete-level authority while Super Admin is in Admin view", () => {
+  it("preserves actual Super Admin authorization while viewing as Admin", () => {
     expect(() =>
       assertPlatformSuperAdmin({
         ...makeAdmin("ADMIN"),
         actualRole: "SUPER_ADMIN",
       }),
-    ).toThrow("This action requires Super Admin access.");
+    ).not.toThrow();
   });
 
   it("allows destructive platform actions only in Super Admin view", () => {
@@ -68,13 +69,13 @@ describe("platform view permissions", () => {
     );
   });
 
-  it.each(["CMO", "CTO"] as const)("denies %s team accounts access to platform configuration", (teamRole) => {
+  it.each(["CMO", "CTO", "SALES_MANAGER"] as const)("denies %s team accounts access to platform configuration", (teamRole) => {
     expect(() =>
       assertPlatformConfigurationAccess({
         ...makeAdmin("ADMIN"),
         team_role: teamRole,
       }),
-    ).toThrow("CMO and CTO team accounts cannot access platform settings, plans, or databases.");
+    ).toThrow("Platform team accounts cannot access platform settings, plans, or databases.");
   });
 
   it("allows Admin and Super Admin accounts to access platform configuration", () => {

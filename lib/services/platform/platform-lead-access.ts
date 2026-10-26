@@ -22,6 +22,12 @@ export function getPlatformLeadReadScope(admin: PlatformSessionAdmin) {
     : {};
 }
 
+export function getPlatformLeadAssignedReadScope(admin: PlatformSessionAdmin) {
+  return admin.actualRole !== "SUPER_ADMIN" && admin.team_role === "SALES_MANAGER"
+    ? { assigned_sales_manager_id: { not: null } }
+    : {};
+}
+
 export function isPlatformSalesManager(admin: PlatformSessionAdmin) {
   return admin.actualRole !== "SUPER_ADMIN" && admin.team_role === "SALES_MANAGER";
 }

@@ -150,6 +150,30 @@ export async function savePlatformEmailConfiguration(input: EmailConfigurationIn
 }
 
 async function getTransport() {
+  const databaseConfiguration = await prisma.platformEmailConfiguration.findUnique({
+    where: { id: CONFIGURATION_ID },
+  });
+  const copySetting = databaseConfiguration?.send_auth_otp_to_credencecraft ?? false;
+
+  if (databaseConfiguration?.is_active) {
+    return {
+      configuration: {
+        from_name: databaseConfiguration.from_name,
+        from_email: databaseConfiguration.from_email,
+        send_auth_otp_to_credencecraft: copySetting,
+      },
+      transporter: nodemailer.createTransport({
+        host: databaseConfiguration.smtp_host,
+        port: databaseConfiguration.smtp_port,
+        secure: databaseConfiguration.smtp_secure,
+        auth: {
+          user: databaseConfiguration.smtp_username,
+          pass: decryptSecret(databaseConfiguration.smtp_password_encrypted),
+        },
+      }),
+    };
+  }
+
   const environmentValues = {
     host: process.env.SMTP_HOST?.trim() ?? "",
     port: process.env.SMTP_PORT?.trim() ?? "",
@@ -158,10 +182,6 @@ async function getTransport() {
     fromEmail: process.env.SMTP_FROM?.trim().toLowerCase() ?? "",
   };
   const hasEnvironmentSmtp = Object.values(environmentValues).some(Boolean);
-  const databaseConfiguration = await prisma.platformEmailConfiguration.findUnique({
-    where: { id: CONFIGURATION_ID },
-  });
-  const copySetting = databaseConfiguration?.send_auth_otp_to_credencecraft ?? false;
 
   if (hasEnvironmentSmtp) {
     const port = Number(environmentValues.port);
@@ -197,26 +217,7 @@ async function getTransport() {
     };
   }
 
-  if (!databaseConfiguration || !databaseConfiguration.is_active) {
-    throw new Error("Platform email is not configured or is inactive.");
-  }
-
-  return {
-    configuration: {
-      from_name: databaseConfiguration.from_name,
-      from_email: databaseConfiguration.from_email,
-      send_auth_otp_to_credencecraft: copySetting,
-    },
-    transporter: nodemailer.createTransport({
-      host: databaseConfiguration.smtp_host,
-      port: databaseConfiguration.smtp_port,
-      secure: databaseConfiguration.smtp_secure,
-      auth: {
-        user: databaseConfiguration.smtp_username,
-        pass: decryptSecret(databaseConfiguration.smtp_password_encrypted),
-      },
-    }),
-  };
+  throw new Error("Platform email is not configured or is inactive.");
 }
 
 export async function sendTestEmail(recipient: string) {

@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { requirePlatformNavigationPermission } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 import {
+  getPlatformLeadAssignedReadScope,
   getPlatformLeadReadScope,
   getPlatformLeadScope,
   isPlatformSalesManager,
@@ -17,6 +18,7 @@ import {
 } from "@/lib/phone/indian-mobile-number";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
 import {
+  PLATFORM_LEAD_CLAIM_BLOCKED_STAGES,
   PLATFORM_LEAD_STAGES,
   PLATFORM_LEAD_THIRD_PARTY_STAGES,
   type PlatformLeadStage,
@@ -243,6 +245,34 @@ export async function listPlatformLeads() {
   const admin = await requirePlatformLeadAccess();
   const leads = await prisma.platformLead.findMany({
     where: getPlatformLeadReadScope(admin),
+    orderBy: [{ created_at: "desc" }, { name: "asc" }],
+    include: {
+      assignedSalesManager: { select: { id: true, full_name: true, email: true } },
+      campaignEntries: {
+        orderBy: { added_at: "desc" },
+        take: 1,
+        select: {
+          added_at: true,
+          campaign: { select: { campaign_date: true } },
+        },
+      },
+    },
+  });
+  return leads.map((lead) => ({
+    ...lead,
+    mobile: formatIndianMobileNumber(lead.mobile),
+  }));
+}
+
+export async function listOtherAssignedPlatformLeads() {
+  const admin = await requirePlatformLeadAccess();
+  if (!isPlatformSalesManager(admin)) {
+    throw new Error("Only Sales Managers can view the other-assigned lead queue.");
+  }
+  const leads = await prisma.platformLead.findMany({
+    where: {
+      assigned_sales_manager_id: { not: null, notIn: [admin.id] },
+    },
     orderBy: [{ created_at: "desc" }, { name: "asc" }],
     include: {
       assignedSalesManager: { select: { id: true, full_name: true, email: true } },
@@ -561,12 +591,30 @@ export async function claimPlatformLead(leadId: string) {
   if (!id || id.length > 255) throw new Error("Select a valid lead.");
 
   return prisma.$transaction(async (transaction) => {
+    const eligibleLead = await transaction.platformLead.findFirst({
+      where: {
+        id,
+        assigned_sales_manager_id: null,
+        stage: { notIn: [...PLATFORM_LEAD_CLAIM_BLOCKED_STAGES] },
+      },
+      select: { stage: true },
+    });
+    if (!eligibleLead) {
+      throw new Error("This lead is not eligible for self-assignment. Ask a CMO to assign it.");
+    }
     const result = await transaction.platformLead.updateMany({
-      where: { id, assigned_sales_manager_id: null },
-      data: { assigned_sales_manager_id: admin.id },
+      where: {
+        id,
+        assigned_sales_manager_id: null,
+        stage: eligibleLead.stage,
+      },
+      data: {
+        assigned_sales_manager_id: admin.id,
+        stage: "Need To Call",
+      },
     });
     if (result.count !== 1) {
-      throw new Error("This lead is no longer unassigned. Refresh the list.");
+      throw new Error("This lead is not eligible for self-assignment. Ask a CMO to assign it.");
     }
     await transaction.platformAuditEvent.create({
       data: {
@@ -577,6 +625,20 @@ export async function claimPlatformLead(leadId: string) {
         details: { salesManagerId: admin.id },
       },
     });
+    if (eligibleLead.stage !== "Need To Call") {
+      await transaction.platformAuditEvent.create({
+        data: {
+          platform_admin_id: admin.id,
+          action: "PLATFORM_LEAD_STAGE_UPDATED",
+          entity_type: "PlatformLead",
+          entity_id: id,
+          details: {
+            previousStage: eligibleLead.stage,
+            stage: "Need To Call",
+          },
+        },
+      });
+    }
     const lead = await transaction.platformLead.findFirst({
       where: { id, assigned_sales_manager_id: admin.id },
       include: {
@@ -595,7 +657,7 @@ export async function claimPlatformLead(leadId: string) {
 
 export async function listPlatformLeadStatusHistory(leadId: string) {
   const admin = await requirePlatformLeadAccess();
-  const scope = getPlatformLeadScope(admin);
+  const scope = getPlatformLeadAssignedReadScope(admin);
   const id = leadId.trim();
   if (!id || id.length > 255) throw new Error("Select a valid lead.");
 
@@ -653,7 +715,7 @@ export async function listPlatformLeadStatusHistory(leadId: string) {
   });
 }
 
-export async function listPlatformLeadActivity() {
+export async function listPlatformLeadActivityPage(cursor?: string) {
   const admin = await requirePlatformLeadAccess();
   const scope = getPlatformLeadScope(admin);
   const scopedLeadIds = isPlatformSalesManager(admin)
@@ -680,8 +742,9 @@ export async function listPlatformLeadActivity() {
         }
         : {}),
     },
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
-    take: 100,
+    take: 101,
     select: {
       id: true,
       action: true,
@@ -693,7 +756,9 @@ export async function listPlatformLeadActivity() {
     },
   });
 
-  const activity = events.map((event) => {
+  const hasMore = events.length > 100;
+  const pageEvents = events.slice(0, 100);
+  const activity = pageEvents.map((event) => {
     const details = typeof event.details === "object"
       && event.details !== null
       && !Array.isArray(event.details)
@@ -787,10 +852,19 @@ export async function listPlatformLeadActivity() {
     : [];
   const namesByLeadId = new Map(leads.map((lead) => [lead.id, lead.name]));
 
-  return activity.map((item) => ({
+  const items = activity.map((item) => ({
     ...item,
     leadName: item.leadId ? namesByLeadId.get(item.leadId) ?? null : null,
   }));
+  return {
+    activity: items,
+    nextCursor: hasMore ? pageEvents[pageEvents.length - 1]?.id ?? null : null,
+  };
+}
+
+export async function listPlatformLeadActivity() {
+  const page = await listPlatformLeadActivityPage();
+  return page.activity;
 }
 
 export async function movePlatformLeadStages(

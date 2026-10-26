@@ -9,6 +9,7 @@ import {
   Layers,
   ArrowLeft,
   Boxes,
+  Bot,
   BriefcaseBusiness,
   ClipboardList,
   Crown,
@@ -40,6 +41,7 @@ import {
 } from "@/components/erp/erp-config-registry";
 import { MasterModuleSwitcher } from "@/components/master-data/master-module-switcher";
 import { SupportTicketTrigger } from "@/components/organizations/support-ticket-trigger";
+import AiCopilotDrawer from "@/components/organizations/ai-copilot-drawer";
 import OrganizationTrialStatus from "@/components/organizations/organization-trial-status";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
@@ -441,6 +443,7 @@ export function MasterModuleWrapper({
   }, [moduleOptions, organizationPath, pathname]);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [aiCopilotOpen, setAiCopilotOpen] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [blockedNotice, setBlockedNotice] = useState<{ message: string; label: string } | null>(null);
 
@@ -655,21 +658,6 @@ export function MasterModuleWrapper({
               <div className="flex min-w-0 items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800" role="alert">
                 <span className="truncate">Sample-data deletion failed: {dummyDataDeleteError}</span>
               </div>
-            ) : dummyDataBuildError ? (
-              <div className="flex min-w-0 items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900" role="alert">
-                <span className="truncate">Sample-data setup paused: {dummyDataBuildError}</span>
-                {dummyDataBuildFailedStep ? (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    disabled={isRemovingDummyData}
-                    onClick={() => void runDummyDataBuild(dummyDataBuildFailedStep)}
-                  >
-                    Retry
-                  </Button>
-                ) : null}
-              </div>
             ) : null}
           </div>
 
@@ -745,6 +733,19 @@ export function MasterModuleWrapper({
             )}
             <SupportTicketTrigger organizationId={organizationId} />
             <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label="Open AI Copilot"
+              aria-haspopup="dialog"
+              aria-expanded={aiCopilotOpen}
+              title="Open AI Copilot"
+              onClick={() => setAiCopilotOpen((open) => !open)}
+              className="h-9 w-9 rounded-md border border-[var(--erp-brand-soft)] bg-[var(--erp-brand-soft)] p-0 text-[var(--erp-brand)] hover:border-[var(--erp-brand)]"
+            >
+              <Bot className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            <Button
               variant="ghost"
               size="sm"
               type="button"
@@ -762,6 +763,31 @@ export function MasterModuleWrapper({
             />
           </div>
         </header>
+
+        <AiCopilotDrawer
+          key={activeModule?.key ?? "workspace"}
+          open={aiCopilotOpen}
+          organizationId={organizationId}
+          currentModule={activeModule?.label ?? "ERP workspace"}
+          onClose={() => setAiCopilotOpen(false)}
+        />
+
+        {dummyDataBuildError ? (
+          <div className="flex min-w-0 items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900 sm:px-6" role="alert">
+            <span className="min-w-0 flex-1">{`Sample-data setup paused: ${dummyDataBuildError}`}</span>
+            {dummyDataBuildFailedStep ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={isRemovingDummyData}
+                onClick={() => void runDummyDataBuild(dummyDataBuildFailedStep)}
+              >
+                Retry
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
 
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-slate-100 p-4 lg:p-8">
           {currentBlockInfo ? (

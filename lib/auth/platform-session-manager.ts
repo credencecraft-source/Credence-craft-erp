@@ -78,7 +78,7 @@ export function assertPlatformSuperAdmin(admin: PlatformSessionAdmin) {
 
 export function assertPlatformConfigurationAccess(admin: PlatformSessionAdmin) {
   if (admin.actualRole !== "SUPER_ADMIN" && admin.team_role) {
-    throw new Error("CMO and CTO team accounts cannot access platform settings, plans, or databases.");
+    throw new Error("Platform team accounts cannot access platform settings, plans, or databases.");
   }
 }
 

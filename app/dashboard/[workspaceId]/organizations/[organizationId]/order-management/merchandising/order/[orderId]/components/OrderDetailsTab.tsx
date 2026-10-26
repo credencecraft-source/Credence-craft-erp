@@ -6,7 +6,6 @@ import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import Input from "@/components/ui/Input";
 import Checkbox from "@/components/ui/Checkbox";
-import OrderQrCodeCard from "./order-qr-code-card";
 import {
   filterMasterOptionsByParent,
   findMasterSelectionOption,
@@ -197,9 +196,6 @@ export default function OrderDetailsTab({
         <h3 className="text-sm font-bold text-slate-900">
           General Order Information
         </h3>
-        {!isCreateMode && form.orderNo ? (
-          <OrderQrCodeCard orderNo={form.orderNo} styleName={form.styleName} colors={form.colors} />
-        ) : null}
       </div>
 
       <div className="mb-6 grid grid-cols-1 gap-4 rounded-xl border border-emerald-200 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent p-4 shadow-sm sm:grid-cols-2 xl:grid-cols-4">

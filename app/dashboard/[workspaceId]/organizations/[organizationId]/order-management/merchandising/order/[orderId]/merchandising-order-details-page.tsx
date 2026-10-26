@@ -1,6 +1,7 @@
 "use client";
 
 import React, { Suspense, useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { Hash } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 import { calculateFinishedGoodsRows } from "@/lib/services/orders/order-quantity-calculations";
@@ -13,6 +14,7 @@ import Select from "@/components/ui/Select";
 import Skeleton from "@/components/ui/Skeleton";
 import Tabs from "@/components/ui/Tabs";
 import OrderDetailsTab from "./components/OrderDetailsTab";
+import OrderQrCodeCard from "./components/order-qr-code-card";
 import { getProcessRows } from "./components/process-tab-state";
 import { getMissingRequiredOrderField } from "./components/order-form-validation";
 import type { OrderFormState } from "./components/order-form-types";
@@ -1053,6 +1055,23 @@ export default function MerchandisingOrderDetailsPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            {orderId && form.orderNo && (
+              <div
+                aria-label={`Order number ${form.orderNo}`}
+                className="inline-flex min-w-0 items-center gap-2 rounded-lg border border-[var(--erp-brand-soft)] bg-[var(--erp-brand-soft)] px-3 py-1.5"
+              >
+                <Hash className="h-4 w-4 shrink-0 text-[var(--erp-brand)]" aria-hidden="true" />
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--erp-brand)]">
+                  Order No
+                </span>
+                <span className="max-w-32 truncate text-xs font-bold text-[var(--erp-text)]" title={form.orderNo}>
+                  {form.orderNo}
+                </span>
+              </div>
+            )}
+            {orderId && activeTab === "details" && form.orderNo && (
+              <OrderQrCodeCard orderNo={form.orderNo} styleName={form.styleName} colors={form.colors} />
+            )}
             {orderId && <Button type="button" variant="secondary" onClick={openShareDialog} className="px-4 py-2">Share with Buyer</Button>}
             {orderId && !isEditing && <Button type="button" onClick={() => router.push(`${detailPath}?mode=edit`)}>Edit</Button>}
             {orderId && isEditing && <Button type="button" variant="secondary" onClick={cancelEditing} disabled={isSaving}>Cancel</Button>}

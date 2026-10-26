@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
+import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
@@ -34,8 +35,18 @@ type WorkOrderGrn = {
     verifiedActualQuantity: number | null;
     approvedQuantity: number | null;
     rejectedQuantity: number | null;
+    requestedQuantity: number;
+    issuedQuantity: number;
+    generalStockQuantity: number;
+    allocatedStockQuantity: number;
+    totalStockQuantity: number;
+    stockTally: "TALLY" | "NOT TALLY" | "PENDING";
   }>;
 };
+
+function formatQuantity(value: number) {
+  return value.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+}
 
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
@@ -131,8 +142,11 @@ export default function WorkOrderGrnDetailPage() {
             </Card>
             <Card className="space-y-3 p-6">
               <h2 className="text-base font-semibold text-[var(--erp-text)]">Received quantities</h2>
+              <p className="text-sm text-[var(--erp-muted)]">
+                Requested is open outward quantity; issued is shipped quantity. Stock columns show current on-hand quantities. Tally checks approved allocation counters and receipt-ledger balances.
+              </p>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[42rem] text-left text-sm">
+                <table className="w-full min-w-[88rem] text-left text-sm">
                   <thead className="bg-[var(--erp-surface-soft)] text-xs uppercase text-[var(--erp-muted)]">
                     <tr>
                       <th className="px-3 py-2">Size</th>
@@ -141,6 +155,12 @@ export default function WorkOrderGrnDetailPage() {
                       <th className="px-3 py-2 text-right">Verified</th>
                       <th className="px-3 py-2 text-right">Approved</th>
                       <th className="px-3 py-2 text-right">Rejected</th>
+                      <th className="px-3 py-2 text-right">Requested</th>
+                      <th className="px-3 py-2 text-right">Issued</th>
+                      <th className="px-3 py-2 text-right">General stock</th>
+                      <th className="px-3 py-2 text-right">Allocated stock</th>
+                      <th className="px-3 py-2 text-right">Total stock</th>
+                      <th className="px-3 py-2 text-center">Tally</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -152,6 +172,22 @@ export default function WorkOrderGrnDetailPage() {
                         <td className="px-3 py-2 text-right">{line.verifiedActualQuantity?.toLocaleString("en-IN") ?? "-"}</td>
                         <td className="px-3 py-2 text-right">{line.approvedQuantity?.toLocaleString("en-IN") ?? "-"}</td>
                         <td className="px-3 py-2 text-right">{line.rejectedQuantity?.toLocaleString("en-IN") ?? "-"}</td>
+                        <td className="px-3 py-2 text-right">{formatQuantity(line.requestedQuantity)}</td>
+                        <td className="px-3 py-2 text-right">{formatQuantity(line.issuedQuantity)}</td>
+                        <td className="px-3 py-2 text-right">{formatQuantity(line.generalStockQuantity)}</td>
+                        <td className="px-3 py-2 text-right">{formatQuantity(line.allocatedStockQuantity)}</td>
+                        <td className="px-3 py-2 text-right font-semibold">{formatQuantity(line.totalStockQuantity)}</td>
+                        <td className="px-3 py-2 text-center">
+                          <Badge className={
+                            line.stockTally === "TALLY"
+                              ? "border-[var(--erp-success-border)] bg-[var(--erp-success-bg)] text-[var(--erp-success-text)]"
+                              : line.stockTally === "NOT TALLY"
+                                ? "border-[var(--erp-warning-border)] bg-[var(--erp-warning-bg)] text-[var(--erp-warning-text)]"
+                                : ""
+                          }>
+                            {line.stockTally}
+                          </Badge>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

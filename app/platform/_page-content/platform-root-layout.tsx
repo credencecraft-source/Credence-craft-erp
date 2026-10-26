@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -13,7 +13,8 @@ import NavigationLinkStatus from "@/components/ui/navigation-link-status";
 
 type NavigationItem = {
   label: string;
-  href: string;
+  href?: string;
+  children?: NavigationItem[];
 };
 
 const NAV_SECTIONS: Array<{ title: string; items: NavigationItem[] }> = [
@@ -36,6 +37,12 @@ const NAV_SECTIONS: Array<{ title: string; items: NavigationItem[] }> = [
       { label: "Leads", href: "/platform/leads" },
       { label: "Sales team", href: "/platform/leads/sales-team" },
       { label: "Campaigns", href: "/platform/campaigns" },
+      {
+        label: "Platform Settings",
+        children: [
+          { label: "AI Settings", href: "/admin/settings/ai-control-panel" },
+        ],
+      },
     ],
   },
   {
@@ -114,8 +121,28 @@ export default function PlatformRootLayoutClient({
     }));
   };
 
-  const renderNavigationItems = (items: NavigationItem[]) =>
+  const isItemCurrent = (item: NavigationItem): boolean =>
+    Boolean(
+      (item.href && (pathname === item.href || pathname.startsWith(`${item.href}/`))) ||
+      item.children?.some(isItemCurrent),
+    );
+
+  const renderNavigationItems = (items: NavigationItem[]): ReactNode =>
     items.map((item) => {
+      if (item.children) {
+        return (
+          <div key={item.label} className="space-y-1 pt-2">
+            <p className="px-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+              {item.label}
+            </p>
+            <div className="ml-2 border-l border-slate-800 pl-2">
+              {renderNavigationItems(item.children)}
+            </div>
+          </div>
+        );
+      }
+      if (!item.href) return null;
+
       const isCurrentPage = pathname === item.href || pathname.startsWith(`${item.href}/`);
       const attentionCount = item.href === "/platform/support-tickets"
         ? attentionCounts.openTickets
@@ -211,9 +238,7 @@ export default function PlatformRootLayoutClient({
             .filter((item) => item.href !== "/platform/workspace-users" || canAccessWorkspace)
             .filter((item) => item.href !== "/platform/plan/dashboard" || !isSuperAdminView)
             .filter((item) => !isSuperAdminView || section.title !== "Settings" || item.href === "/platform/settings/access");
-          const isCurrentSection = items.some((item) =>
-            pathname === item.href || pathname.startsWith(`${item.href}/`),
-          );
+          const isCurrentSection = items.some(isItemCurrent);
           const isOpen = openSections[section.title] ?? isCurrentSection;
 
           return (

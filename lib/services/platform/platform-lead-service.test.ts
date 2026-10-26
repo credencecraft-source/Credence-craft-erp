@@ -101,6 +101,7 @@ import {
   importPlatformLeads,
   listPlatformLeadAppLogins,
   listPlatformLeads,
+  listOtherAssignedPlatformLeads,
   updatePlatformLeadStage,
   updateNewPlatformLeadStages,
   updatePlatformLeadStages,
@@ -108,12 +109,14 @@ import {
   updatePlatformLead,
   listPlatformLeadStatusHistory,
   listPlatformLeadActivity,
+  listPlatformLeadActivityPage,
   syncPlatformLeadsFromGoogleSheet,
   testPlatformGoogleSheetsLeadConnection,
 } from "@/lib/services/platform/platform-lead-service";
 import {
   PLATFORM_LEAD_DEAD_STAGES,
   PLATFORM_LEAD_NOT_INTERESTED_STAGES,
+  PLATFORM_LEAD_PAID_STAGES,
   PLATFORM_LEAD_STAGES,
   PLATFORM_LEAD_THIRD_PARTY_STAGES,
   PLATFORM_LEAD_VERIFIED_INTERESTED_STAGES,
@@ -145,12 +148,32 @@ describe("platform lead management", () => {
     expect(PLATFORM_LEAD_THIRD_PARTY_STAGES).not.toContain("3-Dead");
     expect(PLATFORM_LEAD_DEAD_STAGES).not.toContain("3-Dead");
     expect(PLATFORM_LEAD_DEAD_STAGES).toEqual(["MARK AS FROUD"]);
+    expect(PLATFORM_LEAD_PAID_STAGES).toEqual(["Paid"]);
     expect(PLATFORM_LEAD_STAGES).toContain("Old");
     expect(PLATFORM_LEAD_THIRD_PARTY_STAGES).not.toContain("Old");
     expect(PLATFORM_LEAD_STAGES).not.toContain("Potential Dead");
     expect(PLATFORM_LEAD_STAGES).not.toContain("Testing WhatsApp msg");
     expect(PLATFORM_LEAD_STAGES).not.toContain("Froud Verfication");
     expect(PLATFORM_LEAD_STAGES).not.toContain("Hello blocked");
+  });
+
+  it("lists only leads assigned to managers other than the requesting Sales Manager", async () => {
+    requirePlatformNavigationPermissionMock.mockResolvedValue({
+      id: "sales-manager-1",
+      actualRole: "ADMIN",
+      team_role: "SALES_MANAGER",
+    });
+    findLeadsMock.mockResolvedValue([]);
+
+    await expect(listOtherAssignedPlatformLeads()).resolves.toEqual([]);
+    expect(findLeadsMock).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        assigned_sales_manager_id: { not: null, notIn: ["sales-manager-1"] },
+      },
+      include: expect.objectContaining({
+        assignedSalesManager: expect.any(Object),
+      }),
+    }));
   });
 
   it("places 2-Potential immediately after Demo Attended", () => {
@@ -303,12 +326,37 @@ describe("platform lead management", () => {
     ]);
     expect(findLeadAuditEventsMock).toHaveBeenCalledWith(expect.objectContaining({
       where: { entity_type: { in: ["PlatformLead", "PlatformLeadVoiceNote"] } },
-      take: 100,
+      take: 101,
     }));
     expect(findLeadsMock).toHaveBeenCalledWith({
       where: { id: { in: ["lead-1"] } },
       select: { id: true, name: true },
     });
+  });
+
+  it("returns the next activity cursor for older workspace activity", async () => {
+    findLeadAuditEventsMock.mockResolvedValue(
+      Array.from({ length: 101 }, (_, index) => ({
+        id: `event-${index}`,
+        action: "PLATFORM_LEAD_CREATED",
+        entity_type: "PlatformLead",
+        entity_id: `lead-${index}`,
+        details: {},
+        created_at: new Date(`2026-10-${String((index % 20) + 1).padStart(2, "0")}T12:00:00Z`),
+        platformAdmin: { full_name: `Admin ${index}`, email: `admin${index}@example.com` },
+      })),
+    );
+    findLeadsMock.mockResolvedValue([]);
+
+    const page = await listPlatformLeadActivityPage("event-older");
+
+    expect(page.activity).toHaveLength(100);
+    expect(page.nextCursor).toBe("event-99");
+    expect(findLeadAuditEventsMock).toHaveBeenCalledWith(expect.objectContaining({
+      cursor: { id: "event-older" },
+      skip: 1,
+      take: 101,
+    }));
   });
 
   it("limits Sales Managers to assigned and unassigned leads for claiming", async () => {
@@ -351,15 +399,18 @@ describe("platform lead management", () => {
       expect(updateLeadStagesMock).not.toHaveBeenCalled();
   });
 
-  it("claims an unassigned lead atomically and records the Sales Manager", async () => {
+  it("claims an unassigned lead, moves it to Need To Call, and records both changes", async () => {
       requirePlatformNavigationPermissionMock.mockResolvedValue({
         id: "sales-manager-1",
         actualRole: "ADMIN",
         team_role: "SALES_MANAGER",
       });
       updateLeadStagesMock.mockResolvedValue({ count: 1 });
-      findLeadMock.mockResolvedValue({
+      findLeadMock
+        .mockResolvedValueOnce({ stage: "Verification" })
+        .mockResolvedValueOnce({
         id: "lead-1",
+        stage: "Need To Call",
         assigned_sales_manager_id: "sales-manager-1",
         assignedSalesManager: { id: "sales-manager-1", full_name: "SALES MANAGER", email: "sales@example.com" },
         campaignEntries: [],
@@ -373,8 +424,15 @@ describe("platform lead management", () => {
       });
 
       expect(updateLeadStagesMock).toHaveBeenCalledWith({
-        where: { id: "lead-1", assigned_sales_manager_id: null },
-        data: { assigned_sales_manager_id: "sales-manager-1" },
+        where: {
+          id: "lead-1",
+          assigned_sales_manager_id: null,
+          stage: "Verification",
+        },
+        data: {
+          assigned_sales_manager_id: "sales-manager-1",
+          stage: "Need To Call",
+        },
       });
       expect(createAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({
         data: expect.objectContaining({
@@ -383,7 +441,62 @@ describe("platform lead management", () => {
           entity_id: "lead-1",
         }),
       }));
+      expect(createAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          action: "PLATFORM_LEAD_STAGE_UPDATED",
+          entity_id: "lead-1",
+          details: { previousStage: "Verification", stage: "Need To Call" },
+        }),
+      }));
   });
+
+  it("does not let Sales Managers accept Fraud, Paid, Old, or Not Interested leads", async () => {
+      requirePlatformNavigationPermissionMock.mockResolvedValue({
+        id: "sales-manager-1",
+        actualRole: "ADMIN",
+        team_role: "SALES_MANAGER",
+      });
+      findLeadMock.mockResolvedValue(null);
+
+      await expect(claimPlatformLead("lead-paid"))
+        .rejects.toThrow("This lead is not eligible for self-assignment. Ask a CMO to assign it.");
+
+      expect(findLeadMock).toHaveBeenCalledWith({
+        where: {
+          id: "lead-paid",
+          assigned_sales_manager_id: null,
+          stage: { notIn: ["MARK AS FROUD", "Paid", "Old", "3-Dead"] },
+        },
+        select: { stage: true },
+      });
+      expect(updateLeadStagesMock).not.toHaveBeenCalled();
+      expect(createAuditEventMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["MARK AS FROUD", "Paid", "Old", "3-Dead"])(
+    "blocks Sales Manager self-claim for the protected %s stage",
+    async (stage) => {
+      requirePlatformNavigationPermissionMock.mockResolvedValue({
+        id: "sales-manager-1",
+        actualRole: "ADMIN",
+        team_role: "SALES_MANAGER",
+      });
+      findLeadMock.mockImplementation(async ({ where }) =>
+        where.stage.notIn.includes(stage) ? null : { stage },
+      );
+
+      await expect(claimPlatformLead("lead-protected"))
+        .rejects.toThrow("This lead is not eligible for self-assignment. Ask a CMO to assign it.");
+
+      expect(findLeadMock).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          stage: { notIn: ["MARK AS FROUD", "Paid", "Old", "3-Dead"] },
+        }),
+      }));
+      expect(updateLeadStagesMock).not.toHaveBeenCalled();
+      expect(createAuditEventMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("allows a CMO to assign a lead only to an active manager on their team", async () => {
       requirePlatformNavigationPermissionMock.mockResolvedValue({

@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 
-import { listPlatformLeadActivity } from "@/lib/services/platform/platform-lead-service";
+import { listPlatformLeadActivityPage } from "@/lib/services/platform/platform-lead-service";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const activity = await listPlatformLeadActivity();
-    return NextResponse.json({ activity });
+    const cursor = new URL(request.url).searchParams.get("cursor")?.trim();
+    if (cursor !== undefined && (!cursor || cursor.length > 255)) {
+      return NextResponse.json({ error: "Invalid activity cursor." }, { status: 400 });
+    }
+    return NextResponse.json(await listPlatformLeadActivityPage(cursor));
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to load lead activity." },

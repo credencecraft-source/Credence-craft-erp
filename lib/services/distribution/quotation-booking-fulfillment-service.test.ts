@@ -262,9 +262,9 @@ describe("quotation-linked booking fulfillment", () => {
     booking.sizeLines[0].assignments[0].grnAllocations[0].grnLine.generalStockReceipt = {
       id: "general-receipt-1",
       organization_id: "internal-org-1",
-      quantity_in: 2,
+      quantity_in: 3,
       quantity_out: 1,
-      current_stock: 1,
+      current_stock: 2,
     };
     mocks.prisma.advanceBooking.findFirst.mockResolvedValue(booking);
 
@@ -274,8 +274,8 @@ describe("quotation-linked booking fulfillment", () => {
       where: {
         id: "general-receipt-1",
         organization_id: "internal-org-1",
-        quantity_in: 2,
-        current_stock: 1,
+        quantity_in: 3,
+        current_stock: 2,
       },
       data: {
         quantity_in: { increment: 5 },

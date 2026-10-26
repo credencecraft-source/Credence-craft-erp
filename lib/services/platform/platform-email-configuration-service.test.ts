@@ -135,23 +135,39 @@ describe("email OTP delivery", () => {
     );
   });
 
-  it("rejects incomplete deployment SMTP settings instead of silently using database credentials", async () => {
+  it("uses active database SMTP settings even when deployment SMTP settings are incomplete", async () => {
     vi.stubEnv("SMTP_HOST", "smtp.gmail.com");
     vi.stubEnv("SMTP_PORT", "587");
 
-    await expect(issueEmailOtp(normalizedEmail, "SUPPORT")).rejects.toThrow(
-      "SMTP environment settings are incomplete or invalid.",
+    await issueEmailOtp(normalizedEmail, "SUPPORT");
+
+    expect(mocks.createTransport).toHaveBeenCalledWith({
+      host: "smtp.example.com",
+      port: 587,
+      secure: false,
+      auth: {
+        user: "mailer@example.com",
+        pass: "smtp-password",
+      },
+    });
+    expect(mocks.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: "Credence Craft <mailer@example.com>",
+        to: normalizedEmail,
+      }),
     );
-    expect(mocks.createTransport).not.toHaveBeenCalled();
-    expect(mocks.sendMail).not.toHaveBeenCalled();
   });
 
-  it("prefers deployment SMTP settings over the platform database configuration", async () => {
+  it("uses deployment SMTP settings when the database configuration is inactive", async () => {
     vi.stubEnv("SMTP_HOST", "smtp.gmail.com");
     vi.stubEnv("SMTP_PORT", "465");
     vi.stubEnv("SMTP_USER", "platform@example.com");
     vi.stubEnv("SMTP_PASS", "deployment-app-password");
     vi.stubEnv("SMTP_FROM", "platform@example.com");
+    mocks.findConfiguration.mockResolvedValue({
+      ...emailConfiguration,
+      is_active: false,
+    });
 
     await issueEmailOtp(normalizedEmail, "SUPPORT");
 
@@ -164,6 +180,19 @@ describe("email OTP delivery", () => {
         pass: "deployment-app-password",
       },
     });
+  });
+
+  it("reports inactive database email settings when no deployment fallback exists", async () => {
+    mocks.findConfiguration.mockResolvedValue({
+      ...emailConfiguration,
+      is_active: false,
+    });
+
+    await expect(issueEmailOtp(normalizedEmail, "SUPPORT")).rejects.toThrow(
+      "Platform email is not configured or is inactive.",
+    );
+    expect(mocks.createTransport).not.toHaveBeenCalled();
+    expect(mocks.sendMail).not.toHaveBeenCalled();
   });
 
   it("privately copies customer authentication OTPs when enabled", async () => {

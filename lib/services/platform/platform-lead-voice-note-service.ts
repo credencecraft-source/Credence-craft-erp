@@ -1,4 +1,5 @@
 import {
+  getPlatformLeadAssignedReadScope,
   getPlatformLeadScope,
   requirePlatformLeadAccess,
 } from "@/lib/services/platform/platform-lead-access";
@@ -53,7 +54,7 @@ export async function listPlatformLeadVoiceNotes(leadId: string) {
   const admin = await requirePlatformLeadAccess();
   const id = validateId(leadId, "lead");
   const lead = await prisma.platformLead.findFirst({
-    where: { id, ...getPlatformLeadScope(admin) },
+    where: { id, ...getPlatformLeadAssignedReadScope(admin) },
     select: { id: true },
   });
   if (!lead) throw new Error("Lead not found.");
@@ -123,7 +124,7 @@ export async function getPlatformLeadVoiceNoteAudio(leadId: string, noteId: stri
   const id = validateId(leadId, "lead");
   const voiceNoteId = validateId(noteId, "voice note");
   const lead = await prisma.platformLead.findFirst({
-    where: { id, ...getPlatformLeadScope(admin) },
+    where: { id, ...getPlatformLeadAssignedReadScope(admin) },
     select: { id: true },
   });
   if (!lead) throw new Error("Voice note not found.");

@@ -20,6 +20,21 @@ export const PLATFORM_LEAD_PAID_STAGES = ["Paid"] as const;
 
 export const PLATFORM_LEAD_OLD_STAGES = ["Old"] as const;
 
+export const PLATFORM_LEAD_NOT_INTERESTED_STAGES = ["3-Dead"] as const;
+
+export const PLATFORM_LEAD_CLAIM_BLOCKED_STAGES = [
+  ...PLATFORM_LEAD_DEAD_STAGES,
+  ...PLATFORM_LEAD_PAID_STAGES,
+  ...PLATFORM_LEAD_OLD_STAGES,
+  ...PLATFORM_LEAD_NOT_INTERESTED_STAGES,
+] as const;
+
+export function canAcceptPlatformLead(stage: string) {
+  return !PLATFORM_LEAD_CLAIM_BLOCKED_STAGES.includes(
+    stage as (typeof PLATFORM_LEAD_CLAIM_BLOCKED_STAGES)[number],
+  );
+}
+
 export const PLATFORM_LEAD_VERIFIED_NEED_TO_CALL_STAGES = [
   "Need To Call",
   "Not Picked",
@@ -32,8 +47,6 @@ export const PLATFORM_LEAD_VERIFIED_INTERESTED_STAGES = [
   "Demo Attended",
   "2-Potential",
 ] as const;
-
-export const PLATFORM_LEAD_NOT_INTERESTED_STAGES = ["3-Dead"] as const;
 
 export const PLATFORM_LEAD_VERIFIED_STAGES = [
   "Verification",
