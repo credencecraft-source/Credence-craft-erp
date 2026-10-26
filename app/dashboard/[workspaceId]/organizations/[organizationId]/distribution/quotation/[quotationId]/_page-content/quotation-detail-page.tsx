@@ -446,7 +446,7 @@ export default function QuotationDetailPage() {
             <div>
               <h3 className="text-sm font-semibold text-slate-900">Booking inventory fulfillment</h3>
               <p className="mt-1 text-sm text-slate-600">
-                If a linked booking is blocked from deletion by Work Order GRN fulfillment, reverse that booking&apos;s unused inventory here. The GRN and its audit history are preserved.
+                Unused allocation stock returns to general stock. GRN counter mismatches alone do not block removal. Active stock requests or issued quantity must be resolved first; the GRN and its audit history remain.
               </p>
             </div>
             {isLoadingFulfillment ? <p role="status" className="text-sm text-slate-600">Loading booking fulfillment...</p> : null}
@@ -478,7 +478,7 @@ export default function QuotationDetailPage() {
                 {pendingReversal?.id === booking.id ? (
                   <div className="space-y-3 border-t border-[var(--erp-border)] pt-3">
                     <p className="text-sm text-slate-700">
-                      Confirm reversal for {booking.bookingNo}? This removes its GRN allocation and unused allocated-stock receipts and reduces reserved/on-hand stock. It is blocked if stock has been issued, changed, or reserved by an active request.
+                      Confirm removal for {booking.bookingNo}? Unused allocated stock returns to general stock and its GRN allocation is removed. Removal is blocked when linked allocated stock has an active outward request or any issued quantity. A GRN counter mismatch by itself will not block removal.
                     </p>
                     <div className="flex flex-wrap justify-end gap-2">
                       <Button type="button" variant="secondary" onClick={() => setPendingReversal(null)} disabled={Boolean(reversingBookingId)}>

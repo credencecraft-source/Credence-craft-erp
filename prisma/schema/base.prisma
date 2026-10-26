@@ -48,6 +48,7 @@ model Organization {
   country                       String?                        @db.VarChar(100)
   pin_code                      String?                        @db.VarChar(20)
   is_active                     Boolean                        @default(true)
+  ai_enabled                    Boolean                        @default(false)
   approval_status               String                         @default("PENDING_APPROVAL") @db.VarChar(40)
   archived_at                   DateTime?
   trial_started_at              DateTime?

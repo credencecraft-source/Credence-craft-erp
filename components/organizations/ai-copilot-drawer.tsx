@@ -117,7 +117,7 @@ function MarkdownMessage({ content }: { content: string }) {
 
 function getResponseError(status: number): string {
   if (status === 401) return "Sign in again to use AI Copilot.";
-  if (status === 403) return "You do not have access to this organization's Copilot.";
+  if (status === 403) return "AI Copilot is disabled for this organization or you do not have organization access.";
   if (status === 404) return "The AI Copilot service endpoint is not available.";
   if (status === 429) return "AI Copilot is busy. Wait a moment and try again.";
   if (status >= 500) return "AI Copilot is temporarily unavailable. Try again later.";

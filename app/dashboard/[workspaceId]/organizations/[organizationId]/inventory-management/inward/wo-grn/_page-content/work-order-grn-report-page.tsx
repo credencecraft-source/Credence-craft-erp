@@ -1,12 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
-import Modal from "@/components/ui/Modal";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 
@@ -96,10 +95,10 @@ export default function WorkOrderGrnReportPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [showReconciliation, setShowReconciliation] = useState(false);
   const [reconciliation, setReconciliation] = useState<ReconciliationResult | null>(null);
   const [reconciliationError, setReconciliationError] = useState("");
   const [isReconciling, setIsReconciling] = useState(false);
+  const reconciliationStatusRef = useRef<HTMLDivElement>(null);
 
   const loadGrns = useCallback(async (cursor?: string) => {
     if (cursor) setLoadingMore(true);
@@ -130,24 +129,23 @@ export default function WorkOrderGrnReportPage() {
     }
   }, [organizationId]);
 
-  const runReconciliation = useCallback(async (action: "preview" | "apply") => {
+  const runReconciliation = useCallback(async () => {
     setIsReconciling(true);
+    setReconciliation(null);
     setReconciliationError("");
     try {
       const response = await fetch("/api/inventory/work-order-grns/reconciliation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ organizationId, grnIds: selectedIds, action }),
+        body: JSON.stringify({ organizationId, grnIds: selectedIds, action: "apply" }),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !Array.isArray(data?.records)) {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to reconcile selected Work Order GRNs.");
       }
       setReconciliation(data as ReconciliationResult);
-      if (action === "apply") {
-        setSelectedIds([]);
-        await loadGrns();
-      }
+      setSelectedIds([]);
+      await loadGrns();
     } catch (reconciliationFailure) {
       setReconciliationError(
         reconciliationFailure instanceof Error
@@ -165,6 +163,20 @@ export default function WorkOrderGrnReportPage() {
     }, 0);
     return () => window.clearTimeout(initialLoad);
   }, [loadGrns]);
+
+  useEffect(() => {
+    if (reconciliation) {
+      reconciliationStatusRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [reconciliation]);
+
+  const reconciliationLines = reconciliation?.records.flatMap((record) => record.lines) ?? [];
+  const correctedLineCount = reconciliationLines.filter((line) => line.changed).length;
+  const matchedLineCount = reconciliationLines.filter((line) =>
+    !line.changed && !line.skipped && line.blockers.length === 0,
+  ).length;
+  const pendingLineCount = reconciliationLines.filter((line) => line.skipped).length;
+  const blockedLineCount = reconciliationLines.filter((line) => line.blockers.length > 0).length;
 
   return (
     <Page as="div">
@@ -185,6 +197,87 @@ export default function WorkOrderGrnReportPage() {
           </Card>
         ) : null}
         {loading ? <p role="status" className="text-sm text-slate-600">Loading Work Order GRNs...</p> : null}
+        {reconciliationError ? (
+          <Card role="alert" className="border-[var(--erp-danger)] text-sm">
+            <p>{reconciliationError}</p>
+          </Card>
+        ) : null}
+        {isReconciling ? (
+          <p role="status" className="text-sm text-[var(--erp-muted)]">
+            Recalculating selected GRNs...
+          </p>
+        ) : null}
+        {reconciliation ? (
+          <div ref={reconciliationStatusRef}>
+            <Card aria-live="polite" className="space-y-4 p-6">
+              <header className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <h2 className="text-base font-semibold text-[var(--erp-text)]">Recalculation status</h2>
+                  <p role="status" className="text-sm text-[var(--erp-success-text)]">
+                    {correctedLineCount} counter correction(s) applied; {matchedLineCount} already matched;{" "}
+                    {pendingLineCount} pending verification; {blockedLineCount} blocked.
+                  </p>
+                  <p className="text-sm text-[var(--erp-muted)]">
+                    Stock receipts, allocation records, issued stock, and audit history were preserved.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setReconciliation(null)}
+                >
+                  Dismiss status
+                </Button>
+              </header>
+              <div className="space-y-3">
+                {reconciliation.records.map((record) => (
+                  <Card key={record.grnId} className="space-y-3 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="font-semibold text-[var(--erp-text)]">{record.grnNo}</h3>
+                      <span className="text-xs text-[var(--erp-muted)]">{record.status.replaceAll("_", " ")}</span>
+                    </div>
+                    {record.lines.map((line) => (
+                      <div key={line.lineId} className="space-y-2 border-t border-[var(--erp-border)] pt-3 text-sm">
+                        <p className="font-medium text-[var(--erp-text)]">
+                          Size {line.size} · Approved {line.approvedQuantity?.toLocaleString() ?? "pending"}
+                        </p>
+                        {line.skipped ? <p className="text-[var(--erp-muted)]">{line.skipped}</p> : null}
+                        {line.expectedAllocatedQuantity !== null && line.expectedGeneralQuantity !== null ? (
+                          <p className="text-[var(--erp-muted)]">
+                            Allocated: {line.currentAllocatedQuantity?.toLocaleString() ?? "—"} → {line.expectedAllocatedQuantity.toLocaleString()} ·
+                            {" "}General: {line.currentGeneralQuantity?.toLocaleString() ?? "—"} → {line.expectedGeneralQuantity.toLocaleString()}
+                          </p>
+                        ) : null}
+                        {line.blockers.map((blocker) => (
+                          <p key={blocker} role="alert" className="rounded-md border border-[var(--erp-danger-border)] bg-[var(--erp-danger-bg)] px-3 py-2 text-[var(--erp-danger-text)]">
+                            Not recalculated: {blocker}
+                          </p>
+                        ))}
+                        {line.issuedItems.map((item) => (
+                          <p key={`${item.requestId}:${item.bookingNo}`} className="rounded-md border border-[var(--erp-warning-border)] bg-[var(--erp-warning-bg)] px-3 py-2 text-[var(--erp-warning-text)]">
+                            Size {line.size} for {item.bookingNo}:{" "}
+                            {item.quantityIssued > 0 ? `${item.quantityIssued.toLocaleString()} PCS issued` : null}
+                            {item.quantityIssued > 0 && item.reservedQuantity > 0 ? " · " : ""}
+                            {item.reservedQuantity > 0 ? `${item.reservedQuantity.toLocaleString()} PCS still reserved` : null}
+                            {item.quantityIssued === 0 && item.reservedQuantity === 0 ? item.requestStatus : ""}
+                            {item.requestNo ? ` — ${item.requestNo} (${item.requestId || "request ID unavailable"})` : ""}.
+                            {" "}This usage is from {record.grnNo}; recalculation did not change this stock request.
+                          </p>
+                        ))}
+                        {!line.skipped && line.blockers.length === 0 ? (
+                          <p className="text-[var(--erp-success-text)]">
+                            {line.changed ? "Counters recalculated successfully." : "Counters already match the allocation records."}
+                          </p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </Card>
+                ))}
+              </div>
+            </Card>
+          </div>
+        ) : null}
         <Card className="p-2 shadow-none">
           <ReportGrid
             title="Work Order GRN List"
@@ -212,14 +305,9 @@ export default function WorkOrderGrnReportPage() {
                 variant="secondary"
                 size="sm"
                 disabled={selectedIds.length === 0 || isReconciling}
-                onClick={() => {
-                  setReconciliation(null);
-                  setReconciliationError("");
-                  setShowReconciliation(true);
-                  void runReconciliation("preview");
-                }}
+                onClick={() => void runReconciliation()}
               >
-                Recalculate selected ({selectedIds.length})
+                {isReconciling ? "Recalculating..." : `Recalculate selected (${selectedIds.length})`}
               </Button>
             )}
             onRowClick={(recordId) => router.push(`${basePath}/report/${encodeURIComponent(recordId)}`)}
@@ -243,111 +331,6 @@ export default function WorkOrderGrnReportPage() {
           ) : null}
         </Card>
       </Section>
-      <Modal
-        open={showReconciliation}
-        onClose={() => {
-          if (!isReconciling) setShowReconciliation(false);
-        }}
-        ariaLabelledBy="work-order-grn-reconciliation-title"
-        ariaDescribedBy="work-order-grn-reconciliation-description"
-        closeOnBackdrop={!isReconciling}
-        size="square"
-      >
-        <div className="space-y-4 p-6">
-          <header className="space-y-1">
-            <h2 id="work-order-grn-reconciliation-title" className="text-xl font-semibold text-[var(--erp-text)]">
-              Recalculate selected GRNs?
-            </h2>
-            <p id="work-order-grn-reconciliation-description" className="text-sm text-[var(--erp-muted)]">
-              Rebuilds GRN allocation counters from approved quantities and existing booking-allocation records. It never deletes stock receipts, allocations, issued items, or audit history.
-            </p>
-          </header>
-          {reconciliationError ? (
-            <Card role="alert" className="border-[var(--erp-danger)] text-sm">{reconciliationError}</Card>
-          ) : null}
-          {isReconciling ? <p role="status" className="text-sm text-[var(--erp-muted)]">Checking selected GRNs...</p> : null}
-          {reconciliation ? (
-            <div className="space-y-3">
-              {reconciliation.records.map((record) => (
-                <Card key={record.grnId} className="space-y-3 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="font-semibold text-[var(--erp-text)]">{record.grnNo}</h3>
-                    <span className="text-xs text-[var(--erp-muted)]">{record.status.replaceAll("_", " ")}</span>
-                  </div>
-                  {record.lines.map((line) => (
-                    <div key={line.lineId} className="space-y-2 border-t border-[var(--erp-border)] pt-3 text-sm">
-                      <p className="font-medium text-[var(--erp-text)]">
-                        Size {line.size} · Approved {line.approvedQuantity?.toLocaleString() ?? "pending"}
-                      </p>
-                      {line.skipped ? <p className="text-[var(--erp-muted)]">{line.skipped}</p> : null}
-                      {line.expectedAllocatedQuantity !== null && line.expectedGeneralQuantity !== null ? (
-                        <p className="text-[var(--erp-muted)]">
-                          Allocated: {line.currentAllocatedQuantity?.toLocaleString() ?? "—"} → {line.expectedAllocatedQuantity.toLocaleString()} ·
-                          {" "}General: {line.currentGeneralQuantity?.toLocaleString() ?? "—"} → {line.expectedGeneralQuantity.toLocaleString()}
-                        </p>
-                      ) : null}
-                      {line.blockers.map((blocker) => (
-                        <p key={blocker} role="alert" className="rounded-md border border-[var(--erp-danger-border)] bg-[var(--erp-danger-bg)] px-3 py-2 text-[var(--erp-danger-text)]">
-                          Not recalculated: {blocker}
-                        </p>
-                      ))}
-                      {line.issuedItems.map((item) => (
-                        <p key={`${item.requestId}:${item.bookingNo}`} role="alert" className="rounded-md border border-[var(--erp-warning-border)] bg-[var(--erp-warning-bg)] px-3 py-2 text-[var(--erp-warning-text)]">
-                          Size {line.size} for {item.bookingNo}:{" "}
-                          {item.quantityIssued > 0
-                            ? `${item.quantityIssued.toLocaleString()} PCS issued`
-                            : null}
-                          {item.quantityIssued > 0 && item.reservedQuantity > 0 ? " · " : ""}
-                          {item.reservedQuantity > 0
-                            ? `${item.reservedQuantity.toLocaleString()} PCS still reserved`
-                            : null}
-                          {item.quantityIssued === 0 && item.reservedQuantity === 0 ? item.requestStatus : ""}
-                          {item.requestNo ? ` — ${item.requestNo} (${item.requestId || "request ID unavailable"})` : ""}.
-                          {" "}This usage is from {record.grnNo}; recalculation does not change or block this stock request. Resolve it only if you later reverse {item.bookingNo} fulfillment.
-                        </p>
-                      ))}
-                      {!line.skipped && line.blockers.length === 0 ? (
-                        <p role="status" className="text-[var(--erp-success-text)]">
-                          {line.changed ? "Counter correction is safe." : "Counters already match the allocation records."}
-                        </p>
-                      ) : null}
-                    </div>
-                  ))}
-                </Card>
-              ))}
-              {reconciliation.applied ? (
-                <p role="status" className="text-sm text-[var(--erp-success-text)]">
-                  Safe counter corrections were applied. Stock movements and allocation records were preserved.
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-          <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--erp-border)] pt-4">
-            {!reconciliation?.applied ? (
-              <Button type="button" variant="secondary" onClick={() => setShowReconciliation(false)} disabled={isReconciling}>
-                Cancel
-              </Button>
-            ) : null}
-            {reconciliation && !reconciliation.applied ? (
-              <Button
-                type="button"
-                variant="primary"
-                disabled={isReconciling || !reconciliation.records.some((record) =>
-                  record.lines.some((line) => line.changed && line.blockers.length === 0),
-                )}
-                onClick={() => void runReconciliation("apply")}
-              >
-                {isReconciling ? "Recalculating..." : "Confirm recalculation"}
-              </Button>
-            ) : null}
-            {reconciliation?.applied ? (
-              <Button type="button" variant="primary" onClick={() => setShowReconciliation(false)}>
-                Done
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      </Modal>
     </Page>
   );
 }

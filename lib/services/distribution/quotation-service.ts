@@ -632,67 +632,145 @@ export async function createDistributionMasterQuotation(
   return mapQuotation(organizationId, record);
 }
 
-export async function deleteDistributionQuotation(
+export async function deleteDistributionQuotations(
   organizationId: string,
   userId: string,
-  quotationId: string,
+  quotationIds: string[],
 ) {
-  if (!quotationId.trim()) throw new Error("Select a quotation to delete.");
+  if (
+    quotationIds.length === 0 ||
+    quotationIds.length > 500 ||
+    quotationIds.some((id) => !id.trim()) ||
+    new Set(quotationIds).size !== quotationIds.length
+  ) {
+    throw new Error("Select between one and 500 unique quotations to delete.");
+  }
 
   return prisma.$transaction(async (transaction) => {
-    const quotation = await transaction.distributionQuotation.findFirst({
-      where: { organization_id: organizationId, id: quotationId },
+    const quotations = await transaction.distributionQuotation.findMany({
+      where: { organization_id: organizationId, id: { in: quotationIds } },
       include: {
         lines: { select: { booking_no: true } },
         childQuotations: { select: { id: true, quotation_no: true } },
       },
     });
-    if (!quotation) throw new Error("The quotation was not found in this organization.");
-    if (quotation.status !== "DRAFT") {
-      throw new Error("Only draft quotations can be deleted. Preserve issued quotations and use the approved reversal process.");
+    if (quotations.length !== quotationIds.length) {
+      throw new Error("One or more selected quotations were not found in this organization.");
     }
 
-    if (quotation.mode === "MASTER") {
-      const unlinked = await transaction.distributionQuotation.updateMany({
-        where: {
-          organization_id: organizationId,
-          id: { in: quotation.childQuotations.map((child) => child.id) },
-          parent_quotation_id: quotation.id,
+    const orderedQuotations = quotationIds.map((id) => quotations.find((quotation) => quotation.id === id)!);
+    if (orderedQuotations.some((quotation) => quotation.status !== "DRAFT")) {
+      throw new Error("Only draft quotations can be deleted. Draft sales orders may also be deleted; preserve issued documents and use the approved reversal process.");
+    }
+
+    const includesMaster = orderedQuotations.some((quotation) => quotation.mode === "MASTER");
+    const includesRegular = orderedQuotations.some((quotation) => quotation.mode !== "MASTER");
+    if (includesMaster && includesRegular) {
+      throw new Error("Delete sales orders and regular quotations in separate selections.");
+    }
+
+    const linkedQuotationIds = orderedQuotations.flatMap((quotation) =>
+      quotation.mode === "MASTER"
+        ? quotation.childQuotations.map((child) => child.id)
+        : [quotation.id],
+    );
+    const sourceBookingLines = await transaction.distributionQuotationLine.findMany({
+      where: { organization_id: organizationId, quotation_id: { in: linkedQuotationIds } },
+      select: { source_booking_id: true },
+    });
+    const sourceBookingIds = [...new Set(sourceBookingLines.map((line) => line.source_booking_id))];
+    if (sourceBookingIds.length > 0) {
+      const sourceBookings = await transaction.advanceBooking.findMany({
+        where: { organization_id: organizationId, id: { in: sourceBookingIds } },
+        select: {
+          booking_no: true,
+          sizeLines: {
+            select: {
+              assignments: {
+                select: {
+                  grnAllocations: { select: { id: true } },
+                  finishedGoodsStockReceipts: { select: { id: true } },
+                },
+              },
+            },
+          },
         },
-        data: { parent_quotation_id: null },
       });
-      if (unlinked.count !== quotation.childQuotations.length) {
-        throw new Error("The sales order's linked quotations changed. Reload and try again.");
+      const bookingWithFulfillment = sourceBookings.find((booking) =>
+        booking.sizeLines.some((line) =>
+          line.assignments.some((assignment) =>
+            assignment.grnAllocations.length > 0 || assignment.finishedGoodsStockReceipts.length > 0,
+          ),
+        ),
+      );
+      if (bookingWithFulfillment) {
+        throw new Error(
+          `Booking ${bookingWithFulfillment.booking_no} has Work Order GRN fulfillment. Reverse its inventory fulfillment before deleting this ${includesMaster ? "sales order" : "quotation"}.`,
+        );
       }
-    } else if (quotation.parent_quotation_id) {
-      throw new Error("Delete the parent sales order first, then delete this quotation.");
+    }
+
+    for (const quotation of orderedQuotations) {
+      if (quotation.mode === "MASTER") {
+        const unlinked = await transaction.distributionQuotation.updateMany({
+          where: {
+            organization_id: organizationId,
+            id: { in: quotation.childQuotations.map((child) => child.id) },
+            parent_quotation_id: quotation.id,
+          },
+          data: { parent_quotation_id: null },
+        });
+        if (unlinked.count !== quotation.childQuotations.length) {
+          throw new Error("The sales order's linked quotations changed. Reload and try again.");
+        }
+      } else if (quotation.parent_quotation_id) {
+        throw new Error("Delete the parent sales order first, then delete this quotation.");
+      }
     }
 
     const deleted = await transaction.distributionQuotation.deleteMany({
-      where: { organization_id: organizationId, id: quotation.id, status: "DRAFT" },
-    });
-    if (deleted.count !== 1) throw new Error("The quotation changed while deleting. Reload and try again.");
-
-    await createAuditEvent({
-      organizationId,
-      userId,
-      module: "Distribution",
-      action: quotation.mode === "MASTER" ? "DELETE_DISTRIBUTION_MASTER_QUOTATION" : "DELETE_DISTRIBUTION_QUOTATION",
-      entityType: "DistributionQuotation",
-      entityId: quotation.id,
-      details: {
-        quotation_no: quotation.quotation_no,
-        mode: quotation.mode,
-        child_quotation_nos: quotation.childQuotations.map((child) => child.quotation_no),
-        booking_nos: quotation.lines.map((line) => line.booking_no),
+      where: {
+        organization_id: organizationId,
+        id: { in: quotationIds },
+        status: "DRAFT",
+        parent_quotation_id: null,
       },
-    }, transaction);
+    });
+    if (deleted.count !== orderedQuotations.length) {
+      throw new Error("One or more selected quotations changed while deleting. Reload and try again.");
+    }
 
-    return {
+    for (const quotation of orderedQuotations) {
+      await createAuditEvent({
+        organizationId,
+        userId,
+        module: "Distribution",
+        action: quotation.mode === "MASTER" ? "DELETE_DISTRIBUTION_MASTER_QUOTATION" : "DELETE_DISTRIBUTION_QUOTATION",
+        entityType: "DistributionQuotation",
+        entityId: quotation.id,
+        details: {
+          quotation_no: quotation.quotation_no,
+          mode: quotation.mode,
+          child_quotation_nos: quotation.childQuotations.map((child) => child.quotation_no),
+          booking_nos: quotation.lines.map((line) => line.booking_no),
+        },
+      }, transaction);
+    }
+
+    return orderedQuotations.map((quotation) => ({
       id: quotation.id,
       quotationNo: quotation.quotation_no,
       mode: quotation.mode,
       unlinkedQuotationCount: quotation.mode === "MASTER" ? quotation.childQuotations.length : 0,
-    };
+    }));
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
+}
+
+export async function deleteDistributionQuotation(
+  organizationId: string,
+  userId: string,
+  quotationId: string,
+) {
+  const [deleted] = await deleteDistributionQuotations(organizationId, userId, [quotationId]);
+  return deleted;
 }

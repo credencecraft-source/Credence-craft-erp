@@ -98,6 +98,7 @@ type MasterModuleWrapperProps = {
   workspaceId: string;
   organizationId: string;
   organizationName: string;
+  aiEnabled: boolean;
   canAccessPlatformControlPanel: boolean;
   hasConfiguredPricingType: boolean;
   pricingMode: string;
@@ -151,6 +152,7 @@ export function MasterModuleWrapper({
   workspaceId,
   organizationId,
   organizationName,
+  aiEnabled,
   canAccessPlatformControlPanel,
   hasConfiguredPricingType,
   pricingMode,
@@ -732,19 +734,21 @@ export function MasterModuleWrapper({
               </Link>
             )}
             <SupportTicketTrigger organizationId={organizationId} />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              aria-label="Open AI Copilot"
-              aria-haspopup="dialog"
-              aria-expanded={aiCopilotOpen}
-              title="Open AI Copilot"
-              onClick={() => setAiCopilotOpen((open) => !open)}
-              className="h-9 w-9 rounded-md border border-[var(--erp-brand-soft)] bg-[var(--erp-brand-soft)] p-0 text-[var(--erp-brand)] hover:border-[var(--erp-brand)]"
-            >
-              <Bot className="h-4 w-4" aria-hidden="true" />
-            </Button>
+            {aiEnabled && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label="Open AI Copilot"
+                aria-haspopup="dialog"
+                aria-expanded={aiCopilotOpen}
+                title="Open AI Copilot"
+                onClick={() => setAiCopilotOpen((open) => !open)}
+                className="h-9 w-9 rounded-md border border-[var(--erp-brand-soft)] bg-[var(--erp-brand-soft)] p-0 text-[var(--erp-brand)] hover:border-[var(--erp-brand)]"
+              >
+                <Bot className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -764,13 +768,15 @@ export function MasterModuleWrapper({
           </div>
         </header>
 
-        <AiCopilotDrawer
-          key={activeModule?.key ?? "workspace"}
-          open={aiCopilotOpen}
-          organizationId={organizationId}
-          currentModule={activeModule?.label ?? "ERP workspace"}
-          onClose={() => setAiCopilotOpen(false)}
-        />
+        {aiEnabled ? (
+          <AiCopilotDrawer
+            key={activeModule?.key ?? "workspace"}
+            open={aiCopilotOpen}
+            organizationId={organizationId}
+            currentModule={activeModule?.label ?? "ERP workspace"}
+            onClose={() => setAiCopilotOpen(false)}
+          />
+        ) : null}
 
         {dummyDataBuildError ? (
           <div className="flex min-w-0 items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900 sm:px-6" role="alert">

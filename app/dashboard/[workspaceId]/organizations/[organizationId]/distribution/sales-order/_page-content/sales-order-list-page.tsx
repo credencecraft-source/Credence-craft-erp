@@ -260,10 +260,14 @@ export default function SalesOrderListPage() {
   const router = useRouter();
   const organizationId = params.organizationId;
   const [quotations, setQuotations] = useState<DistributionQuotationSummary[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [visibleFields, setVisibleFields] = useState<SalesOrderField[]>(fields.map(({ key }) => key));
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [pdfError, setPdfError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
   const [pdfLoadingOrderId, setPdfLoadingOrderId] = useState<string | null>(null);
   const [autoAllocateOrder, setAutoAllocateOrder] = useState<SalesOrderRow | null>(null);
   const [allocationMode, setAllocationMode] = useState<SalesOrderAllocationMode | null>(null);
@@ -338,6 +342,55 @@ export default function SalesOrderListPage() {
 
   function openDetails(id: string) {
     router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/sales-order/${encodeURIComponent(id)}`);
+  }
+
+  function requestBulkDelete() {
+    const selectedOrders = salesOrders.filter((order) => selectedIds.includes(order.id));
+    if (selectedOrders.length !== selectedIds.length) {
+      setError("One or more selected sales orders are no longer in this report. Refresh and select them again.");
+      return;
+    }
+    if (selectedOrders.some((order) => order.status !== "DRAFT")) {
+      setError("Only draft sales orders can be deleted.");
+      return;
+    }
+    setError("");
+    setNotice("");
+    setIsBulkDeleteDialogOpen(true);
+  }
+
+  async function deleteSelectedSalesOrders() {
+    if (isBulkDeleting || selectedIds.length === 0) return;
+    setIsBulkDeleting(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/distribution/quotations", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId, quotationIds: selectedIds }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data?.deleted) || data.deleted.length !== selectedIds.length) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to delete the selected sales orders.");
+      }
+      const deletedRecords: unknown[] = data.deleted;
+      const deletedCount = deletedRecords.length;
+      const unlinkedCount = deletedRecords.reduce<number>((sum, item) => {
+        if (!isRecord(item) || !isNonNegativeInteger(item.unlinkedQuotationCount)) return sum;
+        return sum + item.unlinkedQuotationCount;
+      }, 0);
+      setSelectedIds([]);
+      setIsBulkDeleteDialogOpen(false);
+      setNotice(
+        `Deleted ${deletedCount} sales order${deletedCount === 1 ? "" : "s"}; ${unlinkedCount} linked quotation${unlinkedCount === 1 ? "" : "s"} remain in the quotation register.`,
+      );
+      await loadQuotations();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the selected sales orders.");
+    } finally {
+      setIsBulkDeleting(false);
+    }
   }
 
   function openAutoAllocation(order: SalesOrderRow) {
@@ -746,6 +799,7 @@ export default function SalesOrderListPage() {
         </div>
       </header>
       {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
+      {notice ? <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{notice}</p> : null}
       {pdfError ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{pdfError}</p> : null}
       <Card className="p-2 shadow-none">
         <ReportGrid
@@ -757,11 +811,17 @@ export default function SalesOrderListPage() {
           onVisibleFieldsChange={(next) => setVisibleFields(next as SalesOrderField[])}
           storageKey={`distribution-master-quotation-report-columns:${organizationId}`}
           rowIdSelector={getSalesOrderRowId}
-          selectedIds={[]}
-          selectable={false}
+          selectedIds={selectedIds}
+          rowSelectable={(order) => order.status === "DRAFT"}
+          onToggleSelectAll={(checked, recordIds) => setSelectedIds(checked ? recordIds : [])}
+          onToggleRowSelection={(id, checked) => setSelectedIds((current) =>
+            checked ? current.includes(id) ? current : [...current, id] : current.filter((value) => value !== id),
+          )}
           onRowClick={openDetails}
           onRowAction={openDetails}
           rowActionLabel="View Details"
+          onBulkDeleteSelected={requestBulkDelete}
+          bulkDeleteSelectedLabel="Delete Sales Orders"
           rowActions={(order) => (
             <div className="flex items-center gap-2">
               <Button
@@ -787,6 +847,34 @@ export default function SalesOrderListPage() {
           renderCell={renderSalesOrderCell}
         />
       </Card>
+      <Modal
+        open={isBulkDeleteDialogOpen}
+        onClose={() => {
+          if (!isBulkDeleting) setIsBulkDeleteDialogOpen(false);
+        }}
+        ariaLabelledBy="bulk-delete-sales-orders-title"
+        size="square"
+        variant="danger"
+        closeOnBackdrop={!isBulkDeleting}
+      >
+        <div className="space-y-4 p-6">
+          <div>
+            <h2 id="bulk-delete-sales-orders-title" className="text-lg font-semibold text-slate-900">Delete selected sales orders?</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              {selectedIds.length} draft sales order{selectedIds.length === 1 ? "" : "s"} will be deleted. Their linked regular quotations will be ungrouped and kept; source bookings are not deleted.
+            </p>
+          </div>
+          {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => setIsBulkDeleteDialogOpen(false)} disabled={isBulkDeleting}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={() => void deleteSelectedSalesOrders()} disabled={isBulkDeleting}>
+              {isBulkDeleting ? "Deleting..." : `Delete ${selectedIds.length} Sales Order${selectedIds.length === 1 ? "" : "s"}`}
+            </Button>
+          </div>
+        </div>
+      </Modal>
       <Modal
         open={autoAllocateOrder !== null}
         onClose={closeAutoAllocation}

@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
   createDistributionQuotationFromBookings: vi.fn(),
+  deleteDistributionQuotations: vi.fn(),
   listDistributionQuotations: vi.fn(),
 }));
 
@@ -13,13 +14,19 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 }));
 vi.mock("@/lib/services/distribution/quotation-service", () => ({
   createDistributionQuotationFromBookings: mocks.createDistributionQuotationFromBookings,
+  deleteDistributionQuotations: mocks.deleteDistributionQuotations,
   listDistributionQuotations: mocks.listDistributionQuotations,
 }));
 
-import { GET, POST } from "./route";
+import { DELETE, GET, POST } from "./route";
 
 const post = (body: unknown) => new Request("http://localhost/api/distribution/quotations", {
   method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+const deleteRequest = (body: unknown) => new Request("http://localhost/api/distribution/quotations", {
+  method: "DELETE",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
 });
@@ -31,6 +38,9 @@ describe("distribution quotation API", () => {
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
     mocks.listDistributionQuotations.mockResolvedValue({ quotations: [] });
     mocks.createDistributionQuotationFromBookings.mockResolvedValue({ id: "quotation-1" });
+    mocks.deleteDistributionQuotations.mockResolvedValue([
+      { id: "quotation-1", quotationNo: "QT-1", mode: "SINGLE", unlinkedQuotationCount: 0 },
+    ]);
   });
 
   it("lists quotations under the authorized internal organization", async () => {
@@ -94,6 +104,35 @@ describe("distribution quotation API", () => {
     }));
     expect(response.status).toBe(400);
     expect(mocks.createDistributionQuotationFromBookings).not.toHaveBeenCalled();
+  });
+
+  it("deletes selected quotations only within the authorized organization", async () => {
+    const response = await DELETE(deleteRequest({
+      organizationId: "public-org",
+      quotationIds: ["quotation-1"],
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
+      "user-1",
+      "public-org",
+      ["OWNER", "ADMIN", "MERCHANDISING"],
+    );
+    expect(mocks.deleteDistributionQuotations).toHaveBeenCalledWith(
+      "internal-org-1",
+      "user-1",
+      ["quotation-1"],
+    );
+  });
+
+  it("rejects malformed bulk deletion IDs before invoking the service", async () => {
+    const response = await DELETE(deleteRequest({
+      organizationId: "public-org",
+      quotationIds: ["quotation-1", 2],
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.deleteDistributionQuotations).not.toHaveBeenCalled();
   });
 
   it("does not list data when organization membership authorization fails", async () => {

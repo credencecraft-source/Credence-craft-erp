@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import Page from "@/components/ui/Page";
 import Card from "@/components/ui/Card";
 import Section from "@/components/ui/Section";
+import Checkbox from "@/components/ui/Checkbox";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getOrganizationForUser } from "@/lib/services/organizations/organization-service";
 import { ArrowLeft } from "lucide-react";
@@ -28,6 +29,25 @@ export default async function OrganizationSettingsPage({ params }: { params: Pro
           <h1 className="erp-page-heading">{organization.organization_name}</h1>
           <p className="erp-page-subheading">Manage organization access and reporting.</p>
         </div>
+        <Card className="space-y-3">
+          <div>
+            <h2 className="text-base font-bold text-slate-900">AI Copilot</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              AI access is managed by your platform Super Admin. When enabled, organization members can use the Copilot while their existing organization permissions remain in effect.
+            </p>
+          </div>
+          <Checkbox
+            checked={organization.ai_enabled}
+            disabled
+            readOnly
+            label={organization.ai_enabled ? "AI Copilot enabled for this organization" : "AI Copilot disabled for this organization"}
+          />
+          {!organization.ai_enabled && (
+            <p className="text-xs text-slate-500">
+              Contact your platform Super Admin to request access. Organization users cannot enable AI themselves.
+            </p>
+          )}
+        </Card>
         <div className="grid gap-4 md:grid-cols-2">
           <Link href={`${base}/users`}>
             <Card className="transition hover:border-emerald-300">

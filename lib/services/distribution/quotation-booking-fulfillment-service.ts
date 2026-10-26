@@ -16,6 +16,8 @@ function quotationBookingInclude(organizationId: string) {
                 grnLine: {
                   select: {
                     id: true,
+                    size: true,
+                    buyer_size: true,
                     advance_booked_quantity: true,
                     approved_quantity: true,
                     general_inventory_quantity: true,
@@ -180,13 +182,13 @@ function requireUnusedReceipt(
   if (!receipt) {
     throw new Error(`Booking ${bookingNo} has a GRN allocation without its allocated-stock receipt. Resolve the GRN in Inventory before reversing fulfillment.`);
   }
-  if (
-    receipt.organization_id !== organizationId ||
-    receipt.quantity_in !== allocation.allocated_quantity ||
-    receipt.quantity_out !== 0 ||
-    receipt.current_stock !== receipt.quantity_in
-  ) {
-    throw new Error(`GRN ${allocation.grnLine.grn.grn_no} inventory has already been issued or changed and cannot be reversed from this screen.`);
+  if (receipt.organization_id !== organizationId) {
+    throw new Error(`GRN ${allocation.grnLine.grn.grn_no} allocated-stock receipt is not available in this organization.`);
+  }
+  if (receipt.quantity_out > 0) {
+    throw new Error(
+      `GRN ${allocation.grnLine.grn.grn_no} has ${receipt.quantity_out} PCS issued from booking ${bookingNo}. Issued stock must be resolved before deleting this sales order.`,
+    );
   }
   return receipt;
 }
@@ -213,9 +215,20 @@ export async function reverseQuotationBookingFulfillment(
         if (!booking) throw new Error("The selected booking was not found in this organization.");
 
         const allocations = collectBookingAllocations(booking);
-        const receipts = allocations.map((allocation) =>
-          requireUnusedReceipt(allocation, booking.booking_no, organizationId),
-        );
+        const receipts = allocations.map((allocation) => {
+          const receipt = allocation.finishedGoodsStockReceipt;
+          if (!receipt) {
+            throw new Error(
+              `Booking ${booking.booking_no} has a GRN allocation without its allocated-stock receipt. Resolve that missing receipt before deleting this sales order.`,
+            );
+          }
+          if (receipt.organization_id !== organizationId) {
+            throw new Error(
+              `GRN ${allocation.grnLine.grn.grn_no} allocated-stock receipt is not available in this organization.`,
+            );
+          }
+          return receipt;
+        });
         const receiptIds = receipts.map((receipt) => receipt.id);
         const activeRequests = await transaction.finishedGoodsOutwardRequestLine.findMany({
           where: {
@@ -227,119 +240,53 @@ export async function reverseQuotationBookingFulfillment(
           select: {
             id: true,
             request_id: true,
-            status: true,
-            picked_quantity: true,
             source_stock_id: true,
+            requested_quantity: true,
             shipped_quantity: true,
-            boxLines: { select: { id: true } },
             request: {
               select: {
                 id: true,
                 request_no: true,
                 status: true,
-                lines: {
-                  select: {
-                    id: true,
-                    status: true,
-                    picked_quantity: true,
-                    shipped_quantity: true,
-                    boxLines: { select: { id: true } },
-                  },
-                },
               },
             },
           },
         });
-        const requestsToCancel = new Map<string, {
-          request: typeof activeRequests[number]["request"];
-          lineIds: Set<string>;
-        }>();
-        for (const line of activeRequests) {
-          const request = line.request;
-          if (
-            !["REQUESTED", "ACCEPTED"].includes(request.status) ||
-            line.status !== request.status ||
-            line.picked_quantity.greaterThan(0) ||
-            line.shipped_quantity.greaterThan(0) ||
-            line.boxLines.length > 0
-          ) {
-            throw new Error(
-              `Finished-goods request ${request.request_no} has already been picked, packed, or shipped. Undo that work before reversing this booking's fulfillment.`,
-            );
-          }
-          const grouped = requestsToCancel.get(request.id) ?? {
-            request,
-            lineIds: new Set<string>(),
-          };
-          grouped.lineIds.add(line.id);
-          requestsToCancel.set(request.id, grouped);
-        }
-        const cancelledRequestIds: string[] = [];
-        const cancelledRequestLineIds: string[] = [];
-        let fullyCancelledRequestCount = 0;
-        for (const { request, lineIds } of requestsToCancel.values()) {
-          const cancelsWholeRequest = request.lines.length === lineIds.size &&
-            request.lines.every((line) => lineIds.has(line.id));
-          if (cancelsWholeRequest && request.lines.some((line) =>
-            line.status !== request.status ||
-            line.picked_quantity.greaterThan(0) ||
-            line.shipped_quantity.greaterThan(0) ||
-            line.boxLines.length > 0,
-          )) {
-            throw new Error(
-              `Finished-goods request ${request.request_no} contains picked, packed, or shipped items. Undo that work before cancelling the whole request.`,
-            );
-          }
-          const lineIdsToCancel = [...lineIds];
-          const cancelledLines = await transaction.finishedGoodsOutwardRequestLine.updateMany({
-            where: {
-              organization_id: organizationId,
-              request_id: request.id,
-              id: { in: lineIdsToCancel },
-              status: request.status,
-              picked_quantity: 0,
-              shipped_quantity: 0,
+        if (activeRequests.length > 0) {
+          const requestDetails = [...new Map(activeRequests.map((line) => [
+            line.request.id,
+            {
+              requestNo: line.request.request_no,
+              status: line.request.status,
+              requestedQuantity: activeRequests
+                .filter((requestLine) => requestLine.request.id === line.request.id)
+                .reduce((total, requestLine) => total + Number(requestLine.requested_quantity), 0),
+              issuedQuantity: activeRequests
+                .filter((requestLine) => requestLine.request.id === line.request.id)
+                .reduce((total, requestLine) => total + Number(requestLine.shipped_quantity), 0),
             },
-            data: { status: "CANCELLED" },
-          });
-          if (cancelledLines.count !== lineIdsToCancel.length) {
-            throw new Error(
-              `Finished-goods request ${request.request_no} changed during booking reversal. Reload and try again.`,
-            );
-          }
-          if (cancelsWholeRequest) {
-            const cancelledRequest = await transaction.finishedGoodsOutwardRequest.updateMany({
-              where: {
-                organization_id: organizationId,
-                id: request.id,
-                status: request.status,
-              },
-              data: { status: "CANCELLED" },
-            });
-            if (cancelledRequest.count !== 1) {
-              throw new Error(
-                `Finished-goods request ${request.request_no} changed during booking reversal. Reload and try again.`,
-              );
-            }
-            fullyCancelledRequestCount += 1;
-          }
-          cancelledRequestIds.push(request.id);
-          cancelledRequestLineIds.push(...lineIdsToCancel);
-          await createAuditEvent({
-            organizationId,
-            userId,
-            module: "Inventory Management",
-            action: "FG_STOCK_OUTWARD_CANCELLED_FOR_BOOKING_REVERSAL",
-            entityType: "FinishedGoodsOutwardRequest",
-            entityId: request.id,
-            details: {
-              request_no: request.request_no,
-              booking_no: booking.booking_no,
-              cancelled_request_line_ids: lineIdsToCancel,
-              entire_request_cancelled: cancelsWholeRequest,
-            },
-          }, transaction);
+          ])).values()];
+          const details = requestDetails.map((request) =>
+            `${request.requestNo} (${request.status}, ${request.requestedQuantity} PCS requested, ${request.issuedQuantity} PCS issued)`,
+          ).join("; ");
+          throw new Error(
+            `Cannot delete this sales order: linked allocated stock is used by ${details}. Resolve or cancel these stock requests first.`,
+          );
         }
+        const issuedReceipts = allocations.filter((allocation) =>
+          (allocation.finishedGoodsStockReceipt?.quantity_out ?? 0) > 0,
+        );
+        if (issuedReceipts.length > 0) {
+          const issuedDetails = issuedReceipts.map((allocation) =>
+            `${allocation.grnLine.grn.grn_no}, size ${allocation.grnLine.size || allocation.grnLine.buyer_size || "unspecified"}: ${allocation.finishedGoodsStockReceipt!.quantity_out} PCS issued`,
+          ).join("; ");
+          throw new Error(
+            `Cannot delete this sales order: linked booking inventory has already been issued (${issuedDetails}). Resolve the issued stock first.`,
+          );
+        }
+        allocations.forEach((allocation) =>
+          requireUnusedReceipt(allocation, booking.booking_no, organizationId),
+        );
 
         const stockTotals = new Map<string, {
           entityId: string;
@@ -348,7 +295,8 @@ export async function reverseQuotationBookingFulfillment(
           size: string;
           quantity: number;
         }>();
-        for (const receipt of receipts) {
+        for (const allocation of allocations) {
+          const receipt = allocation.finishedGoodsStockReceipt!;
           const key = [receipt.entity_id, receipt.location_id, receipt.style_name, receipt.size].join("\u0000");
           const current = stockTotals.get(key);
           stockTotals.set(key, {
@@ -356,7 +304,7 @@ export async function reverseQuotationBookingFulfillment(
             locationId: receipt.location_id,
             styleName: receipt.style_name,
             size: receipt.size,
-            quantity: (current?.quantity ?? 0) + receipt.quantity_in,
+            quantity: (current?.quantity ?? 0) + allocation.allocated_quantity,
           });
         }
         const allocationQuantityByGrnLine = new Map<string, number>();
@@ -377,30 +325,7 @@ export async function reverseQuotationBookingFulfillment(
           );
           const generalQuantity = line.general_inventory_quantity ?? 0;
           const generalReceipt = line.generalStockReceipt;
-          if (
-            line.approved_quantity === null ||
-            !Number.isSafeInteger(allAllocatedQuantity) ||
-            !Number.isSafeInteger(generalQuantity) ||
-            generalQuantity < 0 ||
-            allAllocations.some((allocation) =>
-              !Number.isSafeInteger(allocation.allocated_quantity) || allocation.allocated_quantity < 0,
-            ) ||
-            allAllocatedQuantity + generalQuantity !== line.approved_quantity
-          ) {
-            throw new Error(`GRN ${line.grn.grn_no} booking allocation totals do not match its approved quantity. Reconcile the GRN before reversing fulfillment.`);
-          }
-          if (
-            (generalQuantity > 0 && !generalReceipt) ||
-            (generalReceipt && (
-              generalReceipt.organization_id !== organizationId ||
-              generalReceipt.current_stock + generalReceipt.quantity_out !== generalReceipt.quantity_in
-            ))
-          ) {
-            throw new Error(`GRN ${line.grn.grn_no} general-stock receipt does not match its verified quantity. Reconcile the GRN before reversing fulfillment.`);
-          }
-          if (quantity > allAllocatedQuantity) {
-            throw new Error(`GRN ${line.grn.grn_no} has less allocated quantity than this booking's receipts. Reconcile the GRN before reversing fulfillment.`);
-          }
+          const remainingAllocatedQuantity = Math.max(allAllocatedQuantity - quantity, 0);
           const allocation = allocations.find((candidate) => candidate.grn_line_id === grnLineId)!;
           const receipt = allocation.finishedGoodsStockReceipt;
           if (!receipt) {
@@ -410,8 +335,13 @@ export async function reverseQuotationBookingFulfillment(
             grnLineId,
             grnNo: line.grn.grn_no,
             quantity,
-            remainingAllocatedQuantity: allAllocatedQuantity - quantity,
-            generalQuantity,
+            remainingAllocatedQuantity,
+            generalQuantity: line.approved_quantity !== null &&
+              Number.isSafeInteger(line.approved_quantity) &&
+              Number.isSafeInteger(remainingAllocatedQuantity) &&
+              line.approved_quantity >= remainingAllocatedQuantity
+              ? line.approved_quantity - remainingAllocatedQuantity
+              : generalQuantity + quantity,
             line,
             generalReceipt,
             sourceReceipt: receipt,
@@ -498,7 +428,7 @@ export async function reverseQuotationBookingFulfillment(
             },
             data: {
               advance_booked_quantity: grnLine.remainingAllocatedQuantity,
-              general_inventory_quantity: generalQuantity + quantity,
+              general_inventory_quantity: generalQuantity,
             },
           });
           if (updated.count !== 1) {
@@ -535,8 +465,8 @@ export async function reverseQuotationBookingFulfillment(
             grn_numbers: grnNumbers,
             reversed_quantity: reversedQuantity,
             transferred_to_general_quantity: reversedQuantity,
-            cancelled_outward_request_ids: cancelledRequestIds,
-            cancelled_outward_request_line_ids: cancelledRequestLineIds,
+            cancelled_outward_request_ids: [],
+            cancelled_outward_request_line_ids: [],
             stock_effect: "Moved unused allocated receipts to general stock without reducing on-hand quantity.",
             grn_allocation_ids: allocationIds,
             stock_receipt_ids: receiptIds,
@@ -548,8 +478,8 @@ export async function reverseQuotationBookingFulfillment(
           bookingNo: booking.booking_no,
           reversedQuantity,
           grnNumbers,
-          cancelledRequestLineCount: cancelledRequestLineIds.length,
-          fullyCancelledRequestCount,
+          cancelledRequestLineCount: 0,
+          fullyCancelledRequestCount: 0,
         };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
     } catch (error) {

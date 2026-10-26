@@ -288,20 +288,42 @@ describe("quotation-linked booking fulfillment", () => {
     expect(mocks.prisma.finishedGoodsGeneralStockReceipt.create).not.toHaveBeenCalled();
   });
 
-  it("rejects a GRN whose approved quantity cannot be reconciled to allocations and general stock", async () => {
+  it("reverses unused stock when stale GRN counters exceed approved quantity", async () => {
     const booking = bookingWithFulfillment();
-    booking.sizeLines[0].assignments[0].grnAllocations[0].grnLine.approved_quantity = 4;
+    const grnLine = booking.sizeLines[0].assignments[0].grnAllocations[0].grnLine;
+    grnLine.approved_quantity = 100;
+    grnLine.advance_booked_quantity = 0;
+    grnLine.general_inventory_quantity = 100;
+    grnLine.generalStockReceipt = {
+      id: "general-receipt-1",
+      organization_id: "internal-org-1",
+      quantity_in: 95,
+      quantity_out: 0,
+      current_stock: 95,
+    };
+    const allocatedReceipt = booking.sizeLines[0].assignments[0].grnAllocations[0].finishedGoodsStockReceipt!;
+    allocatedReceipt.quantity_in = 4;
+    allocatedReceipt.current_stock = 4;
     mocks.prisma.advanceBooking.findFirst.mockResolvedValue(booking);
 
-    await expect(reverseQuotationBookingFulfillment(
+    const result = await reverseQuotationBookingFulfillment(
       "internal-org-1",
       "user-1",
       "quotation-1",
       "booking-1",
-    )).rejects.toThrow("allocation totals do not match its approved quantity");
+    );
 
-    expect(mocks.prisma.finishedGoodsStock.updateMany).not.toHaveBeenCalled();
-    expect(mocks.prisma.finishedGoodsGeneralStockReceipt.create).not.toHaveBeenCalled();
+    expect(result.reversedQuantity).toBe(5);
+    expect(mocks.prisma.workOrderInventoryGrnLine.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { advance_booked_quantity: 0, general_inventory_quantity: 100 },
+    }));
+    expect(mocks.prisma.finishedGoodsGeneralStockReceipt.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { quantity_in: { increment: 5 }, current_stock: { increment: 5 } },
+    }));
+    expect(mocks.prisma.finishedGoodsAllocatedStockReceipt.deleteMany).toHaveBeenCalledOnce();
+    expect(mocks.prisma.finishedGoodsStock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { quantity_reserved: { decrement: 5 } },
+    }));
   });
 
   it("finds the booking's draft sales order before using the same safe reversal flow", async () => {
@@ -325,7 +347,7 @@ describe("quotation-linked booking fulfillment", () => {
       "user-1",
       "quotation-1",
       "booking-1",
-    )).rejects.toThrow("already been issued or changed");
+    )).rejects.toThrow("1 PCS issued");
 
     expect(mocks.prisma.finishedGoodsStock.updateMany).not.toHaveBeenCalled();
     expect(mocks.prisma.finishedGoodsAllocatedStockReceipt.deleteMany).not.toHaveBeenCalled();
@@ -341,137 +363,23 @@ describe("quotation-linked booking fulfillment", () => {
       "user-1",
       "quotation-1",
       "booking-1",
-    )).rejects.toThrow("already been issued or changed");
+    )).rejects.toThrow("not available in this organization");
 
     expect(mocks.prisma.finishedGoodsStock.updateMany).not.toHaveBeenCalled();
     expect(mocks.prisma.finishedGoodsAllocatedStockReceipt.deleteMany).not.toHaveBeenCalled();
   });
 
-  it("automatically cancels an unpicked request before reversing the allocated receipt", async () => {
+  it("blocks reversal when allocated stock has an unpicked active request", async () => {
     mocks.prisma.finishedGoodsOutwardRequestLine.findMany.mockResolvedValue([{
       id: "request-line-1",
       request_id: "request-1",
-      status: "ACCEPTED",
-      picked_quantity: new Prisma.Decimal(0),
       source_stock_id: "receipt-1",
+      requested_quantity: new Prisma.Decimal(5),
       shipped_quantity: new Prisma.Decimal(0),
-      boxLines: [],
       request: {
         id: "request-1",
         request_no: "FGR-1",
         status: "ACCEPTED",
-        lines: [{
-          id: "request-line-1",
-          status: "ACCEPTED",
-          picked_quantity: new Prisma.Decimal(0),
-          shipped_quantity: new Prisma.Decimal(0),
-          boxLines: [],
-        }],
-      },
-    }]);
-
-    const result = await reverseQuotationBookingFulfillment(
-      "internal-org-1",
-      "user-1",
-      "quotation-1",
-      "booking-1",
-    );
-
-    expect(mocks.prisma.finishedGoodsOutwardRequestLine.updateMany).toHaveBeenCalledWith({
-      where: {
-        organization_id: "internal-org-1",
-        request_id: "request-1",
-        id: { in: ["request-line-1"] },
-        status: "ACCEPTED",
-        picked_quantity: 0,
-        shipped_quantity: 0,
-      },
-      data: { status: "CANCELLED" },
-    });
-    expect(mocks.prisma.finishedGoodsOutwardRequest.updateMany).toHaveBeenCalledWith({
-      where: { organization_id: "internal-org-1", id: "request-1", status: "ACCEPTED" },
-      data: { status: "CANCELLED" },
-    });
-    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
-      action: "FG_STOCK_OUTWARD_CANCELLED_FOR_BOOKING_REVERSAL",
-      entityId: "request-1",
-    }), mocks.prisma);
-    expect(result).toMatchObject({
-      cancelledRequestLineCount: 1,
-      fullyCancelledRequestCount: 1,
-    });
-    expect(mocks.prisma.finishedGoodsStock.updateMany).toHaveBeenCalledOnce();
-    expect(mocks.prisma.finishedGoodsAllocatedStockReceipt.deleteMany).toHaveBeenCalledOnce();
-  });
-
-  it("cancels only the allocated receipt line when the request also contains unrelated stock", async () => {
-    const unrelatedLine = {
-      id: "request-line-2",
-      status: "ACCEPTED",
-      picked_quantity: new Prisma.Decimal(0),
-      shipped_quantity: new Prisma.Decimal(0),
-      boxLines: [],
-    };
-    mocks.prisma.finishedGoodsOutwardRequestLine.findMany.mockResolvedValue([{
-      id: "request-line-1",
-      request_id: "request-1",
-      status: "ACCEPTED",
-      picked_quantity: new Prisma.Decimal(0),
-      source_stock_id: "receipt-1",
-      shipped_quantity: new Prisma.Decimal(0),
-      boxLines: [],
-      request: {
-        id: "request-1",
-        request_no: "FGR-1",
-        status: "ACCEPTED",
-        lines: [{
-          id: "request-line-1",
-          status: "ACCEPTED",
-          picked_quantity: new Prisma.Decimal(0),
-          shipped_quantity: new Prisma.Decimal(0),
-          boxLines: [],
-        }, unrelatedLine],
-      },
-    }]);
-
-    const result = await reverseQuotationBookingFulfillment(
-      "internal-org-1",
-      "user-1",
-      "quotation-1",
-      "booking-1",
-    );
-
-    expect(mocks.prisma.finishedGoodsOutwardRequestLine.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ id: { in: ["request-line-1"] } }),
-      data: { status: "CANCELLED" },
-    }));
-    expect(mocks.prisma.finishedGoodsOutwardRequest.updateMany).not.toHaveBeenCalled();
-    expect(result).toMatchObject({
-      cancelledRequestLineCount: 1,
-      fullyCancelledRequestCount: 0,
-    });
-  });
-
-  it("blocks automatic request cancellation if linked inventory has been picked", async () => {
-    mocks.prisma.finishedGoodsOutwardRequestLine.findMany.mockResolvedValue([{
-      id: "request-line-1",
-      request_id: "request-1",
-      status: "PICKED",
-      picked_quantity: new Prisma.Decimal(5),
-      source_stock_id: "receipt-1",
-      shipped_quantity: new Prisma.Decimal(0),
-      boxLines: [],
-      request: {
-        id: "request-1",
-        request_no: "FGR-1",
-        status: "PICKED",
-        lines: [{
-          id: "request-line-1",
-          status: "PICKED",
-          picked_quantity: new Prisma.Decimal(5),
-          shipped_quantity: new Prisma.Decimal(0),
-          boxLines: [],
-        }],
       },
     }]);
 
@@ -480,7 +388,60 @@ describe("quotation-linked booking fulfillment", () => {
       "user-1",
       "quotation-1",
       "booking-1",
-    )).rejects.toThrow("has already been picked, packed, or shipped");
+    )).rejects.toThrow("FGR-1 (ACCEPTED, 5 PCS requested, 0 PCS issued)");
+
+    expect(mocks.prisma.finishedGoodsOutwardRequestLine.updateMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.finishedGoodsOutwardRequest.updateMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.finishedGoodsStock.updateMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.finishedGoodsAllocatedStockReceipt.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("blocks requests even when the request also contains unrelated stock", async () => {
+    mocks.prisma.finishedGoodsOutwardRequestLine.findMany.mockResolvedValue([{
+      id: "request-line-1",
+      request_id: "request-1",
+      source_stock_id: "receipt-1",
+      requested_quantity: new Prisma.Decimal(5),
+      shipped_quantity: new Prisma.Decimal(0),
+      request: {
+        id: "request-1",
+        request_no: "FGR-1",
+        status: "ACCEPTED",
+      },
+    }]);
+
+    await expect(reverseQuotationBookingFulfillment(
+      "internal-org-1",
+      "user-1",
+      "quotation-1",
+      "booking-1",
+    )).rejects.toThrow("Cannot delete this sales order");
+
+    expect(mocks.prisma.finishedGoodsOutwardRequestLine.updateMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.finishedGoodsOutwardRequest.updateMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.finishedGoodsStock.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("blocks reversal when an active request has picked stock", async () => {
+    mocks.prisma.finishedGoodsOutwardRequestLine.findMany.mockResolvedValue([{
+      id: "request-line-1",
+      request_id: "request-1",
+      source_stock_id: "receipt-1",
+      requested_quantity: new Prisma.Decimal(5),
+      shipped_quantity: new Prisma.Decimal(0),
+      request: {
+        id: "request-1",
+        request_no: "FGR-1",
+        status: "PICKED",
+      },
+    }]);
+
+    await expect(reverseQuotationBookingFulfillment(
+      "internal-org-1",
+      "user-1",
+      "quotation-1",
+      "booking-1",
+    )).rejects.toThrow("Cannot delete this sales order");
 
     expect(mocks.prisma.finishedGoodsOutwardRequestLine.updateMany).not.toHaveBeenCalled();
     expect(mocks.prisma.finishedGoodsStock.updateMany).not.toHaveBeenCalled();

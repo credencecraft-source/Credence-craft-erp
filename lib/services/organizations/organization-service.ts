@@ -414,6 +414,7 @@ export async function getOrganizationShellContext(workspaceUserId: string, organ
       trial_enabled: true,
       trial_started_at: true,
       trial_ends_at: true,
+      ai_enabled: true,
     },
   });
 }

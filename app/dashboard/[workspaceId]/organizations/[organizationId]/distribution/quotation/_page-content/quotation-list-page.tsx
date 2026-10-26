@@ -50,8 +50,11 @@ export default function QuotationListPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [visibleFields, setVisibleFields] = useState<QuotationField[]>(fields.map(({ key }) => key));
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isCreatingSalesOrder, setIsCreatingSalesOrder] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
   const [vendors, setVendors] = useState<VendorOption[]>([]);
   const [selectedCounterparty, setSelectedCounterparty] = useState("");
   const [showAllContacts, setShowAllContacts] = useState(false);
@@ -208,6 +211,48 @@ export default function QuotationListPage() {
     }
   }
 
+  function requestBulkDelete() {
+    const selectedQuotations = regularQuotations.filter((quotation) => selectedIds.includes(quotation.id));
+    if (selectedQuotations.length !== selectedIds.length) {
+      setError("One or more selected quotations are no longer in this report. Refresh and select them again.");
+      return;
+    }
+    if (selectedQuotations.some((quotation) => quotation.status !== "DRAFT")) {
+      setError("Only draft quotations can be deleted. Remove issued quotations from the selection.");
+      return;
+    }
+    setError("");
+    setNotice("");
+    setIsBulkDeleteDialogOpen(true);
+  }
+
+  async function deleteSelectedQuotations() {
+    if (isBulkDeleting || selectedIds.length === 0) return;
+    setIsBulkDeleting(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/distribution/quotations", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId, quotationIds: selectedIds }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data?.deleted) || data.deleted.length !== selectedIds.length) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to delete the selected quotations.");
+      }
+      const deletedCount = data.deleted.length;
+      setSelectedIds([]);
+      setIsBulkDeleteDialogOpen(false);
+      setNotice(`Deleted ${deletedCount} quotation${deletedCount === 1 ? "" : "s"}. Source bookings were not deleted.`);
+      await loadQuotations();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the selected quotations.");
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  }
+
   function openQuotation(id: string) {
     router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/quotation/${encodeURIComponent(id)}`);
   }
@@ -234,6 +279,7 @@ export default function QuotationListPage() {
           {vendorError || error}
         </p>
       ) : null}
+      {notice ? <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{notice}</p> : null}
       <Card className="p-2 shadow-none">
         <ReportGrid
           title="Quotation Register"
@@ -249,9 +295,12 @@ export default function QuotationListPage() {
           onToggleRowSelection={(id, checked) => setSelectedIds((current) =>
             checked ? current.includes(id) ? current : [...current, id] : current.filter((value) => value !== id),
           )}
+          rowSelectable={(quotation) => quotation.status === "DRAFT"}
           onRowClick={(id) => openQuotation(id)}
           onRowAction={(id) => openQuotation(id)}
           rowActionLabel="Open Quotation"
+          onBulkDeleteSelected={requestBulkDelete}
+          bulkDeleteSelectedLabel="Delete Quotations"
           toolbarActions={(
             <Button
               type="button"
@@ -272,6 +321,34 @@ export default function QuotationListPage() {
         />
       </Card>
       <Modal
+          open={isBulkDeleteDialogOpen}
+          onClose={() => {
+            if (!isBulkDeleting) setIsBulkDeleteDialogOpen(false);
+          }}
+          ariaLabelledBy="bulk-delete-quotations-title"
+          size="square"
+          variant="danger"
+          closeOnBackdrop={!isBulkDeleting}
+        >
+          <div className="space-y-4 p-6">
+            <div>
+              <h2 id="bulk-delete-quotations-title" className="text-lg font-semibold text-slate-900">Delete selected quotations?</h2>
+              <p className="mt-2 text-sm text-slate-600">
+                {selectedIds.length} draft quotation{selectedIds.length === 1 ? "" : "s"} will be deleted. Their source bookings will remain.
+              </p>
+            </div>
+            {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => setIsBulkDeleteDialogOpen(false)} disabled={isBulkDeleting}>
+                Cancel
+              </Button>
+              <Button type="button" variant="destructive" onClick={() => void deleteSelectedQuotations()} disabled={isBulkDeleting}>
+                {isBulkDeleting ? "Deleting..." : `Delete ${selectedIds.length} Quotation${selectedIds.length === 1 ? "" : "s"}`}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+        <Modal
         open={isSalesOrderModalOpen}
         onClose={() => {
           if (!isCreatingSalesOrder) setIsSalesOrderModalOpen(false);

@@ -271,6 +271,7 @@ export default async function OrganizationShellLayout({
         organizationHasTrialAccess,
       )}
       trialEnabled={trialOrganization.trial_enabled}
+      aiEnabled={organization.ai_enabled}
       trialStartedAt={trialOrganization.trial_started_at?.toISOString() ?? null}
       trialEndsAt={trialOrganization.trial_ends_at?.toISOString() ?? null}
       startDummyDataWizardStep={startDummyDataWizardStepAction}
