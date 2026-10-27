@@ -41,6 +41,7 @@ model MerchandisingOrder {
   advanceBookings                     AdvanceBooking[]
   finishedGoodsGeneralStockReceipts   FinishedGoodsGeneralStockReceipt[]
   finishedGoodsAllocatedStockReceipts FinishedGoodsAllocatedStockReceipt[]
+  qrPrintRequests                      MerchandisingOrderQrPrintRequest[]
 
   @@unique([organization_id, orderNo])
   @@unique([organization_id, id])
@@ -48,6 +49,71 @@ model MerchandisingOrder {
   @@index([organization_id, created_at])
   @@index([organization_id, contact_id])
   @@map("merchandising_orders")
+}
+
+enum OrderQrTemplateType {
+  ORDER_TAGS
+}
+
+model MerchandisingOrderQrTemplate {
+  id                   String               @id @default(cuid())
+  organization_id      String
+  name                 String               @db.VarChar(100)
+  type                 OrderQrTemplateType  @default(ORDER_TAGS)
+  field_keys           Json
+  qr_field_key         String               @default("orderNo") @db.VarChar(50)
+  display_fields       Json                 @default("[]")
+  display_field_styles Json                 @default("{}")
+  qr_size              Int                  @default(256)
+  sticker_width_mm     Decimal              @default(50) @db.Decimal(7, 2)
+  sticker_length_mm    Decimal              @default(30) @db.Decimal(7, 2)
+  created_at           DateTime             @default(now())
+  updated_at           DateTime             @updatedAt
+  organization         Organization         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, name])
+  @@index([organization_id, updated_at])
+  @@map("merchandising_order_qr_templates")
+}
+
+enum OrderQrPrintRequestType {
+  PRINT
+  DOWNLOAD
+}
+
+enum OrderQrPrintRequestStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+model MerchandisingOrderQrPrintRequest {
+  id              String                     @id @default(cuid())
+  organization_id String
+  order_id        String
+  order_no        String                     @db.VarChar(100)
+  request_type    OrderQrPrintRequestType
+  status          OrderQrPrintRequestStatus  @default(PENDING)
+  template_name   String?                    @db.VarChar(100)
+  field_keys      Json
+  qr_field_key    String                     @default("orderNo") @db.VarChar(50)
+  display_fields  Json                       @default("[]")
+  display_values  Json                       @default("{}")
+  display_field_styles Json                  @default("{}")
+  qr_size         Int                        @default(256)
+  sticker_width_mm Decimal                  @default(50) @db.Decimal(7, 2)
+  sticker_length_mm Decimal                 @default(30) @db.Decimal(7, 2)
+  qr_payload      String                     @db.Text
+  requested_by    String                     @db.VarChar(255)
+  requested_at    DateTime                   @default(now())
+  updated_at      DateTime                   @updatedAt
+  organization    Organization               @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "qr_print_requests_organization_fkey")
+  order           MerchandisingOrder         @relation(fields: [organization_id, order_id], references: [organization_id, id], onDelete: Restrict, map: "qr_print_requests_order_fkey")
+
+  @@unique([organization_id, id], map: "qr_print_requests_org_id_key")
+  @@index([organization_id, status, requested_at], map: "qr_print_requests_org_status_date_idx")
+  @@index([organization_id, order_id, requested_at], map: "qr_print_requests_org_order_date_idx")
+  @@map("merchandising_order_qr_print_requests")
 }
 
 model MerchandisingOrderProcessStep {

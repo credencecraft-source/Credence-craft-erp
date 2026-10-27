@@ -95,6 +95,15 @@ export const ERP_MODULES: ErpModule[] = [
           { key: "gold-seals", label: "Gold Seal", pathSegment: "gold-seals" },
         ],
       },
+      {
+        key: "barcode-qr-code",
+        label: "Barcode / QR Code",
+        pathSegment: "barcode-qr-code",
+        children: [
+          { key: "templates", label: "Templates", pathSegment: "templates" },
+          { key: "print-download", label: "Print/Download", pathSegment: "print-download" },
+        ],
+      },
     ],
   },
   {

@@ -78,6 +78,8 @@ model Organization {
   masterCategoryTypes           MasterCategoryType[]
   masterCategories              MasterCategory[]
   masterSubCategories           MasterSubCategory[]
+  merchandisingOrderQrTemplates  MerchandisingOrderQrTemplate[]
+  merchandisingOrderQrPrintRequests MerchandisingOrderQrPrintRequest[]
   masterBrands                  MasterBrand[]
   masterPreOrderChecklists      MasterPreOrderChecklist[]
   masterCurrencyTypes           MasterCurrencyType[]
