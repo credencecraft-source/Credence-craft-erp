@@ -10,12 +10,16 @@ import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import {
+  DEFAULT_QR_FIELD_STYLE,
   ORDER_QR_TEMPLATE_FIELDS,
   buildOrderQrPayload,
+  createDefaultOrderQrTemplateLayout,
   type OrderQrTemplateFieldKey,
   type OrderQrDisplayFieldStyle,
   type OrderQrTemplateLayout,
 } from "@/lib/services/orders/order-qr-template-contract";
+
+const DEFAULT_ORDER_DISPLAY_FIELDS = ["orderNo", "styleName", "colors"] as const;
 
 type OrderQrTemplate = {
   id: string;
@@ -78,15 +82,15 @@ export default function OrderQrCodeCard({
     ),
     [orderFields, orderNo, selectedTemplate],
   );
-  const displayContent = useMemo(
-    () => buildOrderQrPayload(
-      selectedTemplate?.displayFields ?? [],
-      orderFields,
-      orderNo,
-    ).entries,
-    [orderFields, orderNo, selectedTemplate],
+  const displayFields = selectedTemplate?.displayFields ?? DEFAULT_ORDER_DISPLAY_FIELDS;
+  const stickerLayout = selectedTemplate?.layout
+    ?? createDefaultOrderQrTemplateLayout(DEFAULT_ORDER_DISPLAY_FIELDS);
+  const stickerWidthMm = selectedTemplate?.stickerWidthMm ?? 50;
+  const stickerLengthMm = selectedTemplate?.stickerLengthMm ?? 30;
+  const qrWidthPercent = Math.min(
+    52,
+    Math.min(stickerWidthMm, stickerLengthMm) * 52 / stickerWidthMm,
   );
-  const selectedFields = displayContent;
   const qrPayload = qrContent.payload;
   const qrSize = selectedTemplate?.qrSize ?? 256;
   const qrDataUrl = qrState.payload === qrPayload && qrState.size === qrSize
@@ -294,8 +298,12 @@ export default function OrderQrCodeCard({
             </p>
           )}
 
-          <div className="grid min-w-0 gap-6 sm:grid-cols-[minmax(16rem,1fr)_minmax(0,1fr)] sm:items-center">
-            <div className="flex min-h-72 min-w-0 items-center justify-center rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] p-4">
+          <div
+            aria-label={`Sticker preview, ${stickerWidthMm} by ${stickerLengthMm} millimeters`}
+            className="relative mx-auto w-full max-w-2xl overflow-hidden rounded-xl border border-[var(--erp-border)] bg-white"
+            style={{ aspectRatio: `${stickerWidthMm} / ${stickerLengthMm}` }}
+          >
+            <div className="absolute inset-0 overflow-hidden">
               {qrDataUrl ? (
                 <Image
                   src={qrDataUrl}
@@ -303,10 +311,16 @@ export default function OrderQrCodeCard({
                   width={qrSize}
                   height={qrSize}
                   unoptimized
-                  className="h-auto w-full max-w-64"
+                  className="absolute h-auto object-contain"
+                  style={{
+                    left: `${stickerLayout.qr.x}%`,
+                    top: `${stickerLayout.qr.y}%`,
+                    width: `${qrWidthPercent}%`,
+                    aspectRatio: "1",
+                  }}
                 />
               ) : qrError ? (
-                <div className="space-y-3 text-center">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center">
                   <p className="text-sm text-[var(--erp-danger)]" role="alert">{qrError}</p>
                   <Button
                     type="button"
@@ -322,58 +336,42 @@ export default function OrderQrCodeCard({
                   Preparing QR code...
                 </p>
               )}
-            </div>
-            <dl className="grid min-w-0 gap-4">
-              {selectedFields.length > 0 ? selectedFields.map(({ label, value }) => {
-                const fieldKey = selectedTemplate?.displayFields.find((key) =>
-                  ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === key)?.label === label,
-                );
-                const style = fieldKey ? selectedTemplate?.displayFieldStyles[fieldKey] : undefined;
+              {displayFields.map((fieldKey, index) => {
+                const field = ORDER_QR_TEMPLATE_FIELDS.find(({ key }) => key === fieldKey);
+                const value = orderFields[fieldKey]
+                  ?? (fieldKey === "orderNo"
+                    ? orderNo
+                    : fieldKey === "styleName"
+                      ? styleName
+                      : fieldKey === "colors"
+                        ? colors
+                        : "");
+                const style = {
+                  ...DEFAULT_QR_FIELD_STYLE,
+                  ...selectedTemplate?.displayFieldStyles[fieldKey],
+                };
+                const position = stickerLayout.fields[fieldKey]
+                  ?? { x: 44, y: 16 + index * 16 };
+
                 return (
-                <div key={label} className="min-w-0">
-                  <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-text-muted)]">
-                    {label}
-                  </dt>
-                  <dd
-                    className="mt-1 break-words"
+                  <span
+                    key={fieldKey}
+                    className="absolute overflow-hidden text-ellipsis whitespace-nowrap"
                     style={{
-                      color: style?.color,
-                      fontSize: style?.fontSize,
-                      fontWeight: style?.bold ? 700 : 500,
-                      textDecoration: style?.underline ? "underline" : "none",
+                      left: `${position.x}%`,
+                      top: `${position.y}%`,
+                      width: "52%",
+                      color: style.color,
+                      fontSize: style.fontSize,
+                      fontWeight: style.bold ? 700 : 400,
+                      textDecoration: style.underline ? "underline" : "none",
                     }}
                   >
-                    {value}
-                  </dd>
-                </div>
+                    {field?.label}: {value === null || value === undefined ? "" : String(value)}
+                  </span>
                 );
-              }) : (
-                <>
-                  <div className="min-w-0">
-                    <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-text-muted)]">
-                      Order No
-                    </dt>
-                    <dd className="mt-1 break-words text-base font-bold text-[var(--erp-text)]">{orderNo}</dd>
-                  </div>
-                  <div className="min-w-0">
-                    <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-text-muted)]">
-                      Style
-                    </dt>
-                    <dd className="mt-1 break-words text-sm font-medium text-[var(--erp-text)]">
-                      {styleName?.trim() || "—"}
-                    </dd>
-                  </div>
-                  <div className="min-w-0">
-                    <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-text-muted)]">
-                      Color
-                    </dt>
-                    <dd className="mt-1 break-words text-sm font-medium text-[var(--erp-text)]">
-                      {colors?.trim() || "—"}
-                    </dd>
-                  </div>
-                </>
-              )}
-            </dl>
+              })}
+            </div>
           </div>
           <div className="space-y-3 border-t border-[var(--erp-border)] pt-4">
             <p className="text-sm text-[var(--erp-text-muted)]">

@@ -606,19 +606,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
             </Button>
             <Button
               type="submit"
-              disabled={
-                isSaving
-                || !name.trim()
-                || stickerWidthMm < 10
-                || stickerWidthMm > 500
-                || stickerLengthMm < 10
-                || stickerLengthMm > 500
-                || displayFields.some((fieldKey) => {
-                  const fontSize = displayFieldStyles[fieldKey]?.fontSize
-                    ?? DEFAULT_QR_FIELD_STYLE.fontSize;
-                  return fontSize < 8 || fontSize > 48;
-                })
-              }
+              disabled={isSaving}
             >
               {isSaving ? "Saving..." : templateId ? "Save Changes" : "Save Template"}
             </Button>

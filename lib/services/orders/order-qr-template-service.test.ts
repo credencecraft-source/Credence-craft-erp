@@ -46,13 +46,17 @@ describe("order QR template service", () => {
         qr_field_key: "orderNo",
         display_fields: ["orderNo", "buyer"],
         display_field_styles: {
-          styles: {},
+          styles: {
+            orderNo: { fontSize: 20, bold: true, underline: true, color: "#123456" },
+          },
           layout: {
-            qr: { x: 3, y: 25 },
+            qr: { x: 72, y: 9 },
             fields: {
-              orderNo: { x: 44, y: 16 },
-              styleName: { x: 44, y: 36 },
+              orderNo: { x: 7, y: 21 },
+              buyer: { x: 48, y: 74 },
             },
+            printerType: "LASER",
+            pdfPaperSize: "A4_LANDSCAPE",
           },
         },
         qr_size: 192,
@@ -95,17 +99,17 @@ describe("order QR template service", () => {
         qrFieldKey: "orderNo",
         displayFields: ["orderNo", "buyer"],
         displayFieldStyles: {
-          orderNo: { fontSize: 12, bold: false, underline: false, color: "#111827" },
+          orderNo: { fontSize: 20, bold: true, underline: true, color: "#123456" },
           buyer: { fontSize: 12, bold: false, underline: false, color: "#111827" },
         },
         layout: {
-          qr: { x: 3, y: 25 },
+          qr: { x: 72, y: 9 },
           fields: {
-            orderNo: { x: 44, y: 16 },
-            buyer: { x: 44, y: 36 },
+            orderNo: { x: 7, y: 21 },
+            buyer: { x: 48, y: 74 },
           },
-          printerType: "BARCODE",
-          pdfPaperSize: "A4_AUTO",
+          printerType: "LASER",
+          pdfPaperSize: "A4_LANDSCAPE",
         },
         qrSize: 192,
         stickerWidthMm: 50,
