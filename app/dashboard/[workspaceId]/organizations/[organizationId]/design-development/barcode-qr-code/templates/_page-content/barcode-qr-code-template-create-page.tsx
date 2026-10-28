@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import {
   type FormEvent,
@@ -17,6 +16,7 @@ import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
+import OrderQrStickerPreview from "@/components/erp/order-qr-sticker-preview";
 import {
   DEFAULT_QR_FIELD_STYLE,
   createDefaultOrderQrTemplateLayout,
@@ -620,13 +620,25 @@ export default function BarcodeQrCodeTemplateCreatePage({
               Sample order values show how your selected fields will be encoded.
             </p>
           </div>
-          <div
-            className="flex w-full items-center justify-center rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-3"
-            style={{ aspectRatio: `${stickerWidthMm} / ${stickerLengthMm}` }}
-          >
-            <div
-              ref={previewRef}
-              className="relative h-full min-h-0 w-full min-w-0 overflow-hidden rounded border border-[var(--erp-border)] bg-white"
+          <div className="flex w-full items-center justify-center rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-3">
+            <OrderQrStickerPreview
+              rootRef={previewRef}
+              qrDataUrl={qrDataUrl}
+              qrError={qrError}
+              fields={previewEntries.map(({ label, value }, index) => ({
+                key: displayFields[index],
+                label,
+                value,
+                style: {
+                  ...DEFAULT_QR_FIELD_STYLE,
+                  ...displayFieldStyles[displayFields[index]],
+                },
+              }))}
+              layout={layout}
+              stickerWidthMm={stickerWidthMm}
+              stickerLengthMm={stickerLengthMm}
+              interactive
+              qrAlt="QR code template preview"
               onPointerMove={handlePreviewPointerMove}
               onPointerUp={(event) => {
                 if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
@@ -634,77 +646,9 @@ export default function BarcodeQrCodeTemplateCreatePage({
               onPointerCancel={(event) => {
                 if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
               }}
-            >
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                data-layout-item
-                className="absolute min-h-0 justify-start rounded p-1 touch-none cursor-move border border-dashed border-[var(--erp-brand)]/50 bg-[var(--erp-surface)]/70 text-left shadow-sm focus-visible:outline-none"
-                style={{
-                  left: `${layout.qr.x}%`,
-                  top: `${layout.qr.y}%`,
-                  width: `${Math.min(52, (Math.min(stickerWidthMm, stickerLengthMm) * 52 / stickerWidthMm))}%`,
-                  aspectRatio: "1",
-                }}
-                aria-label="Move QR code. Use arrow keys to reposition; hold Shift to move farther."
-                title="Drag to move QR code; use arrow keys for precise placement"
-                onPointerDown={(event) => startPreviewDrag(event, "qr")}
-                onKeyDown={(event) => handlePreviewKeyDown(event, "qr")}
-              >
-                {qrDataUrl ? (
-                  <Image
-                    src={qrDataUrl}
-                    alt="QR code template preview"
-                    fill
-                    unoptimized
-                    draggable={false}
-                    className="pointer-events-none object-contain"
-                  />
-                ) : qrError ? (
-                  <span className="text-xs text-[var(--erp-danger)]" role="alert">{qrError}</span>
-                ) : (
-                  <span className="text-xs text-[var(--erp-text-muted)]" role="status">
-                    Preparing QR...
-                  </span>
-                )}
-              </Button>
-              {previewEntries.map(({ label, value }, index) => {
-                const fieldKey = displayFields[index];
-                const position = layout.fields[fieldKey]
-                  ?? createDefaultOrderQrTemplateLayout(displayFields).fields[fieldKey]
-                  ?? { x: 44, y: 16 };
-                  const style = {
-                    ...DEFAULT_QR_FIELD_STYLE,
-                    ...displayFieldStyles[fieldKey],
-                  };
-                  return (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      key={fieldKey}
-                      data-layout-item
-                      className="absolute min-h-0 justify-start gap-0 rounded px-1 py-0.5 touch-none cursor-move truncate border border-dashed border-[var(--erp-brand)]/50 bg-[var(--erp-surface)]/70 text-left shadow-sm focus-visible:outline-none"
-                      style={{
-                        left: `${position.x}%`,
-                        top: `${position.y}%`,
-                        width: "52%",
-                        color: style.color,
-                        fontSize: style.fontSize,
-                        fontWeight: style.bold ? 700 : 400,
-                        textDecoration: style.underline ? "underline" : "none",
-                      }}
-                      aria-label={`Move ${label}. Use arrow keys to reposition; hold Shift to move farther.`}
-                      title={`Drag to move ${label}; use arrow keys for precise placement`}
-                      onPointerDown={(event) => startPreviewDrag(event, fieldKey)}
-                      onKeyDown={(event) => handlePreviewKeyDown(event, fieldKey)}
-                    >
-                      {label}: {value}
-                    </Button>
-                  );
-              })}
-            </div>
+              onItemPointerDown={startPreviewDrag}
+              onItemKeyDown={handlePreviewKeyDown}
+            />
           </div>
           <p className="text-xs text-[var(--erp-text-muted)]">
             Drag the QR code and each display field to position them. Use arrow keys for precision.

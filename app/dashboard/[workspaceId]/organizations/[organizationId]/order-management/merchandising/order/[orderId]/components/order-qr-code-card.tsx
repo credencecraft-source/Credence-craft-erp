@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
@@ -9,6 +8,7 @@ import { Download, Printer, QrCode, X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
+import OrderQrStickerPreview from "@/components/erp/order-qr-sticker-preview";
 import {
   DEFAULT_QR_FIELD_STYLE,
   ORDER_QR_TEMPLATE_FIELDS,
@@ -87,10 +87,6 @@ export default function OrderQrCodeCard({
     ?? createDefaultOrderQrTemplateLayout(DEFAULT_ORDER_DISPLAY_FIELDS);
   const stickerWidthMm = selectedTemplate?.stickerWidthMm ?? 50;
   const stickerLengthMm = selectedTemplate?.stickerLengthMm ?? 30;
-  const qrWidthPercent = Math.min(
-    52,
-    Math.min(stickerWidthMm, stickerLengthMm) * 52 / stickerWidthMm,
-  );
   const qrPayload = qrContent.payload;
   const qrSize = selectedTemplate?.qrSize ?? 256;
   const qrDataUrl = qrState.payload === qrPayload && qrState.size === qrSize
@@ -298,81 +294,34 @@ export default function OrderQrCodeCard({
             </p>
           )}
 
-          <div
-            aria-label={`Sticker preview, ${stickerWidthMm} by ${stickerLengthMm} millimeters`}
-            className="relative mx-auto w-full max-w-2xl overflow-hidden rounded-xl border border-[var(--erp-border)] bg-white"
-            style={{ aspectRatio: `${stickerWidthMm} / ${stickerLengthMm}` }}
-          >
-            <div className="absolute inset-0 overflow-hidden">
-              {qrDataUrl ? (
-                <Image
-                  src={qrDataUrl}
-                  alt={`QR code for order ${orderNo}`}
-                  width={qrSize}
-                  height={qrSize}
-                  unoptimized
-                  className="absolute h-auto object-contain"
-                  style={{
-                    left: `${stickerLayout.qr.x}%`,
-                    top: `${stickerLayout.qr.y}%`,
-                    width: `${qrWidthPercent}%`,
-                    aspectRatio: "1",
-                  }}
-                />
-              ) : qrError ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center">
-                  <p className="text-sm text-[var(--erp-danger)]" role="alert">{qrError}</p>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setQrRetryCount((count) => count + 1)}
-                  >
-                    Retry
-                  </Button>
-                </div>
-              ) : (
-                <p className="text-sm text-[var(--erp-text-muted)]" role="status">
-                  Preparing QR code...
-                </p>
-              )}
-              {displayFields.map((fieldKey, index) => {
-                const field = ORDER_QR_TEMPLATE_FIELDS.find(({ key }) => key === fieldKey);
-                const value = orderFields[fieldKey]
+          <OrderQrStickerPreview
+            qrDataUrl={qrDataUrl}
+            qrError={qrError}
+            qrAlt={`QR code for order ${orderNo}`}
+            fields={displayFields.map((fieldKey) => ({
+              key: fieldKey,
+              label: ORDER_QR_TEMPLATE_FIELDS.find(({ key }) => key === fieldKey)?.label ?? fieldKey,
+              value: String(
+                orderFields[fieldKey]
                   ?? (fieldKey === "orderNo"
                     ? orderNo
                     : fieldKey === "styleName"
                       ? styleName
                       : fieldKey === "colors"
                         ? colors
-                        : "");
-                const style = {
-                  ...DEFAULT_QR_FIELD_STYLE,
-                  ...selectedTemplate?.displayFieldStyles[fieldKey],
-                };
-                const position = stickerLayout.fields[fieldKey]
-                  ?? { x: 44, y: 16 + index * 16 };
-
-                return (
-                  <span
-                    key={fieldKey}
-                    className="absolute overflow-hidden text-ellipsis whitespace-nowrap"
-                    style={{
-                      left: `${position.x}%`,
-                      top: `${position.y}%`,
-                      width: "52%",
-                      color: style.color,
-                      fontSize: style.fontSize,
-                      fontWeight: style.bold ? 700 : 400,
-                      textDecoration: style.underline ? "underline" : "none",
-                    }}
-                  >
-                    {field?.label}: {value === null || value === undefined ? "" : String(value)}
-                  </span>
-                );
-              })}
-            </div>
-          </div>
+                        : ""),
+              ),
+              style: {
+                ...DEFAULT_QR_FIELD_STYLE,
+                ...selectedTemplate?.displayFieldStyles[fieldKey],
+              },
+            }))}
+            layout={stickerLayout}
+            stickerWidthMm={stickerWidthMm}
+            stickerLengthMm={stickerLengthMm}
+            className="mx-auto max-w-2xl rounded-xl"
+            onRetry={() => setQrRetryCount((count) => count + 1)}
+          />
           <div className="space-y-3 border-t border-[var(--erp-border)] pt-4">
             <p className="text-sm text-[var(--erp-text-muted)]">
               Send this QR code and the selected order details to Design and Development for processing.
