@@ -3,7 +3,8 @@ import { ArrowRight, Boxes, Layers3 } from "lucide-react";
 
 export default async function Page({ params }: { params: Promise<{ workspaceId: string; organizationId: string }> }) {
   const { workspaceId, organizationId } = await params;
-  const stockPath = `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/stock/rm-stock`;
+  const inventoryPath = `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management`;
+  const stockPath = `${inventoryPath}/stock/rm-stock`;
 
   return (
     <main className="mx-auto max-w-6xl space-y-5">

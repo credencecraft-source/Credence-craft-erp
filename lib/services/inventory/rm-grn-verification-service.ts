@@ -85,6 +85,14 @@ function serializeGroupingNumber(grouping: Pick<SourceGrouping, "display_no" | "
   return grouping.display_no ? `GP-${grouping.display_no}` : grouping.grouped_po_no;
 }
 
+function isGeneralPurchaseOrder(purchaseOrder: {
+  procurement_type: string;
+  generalPurchaseOrderRequests?: Array<{ id: string }>;
+}) {
+  return purchaseOrder.procurement_type === "GENERAL"
+    || Boolean(purchaseOrder.generalPurchaseOrderRequests?.length);
+}
+
 async function loadSourceLine(database: Pick<typeof prisma, "inventoryReceiptLine">, organizationId: string, receiptLineId: string) {
   return database.inventoryReceiptLine.findFirst({
     where: { id: receiptLineId, receipt: { organization_id: organizationId } },
@@ -100,7 +108,17 @@ async function loadSourceLine(database: Pick<typeof prisma, "inventoryReceiptLin
       purchaseOrderLine: {
         select: {
           raw_material: true,
-          purchaseOrder: { select: { organization_id: true } },
+          purchaseOrder: {
+            select: {
+              organization_id: true,
+              procurement_type: true,
+              generalPurchaseOrderRequests: {
+                where: { organization_id: organizationId },
+                select: { id: true },
+                take: 1,
+              },
+            },
+          },
           masterPurchaseOrder: {
             select: {
               id: true,
@@ -124,6 +142,7 @@ async function loadSourceLine(database: Pick<typeof prisma, "inventoryReceiptLin
               },
             },
           },
+          quantity: true,
         },
       },
     },
@@ -160,6 +179,20 @@ async function getPriorAllocationTotals(
   ]));
 }
 
+export async function assertAssetPurchaseReceiptLine(organizationId: string, receiptLineId: string) {
+  const line = await prisma.inventoryReceiptLine.findFirst({
+    where: {
+      id: receiptLineId,
+      receipt: {
+        organization_id: organizationId,
+        purchaseOrder: { is: { procurement_type: "GENERAL", is_asset_purchase: true } },
+      },
+    },
+    select: { id: true },
+  });
+  if (!line) throw new RmGrnVerificationNotFoundError();
+}
+
 export async function getRmGrnVerification(organizationId: string, receiptLineId: string) {
   const line = await loadSourceLine(prisma, organizationId, receiptLineId);
   if (!line) return null;
@@ -167,6 +200,7 @@ export async function getRmGrnVerification(organizationId: string, receiptLineId
 
   const master = line.purchaseOrderLine.masterPurchaseOrder;
   if (master && master.organization_id !== organizationId) throw new RmGrnVerificationNotFoundError();
+  const isGeneralPurchaseOrderOrder = isGeneralPurchaseOrder(line.purchaseOrderLine.purchaseOrder);
   const groupings = (master?.sourceRecords ?? [])
     .map(({ groupedPurchaseOrder }) => groupedPurchaseOrder)
     .filter((grouping) => grouping.organization_id === organizationId);
@@ -209,11 +243,12 @@ export async function getRmGrnVerification(organizationId: string, receiptLineId
     purchaseOrderNumber: line.receipt.purchaseOrder.display_no
       ? `PO-${line.receipt.purchaseOrder.display_no}`
       : line.receipt.purchaseOrder.purchase_order_no,
+    procurementType: isGeneralPurchaseOrderOrder ? "GENERAL" : line.purchaseOrderLine.purchaseOrder.procurement_type,
     masterPurchaseOrderId: master?.id ?? null,
     masterGroupingNumber: master
       ? master.display_no ? `MGP-${master.display_no}` : master.master_po_no
       : "",
-    poQuantity: master?.total_grouped_qty?.toString() ?? "0",
+    poQuantity: master?.total_grouped_qty?.toString() ?? line.purchaseOrderLine.quantity.toString(),
     groupedQtyGrn: groupedQtyGrn.toString(),
     verifiedQuantity: saved?.verified_quantity.toString() ?? "",
     approvedQuantity: saved?.approved_quantity.toString() ?? "",
@@ -233,6 +268,12 @@ export async function getRmGrnVerificationDraftsForPurchaseOrder(organizationId:
     select: {
       purchase_order_no: true,
       display_no: true,
+      procurement_type: true,
+      generalPurchaseOrderRequests: {
+        where: { organization_id: organizationId },
+        select: { id: true },
+        take: 1,
+      },
       lines: {
         select: {
           id: true,
@@ -301,6 +342,7 @@ export async function getRmGrnVerificationDraftsForPurchaseOrder(organizationId:
       rawMaterialName: line.raw_material ?? "",
       grnQuantity: "",
       purchaseOrderNumber,
+      procurementType: isGeneralPurchaseOrder(purchaseOrder) ? "GENERAL" : purchaseOrder.procurement_type,
       masterGroupingNumber: master
         ? master.display_no ? `MGP-${master.display_no}` : master.master_po_no
         : "",
@@ -643,9 +685,11 @@ export async function saveRmGrnVerificationInTransaction(
       throw new RmGrnVerificationNotFoundError();
     }
     const master = line.purchaseOrderLine.masterPurchaseOrder;
-    if (!master || master.organization_id !== organizationId) throw new MasterGroupRequiredError();
+    const isGeneralPurchaseOrderOrder = isGeneralPurchaseOrder(line.purchaseOrderLine.purchaseOrder);
+    if (master && master.organization_id !== organizationId) throw new RmGrnVerificationNotFoundError();
+    if (!isGeneralPurchaseOrderOrder && !master) throw new MasterGroupRequiredError();
 
-    const groupings = master.sourceRecords
+    const groupings = (isGeneralPurchaseOrderOrder ? [] : master?.sourceRecords ?? [])
       .map(({ groupedPurchaseOrder }) => groupedPurchaseOrder)
       .filter((grouping) => grouping.organization_id === organizationId);
     const groupIds = groupings.map((grouping) => grouping.id);
@@ -675,8 +719,23 @@ export async function saveRmGrnVerificationInTransaction(
     const groupedQtyGrn = [...groupingCapacities.values()].reduce((total, value) => total.plus(value), zero());
     const verified = parseQuantity(input.verifiedQuantity);
     const approved = parseQuantity(input.approvedQuantity);
-    const calculated = calculateHeaderQuantities(verified, approved, groupedQtyGrn);
+    const calculated = isGeneralPurchaseOrderOrder
+      ? (() => {
+          if (approved.greaterThan(verified)) {
+            throw new InvalidActualCountError("Approved Qty cannot exceed Verified Qty.");
+          }
+          return {
+            rejected: verified.minus(approved),
+            freshExcess: approved,
+            totalExcess: zero(),
+            availableToAllocate: zero(),
+          };
+        })()
+      : calculateHeaderQuantities(verified, approved, groupedQtyGrn);
     if (!Array.isArray(input.allocations)) throw new InvalidActualCountError();
+    if (isGeneralPurchaseOrderOrder && input.allocations.length > 0) {
+      throw new InvalidActualCountError("General Purchase Order receipts do not use order or style allocations.");
+    }
 
       const allocationValues = new Map<string, Prisma.Decimal>();
     for (const item of input.allocations as AllocationInput[]) {
@@ -762,8 +821,8 @@ export async function saveRmGrnVerificationInTransaction(
       ? await transaction.rmGrnVerification.update({
           where: { id: existing.id, organization_id: organizationId },
           data: {
-            master_purchase_order_id: master.id,
-            po_quantity: master.total_grouped_qty ?? zero(),
+            master_purchase_order_id: master?.id ?? null,
+            po_quantity: master?.total_grouped_qty ?? line.purchaseOrderLine.quantity,
             grouped_qty_grn: groupedQtyGrn,
             verified_quantity: verified,
             approved_quantity: approved,
@@ -780,8 +839,8 @@ export async function saveRmGrnVerificationInTransaction(
           data: {
             organization_id: organizationId,
             inventory_receipt_line_id: line.id,
-            master_purchase_order_id: master.id,
-            po_quantity: master.total_grouped_qty ?? zero(),
+            master_purchase_order_id: master?.id ?? null,
+            po_quantity: master?.total_grouped_qty ?? line.purchaseOrderLine.quantity,
             grouped_qty_grn: groupedQtyGrn,
             verified_quantity: verified,
             approved_quantity: approved,

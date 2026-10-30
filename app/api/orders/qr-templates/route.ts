@@ -4,7 +4,13 @@ import { Prisma } from "@prisma/client";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
-import { createOrderQrTemplate, listOrderQrTemplates } from "@/lib/services/orders/order-qr-template-service";
+import {
+  createOrderQrTemplate,
+  deleteOrderQrTemplates,
+  listOrderQrTemplates,
+  OrderQrTemplateDeleteConflictError,
+  OrderQrTemplatePageSetupNotFoundError,
+} from "@/lib/services/orders/order-qr-template-service";
 import { parseOrderQrTemplateInput } from "@/lib/services/orders/order-qr-template-contract";
 
 const ALLOWED_ROLES = ["OWNER", "ADMIN", "MERCHANDISING"];
@@ -117,6 +123,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json({ template }, { status: 201 });
   } catch (error) {
+    if (error instanceof OrderQrTemplatePageSetupNotFoundError) {
+      return NextResponse.json(
+        { error: "Select a Page Setup template from this organization." },
+        { status: 404 },
+      );
+    }
     const schemaResponse = getSchemaNotReadyResponse(error);
     if (schemaResponse) return schemaResponse;
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -132,5 +144,63 @@ export async function POST(request: Request): Promise<NextResponse> {
       errorName: error instanceof Error ? error.name : "UnknownError",
     });
     return NextResponse.json({ error: "Unable to save QR template." }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request): Promise<NextResponse> {
+  try {
+    const authorization = await getAuthorizedOrganization(request);
+    if (!authorization.authorized) return authorization.response;
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 });
+    }
+    const ids = typeof body === "object" && body !== null && "ids" in body
+      ? body.ids
+      : undefined;
+    if (
+      !Array.isArray(ids)
+      || ids.length < 1
+      || ids.length > 100
+      || ids.some((id) => typeof id !== "string" || !id.trim() || id.length > 100)
+      || new Set(ids).size !== ids.length
+    ) {
+      return NextResponse.json(
+        { error: "Select between 1 and 100 unique QR templates." },
+        { status: 400 },
+      );
+    }
+
+    const result = await deleteOrderQrTemplates(
+      authorization.organization.id,
+      authorization.user.id,
+      ids,
+    );
+    if (!result.success) {
+      return NextResponse.json(
+        { error: "One or more QR templates were not found in this organization." },
+        { status: 404 },
+      );
+    }
+    return NextResponse.json({ deletedCount: result.deletedCount });
+  } catch (error) {
+    if (error instanceof OrderQrTemplateDeleteConflictError) {
+      return NextResponse.json(
+        { error: "The selection changed during deletion. Refresh the report and try again." },
+        { status: 409 },
+      );
+    }
+    const schemaResponse = getSchemaNotReadyResponse(error);
+    if (schemaResponse) return schemaResponse;
+    if (isDatabaseUnavailableError(error)) {
+      return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
+    console.error("Unable to delete organization order QR templates.", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    return NextResponse.json({ error: "Unable to delete QR templates." }, { status: 500 });
   }
 }

@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   requireOrganizationContext: vi.fn(),
   listOrderQrTemplates: vi.fn(),
   createOrderQrTemplate: vi.fn(),
+  deleteOrderQrTemplates: vi.fn(),
+  OrderQrTemplatePageSetupNotFoundError: class extends Error {},
   isDatabaseUnavailableError: vi.fn(() => false),
 }));
 
@@ -20,6 +22,9 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 vi.mock("@/lib/services/orders/order-qr-template-service", () => ({
   listOrderQrTemplates: mocks.listOrderQrTemplates,
   createOrderQrTemplate: mocks.createOrderQrTemplate,
+  deleteOrderQrTemplates: mocks.deleteOrderQrTemplates,
+  OrderQrTemplatePageSetupNotFoundError: mocks.OrderQrTemplatePageSetupNotFoundError,
+  OrderQrTemplateDeleteConflictError: class OrderQrTemplateDeleteConflictError extends Error {},
 }));
 
 vi.mock("@/lib/database/database-errors", () => ({
@@ -27,7 +32,7 @@ vi.mock("@/lib/database/database-errors", () => ({
   isDatabaseUnavailableError: mocks.isDatabaseUnavailableError,
 }));
 
-import { GET, POST } from "./route";
+import { DELETE, GET, POST } from "./route";
 
 const requestUrl = "http://localhost/api/orders/qr-templates?organizationId=public-org&workspaceId=workspace-1";
 
@@ -41,6 +46,7 @@ describe("order QR template API", () => {
     });
     mocks.listOrderQrTemplates.mockResolvedValue([]);
     mocks.createOrderQrTemplate.mockResolvedValue({ id: "template-1", name: "ORDER TAG" });
+    mocks.deleteOrderQrTemplates.mockResolvedValue({ success: true, deletedCount: 2 });
   });
 
   it("lists templates using the authorized internal organization id", async () => {
@@ -114,6 +120,7 @@ describe("order QR template API", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: "Order tags",
+          pageSetupTemplateId: "setup-1",
           fieldKeys: ["orderNo", "styleName"],
           qrSize: 192,
         }),
@@ -126,6 +133,7 @@ describe("order QR template API", () => {
       "user-1",
       {
         name: "ORDER TAGS",
+        pageSetupTemplateId: "setup-1",
         qrFieldKey: "orderNo",
         displayFields: ["orderNo", "styleName"],
         displayFieldStyles: {
@@ -146,5 +154,53 @@ describe("order QR template API", () => {
         stickerLengthMm: 30,
       },
     );
+  });
+
+  it("reports when the selected Page Setup is unavailable in this organization", async () => {
+    mocks.createOrderQrTemplate.mockRejectedValue(
+      new mocks.OrderQrTemplatePageSetupNotFoundError(),
+    );
+    const response = await POST(new Request(requestUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Order tags",
+        pageSetupTemplateId: "foreign-setup",
+        fieldKeys: ["orderNo"],
+        qrSize: 192,
+      }),
+    }));
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: "Select a Page Setup template from this organization.",
+    });
+  });
+
+  it("tenant-scopes selected template deletion to the authorized organization", async () => {
+    const response = await DELETE(new Request(requestUrl, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: ["template-1", "template-2"] }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.deleteOrderQrTemplates).toHaveBeenCalledWith(
+      "internal-org-1",
+      "user-1",
+      ["template-1", "template-2"],
+    );
+    await expect(response.json()).resolves.toEqual({ deletedCount: 2 });
+  });
+
+  it("rejects malformed or duplicate template identifiers before deletion", async () => {
+    const response = await DELETE(new Request(requestUrl, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: ["template-1", "template-1"] }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.deleteOrderQrTemplates).not.toHaveBeenCalled();
   });
 });

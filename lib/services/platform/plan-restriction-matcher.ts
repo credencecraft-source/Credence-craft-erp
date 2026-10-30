@@ -86,3 +86,16 @@ export function getSidebarFeatureKeysForRoute(routeSegments: string[]) {
   }
   return keys;
 }
+
+export function getPlanRestrictionRouteSegments(routeSegments: string[]) {
+  if (routeSegments[0] === "asset-management" && routeSegments[1] === "asset-po") {
+    if (routeSegments[2] === "purchase-orders") {
+      return ["order-management", "procurement", "purchase-order", ...routeSegments.slice(3)];
+    }
+    return ["order-management", "procurement", "create-po", "general-po", ...routeSegments.slice(2)];
+  }
+  if (routeSegments[0] === "asset-management" && routeSegments[1] === "asset-grn") {
+    return ["inventory-management", "inward", "grn", ...routeSegments.slice(2)];
+  }
+  return routeSegments;
+}

@@ -10,6 +10,7 @@ type Option = {
   key: string;
   label: string;
   pathSegment?: string;
+  href?: string;
   moduleKey?: string;
   children?: ReadonlyArray<Option>;
 };
@@ -39,20 +40,22 @@ export function MasterModuleSwitcher({
   const getPath = (option: Option) => {
     const segments = pathname.split("/").filter(Boolean);
     const orgIndex = segments.indexOf("organizations");
+    const base = orgIndex === -1 ? "" : `/${segments.slice(0, orgIndex + 2).join("/")}`;
 
     const pathSegments = [option.pathSegment || option.key];
     let currentOption: Option | undefined = option;
     while (currentOption?.children?.[0]) {
       const firstChild: Option = currentOption.children[0];
+      if (firstChild.href) {
+        const href = firstChild.href.startsWith("/") ? firstChild.href : `/${firstChild.href}`;
+        return `${base}${href}`;
+      }
       pathSegments.push(firstChild.pathSegment || firstChild.key);
       currentOption = firstChild;
     }
     const subPath = pathSegments.join("/");
 
-    if (orgIndex === -1) return `/${subPath}`;
-
-    const base = segments.slice(0, orgIndex + 2).join("/");
-    return `/${base}/${subPath}`;
+    return `${base}/${subPath}`;
   };
 
   const prefetchOption = (option: Option) => {
@@ -87,7 +90,7 @@ export function MasterModuleSwitcher({
           onClick={() => setOpen((v) => !v)}
           className="flex h-9 min-w-[180px] items-center justify-between rounded-md border border-slate-300 bg-white px-3 text-sm font-medium cursor-pointer shadow-2xs hover:bg-slate-50 transition-colors"
         >
-          <span className="flex items-center gap-2">
+          <span className="flex items-center gap-2 uppercase">
             {selectedLabel}
           </span>
 
@@ -127,7 +130,7 @@ export function MasterModuleSwitcher({
                       : "hover:bg-slate-100 text-slate-700"
                   }`}
                 >
-                  <span>{option.label}</span>
+                  <span className="uppercase">{option.label}</span>
                   {active && <Check className="h-4 w-4 text-emerald-600" />}
                 </Button>
               );

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   requireOrganizationContext: vi.fn(),
   getOrderQrTemplate: vi.fn(),
   updateOrderQrTemplate: vi.fn(),
+  OrderQrTemplatePageSetupNotFoundError: class extends Error {},
   isDatabaseUnavailableError: vi.fn(() => false),
 }));
 
@@ -17,6 +18,7 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 vi.mock("@/lib/services/orders/order-qr-template-service", () => ({
   getOrderQrTemplate: mocks.getOrderQrTemplate,
   updateOrderQrTemplate: mocks.updateOrderQrTemplate,
+  OrderQrTemplatePageSetupNotFoundError: mocks.OrderQrTemplatePageSetupNotFoundError,
 }));
 vi.mock("@/lib/database/database-errors", () => ({
   DATABASE_UNAVAILABLE_MESSAGE: "Database unavailable.",
@@ -99,6 +101,7 @@ describe("order QR template record API", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: "Basic updated",
+          pageSetupTemplateId: "setup-1",
           fieldKeys: ["orderNo", "buyer"],
           qrSize: 320,
         }),
@@ -113,6 +116,7 @@ describe("order QR template record API", () => {
       "template-1",
       {
         name: "BASIC UPDATED",
+        pageSetupTemplateId: "setup-1",
         qrFieldKey: "orderNo",
         displayFields: ["orderNo", "buyer"],
         displayFieldStyles: {
@@ -133,5 +137,26 @@ describe("order QR template record API", () => {
         stickerLengthMm: 30,
       },
     );
+  });
+
+  it("reports when the selected Page Setup is unavailable in this organization", async () => {
+    mocks.updateOrderQrTemplate.mockRejectedValue(
+      new mocks.OrderQrTemplatePageSetupNotFoundError(),
+    );
+    const response = await PATCH(
+      new Request(requestUrl, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Basic updated",
+          pageSetupTemplateId: "foreign-setup",
+          fieldKeys: ["orderNo"],
+          qrSize: 320,
+        }),
+      }),
+      routeContext,
+    );
+
+    expect(response.status).toBe(404);
   });
 });

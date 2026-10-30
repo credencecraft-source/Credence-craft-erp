@@ -1,15 +1,27 @@
-import { requirePlatformSessionSuperAdmin } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
+import { requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 
-export async function setOrganizationAiEnabled(organizationId: string, enabled: boolean) {
-  const admin = await requirePlatformSessionSuperAdmin();
-  if (!organizationId.trim() || typeof enabled !== "boolean") {
-    throw new Error("A valid organization and AI access value are required.");
+export async function setOrganizationAiEnabledByAdmin(
+  workspaceUserId: string,
+  publicOrganizationId: string,
+  enabled: boolean,
+) {
+  if (!workspaceUserId.trim() || !publicOrganizationId.trim() || typeof enabled !== "boolean") {
+    throw new Error("A valid organization, user, and AI access value are required.");
   }
 
+  const membership = await requireOrganizationAccess(
+    workspaceUserId,
+    publicOrganizationId,
+    ["OWNER", "ADMIN"],
+  );
+
   return prisma.$transaction(async (transaction) => {
-    const organization = await transaction.organization.findUnique({
-      where: { id: organizationId },
+    const organization = await transaction.organization.findFirst({
+      where: {
+        id: membership.organization_id,
+        organization_id: publicOrganizationId,
+      },
       select: { id: true, ai_enabled: true },
     });
     if (!organization) throw new Error("Organization not found.");
@@ -28,7 +40,8 @@ export async function setOrganizationAiEnabled(organizationId: string, enabled: 
         entity_type: "Organization",
         entity_id: organization.id,
         details: {
-          platformAdminId: admin.id,
+          actorUserId: workspaceUserId,
+          actorRole: membership.role,
           previousEnabled: organization.ai_enabled,
           enabled,
         },

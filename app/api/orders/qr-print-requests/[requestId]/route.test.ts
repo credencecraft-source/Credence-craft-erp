@@ -97,4 +97,21 @@ describe("order QR print request status API", () => {
 
     expect(response.status).toBe(409);
   });
+
+  it("rejects manual Page Setup changes on a print request", async () => {
+    const response = await PATCH(
+      new Request(requestUrl, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pageSetupTemplateId: "setup-1" }),
+      }),
+      { params: Promise.resolve({ requestId: "request-1" }) },
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "Page Setup is assigned by the QR template and cannot be changed on a print request.",
+    });
+    expect(mocks.advanceOrderQrPrintRequestStatus).not.toHaveBeenCalled();
+  });
 });

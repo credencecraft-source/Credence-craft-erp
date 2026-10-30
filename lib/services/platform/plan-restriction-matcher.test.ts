@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { restrictionMatchesFeature, restrictionMatchesHiddenRoute, restrictionMatchesRoute } from "./plan-restriction-matcher";
+import {
+  getPlanRestrictionRouteSegments,
+  restrictionMatchesFeature,
+  restrictionMatchesHiddenRoute,
+  restrictionMatchesRoute,
+} from "./plan-restriction-matcher";
 
 const feature = {
   key: "order-management/merchandising/orders",
@@ -18,6 +23,22 @@ const makeRule = (restriction_type: string) => ({
 });
 
 describe("plan restriction matching", () => {
+  it("applies General PO route restrictions to the Asset PO alias", () => {
+    expect(getPlanRestrictionRouteSegments([
+      "asset-management",
+      "asset-po",
+      "approve-price",
+      "request-1",
+    ])).toEqual([
+      "order-management",
+      "procurement",
+      "create-po",
+      "general-po",
+      "approve-price",
+      "request-1",
+    ]);
+  });
+
   it.each(["block", "hide", "HIDE"])("matches %s rules for pricing feature availability", (restrictionType) => {
     expect(restrictionMatchesFeature(makeRule(restrictionType), feature)).toBe(true);
   });

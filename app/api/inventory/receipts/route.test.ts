@@ -99,6 +99,19 @@ describe("inventory receipt verification posting", () => {
     }));
   });
 
+  it("filters Asset GRN report reads to asset Purchase Orders", async () => {
+    mocks.inventoryReceiptFindMany.mockResolvedValue([]);
+    const response = await GET(new Request("http://localhost/api/inventory/receipts?organizationId=public-org&isAssetPurchase=true"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.inventoryReceiptFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "internal-org-1",
+        purchaseOrder: { is: { procurement_type: "GENERAL", is_asset_purchase: true } },
+      },
+    }));
+  });
+
   it("posts receipt counts and verification together without duplicating service-managed excess stock", async () => {
     const response = await POST(new Request("http://localhost/api/inventory/receipts", {
       method: "POST",
@@ -164,6 +177,30 @@ describe("inventory receipt verification posting", () => {
     }]);
     expect(mocks.transaction.rawMaterialStock.create).not.toHaveBeenCalled();
     expect(mocks.saveRmGrnVerificationInTransaction).not.toHaveBeenCalled();
+  });
+
+  it("only creates Asset GRNs from asset-classified General Purchase Orders", async () => {
+    const response = await POST(new Request("http://localhost/api/inventory/receipts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        purchaseOrderId: "asset-po-1",
+        locationId: "location-1",
+        createOnly: true,
+        assetPurchaseOnly: true,
+      }),
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.transaction.purchaseOrder.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        id: "asset-po-1",
+        organization_id: "internal-org-1",
+        procurement_type: "GENERAL",
+        is_asset_purchase: true,
+      },
+    }));
   });
 
   it("keeps the pending PO quantity ceiling for receipts without verification counts", async () => {

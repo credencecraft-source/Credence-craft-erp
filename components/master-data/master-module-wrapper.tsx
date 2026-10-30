@@ -47,7 +47,7 @@ import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
 import Tabs from "@/components/ui/Tabs";
 import NavigationLinkStatus from "@/components/ui/navigation-link-status";
-import { getSidebarFeatureKeysForRoute, normalizeRestrictionPart, restrictionMatchesHiddenRoute, restrictionMatchesRoute } from "@/lib/services/platform/plan-restriction-matcher";
+import { getPlanRestrictionRouteSegments, getSidebarFeatureKeysForRoute, normalizeRestrictionPart, restrictionMatchesHiddenRoute, restrictionMatchesRoute } from "@/lib/services/platform/plan-restriction-matcher";
 import { isOrganizationTrialInactive } from "@/lib/utilities/organization-trial-visibility";
 
 type SubItem = {
@@ -82,6 +82,7 @@ const moduleIcons = {
   online: Gauge,
   pos: Landmark,
   "order-management": ClipboardList,
+  "asset-management": Package,
   "design-development": BriefcaseBusiness,
   "factory-management": Factory,
   "quality-management-system": Boxes,
@@ -191,14 +192,15 @@ export function MasterModuleWrapper({
     const subPath = targetPath.substring(orgIndex + organizationId.length).replace(/^\/+/, "");
     const segments = subPath.split("/").filter(Boolean);
 
-    const featureKeys = getSidebarFeatureKeysForRoute(segments);
-    const targetModule = normalizeRestrictionPart(segments[0] || "");
+    const restrictionSegments = getPlanRestrictionRouteSegments(segments);
+    const featureKeys = getSidebarFeatureKeysForRoute(restrictionSegments);
+    const targetModule = normalizeRestrictionPart(restrictionSegments[0] || "");
 
     for (const rule of restrictions) {
       if (rule.restriction_type === "block" || rule.type === "BLOCK") {
         const owningModule = normalizeRestrictionPart(rule.plan_module_path || "");
         if (owningModule && owningModule !== targetModule) continue;
-        if (restrictionMatchesRoute(rule, segments, featureKeys)) {
+        if (restrictionMatchesRoute(rule, restrictionSegments, featureKeys)) {
           return {
             message: rule.custom_message || rule.customAlertMessage || "Access to this module/feature is restricted by your current plan.",
           };
@@ -216,13 +218,14 @@ export function MasterModuleWrapper({
 
     const subPath = targetPath.substring(orgIndex + organizationId.length).replace(/^\/+/, "");
     const segments = subPath.split("/").filter(Boolean);
-    const featureKeys = getSidebarFeatureKeysForRoute(segments);
-    const targetModule = normalizeRestrictionPart(segments[0] || "");
+    const restrictionSegments = getPlanRestrictionRouteSegments(segments);
+    const featureKeys = getSidebarFeatureKeysForRoute(restrictionSegments);
+    const targetModule = normalizeRestrictionPart(restrictionSegments[0] || "");
 
     return restrictions.some((rule) => {
       const owningModule = normalizeRestrictionPart(rule.plan_module_path || "");
       if (owningModule && owningModule !== targetModule) return false;
-      return restrictionMatchesHiddenRoute(rule, segments, featureKeys);
+      return restrictionMatchesHiddenRoute(rule, restrictionSegments, featureKeys);
     });
   }, [organizationId, restrictions]);
 
@@ -239,7 +242,7 @@ export function MasterModuleWrapper({
 
   const allModuleOptions = useMemo<NavigationModuleOption[]>(() => {
     if (businessTypes.length > 0) {
-      return businessTypes.flatMap((businessType) => {
+      const options = businessTypes.flatMap((businessType) => {
         const linkedModule = getErpModuleForBusinessTypeName(businessType.name);
 
         if (!linkedModule) return [];
@@ -252,6 +255,21 @@ export function MasterModuleWrapper({
           children: linkedModule.children,
         }];
       });
+      const assetManagement = ERP_MODULES.find((module) => module.key === "asset-management");
+      if (
+        options.some((option) => option.moduleKey === "order-management")
+        && assetManagement
+        && !options.some((option) => option.moduleKey === assetManagement.key)
+      ) {
+        options.push({
+          key: assetManagement.key,
+          label: assetManagement.label,
+          moduleKey: assetManagement.key,
+          pathSegment: assetManagement.pathSegment,
+          children: assetManagement.children,
+        });
+      }
+      return options;
     }
     return ERP_MODULES;
   }, [businessTypes]);
@@ -634,7 +652,7 @@ export function MasterModuleWrapper({
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex min-w-0 items-center gap-2">
               <Layers className="h-5 w-5 text-emerald-600" />
-              <span className="truncate font-semibold capitalize">{activeModule?.label ?? "Modules"}</span>
+              <span className="truncate font-semibold uppercase">{activeModule?.label ?? "Modules"}</span>
             </div>
             {isBuildingDummyData ? (
               <div className="flex min-w-0 items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-800" role="status" aria-live="polite">

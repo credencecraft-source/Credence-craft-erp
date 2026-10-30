@@ -46,6 +46,7 @@ export default async function MasterDataListPage({
     ...category,
     masters: getMastersForCategory(masters, category),
   }));
+  const priceListMaster = masters.find((master) => master.key === "price-list");
 
   return (
     <Page as="div">
@@ -58,6 +59,30 @@ export default async function MasterDataListPage({
         </Link>
 
         <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="Master data categories">
+          {priceListMaster ? (
+            <Link
+              href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${priceListMaster.key}`}
+              className="group block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+            >
+              <Card className="flex min-h-40 flex-col justify-between gap-4 rounded-2xl p-5 transition group-hover:border-[var(--erp-brand)]">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--erp-brand)]">Master data</p>
+                    <h2 className="mt-2 text-xl font-semibold text-[var(--erp-text)]">{priceListMaster.label}</h2>
+                  </div>
+                  <ArrowUpRight aria-hidden="true" className="mt-1 h-5 w-5 shrink-0 text-slate-400 transition group-hover:text-[var(--erp-brand)]" />
+                </div>
+
+                <p className="text-sm leading-6 text-slate-600">{priceListMaster.description}</p>
+
+                <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600">
+                  <span className="rounded-full border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] px-2.5 py-1">
+                    1 master
+                  </span>
+                </div>
+              </Card>
+            </Link>
+          ) : null}
           {masterGroups.map((group) => (
             <Link
               key={group.id}

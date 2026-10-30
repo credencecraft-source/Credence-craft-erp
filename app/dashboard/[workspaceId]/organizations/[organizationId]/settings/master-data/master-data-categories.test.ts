@@ -25,6 +25,21 @@ describe("master data categories", () => {
     expect(getMastersForCategory(visibleMasters, others!).map((master) => master.key)).toContain("size-wise-consumption");
   });
 
+  it("keeps Price List as a standalone master-data destination", () => {
+    const others = MASTER_DATA_CATEGORIES.find((category) => category.id === "other");
+    const priceList = visibleMasters.find((master) => master.key === "price-list");
+
+    expect(priceList?.label).toBe("Price List");
+    expect(priceList?.fields.find((field) => field.key === "Channel_Type")).toMatchObject({
+      label: "Price List Type",
+      type: "picklist",
+      required: true,
+      options: ["Qty Based", "Location Based", "Hierarchy Based", "Role Based"],
+    });
+    expect(getMasterDataCategory("price-list")).toBeUndefined();
+    expect(getMastersForCategory(visibleMasters, others!).map((master) => master.key)).not.toContain("price-list");
+  });
+
   it("includes Article under Finished Goods", () => {
     const finishedGoods = MASTER_DATA_CATEGORIES.find((category) => category.id === "finished-goods");
 

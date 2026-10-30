@@ -17,6 +17,7 @@ type AddRawMaterialStockInput = {
   locationId: string;
   quantity: string;
   reason: string;
+  isAssetStock?: boolean;
 };
 
 export async function addRawMaterialStockManually(input: AddRawMaterialStockInput) {
@@ -37,9 +38,14 @@ export async function addRawMaterialStockManually(input: AddRawMaterialStockInpu
   return prisma.$transaction(async (transaction) => {
     const rawMaterial = await transaction.masterRawMaterial.findFirst({
       where: { id: input.rawMaterialId, organization_id: input.organizationId, is_active: true },
-      select: { id: true, raw_material_name: true },
+      select: { id: true, raw_material_name: true, is_asset: true },
     });
     if (!rawMaterial) throw new ManualStockError("The selected raw material is not active in this organization.", 404);
+    if (rawMaterial.is_asset !== (input.isAssetStock ?? false)) {
+      throw new ManualStockError(input.isAssetStock
+        ? "Select an asset-classified raw material for Assets Stock."
+        : "Asset-classified materials can only be added through Assets Stock.");
+    }
 
     const location = await transaction.masterLocation.findFirst({
       where: { id: input.locationId, organization_id: input.organizationId, is_active: true, entity: { is_active: true } },

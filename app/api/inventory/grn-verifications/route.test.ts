@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
   getRmGrnVerification: vi.fn(),
+  assertAssetPurchaseReceiptLine: vi.fn(),
   getRmGrnVerificationAllocation: vi.fn(),
   saveRmGrnVerification: vi.fn(),
   listRmGrnVerificationAllocations: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 
 vi.mock("@/lib/services/inventory/rm-grn-verification-service", () => ({
   getRmGrnVerification: mocks.getRmGrnVerification,
+  assertAssetPurchaseReceiptLine: mocks.assertAssetPurchaseReceiptLine,
   getRmGrnVerificationAllocation: mocks.getRmGrnVerificationAllocation,
   saveRmGrnVerification: mocks.saveRmGrnVerification,
   listRmGrnVerificationAllocations: mocks.listRmGrnVerificationAllocations,
@@ -60,6 +62,16 @@ describe("RM GRN Verification route", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
+    expect(mocks.getRmGrnVerification).toHaveBeenCalledWith("internal-org-1", "line-1");
+  });
+
+  it("verifies Asset GRN lines against the asset Purchase Order before loading details", async () => {
+    mocks.assertAssetPurchaseReceiptLine.mockResolvedValue(undefined);
+    mocks.getRmGrnVerification.mockResolvedValue({ receiptLineId: "line-1" });
+    const response = await GET(new Request("http://localhost/api/inventory/grn-verifications?organizationId=public-org&receiptLineId=line-1&isAssetPurchase=true"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.assertAssetPurchaseReceiptLine).toHaveBeenCalledWith("internal-org-1", "line-1");
     expect(mocks.getRmGrnVerification).toHaveBeenCalledWith("internal-org-1", "line-1");
   });
 
@@ -164,6 +176,26 @@ describe("RM GRN Verification route", () => {
       approvedQuantity: "40",
       allocations: [],
     }, "user-1");
+  });
+
+  it("requires an asset Purchase Order before saving an Asset GRN verification", async () => {
+    mocks.assertAssetPurchaseReceiptLine.mockResolvedValue(undefined);
+    mocks.saveRmGrnVerification.mockResolvedValue({ created: true, verifiedQuantity: "42" });
+    const response = await POST(new Request("http://localhost/api/inventory/grn-verifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        receiptLineId: "line-1",
+        assetPurchaseOnly: true,
+        verifiedQuantity: "42",
+        approvedQuantity: "42",
+        allocations: [],
+      }),
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.assertAssetPurchaseReceiptLine).toHaveBeenCalledWith("internal-org-1", "line-1");
   });
 
   it("does not save when organization authorization fails", async () => {

@@ -3,18 +3,30 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Plus, Save } from "lucide-react";
+import { ArrowLeft, Plus, Save, Settings2 } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
+import Switch from "@/components/ui/Switch";
 import Tabs from "@/components/ui/Tabs";
+import { ReportGrid } from "@/components/reports/report-grid-display";
 
 type RoleCode = "CUSTOMER" | "VENDOR" | "AGENT" | "DISTRIBUTOR" | "DEALER";
 type AddressUsage = "BILLING" | "SHIPPING" | "BOTH";
-type TabId = "contact" | "gst" | "addresses" | "bank";
+type TabId = "contact" | "roles" | "gst" | "billing" | "shipping" | "bank";
+type DistributorDealerRow = {
+  id: string;
+  mappingId: string;
+  code: string;
+  legalName: string;
+  displayName: string | null;
+  isActive: boolean;
+  commissionPercentage?: string | null;
+};
 
 export type ContactData = {
   id: string;
@@ -102,9 +114,11 @@ const ROLE_OPTIONS: Array<{ code: RoleCode; label: string }> = [
 ];
 
 const TABS: Array<{ value: TabId; label: string }> = [
-  { value: "contact", label: "Contact & roles" },
+  { value: "contact", label: "Contact" },
+  { value: "roles", label: "Roles" },
   { value: "gst", label: "GST details" },
-  { value: "addresses", label: "Addresses" },
+  { value: "billing", label: "Billing address" },
+  { value: "shipping", label: "Shipping address" },
   { value: "bank", label: "Bank accounts" },
 ];
 
@@ -195,12 +209,29 @@ export default function ContactMasterRecordPage({
   const [contact, setContact] = useState<ContactData | null>(initialContact);
   const [form, setForm] = useState<ContactForm>(() => initialContact ? toForm(initialContact) : emptyForm());
   const [activeTab, setActiveTab] = useState<TabId>("contact");
+  const [activeRoleTab, setActiveRoleTab] = useState<RoleCode>("CUSTOMER");
   const [editing, setEditing] = useState(createMode);
   const [loading, setLoading] = useState(!createMode && !initialContact);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const roleLabels = useMemo(() => new Map<string, string>(ROLE_OPTIONS.map((role) => [role.code, role.label])), []);
+  const [distributorDealerRows, setDistributorDealerRows] = useState<DistributorDealerRow[]>([]);
+  const [distributorMappingConfirmed, setDistributorMappingConfirmed] = useState(false);
+  const [dealerLookupQuery, setDealerLookupQuery] = useState("");
+  const [dealerLookupRows, setDealerLookupRows] = useState<Array<{ id: string; code: string; label: string }>>([]);
+  const [selectedDealerIds, setSelectedDealerIds] = useState<string[]>([]);
+  const [mappingLoading, setMappingLoading] = useState(false);
+  const [dealerModalOpen, setDealerModalOpen] = useState(false);
+  const [selectedDealer, setSelectedDealer] = useState<{ id: string; code: string; label: string } | null>(null);
+  const [roleMappingConfirmed, setRoleMappingConfirmed] = useState(false);
+  const [roleMappedRows, setRoleMappedRows] = useState<DistributorDealerRow[]>([]);
+  const [roleLookupQuery, setRoleLookupQuery] = useState("");
+  const [roleLookupRows, setRoleLookupRows] = useState<Array<{ id: string; code: string; label: string }>>([]);
+  const [selectedRoleContact, setSelectedRoleContact] = useState<{ id: string; code: string; label: string } | null>(null);
+  const [roleMappedContactIds, setRoleMappedContactIds] = useState<string[]>([]);
+  const [roleModalOpen, setRoleModalOpen] = useState(false);
+  const [agentCommissionPercentage, setAgentCommissionPercentage] = useState("0");
 
   useEffect(() => {
     if (!contactId || initialContact) return;
@@ -224,6 +255,114 @@ export default function ContactMasterRecordPage({
     })();
     return () => { cancelled = true; };
   }, [contactId, endpoint, initialContact]);
+
+  useEffect(() => {
+    if (!contactId || activeTab !== "roles" || activeRoleTab !== "DISTRIBUTOR" || !distributorMappingConfirmed) return;
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`${endpoint}/${encodeURIComponent(contactId)}/dealers`);
+        const result = await response.json() as DistributorDealerRow[] | { error?: string };
+        if (!response.ok || !Array.isArray(result)) throw new Error("error" in result ? result.error ?? "Unable to load mapped Dealers." : "Unable to load mapped Dealers.");
+        setDistributorDealerRows(result);
+        setSelectedDealerIds(result.map((row) => row.id));
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "Unable to load mapped Dealers.");
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeRoleTab, activeTab, contactId, distributorMappingConfirmed, endpoint]);
+
+  useEffect(() => {
+    if (!distributorMappingConfirmed || dealerLookupQuery.trim().length < 2) {
+      setDealerLookupRows([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({
+          activeOnly: "true",
+          limit: "20",
+          offset: "0",
+          search: dealerLookupQuery.trim(),
+          excludedDistributorId: contactId ?? "",
+        });
+        const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/contacts/lookup?${params.toString()}`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        const result = await response.json() as Array<{ id: string; code: string; label: string }> | { error?: string };
+        if (!response.ok || !Array.isArray(result)) throw new Error("error" in result ? result.error ?? "Unable to search Contacts." : "Unable to search Contacts.");
+        setDealerLookupRows(result.filter((row) => row.id !== contactId && !selectedDealerIds.includes(row.id)));
+      } catch (lookupError) {
+        if (!(lookupError instanceof Error && lookupError.name === "AbortError")) {
+          setError(lookupError instanceof Error ? lookupError.message : "Unable to search Contacts.");
+        }
+      }
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [contactId, dealerLookupQuery, distributorMappingConfirmed, organizationId, selectedDealerIds]);
+
+  useEffect(() => {
+    if (activeRoleTab === "DISTRIBUTOR") {
+      setDistributorMappingConfirmed(Boolean(contact?.roles.some((role) => role.role_code === "DISTRIBUTOR")));
+    }
+    if (activeRoleTab === "AGENT" || activeRoleTab === "DEALER") {
+      setRoleMappingConfirmed(Boolean(contact?.roles.some((role) => role.role_code === activeRoleTab)));
+    }
+  }, [activeRoleTab, contact]);
+
+  useEffect(() => {
+    if (!contactId || !["AGENT", "DEALER"].includes(activeRoleTab) || !roleMappingConfirmed) return;
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`${endpoint}/${encodeURIComponent(contactId)}/role-mappings/${activeRoleTab}`);
+        const result = await response.json() as DistributorDealerRow[] | { error?: string };
+        if (!response.ok || !Array.isArray(result)) throw new Error("error" in result ? result.error ?? "Unable to load mapped Contacts." : "Unable to load mapped Contacts.");
+        setRoleMappedRows(result);
+        setRoleMappedContactIds(result.map((row) => row.id));
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "Unable to load mapped Contacts.");
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeRoleTab, contactId, endpoint, roleMappingConfirmed]);
+
+  useEffect(() => {
+    if (!roleMappingConfirmed || !["AGENT", "DEALER"].includes(activeRoleTab) || roleLookupQuery.trim().length < 2) {
+      setRoleLookupRows([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({
+          activeOnly: "true",
+          limit: "20",
+          offset: "0",
+          search: roleLookupQuery.trim(),
+        });
+        const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/contacts/lookup?${params.toString()}`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        const result = await response.json() as Array<{ id: string; code: string; label: string }> | { error?: string };
+        if (!response.ok || !Array.isArray(result)) throw new Error("error" in result ? result.error ?? "Unable to search Contacts." : "Unable to search Contacts.");
+        setRoleLookupRows(result.filter((row) => row.id !== contactId && !roleMappedContactIds.includes(row.id)));
+      } catch (lookupError) {
+        if (!(lookupError instanceof Error && lookupError.name === "AbortError")) {
+          setError(lookupError instanceof Error ? lookupError.message : "Unable to search Contacts.");
+        }
+      }
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [activeRoleTab, contactId, organizationId, roleLookupQuery, roleMappingConfirmed, roleMappedContactIds]);
 
   const title = contact?.display_name || contact?.legal_name || (createMode ? "New contact" : "Contact");
   const detailHref = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/contacts`;
@@ -271,6 +410,97 @@ export default function ContactMasterRecordPage({
     }
   };
 
+  const openDealerModal = () => {
+    setDealerLookupQuery("");
+    setDealerLookupRows([]);
+    setSelectedDealer(null);
+    setDealerModalOpen(true);
+  };
+
+  const closeDealerModal = () => {
+    setDealerModalOpen(false);
+    setDealerLookupQuery("");
+    setDealerLookupRows([]);
+    setSelectedDealer(null);
+  };
+
+  const addDistributorDealer = async () => {
+    if (!contactId || !selectedDealer) return;
+    setMappingLoading(true);
+    setError("");
+    try {
+      const dealerIds = [...new Set([...selectedDealerIds, selectedDealer.id])];
+      const response = await fetch(`${endpoint}/${encodeURIComponent(contactId)}/dealers`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dealerIds }),
+      });
+      const result = await response.json() as DistributorDealerRow[] | { error?: string };
+      if (!response.ok || !Array.isArray(result)) throw new Error("error" in result ? result.error ?? "Unable to add Dealer." : "Unable to add Dealer.");
+      setDistributorDealerRows(result);
+      setSelectedDealerIds(result.map((row) => row.id));
+      setNotice("Dealer added to this Distributor.");
+      closeDealerModal();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to add Dealer.");
+    } finally {
+      setMappingLoading(false);
+    }
+  };
+
+  const confirmDistributor = () => {
+    setDistributorMappingConfirmed(true);
+    setSelectedDealerIds(distributorDealerRows.map((row) => row.id));
+  };
+
+  const confirmRoleMapping = () => {
+    setRoleMappingConfirmed(true);
+    setRoleMappedContactIds(roleMappedRows.map((row) => row.id));
+  };
+
+  const openRoleModal = () => {
+    setRoleLookupQuery("");
+    setRoleLookupRows([]);
+    setSelectedRoleContact(null);
+    setAgentCommissionPercentage("0");
+    setRoleModalOpen(true);
+  };
+
+  const closeRoleModal = () => {
+    setRoleModalOpen(false);
+    setRoleLookupQuery("");
+    setRoleLookupRows([]);
+    setSelectedRoleContact(null);
+    setAgentCommissionPercentage("0");
+  };
+
+  const addRoleMappedContact = async () => {
+    if (!contactId || !selectedRoleContact || !["AGENT", "DEALER"].includes(activeRoleTab)) return;
+    setMappingLoading(true);
+    setError("");
+    try {
+      const contactIds = [...new Set([...roleMappedContactIds, selectedRoleContact.id])];
+      const response = await fetch(`${endpoint}/${encodeURIComponent(contactId)}/role-mappings/${activeRoleTab}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contactIds,
+          ...(activeRoleTab === "AGENT" ? { commissionPercentage: agentCommissionPercentage } : {}),
+        }),
+      });
+      const result = await response.json() as DistributorDealerRow[] | { error?: string };
+      if (!response.ok || !Array.isArray(result)) throw new Error("error" in result ? result.error ?? "Unable to add Contact." : "Unable to add Contact.");
+      setRoleMappedRows(result);
+      setRoleMappedContactIds(result.map((row) => row.id));
+      setNotice(`Contact added under ${roleLabels.get(activeRoleTab)}.`);
+      closeRoleModal();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to add Contact.");
+    } finally {
+      setMappingLoading(false);
+    }
+  };
+
   const cancelEdit = () => {
     if (createMode) {
       router.push(detailHref);
@@ -302,6 +532,11 @@ export default function ContactMasterRecordPage({
     }));
   };
 
+  const selectedAddressUsage = activeTab === "shipping" ? "SHIPPING" : "BILLING";
+  const visibleFormAddresses = form.addresses
+    .map((address, index) => ({ address, index }))
+    .filter(({ address }) => address.usage === selectedAddressUsage || address.usage === "BOTH");
+
   if (loading) {
     return <Card><p className="text-center text-sm text-slate-500" role="status">Loading contact…</p></Card>;
   }
@@ -324,9 +559,24 @@ export default function ContactMasterRecordPage({
           </Link>
           <p className="erp-eyebrow mt-4">Unified Contact Master</p>
           <h1 className="mt-2 break-words text-2xl font-bold text-[var(--erp-text)]">{editing ? (createMode ? "Create contact" : "Edit contact") : title}</h1>
-          {!createMode && contact ? <p className="mt-1 text-sm text-slate-600">{contact.code} · {contact.is_active ? "Active" : "Inactive"}</p> : null}
+          {!createMode && contact ? <p className="mt-1 text-sm text-slate-600">{contact.code} · {(editing ? form.isActive : contact.is_active) ? "Active" : "Inactive"}</p> : null}
         </div>
-        {!editing && contact ? <Button onClick={() => { setForm(toForm(contact)); setEditing(true); setActiveTab("contact"); }}>Edit contact</Button> : null}
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {editing && contactId ? (
+            <div className="flex items-center gap-3 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] px-4 py-2">
+              <div>
+                <p className="text-sm font-semibold text-[var(--erp-text)]">Contact status</p>
+                <p className="text-xs text-[var(--erp-muted)]">{form.isActive ? "Active" : "Inactive"}</p>
+              </div>
+              <Switch
+                checked={form.isActive}
+                label="Active contact"
+                onCheckedChange={(isActive) => setForm((current) => ({ ...current, isActive }))}
+              />
+            </div>
+          ) : null}
+          {!editing && contact ? <Button onClick={() => { setForm(toForm(contact)); setEditing(true); setActiveTab("contact"); }}>Edit contact</Button> : null}
+        </div>
       </div>
 
       {error ? <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-danger)]" role="alert">{error}</p> : null}
@@ -346,10 +596,132 @@ export default function ContactMasterRecordPage({
                     ["Display name", contact.display_name ?? "—"],
                     ["Email", contact.email ?? "—"],
                     ["Phone", contact.phone ?? "—"],
-                    ["Business roles", contact.roles.map((role) => roleLabels.get(role.role_code) ?? role.role_code).join(", ")],
                   ].map(([label, value]) => <DetailField key={label} label={label} value={value} />)}
                 </dl>
               </>
+            ) : null}
+            {activeTab === "roles" ? (
+              <section className="space-y-4">
+                <Tabs
+                  tabs={ROLE_OPTIONS.map((role) => ({ value: role.code, label: role.label }))}
+                  value={activeRoleTab}
+                  onChange={setActiveRoleTab}
+                  ariaLabel="Contact business roles"
+                  scrollable
+                  compact
+                />
+                <div role="tabpanel" className="space-y-3">
+                  <h2 className="text-base font-semibold text-[var(--erp-text)]">{roleLabels.get(activeRoleTab)}</h2>
+                  {contact.roles.some((role) => role.role_code === activeRoleTab)
+                    ? <p className="text-sm text-[var(--erp-success)]" role="status">This contact has the {roleLabels.get(activeRoleTab)} role.</p>
+                    : <EmptyDetail>{`This contact does not have the ${roleLabels.get(activeRoleTab) ?? activeRoleTab} role.`}</EmptyDetail>}
+                  {activeRoleTab === "DISTRIBUTOR" ? (
+                    <div className="space-y-4">
+                      {!distributorMappingConfirmed ? (
+                        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--erp-border)] p-4">
+                          <p className="text-sm font-medium text-[var(--erp-text)]">Is this a Distributor?</p>
+                          <Button type="button" onClick={confirmDistributor} disabled={mappingLoading}>Yes</Button>
+                          <Button type="button" variant="secondary" onClick={() => setDistributorMappingConfirmed(false)}>No</Button>
+                        </div>
+                      ) : (
+                        <>
+                          <ReportGrid
+                            title="Mapped Dealers"
+                            records={distributorDealerRows}
+                            fields={[
+                              { key: "code", label: "Dealer Code" },
+                              { key: "name", label: "Dealer Name" },
+                              { key: "status", label: "Status" },
+                            ]}
+                            visibleFields={["code", "name", "status"]}
+                            onVisibleFieldsChange={() => undefined}
+                            storageKey={`distributor-dealers-${organizationId}-${contactId}`}
+                            rowIdSelector={(row) => row.id}
+                            selectable={false}
+                            selectedIds={[]}
+                            displayMode="cards"
+                            cardBadge={() => "Dealer"}
+                            onRowClick={(dealerId) => router.push(`${detailHref}/${encodeURIComponent(dealerId)}`)}
+                            onNewOrder={openDealerModal}
+                            newActionLabel="+ Add Dealer"
+                            getSearchValue={(fieldKey, row) => fieldKey === "code"
+                              ? row.code
+                              : fieldKey === "name"
+                                ? row.displayName || row.legalName
+                                : row.isActive ? "Active" : "Inactive"}
+                            renderCell={(fieldKey, row) => {
+                              if (fieldKey === "code") return row.code;
+                              if (fieldKey === "name") return row.displayName || row.legalName;
+                              if (fieldKey === "commission") return `${row.commissionPercentage ?? "0"}%`;
+                              return row.isActive ? "Active" : "Inactive";
+                            }}
+                            emptyMessage="No Dealers are mapped to this Distributor."
+                          />
+                        </>
+                      )}
+                    </div>
+                  ) : null}
+                  {activeRoleTab === "AGENT" || activeRoleTab === "DEALER" ? (
+                    <div className="space-y-4">
+                      {!roleMappingConfirmed ? (
+                        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--erp-border)] p-4">
+                          <p className="text-sm font-medium text-[var(--erp-text)]">Is this a {roleLabels.get(activeRoleTab)}?</p>
+                          <Button type="button" onClick={confirmRoleMapping} disabled={mappingLoading}>Yes</Button>
+                          <Button type="button" variant="secondary" onClick={() => setRoleMappingConfirmed(false)}>No</Button>
+                        </div>
+                      ) : (
+                        <ReportGrid
+                          title={`Mapped Contacts`}
+                          records={roleMappedRows}
+                          fields={[
+                            { key: "code", label: "Contact Code" },
+                            { key: "name", label: "Contact Name" },
+                            { key: "status", label: "Status" },
+                            ...(activeRoleTab === "AGENT" ? [{ key: "commission", label: "Commission %" }] : []),
+                            ...(activeRoleTab === "AGENT" ? [{ key: "actions", label: "Actions" }] : []),
+                          ]}
+                          visibleFields={activeRoleTab === "AGENT" ? ["code", "name", "status", "commission", "actions"] : ["code", "name", "status"]}
+                          onVisibleFieldsChange={() => undefined}
+                          storageKey={`${activeRoleTab.toLowerCase()}-contacts-${organizationId}-${contactId}`}
+                          rowIdSelector={(row) => row.id}
+                          selectable={false}
+                          selectedIds={[]}
+                          displayMode="cards"
+                          cardBadge={() => roleLabels.get(activeRoleTab) ?? activeRoleTab}
+                          onRowClick={(mappedContactId) => router.push(`${detailHref}/${encodeURIComponent(mappedContactId)}`)}
+                          onNewOrder={openRoleModal}
+                          newActionLabel="+ Add Contact"
+                          getSearchValue={(fieldKey, row) => fieldKey === "code"
+                            ? row.code
+                            : fieldKey === "name"
+                              ? row.displayName || row.legalName
+                              : row.isActive ? "Active" : "Inactive"}
+                          renderCell={(fieldKey, row) => {
+                            if (fieldKey === "code") return row.code;
+                            if (fieldKey === "name") return row.displayName || row.legalName;
+                            if (fieldKey === "actions" && activeRoleTab === "AGENT" && contactId) {
+                              return (
+                                <div className="flex justify-end">
+                                  <Link
+                                    href={`${detailHref}/${encodeURIComponent(contactId)}/role/agent/settings`}
+                                    aria-label="Open Agent role settings"
+                                    title="Agent role settings"
+                                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] text-[var(--erp-muted)] shadow-sm transition-colors hover:border-[var(--erp-brand)] hover:bg-[var(--erp-brand-soft)] hover:text-[var(--erp-brand)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+                                  >
+                                    <Settings2 className="h-4 w-4" aria-hidden="true" />
+                                  </Link>
+                                </div>
+                              );
+                            }
+                            return row.isActive ? "Active" : "Inactive";
+                          }}
+                          emptyMessage={`No Contacts are mapped to this ${roleLabels.get(activeRoleTab)}.`}
+                        />
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              </section>
             ) : null}
             {activeTab === "gst" ? (
               <section className="space-y-4">
@@ -369,10 +741,15 @@ export default function ContactMasterRecordPage({
                 )) : <EmptyDetail>No GSTIN is assigned to this contact.</EmptyDetail>}
               </section>
             ) : null}
-            {activeTab === "addresses" ? (
+            {activeTab === "billing" || activeTab === "shipping" ? (
               <section className="space-y-4">
-                <h2 className="text-base font-semibold text-[var(--erp-text)]">Billing and shipping addresses</h2>
-                {contact.addresses.length ? contact.addresses.map((address) => (
+                <h2 className="text-base font-semibold text-[var(--erp-text)]">
+                  {activeTab === "billing" ? "Billing addresses" : "Shipping addresses"}
+                </h2>
+                {contact.addresses.filter((address) => address.usage === selectedAddressUsage || address.usage === "BOTH").length
+                  ? contact.addresses
+                    .filter((address) => address.usage === selectedAddressUsage || address.usage === "BOTH")
+                    .map((address) => (
                   <div key={address.id} className="space-y-3 rounded-xl border border-[var(--erp-border)] p-4">
                     <div className="flex flex-wrap gap-2">
                       <span className="rounded-full bg-[var(--erp-surface-soft)] px-3 py-1 text-xs font-semibold">{address.usage}</span>
@@ -386,7 +763,8 @@ export default function ContactMasterRecordPage({
                       <DetailField label="State code" value={address.state_code} />
                     </dl>
                   </div>
-                )) : <EmptyDetail>No billing or shipping addresses have been added.</EmptyDetail>}
+                  ))
+                  : <EmptyDetail>{`No ${activeTab} addresses have been added.`}</EmptyDetail>}
               </section>
             ) : null}
             {activeTab === "bank" ? (
@@ -409,7 +787,7 @@ export default function ContactMasterRecordPage({
           <form onSubmit={saveContact} className="space-y-6" noValidate={false}>
             {activeTab === "contact" ? (
               <section className="space-y-4">
-                <h2 className="text-base font-semibold text-[var(--erp-text)]">Contact information and business roles</h2>
+                <h2 className="text-base font-semibold text-[var(--erp-text)]">Contact information</h2>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <div>
                     <Input
@@ -426,10 +804,48 @@ export default function ContactMasterRecordPage({
                   <Input label="Email" type="email" maxLength={255} value={form.email} onChange={(event) => setForm({ ...form, email: event.currentTarget.value })} />
                   <Input label="Phone" type="tel" maxLength={40} value={form.phone} onChange={(event) => setForm({ ...form, phone: event.currentTarget.value })} />
                 </div>
-                <div className="space-y-3">
-                  <p className="text-sm font-semibold text-[var(--erp-text)]">Business roles</p>
-                  <div className="flex flex-wrap gap-3">{ROLE_OPTIONS.map((role) => <div key={role.code} className="rounded-xl border border-[var(--erp-border)] px-3 py-2"><Checkbox checked={form.roles.includes(role.code)} onChange={(event) => setForm({ ...form, roles: event.currentTarget.checked ? [...form.roles, role.code] : form.roles.filter((item) => item !== role.code) })} label={role.label} /></div>)}</div>
-                </div>
+              </section>
+            ) : null}
+            {activeTab === "roles" ? (
+              <section className="space-y-4">
+                <Tabs
+                  tabs={ROLE_OPTIONS.map((role) => ({ value: role.code, label: role.label }))}
+                  value={activeRoleTab}
+                  onChange={setActiveRoleTab}
+                  ariaLabel="Contact business roles"
+                  scrollable
+                  compact
+                />
+                {ROLE_OPTIONS.filter((role) => role.code === activeRoleTab).map((role) => (
+                  <div key={role.code} className="rounded-xl border border-[var(--erp-border)] p-4">
+                    <h2 className="mb-3 text-base font-semibold text-[var(--erp-text)]">{role.label}</h2>
+                    <Checkbox
+                      checked={form.roles.includes(role.code)}
+                      onChange={(event) => {
+                        const checked = event.currentTarget.checked;
+                        if (checked && role.code === "DEALER" && form.roles.includes("DISTRIBUTOR")) {
+                          setError("A contact cannot be both Distributor and Dealer. Remove the Distributor role first.");
+                          return;
+                        }
+                        if (checked && role.code === "DISTRIBUTOR" && form.roles.includes("DEALER")) {
+                          setError("A contact cannot be both Distributor and Dealer. Remove the Dealer role first.");
+                          return;
+                        }
+                        setForm((current) => ({
+                          ...current,
+                          roles: checked
+                            ? role.code === "DEALER"
+                              ? [...current.roles.filter((item) => item !== "DISTRIBUTOR" && item !== role.code), role.code]
+                              : role.code === "DISTRIBUTOR"
+                                ? [...current.roles.filter((item) => item !== "DEALER" && item !== role.code), role.code]
+                                : [...current.roles.filter((item) => item !== role.code), role.code]
+                            : current.roles.filter((item) => item !== role.code),
+                        }));
+                      }}
+                      label={`Assign ${role.label} role`}
+                    />
+                  </div>
+                ))}
               </section>
             ) : null}
             {activeTab === "gst" ? (
@@ -474,13 +890,41 @@ export default function ContactMasterRecordPage({
                 {!form.taxRegistrations.length ? <EmptyDetail>No GSTIN is assigned to this contact.</EmptyDetail> : null}
               </section>
             ) : null}
-            {activeTab === "addresses" ? (
+            {activeTab === "billing" || activeTab === "shipping" ? (
               <section className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div><h2 className="text-base font-semibold text-[var(--erp-text)]">Billing and shipping addresses</h2><p className="text-sm text-slate-500">Addresses are linked to this contact’s single GSTIN where applicable.</p></div>
-                  <Button size="sm" variant="secondary" onClick={() => setForm({ ...form, addresses: [...form.addresses, { taxRegistrationGstin: "", label: "", usage: "BOTH", addressLine1: "", addressLine2: "", city: "", stateName: "", stateCode: "", postalCode: "", countryCode: "IN", isDefaultBilling: false, isDefaultShipping: false }] })}><Plus aria-hidden="true" className="h-4 w-4" /> Add address</Button>
+                  <div>
+                    <h2 className="text-base font-semibold text-[var(--erp-text)]">
+                      {activeTab === "billing" ? "Billing addresses" : "Shipping addresses"}
+                    </h2>
+                    <p className="text-sm text-slate-500">Addresses are linked to this contact’s single GSTIN where applicable.</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setForm({
+                      ...form,
+                      addresses: [...form.addresses, {
+                        taxRegistrationGstin: "",
+                        label: "",
+                        usage: selectedAddressUsage,
+                        addressLine1: "",
+                        addressLine2: "",
+                        city: "",
+                        stateName: "",
+                        stateCode: "",
+                        postalCode: "",
+                        countryCode: "IN",
+                        isDefaultBilling: false,
+                        isDefaultShipping: false,
+                      }],
+                    })}
+                  >
+                    <Plus aria-hidden="true" className="h-4 w-4" />
+                    Add {activeTab === "billing" ? "billing" : "shipping"} address
+                  </Button>
                 </div>
-                {form.addresses.map((address, index) => (
+                {visibleFormAddresses.map(({ address, index }) => (
                   <div key={`${address.id ?? address.label}-${index}`} className="grid grid-cols-1 gap-3 rounded-xl border border-[var(--erp-border)] p-4 md:grid-cols-2 xl:grid-cols-4">
                     <Input label="Address label" value={address.label} onChange={(event) => updateAddress(index, "label", event.currentTarget.value)} />
                     <Select label="GSTIN" value={address.taxRegistrationGstin} onChange={(event) => updateAddress(index, "taxRegistrationGstin", event.currentTarget.value)}><option value="">No GST registration</option>{form.taxRegistrations.map((registration, rowIndex) => <option key={`${registration.gstin}-${rowIndex}`} value={registration.gstin}>{registration.gstin || "New GST registration"}</option>)}</Select>
@@ -496,7 +940,9 @@ export default function ContactMasterRecordPage({
                     <div className="md:col-span-2 xl:col-span-4"><Button variant="destructive" size="sm" onClick={() => window.confirm("Remove this address?") && setForm({ ...form, addresses: form.addresses.filter((_, rowIndex) => rowIndex !== index) })}>Remove address</Button></div>
                   </div>
                 ))}
-                {!form.addresses.length ? <EmptyDetail>Add billing and shipping destinations for this contact.</EmptyDetail> : null}
+                {!visibleFormAddresses.length ? (
+                  <EmptyDetail>{`Add a ${activeTab} destination for this contact.`}</EmptyDetail>
+                ) : null}
               </section>
             ) : null}
             {activeTab === "bank" ? (
@@ -520,7 +966,7 @@ export default function ContactMasterRecordPage({
               </section>
             ) : null}
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--erp-border)] pt-4">
-              {contactId ? <Checkbox checked={form.isActive} onChange={(event) => setForm({ ...form, isActive: event.currentTarget.checked })} label="Active contact" /> : <span />}
+              <span />
               <div className="flex gap-2">
                 <Button variant="secondary" onClick={cancelEdit} disabled={saving}>Cancel</Button>
                 <Button type="submit" disabled={saving}><Save aria-hidden="true" className="h-4 w-4" />{saving ? "Saving…" : createMode ? "Create contact" : "Save changes"}</Button>
@@ -529,6 +975,119 @@ export default function ContactMasterRecordPage({
           </form>
         )}
       </Card>
+      <Modal
+        open={dealerModalOpen}
+        onClose={closeDealerModal}
+        size="sm"
+        ariaLabel="Add Dealer"
+        closeOnBackdrop={!mappingLoading}
+      >
+        <div className="space-y-5 p-6">
+          <div>
+            <p className="erp-eyebrow">Distributor mapping</p>
+            <h2 className="mt-2 text-lg font-semibold text-[var(--erp-text)]">Add Dealer</h2>
+          </div>
+          <Input
+            label="Dealer name"
+            type="search"
+            value={dealerLookupQuery}
+            onChange={(event) => {
+              setDealerLookupQuery(event.currentTarget.value);
+              setSelectedDealer(null);
+            }}
+            placeholder="Search contact name or code"
+            autoComplete="off"
+          />
+          {dealerLookupQuery.trim().length >= 2 ? (
+            <div className="max-h-64 overflow-y-auto rounded-xl border border-[var(--erp-border)]">
+              {dealerLookupRows.length ? dealerLookupRows.map((row) => (
+                <button
+                  key={row.id}
+                  type="button"
+                  className={`w-full border-b border-[var(--erp-border)] px-4 py-3 text-left text-sm last:border-b-0 ${
+                    selectedDealer?.id === row.id
+                      ? "bg-[var(--erp-surface-soft)] font-semibold text-[var(--erp-text)]"
+                      : "text-[var(--erp-text)] hover:bg-[var(--erp-surface-soft)]"
+                  }`}
+                  onClick={() => setSelectedDealer(row)}
+                >
+                  <span className="block">{row.label}</span>
+                  <span className="block text-xs text-[var(--erp-muted)]">{row.code}</span>
+                </button>
+              )) : <p className="px-4 py-3 text-sm text-[var(--erp-muted)]">No matching Contacts found.</p>}
+            </div>
+          ) : <p className="text-sm text-[var(--erp-muted)]">Enter at least 2 characters to search Contacts.</p>}
+          {activeRoleTab === "AGENT" ? (
+            <Input
+              label="Commission percentage"
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              value={agentCommissionPercentage}
+              onChange={(event) => setAgentCommissionPercentage(event.currentTarget.value)}
+              placeholder="0.00"
+              textCase="preserve"
+            />
+          ) : null}
+          <div className="flex justify-end gap-2 border-t border-[var(--erp-border)] pt-4">
+            <Button type="button" variant="secondary" onClick={closeDealerModal} disabled={mappingLoading}>Cancel</Button>
+            <Button type="button" onClick={addDistributorDealer} disabled={mappingLoading || !selectedDealer}>
+              {mappingLoading ? "Adding..." : "Add Dealer"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+      <Modal
+        open={roleModalOpen}
+        onClose={closeRoleModal}
+        size="square"
+        ariaLabel={`Add Contact under ${roleLabels.get(activeRoleTab)}`}
+        closeOnBackdrop={!mappingLoading}
+      >
+        <div className="space-y-5 p-6">
+          <div>
+            <p className="erp-eyebrow">{roleLabels.get(activeRoleTab)} mapping</p>
+            <h2 className="mt-2 text-lg font-semibold text-[var(--erp-text)]">Add Contact</h2>
+          </div>
+          <Input
+            label="Contact name"
+            type="search"
+            value={roleLookupQuery}
+            onChange={(event) => {
+              setRoleLookupQuery(event.currentTarget.value);
+              setSelectedRoleContact(null);
+            }}
+            placeholder="Search contact name or code"
+            autoComplete="off"
+          />
+          {roleLookupQuery.trim().length >= 2 ? (
+            <div className="max-h-64 overflow-y-auto rounded-xl border border-[var(--erp-border)]">
+              {roleLookupRows.length ? roleLookupRows.map((row) => (
+                <button
+                  key={row.id}
+                  type="button"
+                  className={`w-full border-b border-[var(--erp-border)] px-4 py-3 text-left text-sm last:border-b-0 ${
+                    selectedRoleContact?.id === row.id
+                      ? "bg-[var(--erp-surface-soft)] font-semibold text-[var(--erp-text)]"
+                      : "text-[var(--erp-text)] hover:bg-[var(--erp-surface-soft)]"
+                  }`}
+                  onClick={() => setSelectedRoleContact(row)}
+                >
+                  <span className="block">{row.label}</span>
+                  <span className="block text-xs text-[var(--erp-muted)]">{row.code}</span>
+                </button>
+              )) : <p className="px-4 py-3 text-sm text-[var(--erp-muted)]">No matching Contacts found.</p>}
+            </div>
+          ) : <p className="text-sm text-[var(--erp-muted)]">Enter at least 2 characters to search Contacts.</p>}
+          <div className="flex justify-end gap-2 border-t border-[var(--erp-border)] pt-4">
+            <Button type="button" variant="secondary" onClick={closeRoleModal} disabled={mappingLoading}>Cancel</Button>
+            <Button type="button" onClick={addRoleMappedContact} disabled={mappingLoading || !selectedRoleContact}>
+              {mappingLoading ? "Adding..." : "Add Contact"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

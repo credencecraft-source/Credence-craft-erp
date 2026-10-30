@@ -17,31 +17,19 @@ import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import OrderQrStickerPreview from "@/components/erp/order-qr-sticker-preview";
+import OrderQrPrintSheetPreview from "@/components/erp/order-qr-print-sheet-preview";
+import { createOrderQrStickerDataUrl } from "@/components/erp/order-qr-print-output";
 import {
   DEFAULT_QR_FIELD_STYLE,
   createDefaultOrderQrTemplateLayout,
   ORDER_QR_TEMPLATE_FIELDS,
+  ORDER_QR_TEMPLATE_SAMPLE_VALUES,
   ORDER_QR_TEMPLATE_SIZES,
   type OrderQrDisplayFieldStyle,
   type OrderQrTemplateLayout,
   type OrderQrTemplateFieldKey,
 } from "@/lib/services/orders/order-qr-template-contract";
-
-const sampleOrder: Record<OrderQrTemplateFieldKey, string> = {
-  orderNo: "ORD-2026-001",
-  entityName: "CREDENCE CRAFT",
-  category: "T-SHIRT",
-  subCategory: "CREW NECK",
-  season: "SS 2026",
-  article: "ART-001",
-  styleName: "CLASSIC TEE",
-  colors: "NAVY",
-  buyer: "SAMPLE BUYER",
-  brand: "CREDENCE",
-  sizeGroup: "S-M-L-XL",
-  orderQty: "1200",
-  deliveryDate: "2026-12-15",
-};
+import type { PageSetupPrintSnapshot } from "@/lib/services/design-development/page-setup-template-contract";
 
 export default function BarcodeQrCodeTemplateCreatePage({
   workspaceId,
@@ -62,12 +50,16 @@ export default function BarcodeQrCodeTemplateCreatePage({
     "styleName",
     "buyer",
   ]);
+  const [selectedStyleField, setSelectedStyleField] =
+    useState<OrderQrTemplateFieldKey>("orderNo");
   const [displayFieldStyles, setDisplayFieldStyles] = useState<
     Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>
   >({});
-  const [layout, setLayout] = useState<OrderQrTemplateLayout>(() =>
-    createDefaultOrderQrTemplateLayout(["orderNo", "styleName", "buyer"]),
-  );
+  const savedPageSetupRef = useRef<PageSetupPrintSnapshot | null>(null);
+  const [layout, setLayout] = useState<OrderQrTemplateLayout>(() => ({
+    ...createDefaultOrderQrTemplateLayout(["orderNo", "styleName", "buyer"]),
+    printerType: "LASER",
+  }));
   const previewRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
     key: "qr" | OrderQrTemplateFieldKey;
@@ -80,29 +72,93 @@ export default function BarcodeQrCodeTemplateCreatePage({
   const [qrSize, setQrSize] = useState<(typeof ORDER_QR_TEMPLATE_SIZES)[number]>(256);
   const [stickerWidthMm, setStickerWidthMm] = useState(50);
   const [stickerLengthMm, setStickerLengthMm] = useState(30);
+  const [pageSetupTemplateId, setPageSetupTemplateId] = useState("");
+  const [pageSetupOptions, setPageSetupOptions] = useState<PageSetupPrintSnapshot[]>([]);
+  const [isLoadingPageSetups, setIsLoadingPageSetups] = useState(true);
+  const [pageSetupLoadError, setPageSetupLoadError] = useState("");
+  const [pageSetupLoadAttempt, setPageSetupLoadAttempt] = useState(0);
   const [qrPreview, setQrPreview] = useState<{
     payload: string;
     size: number;
     dataUrl?: string;
     error?: string;
   }>({ payload: "", size: 0 });
+  const [printStickerPreview, setPrintStickerPreview] = useState<{
+    key?: string;
+    dataUrl?: string;
+    error?: string;
+  }>({});
   const [saveError, setSaveError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingTemplate, setIsLoadingTemplate] = useState(Boolean(templateId));
   const [templateLoadError, setTemplateLoadError] = useState("");
   const [templateLoadAttempt, setTemplateLoadAttempt] = useState(0);
+  const selectedPageSetup = pageSetupOptions.find(({ id }) => id === pageSetupTemplateId) ?? null;
+
+  useEffect(() => {
+    let active = true;
+    const query = new URLSearchParams({ organizationId, workspaceId });
+    void fetch(`/api/design-development/page-setup-templates?${query}`, { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error || "Unable to load Page Setup templates.");
+        }
+        return data as { templates: PageSetupPrintSnapshot[] };
+      })
+      .then(({ templates }) => {
+        if (active) {
+          const saved = savedPageSetupRef.current;
+          setPageSetupOptions(
+            saved && !templates.some(({ id }) => id === saved.id)
+              ? [...templates, saved]
+              : templates,
+          );
+          setPageSetupLoadError("");
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setPageSetupLoadError(
+            error instanceof Error ? error.message : "Unable to load Page Setup templates.",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoadingPageSetups(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [organizationId, pageSetupLoadAttempt, workspaceId]);
 
   const previewEntries = useMemo(
     () => displayFields.map((key) => ({
         label: ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === key)!.label,
-        value: sampleOrder[key],
+        value: ORDER_QR_TEMPLATE_SAMPLE_VALUES[key],
       })),
     [displayFields],
   );
+  const printPreviewDisplayValues = useMemo(
+    () => Object.fromEntries(previewEntries.map(({ value }, index) => [
+      displayFields[index],
+      value,
+    ])),
+    [displayFields, previewEntries],
+  );
+  const activeStyleFieldKey = displayFields.includes(selectedStyleField)
+    ? selectedStyleField
+    : displayFields[0] ?? "";
+  const activeStyle = activeStyleFieldKey
+    ? {
+      ...DEFAULT_QR_FIELD_STYLE,
+      ...displayFieldStyles[activeStyleFieldKey],
+    }
+    : DEFAULT_QR_FIELD_STYLE;
   const qrPayload = useMemo(
     () => JSON.stringify({
       [ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === qrFieldKey)!.label]:
-        sampleOrder[qrFieldKey],
+        ORDER_QR_TEMPLATE_SAMPLE_VALUES[qrFieldKey],
     }),
     [qrFieldKey],
   );
@@ -112,6 +168,33 @@ export default function BarcodeQrCodeTemplateCreatePage({
   const qrError = qrPreview.payload === qrPayload && qrPreview.size === qrSize
     ? qrPreview.error
     : undefined;
+  const printPreviewRecord = useMemo(() => ({
+    orderNo: ORDER_QR_TEMPLATE_SAMPLE_VALUES.orderNo,
+    qrSize,
+    qrPayload,
+    stickerWidthMm,
+    stickerLengthMm,
+    pageSetup: selectedPageSetup,
+    layout,
+    displayFields,
+    displayValues: printPreviewDisplayValues,
+    displayFieldStyles,
+    printQuantity: 1,
+  }), [
+    displayFields,
+    displayFieldStyles,
+    layout,
+    printPreviewDisplayValues,
+    qrPayload,
+    qrSize,
+    selectedPageSetup,
+    stickerLengthMm,
+    stickerWidthMm,
+  ]);
+  const printPreviewKey = JSON.stringify(printPreviewRecord);
+  const currentPrintStickerPreview = printStickerPreview.key === printPreviewKey
+    ? printStickerPreview
+    : {};
 
   useEffect(() => {
     if (!templateId) return;
@@ -136,6 +219,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
             qrSize: number;
             stickerWidthMm: number;
             stickerLengthMm: number;
+            pageSetup: PageSetupPrintSnapshot | null;
           };
         };
       })
@@ -154,7 +238,15 @@ export default function BarcodeQrCodeTemplateCreatePage({
             ORDER_QR_TEMPLATE_FIELDS.some((field) => field.key === key),
         ));
         setDisplayFieldStyles(template.displayFieldStyles);
-        setLayout(template.layout);
+        setLayout({ ...template.layout, printerType: "LASER" });
+        setPageSetupTemplateId(template.pageSetup?.id ?? "");
+        savedPageSetupRef.current = template.pageSetup;
+        const pageSetup = template.pageSetup;
+        if (pageSetup) {
+          setPageSetupOptions((current) => current.some(({ id }) => id === pageSetup.id)
+            ? current
+            : [...current, pageSetup]);
+        }
         if (ORDER_QR_TEMPLATE_SIZES.includes(
           template.qrSize as (typeof ORDER_QR_TEMPLATE_SIZES)[number],
         )) {
@@ -206,11 +298,39 @@ export default function BarcodeQrCodeTemplateCreatePage({
     };
   }, [qrPayload, qrSize]);
 
+  useEffect(() => {
+    if (!selectedPageSetup) return;
+
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void createOrderQrStickerDataUrl(printPreviewRecord)
+        .then((dataUrl) => {
+          if (active) setPrintStickerPreview({ key: printPreviewKey, dataUrl });
+        })
+        .catch((error: unknown) => {
+          if (active) {
+            setPrintStickerPreview({
+              key: printPreviewKey,
+              error: error instanceof Error
+                ? error.message
+                : "Unable to prepare the print-sheet preview.",
+            });
+          }
+        });
+    }, 150);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [printPreviewKey, printPreviewRecord, selectedPageSetup]);
+
   const toggleDisplayField = (fieldKey: OrderQrTemplateFieldKey, checked: boolean) => {
     setDisplayFields((current) => checked
       ? [...current, fieldKey]
       : current.filter((key) => key !== fieldKey));
     if (checked) {
+      setSelectedStyleField(fieldKey);
       setLayout((current) => {
         if (current.fields[fieldKey]) return current;
         const defaults = createDefaultOrderQrTemplateLayout([...displayFields, fieldKey]);
@@ -334,6 +454,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
             displayFieldStyles,
             layout,
             qrSize,
+            pageSetupTemplateId,
             stickerWidthMm,
             stickerLengthMm,
           }),
@@ -431,61 +552,65 @@ export default function BarcodeQrCodeTemplateCreatePage({
               }))}
             />
             <Select
-              label="Printer Type"
-              name="printerType"
-              value={layout.printerType}
+              label="Page Setup"
+              name="pageSetupTemplateId"
+              value={pageSetupTemplateId}
               onChange={(event) => {
-                const printerType = event.target.value === "LASER" ? "LASER" : "BARCODE";
-                setLayout((current) => ({ ...current, printerType }));
+                const nextId = event.currentTarget.value;
+                const pageSetup = pageSetupOptions.find(({ id }) => id === nextId);
+                setPageSetupTemplateId(nextId);
+                if (pageSetup) {
+                  setStickerWidthMm(pageSetup.stickerWidthMm);
+                  setStickerLengthMm(pageSetup.stickerLengthMm);
+                  setLayout((current) => ({ ...current, printerType: "LASER" }));
+                }
                 setSaveError("");
               }}
-              options={[
-                { value: "BARCODE", label: "Barcode Printer" },
-                { value: "LASER", label: "Laser Printer (A4 PDF)" },
-              ]}
-            />
-            <Select
-              label="PDF Paper Size"
-              name="pdfPaperSize"
-              value={layout.pdfPaperSize}
-              onChange={(event) => {
-                const pdfPaperSize = event.target.value === "A4_PORTRAIT"
-                  || event.target.value === "A4_LANDSCAPE"
-                  ? event.target.value
-                  : "A4_AUTO";
-                setLayout((current) => ({ ...current, pdfPaperSize }));
-                setSaveError("");
-              }}
-              options={[
-                { value: "A4_AUTO", label: "A4 - Automatic orientation" },
-                { value: "A4_PORTRAIT", label: "A4 - Portrait" },
-                { value: "A4_LANDSCAPE", label: "A4 - Landscape" },
-              ]}
-            />
-            <div className="grid min-w-0 gap-4 sm:grid-cols-2">
-              <Input
-                label="Sticker Width (mm)"
-                name="stickerWidthMm"
-                type="number"
-                min={10}
-                max={500}
-                step={0.1}
-                value={stickerWidthMm}
-                onChange={(event) => setStickerWidthMm(Number(event.target.value))}
-                required
-              />
-              <Input
-                label="Sticker Length (mm)"
-                name="stickerLengthMm"
-                type="number"
-                min={10}
-                max={500}
-                step={0.1}
-                value={stickerLengthMm}
-                onChange={(event) => setStickerLengthMm(Number(event.target.value))}
-                required
-              />
-            </div>
+              disabled={isLoadingPageSetups || Boolean(pageSetupLoadError)}
+              required
+            >
+              <option value="">
+                {isLoadingPageSetups ? "Loading Page Setups..." : "Select Page Setup"}
+              </option>
+              {pageSetupOptions.map((pageSetup) => (
+                <option key={pageSetup.id} value={pageSetup.id}>
+                  {pageSetup.name} · {pageSetup.paperSize} {pageSetup.orientation.toLowerCase()}
+                </option>
+              ))}
+            </Select>
+            {pageSetupLoadError && (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-[var(--erp-danger)]" role="alert">{pageSetupLoadError}</p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setIsLoadingPageSetups(true);
+                    setPageSetupLoadAttempt((attempt) => attempt + 1);
+                  }}
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
+            {!isLoadingPageSetups && !pageSetupLoadError && pageSetupOptions.length === 0 && (
+              <p className="text-sm text-[var(--erp-text-muted)]">
+                Create a Page Setup before saving a QR template.{" "}
+                <Link
+                  href={`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/barcode-qr-code/page-setup/create`}
+                  className="font-medium text-[var(--erp-brand)] hover:underline"
+                >
+                  Create Page Setup
+                </Link>
+              </p>
+            )}
+            {selectedPageSetup && (
+              <p className="text-sm text-[var(--erp-text-muted)]" role="status">
+                Sticker size {selectedPageSetup.stickerWidthMm} × {selectedPageSetup.stickerLengthMm} mm ·{" "}
+                {selectedPageSetup.paperSize} {selectedPageSetup.orientation.toLowerCase()} sheet. These dimensions and margins are fixed by the selected Page Setup.
+              </p>
+            )}
             </Card>
 
             <Card className="space-y-4">
@@ -529,66 +654,10 @@ export default function BarcodeQrCodeTemplateCreatePage({
                   />
                 ))}
               </div>
-              {displayFields.length === 0 ? (
+              {displayFields.length === 0 && (
                 <p className="text-sm text-[var(--erp-text-muted)]">
                   No additional fields will appear on the sticker.
                 </p>
-              ) : (
-                <div className="space-y-4">
-                  {displayFields.map((fieldKey) => {
-                    const field = ORDER_QR_TEMPLATE_FIELDS.find(({ key }) => key === fieldKey)!;
-                    const style = {
-                      ...DEFAULT_QR_FIELD_STYLE,
-                      ...displayFieldStyles[fieldKey],
-                    };
-                    return (
-                      <div
-                        key={fieldKey}
-                        className="grid min-w-0 gap-3 rounded-xl border border-[var(--erp-border)] p-4 sm:grid-cols-2"
-                      >
-                        <div className="sm:col-span-2">
-                          <h3 className="text-sm font-semibold text-slate-900">{field.label} Style</h3>
-                        </div>
-                        <Input
-                          label="Font Size (px)"
-                          type="number"
-                          min={8}
-                          max={48}
-                          step={1}
-                          value={style.fontSize}
-                          onChange={(event) => updateDisplayStyle(fieldKey, {
-                            fontSize: Number(event.target.value),
-                          })}
-                          required
-                        />
-                        <Input
-                          label="Text Color"
-                          type="color"
-                          value={style.color}
-                          onChange={(event) => updateDisplayStyle(fieldKey, {
-                            color: event.target.value,
-                          })}
-                          aria-label={`${field.label} text color`}
-                          className="h-10 p-1"
-                        />
-                        <Checkbox
-                          label="Bold"
-                          checked={style.bold}
-                          onChange={(event) => updateDisplayStyle(fieldKey, {
-                            bold: event.target.checked,
-                          })}
-                        />
-                        <Checkbox
-                          label="Underline"
-                          checked={style.underline}
-                          onChange={(event) => updateDisplayStyle(fieldKey, {
-                            underline: event.target.checked,
-                          })}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
               )}
             </Card>
 
@@ -613,6 +682,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
             </div>
           </div>
 
+          <div className="min-w-0 space-y-6">
           <Card className="h-fit space-y-4">
           <div className="space-y-1">
             <h2 className="text-base font-semibold text-slate-900">QR Preview</h2>
@@ -620,6 +690,67 @@ export default function BarcodeQrCodeTemplateCreatePage({
               Sample order values show how your selected fields will be encoded.
             </p>
           </div>
+          {displayFields.length > 0 && (
+            <div className="space-y-3 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
+              <h3 className="text-sm font-semibold text-slate-900">Selected field style</h3>
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+                <Select
+                  label="Field"
+                  value={activeStyleFieldKey}
+                  onChange={(event) => {
+                    const fieldKey = event.target.value;
+                    if (displayFields.includes(fieldKey as OrderQrTemplateFieldKey)) {
+                      setSelectedStyleField(fieldKey as OrderQrTemplateFieldKey);
+                    }
+                  }}
+                >
+                  {displayFields.map((fieldKey) => (
+                    <option key={fieldKey} value={fieldKey}>
+                      {ORDER_QR_TEMPLATE_FIELDS.find(({ key }) => key === fieldKey)?.label ?? fieldKey}
+                    </option>
+                  ))}
+                </Select>
+                <Input
+                  label="Font Size (px)"
+                  type="number"
+                  min={8}
+                  max={48}
+                  step={1}
+                  value={activeStyle.fontSize}
+                  onChange={(event) => updateDisplayStyle(activeStyleFieldKey, {
+                    fontSize: Number(event.target.value),
+                  })}
+                  required
+                />
+                <Input
+                  label="Text Color"
+                  type="color"
+                  value={activeStyle.color}
+                  onChange={(event) => updateDisplayStyle(activeStyleFieldKey, {
+                    color: event.target.value,
+                  })}
+                  aria-label="Selected field text color"
+                  className="h-10 p-1"
+                />
+                <div className="flex flex-wrap items-center gap-6 sm:pt-6">
+                  <Checkbox
+                    label="Bold"
+                    checked={activeStyle.bold}
+                    onChange={(event) => updateDisplayStyle(activeStyleFieldKey, {
+                      bold: event.target.checked,
+                    })}
+                  />
+                  <Checkbox
+                    label="Underline"
+                    checked={activeStyle.underline}
+                    onChange={(event) => updateDisplayStyle(activeStyleFieldKey, {
+                      underline: event.target.checked,
+                    })}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
           <div className="flex w-full items-center justify-center rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-3">
             <OrderQrStickerPreview
               rootRef={previewRef}
@@ -652,12 +783,33 @@ export default function BarcodeQrCodeTemplateCreatePage({
           </div>
           <p className="text-xs text-[var(--erp-text-muted)]">
             Drag the QR code and each display field to position them. Use arrow keys for precision.
-            {" "}Sticker: {stickerWidthMm} × {stickerLengthMm} mm · {layout.printerType === "LASER"
-              ? `Laser Printer · A4 ${layout.pdfPaperSize === "A4_AUTO" ? "automatic orientation" : layout.pdfPaperSize === "A4_PORTRAIT" ? "portrait" : "landscape"}`
-              : "Barcode Printer · sticker-size output"}
+            {" "}Sticker: {stickerWidthMm} × {stickerLengthMm} mm · {selectedPageSetup
+              ? `${selectedPageSetup.paperSize} ${selectedPageSetup.orientation.toLowerCase()} sheet`
+              : "Select Page Setup"}
             {" "}· QR field: {ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === qrFieldKey)?.label}
           </p>
           </Card>
+          <Card className="h-fit space-y-4">
+            <div className="space-y-1">
+              <h2 className="text-base font-semibold text-slate-900">Print Setup Preview</h2>
+              <p className="text-sm text-slate-600">
+                See the sticker artwork repeated on the selected Page Setup with its saved margins and gaps.
+              </p>
+            </div>
+            {currentPrintStickerPreview.error ? (
+              <p className="text-sm text-[var(--erp-danger)]" role="alert">
+                {currentPrintStickerPreview.error}
+              </p>
+            ) : (
+              <OrderQrPrintSheetPreview
+                pageSetup={selectedPageSetup}
+                stickerDataUrl={currentPrintStickerPreview.dataUrl}
+                stickerWidthMm={stickerWidthMm}
+                stickerLengthMm={stickerLengthMm}
+              />
+            )}
+          </Card>
+          </div>
         </form>
       ) : null}
     </section>

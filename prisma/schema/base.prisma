@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model WorkspaceUser {
@@ -34,156 +34,168 @@ model WorkspaceUser {
 }
 
 model Organization {
-  id                            String                         @id @default(cuid())
-  organization_number           String                         @unique @default(dbgenerated("lpad(nextval('organization_number_sequence'::regclass)::text, 10, '0'::text)")) @db.VarChar(10)
-  organization_id               String                         @unique @default(uuid())
-  organization_name             String                         @db.VarChar(255)
-  organization_email            String?                        @db.VarChar(320)
-  gst_number                    String                         @db.VarChar(50)
-  mobile_number                 String?                        @db.VarChar(50)
-  address_line_1                String?                        @db.VarChar(255)
-  address_line_2                String?                        @db.VarChar(255)
-  city                          String?                        @db.VarChar(100)
-  state                         String?                        @db.VarChar(100)
-  country                       String?                        @db.VarChar(100)
-  pin_code                      String?                        @db.VarChar(20)
-  is_active                     Boolean                        @default(true)
-  ai_enabled                    Boolean                        @default(false)
-  approval_status               String                         @default("PENDING_APPROVAL") @db.VarChar(40)
-  archived_at                   DateTime?
-  trial_started_at              DateTime?
-  trial_ends_at                 DateTime?
-  trial_enabled                 Boolean                        @default(true)
-  trial_extension_hours         Int                            @default(0)
-  plan_id                       String?
-  platform_version_id           String?
-  pricing_mode                  String                         @default("MODULE_BASED") @db.VarChar(30)
-  database_connection_id        String?
-  created_at                    DateTime                       @default(now())
-  updated_at                    DateTime                       @updatedAt
-  plan                          Plan?                          @relation(fields: [plan_id], references: [id])
-  platformVersion               PlatformVersion?               @relation(fields: [platform_version_id], references: [id], onDelete: SetNull)
-  databaseConnection            DatabaseConnection?            @relation(fields: [database_connection_id], references: [id])
-  memberships                   OrganizationMembership[]
-  taxProfiles                   OrganizationTaxProfile[]
-  erpSoftware                   ERPSoftware[]
-  masterModules                 MasterModule[]
-  merchandisingOrders           MerchandisingOrder[]
-  outgoingOrderShares           OrderShare[]                   @relation("OrderShareSourceOrganization")
-  incomingOrderShares           OrderShare[]                   @relation("OrderShareTargetOrganization")
-  destinationOrderShares        OrderShare[]                   @relation("OrderShareDestinationOrganization")
-  approvalRequests              ApprovalRequest[]
-  masterEntities                MasterEntity[]
-  masterLocations               MasterLocation[]
-  masterCategoryTypes           MasterCategoryType[]
-  masterCategories              MasterCategory[]
-  masterSubCategories           MasterSubCategory[]
-  merchandisingOrderQrTemplates  MerchandisingOrderQrTemplate[]
-  merchandisingOrderQrPrintRequests MerchandisingOrderQrPrintRequest[]
-  masterBrands                  MasterBrand[]
-  masterPreOrderChecklists      MasterPreOrderChecklist[]
-  masterCurrencyTypes           MasterCurrencyType[]
-  masterBuyers                  MasterBuyer[]
-  masterSeasons                 MasterSeason[]
-  masterArticles                MasterArticle[]
-  masterArticleVariants               MasterArticleVariant[]
-  masterArticleSizes            MasterArticleSize[]
-  masterGoldSeals               MasterGoldSeal[]
-  masterGoldSealVariants        MasterGoldSealVariant[]
-  masterColors                  MasterColor[]
-  masterSizeGroups              MasterSizeGroup[]
-  masterSizeGroupSizes          MasterSizeGroupSize[]
-  masterSizes                   MasterSize[]
-  masterUoms                    MasterUom[]
-  masterStockUomConverts        MasterStockUomConvert[]
-  masterRawMaterials            MasterRawMaterial[]
-  masterRawMaterialTypes        MasterRawMaterialType[]
-  masterRawMaterialCategories   MasterRawMaterialCategory[]
-  masterRawMaterialSubCats      MasterRawMaterialSubCategory[]
-  generalPurchaseOrderRequests  GeneralPurchaseOrderRequest[]
-  masterVendors                 MasterVendor[]
-  contacts                      Contact[]
-  contactCodeCounter            ContactCodeCounter?
-  contactRoleAssignments        ContactRoleAssignment[]
-  contactTaxRegistrations       ContactTaxRegistration[]
-  contactAddresses              ContactAddress[]
-  contactBankAccounts           ContactBankAccount[]
-  masterStates                  MasterState[]
-  masterGstTypes                MasterGstType[]
-  masterGsts                    MasterGst[]
-  masterHsns                    MasterHsn[]
-  masterMeasurementCharts       MasterMeasurementChart[]
-  masterSizeWiseConsumptions    MasterSizeWiseConsumption[]
-  masterProducts                MasterProduct[]
-  masterProcesses               MasterProcess[]
-  masterProcessTemplates        MasterProcessTemplate[]
-  masterProcessTemplateSteps    MasterProcessTemplateStep[]
-  masterOperations              MasterOperation[]
-  masterOperationTemplates      MasterOperationTemplate[]
-  masterOperationTemplateSteps  MasterOperationTemplateStep[]
-  masterMerchandisers           MasterMerchandiser[]
-  masterStatuses                MasterStatus[]
-  masterOrderVolumes            MasterOrderVolume[]
-  groupedPurchaseOrders         GroupedPurchaseOrder[]
-  masterPurchaseOrders          MasterPurchaseOrder[]
-  purchaseOrders                PurchaseOrder[]
-  posPurchaseRecords            PosPurchaseRecord[]
-  posPurchaseBills              PosPurchaseBill[]
-  posSalesInvoices              PosSalesInvoice[]
-  subscriptions                 Subscription[]
-  segmentPrices                 OrganizationSegmentPrice[]
-  invitations                   OrganizationInvitation[]
-  rolePermissions               OrganizationRolePermission[]
-  roleDefinitions               OrganizationRoleDefinition[]
-  supportTickets                SupportTicket[]
-  orderNumberCounter            OrganizationOrderCounter?
-  dummyDataBatch                OrganizationDummyDataBatch?
-  kycProfile                    OrganizationKycProfile?
-  procurementDocumentCounters   ProcurementDocumentCounter[]
-  challanNumberConfigurations   ChallanNumberConfiguration[]
-  inventoryReceipts             InventoryReceipt[]
-  rmGrnVerifications            RmGrnVerification[]
-  rmGrnVerificationAllocations  RmGrnVerificationAllocation[]
-  rmGrnOrderAllocations         RmGrnOrderAllocation[]
-  rawMaterialStocks             RawMaterialStock[]
-  rawMaterialStockBookings      RawMaterialStockBooking[]
-  rawMaterialOutwardRequests    RawMaterialOutwardRequest[]
-  rawMaterialOutwardRequestLines RawMaterialOutwardRequestLine[]
-  rawMaterialOutwardBoxes       RawMaterialOutwardBox[]
-  rawMaterialOutwardBoxLines    RawMaterialOutwardBoxLine[]
-  rawMaterialOutwardShipments   RawMaterialOutwardShipment[]
-  rawMaterialOutwardShipmentBoxes RawMaterialOutwardShipmentBox[]
-  fgStockOutwardRequests       FinishedGoodsOutwardRequest[]
-  fgStockOutwardRequestLines   FinishedGoodsOutwardRequestLine[]
-  fgStockOutwardBoxes          FinishedGoodsOutwardBox[]
-  fgStockOutwardBoxLines       FinishedGoodsOutwardBoxLine[]
-  fgStockOutwardShipments      FinishedGoodsOutwardShipment[]
-  fgStockOutwardShipmentBoxes  FinishedGoodsOutwardShipmentBox[]
-  finishedGoodsStocks           FinishedGoodsStock[]
-  finishedGoodsSkuStocks        FinishedGoodsSkuStock[]
-  finishedGoodsGeneralStockReceipts   FinishedGoodsGeneralStockReceipt[]
-  finishedGoodsAllocatedStockReceipts FinishedGoodsAllocatedStockReceipt[]
-  gateEntries                   GateEntry[]
-  factoryWorkOrders             FactoryWorkOrder[]
-  shopFloorBatches              BatchMaster[]
-  shopFloorProcessLogs          ShopFloorProcessLog[]
-  shopFloorTransfers            ShopFloorTransfer[]
-  factoryProductionUpdates      FactoryProductionUpdate[]
-  factoryBundleTransfers        FactoryBundleTransfer[]
-  factoryDailyProductionReports FactoryDailyProductionReport[]
-  factoryGrns                   FactoryGrn[]
-  workOrderInventoryGrns        WorkOrderInventoryGrn[]
-  advanceBookings               AdvanceBooking[]
-  advanceBookingSizeLines       AdvanceBookingSizeLine[]
-  advanceBookingAssignments     AdvanceBookingWorkOrderAssignment[]
-  advanceBookingGrnAllocations  WorkOrderInventoryGrnBookingAllocation[]
-  distributionQuotations        DistributionQuotation[]
-  distributionQuotationLines    DistributionQuotationLine[]
-  auditEvents                   AuditEvent[]
-  masterImportJobs                MasterImportJob[]
-  masterImportJobRows             MasterImportJobRow[]
-  masterImportJobFileChunks       MasterImportJobFileChunk[]
-  masterImportRuns                MasterImportRun[]
+  id                                      String                                    @id @default(cuid())
+  organization_number                     String                                    @unique @default(dbgenerated("lpad(nextval('organization_number_sequence'::regclass)::text, 10, '0'::text)")) @db.VarChar(10)
+  organization_id                         String                                    @unique @default(uuid())
+  organization_name                       String                                    @db.VarChar(255)
+  organization_email                      String?                                   @db.VarChar(320)
+  gst_number                              String                                    @db.VarChar(50)
+  mobile_number                           String?                                   @db.VarChar(50)
+  address_line_1                          String?                                   @db.VarChar(255)
+  address_line_2                          String?                                   @db.VarChar(255)
+  city                                    String?                                   @db.VarChar(100)
+  state                                   String?                                   @db.VarChar(100)
+  country                                 String?                                   @db.VarChar(100)
+  pin_code                                String?                                   @db.VarChar(20)
+  is_active                               Boolean                                   @default(true)
+  ai_enabled                              Boolean                                   @default(false)
+  approval_status                         String                                    @default("PENDING_APPROVAL") @db.VarChar(40)
+  archived_at                             DateTime?
+  trial_started_at                        DateTime?
+  trial_ends_at                           DateTime?
+  trial_enabled                           Boolean                                   @default(true)
+  trial_extension_hours                   Int                                       @default(0)
+  plan_id                                 String?
+  platform_version_id                     String?
+  pricing_mode                            String                                    @default("MODULE_BASED") @db.VarChar(30)
+  database_connection_id                  String?
+  created_at                              DateTime                                  @default(now())
+  updated_at                              DateTime                                  @updatedAt
+  plan                                    Plan?                                     @relation(fields: [plan_id], references: [id])
+  platformVersion                         PlatformVersion?                          @relation(fields: [platform_version_id], references: [id], onDelete: SetNull)
+  databaseConnection                      DatabaseConnection?                       @relation(fields: [database_connection_id], references: [id])
+  memberships                             OrganizationMembership[]
+  taxProfiles                             OrganizationTaxProfile[]
+  erpSoftware                             ERPSoftware[]
+  masterModules                           MasterModule[]
+  priceListContactAssignments             PriceListContactAssignment[]
+  merchandisingOrders                     MerchandisingOrder[]
+  outgoingOrderShares                     OrderShare[]                              @relation("OrderShareSourceOrganization")
+  incomingOrderShares                     OrderShare[]                              @relation("OrderShareTargetOrganization")
+  destinationOrderShares                  OrderShare[]                              @relation("OrderShareDestinationOrganization")
+  approvalRequests                        ApprovalRequest[]
+  masterEntities                          MasterEntity[]
+  masterLocations                         MasterLocation[]
+  masterCategoryTypes                     MasterCategoryType[]
+  masterCategories                        MasterCategory[]
+  masterSubCategories                     MasterSubCategory[]
+  merchandisingOrderQrTemplates           MerchandisingOrderQrTemplate[]
+  merchandisingOrderQrPrintRequests       MerchandisingOrderQrPrintRequest[]
+  designDevelopmentPageSetupTemplates     DesignDevelopmentPageSetupTemplate[]
+  masterBrands                            MasterBrand[]
+  masterPreOrderChecklists                MasterPreOrderChecklist[]
+  masterCurrencyTypes                     MasterCurrencyType[]
+  masterBuyers                            MasterBuyer[]
+  masterSeasons                           MasterSeason[]
+  masterArticles                          MasterArticle[]
+  masterArticleVariants                   MasterArticleVariant[]
+  masterArticleSizes                      MasterArticleSize[]
+  masterGoldSeals                         MasterGoldSeal[]
+  masterGoldSealVariants                  MasterGoldSealVariant[]
+  masterColors                            MasterColor[]
+  masterSizeGroups                        MasterSizeGroup[]
+  masterSizeGroupSizes                    MasterSizeGroupSize[]
+  masterSizes                             MasterSize[]
+  masterUoms                              MasterUom[]
+  masterStockUomConverts                  MasterStockUomConvert[]
+  masterRawMaterials                      MasterRawMaterial[]
+  masterRawMaterialTypes                  MasterRawMaterialType[]
+  masterRawMaterialCategories             MasterRawMaterialCategory[]
+  masterRawMaterialSubCats                MasterRawMaterialSubCategory[]
+  generalPurchaseOrderRequests            GeneralPurchaseOrderRequest[]
+  generalPurchaseOrderGroups              GeneralPurchaseOrderGroup[]
+  masterVendors                           MasterVendor[]
+  contacts                                Contact[]
+  contactCodeCounter                      ContactCodeCounter?
+  contactRoleAssignments                  ContactRoleAssignment[]
+  contactTaxRegistrations                 ContactTaxRegistration[]
+  contactAddresses                        ContactAddress[]
+  contactBankAccounts                     ContactBankAccount[]
+  contactDistributorDealerAssignments     ContactDistributorDealerAssignment[]
+  contactRoleMappings                     ContactRoleMapping[]
+  masterStates                            MasterState[]
+  masterGstTypes                          MasterGstType[]
+  masterGsts                              MasterGst[]
+  masterHsns                              MasterHsn[]
+  masterMeasurementCharts                 MasterMeasurementChart[]
+  masterSizeWiseConsumptions              MasterSizeWiseConsumption[]
+  masterProducts                          MasterProduct[]
+  masterProcesses                         MasterProcess[]
+  masterProcessTemplates                  MasterProcessTemplate[]
+  masterProcessTemplateSteps              MasterProcessTemplateStep[]
+  masterOperations                        MasterOperation[]
+  masterOperationTemplates                MasterOperationTemplate[]
+  masterOperationTemplateSteps            MasterOperationTemplateStep[]
+  masterMerchandisers                     MasterMerchandiser[]
+  masterStatuses                          MasterStatus[]
+  masterOrderVolumes                      MasterOrderVolume[]
+  groupedPurchaseOrders                   GroupedPurchaseOrder[]
+  masterPurchaseOrders                    MasterPurchaseOrder[]
+  purchaseOrders                          PurchaseOrder[]
+  posPurchaseRecords                      PosPurchaseRecord[]
+  posPurchaseBills                        PosPurchaseBill[]
+  posSalesInvoices                        PosSalesInvoice[]
+  subscriptions                           Subscription[]
+  segmentPrices                           OrganizationSegmentPrice[]
+  invitations                             OrganizationInvitation[]
+  rolePermissions                         OrganizationRolePermission[]
+  roleDefinitions                         OrganizationRoleDefinition[]
+  supportTickets                          SupportTicket[]
+  orderNumberCounter                      OrganizationOrderCounter?
+  dummyDataBatch                          OrganizationDummyDataBatch?
+  kycProfile                              OrganizationKycProfile?
+  procurementDocumentCounters             ProcurementDocumentCounter[]
+  challanNumberConfigurations             ChallanNumberConfiguration[]
+  inventoryReceipts                       InventoryReceipt[]
+  rmGrnVerifications                      RmGrnVerification[]
+  rmGrnVerificationAllocations            RmGrnVerificationAllocation[]
+  rmGrnOrderAllocations                   RmGrnOrderAllocation[]
+  preventiveMaintenanceAssets             PreventiveMaintenanceAsset[]
+  preventiveMaintenancePlans              PreventiveMaintenancePlan[]
+  preventiveMaintenancePlanChecklist      PreventiveMaintenancePlanChecklist[]
+  preventiveMaintenanceWorkOrders         PreventiveMaintenanceWorkOrder[]
+  preventiveMaintenanceWorkOrderChecklist PreventiveMaintenanceWorkOrderChecklist[]
+  rawMaterialStocks                       RawMaterialStock[]
+  rawMaterialStockBookings                RawMaterialStockBooking[]
+  rawMaterialOutwardRequests              RawMaterialOutwardRequest[]
+  rawMaterialOutwardRequestLines          RawMaterialOutwardRequestLine[]
+  rawMaterialOutwardBoxes                 RawMaterialOutwardBox[]
+  rawMaterialOutwardBoxLines              RawMaterialOutwardBoxLine[]
+  rawMaterialOutwardShipments             RawMaterialOutwardShipment[]
+  rawMaterialOutwardShipmentBoxes         RawMaterialOutwardShipmentBox[]
+  fgStockOutwardRequests                  FinishedGoodsOutwardRequest[]
+  fgStockOutwardRequestLines              FinishedGoodsOutwardRequestLine[]
+  fgStockOutwardBoxes                     FinishedGoodsOutwardBox[]
+  fgStockOutwardBoxLines                  FinishedGoodsOutwardBoxLine[]
+  fgStockOutwardShipments                 FinishedGoodsOutwardShipment[]
+  fgStockOutwardShipmentBoxes             FinishedGoodsOutwardShipmentBox[]
+  finishedGoodsStocks                     FinishedGoodsStock[]
+  finishedGoodsSkuStocks                  FinishedGoodsSkuStock[]
+  finishedGoodsGeneralStockReceipts       FinishedGoodsGeneralStockReceipt[]
+  finishedGoodsAllocatedStockReceipts     FinishedGoodsAllocatedStockReceipt[]
+  gateEntries                             GateEntry[]
+  factoryWorkOrders                       FactoryWorkOrder[]
+  shopFloorBatches                        BatchMaster[]
+  shopFloorProcessLogs                    ShopFloorProcessLog[]
+  shopFloorTransfers                      ShopFloorTransfer[]
+  factoryProductionUpdates                FactoryProductionUpdate[]
+  factoryBundleTransfers                  FactoryBundleTransfer[]
+  factoryDailyProductionReports           FactoryDailyProductionReport[]
+  factoryGrns                             FactoryGrn[]
+  workOrderInventoryGrns                  WorkOrderInventoryGrn[]
+  advanceBookings                         AdvanceBooking[]
+  advanceBookingSizeLines                 AdvanceBookingSizeLine[]
+  advanceBookingAssignments               AdvanceBookingWorkOrderAssignment[]
+  advanceBookingGrnAllocations            WorkOrderInventoryGrnBookingAllocation[]
+  distributionOrderForms                  DistributionOrderForm[]
+  distributionOrderFormLines              DistributionOrderFormLine[]
+  distributionQuotations                  DistributionQuotation[]
+  distributionQuotationLines              DistributionQuotationLine[]
+  auditEvents                             AuditEvent[]
+  masterImportJobs                        MasterImportJob[]
+  masterImportJobRows                     MasterImportJobRow[]
+  masterImportJobFileChunks               MasterImportJobFileChunk[]
+  masterImportRuns                        MasterImportRun[]
 
   @@index([plan_id])
   @@index([database_connection_id])
@@ -221,34 +233,34 @@ enum MasterImportRunStatus {
 }
 
 model MasterImportJob {
-  id                         String                 @id @default(cuid())
-  organization_id            String
-  module_key                 String                 @db.VarChar(100)
-  status                     MasterImportJobStatus  @default(UPLOADED)
-  uploaded_file_name         String                 @db.VarChar(255)
-  uploaded_file_size         Int
-  file_chunk_count           Int                    @default(0)
-  uploaded_file_chunks       Int                    @default(0)
-  source_sha256              String                 @db.VarChar(64)
-  encrypted_source_file      Bytes
-  total_rows                 Int                    @default(0)
-  processed_rows             Int                    @default(0)
-  successful_rows            Int                    @default(0)
-  failed_rows                Int                    @default(0)
-  next_plan_number            Int                    @default(1)
-  checkpoint                 String?                @db.VarChar(120)
-  created_by_user_id         String
-  updated_by_user_id         String
-  created_at                 DateTime               @default(now())
-  updated_at                 DateTime               @updatedAt
-  staged_at                  DateTime?
-  validated_at               DateTime?
-  started_at                 DateTime?
-  completed_at               DateTime?
-  failed_at                  DateTime?
-  expires_at                 DateTime
+  id                    String                @id @default(cuid())
+  organization_id       String
+  module_key            String                @db.VarChar(100)
+  status                MasterImportJobStatus @default(UPLOADED)
+  uploaded_file_name    String                @db.VarChar(255)
+  uploaded_file_size    Int
+  file_chunk_count      Int                   @default(0)
+  uploaded_file_chunks  Int                   @default(0)
+  source_sha256         String                @db.VarChar(64)
+  encrypted_source_file Bytes
+  total_rows            Int                   @default(0)
+  processed_rows        Int                   @default(0)
+  successful_rows       Int                   @default(0)
+  failed_rows           Int                   @default(0)
+  next_plan_number      Int                   @default(1)
+  checkpoint            String?               @db.VarChar(120)
+  created_by_user_id    String
+  updated_by_user_id    String
+  created_at            DateTime              @default(now())
+  updated_at            DateTime              @updatedAt
+  staged_at             DateTime?
+  validated_at          DateTime?
+  started_at            DateTime?
+  completed_at          DateTime?
+  failed_at             DateTime?
+  expires_at            DateTime
 
-  organization Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  organization Organization               @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   rows         MasterImportJobRow[]
   fileChunks   MasterImportJobFileChunk[]
   runs         MasterImportRun[]
@@ -261,22 +273,22 @@ model MasterImportJob {
 }
 
 model MasterImportRun {
-  id                  String                @id @default(cuid())
-  organization_id     String
-  job_id              String
-  operation           String                @db.VarChar(40)
-  status              MasterImportRunStatus @default(QUEUED)
-  input               Json
-  progress            Int                   @default(0)
-  total               Int                   @default(0)
-  attempt_count       Int                   @default(0)
-  lease_expires_at    DateTime?
-  last_error          String?               @db.VarChar(1000)
+  id                   String                @id @default(cuid())
+  organization_id      String
+  job_id               String
+  operation            String                @db.VarChar(40)
+  status               MasterImportRunStatus @default(QUEUED)
+  input                Json
+  progress             Int                   @default(0)
+  total                Int                   @default(0)
+  attempt_count        Int                   @default(0)
+  lease_expires_at     DateTime?
+  last_error           String?               @db.VarChar(1000)
   requested_by_user_id String
-  created_at          DateTime              @default(now())
-  updated_at          DateTime              @updatedAt
-  started_at          DateTime?
-  completed_at        DateTime?
+  created_at           DateTime              @default(now())
+  updated_at           DateTime              @updatedAt
+  started_at           DateTime?
+  completed_at         DateTime?
 
   organization Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   job          MasterImportJob @relation(fields: [organization_id, job_id], references: [organization_id, id], onDelete: Cascade, onUpdate: Cascade)
@@ -288,18 +300,18 @@ model MasterImportRun {
 }
 
 model MasterImportJobRow {
-  id                    String                   @id @default(cuid())
-  organization_id       String
-  job_id                String
-  row_number            Int
-  article_group_key     String?                  @db.VarChar(64)
-  plan_number           Int?
-  status                MasterImportJobRowStatus @default(PENDING)
-  checkpoint            String?                  @db.VarChar(120)
-  encrypted_payload     Bytes
-  updated_by_user_id    String
-  created_at            DateTime                 @default(now())
-  updated_at            DateTime                 @updatedAt
+  id                 String                   @id @default(cuid())
+  organization_id    String
+  job_id             String
+  row_number         Int
+  article_group_key  String?                  @db.VarChar(64)
+  plan_number        Int?
+  status             MasterImportJobRowStatus @default(PENDING)
+  checkpoint         String?                  @db.VarChar(120)
+  encrypted_payload  Bytes
+  updated_by_user_id String
+  created_at         DateTime                 @default(now())
+  updated_at         DateTime                 @updatedAt
 
   organization Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   job          MasterImportJob @relation(fields: [organization_id, job_id], references: [organization_id, id], onDelete: Cascade, onUpdate: Cascade)
@@ -312,38 +324,38 @@ model MasterImportJobRow {
 }
 
 model MasterImportJobFileChunk {
-  id                String          @id @default(cuid())
-  organization_id   String
-  job_id            String
-  chunk_index       Int
-  byte_size         Int
-  sha256            String          @db.VarChar(64)
-  encrypted_data    Bytes
-  created_at        DateTime        @default(now())
-  organization      Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  job               MasterImportJob @relation(fields: [organization_id, job_id], references: [organization_id, id], onDelete: Cascade, onUpdate: Cascade)
+  id              String          @id @default(cuid())
+  organization_id String
+  job_id          String
+  chunk_index     Int
+  byte_size       Int
+  sha256          String          @db.VarChar(64)
+  encrypted_data  Bytes
+  created_at      DateTime        @default(now())
+  organization    Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  job             MasterImportJob @relation(fields: [organization_id, job_id], references: [organization_id, id], onDelete: Cascade, onUpdate: Cascade)
 
   @@unique([organization_id, job_id, chunk_index])
   @@map("master_import_job_file_chunks")
 }
 
 model OrganizationTaxProfile {
-  id             String      @id @default(cuid())
+  id              String       @id @default(cuid())
   organization_id String
-  country        String      @default("IN") @db.VarChar(10)
-  tax_regime     String      @default("GST") @db.VarChar(30)
-  gstin          String?     @db.VarChar(20)
-  state          String?     @db.VarChar(100)
-  is_default     Boolean     @default(true)
-  is_active      Boolean     @default(true)
-  cgst_rate      Decimal?    @db.Decimal(10, 2)
-  sgst_rate      Decimal?    @db.Decimal(10, 2)
-  igst_rate      Decimal?    @db.Decimal(10, 2)
-  vat_rate       Decimal?    @db.Decimal(10, 2)
-  sales_tax_rate Decimal?    @db.Decimal(10, 2)
-  created_at     DateTime    @default(now())
-  updated_at     DateTime    @updatedAt
-  organization   Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  country         String       @default("IN") @db.VarChar(10)
+  tax_regime      String       @default("GST") @db.VarChar(30)
+  gstin           String?      @db.VarChar(20)
+  state           String?      @db.VarChar(100)
+  is_default      Boolean      @default(true)
+  is_active       Boolean      @default(true)
+  cgst_rate       Decimal?     @db.Decimal(10, 2)
+  sgst_rate       Decimal?     @db.Decimal(10, 2)
+  igst_rate       Decimal?     @db.Decimal(10, 2)
+  vat_rate        Decimal?     @db.Decimal(10, 2)
+  sales_tax_rate  Decimal?     @db.Decimal(10, 2)
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
   @@unique([organization_id, country, tax_regime])
   @@index([organization_id, is_default, is_active])
@@ -351,32 +363,32 @@ model OrganizationTaxProfile {
 }
 
 model OrganizationKycProfile {
-  id                          String        @id @default(cuid())
-  organization_id             String        @unique
-  status                      String        @default("NOT_STARTED") @db.VarChar(20)
-  registration_snapshot       Json?
-  kyc_details                 Json?
-  business_types              String[]      @default([])
-  business_type_other         String?       @db.VarChar(255)
-  staff_count                 Int?
-  factory_count               Int?
-  outlet_count                Int?
-  business_started_year       Int?
-  software_used               String?       @db.VarChar(1000)
-  major_challenges            String[]      @default([])
-  major_challenge_other       String?       @db.VarChar(1000)
-  brands_worked_with          String?       @db.VarChar(2000)
-  monthly_production_pcs      Int?
-  business_activities         String[]      @default([])
-  factory_arrangement         String?       @db.VarChar(20)
-  submitted_at                DateTime?
-  reviewed_at                 DateTime?
+  id                            String         @id @default(cuid())
+  organization_id               String         @unique
+  status                        String         @default("NOT_STARTED") @db.VarChar(20)
+  registration_snapshot         Json?
+  kyc_details                   Json?
+  business_types                String[]       @default([])
+  business_type_other           String?        @db.VarChar(255)
+  staff_count                   Int?
+  factory_count                 Int?
+  outlet_count                  Int?
+  business_started_year         Int?
+  software_used                 String?        @db.VarChar(1000)
+  major_challenges              String[]       @default([])
+  major_challenge_other         String?        @db.VarChar(1000)
+  brands_worked_with            String?        @db.VarChar(2000)
+  monthly_production_pcs        Int?
+  business_activities           String[]       @default([])
+  factory_arrangement           String?        @db.VarChar(20)
+  submitted_at                  DateTime?
+  reviewed_at                   DateTime?
   reviewed_by_platform_admin_id String?
-  review_note                 String?       @db.VarChar(2000)
-  created_at                  DateTime      @default(now())
-  updated_at                  DateTime      @updatedAt
-  organization                Organization  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  reviewedByPlatformAdmin     PlatformAdmin? @relation(fields: [reviewed_by_platform_admin_id], references: [id], onDelete: SetNull)
+  review_note                   String?        @db.VarChar(2000)
+  created_at                    DateTime       @default(now())
+  updated_at                    DateTime       @updatedAt
+  organization                  Organization   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  reviewedByPlatformAdmin       PlatformAdmin? @relation(fields: [reviewed_by_platform_admin_id], references: [id], onDelete: SetNull)
 
   @@index([status, submitted_at])
   @@index([reviewed_by_platform_admin_id, reviewed_at])
@@ -503,26 +515,26 @@ model WorkspaceNotification {
 }
 
 model PlatformAdmin {
-  id             String             @id @default(cuid())
-  admin_id       String             @unique @default(uuid())
-  full_name      String             @db.VarChar(255)
-  email          String             @unique @db.VarChar(255)
-  mobile_number  String?            @db.VarChar(20)
-  password_hash  String             @db.VarChar(255)
-  role           PlatformAdminRole  @default(SUPER_ADMIN)
-  team_role      PlatformTeamRole?
-  manager_id     String?
-  is_active      Boolean            @default(true)
-  created_at     DateTime           @default(now())
-  updated_at     DateTime           @updatedAt
-  last_login_at  DateTime?
-  manager        PlatformAdmin?     @relation("PlatformAdminTeam", fields: [manager_id], references: [id], onDelete: SetNull)
-  teamMembers    PlatformAdmin[]    @relation("PlatformAdminTeam")
-  assignedPlatformLeads PlatformLead[] @relation("PlatformLeadSalesManager")
-  ticketMessages TicketMessage[]
-  createdSupportTickets SupportTicket[] @relation("SupportTicketPlatformCreator")
-  auditEvents    PlatformAuditEvent[]
-  reviewedKycProfiles OrganizationKycProfile[]
+  id                    String                   @id @default(cuid())
+  admin_id              String                   @unique @default(uuid())
+  full_name             String                   @db.VarChar(255)
+  email                 String                   @unique @db.VarChar(255)
+  mobile_number         String?                  @db.VarChar(20)
+  password_hash         String                   @db.VarChar(255)
+  role                  PlatformAdminRole        @default(SUPER_ADMIN)
+  team_role             PlatformTeamRole?
+  manager_id            String?
+  is_active             Boolean                  @default(true)
+  created_at            DateTime                 @default(now())
+  updated_at            DateTime                 @updatedAt
+  last_login_at         DateTime?
+  manager               PlatformAdmin?           @relation("PlatformAdminTeam", fields: [manager_id], references: [id], onDelete: SetNull)
+  teamMembers           PlatformAdmin[]          @relation("PlatformAdminTeam")
+  assignedPlatformLeads PlatformLead[]           @relation("PlatformLeadSalesManager")
+  ticketMessages        TicketMessage[]
+  createdSupportTickets SupportTicket[]          @relation("SupportTicketPlatformCreator")
+  auditEvents           PlatformAuditEvent[]
+  reviewedKycProfiles   OrganizationKycProfile[]
 
   @@index([manager_id, team_role])
   @@index([manager_id, role, is_active])
@@ -530,13 +542,13 @@ model PlatformAdmin {
 }
 
 model PlatformAuditEvent {
-  id                String        @id @default(cuid())
+  id                String         @id @default(cuid())
   platform_admin_id String?
-  action            String        @db.VarChar(100)
-  entity_type       String        @db.VarChar(150)
-  entity_id         String        @db.VarChar(255)
+  action            String         @db.VarChar(100)
+  entity_type       String         @db.VarChar(150)
+  entity_id         String         @db.VarChar(255)
   details           Json?
-  created_at        DateTime      @default(now())
+  created_at        DateTime       @default(now())
   platformAdmin     PlatformAdmin? @relation(fields: [platform_admin_id], references: [id], onDelete: SetNull)
 
   @@index([platform_admin_id, created_at])
@@ -545,36 +557,36 @@ model PlatformAuditEvent {
 }
 
 model PlatformPricingSettings {
-  id                       String   @id @default("global") @db.VarChar(50)
-  module_based_active      Boolean  @default(true)
-  user_based_active        Boolean  @default(false)
-  user_monthly_price       Decimal  @default(0) @db.Decimal(10, 2)
+  id                           String   @id @default("global") @db.VarChar(50)
+  module_based_active          Boolean  @default(true)
+  user_based_active            Boolean  @default(false)
+  user_monthly_price           Decimal  @default(0) @db.Decimal(10, 2)
   updated_by_platform_admin_id String?
-  created_at               DateTime @default(now())
-  updated_at               DateTime @updatedAt
+  created_at                   DateTime @default(now())
+  updated_at                   DateTime @updatedAt
 
   @@map("platform_pricing_settings")
 }
 
 model PlatformLead {
-  id                  String          @id @default(cuid())
-  name                String          @db.VarChar(255)
-  email               String?         @db.VarChar(255)
-  mobile              String?         @db.VarChar(20)
-  company_name        String?         @db.VarChar(255)
-  city                String?         @db.VarChar(120)
-  source              String?         @db.VarChar(120)
-  stage               String          @default("1-new") @db.VarChar(80)
-  nature_of_business  String?         @db.VarChar(2000)
-  quick_note          String?         @db.VarChar(2000)
-  created_at          DateTime        @default(now())
-  updated_at          DateTime        @updatedAt
-  supportTickets      SupportTicket[]
-  campaignEntries     PlatformCampaignLead[]
-  whatsappRecipients  PlatformWhatsAppCampaignMessageRecipient[]
-  voiceNotes          PlatformLeadVoiceNote[]
+  id                        String                                     @id @default(cuid())
+  name                      String                                     @db.VarChar(255)
+  email                     String?                                    @db.VarChar(255)
+  mobile                    String?                                    @db.VarChar(20)
+  company_name              String?                                    @db.VarChar(255)
+  city                      String?                                    @db.VarChar(120)
+  source                    String?                                    @db.VarChar(120)
+  stage                     String                                     @default("1-new") @db.VarChar(80)
+  nature_of_business        String?                                    @db.VarChar(2000)
+  quick_note                String?                                    @db.VarChar(2000)
+  created_at                DateTime                                   @default(now())
+  updated_at                DateTime                                   @updatedAt
+  supportTickets            SupportTicket[]
+  campaignEntries           PlatformCampaignLead[]
+  whatsappRecipients        PlatformWhatsAppCampaignMessageRecipient[]
+  voiceNotes                PlatformLeadVoiceNote[]
   assigned_sales_manager_id String?
-  assignedSalesManager PlatformAdmin? @relation("PlatformLeadSalesManager", fields: [assigned_sales_manager_id], references: [id], onDelete: SetNull)
+  assignedSalesManager      PlatformAdmin?                             @relation("PlatformLeadSalesManager", fields: [assigned_sales_manager_id], references: [id], onDelete: SetNull)
 
   @@index([assigned_sales_manager_id, created_at])
   @@index([updated_at])
@@ -597,12 +609,12 @@ model PlatformLeadVoiceNote {
 }
 
 model PlatformCampaign {
-  id            String                 @id @default(cuid())
-  name          String                 @db.VarChar(255)
-  campaign_date DateTime               @db.Date
-  created_at    DateTime               @default(now())
-  updated_at    DateTime               @updatedAt
-  leads         PlatformCampaignLead[]
+  id               String                            @id @default(cuid())
+  name             String                            @db.VarChar(255)
+  campaign_date    DateTime                          @db.Date
+  created_at       DateTime                          @default(now())
+  updated_at       DateTime                          @updatedAt
+  leads            PlatformCampaignLead[]
   whatsappMessages PlatformWhatsAppCampaignMessage[]
 
   @@index([campaign_date])
@@ -622,26 +634,26 @@ model PlatformCampaignLead {
 }
 
 model PlatformWhatsAppConfiguration {
-  id                   String   @id @default("default") @db.VarChar(50)
-  api_key_encrypted    String?  @db.VarChar(4000)
-  namespace            String   @default("decc5535_5d4b_402c_9592_3165bf9c35e4") @db.VarChar(255)
-  callback_token_hash  String?  @db.VarChar(64)
-  updated_at           DateTime @updatedAt
+  id                  String   @id @default("default") @db.VarChar(50)
+  api_key_encrypted   String?  @db.VarChar(4000)
+  namespace           String   @default("decc5535_5d4b_402c_9592_3165bf9c35e4") @db.VarChar(255)
+  callback_token_hash String?  @db.VarChar(64)
+  updated_at          DateTime @updatedAt
 
   @@map("platform_whatsapp_configurations")
 }
 
 model PlatformWhatsAppTemplate {
-  id                    String                           @id @default(cuid())
-  template_name         String                           @db.VarChar(255)
-  sample_template_text  String                           @db.VarChar(5000)
-  integrated_number     String                           @db.VarChar(20)
-  image_url             String?                          @db.VarChar(2048)
-  language_code         String                           @default("en") @db.VarChar(20)
-  is_active             Boolean                          @default(false)
-  created_at            DateTime                         @default(now())
-  updated_at            DateTime                         @updatedAt
-  campaignMessages      PlatformWhatsAppCampaignMessage[]
+  id                   String                            @id @default(cuid())
+  template_name        String                            @db.VarChar(255)
+  sample_template_text String                            @db.VarChar(5000)
+  integrated_number    String                            @db.VarChar(20)
+  image_url            String?                           @db.VarChar(2048)
+  language_code        String                            @default("en") @db.VarChar(20)
+  is_active            Boolean                           @default(false)
+  created_at           DateTime                          @default(now())
+  updated_at           DateTime                          @updatedAt
+  campaignMessages     PlatformWhatsAppCampaignMessage[]
 
   @@unique([template_name, language_code])
   @@index([is_active, template_name])
@@ -649,19 +661,19 @@ model PlatformWhatsAppTemplate {
 }
 
 model PlatformWhatsAppCampaignMessage {
-  id                  String                                  @id @default(cuid())
+  id                  String                                     @id @default(cuid())
   campaign_id         String
   template_id         String
   scheduled_at        DateTime
-  status              String                                  @default("SCHEDULED") @db.VarChar(30)
-  provider_request_id String?                                 @db.VarChar(255)
-  failure_summary     String?                                 @db.VarChar(500)
+  status              String                                     @default("SCHEDULED") @db.VarChar(30)
+  provider_request_id String?                                    @db.VarChar(255)
+  failure_summary     String?                                    @db.VarChar(500)
   created_by_admin_id String?
-  created_at          DateTime                                @default(now())
+  created_at          DateTime                                   @default(now())
   submitted_at        DateTime?
-  updated_at          DateTime                                @updatedAt
-  campaign            PlatformCampaign                        @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
-  template            PlatformWhatsAppTemplate                @relation(fields: [template_id], references: [id], onDelete: Restrict)
+  updated_at          DateTime                                   @updatedAt
+  campaign            PlatformCampaign                           @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
+  template            PlatformWhatsAppTemplate                   @relation(fields: [template_id], references: [id], onDelete: Restrict)
   recipients          PlatformWhatsAppCampaignMessageRecipient[]
 
   @@index([status, scheduled_at])
@@ -670,18 +682,18 @@ model PlatformWhatsAppCampaignMessage {
 }
 
 model PlatformWhatsAppCampaignMessageRecipient {
-  id                    String                        @id @default(cuid())
-  campaign_message_id   String
-  lead_id               String?
-  customer_name         String                        @db.VarChar(255)
-  phone_number          String                        @db.VarChar(20)
-  status                String                        @default("PENDING") @db.VarChar(30)
-  provider_message_id   String?                       @db.VarChar(255)
-  failure_summary       String?                       @db.VarChar(500)
-  delivered_at          DateTime?
-  updated_at            DateTime                      @updatedAt
-  campaignMessage       PlatformWhatsAppCampaignMessage @relation(fields: [campaign_message_id], references: [id], onDelete: Cascade)
-  lead                  PlatformLead?                 @relation(fields: [lead_id], references: [id], onDelete: SetNull)
+  id                  String                          @id @default(cuid())
+  campaign_message_id String
+  lead_id             String?
+  customer_name       String                          @db.VarChar(255)
+  phone_number        String                          @db.VarChar(20)
+  status              String                          @default("PENDING") @db.VarChar(30)
+  provider_message_id String?                         @db.VarChar(255)
+  failure_summary     String?                         @db.VarChar(500)
+  delivered_at        DateTime?
+  updated_at          DateTime                        @updatedAt
+  campaignMessage     PlatformWhatsAppCampaignMessage @relation(fields: [campaign_message_id], references: [id], onDelete: Cascade)
+  lead                PlatformLead?                   @relation(fields: [lead_id], references: [id], onDelete: SetNull)
 
   @@unique([campaign_message_id, lead_id], map: "wa_campaign_recipient_lead_key")
   @@index([provider_message_id, status], map: "wa_campaign_recipient_provider_status_idx")
@@ -690,19 +702,19 @@ model PlatformWhatsAppCampaignMessageRecipient {
 }
 
 model PlatformEmailConfiguration {
-  id                      String   @id @default(cuid())
-  provider                String   @default("smtp") @db.VarChar(40)
-  smtp_host               String   @db.VarChar(255)
-  smtp_port               Int      @default(587)
-  smtp_secure             Boolean  @default(false)
-  smtp_username           String   @db.VarChar(255)
-  smtp_password_encrypted String   @db.VarChar(2000)
-  from_email              String   @db.VarChar(255)
-  from_name               String   @db.VarChar(255)
-  is_active               Boolean  @default(true)
-  send_auth_otp_to_credencecraft Boolean @default(false)
-  created_at              DateTime @default(now())
-  updated_at              DateTime @updatedAt
+  id                             String   @id @default(cuid())
+  provider                       String   @default("smtp") @db.VarChar(40)
+  smtp_host                      String   @db.VarChar(255)
+  smtp_port                      Int      @default(587)
+  smtp_secure                    Boolean  @default(false)
+  smtp_username                  String   @db.VarChar(255)
+  smtp_password_encrypted        String   @db.VarChar(2000)
+  from_email                     String   @db.VarChar(255)
+  from_name                      String   @db.VarChar(255)
+  is_active                      Boolean  @default(true)
+  send_auth_otp_to_credencecraft Boolean  @default(false)
+  created_at                     DateTime @default(now())
+  updated_at                     DateTime @updatedAt
 
   @@map("platform_email_configurations")
 }
@@ -719,11 +731,11 @@ model PlatformMobileOtpConfiguration {
 }
 
 model PlatformAlternativeMobileOtpConfiguration {
-  id                 String   @id @default(cuid())
-  api_url            String   @db.VarChar(2048)
-  api_key_encrypted  String   @db.VarChar(4000)
-  created_at         DateTime @default(now())
-  updated_at         DateTime @updatedAt
+  id                String   @id @default(cuid())
+  api_url           String   @db.VarChar(2048)
+  api_key_encrypted String   @db.VarChar(4000)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
 
   @@map("platform_alternative_mobile_otp_configurations")
 }
@@ -743,26 +755,26 @@ model OtpChallenge {
 }
 
 model SupportTicket {
-  id                   String          @id @default(cuid())
-  ticket_number        String          @unique @default(uuid())
-  organization_id      String?
-  submitted_by_user_id String?
-  platform_lead_id     String?
+  id                           String          @id @default(cuid())
+  ticket_number                String          @unique @default(uuid())
+  organization_id              String?
+  submitted_by_user_id         String?
+  platform_lead_id             String?
   created_by_platform_admin_id String?
-  request_type         String          @default("TICKET") @db.VarChar(30)
-  subject              String          @db.VarChar(255)
-  description          String          @db.VarChar(5000)
-  callback_date        String?         @db.VarChar(20)
-  callback_time        String?         @db.VarChar(10)
-  priority             String          @default("NORMAL") @db.VarChar(30)
-  status               String          @default("OPEN") @db.VarChar(30)
-  created_at           DateTime        @default(now())
-  updated_at           DateTime        @updatedAt
-  organization         Organization?   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  submittedBy          WorkspaceUser?  @relation("SupportTicketSubmitter", fields: [submitted_by_user_id], references: [id], onDelete: Cascade)
-  platformLead         PlatformLead?   @relation(fields: [platform_lead_id], references: [id], onDelete: Restrict)
-  createdByPlatformAdmin PlatformAdmin? @relation("SupportTicketPlatformCreator", fields: [created_by_platform_admin_id], references: [id], onDelete: SetNull)
-  messages             TicketMessage[]
+  request_type                 String          @default("TICKET") @db.VarChar(30)
+  subject                      String          @db.VarChar(255)
+  description                  String          @db.VarChar(5000)
+  callback_date                String?         @db.VarChar(20)
+  callback_time                String?         @db.VarChar(10)
+  priority                     String          @default("NORMAL") @db.VarChar(30)
+  status                       String          @default("OPEN") @db.VarChar(30)
+  created_at                   DateTime        @default(now())
+  updated_at                   DateTime        @updatedAt
+  organization                 Organization?   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  submittedBy                  WorkspaceUser?  @relation("SupportTicketSubmitter", fields: [submitted_by_user_id], references: [id], onDelete: Cascade)
+  platformLead                 PlatformLead?   @relation(fields: [platform_lead_id], references: [id], onDelete: Restrict)
+  createdByPlatformAdmin       PlatformAdmin?  @relation("SupportTicketPlatformCreator", fields: [created_by_platform_admin_id], references: [id], onDelete: SetNull)
+  messages                     TicketMessage[]
 
   @@index([organization_id, status, created_at])
   @@index([status, created_at])
@@ -772,16 +784,16 @@ model SupportTicket {
 }
 
 model AuditEvent {
-  id              String       @id @default(cuid())
+  id              String         @id @default(cuid())
   organization_id String
   user_id         String?
-  module          String       @db.VarChar(100)
-  action          String       @db.VarChar(100)
-  entity_type     String?      @db.VarChar(150)
-  entity_id       String?      @db.VarChar(255)
+  module          String         @db.VarChar(100)
+  action          String         @db.VarChar(100)
+  entity_type     String?        @db.VarChar(150)
+  entity_id       String?        @db.VarChar(255)
   details         Json?
-  created_at      DateTime     @default(now())
-  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  created_at      DateTime       @default(now())
+  organization    Organization   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   user            WorkspaceUser? @relation(fields: [user_id], references: [id], onDelete: SetNull)
 
   @@index([organization_id, created_at])
@@ -935,40 +947,43 @@ model MasterModule {
 }
 
 model MasterModuleValue {
-  id          String       @id @default(cuid())
-  value_id    String       @unique @default(uuid())
-  module_id   String
-  label       String       @db.VarChar(255)
-  code        String?      @db.VarChar(100)
-  description String?      @db.VarChar(500)
-  is_active   Boolean      @default(true)
-  metadata    Json?
-  parent_id   String?
-  sort_order  Int          @default(0)
-  created_at  DateTime     @default(now())
-  updated_at  DateTime     @updatedAt
-  module      MasterModule @relation(fields: [module_id], references: [id], onDelete: Cascade)
+  id                String                       @id @default(cuid())
+  value_id          String                       @unique @default(uuid())
+  module_id         String
+  label             String                       @db.VarChar(255)
+  code              String?                      @db.VarChar(100)
+  description       String?                      @db.VarChar(500)
+  is_active         Boolean                      @default(true)
+  metadata          Json?
+  parent_id         String?
+  sort_order        Int                          @default(0)
+  created_at        DateTime                     @default(now())
+  updated_at        DateTime                     @updatedAt
+  module            MasterModule                 @relation(fields: [module_id], references: [id], onDelete: Cascade)
+  priceListContacts PriceListContactAssignment[]
 
   @@map("master_module_values")
 }
 
 model MasterEntity {
-  id              String       @id @default(cuid())
-  value_id        String       @unique @default(uuid())
-  organization_id String
-  entity_name     String       @db.VarChar(255)
-  is_active       Boolean      @default(false)
-  sort_order      Int          @default(0)
-  legacy_metadata Json?
-  created_at      DateTime     @default(now())
-  updated_at      DateTime     @updatedAt
-  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  locations       MasterLocation[]
-  merchandisingOrders MerchandisingOrder[] @relation("MerchandisingOrderEntity")
-  groupedPurchaseOrders GroupedPurchaseOrder[] @relation("GroupedPurchaseOrderEntity")
-  masterPurchaseOrders MasterPurchaseOrder[] @relation("MasterPurchaseOrderEntity")
-  purchaseOrders PurchaseOrder[] @relation("PurchaseOrderEntity")
-  inventoryReceipts InventoryReceipt[] @relation("InventoryReceiptEntity")
+  id                           String                        @id @default(cuid())
+  value_id                     String                        @unique @default(uuid())
+  organization_id              String
+  entity_name                  String                        @db.VarChar(255)
+  is_active                    Boolean                       @default(false)
+  sort_order                   Int                           @default(0)
+  legacy_metadata              Json?
+  created_at                   DateTime                      @default(now())
+  updated_at                   DateTime                      @updatedAt
+  organization                 Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  locations                    MasterLocation[]
+  merchandisingOrders          MerchandisingOrder[]          @relation("MerchandisingOrderEntity")
+  groupedPurchaseOrders        GroupedPurchaseOrder[]        @relation("GroupedPurchaseOrderEntity")
+  masterPurchaseOrders         MasterPurchaseOrder[]         @relation("MasterPurchaseOrderEntity")
+  purchaseOrders               PurchaseOrder[]               @relation("PurchaseOrderEntity")
+  inventoryReceipts            InventoryReceipt[]            @relation("InventoryReceiptEntity")
+  generalPurchaseOrderRequests GeneralPurchaseOrderRequest[] @relation("GeneralPurchaseOrderRequestEntity")
+  generalPurchaseOrderGroups   GeneralPurchaseOrderGroup[]
 
   @@unique([organization_id, entity_name])
   @@unique([organization_id, id])
@@ -977,22 +992,23 @@ model MasterEntity {
 }
 
 model MasterLocation {
-  id              String       @id @default(cuid())
-  value_id        String       @unique @default(uuid())
-  organization_id String
-  entity_id       String
-  location_name   String       @db.VarChar(255)
-  is_active       Boolean      @default(false)
-  sort_order      Int          @default(0)
-  legacy_metadata Json?
-  created_at      DateTime     @default(now())
-  updated_at      DateTime     @default(now()) @updatedAt
-  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  entity          MasterEntity @relation(fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
-  inventoryReceipts InventoryReceipt[]
-  rawMaterialStocks RawMaterialStock[]
-  finishedGoodsStocks FinishedGoodsStock[]
-  finishedGoodsSkuStocks FinishedGoodsSkuStock[]
+  id                                  String                               @id @default(cuid())
+  value_id                            String                               @unique @default(uuid())
+  organization_id                     String
+  entity_id                           String
+  location_name                       String                               @db.VarChar(255)
+  is_active                           Boolean                              @default(false)
+  sort_order                          Int                                  @default(0)
+  legacy_metadata                     Json?
+  created_at                          DateTime                             @default(now())
+  updated_at                          DateTime                             @default(now()) @updatedAt
+  organization                        Organization                         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity                              MasterEntity                         @relation(fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
+  inventoryReceipts                   InventoryReceipt[]
+  rawMaterialStocks                   RawMaterialStock[]
+  preventiveMaintenanceAssets         PreventiveMaintenanceAsset[]
+  finishedGoodsStocks                 FinishedGoodsStock[]
+  finishedGoodsSkuStocks              FinishedGoodsSkuStock[]
   finishedGoodsGeneralStockReceipts   FinishedGoodsGeneralStockReceipt[]
   finishedGoodsAllocatedStockReceipts FinishedGoodsAllocatedStockReceipt[]
 
@@ -1172,25 +1188,25 @@ model MasterSeason {
 }
 
 model MasterArticle {
-  id              String       @id @default(cuid())
-  value_id        String       @unique @default(uuid())
-  organization_id String
-  article         String       @db.VarChar(255)
-  article_code    String?      @db.VarChar(100)
+  id                String                 @id @default(cuid())
+  value_id          String                 @unique @default(uuid())
+  organization_id   String
+  article           String                 @db.VarChar(255)
+  article_code      String?                @db.VarChar(100)
   product_master_id String?
   category_id       String?
   sub_category_id   String?
   brand_id          String?
   size_group_id     String?
   default_price     Decimal?               @db.Decimal(18, 4)
-  design_by       String?      @db.VarChar(255)
-  designed_date   DateTime?
-  is_active       Boolean      @default(false)
-  sort_order      Int          @default(0)
-  legacy_metadata Json?
-  created_at      DateTime     @default(now())
-  updated_at      DateTime     @updatedAt
-  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  design_by         String?                @db.VarChar(255)
+  designed_date     DateTime?
+  is_active         Boolean                @default(false)
+  sort_order        Int                    @default(0)
+  legacy_metadata   Json?
+  created_at        DateTime               @default(now())
+  updated_at        DateTime               @updatedAt
+  organization      Organization           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   product_master    MasterProduct?         @relation(fields: [product_master_id], references: [id], onDelete: SetNull)
   category          MasterCategory?        @relation(fields: [category_id], references: [id], onDelete: SetNull)
   sub_category      MasterSubCategory?     @relation(fields: [sub_category_id], references: [id], onDelete: SetNull)
@@ -1236,15 +1252,15 @@ model MasterArticleVariant {
 }
 
 model MasterArticleSize {
-  id              String           @id @default(cuid())
+  id              String        @id @default(cuid())
   organization_id String
   article_id      String
   size_id         String
-  price           Decimal?         @db.Decimal(18, 4)
-  created_at      DateTime         @default(now())
-  organization    Organization     @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  article         MasterArticle    @relation(fields: [article_id], references: [id], onDelete: Cascade)
-  size            MasterSize       @relation(fields: [size_id], references: [id], onDelete: Restrict)
+  price           Decimal?      @db.Decimal(18, 4)
+  created_at      DateTime      @default(now())
+  organization    Organization  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  article         MasterArticle @relation(fields: [article_id], references: [id], onDelete: Cascade)
+  size            MasterSize    @relation(fields: [size_id], references: [id], onDelete: Restrict)
 
   @@unique([organization_id, article_id, size_id])
   @@index([organization_id, article_id])
@@ -1252,19 +1268,19 @@ model MasterArticleSize {
 }
 
 model MasterGoldSeal {
-  id              String                   @id @default(cuid())
-  value_id        String                   @unique @default(uuid())
+  id              String                  @id @default(cuid())
+  value_id        String                  @unique @default(uuid())
   organization_id String
-  gold_seal       String                   @db.VarChar(255)
-  gold_seal_code  String?                  @db.VarChar(100)
-  design_by       String?                  @db.VarChar(255)
+  gold_seal       String                  @db.VarChar(255)
+  gold_seal_code  String?                 @db.VarChar(100)
+  design_by       String?                 @db.VarChar(255)
   designed_date   DateTime?
-  is_active       Boolean                  @default(false)
-  sort_order      Int                      @default(0)
+  is_active       Boolean                 @default(false)
+  sort_order      Int                     @default(0)
   legacy_metadata Json?
-  created_at      DateTime                 @default(now())
-  updated_at      DateTime                 @updatedAt
-  organization    Organization              @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  created_at      DateTime                @default(now())
+  updated_at      DateTime                @updatedAt
+  organization    Organization            @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   variants        MasterGoldSealVariant[]
 
   @@unique([organization_id, gold_seal])
@@ -1274,23 +1290,23 @@ model MasterGoldSeal {
 }
 
 model MasterGoldSealVariant {
-  id              String          @id @default(cuid())
-  value_id        String          @unique @default(uuid())
+  id              String         @id @default(cuid())
+  value_id        String         @unique @default(uuid())
   organization_id String
   gold_seal_id    String
-  variant         String          @db.VarChar(255)
-  variant_code    String?         @db.VarChar(100)
-  color           String?         @db.VarChar(150)
-  size            String?         @db.VarChar(100)
-  sku             String?         @db.VarChar(150)
-  barcode         String?         @db.VarChar(150)
-  is_active       Boolean         @default(false)
-  sort_order      Int             @default(0)
+  variant         String         @db.VarChar(255)
+  variant_code    String?        @db.VarChar(100)
+  color           String?        @db.VarChar(150)
+  size            String?        @db.VarChar(100)
+  sku             String?        @db.VarChar(150)
+  barcode         String?        @db.VarChar(150)
+  is_active       Boolean        @default(false)
+  sort_order      Int            @default(0)
   legacy_metadata Json?
-  created_at      DateTime        @default(now())
-  updated_at      DateTime        @updatedAt
-  organization    Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  goldSeal        MasterGoldSeal  @relation(fields: [gold_seal_id], references: [id], onDelete: Cascade)
+  created_at      DateTime       @default(now())
+  updated_at      DateTime       @updatedAt
+  organization    Organization   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  goldSeal        MasterGoldSeal @relation(fields: [gold_seal_id], references: [id], onDelete: Cascade)
 
   @@unique([organization_id, gold_seal_id, variant])
   @@unique([organization_id, variant_code])
@@ -1301,18 +1317,18 @@ model MasterGoldSealVariant {
 }
 
 model MasterColor {
-  id              String              @id @default(cuid())
-  value_id        String              @unique @default(uuid())
-  organization_id String
-  colors          String              @db.VarChar(255)
-  status          String?             @db.VarChar(50)
-  is_active       Boolean             @default(false)
-  sort_order      Int                 @default(0)
-  legacy_metadata Json?
-  created_at      DateTime            @default(now())
-  updated_at      DateTime            @updatedAt
-  organization    Organization        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  raw_materials   MasterRawMaterial[]
+  id               String                 @id @default(cuid())
+  value_id         String                 @unique @default(uuid())
+  organization_id  String
+  colors           String                 @db.VarChar(255)
+  status           String?                @db.VarChar(50)
+  is_active        Boolean                @default(false)
+  sort_order       Int                    @default(0)
+  legacy_metadata  Json?
+  created_at       DateTime               @default(now())
+  updated_at       DateTime               @updatedAt
+  organization     Organization           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  raw_materials    MasterRawMaterial[]
   article_variants MasterArticleVariant[]
 
   @@unique([organization_id, colors])
@@ -1346,19 +1362,19 @@ model MasterSizeGroup {
 }
 
 model MasterSize {
-  id              String           @id @default(cuid())
-  value_id        String           @unique @default(uuid())
+  id              String                @id @default(cuid())
+  value_id        String                @unique @default(uuid())
   organization_id String
-  size            String           @db.VarChar(255)
+  size            String                @db.VarChar(255)
   size_group_id   String?
-  status          String?          @db.VarChar(50)
-  is_active       Boolean          @default(false)
-  sort_order      Int              @default(0)
+  status          String?               @db.VarChar(50)
+  is_active       Boolean               @default(false)
+  sort_order      Int                   @default(0)
   legacy_metadata Json?
-  created_at      DateTime         @default(now())
-  updated_at      DateTime         @updatedAt
-  organization    Organization     @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  size_group      MasterSizeGroup? @relation(fields: [size_group_id], references: [id])
+  created_at      DateTime              @default(now())
+  updated_at      DateTime              @updatedAt
+  organization    Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  size_group      MasterSizeGroup?      @relation(fields: [size_group_id], references: [id])
   group_links     MasterSizeGroupSize[]
   article_sizes   MasterArticleSize[]
 
@@ -1375,7 +1391,7 @@ model MasterSizeGroupSize {
   created_at      DateTime        @default(now())
   organization    Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   size_group      MasterSizeGroup @relation(fields: [size_group_id], references: [id], onDelete: Cascade)
-  size            MasterSize       @relation(fields: [size_id], references: [id], onDelete: Cascade)
+  size            MasterSize      @relation(fields: [size_id], references: [id], onDelete: Cascade)
 
   @@unique([size_group_id, size_id])
   @@index([organization_id, size_group_id])
@@ -1384,16 +1400,16 @@ model MasterSizeGroupSize {
 }
 
 model MasterUom {
-  id              String              @id @default(cuid())
-  value_id        String              @unique @default(uuid())
+  id              String                  @id @default(cuid())
+  value_id        String                  @unique @default(uuid())
   organization_id String
-  uom             String              @db.VarChar(255)
-  is_active       Boolean             @default(false)
-  sort_order      Int                 @default(0)
+  uom             String                  @db.VarChar(255)
+  is_active       Boolean                 @default(false)
+  sort_order      Int                     @default(0)
   legacy_metadata Json?
-  created_at      DateTime            @default(now())
-  updated_at      DateTime            @updatedAt
-  organization    Organization        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  created_at      DateTime                @default(now())
+  updated_at      DateTime                @updatedAt
+  organization    Organization            @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   raw_materials   MasterRawMaterial[]
   conversions     MasterStockUomConvert[]
 
@@ -1423,28 +1439,29 @@ model MasterStockUomConvert {
 }
 
 model MasterVendor {
-  id                    String                 @id @default(cuid())
-  value_id              String                 @unique @default(uuid())
-  organization_id       String
-  contact_id            String?
-  vendor                String                 @db.VarChar(255)
-  gst_number            String?                @db.VarChar(50)
-  registered_state      String?                @db.VarChar(100)
-  registered_state_id   String?
-  is_current_store      Boolean                @default(false)
-  is_active             Boolean                @default(false)
-  sort_order            Int                    @default(0)
-  legacy_metadata       Json?
-  created_at            DateTime               @default(now())
-  updated_at            DateTime               @updatedAt
-  organization          Organization           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  contact               Contact?               @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Restrict)
-  registeredState       MasterState?           @relation(fields: [registered_state_id], references: [id], onDelete: SetNull)
-  groupedPurchaseOrders GroupedPurchaseOrder[]
-  masterPurchaseOrders  MasterPurchaseOrder[]
-  purchaseOrders        PurchaseOrder[]
-  rawMaterialStockBookings RawMaterialStockBooking[]
+  id                           String                        @id @default(cuid())
+  value_id                     String                        @unique @default(uuid())
+  organization_id              String
+  contact_id                   String?
+  vendor                       String                        @db.VarChar(255)
+  gst_number                   String?                       @db.VarChar(50)
+  registered_state             String?                       @db.VarChar(100)
+  registered_state_id          String?
+  is_current_store             Boolean                       @default(false)
+  is_active                    Boolean                       @default(false)
+  sort_order                   Int                           @default(0)
+  legacy_metadata              Json?
+  created_at                   DateTime                      @default(now())
+  updated_at                   DateTime                      @updatedAt
+  organization                 Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  contact                      Contact?                      @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Restrict)
+  registeredState              MasterState?                  @relation(fields: [registered_state_id], references: [id], onDelete: SetNull)
+  groupedPurchaseOrders        GroupedPurchaseOrder[]
+  masterPurchaseOrders         MasterPurchaseOrder[]
+  purchaseOrders               PurchaseOrder[]
+  rawMaterialStockBookings     RawMaterialStockBooking[]
   generalPurchaseOrderRequests GeneralPurchaseOrderRequest[]
+  generalPurchaseOrderGroups   GeneralPurchaseOrderGroup[]
   distributionQuotations       DistributionQuotation[]
 
   @@unique([organization_id, id])
@@ -1564,16 +1581,16 @@ model MasterSizeWiseConsumption {
 }
 
 model MasterProduct {
-  id                  String       @id @default(cuid())
-  value_id            String       @unique @default(uuid())
+  id                  String           @id @default(cuid())
+  value_id            String           @unique @default(uuid())
   organization_id     String
-  product_master_name String       @db.VarChar(255)
-  is_active           Boolean      @default(false)
-  sort_order          Int          @default(0)
+  product_master_name String           @db.VarChar(255)
+  is_active           Boolean          @default(false)
+  sort_order          Int              @default(0)
   legacy_metadata     Json?
-  created_at          DateTime     @default(now())
-  updated_at          DateTime     @updatedAt
-  organization        Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  created_at          DateTime         @default(now())
+  updated_at          DateTime         @updatedAt
+  organization        Organization     @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   categories          MasterCategory[]
   articles            MasterArticle[]
 
@@ -1594,17 +1611,17 @@ model MasterProcess {
   updated_at                   DateTime                            @updatedAt
   organization                 Organization                        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   templateSteps                MasterProcessTemplateStep[]
-  firstProcessTemplates        MasterProcessTemplate[]               @relation("ProcessTemplateFirstProcess")
-  lastProcessTemplates         MasterProcessTemplate[]               @relation("ProcessTemplateLastProcess")
-  blockedProcessTemplateSteps  MasterProcessTemplateStep[]           @relation("ProcessTemplateStepBlocker")
+  firstProcessTemplates        MasterProcessTemplate[]             @relation("ProcessTemplateFirstProcess")
+  lastProcessTemplates         MasterProcessTemplate[]             @relation("ProcessTemplateLastProcess")
+  blockedProcessTemplateSteps  MasterProcessTemplateStep[]         @relation("ProcessTemplateStepBlocker")
   orderSteps                   MerchandisingOrderProcessStep[]
   operationTemplates           MasterOperationTemplate[]
   orderControllerProcesses     OrderProcessControllerProcess[]
   workOrderControllerProcesses WorkOrderProcessControllerProcess[]
   shopFloorBatches             BatchMaster[]
   shopFloorProcessLogs         ShopFloorProcessLog[]
-  shopFloorTransfersFrom       ShopFloorTransfer[] @relation("ShopFloorTransferFromProcess")
-  shopFloorTransfersTo         ShopFloorTransfer[] @relation("ShopFloorTransferToProcess")
+  shopFloorTransfersFrom       ShopFloorTransfer[]                 @relation("ShopFloorTransferFromProcess")
+  shopFloorTransfersTo         ShopFloorTransfer[]                 @relation("ShopFloorTransferToProcess")
 
   @@unique([organization_id, process_name])
   @@index([organization_id, is_active])
@@ -1729,6 +1746,7 @@ model MasterRawMaterialType {
   value_id          String                      @unique @default(uuid())
   organization_id   String
   raw_material_type String                      @db.VarChar(255)
+  is_asset          Boolean?
   is_active         Boolean                     @default(false)
   sort_order        Int                         @default(0)
   legacy_metadata   Json?
@@ -1750,6 +1768,7 @@ model MasterRawMaterialCategory {
   raw_material_type_id  String?
   raw_material_category String                         @db.VarChar(255)
   create_cost_center    Boolean                        @default(false)
+  is_asset              Boolean?                       @default(false)
   is_active             Boolean                        @default(false)
   sort_order            Int                            @default(0)
   legacy_metadata       Json?
@@ -1786,68 +1805,177 @@ model MasterRawMaterialSubCategory {
 }
 
 model MasterRawMaterial {
-  id                           String                       @id @default(cuid())
-  value_id                     String                       @unique @default(uuid())
+  id                           String                        @id @default(cuid())
+  value_id                     String                        @unique @default(uuid())
   organization_id              String
-  raw_material_name            String                       @db.VarChar(255)
+  raw_material_name            String                        @db.VarChar(255)
   raw_material_category_id     String
   raw_material_sub_category_id String
   stock_uom_id                 String
   raw_material_type_id         String?
-  is_specific_for_brand        Boolean                      @default(false)
-  size_wise_consumption        Boolean                      @default(false)
+  is_asset                     Boolean                       @default(false)
+  asset_class                  String?                       @db.VarChar(255)
+  manufacturer                 String?                       @db.VarChar(255)
+  model_number                 String?                       @db.VarChar(255)
+  useful_life_months           Int?
+  warranty_expiry              DateTime?                     @db.Date
+  is_specific_for_brand        Boolean                       @default(false)
+  size_wise_consumption        Boolean                       @default(false)
   size_wise_consumption_id     String?
   brand_id                     String?
-  show_all                     Boolean                      @default(false)
+  show_all                     Boolean                       @default(false)
   workdrive_image_id           String?
   buyer_item_code              String?
   image_url                    String?
   item_code                    String?
   colour_id                    String?
   create_open_stock            String?
-  open_stock                   Decimal?                     @db.Decimal(12, 2)
-  open_stock_price             Decimal?                     @db.Decimal(12, 2)
+  open_stock                   Decimal?                      @db.Decimal(12, 2)
+  open_stock_price             Decimal?                      @db.Decimal(12, 2)
   vendor_wise_price_list       String?
-  is_active                    Boolean                      @default(false)
-  sort_order                   Int                          @default(0)
+  is_active                    Boolean                       @default(false)
+  sort_order                   Int                           @default(0)
   legacy_metadata              Json?
-  created_at                   DateTime                     @default(now())
-  updated_at                   DateTime                     @updatedAt
-  organization                 Organization                 @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  raw_material_category        MasterRawMaterialCategory    @relation("RawMaterialCategoryToRawMaterial", fields: [raw_material_category_id], references: [id])
-  raw_material_sub_category    MasterRawMaterialSubCategory @relation("RawMaterialSubCategoryToRawMaterial", fields: [raw_material_sub_category_id], references: [id])
-  stock_uom                    MasterUom                    @relation(fields: [stock_uom_id], references: [id])
-  raw_material_type            MasterRawMaterialType?       @relation(fields: [raw_material_type_id], references: [id])
-  brand                        MasterBrand?                 @relation(fields: [brand_id], references: [id])
-  colour                       MasterColor?                 @relation(fields: [colour_id], references: [id])
-  size_wise_consumption_ref    MasterSizeWiseConsumption?   @relation(fields: [size_wise_consumption_id], references: [id])
+  created_at                   DateTime                      @default(now())
+  updated_at                   DateTime                      @updatedAt
+  organization                 Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  raw_material_category        MasterRawMaterialCategory     @relation("RawMaterialCategoryToRawMaterial", fields: [raw_material_category_id], references: [id])
+  raw_material_sub_category    MasterRawMaterialSubCategory  @relation("RawMaterialSubCategoryToRawMaterial", fields: [raw_material_sub_category_id], references: [id])
+  stock_uom                    MasterUom                     @relation(fields: [stock_uom_id], references: [id])
+  raw_material_type            MasterRawMaterialType?        @relation(fields: [raw_material_type_id], references: [id])
+  brand                        MasterBrand?                  @relation(fields: [brand_id], references: [id])
+  colour                       MasterColor?                  @relation(fields: [colour_id], references: [id])
+  size_wise_consumption_ref    MasterSizeWiseConsumption?    @relation(fields: [size_wise_consumption_id], references: [id])
   generalPurchaseOrderRequests GeneralPurchaseOrderRequest[]
+  generalPurchaseOrderGroups   GeneralPurchaseOrderGroup[]
+  preventiveMaintenanceAssets  PreventiveMaintenanceAsset[]
 
   @@unique([organization_id, raw_material_name])
+  @@unique([organization_id, id])
   @@index([organization_id, is_active])
   @@map("master_raw_materials")
 }
 
-model ApprovalRequest {
-  id              String       @id @default(cuid())
-  request_id      String       @unique @default(uuid())
+model PreventiveMaintenanceAsset {
+  id                     String                           @id @default(cuid())
+  organization_id        String
+  asset_tag              String                           @db.VarChar(100)
+  master_raw_material_id String
+  entity_id              String
+  location_id            String
+  serial_number          String?                          @db.VarChar(150)
+  criticality            String                           @default("MEDIUM") @db.VarChar(20)
+  status                 String                           @default("ACTIVE") @db.VarChar(20)
+  created_at             DateTime                         @default(now())
+  updated_at             DateTime                         @updatedAt
+  organization           Organization                     @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  rawMaterial            MasterRawMaterial                @relation(fields: [organization_id, master_raw_material_id], references: [organization_id, id], onDelete: Restrict)
+  location               MasterLocation                   @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
+  plans                  PreventiveMaintenancePlan[]
+  workOrders             PreventiveMaintenanceWorkOrder[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, asset_tag])
+  @@index([organization_id, status, criticality])
+  @@map("preventive_maintenance_assets")
+}
+
+model PreventiveMaintenancePlan {
+  id              String                               @id @default(cuid())
   organization_id String
-  module_key      String       @db.VarChar(100)
-  module_name     String       @db.VarChar(255)
-  entity_type     String       @db.VarChar(100)
-  entity_key      String       @db.VarChar(255)
-  entity_label    String       @db.VarChar(255)
-  entity_ref_id   String?
-  requested_by    String?
+  asset_id        String
+  plan_name       String                               @db.VarChar(120)
+  interval_days   Int
+  next_due_date   DateTime                             @db.Date
+  is_active       Boolean                              @default(true)
+  created_at      DateTime                             @default(now())
+  updated_at      DateTime                             @updatedAt
+  organization    Organization                         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  asset           PreventiveMaintenanceAsset           @relation(fields: [organization_id, asset_id], references: [organization_id, id], onDelete: Restrict)
+  checklist       PreventiveMaintenancePlanChecklist[]
+  workOrders      PreventiveMaintenanceWorkOrder[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, asset_id, plan_name])
+  @@index([organization_id, is_active, next_due_date])
+  @@map("preventive_maintenance_plans")
+}
+
+model PreventiveMaintenancePlanChecklist {
+  id              String                    @id @default(cuid())
+  organization_id String
+  plan_id         String
+  sort_order      Int
+  instruction     String                    @db.VarChar(240)
+  created_at      DateTime                  @default(now())
+  organization    Organization              @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  plan            PreventiveMaintenancePlan @relation(fields: [organization_id, plan_id], references: [organization_id, id], onDelete: Cascade)
+
+  @@unique([organization_id, plan_id, sort_order])
+  @@map("preventive_maintenance_plan_checklist")
+}
+
+model PreventiveMaintenanceWorkOrder {
+  id               String                                    @id @default(cuid())
+  organization_id  String
+  asset_id         String
+  plan_id          String?
+  scheduled_for    DateTime                                  @db.Date
+  status           String                                    @default("SCHEDULED") @db.VarChar(20)
+  completed_by     String?                                   @db.VarChar(255)
+  completed_at     DateTime?
+  downtime_minutes Int?
+  completion_notes String?                                   @db.VarChar(1000)
+  created_at       DateTime                                  @default(now())
+  updated_at       DateTime                                  @updatedAt
+  organization     Organization                              @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  asset            PreventiveMaintenanceAsset                @relation(fields: [organization_id, asset_id], references: [organization_id, id], onDelete: Restrict)
+  plan             PreventiveMaintenancePlan?                @relation(fields: [organization_id, plan_id], references: [organization_id, id], onDelete: Restrict)
+  checklist        PreventiveMaintenanceWorkOrderChecklist[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, plan_id, scheduled_for])
+  @@index([organization_id, status, scheduled_for])
+  @@map("preventive_maintenance_work_orders")
+}
+
+model PreventiveMaintenanceWorkOrderChecklist {
+  id              String                         @id @default(cuid())
+  organization_id String
+  work_order_id   String
+  sort_order      Int
+  instruction     String                         @db.VarChar(240)
+  is_completed    Boolean                        @default(false)
+  completion_note String?                        @db.VarChar(500)
+  completed_at    DateTime?
+  completed_by    String?                        @db.VarChar(255)
+  organization    Organization                   @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "preventive_maintenance_work_order_checklist_org_fkey")
+  workOrder       PreventiveMaintenanceWorkOrder @relation(fields: [organization_id, work_order_id], references: [organization_id, id], onDelete: Cascade, map: "preventive_maintenance_work_order_checklist_work_order_fkey")
+
+  @@unique([organization_id, work_order_id, sort_order])
+  @@map("preventive_maintenance_work_order_checklist")
+}
+
+model ApprovalRequest {
+  id                   String       @id @default(cuid())
+  request_id           String       @unique @default(uuid())
+  organization_id      String
+  module_key           String       @db.VarChar(100)
+  module_name          String       @db.VarChar(255)
+  entity_type          String       @db.VarChar(100)
+  entity_key           String       @db.VarChar(255)
+  entity_label         String       @db.VarChar(255)
+  entity_ref_id        String?
+  requested_by         String?
   requested_by_user_id String?
-  status          String       @default("pending") @db.VarChar(50)
-  notes           String?
-  reviewed_by     String?
-  reviewed_by_user_id String?
-  reviewed_at     DateTime?
-  created_at      DateTime     @default(now())
-  updated_at      DateTime     @updatedAt
-  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  status               String       @default("pending") @db.VarChar(50)
+  notes                String?
+  reviewed_by          String?
+  reviewed_by_user_id  String?
+  reviewed_at          DateTime?
+  created_at           DateTime     @default(now())
+  updated_at           DateTime     @updatedAt
+  organization         Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
   @@index([organization_id, status])
   @@index([organization_id, entity_ref_id])
@@ -1855,30 +1983,36 @@ model ApprovalRequest {
 }
 
 model GeneralPurchaseOrderRequest {
-  id                   String        @id @default(cuid())
-  organization_id      String
-  raw_material_id      String
-  quantity             Decimal       @db.Decimal(12, 2)
-  status               String        @default("PENDING_PRICE_APPROVAL") @db.VarChar(50)
-  vendor_id            String?
-  vendor_price         Decimal?      @db.Decimal(12, 4)
-  gst                  Decimal?      @db.Decimal(10, 2)
-  hsn_code             String?       @db.VarChar(100)
-  created_by           String?       @db.VarChar(255)
-  created_by_user_id   String?
-  approved_by          String?       @db.VarChar(255)
-  approved_by_user_id  String?
-  approved_at          DateTime?
-  purchase_order_id    String?
-  created_at           DateTime      @default(now())
-  updated_at           DateTime      @updatedAt
-  organization         Organization  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  rawMaterial          MasterRawMaterial @relation(fields: [raw_material_id], references: [id], onDelete: Restrict)
-  vendor               MasterVendor? @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
-  purchaseOrder        PurchaseOrder? @relation(fields: [purchase_order_id], references: [id], onDelete: SetNull)
+  id                              String                     @id @default(cuid())
+  organization_id                 String
+  entity_id                       String?
+  raw_material_id                 String
+  quantity                        Decimal                    @db.Decimal(12, 2)
+  status                          String                     @default("PENDING_PRICE_APPROVAL") @db.VarChar(50)
+  vendor_id                       String?
+  vendor_price                    Decimal?                   @db.Decimal(12, 4)
+  gst                             Decimal?                   @db.Decimal(10, 2)
+  hsn_code                        String?                    @db.VarChar(100)
+  created_by                      String?                    @db.VarChar(255)
+  created_by_user_id              String?
+  approved_by                     String?                    @db.VarChar(255)
+  approved_by_user_id             String?
+  approved_at                     DateTime?
+  purchase_order_id               String?
+  general_purchase_order_group_id String?
+  created_at                      DateTime                   @default(now())
+  updated_at                      DateTime                   @updatedAt
+  organization                    Organization               @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity                          MasterEntity?              @relation("GeneralPurchaseOrderRequestEntity", fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
+  rawMaterial                     MasterRawMaterial          @relation(fields: [raw_material_id], references: [id], onDelete: Restrict)
+  vendor                          MasterVendor?              @relation(fields: [vendor_id], references: [id], onDelete: Restrict)
+  purchaseOrder                   PurchaseOrder?             @relation(fields: [purchase_order_id], references: [id], onDelete: SetNull)
+  generalPurchaseOrderGroup       GeneralPurchaseOrderGroup? @relation(fields: [general_purchase_order_group_id], references: [id], onDelete: Restrict)
 
   @@index([organization_id, status, created_at])
   @@index([organization_id, vendor_id])
+  @@index([organization_id, entity_id])
+  @@index([organization_id, general_purchase_order_group_id])
   @@index([purchase_order_id])
   @@map("general_purchase_order_requests")
 }
@@ -1946,17 +2080,17 @@ model OrganizationOrderCounter {
 }
 
 model OrganizationDummyDataBatch {
-  id                 String       @id @default(cuid())
-  organization_id    String       @unique
-  status             String       @default("EMPTY") @db.VarChar(40)
-  stage              String       @default("IDLE") @db.VarChar(40)
-  checkpoint         Json         @default("{}")
-  last_error         String?      @db.VarChar(1000)
-  sample_order_id    String?      @unique
-  master_record_ids  Json         @default("{}")
-  created_at         DateTime     @default(now())
-  updated_at         DateTime     @updatedAt
-  organization       Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  id                String       @id @default(cuid())
+  organization_id   String       @unique
+  status            String       @default("EMPTY") @db.VarChar(40)
+  stage             String       @default("IDLE") @db.VarChar(40)
+  checkpoint        Json         @default("{}")
+  last_error        String?      @db.VarChar(1000)
+  sample_order_id   String?      @unique
+  master_record_ids Json         @default("{}")
+  created_at        DateTime     @default(now())
+  updated_at        DateTime     @updatedAt
+  organization      Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
   @@index([organization_id, status])
   @@map("organization_dummy_data_batches")

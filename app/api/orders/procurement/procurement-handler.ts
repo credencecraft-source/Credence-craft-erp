@@ -3,8 +3,10 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import {
   approveGeneralPurchaseOrderPrice,
-  createGeneralPurchaseOrder,
+  createGeneralPurchaseOrderFromGroups,
+  createGeneralPurchaseOrderGroups,
   createGeneralPurchaseOrderRequests,
+  listGeneralPurchaseOrderGroups,
   listGeneralPurchaseOrderRequests,
   saveGeneralPurchaseOrderPrice,
 } from "@/lib/services/orders/general-purchase-order-service";
@@ -27,6 +29,26 @@ export async function GET(request: Request) {
 
     const organization = await requireOrganizationContext(user.id, organizationId);
     const view = url.searchParams.get("view") ?? "price-approval";
+    const assetOnlyParameter = url.searchParams.get("isAsset");
+    if (assetOnlyParameter !== null && assetOnlyParameter !== "true" && assetOnlyParameter !== "false") {
+      return NextResponse.json({ error: "Asset classification filter must be true or false." }, { status: 400 });
+    }
+    const assetClassification = assetOnlyParameter === null ? undefined : assetOnlyParameter === "true";
+    if (view === "general-po-request") {
+      const requestId = url.searchParams.get("requestId")?.trim();
+      if (!requestId) {
+        return NextResponse.json({ error: "General PO request ID is required." }, { status: 400 });
+      }
+      const result = await listGeneralPurchaseOrderRequests(
+        organization.id,
+        ["PENDING_PRICE_APPROVAL"],
+        { requestId, limit: 1, ...(assetClassification === undefined ? {} : { isAsset: assetClassification }) },
+      );
+      if (!result.requests[0]) {
+        return NextResponse.json({ error: "The pending General PO price request was not found." }, { status: 404 });
+      }
+      return NextResponse.json({ request: result.requests[0] });
+    }
     if (view === "general-po") {
       const statusParameter = url.searchParams.get("status");
       const requestedStatuses = statusParameter?.split(",").map((status) => status.trim());
@@ -39,8 +61,24 @@ export async function GET(request: Request) {
         ...await listGeneralPurchaseOrderRequests(organization.id, requestedStatuses, {
           cursor: url.searchParams.get("cursor") ?? undefined,
           limit: Number.isFinite(requestedLimit) ? requestedLimit : 50,
+          unGroupedOnly: url.searchParams.get("unGroupedOnly") === "true",
+          ...(assetClassification === undefined ? {} : { isAsset: assetClassification }),
         }),
       });
+    }
+    if (view === "general-groups") {
+      const statusParameter = url.searchParams.get("status");
+      const requestedStatuses = statusParameter?.split(",").map((status) => status.trim());
+      const allowedStatuses = ["MASTER_GROUPED", "PO_CREATED"];
+      if (requestedStatuses && (!requestedStatuses.length || requestedStatuses.some((status) => !allowedStatuses.includes(status)))) {
+        return NextResponse.json({ error: "One or more General PO group statuses are invalid." }, { status: 400 });
+      }
+      const requestedLimit = Number(url.searchParams.get("limit") ?? 50);
+      return NextResponse.json(await listGeneralPurchaseOrderGroups(organization.id, requestedStatuses, {
+        cursor: url.searchParams.get("cursor") ?? undefined,
+        limit: Number.isFinite(requestedLimit) ? requestedLimit : 50,
+        ...(assetClassification === undefined ? {} : { isAsset: assetClassification }),
+      }));
     }
     if (view === "summary") {
       return NextResponse.json(await getProcurementSummary(organization.id));
@@ -89,12 +127,22 @@ export async function POST(request: Request) {
     const organizationId = String(body.organizationId ?? "");
     if (body.action === "create-general-requests") {
       const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      const requestRows = Array.isArray(body.requests) ? body.requests : [];
+      if (requestRows.some((item: unknown) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return true;
+        const values = item as Record<string, unknown>;
+        return values.isAsset !== undefined && typeof values.isAsset !== "boolean";
+      })) {
+        return NextResponse.json({ error: "Every material line must have a valid asset classification." }, { status: 400 });
+      }
       const generalPurchaseOrderRequests = await createGeneralPurchaseOrderRequests(
         organization.id,
-        Array.isArray(body.requests)
-          ? body.requests.map((item: { rawMaterialId?: unknown; quantity?: unknown }) => ({
+        requestRows.length
+          ? requestRows.map((item: { entityId?: unknown; rawMaterialId?: unknown; quantity?: unknown; isAsset?: boolean }) => ({
+              entityId: String(item.entityId ?? ""),
               rawMaterialId: String(item.rawMaterialId ?? ""),
               quantity: item.quantity as number | string,
+              ...(item.isAsset === undefined ? {} : { isAsset: item.isAsset }),
             }))
           : [],
         user.full_name,
@@ -130,15 +178,26 @@ export async function POST(request: Request) {
     }
     if (body.action === "create-general-po") {
       const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
-      const purchaseOrder = await createGeneralPurchaseOrder(
+      const purchaseOrder = await createGeneralPurchaseOrderFromGroups(
         organization.id,
-        Array.isArray(body.requestIds) ? body.requestIds.map(String) : [],
+        Array.isArray(body.groupIds) ? body.groupIds.map(String) : [],
         user.full_name,
         user.id,
         body.poDate ? String(body.poDate) : null,
         body.deliveryDate ? String(body.deliveryDate) : null,
       );
       return NextResponse.json({ ok: true, purchaseOrder }, { status: 201 });
+    }
+    if (body.action === "create-general-master-groups") {
+      const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);
+      const groups = await createGeneralPurchaseOrderGroups(
+        organization.id,
+        Array.isArray(body.requestIds) ? body.requestIds.map(String) : [],
+        user.full_name,
+        user.id,
+        body.entityId ? String(body.entityId) : null,
+      );
+      return NextResponse.json({ ok: true, groups }, { status: 201 });
     }
     if (body.action === "master-group") {
       const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "MERCHANDISING"]);

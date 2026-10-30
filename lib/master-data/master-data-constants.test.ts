@@ -10,6 +10,7 @@ const { prismaMock, models } = vi.hoisted(() => {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     findFirst: vi.fn().mockResolvedValue(null),
     findMany: vi.fn().mockResolvedValue([]),
+    findUnique: vi.fn().mockResolvedValue(null),
     update: vi.fn().mockResolvedValue({ id: "updated-id" }),
     updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     upsert: vi.fn().mockResolvedValue({ id: "upserted-id" }),
@@ -23,6 +24,7 @@ const { prismaMock, models } = vi.hoisted(() => {
     "masterRawMaterialCategory", "masterRawMaterialSubCategory", "masterRawMaterialType", "masterSeason",
     "masterSize", "masterSizeGroup", "masterSizeGroupSize", "masterState", "masterStatus", "masterStockUomConvert",
     "masterSubCategory", "masterUom", "masterVendor", "masterSizeWiseConsumption",
+    "masterModule", "masterModuleValue", "approvalRequest", "auditEvent",
   ];
   const models = Object.fromEntries(modelNames.map((name) => [name, delegate()])) as Record<string, ReturnType<typeof delegate>>;
   const organizationDummyDataBatch = delegate();
@@ -87,6 +89,254 @@ describe("organization master record queries", () => {
         process_template_id: "process-template-id",
       }),
     }));
+  });
+
+  it("reads Price Lists only through the organization-scoped master module", async () => {
+    models.masterModule.findUnique.mockResolvedValueOnce({ id: "org-channel-module" });
+    models.masterModuleValue.findMany.mockResolvedValueOnce([{
+      id: "channel-id",
+      value_id: "channel-value-id",
+      label: "ONLINE",
+      code: "WEB",
+      description: null,
+      metadata: { Channel_Type: "Qty Based" },
+      is_active: true,
+      parent_id: null,
+      sort_order: 0,
+    }]);
+
+    const values = await getMasterValuesForOrganization("org-id", "price-list");
+
+    expect(models.masterModule.findUnique).toHaveBeenCalledWith({
+      where: { organization_id_module_key: { organization_id: "org-id", module_key: "price-list" } },
+      select: { id: true },
+    });
+    expect(models.masterModuleValue.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { module_id: "org-channel-module", is_active: true },
+    }));
+    expect(values).toEqual([expect.objectContaining({
+      id: "channel-id",
+      value_id: "channel-value-id",
+      label: "ONLINE",
+      fields: { Channel_Name: "ONLINE", Channel_Code: "WEB", Channel_Type: "Qty Based" },
+    })]);
+  });
+
+  it("resolves Price Lists by exact Price List Code for record detail routes", async () => {
+    models.masterModule.findUnique.mockResolvedValueOnce({ id: "org-channel-module" });
+    models.masterModuleValue.findMany.mockResolvedValueOnce([{
+      id: "channel-id",
+      value_id: "channel-value-id",
+      label: "ONLINE",
+      code: "WEB",
+      description: null,
+      metadata: { Channel_Type: "Qty Based" },
+      is_active: true,
+      parent_id: null,
+      sort_order: 0,
+    }]);
+
+    const values = await getMasterValuesForOrganization("org-id", "price-list", true, {
+      search: "web",
+      exactSearch: true,
+      limit: 2,
+    });
+
+    expect(models.masterModuleValue.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        module_id: "org-channel-module",
+        OR: expect.arrayContaining([
+          { code: { equals: "web", mode: "insensitive" } },
+        ]),
+      }),
+      take: 2,
+    }));
+    expect(values).toEqual([expect.objectContaining({
+      id: "channel-id",
+      value_id: "channel-value-id",
+      code: "WEB",
+    })]);
+  });
+
+  it("creates a normalized Price List and its approval request", async () => {
+    models.masterModule.upsert.mockResolvedValueOnce({ id: "org-channel-module" });
+    models.masterModuleValue.create.mockResolvedValueOnce({
+      id: "channel-id",
+      value_id: "channel-value-id",
+      label: "ONLINE",
+      code: "WEB",
+      metadata: { Channel_Type: "Qty Based" },
+      is_active: true,
+    });
+
+    await createMasterValueForOrganization("org-id", "price-list", {
+      label: "online",
+      fields: { Channel_Name: "online", Channel_Code: "web", Channel_Type: "Qty Based" },
+    });
+
+    expect(models.masterModule.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id_module_key: { organization_id: "org-id", module_key: "price-list" } },
+    }));
+    expect(models.masterModuleValue.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        module_id: "org-channel-module",
+        label: "ONLINE",
+        code: "WEB",
+        metadata: { Channel_Type: "Qty Based" },
+        is_active: true,
+      }),
+    });
+    expect(models.approvalRequest.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        organization_id: "org-id",
+        module_key: "price-list",
+        entity_ref_id: "channel-value-id",
+      }),
+    }));
+  });
+
+  it("rejects Price List Types outside the configured choices", async () => {
+    await expect(createMasterValueForOrganization("org-id", "price-list", {
+      label: "online",
+      fields: { Channel_Name: "online", Channel_Type: "Unsupported" },
+    })).rejects.toThrow("Select a valid Price List Type.");
+
+    expect(models.masterModule.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("raw-material type asset classification", () => {
+  it("includes the saved category classification in Raw Material Category lookups", async () => {
+    models.masterRawMaterialCategory.findMany.mockResolvedValueOnce([{
+      id: "category-id",
+      value_id: "category-value-id",
+      organization_id: "org-id",
+      is_active: true,
+      sort_order: 1,
+      raw_material_type_id: "type-id",
+      raw_material_category: "Equipment",
+      is_asset: true,
+    }] as never);
+
+    const categories = await getMasterValuesForOrganization("org-id", "raw-material-category");
+
+    expect(models.masterRawMaterialCategory.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({ is_asset: true }),
+    }));
+    expect(categories[0].fields.is_asset).toBe(true);
+  });
+
+  it("uses a classified category when its legacy Raw Material Type has no classification", async () => {
+    const category = {
+      id: "category-id",
+      raw_material_type_id: "type-id",
+      is_asset: true,
+    };
+    models.masterRawMaterialCategory.findFirst
+      .mockResolvedValueOnce(category as never)
+      .mockResolvedValueOnce(category as never);
+    const subCategory = {
+      id: "sub-category-id",
+      raw_material_category_id: "category-id",
+    };
+    models.masterRawMaterialSubCategory.findFirst
+      .mockResolvedValueOnce(subCategory as never)
+      .mockResolvedValueOnce(subCategory as never);
+    const rawMaterialType = {
+      id: "type-id",
+      is_asset: null,
+    };
+    models.masterRawMaterialType.findFirst.mockResolvedValueOnce(rawMaterialType as never);
+    models.masterUom.findFirst.mockResolvedValueOnce({ id: "uom-id" } as never);
+
+    await createMasterValueForOrganization("org-id", "raw-material", {
+      label: "Equipment",
+      createOnly: true,
+      fields: {
+        Raw_Material_Name: "Equipment",
+        Category: "category-id",
+        Subcategory: "sub-category-id",
+        Stock_Uom1: "uom-id",
+      },
+    });
+
+    expect(models.masterRawMaterial.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        organization_id: "org-id",
+        raw_material_type_id: "type-id",
+        is_asset: true,
+      }),
+    }));
+  });
+
+  it("synchronizes linked materials and audits type classification changes in one transaction", async () => {
+    models.masterRawMaterialType.findFirst.mockResolvedValue({
+      id: "type-id",
+      is_asset: false,
+      legacy_metadata: null,
+    } as never);
+    models.masterRawMaterialCategory.findMany.mockResolvedValue([{ id: "category-id" }] as never);
+
+    await updateMasterValue("org-id", "type-id", {
+      label: "Equipment",
+      fields: {
+        Raw_Material_Type: "Equipment",
+        Asset_Classification: true,
+      },
+      actorUserId: "actor-id",
+    });
+
+    expect(models.masterRawMaterialType.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "type-id" },
+      data: expect.objectContaining({ is_asset: true }),
+    }));
+    expect(models.masterRawMaterialCategory.findMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-id", raw_material_type_id: "type-id" },
+      select: { id: true },
+    });
+    expect(models.masterRawMaterialCategory.updateMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-id", id: { in: ["category-id"] } },
+      data: { is_asset: true },
+    });
+    expect(models.masterRawMaterial.updateMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-id", raw_material_category_id: { in: ["category-id"] } },
+      data: { is_asset: true },
+    });
+    expect(models.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        organization_id: "org-id",
+        user_id: "actor-id",
+        action: "UPDATE_RAW_MATERIAL_TYPE_ASSET_CLASSIFICATION",
+        entity_id: "type-id",
+        details: expect.objectContaining({
+          before: false,
+          after: true,
+          affectedCategoryCount: 1,
+          affectedRawMaterialCount: 1,
+        }),
+      }),
+    }));
+    expect(prismaMock.$transaction).toHaveBeenCalledOnce();
+  });
+
+  it("requires an actor before changing type classification", async () => {
+    models.masterRawMaterialType.findFirst.mockReset().mockResolvedValue({
+      id: "type-id",
+      raw_material_type: "Equipment",
+      is_asset: false,
+      legacy_metadata: null,
+    } as never);
+
+    await expect(updateMasterValue("org-id", "type-id", {
+      label: "Equipment",
+      fields: {
+        Raw_Material_Type: "Equipment",
+        Asset_Classification: true,
+      },
+    })).rejects.toThrow("requires an authorized actor");
+
+    expect(models.masterRawMaterialType.update).not.toHaveBeenCalled();
+    expect(models.masterRawMaterial.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -503,6 +753,19 @@ describe("raw material creation", () => {
     addLookup("size-wise-consumption", "consumption-id", "STANDARD");
     addLookup("brand", "brand-id", "BRAND");
     addLookup("color", "colour-id", "BLUE");
+    models.masterRawMaterialCategory.findFirst.mockReset().mockResolvedValue({
+      id: "raw-category-id",
+      raw_material_type_id: "raw-type-id",
+      is_asset: false,
+    } as never);
+    models.masterRawMaterialSubCategory.findFirst.mockReset().mockResolvedValue({
+      id: "raw-subcategory-id",
+      raw_material_category_id: "raw-category-id",
+    } as never);
+    models.masterRawMaterialType.findFirst.mockReset().mockResolvedValue({
+      id: "raw-type-id",
+      is_asset: false,
+    } as never);
 
     await createMasterValueForOrganization("org-id", "raw-material", {
       label: "CACHED LOOKUP FABRIC",
@@ -531,10 +794,16 @@ describe("raw material creation", () => {
         colour_id: "colour-id",
       }),
     });
-    expect(models.masterRawMaterialCategory.findFirst).not.toHaveBeenCalled();
-    expect(models.masterRawMaterialSubCategory.findFirst).not.toHaveBeenCalled();
+    expect(models.masterRawMaterialCategory.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "raw-category-id", organization_id: "org-id" },
+    }));
+    expect(models.masterRawMaterialSubCategory.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "raw-subcategory-id", organization_id: "org-id" },
+    }));
     expect(models.masterUom.findFirst).not.toHaveBeenCalled();
-    expect(models.masterRawMaterialType.findFirst).not.toHaveBeenCalled();
+    expect(models.masterRawMaterialType.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "raw-type-id", organization_id: "org-id" },
+    }));
     expect(models.masterSizeWiseConsumption.findFirst).not.toHaveBeenCalled();
     expect(models.masterBrand.findFirst).not.toHaveBeenCalled();
     expect(models.masterColor.findFirst).not.toHaveBeenCalled();
@@ -552,9 +821,20 @@ describe("raw material creation", () => {
     ] as const;
 
     for (const [lookup, id] of lookups) {
-      lookup.findFirst.mockResolvedValue({ id, legacy_metadata: null });
+      lookup.findFirst.mockReset().mockResolvedValue({ id, legacy_metadata: null });
     }
-
+    models.masterRawMaterialType.findFirst.mockReset()
+      .mockResolvedValueOnce({ id: "raw-type-id", legacy_metadata: null } as never)
+      .mockResolvedValueOnce({ id: "raw-type-id", is_asset: true } as never);
+    models.masterRawMaterialCategory.findFirst.mockResolvedValue({
+      id: "raw-category-id",
+      raw_material_type_id: "raw-type-id",
+      is_asset: true,
+    } as never);
+    models.masterRawMaterialSubCategory.findFirst.mockResolvedValue({
+      id: "raw-subcategory-id",
+      raw_material_category_id: "raw-category-id",
+    } as never);
     await createMasterValueForOrganization("org-id", "raw-material", {
       label: "JASSIMTKTEST",
       fields: {
@@ -567,6 +847,11 @@ describe("raw material creation", () => {
         Size_Wise_Consemption_Master: "consumption-id",
         Brand1: "brand-id",
         Colour: "colour-id",
+        Asset_Class: "MACHINERY",
+        Manufacturer: "ACME",
+        Model_Number: "MX-100",
+        Useful_Life_Months: 48,
+        Warranty_Expiry: "2030-12-31",
       },
     });
 
@@ -578,6 +863,12 @@ describe("raw material creation", () => {
         raw_material_sub_category_id: "raw-subcategory-id",
         stock_uom_id: "uom-id",
         raw_material_type_id: "raw-type-id",
+        is_asset: true,
+        asset_class: "MACHINERY",
+        manufacturer: "ACME",
+        model_number: "MX-100",
+        useful_life_months: 48,
+        warranty_expiry: new Date("2030-12-31T00:00:00.000Z"),
         size_wise_consumption: true,
         size_wise_consumption_id: "consumption-id",
         brand_id: "brand-id",

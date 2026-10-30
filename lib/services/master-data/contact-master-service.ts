@@ -457,12 +457,14 @@ export async function listContacts(
 export async function listContactLookupOptions(
   organizationId: string,
   database: ContactDatabase = prisma,
-  pagination: { skip?: number; take?: number; search?: string } = {},
+  pagination: { skip?: number; take?: number; search?: string; activeOnly?: boolean; excludedIds?: string[] } = {},
 ) {
   const search = pagination.search?.trim();
   const contacts = await database.contact.findMany({
     where: {
       organization_id: organizationId,
+      ...(pagination.activeOnly ? { is_active: true } : {}),
+      ...(pagination.excludedIds?.length ? { id: { notIn: pagination.excludedIds } } : {}),
       ...(search ? {
         OR: [
           { legal_name: { contains: search, mode: "insensitive" } },

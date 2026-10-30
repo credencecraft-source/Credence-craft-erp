@@ -11,6 +11,7 @@ describe("parseOrderQrTemplateInput", () => {
   it("normalizes names and accepts QR, display, style, and sticker settings", () => {
     expect(parseOrderQrTemplateInput({
       name: "order tag - sample",
+      pageSetupTemplateId: "setup-1",
       qrFieldKey: "orderNo",
       displayFields: ["orderNo", "styleName", "buyer"],
       displayFieldStyles: {
@@ -25,6 +26,7 @@ describe("parseOrderQrTemplateInput", () => {
       success: true,
       data: {
         name: "ORDER TAG - SAMPLE",
+        pageSetupTemplateId: "setup-1",
         qrFieldKey: "orderNo",
         displayFields: ["orderNo", "styleName", "buyer"],
         displayFieldStyles: {
@@ -52,6 +54,7 @@ describe("parseOrderQrTemplateInput", () => {
   it("converts legacy field selections into a QR field and display fields", () => {
     expect(parseOrderQrTemplateInput({
       name: "order tag",
+      pageSetupTemplateId: "setup-1",
       fieldKeys: ["orderNo", "styleName"],
       qrSize: 192,
     })).toMatchObject({
@@ -81,6 +84,7 @@ describe("parseOrderQrTemplateInput", () => {
     };
     expect(parseOrderQrTemplateInput({
       name: "MOVABLE",
+      pageSetupTemplateId: "setup-1",
       qrFieldKey: "orderNo",
       displayFields: ["buyer"],
       qrSize: 128,
@@ -88,6 +92,7 @@ describe("parseOrderQrTemplateInput", () => {
     })).toMatchObject({ success: true, data: { layout } });
     expect(parseOrderQrTemplateInput({
       name: "INVALID POSITION",
+      pageSetupTemplateId: "setup-1",
       qrFieldKey: "orderNo",
       displayFields: ["buyer"],
       qrSize: 128,
@@ -107,6 +112,37 @@ describe("parseOrderQrTemplateInput", () => {
     expect(getA4StickerGrid(350, 30, "A4_PORTRAIT")).toBeNull();
   });
 
+  it("uses the saved Page Setup dimensions, margins, and gaps for print-sheet placement", () => {
+    const pageSetup = {
+      id: "setup-1",
+      name: "A3 STOCK",
+      paperSize: "A3" as const,
+      orientation: "LANDSCAPE" as const,
+      stickerWidthMm: 50,
+      stickerLengthMm: 30,
+      marginTopMm: 10,
+      marginBottomMm: 10,
+      marginLeftMm: 15,
+      marginRightMm: 15,
+      horizontalGapMm: 3,
+      verticalGapMm: 4,
+    };
+
+    expect(getA4StickerGrid(50, 30, "A4_AUTO", pageSetup)).toMatchObject({
+      pageWidthMm: 420,
+      pageHeightMm: 297,
+      columns: 7,
+      rows: 8,
+      count: 56,
+      marginTopMm: 10,
+      marginLeftMm: 15,
+      horizontalGapMm: 3,
+      verticalGapMm: 4,
+      portrait: false,
+      paperSize: "A3",
+    });
+  });
+
   it("reads legacy template styles with the existing barcode printer defaults", () => {
     expect(parseStoredOrderQrTemplateDesign({
       buyer: { fontSize: 16, bold: true, underline: false, color: "#123456" },
@@ -120,6 +156,7 @@ describe("parseOrderQrTemplateInput", () => {
         printerType: "BARCODE",
         pdfPaperSize: "A4_AUTO",
       },
+      pageSetup: null,
     });
   });
 
@@ -127,7 +164,6 @@ describe("parseOrderQrTemplateInput", () => {
     expect(buildOrderQrPayload(
       ["orderNo", "buyer"],
       { orderNo: "ORD-100", buyer: "BUYER A", styleName: "UNSELECTED" },
-      "ORD-100",
     )).toEqual({
       entries: [
         { label: "Order Number", value: "ORD-100" },
@@ -137,21 +173,21 @@ describe("parseOrderQrTemplateInput", () => {
     });
   });
 
-  it("falls back to the order number if selected order fields are empty", () => {
-    expect(buildOrderQrPayload(["buyer"], { buyer: " " }, "ORD-100")).toEqual({
+  it("does not substitute an order number when the selected QR field is empty", () => {
+    expect(buildOrderQrPayload(["buyer"], { buyer: " " })).toEqual({
       entries: [],
-      payload: "ORD-100",
+      payload: "",
     });
   });
 
   it.each([
     [null, "Template details are required."],
-    [{ name: " ", fieldKeys: ["orderNo"], qrSize: 128 }, "Template name is required."],
-    [{ name: "valid", qrFieldKey: "bad", qrSize: 128 }, "Select one valid QR code field."],
-    [{ name: "valid", fieldKeys: [], qrSize: 128 }, "Select one valid QR code field."],
-    [{ name: "valid", fieldKeys: ["notAnOrderField"], qrSize: 128 }, "Select one valid QR code field."],
-    [{ name: "valid", displayFields: ["orderNo", "orderNo"], qrSize: 128 }, "Display fields cannot be selected more than once."],
-    [{ name: "valid", fieldKeys: ["orderNo"], qrSize: 129 }, "Select a supported QR code size."],
+    [{ name: " ", pageSetupTemplateId: "setup-1", fieldKeys: ["orderNo"], qrSize: 128 }, "Template name is required."],
+    [{ name: "valid", pageSetupTemplateId: "setup-1", qrFieldKey: "bad", qrSize: 128 }, "Select one valid QR code field."],
+    [{ name: "valid", pageSetupTemplateId: "setup-1", fieldKeys: [], qrSize: 128 }, "Select one valid QR code field."],
+    [{ name: "valid", pageSetupTemplateId: "setup-1", fieldKeys: ["notAnOrderField"], qrSize: 128 }, "Select one valid QR code field."],
+    [{ name: "valid", pageSetupTemplateId: "setup-1", displayFields: ["orderNo", "orderNo"], qrSize: 128 }, "Display fields cannot be selected more than once."],
+    [{ name: "valid", pageSetupTemplateId: "setup-1", fieldKeys: ["orderNo"], qrSize: 129 }, "Select a supported QR code size."],
   ])("rejects invalid input %#", (input, message) => {
     expect(parseOrderQrTemplateInput(input)).toEqual({ success: false, error: message });
   });
@@ -159,6 +195,7 @@ describe("parseOrderQrTemplateInput", () => {
   it("rejects a name longer than the storage limit", () => {
     expect(parseOrderQrTemplateInput({
       name: "T".repeat(101),
+      pageSetupTemplateId: "setup-1",
       fieldKeys: ["orderNo"],
       qrSize: 128,
     })).toEqual({
@@ -170,6 +207,7 @@ describe("parseOrderQrTemplateInput", () => {
   it("rejects invalid styles and sticker dimensions", () => {
     expect(parseOrderQrTemplateInput({
       name: "BAD STYLE",
+      pageSetupTemplateId: "setup-1",
       qrFieldKey: "orderNo",
       displayFields: ["buyer"],
       displayFieldStyles: {
@@ -182,6 +220,7 @@ describe("parseOrderQrTemplateInput", () => {
 
     expect(parseOrderQrTemplateInput({
       name: "BAD SIZE",
+      pageSetupTemplateId: "setup-1",
       qrFieldKey: "orderNo",
       displayFields: [],
       qrSize: 128,
@@ -190,6 +229,18 @@ describe("parseOrderQrTemplateInput", () => {
     })).toEqual({
       success: false,
       error: "Sticker width and length must be between 10 and 500 mm, with at most two decimal places.",
+    });
+
+  });
+
+  it("requires a Page Setup template selection", () => {
+    expect(parseOrderQrTemplateInput({
+      name: "ORDER TAG",
+      fieldKeys: ["orderNo"],
+      qrSize: 128,
+    })).toEqual({
+      success: false,
+      error: "Select a Page Setup template for this QR template.",
     });
   });
 });

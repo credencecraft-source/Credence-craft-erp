@@ -10,15 +10,21 @@ export async function GET(request: Request) {
     const searchParams = new URL(request.url).searchParams;
     const organizationId = searchParams.get("organizationId") ?? "";
     const organization = await requireOrganizationContext(user.id, organizationId);
+    const assetOnlyParameter = searchParams.get("isAssetPurchase");
+    if (assetOnlyParameter !== null && assetOnlyParameter !== "true" && assetOnlyParameter !== "false") {
+      return NextResponse.json({ error: "Asset purchase filter must be true or false." }, { status: 400 });
+    }
+    const assetOnly = assetOnlyParameter === "true";
     if (searchParams.get("view") === "report") {
       const limitValue = Number(searchParams.get("limit") ?? 50);
       return NextResponse.json(await listPurchaseOrderReportPage(organization.id, {
         cursor: searchParams.get("cursor") ?? undefined,
         limit: Number.isFinite(limitValue) ? limitValue : 50,
         search: searchParams.get("search") ?? undefined,
+        assetOnly,
       }));
     }
-    return NextResponse.json({ purchaseOrders: await listPurchaseOrders(organization.id) });
+    return NextResponse.json({ purchaseOrders: await listPurchaseOrders(organization.id, { assetOnly }) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load Purchase Orders." }, { status: 400 });
   }

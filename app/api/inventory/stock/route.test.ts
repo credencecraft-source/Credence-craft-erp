@@ -47,6 +47,7 @@ describe("manual raw-material stock endpoint", () => {
       locationId: "location-1",
       quantity: "2",
       reason: "Opening balance",
+      isAssetStock: false,
     });
   });
 

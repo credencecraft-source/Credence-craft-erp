@@ -40,7 +40,7 @@ vi.mock("@/lib/services/organizations/audit-event-service", () => ({
   createAuditEvent: mocks.createAuditEvent,
 }));
 
-import { getRmGrnVerification, getRmGrnVerificationAllocation, getRmGrnVerificationDraftsForPurchaseOrder, listRmGrnVerificationAllocations, MasterGroupRequiredError, RmGrnVerificationNotFoundError, saveRmGrnVerification } from "./rm-grn-verification-service";
+import { assertAssetPurchaseReceiptLine, getRmGrnVerification, getRmGrnVerificationAllocation, getRmGrnVerificationDraftsForPurchaseOrder, listRmGrnVerificationAllocations, MasterGroupRequiredError, RmGrnVerificationNotFoundError, saveRmGrnVerification } from "./rm-grn-verification-service";
 
 const transaction = {
   inventoryReceiptLine: {
@@ -64,7 +64,13 @@ const transaction = {
   },
 };
 
-const sourceLine = (withMaster = true, groupedQuantity = "10", masterQuantity = "14") => ({
+const sourceLine = (
+  withMaster = true,
+  groupedQuantity = "10",
+  masterQuantity = "14",
+  procurementType = "STYLE_WISE",
+  legacyGeneralRequest = false,
+) => ({
   id: "receipt-line-1",
   raw_material: "Cotton",
   received_quantity: new Prisma.Decimal("12"),
@@ -76,7 +82,12 @@ const sourceLine = (withMaster = true, groupedQuantity = "10", masterQuantity = 
   },
   purchaseOrderLine: {
     raw_material: "Cotton",
-    purchaseOrder: { organization_id: "org-1" },
+    quantity: new Prisma.Decimal("14"),
+    purchaseOrder: {
+      organization_id: "org-1",
+      procurement_type: procurementType,
+      generalPurchaseOrderRequests: legacyGeneralRequest ? [{ id: "legacy-request" }] : [],
+    },
     masterPurchaseOrder: withMaster ? {
       id: "master-1",
       organization_id: "org-1",
@@ -119,6 +130,29 @@ describe("RM GRN Verification", () => {
     mocks.rawMaterialStockFindFirst.mockResolvedValue(null);
     mocks.rawMaterialStockCreate.mockResolvedValue({});
     mocks.rawMaterialStockUpdateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it("restricts Asset GRN verification lines to asset Purchase Orders", async () => {
+    mocks.lineFindFirst.mockResolvedValue({ id: "receipt-line-1" });
+
+    await expect(assertAssetPurchaseReceiptLine("org-1", "receipt-line-1")).resolves.toBeUndefined();
+    expect(mocks.lineFindFirst).toHaveBeenCalledWith({
+      where: {
+        id: "receipt-line-1",
+        receipt: {
+          organization_id: "org-1",
+          purchaseOrder: { is: { procurement_type: "GENERAL", is_asset_purchase: true } },
+        },
+      },
+      select: { id: true },
+    });
+  });
+
+  it("rejects verification lines that do not belong to an asset Purchase Order", async () => {
+    mocks.lineFindFirst.mockResolvedValue(null);
+
+    await expect(assertAssetPurchaseReceiptLine("org-1", "receipt-line-1"))
+      .rejects.toBeInstanceOf(RmGrnVerificationNotFoundError);
   });
 
   it("loads tenant-scoped source values, capacity, and saved calculations", async () => {
@@ -165,8 +199,75 @@ describe("RM GRN Verification", () => {
     await expect(getRmGrnVerification("org-1", "receipt-line-1")).resolves.toMatchObject({
       masterPurchaseOrderId: null,
       masterGroupingNumber: "",
+      poQuantity: "14",
       allocations: [],
     });
+  });
+
+  it("verifies General PO receipts without a Master Group and posts all accepted quantity to General Inventory", async () => {
+    mocks.transactionLineFindFirst.mockResolvedValue(sourceLine(false, "0", "0", "GENERAL"));
+    mocks.transactionVerificationFindFirst.mockResolvedValue(null);
+    mocks.verificationCreate.mockImplementation(({ data }) => Promise.resolve({
+      id: "verification-general",
+      verified_quantity: data.verified_quantity,
+      approved_quantity: data.approved_quantity,
+      grouped_allocated: data.grouped_allocated,
+    }));
+
+    await expect(saveRmGrnVerification("org-1", "receipt-line-1", {
+      verifiedQuantity: "10",
+      approvedQuantity: "8",
+      allocations: [],
+    }, "user-1")).resolves.toMatchObject({
+      created: true,
+      verifiedQuantity: "10",
+      approvedQuantity: "8",
+      groupedAllocated: "0",
+    });
+
+    expect(mocks.verificationCreate).toHaveBeenCalledWith({ data: expect.objectContaining({
+      master_purchase_order_id: null,
+      po_quantity: new Prisma.Decimal("14"),
+      grouped_qty_grn: new Prisma.Decimal("0"),
+      verified_quantity: new Prisma.Decimal("10"),
+      approved_quantity: new Prisma.Decimal("8"),
+      rejected_quantity: new Prisma.Decimal("2"),
+      fresh_excess: new Prisma.Decimal("8"),
+      total_excess: new Prisma.Decimal("0"),
+      available_to_allocate: new Prisma.Decimal("0"),
+      grouped_allocated: new Prisma.Decimal("0"),
+    }) });
+    expect(mocks.rawMaterialStockCreate).toHaveBeenCalledWith({ data: expect.objectContaining({
+      entity_id: "entity-1",
+      location_id: "location-1",
+      quantity_on_hand: new Prisma.Decimal("8"),
+      inventory_receipt_line_id: "receipt-line-1",
+    }) });
+    expect(mocks.allocationUpsert).not.toHaveBeenCalled();
+  });
+
+  it("recognizes legacy General POs from their linked request records", async () => {
+    const legacyLine = sourceLine(false, "0", "0", "STYLE_WISE", true);
+    mocks.lineFindFirst.mockResolvedValue(legacyLine);
+    mocks.savedFindFirst.mockResolvedValue(null);
+
+    await expect(getRmGrnVerification("org-1", "receipt-line-1")).resolves.toMatchObject({
+      procurementType: "GENERAL",
+      masterPurchaseOrderId: null,
+      allocations: [],
+    });
+  });
+
+  it("rejects style or order allocations for a General PO receipt", async () => {
+    mocks.transactionLineFindFirst.mockResolvedValue(sourceLine(false, "0", "0", "GENERAL"));
+
+    await expect(saveRmGrnVerification("org-1", "receipt-line-1", {
+      verifiedQuantity: "10",
+      approvedQuantity: "10",
+      allocations: [{ groupedPurchaseOrderId: "group-1", verificationAllocated: "1" }],
+    }, "user-1")).rejects.toThrow("General Purchase Order receipts do not use order or style allocations.");
+    expect(mocks.verificationCreate).not.toHaveBeenCalled();
+    expect(mocks.rawMaterialStockCreate).not.toHaveBeenCalled();
   });
 
   it("loads every PO line for the pre-post popup with only unallocated grouping capacity", async () => {

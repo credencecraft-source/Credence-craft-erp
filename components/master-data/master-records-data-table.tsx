@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEve
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { Settings2 } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
@@ -47,7 +48,6 @@ type MasterRecord = {
 };
 
 const getMasterRecordId = (record: MasterRecord) => record.id;
-const ignoreReportRowClick = () => undefined;
 
 type ChildRecord = { id?: string; parentId: string | null; label: string; fields?: Record<string, unknown> };
 
@@ -85,8 +85,37 @@ const rawMaterialShowAllFieldKeys = new Set([
   "Brand1",
   "Buyer_Item_Code",
 ]);
+const rawMaterialAssetOnlyFieldKeys = new Set([
+  "Asset_Class",
+  "Manufacturer",
+  "Model_Number",
+  "Useful_Life_Months",
+  "Warranty_Expiry",
+]);
+const rawMaterialAssetIrrelevantFieldKeys = new Set([
+  "Is_this_Specific_for_a_Brand",
+  "Size_Wise_Concemption",
+  "Size_Wise_Consemption_Master",
+  "Brand1",
+  "Show_All1",
+  "Workdrive_Image_ID",
+  "Buyer_Item_Code",
+  "Colour",
+  "Create_open_stock",
+  "Open_Stock",
+  "Open_Stock_Price",
+  "Vendor_Wise_Price_List",
+]);
 const rawMaterialFieldOrder = ["Category", "Subcategory", "Raw_Material_Name", "Stock_Uom1", "Colour", "Image_Url", "Show_All1"];
 const emptyMasterLookupOptions: MasterLookupOption[] = [];
+
+function getAssetClassification(fields?: Record<string, unknown>) {
+  const value = fields?.Asset_Classification ?? fields?.is_asset;
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
+}
 const masterSelectOptionsCache = new WeakMap<object, Map<string, MasterSelectOption[]>>();
 
 type ArticleSizePrice = { size: string; price: string | null };
@@ -212,10 +241,13 @@ const MasterLookupSelect = memo(function MasterLookupSelect({
       if (moduleKey === "raw-material" && field.key === "Category") {
         const selectedCategory = (articleLookupOptions["raw-material-category"] ?? emptyMasterLookupOptions)
           .find((option) => option.label === nextValue);
-        const categoryType = String(selectedCategory?.fields?.Raw_Material_Type1 ?? "");
         const matchingType = (articleLookupOptions["raw-material-type"] ?? emptyMasterLookupOptions)
-          .find((option) => option.label === categoryType);
+          .find((option) => [option.id, option.value_id, option.label].some((candidate) =>
+            String(candidate ?? "") === String(selectedCategory?.parent_id ?? "")));
         nextValues.Category_Type = matchingType?.label ?? "";
+        nextValues.Asset_Purchase = getAssetClassification(matchingType?.fields)
+          ?? getAssetClassification(selectedCategory?.fields)
+          ?? false;
       }
       return nextValues;
     });
@@ -471,10 +503,45 @@ export function MasterRecordsTable({
     })
     : fields, [fields, moduleKey]);
   const masterFieldByKey = useMemo(() => new Map(fields.map((field) => [field.key, field])), [fields]);
+  const isAssetCategorySelected = useCallback((values: MasterFormValues) => {
+    const categoryValue = String(values.Category ?? "");
+    if (!categoryValue) return false;
+    const category = (articleLookupOptions["raw-material-category"] ?? emptyMasterLookupOptions)
+      .find((option) => [option.id, option.value_id, option.label].some((candidate) => String(candidate ?? "") === categoryValue));
+    const rawMaterialType = (articleLookupOptions["raw-material-type"] ?? emptyMasterLookupOptions)
+      .find((option) => [option.id, option.value_id, option.label].some((candidate) =>
+        String(candidate ?? "") === String(category?.parent_id ?? "")));
+    return (getAssetClassification(rawMaterialType?.fields)
+      ?? getAssetClassification(category?.fields)) === true;
+  }, [articleLookupOptions]);
+  const isUnclassifiedRawMaterialCategorySelected = useCallback((values: MasterFormValues) => {
+    const categoryValue = String(values.Category ?? "");
+    if (!categoryValue) return false;
+    const category = (articleLookupOptions["raw-material-category"] ?? emptyMasterLookupOptions)
+      .find((option) => [option.id, option.value_id, option.label].some((candidate) => String(candidate ?? "") === categoryValue));
+    const rawMaterialType = (articleLookupOptions["raw-material-type"] ?? emptyMasterLookupOptions)
+      .find((option) => [option.id, option.value_id, option.label].some((candidate) =>
+        String(candidate ?? "") === String(category?.parent_id ?? "")));
+    return getAssetClassification(rawMaterialType?.fields) === undefined
+      && getAssetClassification(category?.fields) === undefined;
+  }, [articleLookupOptions]);
+  const shouldHideRawMaterialField = useCallback((fieldKey: string, values: MasterFormValues) => {
+    if (moduleKey !== "raw-material") return false;
+    const isAsset = isAssetCategorySelected(values);
+    if (isAsset) {
+      return (rawMaterialShowAllFieldKeys.has(fieldKey) && fieldKey !== "Item_Code")
+        || rawMaterialAssetIrrelevantFieldKeys.has(fieldKey);
+    }
+    return rawMaterialAssetOnlyFieldKeys.has(fieldKey);
+  }, [isAssetCategorySelected, moduleKey]);
 
   const openRecordDetail = useCallback((record: MasterRecord) => {
     if (moduleKey === "article") {
       router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/article/${encodeURIComponent(record.code || record.value_id)}`);
+      return;
+    }
+    if (moduleKey === "price-list") {
+      router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}/${encodeURIComponent(record.id)}`);
       return;
     }
     if (moduleKey === "size-group") {
@@ -819,7 +886,25 @@ export function MasterRecordsTable({
     setValues: SetMasterFormValues,
     allowQuickCreate = false,
   ) => {
-    if (field.readOnly) return null;
+    if (field.readOnly && !(moduleKey === "raw-material" && field.key === "Asset_Purchase")) return null;
+
+    if (moduleKey === "raw-material" && field.key === "Asset_Purchase") {
+      const isAsset = isAssetCategorySelected(values);
+      return (
+        <div key={field.key} className="space-y-1">
+          <p className="text-sm font-medium text-slate-700">Asset classification</p>
+          <p className="text-sm text-slate-600">
+            {isUnclassifiedRawMaterialCategorySelected(values)
+              ? "This Raw Material Type has mixed legacy classifications. Set its asset status on the type master first."
+              : isAsset
+                ? "Asset — inherited from the selected Raw Material Type."
+                : values.Category
+                  ? "Raw material — inherited from the selected Raw Material Type."
+                  : "Select a category to see its type's asset classification."}
+          </p>
+        </div>
+      );
+    }
 
     const value = values[field.key] ?? field.initialValue;
     if (field.type === "checkbox")
@@ -1263,14 +1348,24 @@ export function MasterRecordsTable({
     return String(value);
   }, []);
 
-  const reportFields = useMemo(() => [
-    ...(moduleKey === "article" ? [] : [{ key: "label", label: "Name" }]),
-    ...(moduleKey === "article" ? [] : [{ key: "code", label: "Code" }]),
-    ...fields.map((field) => ({ key: field.key, label: field.label })),
-    { key: "description", label: "Description" },
-    { key: "status", label: "Status" },
-    { key: "actions", label: "Actions" },
-  ].filter((field, index, allFields) => allFields.findIndex((item) => item.key === field.key) === index), [fields, moduleKey]);
+  const reportFields = useMemo(() => (moduleKey === "price-list"
+    ? [
+        { key: "label", label: "Channel Name" },
+        ...fields
+          .filter((field) => !["Channel_Name", "Channel_Code"].includes(field.key))
+          .map((field) => ({ key: field.key, label: field.label })),
+        { key: "Channel_Code", label: "Channel Code" },
+        { key: "status", label: "Status" },
+        { key: "actions", label: "Actions" },
+      ]
+    : [
+        ...(moduleKey === "article" ? [] : [{ key: "label", label: "Name" }]),
+        ...(moduleKey === "article" ? [] : [{ key: "code", label: "Code" }]),
+        ...fields.map((field) => ({ key: field.key, label: field.label })),
+        { key: "description", label: "Description" },
+        { key: "status", label: "Status" },
+        { key: "actions", label: "Actions" },
+      ]).filter((field, index, allFields) => allFields.findIndex((item) => item.key === field.key) === index), [fields, moduleKey]);
 
   const defaultVisibleReportFields = useMemo(() => reportFields
     .filter((field) => field.key !== "description" || records.some((record) => record.description))
@@ -1320,6 +1415,19 @@ export function MasterRecordsTable({
     if (fieldKey === "description") return record.description || "—";
     if (fieldKey === "status") return record.is_active ? "Active" : "Pending";
     if (fieldKey === "actions") {
+      if (moduleKey === "price-list") {
+        return (
+          <Link
+            href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/price-list/SETTINGS`}
+            aria-label="Price List settings"
+            title="Price List settings"
+            onClick={(event) => event.stopPropagation()}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--erp-border)] bg-[var(--erp-surface)] text-[var(--erp-muted)] transition hover:border-[var(--erp-brand)] hover:bg-[var(--erp-brand-soft)] hover:text-[var(--erp-brand)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+          >
+            <Settings2 className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        );
+      }
       return (
         <div className="flex items-center gap-1.5" onClick={(event) => event.stopPropagation()}>
           <Button type="button" size="sm" variant="secondary" onClick={() => openRecordDetail(record)}>
@@ -1491,9 +1599,11 @@ export function MasterRecordsTable({
               <input type="hidden" name="code" value={String(formValues.code ?? initialRecord?.code ?? "")} />
               <input type="hidden" name="description" value={String(formValues.description ?? initialRecord?.description ?? "")} />
               <div className={`grid min-w-0 grid-cols-1 content-start gap-x-6 gap-y-4 ${moduleKey === "raw-material" ? "sm:grid-cols-2" : "sm:grid-cols-2 xl:grid-cols-3"}`}>
-                {orderedFields.map((field) => moduleKey === "raw-material" && rawMaterialShowAllFieldKeys.has(field.key) && formValues.Show_All1 !== true
-                  ? <input key={field.key} type="hidden" name={`field_${field.key}`} value={String(formValues[field.key] ?? "")} />
-                  : renderField(field, formValues, setFormValues))}
+                {orderedFields.map((field) => shouldHideRawMaterialField(field.key, formValues)
+                  ? null
+                  : moduleKey === "raw-material" && rawMaterialShowAllFieldKeys.has(field.key) && formValues.Show_All1 !== true
+                    ? <input key={field.key} type="hidden" name={`field_${field.key}`} value={String(formValues[field.key] ?? "")} />
+                    : renderField(field, formValues, setFormValues))}
               </div>
               <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--erp-border)] pt-4">
                 <Button type="button" variant="secondary" onClick={() => router.push(returnPath)}>Cancel</Button>
@@ -1517,17 +1627,17 @@ export function MasterRecordsTable({
         storageKey={`master-report-columns-${moduleKey}`}
         rowIdSelector={getMasterRecordId}
         selectedIds={selectedRecordIds}
-        selectable
-        onToggleSelectAll={handleToggleSelectAll}
-        onToggleRowSelection={handleToggleRowSelection}
-        onBulkDeleteSelected={handleBulkDeleteSelected}
+        selectable={moduleKey !== "price-list"}
+        onToggleSelectAll={moduleKey === "price-list" ? undefined : handleToggleSelectAll}
+        onToggleRowSelection={moduleKey === "price-list" ? undefined : handleToggleRowSelection}
+        onBulkDeleteSelected={moduleKey === "price-list" ? undefined : handleBulkDeleteSelected}
         bulkDeleteSelectedLabel={`Delete selected ${moduleLabel} records`}
-        onRowClick={ignoreReportRowClick}
         onRecordClick={handleRecordClick}
         onNewOrder={handleNewOrder}
         newActionLabel="+ Add Record"
         renderCell={renderReportCell}
         getSearchValue={getReportSearchValue}
+        displayMode={moduleKey === "price-list" ? "cards" : "table"}
         emptyMessage={`No ${moduleLabel.toLowerCase()} records found.`}
       />
 
@@ -1598,9 +1708,11 @@ export function MasterRecordsTable({
               <input type="hidden" name="moduleKey" value={moduleKey} />
 
               <div className={`grid min-h-0 flex-1 grid-cols-1 content-start gap-x-6 gap-y-4 overflow-y-auto pr-2 ${moduleKey === "raw-material" ? "sm:grid-cols-2" : moduleKey === "article" ? "sm:grid-cols-2 xl:grid-cols-4" : "sm:grid-cols-2 xl:grid-cols-3"}`}>
-                {orderedFields.map((field) => moduleKey === "raw-material" && rawMaterialShowAllFieldKeys.has(field.key) && createFields.Show_All1 !== true
-                  ? <input key={field.key} type="hidden" name={`field_${field.key}`} value={String(createFields[field.key] ?? "")} />
-                  : renderField(field, createFields, setCreateFields, moduleKey === "article"))}
+                {orderedFields.map((field) => shouldHideRawMaterialField(field.key, createFields)
+                  ? null
+                  : moduleKey === "raw-material" && rawMaterialShowAllFieldKeys.has(field.key) && createFields.Show_All1 !== true
+                    ? <input key={field.key} type="hidden" name={`field_${field.key}`} value={String(createFields[field.key] ?? "")} />
+                    : renderField(field, createFields, setCreateFields, moduleKey === "article"))}
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
@@ -1671,9 +1783,11 @@ export function MasterRecordsTable({
               <input type="hidden" name="valueId" value={editingRecord.value_id} />
 
               <div className={moduleKey === "raw-material" ? "grid min-h-0 flex-1 grid-cols-1 content-start gap-x-6 gap-y-4 overflow-y-auto pr-2 sm:grid-cols-2" : "max-h-96 space-y-3 overflow-y-auto pr-1"}>
-                {orderedFields.map((field) => moduleKey === "raw-material" && rawMaterialShowAllFieldKeys.has(field.key) && editFields.Show_All1 !== true
-                  ? <input key={field.key} type="hidden" name={`field_${field.key}`} value={String(editFields[field.key] ?? "")} />
-                  : renderField(field, editFields, setEditFields))}
+                {orderedFields.map((field) => shouldHideRawMaterialField(field.key, editFields)
+                  ? null
+                  : moduleKey === "raw-material" && rawMaterialShowAllFieldKeys.has(field.key) && editFields.Show_All1 !== true
+                    ? <input key={field.key} type="hidden" name={`field_${field.key}`} value={String(editFields[field.key] ?? "")} />
+                    : renderField(field, editFields, setEditFields))}
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">

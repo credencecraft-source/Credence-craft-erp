@@ -1070,7 +1070,15 @@ export default function MerchandisingOrderDetailsPage() {
               </div>
             )}
             {orderId && activeTab === "details" && form.orderNo && (
-              <OrderQrCodeCard orderNo={form.orderNo} styleName={form.styleName} colors={form.colors} />
+              <OrderQrCodeCard
+                orderId={orderId}
+                orderNo={form.orderNo}
+                styleName={form.styleName}
+                colors={form.colors}
+                workspaceId={params.workspaceId}
+                organizationId={params.organizationId}
+                orderFields={form}
+              />
             )}
             {orderId && <Button type="button" variant="secondary" onClick={openShareDialog} className="px-4 py-2">Share with Buyer</Button>}
             {orderId && !isEditing && <Button type="button" onClick={() => router.push(`${detailPath}?mode=edit`)}>Edit</Button>}

@@ -17,7 +17,7 @@ type ReceiptLineInput = {
   approvedQuantity?: string | number;
   allocations?: Array<{ groupedPurchaseOrderId: string; verificationAllocated: string | number }>;
 };
-type ReceiptRequestBody = { organizationId?: string; purchaseOrderId?: string; locationId?: string; receivedDate?: string; notes?: string; createOnly?: boolean; lines?: ReceiptLineInput[] };
+type ReceiptRequestBody = { organizationId?: string; purchaseOrderId?: string; locationId?: string; receivedDate?: string; notes?: string; createOnly?: boolean; assetPurchaseOnly?: boolean; lines?: ReceiptLineInput[] };
 
 class GrnDeletionConflictError extends Error {}
 
@@ -28,10 +28,20 @@ export async function GET(request: Request) {
     const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "");
     const purchaseOrderId = searchParams.get("purchaseOrderId");
     const receiptId = searchParams.get("receiptId");
+    const assetOnlyParameter = searchParams.get("isAssetPurchase");
+    if (assetOnlyParameter !== null && assetOnlyParameter !== "true" && assetOnlyParameter !== "false") {
+      return NextResponse.json({ error: "Asset purchase filter must be true or false." }, { status: 400 });
+    }
+    const assetOnly = assetOnlyParameter === "true";
     const receipts = await prisma.inventoryReceipt.findMany({
-      where: { organization_id: organization.id, ...(purchaseOrderId ? { purchase_order_id: purchaseOrderId } : {}), ...(receiptId ? { id: receiptId } : {}) },
+      where: {
+        organization_id: organization.id,
+        ...(purchaseOrderId ? { purchase_order_id: purchaseOrderId } : {}),
+        ...(receiptId ? { id: receiptId } : {}),
+        ...(assetOnly ? { purchaseOrder: { is: { procurement_type: "GENERAL", is_asset_purchase: true } } } : {}),
+      },
       include: {
-        purchaseOrder: { select: { id: true, purchase_order_no: true, display_no: true, entity_id: true, entity: { select: { id: true, entity_name: true } } } },
+        purchaseOrder: { select: { id: true, purchase_order_no: true, display_no: true, entity_id: true, procurement_type: true, is_asset_purchase: true, entity: { select: { id: true, entity_name: true } } } },
         entity: { select: { id: true, entity_name: true } },
         location: { select: { id: true, location_name: true } },
         lines: {
@@ -73,6 +83,9 @@ export async function POST(request: Request) {
     const user = await requireSessionUser();
     const body = await request.json() as ReceiptRequestBody;
     const organization = await requireOrganizationContext(user.id, String(body.organizationId ?? ""), ["OWNER", "ADMIN", "INVENTORY"]);
+    if (body.assetPurchaseOnly !== undefined && typeof body.assetPurchaseOnly !== "boolean") {
+      throw new Error("Asset purchase filter must be true or false.");
+    }
     const purchaseOrderId = String(body.purchaseOrderId ?? "");
     const locationId = String(body.locationId ?? "");
     const lines = Array.isArray(body.lines) ? body.lines : [];
@@ -89,7 +102,11 @@ export async function POST(request: Request) {
 
     const receipt = await prisma.$transaction(async (transaction) => {
       const purchaseOrder = await transaction.purchaseOrder.findFirst({
-        where: { id: purchaseOrderId, organization_id: organization.id },
+        where: {
+          id: purchaseOrderId,
+          organization_id: organization.id,
+          ...(body.assetPurchaseOnly ? { procurement_type: "GENERAL", is_asset_purchase: true } : {}),
+        },
         include: { lines: true, entity: { select: { id: true, is_active: true } } },
       });
       if (!purchaseOrder) throw new Error("Purchase Order not found in this organization.");
@@ -248,11 +265,19 @@ export async function DELETE(request: Request) {
     const searchParams = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "", ["OWNER", "ADMIN", "INVENTORY"]);
     const receiptId = searchParams.get("receiptId") ?? "";
+    const assetOnlyParameter = searchParams.get("isAssetPurchase");
+    if (assetOnlyParameter !== null && assetOnlyParameter !== "true" && assetOnlyParameter !== "false") {
+      return NextResponse.json({ error: "Asset purchase filter must be true or false." }, { status: 400 });
+    }
     if (!receiptId) throw new Error("A GRN is required for deletion.");
 
     const deletedReceipt = await prisma.$transaction(async (transaction) => {
       const receipt = await transaction.inventoryReceipt.findFirst({
-        where: { id: receiptId, organization_id: organization.id },
+        where: {
+          id: receiptId,
+          organization_id: organization.id,
+          ...(assetOnlyParameter === "true" ? { purchaseOrder: { is: { procurement_type: "GENERAL", is_asset_purchase: true } } } : {}),
+        },
         select: {
           id: true,
           receipt_no: true,

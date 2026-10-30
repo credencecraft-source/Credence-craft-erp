@@ -28,13 +28,15 @@ type Receipt = {
 
 const quantity = (value: number | string) => Number(value).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 
-export default function GrnDetailPage() {
+export default function GrnDetailPage({ assetMode = false }: { assetMode?: boolean }) {
   const params = useParams<{ workspaceId: string; organizationId: string; receiptId: string }>();
   const router = useRouter();
   const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
   const receiptId = params?.receiptId ?? "";
-  const reportPath = `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/grn/report`;
+  const reportPath = assetMode
+    ? `/dashboard/${workspaceId}/organizations/${organizationId}/asset-management/asset-grn/report`
+    : `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/grn/report`;
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -45,7 +47,7 @@ export default function GrnDetailPage() {
     setDeleting(true);
     setError("");
     try {
-      const response = await fetch(`/api/inventory/receipts?organizationId=${encodeURIComponent(organizationId)}&receiptId=${encodeURIComponent(receiptId)}`, {
+      const response = await fetch(`/api/inventory/receipts?organizationId=${encodeURIComponent(organizationId)}&receiptId=${encodeURIComponent(receiptId)}${assetMode ? "&isAssetPurchase=true" : ""}`, {
         method: "DELETE",
       });
       const data = await response.json();
@@ -60,7 +62,7 @@ export default function GrnDetailPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(`/api/inventory/receipts?organizationId=${encodeURIComponent(organizationId)}&receiptId=${encodeURIComponent(receiptId)}`, {
+    void fetch(`/api/inventory/receipts?organizationId=${encodeURIComponent(organizationId)}&receiptId=${encodeURIComponent(receiptId)}${assetMode ? "&isAssetPurchase=true" : ""}`, {
       cache: "no-store",
       signal: controller.signal,
     })
@@ -77,12 +79,12 @@ export default function GrnDetailPage() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [organizationId, receiptId]);
+  }, [assetMode, organizationId, receiptId]);
 
   return (
     <UiPage as="div">
       <Section className="space-y-6">
-        <Link href={reportPath} className="text-xs font-semibold text-emerald-700">&larr; RM GRN Report</Link>
+        <Link href={reportPath} className="text-xs font-semibold text-emerald-700">&larr; {assetMode ? "Asset GRN Report" : "RM GRN Report"}</Link>
         {loading && <Card className="p-6 text-sm text-slate-600">Loading GRN details...</Card>}
         {error && <Card className="border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</Card>}
         {receipt && (

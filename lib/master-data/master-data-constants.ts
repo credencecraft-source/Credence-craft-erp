@@ -1,9 +1,12 @@
 import { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/database/prisma-client";
+import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { enforceInventoryLocationLimit } from "@/lib/services/platform/inventory-location-restriction-service";
 import { syncFinishedGoodsSizes, type FinishedGoodsSizePriceInput } from "@/lib/services/master-data/finished-goods-size-service";
 import { parseFinishedGoodsPrice, syncFinishedGoodsVariants, type FinishedGoodsVariantInput } from "@/lib/services/master-data/finished-goods-variant-service";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
+import { normalizeUppercase } from "@/lib/utilities/text-case";
 export { getMasterDefinition, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
 
 export type MasterFieldValues = Record<string, string | number | boolean | null | string[] | number[] | Record<string, unknown>[]>;
@@ -55,6 +58,44 @@ const delegates = {
 
 const masterModulesWithoutLegacyMetadata = new Set(["article-variant", "state"]);
 
+async function findOrganizationPriceListModule(organizationId: string) {
+  return prisma.masterModule.findUnique({
+    where: {
+      organization_id_module_key: {
+        organization_id: organizationId,
+        module_key: "price-list",
+      },
+    },
+    select: { id: true },
+  });
+}
+
+async function ensureOrganizationPriceListModule(
+  database: typeof prisma | Prisma.TransactionClient,
+  organizationId: string,
+) {
+  return database.masterModule.upsert({
+    where: {
+      organization_id_module_key: {
+        organization_id: organizationId,
+        module_key: "price-list",
+      },
+    },
+    create: {
+      organization_id: organizationId,
+      module_key: "price-list",
+      module_name: "Price List",
+      description: "Price list records used for sales pricing and Advance Booking fulfillment.",
+    },
+    update: {
+      module_name: "Price List",
+      status: "active",
+      description: "Price list records used for sales pricing and Advance Booking fulfillment.",
+    },
+    select: { id: true },
+  });
+}
+
 const transactionDelegateNames: Record<string, string> = {
   entity: "masterEntity",
   location: "masterLocation",
@@ -87,10 +128,12 @@ const labelFields: Record<string, string> = {
   hsn: "hsn_code", state: "state", "measurement-chart": "measurement_chart", "size-wise-consumption": "bom_template_name", "product-master": "product_master_name",
   "process-master": "process_name", operation: "operation_name", "process-template": "process_name", "process-template-step": "process_name", "operation-template": "operation_template_name", "operation-template-step": "operation", merchandiser: "merchandiser", status: "status", "order-volume": "order_volume",
   "raw-material-type": "raw_material_type", "raw-material-category": "raw_material_category", "raw-material-sub-category": "raw_material_sub_category",
+  "price-list": "label",
 };
 
 const fieldColumns: Record<string, Record<string, string>> = {
   entity: { entity_name: "entity_name" },
+  "price-list": { Channel_Name: "label", Channel_Code: "code" },
   location: { location_name: "location_name", entity_id: "entity_id" },
   "category-type": { Category_Type1: "category_type", Books_Item_ID: "books_item_id" },
   category: { Product_Master: "product_master_id", Category_Name: "category_name", Maximum_Excess_Allowed: "maximum_excess_allowed", Create_Cost_Center: "create_cost_center", Status: "status" },
@@ -110,10 +153,10 @@ const fieldColumns: Record<string, Record<string, string>> = {
   "measurement-chart": { Measurement_Chart: "measurement_chart" }, "size-wise-consumption": { Bom_Template_Name: "bom_template_name" },
   "product-master": { Product_Master_name: "product_master_name" }, "process-master": { Process_Name: "process_name" }, "process-template": { Process_Template_Name: "process_name", First_Process: "legacy_metadata.first_process_id", Last_Process: "legacy_metadata.last_process_id" }, "process-template-step": { Process: "process_id", Operation_Template: "operation_template_id", Sl_No: "sl_no", Is_Returnable_Process: "legacy_metadata.is_returnable_process", Block_By: "legacy_metadata.block_by_process_id" }, "operation-template": { Operation_Template_Name: "operation_template_name", Process: "process_id" }, "operation-template-step": { Operation: "operation", Sl_No: "sl_no", Price: "price" }, merchandiser: { merchandiser: "merchandiser" },
   status: { status: "status" }, "order-volume": { Order_Volume: "order_volume", From: "from_value", To: "to_value" },
-  "raw-material-type": { Raw_Material_Type: "raw_material_type" },
+  "raw-material-type": { Raw_Material_Type: "raw_material_type", Asset_Classification: "is_asset" },
   "raw-material-category": { Raw_Material_Type1: "raw_material_type_id", Raw_Material_Category: "raw_material_category", Create_Cost_Center: "create_cost_center" },
   "raw-material-sub-category": { Raw_Material_Category1: "raw_material_category_id", Raw_Material_Sub_Category: "raw_material_sub_category" },
-  "raw-material": { Raw_Material_Name: "raw_material_name", Category: "raw_material_category_id", Subcategory: "raw_material_sub_category_id", Stock_Uom1: "stock_uom_id", Category_Type: "raw_material_type_id", Is_this_Specific_for_a_Brand: "is_specific_for_brand", Size_Wise_Concemption: "size_wise_consumption", Size_Wise_Consemption_Master: "size_wise_consumption_id", Brand1: "brand_id", Show_All1: "show_all", Workdrive_Image_ID: "workdrive_image_id", Buyer_Item_Code: "buyer_item_code", Image_Url: "image_url", Item_Code: "item_code", Colour: "colour_id", Create_open_stock: "create_open_stock", Open_Stock: "open_stock", Open_Stock_Price: "open_stock_price", Vendor_Wise_Price_List: "vendor_wise_price_list" },
+  "raw-material": { Raw_Material_Name: "raw_material_name", Category: "raw_material_category_id", Subcategory: "raw_material_sub_category_id", Stock_Uom1: "stock_uom_id", Category_Type: "raw_material_type_id", Asset_Purchase: "is_asset", Asset_Class: "asset_class", Manufacturer: "manufacturer", Model_Number: "model_number", Useful_Life_Months: "useful_life_months", Warranty_Expiry: "warranty_expiry", Is_this_Specific_for_a_Brand: "is_specific_for_brand", Size_Wise_Concemption: "size_wise_consumption", Size_Wise_Consemption_Master: "size_wise_consumption_id", Brand1: "brand_id", Show_All1: "show_all", Workdrive_Image_ID: "workdrive_image_id", Buyer_Item_Code: "buyer_item_code", Image_Url: "image_url", Item_Code: "item_code", Colour: "colour_id", Create_open_stock: "create_open_stock", Open_Stock: "open_stock", Open_Stock_Price: "open_stock_price", Vendor_Wise_Price_List: "vendor_wise_price_list" },
 };
 
 const parentColumns: Record<string, string> = {
@@ -132,6 +175,11 @@ const parentColumns: Record<string, string> = {
 function typedValue(field: MasterFieldDefinition, value: unknown) {
   if (value === null || value === undefined || value === "") return null;
   if (field.type === "checkbox") return value === true || value === "true" || value === "on";
+  if (field.key === "Asset_Classification") {
+    if (value === "ASSET") return true;
+    if (value === "RAW_MATERIAL") return false;
+    throw new Error("Choose whether this category is for assets or raw materials.");
+  }
   if (["number", "percentage", "decimal"].includes(field.type)) return Number(value);
   if (field.type === "date") {
     if (value instanceof Date) return value.toISOString();
@@ -350,7 +398,9 @@ async function buildData(
   };
 
   for (const field of definition.fields) {
+    if (field.readOnly) continue;
     if (moduleKey === "article" && field.key === "Sizes") continue;
+    if (moduleKey === "raw-material" && field.key === "Category_Type") continue;
     const relationField = fieldColumns[moduleKey]?.[field.key];
     if (!relationField || relationField === labelFields[moduleKey]) continue;
     const legacyMetadataKey = relationField.startsWith("legacy_metadata.")
@@ -411,7 +461,35 @@ async function buildData(
       }
     }
 
-    const val = moduleKey === "article" && field.key === "default_price"
+    const val = moduleKey === "raw-material-type" && field.key === "Asset_Classification"
+      ? Boolean(fields[field.key])
+        : moduleKey === "raw-material" && field.key === "Useful_Life_Months"
+        ? (() => {
+            const value = fields[field.key];
+            if (value === null || value === undefined || value === "") return null;
+            const months = Number(value);
+            if (!Number.isInteger(months) || months <= 0) {
+              throw new Error("Useful Life must be a positive whole number of months.");
+            }
+            return months;
+          })()
+        : moduleKey === "raw-material" && field.key === "Warranty_Expiry"
+          ? (() => {
+              const value = fields[field.key];
+              if (value === null || value === undefined || value === "") return null;
+              const dateValue = value instanceof Date
+                ? value.toISOString().slice(0, 10)
+                : String(value).trim();
+              if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+                throw new Error("Warranty Expiry must be a valid date.");
+              }
+              const date = new Date(`${dateValue}T00:00:00.000Z`);
+              if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== dateValue) {
+                throw new Error("Warranty Expiry must be a valid date.");
+              }
+              return date;
+            })()
+      : moduleKey === "article" && field.key === "default_price"
       ? fields[field.key] === null || fields[field.key] === undefined || fields[field.key] === ""
         ? null
         : parseFinishedGoodsPrice(fields[field.key], "Default price")
@@ -454,6 +532,42 @@ async function buildData(
         throw new Error("Finished Goods Subcategory must belong to the selected category.");
       }
     }
+  }
+  if (moduleKey === "raw-material") {
+    const categoryId = String(data.raw_material_category_id ?? "");
+    const subCategoryId = String(data.raw_material_sub_category_id ?? "");
+    const [category, subCategory] = await Promise.all([
+      database.masterRawMaterialCategory.findFirst({
+        where: { id: categoryId, organization_id: organizationId },
+        select: { id: true, raw_material_type_id: true, is_asset: true },
+      }),
+      database.masterRawMaterialSubCategory.findFirst({
+        where: { id: subCategoryId, organization_id: organizationId },
+        select: { id: true, raw_material_category_id: true },
+      }),
+    ]);
+    if (!category) throw new Error("Select a valid Raw Material Category.");
+    if (!subCategory || subCategory.raw_material_category_id !== category.id) {
+      throw new Error("Select a Raw Material Sub Category belonging to the selected category.");
+    }
+    if (!category.raw_material_type_id) {
+      throw new Error("The selected Raw Material Category is not linked to a Raw Material Type.");
+    }
+    const rawMaterialType = await database.masterRawMaterialType.findFirst({
+      where: { id: category.raw_material_type_id, organization_id: organizationId },
+      select: { id: true, is_asset: true },
+    });
+    if (!rawMaterialType) {
+      throw new Error("The selected Raw Material Category is not linked to a Raw Material Type.");
+    }
+    data.raw_material_type_id = rawMaterialType.id;
+    const isAsset = typeof rawMaterialType?.is_asset === "boolean"
+      ? rawMaterialType.is_asset
+      : category.is_asset;
+    if (typeof isAsset !== "boolean") {
+      throw new Error("Set whether this Raw Material Type or Category is for assets before creating or editing materials under it.");
+    }
+    data.is_asset = isAsset;
   }
   return data;
 }
@@ -507,6 +621,58 @@ export async function getMasterValuesForOrganization(
   } = {},
 ) {
   const definition = getMasterDefinition(moduleKey);
+  if (moduleKey === "price-list") {
+    if (!definition) return [];
+    const masterModule = await findOrganizationPriceListModule(organizationId);
+    if (!masterModule) return [];
+    const search = options.search?.trim();
+    const limit = Math.min(Math.max(options.limit ?? 500, 1), 500);
+    const searchConditions: Prisma.MasterModuleValueWhereInput[] = search
+      ? options.exactSearch
+        ? [
+            { label: { equals: search, mode: "insensitive" } },
+            { code: { equals: search, mode: "insensitive" } },
+            { value_id: search },
+            { id: search },
+          ]
+        : [
+            { label: { contains: search, mode: "insensitive" } },
+            { code: { contains: search, mode: "insensitive" } },
+          ]
+      : [];
+    const rows = await prisma.masterModuleValue.findMany({
+      where: {
+        module_id: masterModule.id,
+        ...(includeInactive ? {} : { is_active: true }),
+        ...(search ? { OR: searchConditions } : {}),
+      },
+      orderBy: [{ sort_order: "asc" }, { label: "asc" }],
+      take: limit,
+    });
+    const additionalRead = options.onRowsFetched?.(rows.map((row) => row.id));
+    await additionalRead;
+    return rows.map((row) => {
+      const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? row.metadata as Record<string, unknown>
+        : {};
+      const fields: MasterFieldValues = {
+        Channel_Name: row.label,
+        Channel_Code: row.code,
+        Channel_Type: typeof metadata.Channel_Type === "string" ? metadata.Channel_Type : null,
+      };
+      return {
+        id: row.id,
+        value_id: row.value_id,
+        label: row.label,
+        code: row.code,
+        description: row.description,
+        is_active: row.is_active,
+        is_dummy: false,
+        parent_id: row.parent_id,
+        fields,
+      };
+    });
+  }
   const delegate = delegates[moduleKey];
   if (!definition || !delegate) return [];
   const search = options.search?.trim();
@@ -521,6 +687,7 @@ export async function getMasterValuesForOrganization(
     labelFields[moduleKey],
     parentColumns[moduleKey],
   ]);
+  if (moduleKey === "raw-material-category") selectedColumns.add("is_asset");
   for (const field of definition.fields) {
     const column = fieldColumns[moduleKey]?.[field.key];
     if (column && !column.startsWith("legacy_metadata.")) selectedColumns.add(column);
@@ -666,6 +833,10 @@ export async function getMasterValuesForOrganization(
 
   const hydratedRows = rows.map((row) => {
     const fields = rowFields(moduleKey, row, definition, options.includeArticleMetrics);
+    if (moduleKey === "raw-material-category") {
+      const isAsset = (row as Record<string, unknown>).is_asset;
+      fields.is_asset = typeof isAsset === "boolean" ? isAsset : null;
+    }
     for (const field of lookupFields) {
       const related = fields[field.key] && field.lookupModuleKey
         ? lookupCache.get(field.lookupModuleKey)?.get(String(fields[field.key]))
@@ -951,12 +1122,87 @@ export async function syncSizeGroupSizes(organizationId: string, sizeGroupId: st
 export async function createMasterValueForOrganization(
   organizationId: string,
   moduleKey: string,
-  input: { label: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; childRows?: Record<string, Record<string, unknown>[]>; parentValueId?: string | null; createOnly?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; articleSizePrices?: FinishedGoodsSizePriceInput[]; sizeGroupId?: string; lookupIndex?: ActiveMasterLookupIndex },
+  input: { label: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; childRows?: Record<string, Record<string, unknown>[]>; parentValueId?: string | null; createOnly?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; articleSizePrices?: FinishedGoodsSizePriceInput[]; sizeGroupId?: string; lookupIndex?: ActiveMasterLookupIndex; actorUserId?: string },
   database: typeof prisma | Prisma.TransactionClient = prisma,
 ) {
   const definition = getMasterDefinition(moduleKey);
   const delegate = delegates[moduleKey];
-  if (!definition || !delegate) throw new Error("Master module is not available.");
+  if (!definition) throw new Error("Master module is not available.");
+  if (moduleKey === "price-list") {
+    const label = normalizeUppercase(String(input.fields?.Channel_Name ?? input.label).trim());
+    const codeValue = input.fields?.Channel_Code ?? input.code;
+    const code = typeof codeValue === "string" && codeValue.trim()
+      ? normalizeUppercase(codeValue.trim())
+      : null;
+    const priceListType = input.fields?.Channel_Type;
+    const priceListTypeField = definition.fields.find((field) => field.key === "Channel_Type");
+    if (!label) throw new Error("Channel Name is required.");
+    if (label.length > 255) throw new Error("Channel Name must be 255 characters or fewer.");
+    if (code && code.length > 100) throw new Error("Channel Code must be 100 characters or fewer.");
+    if (typeof priceListType !== "string" || !priceListTypeField?.options?.includes(priceListType)) {
+      throw new Error("Select a valid Price List Type.");
+    }
+
+    const createPriceList = async (transaction: Prisma.TransactionClient) => {
+      const masterModule = await ensureOrganizationPriceListModule(transaction, organizationId);
+      const existing = await transaction.masterModuleValue.findFirst({
+        where: {
+          module_id: masterModule.id,
+          label: { equals: label, mode: "insensitive" },
+        },
+        select: { id: true },
+      });
+      if (existing) {
+        throw new Error(`Price List "${label}" already exists.`);
+      }
+
+      const sortOrder = await transaction.masterModuleValue.count({
+        where: { module_id: masterModule.id },
+      });
+      const created = await transaction.masterModuleValue.create({
+        data: {
+          module_id: masterModule.id,
+          label,
+          code,
+          description: input.description?.trim() || null,
+          metadata: { Channel_Type: priceListType },
+          is_active: true,
+          sort_order: sortOrder,
+        },
+      });
+      await transaction.approvalRequest.create({
+        data: {
+          organization_id: organizationId,
+          module_key: moduleKey,
+          module_name: definition.label,
+          entity_type: "master",
+          entity_key: moduleKey,
+          entity_label: label,
+          entity_ref_id: created.value_id,
+          status: "pending",
+          notes: `Master value pending approval for ${definition.label}.`,
+        },
+      });
+      if (input.actorUserId) {
+        await createAuditEvent({
+          organizationId,
+          userId: input.actorUserId,
+          module: "master-data",
+          action: "CREATE",
+          entityType: "price-list",
+          entityId: created.value_id,
+          details: { label, code },
+        }, transaction);
+      }
+      return created;
+    };
+
+    if ("$transaction" in database) {
+      return database.$transaction(createPriceList, { maxWait: 10_000, timeout: 30_000 });
+    }
+    return createPriceList(database);
+  }
+  if (!delegate) throw new Error("Master module is not available.");
 
   const createWithinTransaction = async (transaction: Prisma.TransactionClient) => {
     const transactionDelegateName = moduleKey === "product-master"
@@ -967,10 +1213,11 @@ export async function createMasterValueForOrganization(
     const transactionDelegate =
       (transaction as unknown as Record<string, MasterDelegate>)[transactionDelegateName] ?? delegate;
 
+    const masterFields = { ...(input.fields ?? {}) };
     const data = await buildData(
       organizationId,
       moduleKey,
-      input.fields ?? {},
+      masterFields,
       input.label.trim(),
       undefined,
       input.lookupIndex,
@@ -1225,7 +1472,74 @@ export async function createMasterValueForOrganization(
   return createWithinTransaction(database);
 }
 
-export async function updateMasterValue(organizationId: string, valueId: string, input: { label?: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; is_active?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; articleSizePrices?: FinishedGoodsSizePriceInput[] }) {
+export async function updateMasterValue(organizationId: string, valueId: string, input: { label?: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; is_active?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; articleSizePrices?: FinishedGoodsSizePriceInput[]; actorUserId?: string }) {
+  const priceListModule = await findOrganizationPriceListModule(organizationId);
+  if (priceListModule) {
+    const existing = await prisma.masterModuleValue.findFirst({
+      where: {
+        module_id: priceListModule.id,
+        OR: [{ id: valueId }, { value_id: valueId }],
+      },
+    });
+    if (existing) {
+      const labelInput = input.fields?.Channel_Name ?? input.label;
+      const label = typeof labelInput === "string" && labelInput.trim()
+        ? normalizeUppercase(labelInput.trim())
+        : existing.label;
+      const codeInput = input.fields?.Channel_Code ?? input.code;
+      const code = typeof codeInput === "string"
+        ? normalizeUppercase(codeInput.trim()) || null
+        : codeInput === null ? null : existing.code;
+      const existingMetadata = existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
+        ? existing.metadata as Record<string, unknown>
+        : {};
+      const priceListType = input.fields?.Channel_Type ?? existingMetadata.Channel_Type;
+      const priceListTypeField = getMasterDefinition("price-list")?.fields.find((field) => field.key === "Channel_Type");
+      if (label.length > 255) throw new Error("Channel Name must be 255 characters or fewer.");
+      if (code && code.length > 100) throw new Error("Channel Code must be 100 characters or fewer.");
+      if (typeof priceListType !== "string" || !priceListTypeField?.options?.includes(priceListType)) {
+        throw new Error("Select a valid Price List Type.");
+      }
+
+      return prisma.$transaction(async (transaction) => {
+        const duplicate = await transaction.masterModuleValue.findFirst({
+          where: {
+            module_id: priceListModule.id,
+            id: { not: existing.id },
+            label: { equals: label, mode: "insensitive" },
+          },
+          select: { id: true },
+        });
+        if (duplicate) throw new Error(`Price List "${label}" already exists.`);
+        const updated = await transaction.masterModuleValue.update({
+          where: { id: existing.id },
+          data: {
+            label,
+            code,
+            metadata: { ...existingMetadata, Channel_Type: priceListType },
+            ...(input.description !== undefined ? { description: input.description?.trim() || null } : {}),
+            ...(input.is_active !== undefined ? { is_active: input.is_active } : {}),
+          },
+        });
+        if (input.actorUserId) {
+          await createAuditEvent({
+            organizationId,
+            userId: input.actorUserId,
+            module: "master-data",
+            action: "UPDATE",
+            entityType: "price-list",
+            entityId: updated.value_id,
+            details: {
+              before: { label: existing.label, code: existing.code, is_active: existing.is_active },
+              after: { label, code, is_active: updated.is_active },
+            },
+          }, transaction);
+        }
+        return updated;
+      });
+    }
+  }
+
   for (const [moduleKey, delegate] of Object.entries(delegates)) {
     const existing = await delegate.findFirst({ where: { organization_id: organizationId, OR: [{ id: valueId }, { value_id: valueId }] } });
     if (existing) {
@@ -1280,13 +1594,118 @@ export async function updateMasterValue(organizationId: string, valueId: string,
         : {};
       delete data.organization_id;
       if (input.is_active !== undefined) data.is_active = input.is_active;
+      if (moduleKey === "raw-material-type") {
+        if (!input.actorUserId) throw new Error("The category change requires an authorized actor.");
+        if (typeof data.is_asset !== "boolean") {
+          throw new Error("Set whether this Raw Material Type is for assets.");
+        }
+        const isAsset = data.is_asset;
+        return prisma.$transaction(async (transaction) => {
+          const rawMaterialType = await transaction.masterRawMaterialType.findFirst({
+            where: { id: existing.id, organization_id: organizationId },
+            select: { id: true, is_asset: true },
+          });
+          if (!rawMaterialType) return null;
+          const updated = await transaction.masterRawMaterialType.update({
+            where: { id: rawMaterialType.id },
+            data,
+          });
+          const categories = await transaction.masterRawMaterialCategory.findMany({
+            where: { organization_id: organizationId, raw_material_type_id: rawMaterialType.id },
+            select: { id: true },
+          });
+          const categoryIds = categories.map((category) => category.id);
+          await transaction.masterRawMaterialCategory.updateMany({
+            where: { organization_id: organizationId, id: { in: categoryIds } },
+            data: { is_asset: isAsset },
+          });
+          const materials = await transaction.masterRawMaterial.updateMany({
+            where: { organization_id: organizationId, raw_material_category_id: { in: categoryIds } },
+            data: { is_asset: isAsset },
+          });
+          await createAuditEvent({
+            organizationId,
+            userId: input.actorUserId,
+            module: "Inventory",
+            action: "UPDATE_RAW_MATERIAL_TYPE_ASSET_CLASSIFICATION",
+            entityType: "MasterRawMaterialType",
+            entityId: rawMaterialType.id,
+            details: {
+              before: rawMaterialType.is_asset,
+              after: isAsset,
+              affectedCategoryCount: categoryIds.length,
+              affectedRawMaterialCount: materials.count,
+            },
+          }, transaction);
+          return updated;
+        });
+      }
+      if (moduleKey === "raw-material-category" && typeof data.raw_material_type_id === "string") {
+        const rawMaterialTypeId = data.raw_material_type_id;
+        return prisma.$transaction(async (transaction) => {
+          const rawMaterialType = await transaction.masterRawMaterialType.findFirst({
+            where: { id: rawMaterialTypeId, organization_id: organizationId },
+            select: { id: true, is_asset: true },
+          });
+          if (!rawMaterialType) throw new Error("Select a Raw Material Type from this organization.");
+          const category = await transaction.masterRawMaterialCategory.findFirst({
+            where: { id: existing.id, organization_id: organizationId },
+            select: { is_asset: true },
+          });
+          const isAsset = typeof rawMaterialType.is_asset === "boolean"
+            ? rawMaterialType.is_asset
+            : category?.is_asset;
+          if (typeof isAsset === "boolean") data.is_asset = isAsset;
+          const updated = await transaction.masterRawMaterialCategory.update({
+            where: { id: existing.id },
+            data,
+          });
+          if (typeof isAsset === "boolean") {
+            await transaction.masterRawMaterial.updateMany({
+              where: { organization_id: organizationId, raw_material_category_id: existing.id },
+              data: { is_asset: isAsset },
+            });
+          }
+          return updated;
+        });
+      }
       return delegate.update({ where: { id: existing.id }, data });
     }
   }
   return null;
 }
 
-export async function deleteMasterValue(organizationId: string, valueId: string) {
+export async function deleteMasterValue(organizationId: string, valueId: string, userId?: string) {
+  const priceListModule = await findOrganizationPriceListModule(organizationId);
+  if (priceListModule) {
+    const existing = await prisma.masterModuleValue.findFirst({
+      where: {
+        module_id: priceListModule.id,
+        OR: [{ id: valueId }, { value_id: valueId }],
+      },
+    });
+    if (existing) {
+      await prisma.$transaction(async (transaction) => {
+        await transaction.approvalRequest.deleteMany({
+          where: { organization_id: organizationId, entity_ref_id: existing.value_id },
+        });
+        await transaction.masterModuleValue.delete({ where: { id: existing.id } });
+        if (userId) {
+          await createAuditEvent({
+            organizationId,
+            userId,
+            module: "master-data",
+            action: "DELETE",
+            entityType: "price-list",
+            entityId: existing.value_id,
+            details: { label: existing.label, code: existing.code },
+          }, transaction);
+        }
+      });
+      return { record: existing };
+    }
+  }
+
   for (const [moduleKey, delegate] of Object.entries(delegates)) {
     const existing = await delegate.findFirst({ where: { organization_id: organizationId, OR: [{ id: valueId }, { value_id: valueId }] } });
     if (existing) {
@@ -1611,6 +2030,20 @@ export async function updateApprovalRequestStatus(
   }
 
   if (request.entity_ref_id) {
+    if (request.module_key === "price-list") {
+      const masterModule = await findOrganizationPriceListModule(organizationId);
+      if (masterModule) {
+        await prisma.masterModuleValue.updateMany({
+          where: {
+            module_id: masterModule.id,
+            OR: [{ id: request.entity_ref_id }, { value_id: request.entity_ref_id }],
+          },
+          data: { is_active: status === "approved" },
+        });
+      }
+      return updated;
+    }
+
     const delegate = delegates[request.module_key];
     if (delegate) {
       const existing = await delegate.findFirst({ where: { organization_id: organizationId, OR: [{ id: request.entity_ref_id }, { value_id: request.entity_ref_id }] } });

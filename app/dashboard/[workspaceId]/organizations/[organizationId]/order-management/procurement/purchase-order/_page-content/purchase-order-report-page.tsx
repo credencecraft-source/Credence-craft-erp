@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 
 type PurchaseOrder = {
@@ -13,6 +14,8 @@ type PurchaseOrder = {
   entityName: string;
   vendor: { name: string; email?: string | null };
   status: string;
+  procurementType: string;
+  isAssetPurchase: boolean;
   poDate: string;
   deliveryDate: string | null;
   total: number;
@@ -21,10 +24,11 @@ type PurchaseOrder = {
   buyingUoms?: string[];
 };
 
-type PurchaseOrderField = "purchaseOrderNo" | "entityName" | "vendorName" | "poDate" | "deliveryDate" | "status" | "buyingUom" | "gst" | "hsnCode" | "total";
+type PurchaseOrderField = "purchaseOrderNo" | "procurementType" | "entityName" | "vendorName" | "poDate" | "deliveryDate" | "status" | "buyingUom" | "gst" | "hsnCode" | "total";
 
 const reportFields: Array<{ key: PurchaseOrderField; label: string }> = [
   { key: "purchaseOrderNo", label: "PO Number" },
+  { key: "procurementType", label: "PO Type" },
   { key: "entityName", label: "Entity" },
   { key: "vendorName", label: "Vendor" },
   { key: "poDate", label: "PO Date" },
@@ -39,17 +43,18 @@ const reportFields: Array<{ key: PurchaseOrderField; label: string }> = [
 const number = (value: number | null | undefined) => Number(value ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 const date = (value: string | null | undefined) => (value ? new Date(value).toLocaleDateString("en-IN") : "To be confirmed");
 
-async function fetchPurchaseOrderReportPage(organizationId: string, cursor?: string, search = "") {
+async function fetchPurchaseOrderReportPage(organizationId: string, cursor?: string, search = "", assetOnly = false) {
   const query = new URLSearchParams({ organizationId, view: "report", limit: "50" });
   if (cursor) query.set("cursor", cursor);
   if (search.trim()) query.set("search", search.trim());
+  if (assetOnly) query.set("isAssetPurchase", "true");
   const response = await fetch(`/api/orders/purchase-orders?${query.toString()}`, { cache: "no-store" });
   const data = await response.json();
   if (!response.ok) throw new Error(data?.error || "Unable to load Purchase Orders.");
   return data as { purchaseOrders?: PurchaseOrder[]; nextCursor?: string | null };
 }
 
-export default function PurchaseOrderReportPage() {
+export default function PurchaseOrderReportPage({ assetMode = false }: { assetMode?: boolean }) {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
@@ -68,17 +73,17 @@ export default function PurchaseOrderReportPage() {
   const purchaseOrderPath = `${basePath}/purchase-order`;
 
   const loadOrders = useCallback(async (cursor?: string, append = false) => {
-    const data = await fetchPurchaseOrderReportPage(organizationId, cursor, searchTerm);
+    const data = await fetchPurchaseOrderReportPage(organizationId, cursor, searchTerm, assetMode);
     const page = (data.purchaseOrders ?? []).map((order: PurchaseOrder) => ({ ...order, status: order.status === "OPEN" ? "DRAFT" : order.status }));
     setOrders((current) => append ? [...current, ...page] : page);
     setNextCursor(data.nextCursor ?? null);
-  }, [organizationId, searchTerm]);
+  }, [assetMode, organizationId, searchTerm]);
 
   useEffect(() => {
     if (!organizationId) return;
     let active = true;
     const timeout = window.setTimeout(() => {
-      fetchPurchaseOrderReportPage(organizationId, undefined, searchTerm)
+      fetchPurchaseOrderReportPage(organizationId, undefined, searchTerm, assetMode)
         .then((data) => {
           if (!active) return;
           const page = (data.purchaseOrders ?? []).map((order) => ({ ...order, status: order.status === "OPEN" ? "DRAFT" : order.status }));
@@ -96,7 +101,7 @@ export default function PurchaseOrderReportPage() {
       active = false;
       window.clearTimeout(timeout);
     };
-  }, [organizationId, searchTerm]);
+  }, [assetMode, organizationId, searchTerm]);
 
   const loadMoreOrders = async () => {
     if (!nextCursor || loadingMore) return;
@@ -188,7 +193,7 @@ export default function PurchaseOrderReportPage() {
       {loading ? (
         <div className="erp-surface flex min-h-48 items-center justify-center gap-2 text-xs text-slate-500">
           <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
-          Loading Purchase Orders
+          Loading {assetMode ? "Asset " : ""}Purchase Orders
         </div>
       ) : error ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -200,7 +205,7 @@ export default function PurchaseOrderReportPage() {
                 {error.linkedReceipts.map((receipt) => (
                   <li key={receipt.id}>
                     <a
-                      href={`/dashboard/${params?.workspaceId ?? "demo"}/organizations/${organizationId}/inventory-management/inward/grn/report/${encodeURIComponent(receipt.id)}`}
+                      href={`/dashboard/${params?.workspaceId ?? "demo"}/organizations/${organizationId}/${assetMode ? "asset-management/asset-grn" : "inventory-management/inward/grn"}/report/${encodeURIComponent(receipt.id)}`}
                       className="font-semibold text-red-700 underline underline-offset-2 hover:text-red-900"
                     >
                       {receipt.receiptNo}
@@ -229,7 +234,7 @@ export default function PurchaseOrderReportPage() {
             </p>
           ) : null}
           <ReportGrid
-            title="Purchase Orders"
+            title={assetMode ? "Asset Purchase Orders" : "Purchase Orders"}
             records={reportRows}
             fields={reportFields}
             visibleFields={visibleFields}
@@ -266,6 +271,9 @@ export default function PurchaseOrderReportPage() {
               switch (fieldKey as PurchaseOrderField) {
                 case "purchaseOrderNo":
                   return row.purchaseOrderNo;
+                case "procurementType":
+                  if (row.isAssetPurchase) return <Badge>Asset PO</Badge>;
+                  return row.procurementType === "GENERAL" ? "General PO" : "Style Wise PO";
                 case "entityName":
                   return row.entityName || "Missing Entity";
                 case "vendorName":
@@ -288,7 +296,7 @@ export default function PurchaseOrderReportPage() {
                   return "";
               }
             }}
-            emptyMessage="No Purchase Orders have been generated."
+            emptyMessage={assetMode ? "No asset Purchase Orders have been generated." : "No Purchase Orders have been generated."}
           />
           {nextCursor && (
             <div className="flex justify-center border-t border-slate-200 p-3">

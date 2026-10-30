@@ -83,6 +83,34 @@ export const ERP_MODULES: ErpModule[] = [
     ],
   },
   {
+    key: "asset-management",
+    label: "Asset Management",
+    pathSegment: "asset-management",
+    children: [
+      {
+        key: "asset-purchase",
+        label: "Asset Purchase",
+        pathSegment: "asset-purchase",
+        children: [
+          { key: "asset-purchase-order", label: "Asset Purchase Order", href: "/asset-management/asset-po/purchase-orders" },
+          { key: "create-po", label: "Create PO", href: "/asset-management/asset-po/allocate-vendor" },
+          { key: "asset-grn", label: "Asset GRN", href: "/asset-management/asset-grn/report" },
+        ],
+      },
+      {
+        key: "asset-inventory",
+        label: "Asset Inventory",
+        href: "/asset-management/asset-inventory",
+      },
+      {
+        key: "preventive-maintenance",
+        label: "Preventive Maintenance",
+        pathSegment: "preventive-maintenance",
+        href: "/asset-management/preventive-maintenance",
+      },
+    ],
+  },
+  {
     key: "design-development",
     label: "Design and Development",
     pathSegment: "design-development",
@@ -101,6 +129,7 @@ export const ERP_MODULES: ErpModule[] = [
         pathSegment: "barcode-qr-code",
         children: [
           { key: "templates", label: "Templates", pathSegment: "templates" },
+          { key: "page-setup", label: "Page Setup", pathSegment: "page-setup" },
           { key: "print-download", label: "Print/Download", pathSegment: "print-download" },
         ],
       },
@@ -245,6 +274,11 @@ export const ERP_MODULES: ErpModule[] = [
             href: "/advance-booking/order/advance-booking",
           },
           {
+            key: "order-form",
+            label: "Order Form",
+            href: "/advance-booking/order/order-form",
+          },
+          {
             key: "quotation",
             label: "Quotation",
             href: "/advance-booking/quotation",
@@ -347,6 +381,7 @@ const BUSINESS_TYPE_MODULE_ALIASES: Record<string, string> = {
   "pos": "pos",
   "point-of-sale": "pos",
   "order-management": "order-management",
+  "asset-management": "asset-management",
   "design-development": "design-development",
   "design-and-development": "design-development",
   "factory-management": "factory-management",

@@ -2,6 +2,9 @@ import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 
 import { MasterRecordsTable } from "@/components/master-data/master-records-data-table";
+import PriceListSettingsPage from "./_page-content/price-list-settings-page";
+import PriceListTypesHome from "../../../admin/master-data/[moduleKey]/_page-content/price-list-types-home";
+import PriceListContactReport from "../../../admin/master-data/[moduleKey]/[recordCode]/_page-content/price-list-contact-report";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 import { groupArticleMatrixRows } from "@/lib/master-data/article-import-workbook";
@@ -28,6 +31,10 @@ import {
 } from "@/lib/master-data/master-records-workbook";
 import type { MasterFieldValues } from "@/lib/master-data/master-data-constants";
 import type { MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
+import {
+  getMissingRequiredFieldLabels,
+  getRequiredFieldsErrorMessage,
+} from "@/lib/master-data/required-field-validation";
 import {
   loadArticleImportSupportingMasterIndex,
   validateArticleImportSupportingMasters,
@@ -103,32 +110,6 @@ function readChildValues(formData: FormData, field: MasterFieldDefinition) {
   } catch {
     throw new Error(`${field.label} data is invalid. Refresh the page and try again.`);
   }
-}
-
-function hasMissingRequiredField(fields: Record<string, unknown>, definition: { fields: MasterFieldDefinition[] }) {
-  return definition.fields.some((field) => {
-    if (!field.required && !field.dependsOn) return false;
-
-    const value = fields[field.key];
-    const hasValue = Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== "";
-
-    if (!field.required && field.dependsOn) {
-      const parentValue = fields[field.dependsOn];
-      if (parentValue === null || parentValue === undefined || parentValue === "") {
-        return false;
-      }
-      return !hasValue;
-    }
-
-    if (field.dependsOn) {
-      const parentValue = fields[field.dependsOn];
-      if (parentValue === null || parentValue === undefined || parentValue === "") {
-        return true;
-      }
-    }
-
-    return !hasValue;
-  });
 }
 
 function validateChildValues(
@@ -314,17 +295,21 @@ export async function createMasterValueAction(formData: FormData) {
     return;
   }
 
-  if (!label || hasMissingRequiredField(fields, definition)) {
+  const missingRequiredFieldLabels = getMissingRequiredFieldLabels(
+    fields,
+    definition.fields,
+    definition.labelField ?? definition.fields[0]?.key,
+  );
+  if (missingRequiredFieldLabels.length > 0) {
+    const errorMessage = getRequiredFieldsErrorMessage(missingRequiredFieldLabels);
     if (returnToArticleDetail && moduleKey === "article") {
-      masterDataErrorRedirect(workspaceId, organizationId, moduleKey,
-        new Error(`Complete all required ${definition.label.toLowerCase()} fields before saving.`), true);
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, new Error(errorMessage), true);
     }
     if (returnToMasterRecord) {
-      masterDataErrorRedirect(workspaceId, organizationId, moduleKey,
-        new Error(`Complete all required ${definition.label.toLowerCase()} fields before saving.`),
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, new Error(errorMessage),
         false, "", false, "", true);
     }
-    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent(`Complete all required ${definition.label.toLowerCase()} fields before saving.`)}`);
+    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent(errorMessage)}`);
   }
 
   const user = await requireSessionUser();
@@ -363,6 +348,7 @@ export async function createMasterValueAction(formData: FormData) {
       code: code || null,
       description: description || null,
       fields,
+      actorUserId: user.id,
       ...(articleVariants ? { articleVariants } : {}),
       ...(moduleKey === "article" ? {
         articleSizes: Array.isArray(fields.Sizes) ? fields.Sizes.map(String) : [],
@@ -438,22 +424,28 @@ export async function updateMasterValueAction(formData: FormData) {
   const label = definition ? getRecordLabel(fields, definition) : "";
   const code = String(formData.get("code") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  if (!workspaceId || !organizationId || !moduleKey || !valueId || !label || !definition || definition.hidden || hasMissingRequiredField(fields, definition)) {
+  if (!workspaceId || !organizationId || !moduleKey || !valueId || !definition || definition.hidden) {
+    return;
+  }
+  const missingRequiredFieldLabels = getMissingRequiredFieldLabels(
+    fields,
+    definition.fields,
+    definition.labelField ?? definition.fields[0]?.key,
+  );
+  if (missingRequiredFieldLabels.length > 0) {
+    const errorMessage = getRequiredFieldsErrorMessage(missingRequiredFieldLabels);
     if (returnToArticleDetail && moduleKey === "article" && definition) {
-      masterDataErrorRedirect(workspaceId, organizationId, moduleKey,
-        new Error(`Complete all required ${definition.label.toLowerCase()} fields before saving.`), true, returnRecordCode);
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, new Error(errorMessage), true, returnRecordCode);
     }
     if (returnToSizeGroupDetail && definition) {
-      masterDataErrorRedirect(workspaceId, organizationId, moduleKey,
-        new Error(`Complete all required ${definition.label.toLowerCase()} fields before saving.`),
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, new Error(errorMessage),
         false, "", true, valueId);
     }
     if (returnToMasterRecord && definition) {
-      masterDataErrorRedirect(workspaceId, organizationId, moduleKey,
-        new Error(`Complete all required ${definition.label.toLowerCase()} fields before saving.`),
+      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, new Error(errorMessage),
         false, "", false, "", true, masterRecordCode);
     }
-    return;
+    masterDataErrorRedirect(workspaceId, organizationId, moduleKey, new Error(errorMessage));
   }
 
   const user = await requireSessionUser();
@@ -504,6 +496,7 @@ export async function updateMasterValueAction(formData: FormData) {
       code: code || null,
       description: description || null,
       fields,
+      actorUserId: user.id,
       ...(articleVariants ? { articleVariants } : {}),
       ...(moduleKey === "article" ? {
         articleSizes: Array.isArray(fields.Sizes) ? fields.Sizes.map(String) : [],
@@ -596,8 +589,11 @@ async function deleteMasterValueAction(formData: FormData) {
   if (!definition || definition.hidden) {
     notFound();
   }
+  if (moduleKey === "price-list") {
+    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent("Price List records cannot be deleted.")}`);
+  }
 
-  const deletionResult = await deleteMasterValue(organization.id, valueId);
+  const deletionResult = await deleteMasterValue(organization.id, valueId, user.id);
   if (deletionResult.error) {
     redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent(deletionResult.error)}`);
   }
@@ -628,6 +624,10 @@ async function deleteSelectedMasterValuesAction(formData: FormData) {
   const organization = await getOrganizationForUser(user.id, organizationId);
   if (!organization) notFound();
   await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
+
+  if (moduleKey === "price-list") {
+    redirect(`${returnPath}?error=${encodeURIComponent("Price List records cannot be deleted.")}`);
+  }
 
   const result = await deleteSelectedMasterValuesForOrganization(
     organization.id,
@@ -804,8 +804,13 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
       const fields = Object.fromEntries(Object.entries(row.fields).filter(([key]) =>
         definition.fields.find((field) => field.key === key)?.type !== "child-list",
       ));
-      if (hasMissingRequiredField(fields, definition)) {
-        throw new Error(`Complete all required ${definition.label.toLowerCase()} fields.`);
+      const missingRequiredFieldLabels = getMissingRequiredFieldLabels(
+        fields,
+        definition.fields,
+        definition.labelField ?? definition.fields[0]?.key,
+      );
+      if (missingRequiredFieldLabels.length > 0) {
+        throw new Error(getRequiredFieldsErrorMessage(missingRequiredFieldLabels));
       }
 
       if (moduleKey === "article") {
@@ -938,6 +943,10 @@ export default async function MasterDataEditorPage({
     notFound();
   }
 
+  if (moduleKey === "price-list" && recordCode === "SETTINGS") {
+    return <PriceListSettingsPage workspaceId={workspaceId} organizationId={organizationId} />;
+  }
+
   const childModuleKey = definition.fields.find((field) => field.type === "child-list")?.childModuleKey
     ?? definition.fields.find((field) => field.type === "lookup" && field.multiple)?.lookupModuleKey;
   const activeDummyDataBatch = formMode === "create"
@@ -951,13 +960,39 @@ export default async function MasterDataEditorPage({
         exactSearch: true,
         limit: 2,
       }).then((items) => {
-        const matches = items.filter((item) => item.value_id === recordCode || item.id === recordCode);
+        const matches = items.filter((item) => item.value_id === recordCode
+          || item.id === recordCode
+          || (moduleKey === "price-list" && item.code?.toLocaleLowerCase() === recordCode.toLocaleLowerCase()));
         if (matches.length !== 1) notFound();
         return matches;
       })
     : formMode
       ? []
       : await getMasterValuesForOrganization(organization.id, moduleKey, true, { includeDummyData: true, activeDummyDataBatch });
+  if (moduleKey === "price-list" && formMode === "view" && values[0]) {
+    return (
+      <PriceListContactReport
+        workspaceId={workspaceId}
+        organizationId={organizationId}
+        priceListId={values[0].id}
+      />
+    );
+  }
+  if (moduleKey === "price-list" && !formMode) {
+    const priceListTypeOptions = definition.fields.find((field) => field.key === "Channel_Type")?.options ?? [];
+    return (
+      <PriceListTypesHome
+        workspaceId={workspaceId}
+        organizationId={organizationId}
+        priceListTypes={priceListTypeOptions}
+        records={values.map((item) => ({
+          id: item.id,
+          label: item.label,
+          priceListType: typeof item.fields.Channel_Type === "string" ? item.fields.Channel_Type : null,
+        }))}
+      />
+    );
+  }
   const shouldShowMasterHeader = !formMode && moduleKey !== "article";
   const formRecord = formMode === "edit" || formMode === "view" ? values[0] : undefined;
   const childRecords = formRecord && childModuleKey

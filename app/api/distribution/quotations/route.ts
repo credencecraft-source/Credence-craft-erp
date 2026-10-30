@@ -5,6 +5,7 @@ import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import {
   createDistributionQuotationFromBookings,
+  createDistributionQuotationFromOrderForms,
   deleteDistributionQuotations,
   listDistributionQuotations,
 } from "@/lib/services/distribution/quotation-service";
@@ -56,6 +57,21 @@ export async function POST(request: Request) {
     );
     const vendorId = typeof body.vendorId === "string" && body.vendorId.trim() ? body.vendorId.trim() : null;
     const contactId = typeof body.contactId === "string" && body.contactId.trim() ? body.contactId.trim() : null;
+    const orderFormIds = body.orderFormIds;
+    if (
+      Array.isArray(orderFormIds) &&
+      orderFormIds.every((id) => typeof id === "string") &&
+      !body.bookingIds
+    ) {
+      const quotation = await createDistributionQuotationFromOrderForms(
+        organization.id,
+        user.id,
+        orderFormIds,
+        vendorId,
+        contactId,
+      );
+      return NextResponse.json({ quotation }, { status: 201 });
+    }
     if (
       !Array.isArray(body.bookingIds) ||
       body.bookingIds.some((id) => typeof id !== "string") ||

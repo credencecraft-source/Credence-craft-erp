@@ -6,9 +6,14 @@ export const DISTRIBUTION_MASTER_DEFINITIONS = [
     text("Contact_Person", "Contact Person"),
     text("Phone_Number", "Phone Number"),
   ], { labelField: "Partner_Name", moduleGroup: "distribution", moduleSubGroup: "delivery", moduleOrder: 1 }),
-  createMaster("sales-channel", "Sales Channel", "Customer-facing or order channels used for Advance Booking fulfillment.", [
-    text("Channel_Name", "Channel Name", { required: true, unique: true }),
-    text("Channel_Code", "Channel Code"),
+  createMaster("price-list", "Price List", "Price list records used for sales pricing and Advance Booking fulfillment.", [
+    text("Channel_Name", "Price List Name", { required: true, unique: true }),
+    text("Channel_Code", "Price List Code"),
+    text("Channel_Type", "Price List Type", {
+      type: "picklist",
+      required: true,
+      options: ["Qty Based", "Location Based", "Hierarchy Based", "Role Based"],
+    }),
   ], { labelField: "Channel_Name", moduleGroup: "distribution", moduleSubGroup: "sales-order", moduleOrder: 1 }),
   createMaster("dispatch-status", "Dispatch Status", "Dispatch and delivery lifecycle values to track movement readiness.", [
     text("Status_Name", "Status Name", { required: true, unique: true }),

@@ -49,7 +49,7 @@ type Receipt = {
   notes: string | null;
   entity: { entity_name: string } | null;
   location: { location_name: string } | null;
-  purchaseOrder: { purchase_order_no: string; display_no: number | null };
+  purchaseOrder: { purchase_order_no: string; display_no: number | null; procurement_type: string };
   lines: ReceiptLine[];
 };
 
@@ -79,6 +79,7 @@ type VerificationRow = {
   verification_status: "Pending" | "Verified";
   received_date: string;
   purchase_order_no: string;
+  procurement_type: string;
   entity_name: string;
   location_name: string;
   received_by: string;
@@ -123,6 +124,7 @@ type VerificationDetails = {
   rawMaterialName: string;
   grnQuantity: string;
   purchaseOrderNumber: string;
+  procurementType: string;
   masterGroupingNumber: string;
   poQuantity: string;
   groupedQtyGrn: string;
@@ -191,12 +193,14 @@ const amount = (value: number | string | null | undefined) =>
 
 const formatDate = (value: string) => new Date(value).toLocaleDateString("en-IN");
 
-export default function GrnVerificationPage() {
+export default function GrnVerificationPage({ assetMode = false }: { assetMode?: boolean }) {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
   const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
-  const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/grn`;
+  const basePath = assetMode
+    ? `/dashboard/${workspaceId}/organizations/${organizationId}/asset-management/asset-grn`
+    : `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/grn`;
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [stockTasks, setStockTasks] = useState<StockVerificationTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -215,20 +219,23 @@ export default function GrnVerificationPage() {
   useEffect(() => {
     const controller = new AbortController();
 
-    void Promise.all([
-      fetch(`/api/inventory/receipts?organizationId=${encodeURIComponent(organizationId)}`, {
-        cache: "no-store",
-        signal: controller.signal,
-      }),
-      fetch(`/api/inventory/grn-verifications?organizationId=${encodeURIComponent(organizationId)}&verificationRegister=true`, {
-        cache: "no-store",
-        signal: controller.signal,
-      }),
-    ])
+    const receiptUrl = `/api/inventory/receipts?organizationId=${encodeURIComponent(organizationId)}${assetMode ? "&isAssetPurchase=true" : ""}`;
+    const requests = assetMode
+      ? [fetch(receiptUrl, { cache: "no-store", signal: controller.signal }), Promise.resolve(null)]
+      : [
+          fetch(receiptUrl, { cache: "no-store", signal: controller.signal }),
+          fetch(`/api/inventory/grn-verifications?organizationId=${encodeURIComponent(organizationId)}&verificationRegister=true`, {
+            cache: "no-store",
+            signal: controller.signal,
+          }),
+        ];
+    void Promise.all(requests)
       .then(async ([receiptsResponse, stockTasksResponse]) => {
-        const [receiptData, taskData] = await Promise.all([receiptsResponse.json(), stockTasksResponse.json()]);
+        if (!receiptsResponse) return;
+        const receiptData = await receiptsResponse.json();
+        const taskData = stockTasksResponse ? await stockTasksResponse.json() : { stockTasks: [] };
         if (!receiptsResponse.ok) throw new Error(receiptData.error || "Unable to load GRN verification report.");
-        if (!stockTasksResponse.ok) throw new Error(taskData.error || "Unable to load stock verification tasks.");
+        if (stockTasksResponse && !stockTasksResponse.ok) throw new Error(taskData.error || "Unable to load stock verification tasks.");
         setReceipts(Array.isArray(receiptData.receipts) ? receiptData.receipts : []);
         setStockTasks(Array.isArray(taskData.stockTasks) ? taskData.stockTasks : []);
       })
@@ -242,7 +249,7 @@ export default function GrnVerificationPage() {
       });
 
     return () => controller.abort();
-  }, [organizationId]);
+  }, [assetMode, organizationId]);
 
   useEffect(() => {
     if (!activeSource) return;
@@ -251,13 +258,13 @@ export default function GrnVerificationPage() {
       ? `stockGroupedPurchaseOrderId=${encodeURIComponent(activeSource.id)}`
       : `receiptLineId=${encodeURIComponent(activeSource.id)}`;
 
-    void fetch(`/api/inventory/grn-verifications?organizationId=${encodeURIComponent(organizationId)}&${sourceQuery}`, {
+    void fetch(`/api/inventory/grn-verifications?organizationId=${encodeURIComponent(organizationId)}&${sourceQuery}${assetMode ? "&isAssetPurchase=true" : ""}`, {
       cache: "no-store",
       signal: controller.signal,
     })
       .then(async (response) => {
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Unable to load RM GRN Verification.");
+        if (!response.ok) throw new Error(data.error || `Unable to load ${assetMode ? "Asset" : "RM"} GRN Verification.`);
         const details = data.verification as VerificationDetails;
         setVerification(details);
         setVerifiedQuantity(details.verifiedQuantity);
@@ -269,12 +276,12 @@ export default function GrnVerificationPage() {
       })
       .catch((loadError) => {
         if (!controller.signal.aborted) {
-          setVerificationError(loadError instanceof Error ? loadError.message : "Unable to load RM GRN Verification.");
+          setVerificationError(loadError instanceof Error ? loadError.message : `Unable to load ${assetMode ? "Asset" : "RM"} GRN Verification.`);
         }
       });
 
     return () => controller.abort();
-  }, [activeSource, organizationId]);
+  }, [activeSource, assetMode, organizationId]);
 
   const saveVerification = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -292,6 +299,7 @@ export default function GrnVerificationPage() {
           ...(activeSource.type === "stock"
             ? { sourceGroupedPurchaseOrderId: activeSource.id }
             : { receiptLineId: activeSource.id }),
+          ...(assetMode ? { assetPurchaseOnly: true } : {}),
           verifiedQuantity,
           approvedQuantity,
           ...(activeSource.type === "receipt" ? {
@@ -303,7 +311,7 @@ export default function GrnVerificationPage() {
         }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Unable to save RM GRN Verification.");
+      if (!response.ok) throw new Error(data.error || `Unable to save ${assetMode ? "Asset" : "RM"} GRN Verification.`);
       setVerificationSaved(true);
       if (activeSource.type === "receipt") {
         setReceipts((current) => current.map((receipt) => ({
@@ -317,7 +325,7 @@ export default function GrnVerificationPage() {
       }
       setActiveSource(null);
     } catch (saveError) {
-      setVerificationError(saveError instanceof Error ? saveError.message : "Unable to save RM GRN Verification.");
+      setVerificationError(saveError instanceof Error ? saveError.message : `Unable to save ${assetMode ? "Asset" : "RM"} GRN Verification.`);
     } finally {
       setVerificationSaving(false);
     }
@@ -344,6 +352,7 @@ export default function GrnVerificationPage() {
         status: receipt.status,
         received_date: receipt.received_date,
         purchase_order_no: purchaseOrderNo,
+        procurement_type: receipt.purchaseOrder.procurement_type,
         entity_name: receipt.entity?.entity_name ?? "Missing Entity",
         location_name: receipt.location?.location_name ?? "Location not set",
         received_by: receipt.received_by ?? "-",
@@ -383,6 +392,7 @@ export default function GrnVerificationPage() {
     verification_status: "Pending",
     received_date: task.createdAt,
     purchase_order_no: "Internal Store Issue",
+    procurement_type: "STYLE_WISE",
     entity_name: task.entityName,
     location_name: "Internal Store",
     received_by: "Internal Store",
@@ -454,11 +464,11 @@ export default function GrnVerificationPage() {
         <header className="flex flex-wrap items-end justify-between gap-2 border-b border-slate-200 pb-2">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">Inventory / Inward</p>
-            <h1 className="mt-1 text-2xl font-bold text-slate-900">GRN Verification Report</h1>
+            <h1 className="mt-1 text-2xl font-bold text-slate-900">{assetMode ? "Asset GRN Verification Report" : "GRN Verification Report"}</h1>
           </div>
           <nav className="flex gap-3 text-sm font-semibold">
-            <Link href={`${basePath}/report`} className="text-emerald-800 hover:text-emerald-950">GRN Report</Link>
-            <Link href={`${basePath}/create`} className="text-emerald-800 hover:text-emerald-950">Create GRN</Link>
+            <Link href={`${basePath}/report`} className="text-emerald-800 hover:text-emerald-950">{assetMode ? "Asset GRN Report" : "GRN Report"}</Link>
+            <Link href={`${basePath}/create`} className="text-emerald-800 hover:text-emerald-950">{assetMode ? "Create Asset GRN" : "Create GRN"}</Link>
           </nav>
         </header>
 
@@ -477,7 +487,7 @@ export default function GrnVerificationPage() {
               rowIdSelector={(row) => row.id}
               selectedIds={[]}
               selectable={false}
-              storageKey={`grn-verification-columns-${organizationId}`}
+              storageKey={`${assetMode ? "asset-" : ""}grn-verification-columns-${organizationId}`}
               onRowAction={(recordId) => {
                 const row = reportRows.find((record) => record.id === recordId);
                 if (!row || (!row.receiptLineId && !row.sourceGroupedPurchaseOrderId)) return;
@@ -492,7 +502,9 @@ export default function GrnVerificationPage() {
                   : { type: "receipt", id: row.receiptLineId! });
               }}
               rowActionLabel="Verify / Confirm"
-              rowActionDisabledSelector={(row) => (!row.receiptLineId && !row.sourceGroupedPurchaseOrderId) || !row.masterPurchaseOrderId || row.isVerified}
+              rowActionDisabledSelector={(row) => (!row.receiptLineId && !row.sourceGroupedPurchaseOrderId)
+                || (!row.masterPurchaseOrderId && row.procurement_type !== "GENERAL")
+                || row.isVerified}
               onRowClick={(recordId) => {
                 const row = reportRows.find((record) => record.id === recordId);
                 if (row?.receiptId) router.push(`${basePath}/report/${encodeURIComponent(row.receiptId)}`);
@@ -506,7 +518,7 @@ export default function GrnVerificationPage() {
                 if (rateFields.has(field)) return value == null ? "-" : `${amount(value)}%`;
                 return String(value ?? "-");
               }}
-              emptyMessage="No GRN or stock verification tasks found."
+              emptyMessage={assetMode ? "No asset GRN verification records found." : "No GRN or stock verification tasks found."}
             />
           </div>
         )}
@@ -520,7 +532,7 @@ export default function GrnVerificationPage() {
       >
         <form onSubmit={(event) => void saveVerification(event)}>
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-            <h2 id="rm-grn-verification-title" className="text-sm font-bold text-slate-900">{verification?.isStockIssue ? "Store Stock Verification" : "GRN Verification"}</h2>
+            <h2 id="rm-grn-verification-title" className="text-sm font-bold text-slate-900">{verification?.isStockIssue ? "Store Stock Verification" : `${assetMode ? "Asset " : ""}GRN Verification`}</h2>
             <Button type="button" variant="ghost" size="sm" onClick={() => setActiveSource(null)} aria-label="Close RM GRN Verification">
               Close
             </Button>
@@ -533,7 +545,9 @@ export default function GrnVerificationPage() {
               <>
                 <section aria-label="GRN Verification header fields" className="space-y-3">
                   <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <div><p className="text-[10px] font-semibold uppercase text-slate-500">Master Group *</p><p className="mt-1 text-xs font-semibold text-slate-900">{verification.masterGroupingNumber}</p></div>
+                    {verification.procurementType === "GENERAL"
+                      ? <div><p className="text-[10px] font-semibold uppercase text-slate-500">Procurement Type</p><p className="mt-1 text-xs font-semibold text-slate-900">General Purchase</p></div>
+                      : <div><p className="text-[10px] font-semibold uppercase text-slate-500">Master Group *</p><p className="mt-1 text-xs font-semibold text-slate-900">{verification.masterGroupingNumber}</p></div>}
                     <div><p className="text-[10px] font-semibold uppercase text-slate-500">{verification.isStockIssue ? "Stock Reference" : "GRN No"}</p><p className="mt-1 text-xs font-semibold text-slate-900">{verification.grnNumber}</p></div>
                     <div><p className="text-[10px] font-semibold uppercase text-slate-500">{verification.isStockIssue ? "Source" : "Purchase Order"}</p><p className="mt-1 text-xs font-semibold text-slate-900">{verification.purchaseOrderNumber}</p></div>
                     <div><p className="text-[10px] font-semibold uppercase text-slate-500">Raw Material</p><p className="mt-1 text-xs font-semibold text-slate-900">{verification.rawMaterialName || "-"}</p></div>
@@ -561,14 +575,22 @@ export default function GrnVerificationPage() {
                       disabled={verificationSaving}
                     />
                     <div><p className="text-[10px] font-semibold uppercase text-slate-500">Rejected · tracked separately</p><p className="mt-1 text-xs font-semibold text-amber-800">{previewQuantity(rejectedPreview)}</p></div>
-                    <div><p className="text-[10px] font-semibold uppercase text-slate-500">Approved excess · General Inventory</p><p className="mt-1 text-xs font-semibold text-emerald-800">{previewQuantity(freshExcessPreview)}</p></div>
-                    <div><p className="text-[10px] font-semibold uppercase text-slate-500">Total excess to reconcile</p><p className="mt-1 text-xs font-semibold text-slate-900">{previewQuantity(totalExcessPreview)}</p></div>
-                    <div className="rounded-md border border-blue-200 bg-blue-50 px-2.5 py-2"><p className="text-[10px] font-semibold uppercase text-blue-800">Matched qty · style/order allocation</p><p className="mt-1 text-sm font-bold tabular-nums text-blue-950">{previewQuantity(availableToAllocatePreview)}</p></div>
-                    <div><p className="text-[10px] font-semibold uppercase text-slate-500">Grouped Allocated</p><p className="mt-1 text-xs font-semibold text-slate-900">{previewQuantity(groupedAllocatedPreview)}</p></div>
-                    <div><p className="text-[10px] font-semibold uppercase text-slate-500">Grouped Balance to Allocate</p><p className="mt-1 text-xs font-semibold text-slate-900">{previewQuantity(groupedBalancePreview)}</p></div>
+                    <div><p className="text-[10px] font-semibold uppercase text-slate-500">{verification.procurementType === "GENERAL" ? "Accepted Qty · General Inventory" : "Approved excess · General Inventory"}</p><p className="mt-1 text-xs font-semibold text-emerald-800">{previewQuantity(freshExcessPreview)}</p></div>
+                    {verification.procurementType !== "GENERAL" && (
+                      <div><p className="text-[10px] font-semibold uppercase text-slate-500">Total excess to reconcile</p><p className="mt-1 text-xs font-semibold text-slate-900">{previewQuantity(totalExcessPreview)}</p></div>
+                    )}
+                    {verification.procurementType !== "GENERAL" && <>
+                      <div className="rounded-md border border-blue-200 bg-blue-50 px-2.5 py-2"><p className="text-[10px] font-semibold uppercase text-blue-800">Matched qty · style/order allocation</p><p className="mt-1 text-sm font-bold tabular-nums text-blue-950">{previewQuantity(availableToAllocatePreview)}</p></div>
+                      <div><p className="text-[10px] font-semibold uppercase text-slate-500">Grouped Allocated</p><p className="mt-1 text-xs font-semibold text-slate-900">{previewQuantity(groupedAllocatedPreview)}</p></div>
+                      <div><p className="text-[10px] font-semibold uppercase text-slate-500">Grouped Balance to Allocate</p><p className="mt-1 text-xs font-semibold text-slate-900">{previewQuantity(groupedBalancePreview)}</p></div>
+                    </>}
                   </div>
                 </section>
-                <section aria-label="GRN Verification allocation subform" className="space-y-2">
+                {verification.procurementType === "GENERAL" ? (
+                  <Card className="p-3 text-sm text-slate-700">
+                    Accepted quantity posts directly to General Inventory at the selected GRN location. No style, order, or allocation bucket is used.
+                  </Card>
+                ) : <section aria-label="GRN Verification allocation subform" className="space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">RM GRN Verification Subform</h3>
@@ -640,13 +662,13 @@ export default function GrnVerificationPage() {
                   {groupedAllocatedPreview < availableToAllocatePreview && (
                     <p className="text-[11px] text-slate-500">Unassigned matched quantity: {previewQuantity(availableToAllocatePreview - groupedAllocatedPreview)}. You can enter group amounts or fill remaining group capacity.</p>
                   )}
-                </section>
+                </section>}
               </>
             ) : null}
           </div>
           <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3">
             <p aria-live="polite" className="text-xs font-medium text-emerald-700">{verificationSaved ? "Verification saved." : ""}</p>
-            <Button type="submit" size="sm" disabled={!verification || !verification.masterPurchaseOrderId || verificationLoading || verificationSaving || approvedValue > verifiedValue || groupedAllocatedPreview > availableToAllocatePreview || allocationExceedsCapacity}>
+            <Button type="submit" size="sm" disabled={!verification || (!verification.masterPurchaseOrderId && verification.procurementType !== "GENERAL") || verificationLoading || verificationSaving || approvedValue > verifiedValue || groupedAllocatedPreview > availableToAllocatePreview || allocationExceedsCapacity}>
               {verificationSaving ? "Submitting..." : verification?.isStockIssue ? "Submit Store Verification" : "Save Verification"}
             </Button>
           </div>

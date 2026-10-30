@@ -21,7 +21,7 @@ import { addRawMaterialStockManually, ManualStockError } from "./rm-manual-stock
 describe("manual raw-material stock addition", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.transaction.masterRawMaterial.findFirst.mockResolvedValue({ id: "material-1", raw_material_name: "Cotton" });
+    mocks.transaction.masterRawMaterial.findFirst.mockResolvedValue({ id: "material-1", raw_material_name: "Cotton", is_asset: false });
     mocks.transaction.masterLocation.findFirst.mockResolvedValue({ id: "location-1", entity_id: "entity-1", location_name: "Store" });
     mocks.transaction.rawMaterialStock.create.mockResolvedValue({ id: "stock-1" });
     mocks.createAuditEvent.mockResolvedValue({});
@@ -39,7 +39,7 @@ describe("manual raw-material stock addition", () => {
 
     expect(mocks.transaction.masterRawMaterial.findFirst).toHaveBeenCalledWith({
       where: { id: "material-1", organization_id: "internal-org-1", is_active: true },
-      select: { id: true, raw_material_name: true },
+      select: { id: true, raw_material_name: true, is_asset: true },
     });
     expect(mocks.transaction.masterLocation.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "location-1", organization_id: "internal-org-1", is_active: true, entity: { is_active: true } },
@@ -79,6 +79,47 @@ describe("manual raw-material stock addition", () => {
 
     expect(mocks.transaction.rawMaterialStock.create).not.toHaveBeenCalled();
     expect(mocks.createAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects asset materials from the ordinary RM stock action", async () => {
+    mocks.transaction.masterRawMaterial.findFirst.mockResolvedValue({
+      id: "material-1",
+      raw_material_name: "Machine",
+      is_asset: true,
+    });
+
+    await expect(addRawMaterialStockManually({
+      organizationId: "internal-org-1",
+      userId: "user-1",
+      rawMaterialId: "material-1",
+      locationId: "location-1",
+      quantity: "1",
+      reason: "Opening balance",
+    })).rejects.toThrow("Asset-classified materials can only be added through Assets Stock.");
+
+    expect(mocks.transaction.rawMaterialStock.create).not.toHaveBeenCalled();
+  });
+
+  it("allows an asset material through the Assets Stock action", async () => {
+    mocks.transaction.masterRawMaterial.findFirst.mockResolvedValue({
+      id: "material-1",
+      raw_material_name: "Machine",
+      is_asset: true,
+    });
+
+    await addRawMaterialStockManually({
+      organizationId: "internal-org-1",
+      userId: "user-1",
+      rawMaterialId: "material-1",
+      locationId: "location-1",
+      quantity: "1",
+      reason: "Opening balance",
+      isAssetStock: true,
+    });
+
+    expect(mocks.transaction.rawMaterialStock.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ raw_material: "Machine", source_type: "MANUAL" }),
+    }));
   });
 
   it("rejects zero and excessive precision before opening a transaction", async () => {

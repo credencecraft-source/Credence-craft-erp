@@ -4,15 +4,11 @@ import { notFound, redirect } from "next/navigation";
 import { after } from "next/server";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
-import {
-  requirePlatformSessionAdmin,
-  requirePlatformSessionSuperAdmin,
-} from "@/lib/auth/platform-session-manager";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { assignOrganizationPlatformVersion, getOrganizationClient, listPlatformVersions } from "@/lib/services/platform/client-service";
 import { listOrganizationSegmentPricing, resetOrganizationSegmentPrice, setOrganizationSegmentCustomPrice } from "@/lib/services/platform/organization-segment-pricing-service";
 import { deleteOrganizationFromPlatform, forceDeleteOrganizationFromPlatform, getOrganizationDeletionEligibility, ORGANIZATION_DELETE_RETENTION_DAYS, updateOrganizationApprovalStatusWithTransition } from "@/lib/services/organizations/organization-service";
@@ -31,7 +27,6 @@ import OrganizationSubscriptionPricing from "./organization-subscription-pricing
 import OrganizationTrialControls from "../../_page-content/organization-trial-controls";
 import OrganizationDeleteControl from "./organization-delete-control";
 import { countActiveOrganizationMembers, getPlatformPricingSettings, setOrganizationPricingMode, type PricingMode } from "@/lib/services/platform/pricing-mode-service";
-import { setOrganizationAiEnabled } from "@/lib/services/platform/organization-ai-access-service";
 
 function Detail({ label, value }: { label: string; value: string }) {
   return (
@@ -150,7 +145,7 @@ export default async function PlatformOrganizationDetailsPage({
       label: "Brands",
       details: [
         { label: "Own brands", value: kycDetails.ownBrandNames ?? "Not provided" },
-        { label: "Own-brand sales channels", value: kycList(kycDetails.ownBrandChannels) },
+        { label: "Own-brand price lists", value: kycList(kycDetails.ownBrandChannels) },
         { label: "White-label brands", value: kycDetails.whiteLabelBrands ?? "Not provided" },
         { label: "Brands worked with", value: kycProfile.brands_worked_with ?? "Not provided" },
         { label: "White-label fulfilment", value: kycValue(kycDetails.whiteLabelFulfilment) },
@@ -325,19 +320,6 @@ export default async function PlatformOrganizationDetailsPage({
     redirect(`/platform/organisations/${organizationId}?tab=pricing-type&success=${encodeURIComponent("Pricing type updated.")}`);
   }
 
-  async function updateAiAccess(formData: FormData) {
-    "use server";
-    await requirePlatformSessionSuperAdmin();
-    try {
-      await setOrganizationAiEnabled(internalOrganizationId, formData.get("enabled") === "on");
-    } catch (error) {
-      redirect(`/platform/organisations/${organizationId}?tab=ai-access&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to update AI Copilot access.")}`);
-    }
-    revalidatePath(`/platform/organisations/${organizationId}`);
-    revalidatePath(`/dashboard`, "layout");
-    redirect(`/platform/organisations/${organizationId}?tab=ai-access&success=${encodeURIComponent("AI Copilot access updated.")}`);
-  }
-
   async function extendTrial(formData: FormData) {
     "use server";
     await requirePlatformSessionAdmin();
@@ -387,7 +369,7 @@ export default async function PlatformOrganizationDetailsPage({
           </header>
         </div>
 
-        <OrganizationDetailTabs initialValue={["overview", "database", "pricing-type", "pricing", "subscriptions", "trial", "users", "activity", "delete", "kyc", "ai-access"].includes(query.tab ?? "") ? query.tab : undefined} panels={[
+        <OrganizationDetailTabs initialValue={["overview", "database", "pricing-type", "pricing", "subscriptions", "trial", "users", "activity", "delete", "kyc"].includes(query.tab ?? "") ? query.tab : undefined} panels={[
           {
             label: "Pricing Type",
             value: "pricing-type",
@@ -430,42 +412,6 @@ export default async function PlatformOrganizationDetailsPage({
                   <Detail label="Created" value={new Date(organization.created_at).toLocaleString()} />
                   <Detail label="Last updated" value={new Date(organization.updated_at).toLocaleString()} />
                 </dl>
-              </section>
-            ),
-          },
-          {
-            label: "AI Copilot",
-            value: "ai-access",
-            content: (
-              <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
-                <div>
-                  <h2 className="text-sm font-bold text-slate-900">Organization AI access</h2>
-                  <p className="mt-1 text-xs leading-5 text-slate-600">
-                    AI Copilot is available to this organization’s active members only after Super Admin enables access here.
-                    Existing organization roles and business permissions continue to apply.
-                  </p>
-                </div>
-                <form action={updateAiAccess} className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-100 pt-4">
-                  <div className="space-y-1">
-                    <Checkbox
-                      name="enabled"
-                      value="on"
-                      defaultChecked={organization.ai_enabled}
-                      disabled={platformAdmin.actualRole !== "SUPER_ADMIN"}
-                      label="Enable AI Copilot for this organization"
-                    />
-                    <p className="pl-6 text-xs text-slate-500">
-                      {organization.ai_enabled
-                        ? "Enabled. Organization members can open the Copilot; the chat service must also be configured."
-                        : "Disabled. Copilot is hidden and chat requests are rejected for every member."}
-                    </p>
-                  </div>
-                  {platformAdmin.actualRole === "SUPER_ADMIN" ? (
-                    <Button type="submit" size="sm">Save AI access</Button>
-                  ) : (
-                    <Badge>Super Admin only</Badge>
-                  )}
-                </form>
               </section>
             ),
           },

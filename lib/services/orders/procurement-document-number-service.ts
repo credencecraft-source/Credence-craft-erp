@@ -5,6 +5,7 @@ import { prisma } from "@/lib/database/prisma-client";
 export type ProcurementDocumentType =
   | "GROUPED_PO"
   | "MASTER_GROUP"
+  | "GENERAL_MASTER_GROUP"
   | "PURCHASE_ORDER"
   | "RM_OUTWARD_REQUEST"
   | "RM_OUTWARD_BOX"
@@ -13,6 +14,7 @@ export type ProcurementDocumentType =
   | "FG_OUTWARD_BOX"
   | "FG_OUTWARD_PACKING_LIST"
   | "ADVANCE_BOOKING"
+  | "DISTRIBUTION_ORDER_FORM"
   | "DISTRIBUTION_QUOTATION"
   | "DISTRIBUTION_MASTER_QUOTATION"
   | "POS_SALES_INVOICE";
@@ -20,6 +22,7 @@ export type ProcurementDocumentType =
 const documentPrefixes: Record<ProcurementDocumentType, string> = {
   GROUPED_PO: "GP",
   MASTER_GROUP: "MGP",
+  GENERAL_MASTER_GROUP: "GMG",
   PURCHASE_ORDER: "PO",
   RM_OUTWARD_REQUEST: "RMR",
   RM_OUTWARD_BOX: "RM-BOX",
@@ -28,6 +31,7 @@ const documentPrefixes: Record<ProcurementDocumentType, string> = {
   FG_OUTWARD_BOX: "FG-BOX",
   FG_OUTWARD_PACKING_LIST: "FG-PL",
   ADVANCE_BOOKING: "BK",
+  DISTRIBUTION_ORDER_FORM: "OF",
   DISTRIBUTION_QUOTATION: "QT",
   DISTRIBUTION_MASTER_QUOTATION: "MQT",
   POS_SALES_INVOICE: "POS",

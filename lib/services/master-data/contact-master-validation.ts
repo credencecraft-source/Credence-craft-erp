@@ -253,6 +253,9 @@ export function parseContactInput(value: unknown, partial = false): Partial<Cont
       throw new ContactValidationError("Contact roles must use uppercase letters, digits, and underscores.", ["roles"]);
     }
     if (new Set(parsedRoles).size !== parsedRoles.length) throw new ContactValidationError("Duplicate contact roles are not allowed.", ["roles"]);
+    if (parsedRoles.includes("DISTRIBUTOR") && parsedRoles.includes("DEALER")) {
+      throw new ContactValidationError("A contact cannot be both Distributor and Dealer. Choose one role.", ["roles"]);
+    }
     output.roles = parsedRoles;
   }
 

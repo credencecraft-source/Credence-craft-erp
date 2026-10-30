@@ -3,12 +3,16 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import QRCode from "qrcode";
 
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import OrderQrStickerPreview from "@/components/erp/order-qr-sticker-preview";
 import {
+  buildOrderQrPayload,
   ORDER_QR_TEMPLATE_FIELDS,
+  ORDER_QR_TEMPLATE_SAMPLE_VALUES,
   type OrderQrDisplayFieldStyle,
   type OrderQrTemplateLayout,
   type OrderQrTemplateFieldKey,
@@ -42,6 +46,12 @@ export default function BarcodeQrCodeTemplateDetailPage({
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const [qrRetryCount, setQrRetryCount] = useState(0);
+  const [qrPreview, setQrPreview] = useState<{
+    payload: string;
+    dataUrl?: string;
+    error?: string;
+  }>({ payload: "" });
   const router = useRouter();
   const templatesHref =
     `/dashboard/${workspaceId}/organizations/${organizationId}/design-development/barcode-qr-code/templates`;
@@ -88,6 +98,39 @@ export default function BarcodeQrCodeTemplateDetailPage({
   const displayFieldLabels = template?.displayFields.map(
     (key) => ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === key)?.label ?? key,
   ) ?? [];
+  const qrPayload = template
+    ? buildOrderQrPayload(
+      [template.qrFieldKey],
+      ORDER_QR_TEMPLATE_SAMPLE_VALUES,
+    ).payload
+    : "";
+  const qrDataUrl = qrPreview.payload === qrPayload ? qrPreview.dataUrl : undefined;
+  const qrError = qrPreview.payload === qrPayload ? qrPreview.error : undefined;
+
+  useEffect(() => {
+    if (!template || !qrPayload) return;
+    let active = true;
+    void QRCode.toDataURL(qrPayload, {
+      errorCorrectionLevel: "H",
+      margin: 2,
+      width: template.qrSize,
+    })
+      .then((dataUrl) => {
+        if (active) setQrPreview({ payload: qrPayload, dataUrl });
+      })
+      .catch((error: unknown) => {
+        console.error("Unable to generate the saved order QR template preview.", {
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
+        if (active) {
+          setQrPreview({ payload: qrPayload, error: "QR preview could not be generated." });
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [qrPayload, qrRetryCount, template]);
 
   return (
     <section className="min-w-0 space-y-6">
@@ -134,6 +177,31 @@ export default function BarcodeQrCodeTemplateDetailPage({
       {isLoading ? (
         <Card><p className="text-sm text-[var(--erp-text-muted)]" role="status">Loading template...</p></Card>
       ) : template ? (
+        <>
+        <Card className="space-y-4">
+          <div className="space-y-1">
+            <h2 className="text-base font-semibold text-slate-900">Saved QR Sticker Preview</h2>
+            <p className="text-sm text-slate-600">
+              This is the saved template layout with sample order values.
+            </p>
+          </div>
+          <OrderQrStickerPreview
+            qrDataUrl={qrDataUrl}
+            qrError={qrError}
+            qrAlt={`Saved QR code preview for ${template.name}`}
+            fields={template.displayFields.map((key) => ({
+              key,
+              label: ORDER_QR_TEMPLATE_FIELDS.find(({ key: fieldKey }) => fieldKey === key)?.label ?? key,
+              value: ORDER_QR_TEMPLATE_SAMPLE_VALUES[key],
+              style: template.displayFieldStyles[key],
+            }))}
+            layout={template.layout}
+            stickerWidthMm={template.stickerWidthMm}
+            stickerLengthMm={template.stickerLengthMm}
+            className="mx-auto max-w-3xl rounded-xl"
+            onRetry={() => setQrRetryCount((count) => count + 1)}
+          />
+        </Card>
         <Card className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-slate-900">{template.name}</h2>
@@ -211,6 +279,7 @@ export default function BarcodeQrCodeTemplateDetailPage({
             </div>
           </dl>
         </Card>
+        </>
       ) : null}
     </section>
   );

@@ -130,7 +130,6 @@ const bookingReportFields: Array<{ key: BookingReportField; label: string }> = [
   { key: "fulfillmentStatus", label: "Fulfillment Status" },
   { key: "bookingId", label: "Booking ID" },
   { key: "orderNo", label: "Order No" },
-  { key: "customer", label: "End Customer" },
   { key: "quotationVendor", label: "Dealer" },
   { key: "masterQuotationVendor", label: "Distributor" },
   { key: "brand", label: "Brand" },
@@ -213,21 +212,14 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [isLoadingMoreOrders, setIsLoadingMoreOrders] = useState(false);
   const [ordersError, setOrdersError] = useState("");
   const [selectedOrderId, setSelectedOrderId] = useState("");
-  const [vendors, setVendors] = useState<VendorOption[]>([]);
-  const [vendorsLoadedFor, setVendorsLoadedFor] = useState("");
   const [allContactVendors, setAllContactVendors] = useState<{
     organizationId: string;
     search: string;
     options: VendorOption[];
   } | null>(null);
   const [contactLookupSearch, setContactLookupSearch] = useState("");
-  const [isLoadingVendors, setIsLoadingVendors] = useState(true);
   const [isLoadingAllContacts, setIsLoadingAllContacts] = useState(false);
-  const [vendorsError, setVendorsError] = useState("");
   const [allContactsError, setAllContactsError] = useState("");
-  const [showAllContacts, setShowAllContacts] = useState(false);
-  const [showAllQuotationContacts, setShowAllQuotationContacts] = useState(false);
-  const [selectedVendorId, setSelectedVendorId] = useState("");
   const [selectedQuotationVendorId, setSelectedQuotationVendorId] = useState("");
   const [orderDetailsRetry, setOrderDetailsRetry] = useState(0);
   const [orderDetails, setOrderDetails] = useState<{
@@ -327,11 +319,6 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     && allContactVendors.search === contactLookupSearch.trim()
     ? allContactVendors.options
     : null;
-  const selectedAllContactVendor = currentAllContactVendors?.find((vendor) => vendor.id === selectedVendorId) ?? null;
-  const endCustomerVendors = showAllContacts && currentAllContactVendors
-    ? currentAllContactVendors
-    : vendors;
-  const selectedVendor = endCustomerVendors.find((vendor) => vendor.id === selectedVendorId) ?? null;
   const finishedGoodsBySize = useMemo(() => {
     const sizes = emptySizes();
     for (const row of selectedOrder?.finishedGoods ?? []) {
@@ -471,36 +458,6 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     };
   }, [isCreating, loadInitialOrders, organizationId, ordersLoadedFor, view]);
 
-  const loadVendors = useCallback(async (signal?: AbortSignal) => {
-    setIsLoadingVendors(true);
-    setVendorsError("");
-    try {
-      const response = await fetch(
-        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/vendor?includeInactive=false&includeDummyData=true&limit=200`,
-        {
-        cache: "no-store",
-        signal,
-        },
-      );
-      const data = await response.json().catch(() => null);
-      if (!response.ok || !Array.isArray(data)) {
-        throw new Error(typeof data?.error === "string" ? data.error : "Unable to load Vendor Master.");
-      }
-      const options = data
-        .filter((value: { id?: string; label?: string }) => typeof value?.id === "string" && typeof value?.label === "string" && value.label.trim())
-        .map((value: { id: string; label: string }) => ({ id: value.id, label: value.label.trim() }))
-        .sort((left: VendorOption, right: VendorOption) => left.label.localeCompare(right.label));
-      setVendors(options);
-      setVendorsLoadedFor(organizationId);
-      setSelectedVendorId((current) => options.some((vendor: VendorOption) => vendor.id === current) ? current : "");
-    } catch (loadError) {
-      if (signal?.aborted) return;
-      setVendorsError(loadError instanceof Error ? loadError.message : "Unable to load Vendor Master.");
-    } finally {
-      if (!signal?.aborted) setIsLoadingVendors(false);
-    }
-  }, [organizationId]);
-
   const loadAllContacts = useCallback(async (search: string, signal?: AbortSignal) => {
     setIsLoadingAllContacts(true);
     setAllContactsError("");
@@ -537,20 +494,8 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   }, [organizationId]);
 
   useEffect(() => {
-    if (view !== "booking" || (!isCreating && !isQuotationVendorModalOpen)) return;
-    if (vendorsLoadedFor === organizationId) return;
-    const controller = new AbortController();
-    void Promise.resolve().then(() => {
-      if (!controller.signal.aborted) void loadVendors(controller.signal);
-    });
-    return () => {
-      controller.abort();
-    };
-  }, [isCreating, isQuotationVendorModalOpen, loadVendors, organizationId, vendorsLoadedFor, view]);
-
-  useEffect(() => {
     const contactLookupRequested = view === "booking"
-      && ((isCreating && showAllContacts) || (isQuotationVendorModalOpen && showAllQuotationContacts));
+      && isQuotationVendorModalOpen;
     if (!contactLookupRequested || currentAllContactVendors !== null) return;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => {
@@ -560,7 +505,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [contactLookupSearch, currentAllContactVendors, isCreating, isQuotationVendorModalOpen, loadAllContacts, showAllContacts, showAllQuotationContacts, view]);
+  }, [contactLookupSearch, currentAllContactVendors, isQuotationVendorModalOpen, loadAllContacts, view]);
 
   useEffect(() => {
     if (view !== "booking" || !isCreating || !selectedOrderId) return;
@@ -680,8 +625,6 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         body: JSON.stringify({
           organizationId,
           orderId: selectedOrder.id,
-          vendorId: selectedVendor?.contactId ? "" : selectedVendor?.id ?? "",
-          contactId: selectedVendor?.contactId ?? "",
           sizes: Object.entries(quantities).map(([size, quantity]) => ({
             size,
             quantity,
@@ -842,19 +785,19 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     setStatus("");
     if (quotationSelectionError || !selectedQuotationVendorId || isCreatingQuotation) {
       setError(quotationSelectionError || (!selectedQuotationVendorId
-        ? "Select a Dealer or Contact for the quotation."
-        : "Wait for the current quotation to finish saving."));
+        ? "Select a Contact for the Order Form."
+        : "Wait for the current Order Form to finish saving."));
       return;
     }
     const isContactSelection = selectedQuotationVendorId.startsWith("contact:");
     const selectedCounterpartyId = selectedQuotationVendorId.slice(selectedQuotationVendorId.indexOf(":") + 1);
     if (!selectedCounterpartyId) {
-      setError("Select a valid Dealer or Contact for the quotation.");
+      setError("Select a valid Contact for the Order Form.");
       return;
     }
     setIsCreatingQuotation(true);
     try {
-      const response = await fetch("/api/distribution/quotations", {
+      const response = await fetch("/api/distribution/order-forms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -865,24 +808,14 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
         }),
       });
       const data = await response.json().catch(() => null);
-      if (!response.ok || !data?.quotation || typeof data.quotation.id !== "string") {
-        throw new Error(typeof data?.error === "string" ? data.error : "Unable to create the quotation.");
+      if (!response.ok || !data?.orderForm || typeof data.orderForm.id !== "string") {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to create the Order Form.");
       }
       setSelectedBookingIds([]);
       setIsQuotationVendorModalOpen(false);
-      const createdQuotation = data.quotation as { quotationNo?: string; customer?: string };
-      const quotationNo = createdQuotation.quotationNo ?? null;
-      setBookings((current) => current.map((booking) =>
-        selectedBookings.some((selected) => selected.id === booking.id)
-          ? {
-              ...booking,
-              quotationNo,
-              quotationVendor: createdQuotation.customer ?? booking.quotationVendor,
-            }
-          : booking,
-      ));
-      setStatus(
-        `${typeof data.quotation.quotationNo === "string" ? `${data.quotation.quotationNo} was` : "Quotation was"} created and saved as a draft. Unit prices default to 0.00.`,
+      setStatus(`Created Order Form ${data.orderForm.orderFormNo}.`);
+      router.push(
+        `/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/order/order-form`,
       );
     } catch (quotationError) {
       setError(quotationError instanceof Error ? quotationError.message : "Unable to create the quotation.");
@@ -1048,7 +981,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             <section className="space-y-3">
               <div className="border-b border-slate-200 pb-2">
                 <h2 className="text-base font-semibold text-slate-900">Advance Booking Header</h2>
-                <p className="mt-1 text-sm text-slate-600">Choose an order, optionally assign an End Customer, then enter quantities by finished-goods size.</p>
+                <p className="mt-1 text-sm text-slate-600">Choose an order, then enter quantities by finished-goods size.</p>
               </div>
               <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
                 <Input label="Booking ID" value="Generated when saved" readOnly />
@@ -1068,83 +1001,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                   disabled={isLoadingOrders || orders.length === 0}
                   required
                 />
-                <div className="flex items-start gap-3">
-                  <div className="min-w-0 flex-1">
-                    <Select
-                      label="End Customer (Optional)"
-                      value={selectedVendorId}
-                      onChange={(event) => {
-                        setSelectedVendorId(event.target.value);
-                        setError("");
-                      }}
-                      options={[
-                        {
-                          label: isLoadingVendors
-                            ? "Loading Vendor Master..."
-                            : showAllContacts && isLoadingAllContacts
-                              ? "Searching contacts..."
-                              : "No End Customer",
-                          value: "",
-                        },
-                        ...endCustomerVendors.map((vendor) => ({ label: vendor.label, value: vendor.id })),
-                      ]}
-                      disabled={showAllContacts ? isLoadingAllContacts : isLoadingVendors}
-                    />
-                  </div>
-                  <Checkbox
-                    label="LIST ALL"
-                    checked={showAllContacts}
-                    onChange={(event) => {
-                      const checked = event.target.checked;
-                      if (!checked && selectedAllContactVendor) setSelectedVendorId("");
-                      setShowAllContacts(checked);
-                      setContactLookupSearch("");
-                    }}
-                    className="mt-0.5 shrink-0"
-                  />
-                </div>
-                {showAllContacts ? (
-                  <>
-                    <Input
-                      label="Search Contact Master"
-                      value={contactLookupSearch}
-                      onChange={(event) => {
-                        setContactLookupSearch(event.target.value);
-                        setSelectedVendorId("");
-                      }}
-                      placeholder="Search name or code"
-                    />
-                    <p className="text-xs text-slate-600">Showing up to 100 matches. Refine your search if the contact is not listed.</p>
-                  </>
-                ) : null}
                 <Input label="Brand" value={selectedOrder?.brand ?? ""} readOnly />
                 <Input label="Style" value={selectedOrder?.styleName ?? ""} readOnly />
                 <Input label="Delivery Date" type="date" value={selectedOrder?.deliveryDate?.slice(0, 10) ?? ""} readOnly />
               </div>
-              {vendorsError ? (
-                <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-700">
-                  <span>{vendorsError}</span>
-                  <Button type="button" variant="secondary" size="sm" onClick={() => void loadVendors()} disabled={isLoadingVendors}>
-                    Retry Vendor Master
-                  </Button>
-                </div>
-              ) : null}
-              {showAllContacts && allContactsError ? (
-                <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-700">
-                  <span>{allContactsError}</span>
-                  <Button type="button" variant="secondary" size="sm" onClick={() => void loadAllContacts(contactLookupSearch)} disabled={isLoadingAllContacts}>
-                    Retry Contact Search
-                  </Button>
-                </div>
-              ) : null}
-              {!showAllContacts && !isLoadingVendors && !vendorsError && vendors.length === 0 ? (
-                <div className="flex flex-wrap items-center gap-3">
-                  <p role="status" className="text-sm text-slate-600">No active End Customer is available. End Customer is optional.</p>
-                </div>
-              ) : null}
-              {showAllContacts && currentAllContactVendors?.length === 0 && !isLoadingAllContacts && !allContactsError ? (
-                <p role="status" className="text-sm text-slate-600">No contacts are available in Contact Master.</p>
-              ) : null}
               {isLoadingOrders ? (
                 <p role="status" className="text-sm text-slate-600">Loading organization orders...</p>
               ) : null}
@@ -1259,11 +1119,9 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
 
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3">
               <p role="status" className="text-sm text-slate-600">
-                {isLoadingVendors
-                  ? "Loading optional End Customers..."
-                  : !selectedOrder
-                    ? "Select an order to enable saving."
-                    : "Ready to save; End Customer is optional."}
+                {!selectedOrder
+                  ? "Select an order to enable saving."
+                  : "Ready to save."}
               </p>
               <div className="flex flex-wrap justify-end gap-3">
                 <Button
@@ -1352,7 +1210,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                       setIsQuotationVendorModalOpen(true);
                     }}
                   >
-                    {isCreatingQuotation ? "Creating Quotation..." : `Create & Save Quotation${selectedBookingIds.length > 0 ? ` (${selectedBookingIds.length})` : ""}`}
+                    {isCreatingQuotation ? "Creating Order Form..." : `Confirm${selectedBookingIds.length > 0 ? ` (${selectedBookingIds.length})` : ""}`}
                   </Button>
                 ) : null}
                 <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings(undefined, { preservePages: true, search: bookingSearch })} disabled={isLoadingBookings}>
@@ -1543,37 +1401,21 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
           }}
         >
           <header className="space-y-1">
-            <h2 id="quotation-vendor-title" className="text-lg font-semibold text-slate-900">Create Quotation</h2>
-            <p className="text-sm text-slate-600">Select a Dealer, or enable LIST ALL to choose any Contact Master contact. End Customer remains optional.</p>
+            <h2 id="quotation-vendor-title" className="text-lg font-semibold text-slate-900">Confirm Order Form</h2>
+            <p className="text-sm text-slate-600">Select the Contact name for this Order Form.</p>
           </header>
-          <Checkbox
-            label="LIST ALL"
-            checked={showAllQuotationContacts}
+          <Input
+            label="Search Contact Master"
+            value={contactLookupSearch}
             onChange={(event) => {
-              setShowAllQuotationContacts(event.target.checked);
+              setContactLookupSearch(event.target.value);
               setSelectedQuotationVendorId("");
-              setError("");
-              setContactLookupSearch("");
             }}
+            placeholder="Search name or code"
             disabled={isCreatingQuotation}
           />
-          {showAllQuotationContacts ? (
-            <>
-              <Input
-                label="Search Contact Master"
-                value={contactLookupSearch}
-                onChange={(event) => {
-                  setContactLookupSearch(event.target.value);
-                  setSelectedQuotationVendorId("");
-                }}
-                placeholder="Search name or code"
-                disabled={isCreatingQuotation}
-              />
-              <p className="text-xs text-slate-600">Showing up to 100 matches. Refine your search if the contact is not listed.</p>
-            </>
-          ) : null}
           <Select
-            label="Dealer / Contact"
+            label="Contact Name"
             required
             value={selectedQuotationVendorId}
             onChange={(event) => {
@@ -1582,21 +1424,17 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             }}
             options={[
               {
-                label: showAllQuotationContacts
-                  ? isLoadingAllContacts ? "Searching contacts..." : "Select a Contact"
-                  : isLoadingVendors ? "Loading vendors..." : "Select a Dealer",
+                label: isLoadingAllContacts ? "Searching contacts..." : "Select a Contact",
                 value: "",
               },
-              ...(showAllQuotationContacts
-                ? (currentAllContactVendors ?? []).map((contact) => ({
-                    label: contact.label,
-                    value: `contact:${contact.contactId ?? contact.id}`,
-                  }))
-                : vendors.map((vendor) => ({ label: vendor.label, value: `vendor:${vendor.id}` }))),
+              ...(currentAllContactVendors ?? []).map((contact) => ({
+                label: contact.label,
+                value: `contact:${contact.contactId ?? contact.id}`,
+              })),
             ]}
-            disabled={(showAllQuotationContacts ? isLoadingAllContacts : isLoadingVendors) || isCreatingQuotation}
+            disabled={isLoadingAllContacts || isCreatingQuotation}
           />
-          {showAllQuotationContacts && allContactsError ? (
+          {allContactsError ? (
             <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-700">
               <span>{allContactsError}</span>
               <Button type="button" variant="secondary" size="sm" onClick={() => void loadAllContacts(contactLookupSearch)} disabled={isLoadingAllContacts}>
@@ -1604,14 +1442,8 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
               </Button>
             </div>
           ) : null}
-          {showAllQuotationContacts && currentAllContactVendors?.length === 0 && !isLoadingAllContacts && !allContactsError ? (
+          {currentAllContactVendors?.length === 0 && !isLoadingAllContacts && !allContactsError ? (
             <p role="status" className="text-sm text-slate-600">No contacts are available in Contact Master.</p>
-          ) : null}
-          {showAllQuotationContacts ? (
-            <p className="text-sm text-slate-600">Contacts without a Vendor Master record are saved on the quotation by name.</p>
-          ) : null}
-          {!showAllQuotationContacts && !isLoadingVendors && !vendorsError && vendors.length === 0 ? (
-            <p role="status" className="text-sm text-slate-600">No active Dealers are available. Enable LIST ALL to choose a Contact Master contact.</p>
           ) : null}
           {error ? <p role="alert" className="text-sm text-red-700">{error}</p> : null}
           <footer className="flex justify-end gap-3 border-t border-[var(--erp-border)] pt-4">
@@ -1621,9 +1453,9 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             <Button
               type="submit"
               variant="primary"
-              disabled={!selectedQuotationVendorId || (showAllQuotationContacts ? isLoadingAllContacts : isLoadingVendors) || isCreatingQuotation}
+              disabled={!selectedQuotationVendorId || isLoadingAllContacts || isCreatingQuotation}
             >
-              {isCreatingQuotation ? "Creating..." : "Create Quotation"}
+              {isCreatingQuotation ? "Creating..." : "Submit Order Form"}
             </Button>
           </footer>
         </form>

@@ -3,6 +3,7 @@
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
 import Modal from "@/components/ui/Modal";
 import Skeleton from "@/components/ui/Skeleton";
@@ -10,6 +11,7 @@ import Table from "@/components/ui/Table";
 import Tabs from "@/components/ui/Tabs";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
+import Badge from "@/components/ui/Badge";
 import {
   filterIndexedReportRecords,
   getReportSearchValue,
@@ -67,6 +69,9 @@ interface ReportGridProps<T> {
   secondaryRowActionDisabledSelector?: (record: T) => boolean;
   secondaryRowActionHiddenSelector?: (record: T) => boolean;
   wrapCells?: boolean;
+  compact?: boolean;
+  displayMode?: "table" | "cards";
+  cardBadge?: (record: T) => ReactNode;
   toolbarActions?: ReactNode;
   onSearchQueryChange?: (query: string) => void;
   serverSideSearch?: boolean;
@@ -118,6 +123,9 @@ function ReportGridImplementation<T>({
   secondaryRowActionDisabledSelector,
   secondaryRowActionHiddenSelector,
   wrapCells = false,
+  compact = false,
+  displayMode = "table",
+  cardBadge,
   toolbarActions,
   onSearchQueryChange,
   serverSideSearch = false,
@@ -294,13 +302,17 @@ function ReportGridImplementation<T>({
   const bottomSpacerHeight = virtualizeRows && lastVirtualRow
     ? Math.max(0, rowVirtualizer.getTotalSize() - lastVirtualRow.start - lastVirtualRow.size)
     : 0;
+  const cardActionField = visibleFieldDefinitions.find((field) => String(field.key) === "actions");
+  const cardDataFields = visibleFieldDefinitions.filter((field) =>
+    !["label", "actions"].includes(String(field.key)),
+  );
 
   useEffect(() => {
     if (virtualizeRows) tableContainerRef.current?.scrollTo({ top: 0 });
   }, [columnFilters, deferredSearchQuery, virtualizeRows]);
 
   return (
-    <div className="space-y-2.5 text-[11px]">
+    <div className={`${compact ? "space-y-2" : "space-y-2.5"} text-[11px]`}>
       {statusOptions && selectedStatus && onStatusChange && (
         <Tabs
           tabs={statusOptions.map((st) => ({ label: st.toUpperCase(), value: st }))}
@@ -310,7 +322,7 @@ function ReportGridImplementation<T>({
       )}
 
       {/* HEADER CONTROLS BAR */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2.5 rounded-lg border border-slate-200 shadow-none">
+      <div className={`flex flex-wrap items-center justify-between bg-white rounded-lg border border-slate-200 shadow-none ${compact ? "gap-2 p-1.5" : "gap-3 p-2.5"}`}>
         <div>
           <h2 className="text-xs font-bold text-slate-900">{title}</h2>
           <p className="text-[10px] text-slate-500">{filteredRecords.length} records available</p>
@@ -389,7 +401,106 @@ function ReportGridImplementation<T>({
         </div>
       </div>
 
-      {/* TABLE */}
+      {displayMode === "cards" ? (
+        isLoading && filteredRecords.length === 0 ? (
+          <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-busy="true">
+            {Array.from({ length: 6 }, (_, index) => (
+              <Card key={`loading-card-${index}`} className="space-y-4 p-5">
+                <Skeleton className="h-5 w-2/3" />
+                <Skeleton className="h-4 w-1/2" />
+                <Skeleton className="h-8 w-full" />
+              </Card>
+            ))}
+          </div>
+        ) : filteredRecords.length === 0 ? (
+          <Card className="p-6 text-center text-sm text-[var(--erp-muted)]">{emptyMessage}</Card>
+        ) : (
+          <div className="space-y-4" aria-busy={searchQuery !== deferredSearchQuery}>
+            {selectable ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <Checkbox
+                  label="Select all filtered records"
+                  checked={allFilteredSelected}
+                  disabled={selectableRecords.length === 0}
+                  onChange={(event) => onToggleSelectAll?.(
+                    event.target.checked,
+                    selectableRecords.map(rowIdSelector),
+                  )}
+                />
+                {selectedIds.length > 0 ? (
+                  <span className="text-sm text-[var(--erp-muted)]">{selectedIds.length} selected</span>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {filteredRecords.map((record) => {
+                const recordId = rowIdSelector(record);
+                const isSelected = selectedIdSet.has(recordId);
+                const hasCardNavigation = Boolean(onRecordClick || onRowClick);
+                return (
+                  <Card
+                    key={recordId}
+                    className={`flex h-full flex-col gap-4 p-5 ${isSelected ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)]" : ""} ${hasCardNavigation ? "cursor-pointer transition hover:border-[var(--erp-brand)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2" : ""}`}
+                    role={hasCardNavigation ? "link" : undefined}
+                    tabIndex={hasCardNavigation ? 0 : undefined}
+                    aria-label={hasCardNavigation ? `Open ${title} record` : undefined}
+                    onClick={(event) => {
+                      if (!hasCardNavigation) return;
+                      const target = event.target;
+                      if (target instanceof Element && target.closest("a, button, input, label")) return;
+                      onRecordClick?.(record);
+                      onRowClick?.(recordId);
+                    }}
+                    onKeyDown={hasCardNavigation ? (event) => {
+                      if (
+                        event.target !== event.currentTarget
+                        || (event.key !== "Enter" && event.key !== " ")
+                      ) return;
+                      event.preventDefault();
+                      onRecordClick?.(record);
+                      onRowClick?.(recordId);
+                    } : undefined}
+                  >
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="break-words text-base font-semibold text-[var(--erp-text)]">
+                          {renderCell("label", record)}
+                        </h3>
+                      </div>
+                      {cardBadge ? <Badge>{cardBadge(record)}</Badge> : null}
+                      {selectable ? (
+                        <Checkbox
+                          aria-label={`Select ${title} record ${recordId}`}
+                          checked={isSelected}
+                          disabled={!(rowSelectable?.(record) ?? true)}
+                          onChange={(event) => onToggleRowSelection?.(recordId, event.target.checked)}
+                        />
+                      ) : null}
+                    </div>
+                    {cardDataFields.length > 0 ? (
+                      <dl className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+                        {cardDataFields.map((field) => (
+                          <div key={`${recordId}-${String(field.key)}`} className="min-w-0 space-y-1">
+                            <dt className="text-xs font-medium text-[var(--erp-muted)]">{field.label}</dt>
+                            <dd className="break-words text-sm text-[var(--erp-text)]">
+                              {renderCell(String(field.key), record)}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    ) : null}
+                    {cardActionField ? (
+                      <div className="mt-auto border-t border-[var(--erp-border)] pt-3">
+                        {renderCell(String(cardActionField.key), record)}
+                      </div>
+                    ) : null}
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        )
+      ) : (
       <Table
         aria-busy={isLoading || searchQuery !== deferredSearchQuery}
         className={virtualizeRows ? "max-h-[70vh] overflow-y-auto" : undefined}
@@ -398,7 +509,7 @@ function ReportGridImplementation<T>({
         <thead className={`bg-slate-50 text-slate-700 uppercase tracking-wider text-[10px] border-b border-slate-200 ${virtualizeRows ? "sticky top-0 z-10" : ""}`}>
           <tr>
             {selectable && (
-              <th className="p-2 w-8 text-center">
+              <th className={`${compact ? "p-1" : "p-2"} w-8 text-center`}>
                 <Checkbox
                   className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
                   checked={allFilteredSelected}
@@ -412,36 +523,36 @@ function ReportGridImplementation<T>({
                 />
               </th>
             )}
-            {hasRowActions && rowActionPosition === "start" && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
+            {hasRowActions && rowActionPosition === "start" && <th className={`${compact ? "p-1" : "p-2"} font-semibold whitespace-nowrap`}>Actions</th>}
             {visibleFieldDefinitions.map((field) => (
-              <th key={String(field.key)} className="p-2 font-semibold whitespace-nowrap">
+              <th key={String(field.key)} className={`${compact ? "p-1" : "p-2"} font-semibold whitespace-nowrap`}>
                 {field.label}
               </th>
             ))}
-            {hasRowActions && rowActionPosition === "end" && <th className="p-2 font-semibold whitespace-nowrap">Actions</th>}
+            {hasRowActions && rowActionPosition === "end" && <th className={`${compact ? "p-1" : "p-2"} font-semibold whitespace-nowrap`}>Actions</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200 bg-white text-slate-700 text-[11px]">
           {isLoading && filteredRecords.length === 0 ? (
             Array.from({ length: 6 }, (_, index) => (
               <tr key={`loading-${index}`}>
-                {selectable && <td className="p-2"><Skeleton className="mx-auto h-3 w-3" /></td>}
+                {selectable && <td className={compact ? "p-1" : "p-2"}><Skeleton className="mx-auto h-3 w-3" /></td>}
                 {hasRowActions && rowActionPosition === "start" && (
-                  <td className="p-2"><Skeleton className="h-6 w-14" /></td>
+                  <td className={compact ? "p-1" : "p-2"}><Skeleton className="h-6 w-14" /></td>
                 )}
                 {visibleFieldDefinitions.map((field) => (
-                  <td key={`loading-${index}-${String(field.key)}`} className="p-2">
+                  <td key={`loading-${index}-${String(field.key)}`} className={compact ? "p-1" : "p-2"}>
                     <Skeleton className="h-3 w-24" />
                   </td>
                 ))}
                 {hasRowActions && rowActionPosition === "end" && (
-                  <td className="p-2"><Skeleton className="h-6 w-14" /></td>
+                  <td className={compact ? "p-1" : "p-2"}><Skeleton className="h-6 w-14" /></td>
                 )}
               </tr>
             ))
           ) : filteredRecords.length === 0 ? (
             <tr>
-              <td colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (hasRowActions ? 1 : 0)} className="p-6 text-center text-slate-500">
+              <td colSpan={visibleFieldDefinitions.length + (selectable ? 1 : 0) + (hasRowActions ? 1 : 0)} className={`${compact ? "p-3" : "p-6"} text-center text-slate-500`}>
                 {emptyMessage}
               </td>
             </tr>
@@ -482,7 +593,7 @@ function ReportGridImplementation<T>({
                   } ${isSelected ? "bg-emerald-50/60" : hasRowClick ? "hover:bg-slate-100/60" : ""}`}
                 >
                   {selectable && (
-                    <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>
+                    <td className={`${compact ? "p-1" : "p-2"} text-center`} onClick={(e) => e.stopPropagation()}>
                       <Checkbox
                         className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3"
                         checked={isSelected}
@@ -492,7 +603,7 @@ function ReportGridImplementation<T>({
                     </td>
                   )}
                   {hasRowActions && rowActionPosition === "start" && (
-                    <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <td className={`${compact ? "p-1" : "p-2"} whitespace-nowrap`} onClick={(e) => e.stopPropagation()}>
                       <div className="flex flex-wrap items-center gap-2">
                         {onRowAction && !rowActionHiddenSelector?.(record) ? (
                           <Button
@@ -523,7 +634,7 @@ function ReportGridImplementation<T>({
                   {visibleFieldDefinitions.map((field) => (
                     <td
                       key={`${recordId}-${String(field.key)}`}
-                      className={`p-2 ${
+                      className={`${compact ? "p-1" : "p-2"} ${
                         wrapCells
                           ? "max-w-[16rem] whitespace-normal break-words [overflow-wrap:anywhere]"
                           : "whitespace-nowrap"
@@ -533,7 +644,7 @@ function ReportGridImplementation<T>({
                     </td>
                   ))}
                   {hasRowActions && rowActionPosition === "end" && (
-                    <td className="p-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <td className={`${compact ? "p-1" : "p-2"} whitespace-nowrap`} onClick={(e) => e.stopPropagation()}>
                       <div className="flex flex-wrap items-center gap-2">
                         {onRowAction && !rowActionHiddenSelector?.(record) ? (
                           <Button
@@ -576,6 +687,7 @@ function ReportGridImplementation<T>({
           )}
         </tbody>
       </Table>
+      )}
 
       {/* ADVANCED MULTI-FIELD FILTER MODAL */}
       <Modal open={showFilterModal} onClose={() => setShowFilterModal(false)} ariaLabelledBy="report-filter-title" size="lg">

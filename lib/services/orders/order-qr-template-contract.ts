@@ -1,4 +1,9 @@
 import { normalizeUppercase } from "@/lib/utilities/text-case";
+import {
+  getPageSetupStickerGrid,
+  parsePageSetupPrintSnapshot,
+  type PageSetupPrintSnapshot,
+} from "@/lib/services/design-development/page-setup-template-contract";
 
 export const ORDER_QR_TEMPLATE_FIELDS = [
   { key: "orderNo", label: "Order Number" },
@@ -15,6 +20,25 @@ export const ORDER_QR_TEMPLATE_FIELDS = [
   { key: "orderQty", label: "Order Quantity" },
   { key: "deliveryDate", label: "Delivery Date" },
 ] as const;
+
+export const ORDER_QR_TEMPLATE_SAMPLE_VALUES: Record<
+  (typeof ORDER_QR_TEMPLATE_FIELDS)[number]["key"],
+  string
+> = {
+  orderNo: "ORD-2026-001",
+  entityName: "CREDENCE CRAFT",
+  category: "T-SHIRT",
+  subCategory: "CREW NECK",
+  season: "SS 2026",
+  article: "ART-001",
+  styleName: "CLASSIC TEE",
+  colors: "NAVY",
+  buyer: "SAMPLE BUYER",
+  brand: "CREDENCE",
+  sizeGroup: "S-M-L-XL",
+  orderQty: "1200",
+  deliveryDate: "2026-12-15",
+};
 
 export type OrderQrTemplateFieldKey =
   (typeof ORDER_QR_TEMPLATE_FIELDS)[number]["key"];
@@ -46,6 +70,7 @@ export type OrderQrTemplateLayout = {
 
 export type OrderQrTemplateInput = {
   name: string;
+  pageSetupTemplateId: string;
   qrFieldKey: OrderQrTemplateFieldKey;
   displayFields: OrderQrTemplateFieldKey[];
   displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
@@ -74,7 +99,30 @@ export function getA4StickerGrid(
   stickerWidthMm: number,
   stickerLengthMm: number,
   paperSize: OrderQrPdfPaperSize,
+  pageSetup?: PageSetupPrintSnapshot | null,
 ) {
+  if (pageSetup) {
+    const grid = getPageSetupStickerGrid(
+      pageSetup.paperSize,
+      pageSetup.orientation,
+      stickerWidthMm,
+      stickerLengthMm,
+      pageSetup,
+    );
+    if (grid.count < 1) return null;
+    return {
+      ...grid,
+      pageHeightMm: grid.pageLengthMm,
+      marginMm: pageSetup.marginTopMm,
+      gapMm: pageSetup.horizontalGapMm,
+      marginTopMm: pageSetup.marginTopMm,
+      marginLeftMm: pageSetup.marginLeftMm,
+      horizontalGapMm: pageSetup.horizontalGapMm,
+      verticalGapMm: pageSetup.verticalGapMm,
+      portrait: pageSetup.orientation === "PORTRAIT",
+      paperSize: pageSetup.paperSize,
+    };
+  }
   const portrait = paperSize === "A4_PORTRAIT"
     || (paperSize === "A4_AUTO" && stickerWidthMm <= stickerLengthMm);
   const pageWidthMm = portrait ? 210 : 297;
@@ -93,10 +141,15 @@ export function getA4StickerGrid(
     pageHeightMm,
     marginMm,
     gapMm,
+    marginTopMm: marginMm,
+    marginLeftMm: marginMm,
+    horizontalGapMm: gapMm,
+    verticalGapMm: gapMm,
     columns,
     rows,
     count: columns * rows,
     portrait,
+    paperSize: "A4" as const,
   };
 }
 
@@ -161,7 +214,6 @@ export function parseOrderQrTemplateLayout(
 export function buildOrderQrPayload(
   fieldKeys: readonly OrderQrTemplateFieldKey[],
   orderFields: Partial<Record<OrderQrTemplateFieldKey, string | number | null>>,
-  fallbackValue: string,
 ) {
   const entries = fieldKeys.flatMap((key) => {
     const field = ORDER_QR_TEMPLATE_FIELDS.find((option) => option.key === key);
@@ -176,7 +228,7 @@ export function buildOrderQrPayload(
     entries,
     payload: entries.length > 0
       ? JSON.stringify(Object.fromEntries(entries.map(({ label, value }) => [label, value])))
-      : fallbackValue,
+      : "",
   };
 }
 
@@ -241,6 +293,14 @@ export function parseOrderQrTemplateInput(
     return { success: false, error: "Template name must be 100 characters or fewer." };
   }
 
+  if (
+    typeof value.pageSetupTemplateId !== "string"
+    || !value.pageSetupTemplateId.trim()
+    || value.pageSetupTemplateId.length > 100
+  ) {
+    return { success: false, error: "Select a Page Setup template for this QR template." };
+  }
+
   const legacyFields = Array.isArray(value.fieldKeys)
     ? value.fieldKeys
     : [];
@@ -302,6 +362,7 @@ export function parseOrderQrTemplateInput(
     success: true,
     data: {
       name,
+      pageSetupTemplateId: value.pageSetupTemplateId.trim(),
       qrFieldKey,
       displayFields,
       displayFieldStyles: parsedStyles.data,
@@ -324,6 +385,7 @@ export function parseStoredOrderQrTemplateDesign(
 ): {
   displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
   layout: OrderQrTemplateLayout;
+  pageSetup: PageSetupPrintSnapshot | null;
 } {
   const saved = isRecord(value) ? value : {};
   const wrapped = isRecord(saved.styles) || isRecord(saved.layout);
@@ -338,12 +400,14 @@ export function parseStoredOrderQrTemplateDesign(
     layout: parsedLayout.success
       ? parsedLayout.data
       : createDefaultOrderQrTemplateLayout(displayFields),
+    pageSetup: parsePageSetupPrintSnapshot(saved.pageSetup),
   };
 }
 
 export function serializeOrderQrTemplateDesign(
   displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>,
   layout: OrderQrTemplateLayout,
+  pageSetup?: PageSetupPrintSnapshot | null,
 ) {
   return {
     styles: displayFieldStyles,
@@ -353,5 +417,6 @@ export function serializeOrderQrTemplateDesign(
       printerType: layout.printerType,
       pdfPaperSize: layout.pdfPaperSize,
     },
+    ...(pageSetup ? { pageSetup } : {}),
   };
 }

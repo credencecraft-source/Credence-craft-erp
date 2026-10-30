@@ -5,11 +5,19 @@ const prismaCounterMock = vi.hoisted(() => ({
   upsert: vi.fn(),
   orderFindFirst: vi.fn(),
   orderFindMany: vi.fn(),
+  bookingFindMany: vi.fn(),
+  factoryGrnFindMany: vi.fn(),
+  orderDeleteMany: vi.fn(),
+  createAuditEvent: vi.fn(),
   articleFindMany: vi.fn(),
   articleVariantFindMany: vi.fn(),
   bomItemFindMany: vi.fn(),
   sizeGroupFindMany: vi.fn(),
   sizeGroupSizeFindMany: vi.fn(),
+}));
+
+vi.mock("@/lib/services/organizations/audit-event-service", () => ({
+  createAuditEvent: prismaCounterMock.createAuditEvent,
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -20,7 +28,10 @@ vi.mock("@/lib/database/prisma-client", () => ({
     merchandisingOrder: {
       findFirst: prismaCounterMock.orderFindFirst,
       findMany: prismaCounterMock.orderFindMany,
+      deleteMany: prismaCounterMock.orderDeleteMany,
     },
+    advanceBooking: { findMany: prismaCounterMock.bookingFindMany },
+    factoryGrn: { findMany: prismaCounterMock.factoryGrnFindMany },
     masterArticle: {
       findMany: prismaCounterMock.articleFindMany,
     },
@@ -40,6 +51,7 @@ vi.mock("@/lib/database/prisma-client", () => ({
 }));
 
 import {
+  deleteOrders,
   getArticleOrderSummaries,
   getOrderCoreById,
   getOrderDetailSection,
@@ -144,6 +156,60 @@ describe("reserveNextOrderNumber", () => {
     await expect(reserveNextOrderNumber("org-123", staleTransaction)).resolves.toBe("OD-7");
     expect(staleTransaction.organizationOrderCounter.upsert).toHaveBeenCalledTimes(1);
     expect(prismaCounterMock.upsert).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("deleteOrders", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prismaCounterMock.bookingFindMany.mockResolvedValue([]);
+    prismaCounterMock.factoryGrnFindMany.mockResolvedValue([]);
+    prismaCounterMock.orderDeleteMany.mockResolvedValue({ count: 1 });
+    prismaCounterMock.createAuditEvent.mockResolvedValue({});
+  });
+
+  it("blocks deleting an order referenced by advance bookings and names the next step", async () => {
+    prismaCounterMock.bookingFindMany.mockResolvedValue([
+      { booking_no: "BK-100" },
+      { booking_no: "BK-101" },
+    ]);
+
+    await expect(deleteOrders(["order-1"], "org-1", "user-1"))
+      .rejects.toThrow(
+        "Cannot delete these orders because advance bookings BK-100, BK-101 still reference them. Resolve or delete the linked bookings in Advance Booking first.",
+      );
+
+    expect(prismaCounterMock.bookingFindMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-1", order_id: { in: ["order-1"] } },
+      select: { booking_no: true },
+      take: 6,
+    });
+    expect(prismaCounterMock.factoryGrnFindMany).not.toHaveBeenCalled();
+    expect(prismaCounterMock.orderDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("deletes tenant-scoped orders only when no booking or GRN dependency exists", async () => {
+    await expect(deleteOrders(["order-1"], "org-1", "user-1"))
+      .resolves.toEqual({ deletedCount: 1 });
+
+    expect(prismaCounterMock.orderDeleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["order-1"] }, organization_id: "org-1" },
+    });
+    expect(prismaCounterMock.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      organizationId: "org-1",
+      userId: "user-1",
+      action: "DELETE",
+      entityType: "MerchandisingOrder",
+    }));
+  });
+
+  it("returns a safe dependency message if a reference appears during deletion", async () => {
+    prismaCounterMock.orderDeleteMany.mockRejectedValue({ code: "P2003" });
+
+    await expect(deleteOrders(["order-1"], "org-1", "user-1"))
+      .rejects.toThrow(
+        "One or more selected orders still have related business records, such as advance bookings, production, or GRN records. Resolve those records before deleting the orders.",
+      );
   });
 });
 

@@ -11,8 +11,10 @@ import {
   requireOrganizationPermission,
 } from "@/lib/services/organizations/organization-service";
 import {
+  deletePendingOrderQrPrintRequests,
   createOrderQrPrintRequest,
   listOrderQrPrintRequests,
+  OrderQrPrintRequestDeleteConflictError,
 } from "@/lib/services/orders/order-qr-print-request-service";
 import { parseCreateOrderQrPrintRequestInput } from "@/lib/services/orders/order-qr-print-request-contract";
 
@@ -33,7 +35,10 @@ function getSchemaNotReadyResponse(error: unknown) {
   return null;
 }
 
-async function authorizeOrganization(request: Request, permission: "VIEW_REPORTS" | "CREATE_ORDERS") {
+async function authorizeOrganization(
+  request: Request,
+  permission: "VIEW_REPORTS" | "CREATE_ORDERS" | "MANAGE_MASTER_DATA",
+) {
   const user = await requireSessionUser();
   const url = new URL(request.url);
   const organizationId = url.searchParams.get("organizationId");
@@ -112,6 +117,24 @@ export async function POST(request: Request): Promise<NextResponse> {
       parsed.data,
     );
     if (!result.success) {
+      if (result.reason === "INVALID_QUANTITY") {
+        return NextResponse.json(
+          { error: "A QR request must contain between 1 and 10,000 labels in total." },
+          { status: 400 },
+        );
+      }
+      if (result.reason === "QR_FIELD_VALUE_MISSING") {
+        return NextResponse.json(
+          { error: "The selected QR field has no value on this order." },
+          { status: 400 },
+        );
+      }
+      if (result.reason === "PAGE_SETUP_REQUIRED") {
+        return NextResponse.json(
+          { error: "Assign a Page Setup to the QR template before creating a print request." },
+          { status: 409 },
+        );
+      }
       return NextResponse.json(
         { error: result.reason === "ORDER_NOT_FOUND"
           ? "The selected order was not found in this organization."
@@ -130,5 +153,69 @@ export async function POST(request: Request): Promise<NextResponse> {
       errorName: error instanceof Error ? error.name : "UnknownError",
     });
     return NextResponse.json({ error: "Unable to submit the QR print/download request." }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request): Promise<NextResponse> {
+  try {
+    const authorization = await authorizeOrganization(request, "MANAGE_MASTER_DATA");
+    if (!authorization.authorized) return authorization.response;
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 });
+    }
+    const ids = typeof body === "object" && body !== null && "ids" in body
+      ? body.ids
+      : undefined;
+    if (
+      !Array.isArray(ids)
+      || ids.length < 1
+      || ids.length > 200
+      || ids.some((id) => typeof id !== "string" || !id.trim() || id.length > 100)
+      || new Set(ids).size !== ids.length
+    ) {
+      return NextResponse.json(
+        { error: "Select between 1 and 200 unique QR print/download requests." },
+        { status: 400 },
+      );
+    }
+
+    const result = await deletePendingOrderQrPrintRequests(
+      authorization.organization.id,
+      authorization.user.id,
+      ids,
+    );
+    if (!result.success) {
+      if (result.reason === "NOT_FOUND") {
+        return NextResponse.json(
+          { error: "One or more requests were not found in this organization." },
+          { status: 404 },
+        );
+      }
+      return NextResponse.json(
+        { error: "Only pending QR print/download requests can be deleted." },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json({ deletedCount: result.deletedCount });
+  } catch (error) {
+    if (error instanceof OrderQrPrintRequestDeleteConflictError) {
+      return NextResponse.json(
+        { error: "A request changed while deletion was in progress. Refresh the report and try again." },
+        { status: 409 },
+      );
+    }
+    const schemaResponse = getSchemaNotReadyResponse(error);
+    if (schemaResponse) return schemaResponse;
+    if (isDatabaseUnavailableError(error)) {
+      return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
+    console.error("Unable to delete organization order QR print requests.", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    return NextResponse.json({ error: "Unable to delete QR print/download requests." }, { status: 500 });
   }
 }

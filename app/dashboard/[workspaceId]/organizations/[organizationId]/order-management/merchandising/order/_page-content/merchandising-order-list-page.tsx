@@ -3,13 +3,34 @@
 import { useEffect, useState, startTransition, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { QrCode } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
+import OrderQrStickerPreview from "@/components/erp/order-qr-sticker-preview";
 import ArticleBasedOrderDialog from "@/components/erp/article-based-order-dialog";
 import MerchandisingOrderVariantDialog from "@/components/erp/merchandising-order-variant-dialog";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import Select from "@/components/ui/Select";
+import Table from "@/components/ui/Table";
+import Tabs from "@/components/ui/Tabs";
+import QRCode from "qrcode";
+import {
+  ORDER_QR_TEMPLATE_SIZES,
+  ORDER_QR_TEMPLATE_FIELDS,
+  buildOrderQrPayload,
+  parseOrderQrTemplateLayout,
+  parseStoredOrderQrTemplateDesign,
+  type OrderQrTemplateFieldKey,
+  type OrderQrTemplateLayout,
+  type OrderQrDisplayFieldStyle,
+} from "@/lib/services/orders/order-qr-template-contract";
+import {
+  MAX_ORDER_QR_PRINT_REQUEST_ORDERS,
+  MAX_ORDER_QR_PRINT_REQUEST_LABELS,
+} from "@/lib/services/orders/order-qr-print-request-contract";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
 
 type OrderRecord = {
@@ -33,6 +54,87 @@ type OrderRecord = {
   processStatus?: string | null;
   sourceStatus?: string | null;
 };
+
+type OrderQrTemplate = {
+  id: string;
+  name: string;
+  qrFieldKey: OrderQrTemplateFieldKey;
+  displayFields: OrderQrTemplateFieldKey[];
+  displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
+  layout: OrderQrTemplateLayout;
+  qrSize: number;
+  stickerWidthMm: number;
+  stickerLengthMm: number;
+};
+
+function parseOrderQrTemplates(value: unknown): OrderQrTemplate[] {
+  if (!Array.isArray(value)) throw new Error("QR template response was invalid.");
+  const templates = value.flatMap((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
+    const candidate = item as Record<string, unknown>;
+    const displayFields = Array.isArray(candidate.displayFields)
+      ? candidate.displayFields.filter((field): field is OrderQrTemplateFieldKey =>
+        ORDER_QR_TEMPLATE_FIELDS.some((option) => option.key === field))
+      : [];
+    const layout = parseOrderQrTemplateLayout(candidate.layout, displayFields);
+    if (
+      typeof candidate.id !== "string"
+      || typeof candidate.name !== "string"
+      || typeof candidate.qrFieldKey !== "string"
+      || !ORDER_QR_TEMPLATE_FIELDS.some((field) => field.key === candidate.qrFieldKey)
+      || !Array.isArray(candidate.displayFields)
+      || displayFields.length !== candidate.displayFields.length
+      || !layout.success
+      || typeof candidate.qrSize !== "number"
+      || !ORDER_QR_TEMPLATE_SIZES.includes(
+        candidate.qrSize as (typeof ORDER_QR_TEMPLATE_SIZES)[number],
+      )
+      || typeof candidate.stickerWidthMm !== "number"
+      || typeof candidate.stickerLengthMm !== "number"
+      || !Number.isFinite(candidate.stickerWidthMm)
+      || !Number.isFinite(candidate.stickerLengthMm)
+      || candidate.stickerWidthMm <= 0
+      || candidate.stickerLengthMm <= 0
+    ) return [];
+    const design = parseStoredOrderQrTemplateDesign({
+      styles: candidate.displayFieldStyles,
+      layout: candidate.layout,
+    }, displayFields);
+    return [{
+      id: candidate.id,
+      name: candidate.name,
+      qrFieldKey: candidate.qrFieldKey as OrderQrTemplateFieldKey,
+      displayFields,
+      displayFieldStyles: design.displayFieldStyles,
+      layout: layout.data,
+      qrSize: candidate.qrSize,
+      stickerWidthMm: candidate.stickerWidthMm,
+      stickerLengthMm: candidate.stickerLengthMm,
+    }];
+  });
+  if (templates.length !== value.length) {
+    throw new Error("One or more QR templates could not be loaded. Review the saved templates and try again.");
+  }
+  return templates;
+}
+
+function getOrderQrFieldValues(order: OrderRecord, quantity: number) {
+  return {
+    orderNo: order.orderNo,
+    entityName: order.entityName,
+    category: order.category,
+    subCategory: order.subCategory,
+    season: order.season,
+    article: order.article,
+    styleName: order.styleName,
+    colors: order.colors,
+    buyer: order.buyer,
+    brand: order.brand,
+    sizeGroup: order.sizeGroup,
+    orderQty: quantity,
+    deliveryDate: order.deliveryDate,
+  } satisfies Partial<Record<OrderQrTemplateFieldKey, string | number | null>>;
+}
 
 type FilterableOrderField =
   | "orderNo"
@@ -120,8 +222,22 @@ export default function MerchandisingOrdersPage({
     useState<(typeof dsStatusOptions)[number]>("Draft");
 
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+  const [showBulkQrRequest, setShowBulkQrRequest] = useState(false);
+  const [bulkQrQuantityMode, setBulkQrQuantityMode] = useState<"PCS" | "BULK_QTY">("PCS");
+  const [bulkQrQuantities, setBulkQrQuantities] = useState<Record<string, string>>({});
+  const [qrTemplates, setQrTemplates] = useState<OrderQrTemplate[]>([]);
+  const [selectedQrTemplateId, setSelectedQrTemplateId] = useState("");
+  const [isLoadingQrTemplates, setIsLoadingQrTemplates] = useState(false);
+  const [qrTemplateError, setQrTemplateError] = useState("");
+  const [qrTemplateRetry, setQrTemplateRetry] = useState(0);
+  const [qrRequestError, setQrRequestError] = useState("");
+  const [qrRequestSuccess, setQrRequestSuccess] = useState("");
+  const [isSubmittingQrRequest, setIsSubmittingQrRequest] = useState(false);
+  const [sampleQrPreview, setSampleQrPreview] = useState<{ key: string; dataUrl: string } | null>(null);
+  const [sampleQrPreviewError, setSampleQrPreviewError] = useState<{ key: string; error: string } | null>(null);
   const [isPreparingBulkWorkbook, setIsPreparingBulkWorkbook] = useState(false);
   const [bulkWorkbookError, setBulkWorkbookError] = useState("");
+  const [deleteError, setDeleteError] = useState("");
   const [showArticleOrderDialog, setShowArticleOrderDialog] = useState(false);
   const [articleOrderSuccess, setArticleOrderSuccess] = useState("");
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
@@ -148,6 +264,44 @@ export default function MerchandisingOrdersPage({
   );
   const lastLoadedAt = useRef(0);
   const skipInitialStatusFetch = useRef(true);
+
+  const selectedQrOrders = selectedOrderIds.flatMap((id) => {
+    const order = orders.find((candidate) => candidate.id === id);
+    return order ? [order] : [];
+  });
+  const selectedQrTemplate = qrTemplates.find((template) => template.id === selectedQrTemplateId);
+  const sampleQrOrder = selectedQrOrders[0];
+  const sampleQrQuantity = sampleQrOrder
+    ? bulkQrQuantityMode === "PCS"
+      ? 1
+      : Number(bulkQrQuantities[sampleQrOrder.id] ?? sampleQrOrder.orderQty ?? 1)
+    : 1;
+  const sampleQrFields: Partial<Record<OrderQrTemplateFieldKey, string | number | null>> =
+    sampleQrOrder ? getOrderQrFieldValues(sampleQrOrder, sampleQrQuantity) : {};
+  const sampleQrPayload = selectedQrTemplate
+    ? buildOrderQrPayload([selectedQrTemplate.qrFieldKey], sampleQrFields).payload
+    : "";
+  const sampleQrPreviewKey = `${selectedQrTemplateId}:${sampleQrPayload}`;
+  const sampleQrDataUrl = sampleQrPreview?.key === sampleQrPreviewKey
+    ? sampleQrPreview.dataUrl
+    : "";
+  const sampleQrError = sampleQrPreviewError?.key === sampleQrPreviewKey
+    ? sampleQrPreviewError.error
+    : "";
+  const sampleQrDisplayFields = selectedQrTemplate?.displayFields.map((key) => {
+    const definition = ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === key);
+    const value = sampleQrFields[key];
+    return {
+      key,
+      label: definition?.label ?? key,
+      value: value === null || value === undefined ? "" : String(value),
+      style: selectedQrTemplate.displayFieldStyles[key],
+    };
+  }) ?? [];
+  const bulkQrLabelTotal = selectedQrOrders.reduce((total, order) => {
+    const quantity = Number(bulkQrQuantities[order.id]);
+    return total + (Number.isSafeInteger(quantity) && quantity > 0 ? quantity : 0);
+  }, 0);
 
   const loadOrders = useCallback(async (
     signal?: AbortSignal,
@@ -210,6 +364,72 @@ export default function MerchandisingOrdersPage({
     };
   }, [loadOrders]);
 
+  useEffect(() => {
+    if (!showBulkQrRequest) return;
+    const controller = new AbortController();
+    const query = new URLSearchParams({ organizationId, workspaceId });
+    void (async () => {
+      setIsLoadingQrTemplates(true);
+      setQrTemplateError("");
+      try {
+        const response = await fetch(`/api/orders/qr-templates?${query.toString()}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const data: unknown = await response.json().catch(() => null);
+        if (!response.ok) {
+          const errorMessage = typeof data === "object" && data !== null
+            && "error" in data && typeof data.error === "string"
+            ? data.error
+            : "Unable to load QR templates.";
+          throw new Error(errorMessage);
+        }
+        const payload = typeof data === "object" && data !== null ? data : {};
+        const templates = parseOrderQrTemplates(
+          "templates" in payload ? payload.templates : undefined,
+        );
+        if (controller.signal.aborted) return;
+        setQrTemplates(templates);
+        setSelectedQrTemplateId((current) =>
+          templates.some((template) => template.id === current)
+            ? current
+            : templates[0]?.id ?? "",
+        );
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setQrTemplateError(error instanceof Error ? error.message : "Unable to load QR templates.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setIsLoadingQrTemplates(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [organizationId, qrTemplateRetry, showBulkQrRequest, workspaceId]);
+
+  useEffect(() => {
+    let active = true;
+    if (!showBulkQrRequest || !sampleQrPayload || !selectedQrTemplate) return;
+    void QRCode.toDataURL(sampleQrPayload, {
+      errorCorrectionLevel: "H",
+      margin: 2,
+      width: selectedQrTemplate.qrSize,
+    })
+      .then((dataUrl) => {
+        if (active) setSampleQrPreview({ key: sampleQrPreviewKey, dataUrl });
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setSampleQrPreviewError({
+            key: sampleQrPreviewKey,
+            error: error instanceof Error ? error.message : "Unable to prepare the QR preview.",
+          });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [sampleQrPayload, sampleQrPreviewKey, selectedQrTemplate, showBulkQrRequest]);
+
   const filteredOrders = orders;
 
   const loadMoreOrders = () => {
@@ -258,6 +478,7 @@ export default function MerchandisingOrdersPage({
   }, [handleSelectOrder]);
 
   const handleOpenDeleteConfirmation = useCallback(() => {
+    setDeleteError("");
     setShowDeleteConfirmation(true);
   }, []);
 
@@ -277,7 +498,7 @@ export default function MerchandisingOrdersPage({
     }
     const sizeGroups = new Set(selectedOrders.map((order) => String(order.sizeGroup ?? "").trim().toLocaleLowerCase()));
     if (sizeGroups.size !== 1 || sizeGroups.has("")) {
-      window.alert("Please select orders with the same Size Group.");
+      setBulkWorkbookError("Please select orders with the same Size Group.");
       return;
     }
 
@@ -318,6 +539,84 @@ export default function MerchandisingOrdersPage({
       );
     });
   }, [organizationId, router, workspaceId]);
+
+  const openBulkQrRequest = () => {
+    setQrRequestError("");
+    setBulkQrQuantityMode("PCS");
+    setBulkQrQuantities(Object.fromEntries(selectedQrOrders.map((order) => [
+      order.id,
+      String(Math.max(1, Number(order.orderQty) || 1)),
+    ])));
+    setShowBulkQrRequest(true);
+  };
+
+  const submitBulkQrRequest = async () => {
+    setQrRequestError("");
+    if (selectedOrderIds.length < 2) {
+      setQrRequestError("Select at least two orders to create one consolidated QR request.");
+      return;
+    }
+    if (selectedOrderIds.length === 0 || selectedQrOrders.length !== selectedOrderIds.length) {
+      setQrRequestError("Some selected orders are no longer available. Refresh the orders list and try again.");
+      return;
+    }
+    if (selectedQrOrders.length > MAX_ORDER_QR_PRINT_REQUEST_ORDERS) {
+      setQrRequestError(
+        `A single QR request can contain up to ${MAX_ORDER_QR_PRINT_REQUEST_ORDERS} orders. Reduce the selection and try again.`,
+      );
+      return;
+    }
+    if (!selectedQrTemplateId) {
+      setQrRequestError("Create or select a QR template before requesting labels.");
+      return;
+    }
+    const bulkOrders = selectedQrOrders.map((order) => ({
+      orderId: order.id,
+      quantity: bulkQrQuantityMode === "PCS" ? 1 : Number(bulkQrQuantities[order.id]),
+    }));
+    if (bulkOrders.some(({ quantity }) => !Number.isSafeInteger(quantity) || quantity < 1)) {
+      setQrRequestError("Enter a positive whole-number quantity for every selected order.");
+      return;
+    }
+    if (bulkOrders.reduce((total, item) => total + item.quantity, 0) > MAX_ORDER_QR_PRINT_REQUEST_LABELS) {
+      setQrRequestError(
+        `A single QR request cannot exceed ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()} labels.`,
+      );
+      return;
+    }
+
+    setIsSubmittingQrRequest(true);
+    try {
+      const query = new URLSearchParams({ organizationId, workspaceId });
+      const response = await fetch(`/api/orders/qr-print-requests?${query.toString()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bulkOrders,
+          templateId: selectedQrTemplateId,
+          requestType: "PRINT",
+          quantityMode: bulkQrQuantityMode,
+        }),
+      });
+      const data: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const errorMessage = typeof data === "object" && data !== null
+          && "error" in data && typeof data.error === "string"
+          ? data.error
+          : "Unable to send the QR request.";
+        throw new Error(errorMessage);
+      }
+      setShowBulkQrRequest(false);
+      setSelectedOrderIds([]);
+      setQrRequestSuccess(
+        `One QR request for ${selectedQrOrders.length} orders was sent to Design & Development. They can choose to print or download it.`,
+      );
+    } catch (error) {
+      setQrRequestError(error instanceof Error ? error.message : "Unable to send the QR request.");
+    } finally {
+      setIsSubmittingQrRequest(false);
+    }
+  };
 
   const handleVariantOrder = useCallback(async (orderId: string) => {
     if (isCreatingVariantRef.current) return;
@@ -449,6 +748,7 @@ export default function MerchandisingOrdersPage({
 
     try {
       setIsDeleting(true);
+      setDeleteError("");
       const response = await fetch(`/api/orders?organizationId=${encodeURIComponent(organizationId)}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
@@ -460,7 +760,7 @@ export default function MerchandisingOrdersPage({
       setSelectedOrderIds([]);
       setShowDeleteConfirmation(false);
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Unable to delete selected orders.");
+      setDeleteError(error instanceof Error ? error.message : "Unable to delete selected orders.");
     } finally {
       setIsDeleting(false);
     }
@@ -493,6 +793,11 @@ export default function MerchandisingOrdersPage({
         {variantSuccessMessage && (
           <p role="status" className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">
             {variantSuccessMessage}
+          </p>
+        )}
+        {qrRequestSuccess && (
+          <p role="status" className="mb-3 rounded-md border border-[var(--erp-success)] bg-[var(--erp-surface)] px-3 py-2 text-xs font-medium text-[var(--erp-success)]">
+            {qrRequestSuccess}
           </p>
         )}
         {articleOrderSuccess && (
@@ -528,18 +833,32 @@ export default function MerchandisingOrdersPage({
           onStatusChange={handleStatusChange}
           onNewOrder={handleNewOrder}
           toolbarActions={(
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="h-7 px-2.5 text-[11px]"
-              onClick={() => {
-                setArticleOrderSuccess("");
-                setShowArticleOrderDialog(true);
-              }}
-            >
-              Create Order from Article
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-7 px-2.5 text-[11px]"
+                onClick={openBulkQrRequest}
+                disabled={selectedOrderIds.length < 2 || isSubmittingQrRequest}
+                aria-label={`Request QR labels for ${selectedOrderIds.length} selected orders`}
+              >
+                <QrCode aria-hidden="true" className="mr-1.5 h-4 w-4" />
+                QR Labels{selectedOrderIds.length > 0 ? ` (${selectedOrderIds.length})` : ""}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-7 px-2.5 text-[11px]"
+                onClick={() => {
+                  setArticleOrderSuccess("");
+                  setShowArticleOrderDialog(true);
+                }}
+              >
+                Create Order from Article
+              </Button>
+            </div>
           )}
           onDeleteSelected={handleOpenDeleteConfirmation}
           onBulkUpload={handleBulkUpload}
@@ -572,6 +891,220 @@ export default function MerchandisingOrdersPage({
           </div>
         )}
       </Card>
+
+      <Modal
+        open={showBulkQrRequest}
+        onClose={() => {
+          if (!isSubmittingQrRequest) setShowBulkQrRequest(false);
+        }}
+        ariaLabelledBy="bulk-order-qr-title"
+        size="rectangle"
+        closeOnBackdrop={!isSubmittingQrRequest}
+      >
+        <div className="flex h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] min-h-0 flex-col p-6">
+          <div className="mb-5 flex shrink-0 flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 id="bulk-order-qr-title" className="text-lg font-semibold text-[var(--erp-text)]">
+                Request QR labels
+              </h2>
+              <p className="mt-1 text-sm text-[var(--erp-text-muted)]">
+                One request will be sent to Design & Development for {selectedOrderIds.length} selected orders. They will choose print or download.
+              </p>
+            </div>
+            <span className="rounded-full border border-[var(--erp-border)] px-3 py-1 text-xs font-medium text-[var(--erp-text-muted)]">
+              {selectedQrOrders.length} of {selectedOrderIds.length} orders available
+            </span>
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
+            {qrTemplateError && (
+              <div className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]" role="alert">
+                <p>{qrTemplateError}</p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => setQrTemplateRetry((retry) => retry + 1)}
+                >
+                  Retry templates
+                </Button>
+              </div>
+            )}
+
+            <Select
+              label="Saved QR template"
+              value={selectedQrTemplateId}
+              onChange={(event) => setSelectedQrTemplateId(event.target.value)}
+              disabled={isLoadingQrTemplates || qrTemplates.length === 0}
+            >
+              <option value="">
+                {isLoadingQrTemplates ? "Loading templates..." : "Select a template"}
+              </option>
+              {qrTemplates.map((template) => (
+                <option key={template.id} value={template.id}>{template.name}</option>
+              ))}
+            </Select>
+
+            {!isLoadingQrTemplates && !qrTemplateError && qrTemplates.length === 0 && (
+              <p className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-text-muted)]">
+                No saved QR templates are available.{" "}
+                <Link
+                  href={`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/barcode-qr-code/templates`}
+                  className="font-semibold text-[var(--erp-brand)] underline-offset-2 hover:underline"
+                >
+                  Create a template
+                </Link>
+                .
+              </p>
+            )}
+
+            <Tabs
+              ariaLabel="QR label quantity mode"
+              compact
+              value={bulkQrQuantityMode}
+              onChange={setBulkQrQuantityMode}
+              tabs={[
+                { value: "PCS", label: "PCS" },
+                { value: "BULK_QTY", label: "Bulk Qty" },
+              ]}
+            />
+
+            {bulkQrQuantityMode === "PCS" ? (
+            <Table className="max-h-56 overflow-y-auto">
+              <thead className="sticky top-0 bg-[var(--erp-surface-soft)] text-xs uppercase text-[var(--erp-text-muted)]">
+                <tr>
+                  <th scope="col" className="px-3 py-2">Order No</th>
+                  <th scope="col" className="px-3 py-2">Style Name</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--erp-border)]">
+                {selectedQrOrders.map((order) => (
+                  <tr key={order.id}>
+                    <td className="px-3 py-2 font-medium text-[var(--erp-text)]">{normalizeUppercase(order.orderNo)}</td>
+                    <td className="px-3 py-2 text-[var(--erp-text-muted)]">{normalizeUppercase(order.styleName ?? "") || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+            ) : (
+            <div className="space-y-2">
+              <p className="text-right text-xs font-medium text-[var(--erp-text-muted)]">
+                Total labels: {bulkQrLabelTotal.toLocaleString()} / {MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()}
+              </p>
+              <Table className="max-h-56 overflow-y-auto">
+                <thead className="sticky top-0 bg-[var(--erp-surface-soft)] text-xs uppercase text-[var(--erp-text-muted)]">
+                  <tr>
+                    <th scope="col" className="px-3 py-2">Order No</th>
+                    <th scope="col" className="px-3 py-2">Style Name</th>
+                    <th scope="col" className="w-36 px-3 py-2">Label Qty</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--erp-border)]">
+                  {selectedQrOrders.map((order) => (
+                    <tr key={order.id}>
+                      <td className="px-3 py-2 font-medium text-[var(--erp-text)]">{normalizeUppercase(order.orderNo)}</td>
+                      <td className="px-3 py-2 text-[var(--erp-text-muted)]">{normalizeUppercase(order.styleName ?? "") || "—"}</td>
+                      <td className="px-3 py-2">
+                        <Input
+                          aria-label={`Label quantity for ${order.orderNo}`}
+                          type="number"
+                          inputMode="numeric"
+                          min={1}
+                          max={MAX_ORDER_QR_PRINT_REQUEST_LABELS}
+                          step={1}
+                          value={bulkQrQuantities[order.id] ?? ""}
+                          onChange={(event) => setBulkQrQuantities((current) => ({
+                            ...current,
+                            [order.id]: event.target.value,
+                          }))}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            </div>
+            )}
+
+            {selectedQrTemplate && sampleQrOrder && (
+            <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(16rem,1fr)]">
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-[var(--erp-text)]">Sample sticker preview</h3>
+                <OrderQrStickerPreview
+                  qrDataUrl={sampleQrDataUrl || undefined}
+                  qrError={sampleQrError || undefined}
+                  fields={sampleQrDisplayFields}
+                  layout={selectedQrTemplate.layout}
+                  stickerWidthMm={selectedQrTemplate.stickerWidthMm}
+                  stickerLengthMm={selectedQrTemplate.stickerLengthMm}
+                  className="max-w-xl"
+                />
+              </div>
+              <dl className="grid content-start gap-2 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] p-4 text-sm">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-[var(--erp-text-muted)]">Template</dt>
+                  <dd className="text-right font-medium text-[var(--erp-text)]">{selectedQrTemplate.name}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-[var(--erp-text-muted)]">Sticker size</dt>
+                  <dd className="text-right font-medium text-[var(--erp-text)]">
+                    {selectedQrTemplate.stickerWidthMm} × {selectedQrTemplate.stickerLengthMm} mm
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-[var(--erp-text-muted)]">Printer</dt>
+                  <dd className="text-right font-medium text-[var(--erp-text)]">
+                    {selectedQrTemplate.layout.printerType === "LASER" ? "Laser / A4 PDF" : "Barcode sticker printer"}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-[var(--erp-text-muted)]">QR field</dt>
+                  <dd className="text-right font-medium text-[var(--erp-text)]">
+                    {ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === selectedQrTemplate.qrFieldKey)?.label}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+            )}
+
+            {qrRequestError && (
+              <p role="alert" className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">
+                {qrRequestError}
+              </p>
+            )}
+            {selectedOrderIds.length > MAX_ORDER_QR_PRINT_REQUEST_ORDERS && (
+              <p role="alert" className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">
+                Select no more than {MAX_ORDER_QR_PRINT_REQUEST_ORDERS} orders for one QR request.
+              </p>
+            )}
+          </div>
+          <div className="mt-4 flex shrink-0 flex-wrap justify-end gap-2 border-t border-[var(--erp-border)] bg-white pt-4">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setShowBulkQrRequest(false)}
+              disabled={isSubmittingQrRequest}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void submitBulkQrRequest()}
+              disabled={
+                isSubmittingQrRequest
+                || isLoadingQrTemplates
+                || Boolean(qrTemplateError)
+                || !selectedQrTemplateId
+                || selectedOrderIds.length < 2
+                || selectedOrderIds.length > MAX_ORDER_QR_PRINT_REQUEST_ORDERS
+              }
+            >
+              {isSubmittingQrRequest ? "Sending request..." : "Send one QR request"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <ArticleBasedOrderDialog
         key={organizationId}
@@ -606,15 +1139,29 @@ export default function MerchandisingOrdersPage({
       />
 
       {showDeleteConfirmation && (
-        <Modal open={showDeleteConfirmation} onClose={() => setShowDeleteConfirmation(false)} ariaLabel="Delete selected orders" variant="danger" size="sm" className="p-5">
-          <div className="space-y-4">
+        <Modal
+          open={showDeleteConfirmation}
+          onClose={() => {
+            if (!isDeleting) setShowDeleteConfirmation(false);
+          }}
+          ariaLabelledBy="delete-orders-title"
+          variant="danger"
+          size="square"
+          closeOnBackdrop={!isDeleting}
+        >
+          <div className="space-y-4 p-6">
             <div>
               <h3 id="delete-orders-title" className="text-base font-bold text-slate-900">Delete selected orders?</h3>
               <p className="mt-1 text-xs text-slate-500">This will permanently delete {selectedOrderIds.length} order{selectedOrderIds.length === 1 ? "" : "s"} and its finished goods and BOM records.</p>
             </div>
+            {deleteError ? (
+              <p role="alert" className="rounded-md border border-[var(--erp-danger)] bg-[var(--erp-surface)] px-3 py-2 text-sm text-[var(--erp-danger)]">
+                {deleteError}
+              </p>
+            ) : null}
             <div className="flex justify-end gap-2">
               <Button variant="secondary" size="sm" onClick={() => setShowDeleteConfirmation(false)} disabled={isDeleting}>Cancel</Button>
-              <Button variant="danger" size="sm" onClick={handleDeleteSelected} disabled={isDeleting}>{isDeleting ? "Deleting..." : "Delete Orders"}</Button>
+              <Button variant="destructive" size="sm" onClick={handleDeleteSelected} disabled={isDeleting}>{isDeleting ? "Deleting..." : "Delete Orders"}</Button>
             </div>
           </div>
         </Modal>

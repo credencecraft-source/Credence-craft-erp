@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
   listOrdersPage: vi.fn(),
+  deleteOrders: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({
@@ -16,14 +17,14 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 
 vi.mock("@/lib/services/orders/order-service", () => ({
   createOrder: vi.fn(),
-  deleteOrders: vi.fn(),
+  deleteOrders: mocks.deleteOrders,
   listOrdersPage: mocks.listOrdersPage,
   toDateOnly: vi.fn(),
   updateOrderWithDetails: vi.fn(),
 }));
 
 import { DATABASE_UNAVAILABLE_MESSAGE } from "@/lib/database/database-errors";
-import { GET } from "./orders-handler";
+import { DELETE, GET } from "./orders-handler";
 
 describe("merchandising orders list API", () => {
   beforeEach(() => {
@@ -31,6 +32,7 @@ describe("merchandising orders list API", () => {
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
     mocks.listOrdersPage.mockResolvedValue({ orders: [], nextCursor: null });
+    mocks.deleteOrders.mockResolvedValue({ deletedCount: 1 });
   });
 
   it("returns a JSON service-unavailable error when the database cannot be reached", async () => {
@@ -76,5 +78,30 @@ describe("merchandising orders list API", () => {
     await expect(GET(new Request(
       "http://localhost/api/orders?organizationId=public-org-id",
     ))).rejects.toBe(redirect);
+  });
+
+  it("returns a safe, actionable conflict when advance bookings prevent order deletion", async () => {
+    mocks.deleteOrders.mockRejectedValue(new Error(
+      "Cannot delete these orders because advance booking BK-100 still references them. Resolve or delete the linked bookings in Advance Booking first.",
+    ));
+    const response = await DELETE(new Request(
+      "http://localhost/api/orders?organizationId=public-org-id",
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderIds: ["order-1"] }),
+      },
+    ));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Cannot delete these orders because advance booking BK-100 still references them. Resolve or delete the linked bookings in Advance Booking first.",
+    });
+    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
+      "user-1",
+      "public-org-id",
+      ["OWNER", "ADMIN", "MERCHANDISING"],
+    );
+    expect(mocks.deleteOrders).toHaveBeenCalledWith(["order-1"], "internal-org-1", "user-1");
   });
 });

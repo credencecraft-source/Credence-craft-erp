@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { listContactLookupOptions } from "@/lib/services/master-data/contact-master-service";
+import { listAssignedDealerIds } from "@/lib/services/master-data/distributor-dealer-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function GET(
@@ -24,6 +25,11 @@ export async function GET(
     const rawLimit = Number(searchParams.get("limit") ?? 200);
     const rawOffset = Number(searchParams.get("offset") ?? 0);
     const search = searchParams.get("search")?.trim() ?? "";
+    const activeOnly = searchParams.get("activeOnly") === "true";
+    const excludedDistributorId = searchParams.get("excludedDistributorId")?.trim() ?? "";
+    const excludedIds = excludedDistributorId
+      ? await listAssignedDealerIds(organization.id, excludedDistributorId)
+      : [];
     if (
       !Number.isSafeInteger(rawLimit) ||
       rawLimit < 1 ||
@@ -35,10 +41,17 @@ export async function GET(
       return NextResponse.json({ error: "Contact lookup filters are invalid." }, { status: 400 });
     }
 
+    const pagination = {
+      skip: rawOffset,
+      take: rawLimit,
+      search,
+      activeOnly,
+      ...(excludedDistributorId ? { excludedIds } : {}),
+    };
     return NextResponse.json(await listContactLookupOptions(
       organization.id,
       undefined,
-      { skip: rawOffset, take: rawLimit, search },
+      pagination,
     ));
   } catch (error) {
     if (isDatabaseUnavailableError(error)) {

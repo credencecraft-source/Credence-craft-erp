@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getRmGrnVerification, getRmGrnVerificationAllocation, getRmGrnVerificationDraftsForPurchaseOrder, InvalidActualCountError, listRmGrnVerificationAllocations, MasterGroupRequiredError, RmGrnVerificationNotFoundError, saveRmGrnVerification } from "@/lib/services/inventory/rm-grn-verification-service";
+import { assertAssetPurchaseReceiptLine, getRmGrnVerification, getRmGrnVerificationAllocation, getRmGrnVerificationDraftsForPurchaseOrder, InvalidActualCountError, listRmGrnVerificationAllocations, MasterGroupRequiredError, RmGrnVerificationNotFoundError, saveRmGrnVerification } from "@/lib/services/inventory/rm-grn-verification-service";
 import { getStockVerificationDetails, listPendingStockVerificationTasks, saveStockGroupVerification } from "@/lib/services/inventory/rm-stock-verification-service";
 import { getRawMaterialPickSummariesForGroupedLines } from "@/lib/services/inventory/raw-material-outward-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
@@ -36,6 +36,11 @@ export async function GET(request: Request) {
     const user = await requireSessionUser();
     const searchParams = new URL(request.url).searchParams;
     const organization = await requireOrganizationContext(user.id, searchParams.get("organizationId") ?? "");
+    const assetOnlyParameter = searchParams.get("isAssetPurchase");
+    if (assetOnlyParameter !== null && assetOnlyParameter !== "true" && assetOnlyParameter !== "false") {
+      return NextResponse.json({ error: "Asset purchase filter must be true or false." }, { status: 400 });
+    }
+    const assetOnly = assetOnlyParameter === "true";
     const allocationId = searchParams.get("allocationId")?.trim();
     if (allocationId) {
       const allocation = await getRmGrnVerificationAllocation(organization.id, allocationId);
@@ -46,7 +51,7 @@ export async function GET(request: Request) {
       });
     }
     if (searchParams.get("verificationRegister") === "true") {
-      const stockTasks = await listPendingStockVerificationTasks(organization.id);
+      const stockTasks = assetOnly ? [] : await listPendingStockVerificationTasks(organization.id);
       return NextResponse.json({ stockTasks });
     }
     if (searchParams.get("allocationRegister") === "true") {
@@ -78,7 +83,11 @@ export async function GET(request: Request) {
 
     const receiptLineId = searchParams.get("receiptLineId") ?? "";
     const stockGroupedPurchaseOrderId = searchParams.get("stockGroupedPurchaseOrderId") ?? "";
+    if (assetOnly && receiptLineId) {
+      await assertAssetPurchaseReceiptLine(organization.id, receiptLineId);
+    }
     if (stockGroupedPurchaseOrderId) {
+      if (assetOnly) return NextResponse.json({ error: "Asset GRN verification does not include stock verification tasks." }, { status: 404 });
       const verification = await getStockVerificationDetails(organization.id, stockGroupedPurchaseOrderId);
       if (!verification) return NextResponse.json({ error: "Stock verification task not found." }, { status: 404 });
       return NextResponse.json({ verification });
@@ -104,11 +113,17 @@ export async function POST(request: Request) {
     );
     const receiptLineId = String(body.receiptLineId ?? "").trim();
     const stockGroupedPurchaseOrderId = String(body.sourceGroupedPurchaseOrderId ?? "").trim();
+    if (body.assetPurchaseOnly !== undefined && typeof body.assetPurchaseOnly !== "boolean") {
+      return NextResponse.json({ error: "Asset purchase filter must be true or false." }, { status: 400 });
+    }
     if (Boolean(receiptLineId) === Boolean(stockGroupedPurchaseOrderId)) {
       return NextResponse.json({ error: "Choose exactly one GRN line or stock verification task." }, { status: 400 });
     }
 
     if (stockGroupedPurchaseOrderId) {
+      if (body.assetPurchaseOnly) {
+        return NextResponse.json({ error: "Asset GRN verification does not include stock verification tasks." }, { status: 400 });
+      }
       const result = await saveStockGroupVerification(
         organization.id,
         stockGroupedPurchaseOrderId,
@@ -118,6 +133,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ verification: result }, { status: 201 });
     }
 
+    if (body.assetPurchaseOnly) await assertAssetPurchaseReceiptLine(organization.id, receiptLineId);
     const result = await saveRmGrnVerification(
       organization.id,
       receiptLineId,

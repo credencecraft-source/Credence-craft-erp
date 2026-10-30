@@ -99,6 +99,14 @@ Current implementation facts to carry into the baseline (these are code-path ris
 - For every cohort, test direct URL load, refresh/back/forward, create, edit, invalid input, save success/failure, stale/deleted record, no lookup results, lookup failure/retry, slow lookup, parent/child dependency changes, narrow viewport, keyboard/tab navigation, and navigation away with unsaved changes. Verify persistence by reloading after successful save; never use live/production business data for destructive tests.
 - Report the exact masters/routes exercised, measured load/lookup timings and sample context, tests run, known exceptions, and any unverified workflow. A successful shared-component test or one fast master does not certify the other masters.
 
+## 1E. Organization Module Reports And Post-Submit Navigation
+
+- Every new organization module and every materially reworked module report must use the shared `ReportGrid` in `components/reports/report-grid-display.tsx`, or an existing shared report pattern when its interaction model is unsuitable. Do not introduce a parallel, page-local table for ordinary records.
+- Each report must provide a consistent title, responsive search, meaningful status/column filters, user-controlled column visibility, organization-scoped saved column preferences, locale-consistent value/date/quantity formatting, truthful loading/error/empty states, and keyboard-accessible actions. Keep report rows non-navigable unless they have a real tenant-authorized record destination; use explicit row actions for available operations and never a no-op row callback.
+- For a module with multiple record categories/tabs, give each category its own report view and preserve the category's operational actions. Work-order/checklist detail can remain in an inline selected-record panel beneath its report.
+- Do not leave a create form permanently stacked with its report. Enter create mode only after an explicit New/Create action, and provide a clear cancel/back-to-report action. Following successful submission, show confirmation and return to that record's owning report tab/list, where the newly saved record is visible. A failed submission must keep the user in the form with entered values and actionable error feedback. Do not redirect to an unrelated tab or clear a form before the save succeeds.
+- Validate each tab's search, filters, column settings, responsive table region, empty/loading/error state, and row/action semantics. For create flows, test open, cancel, invalid submit, failed save preserving values, successful save returning to the correct report, and visibility/persistence of the saved row. Include these behaviors in focused regression and browser coverage.
+
 ## 2. Specify The Contract
 
 - Define actor, workspace, organization, permission, input shape, response shape, lifecycle transition, and failure behavior.

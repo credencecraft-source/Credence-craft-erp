@@ -54,7 +54,7 @@ describe("organization contact lookup API", () => {
     expect(mocks.listContactLookupOptions).toHaveBeenCalledWith(
       "internal-org-1",
       undefined,
-      { skip: 0, take: 200, search: "" },
+      { skip: 0, take: 200, search: "", activeOnly: false },
     );
   });
 
@@ -68,7 +68,21 @@ describe("organization contact lookup API", () => {
     expect(mocks.listContactLookupOptions).toHaveBeenCalledWith(
       "internal-org-1",
       undefined,
-      { skip: 0, take: 100, search: "acme" },
+      { skip: 0, take: 100, search: "acme", activeOnly: false },
+    );
+  });
+
+  it("can restrict lookup results to active contacts", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/contacts/lookup?activeOnly=true"),
+      routeContext,
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.listContactLookupOptions).toHaveBeenCalledWith(
+      "internal-org-1",
+      undefined,
+      { skip: 0, take: 200, search: "", activeOnly: true },
     );
   });
 

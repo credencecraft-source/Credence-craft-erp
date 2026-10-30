@@ -9,6 +9,7 @@ import {
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 import {
   getOrderQrTemplate,
+  OrderQrTemplatePageSetupNotFoundError,
   updateOrderQrTemplate,
 } from "@/lib/services/orders/order-qr-template-service";
 import { parseOrderQrTemplateInput } from "@/lib/services/orders/order-qr-template-contract";
@@ -125,6 +126,12 @@ export async function PATCH(
     }
     return NextResponse.json({ template });
   } catch (error) {
+    if (error instanceof OrderQrTemplatePageSetupNotFoundError) {
+      return NextResponse.json(
+        { error: "Select a Page Setup template from this organization." },
+        { status: 404 },
+      );
+    }
     const schemaResponse = getSchemaNotReadyResponse(error);
     if (schemaResponse) return schemaResponse;
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {

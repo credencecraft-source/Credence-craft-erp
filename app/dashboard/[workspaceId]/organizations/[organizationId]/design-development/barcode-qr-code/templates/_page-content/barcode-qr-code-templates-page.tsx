@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Button from "@/components/ui/Button";
+import Modal from "@/components/ui/Modal";
 import { ORDER_QR_TEMPLATE_FIELDS } from "@/lib/services/orders/order-qr-template-contract";
 
 type TemplateReportRow = {
@@ -37,10 +38,12 @@ export default function BarcodeQrCodeTemplatesPage({
   workspaceId,
   organizationId,
   createHref,
+  canManage,
 }: {
   workspaceId: string;
   organizationId: string;
   createHref: string;
+  canManage: boolean;
 }) {
   const [visibleFields, setVisibleFields] = useState<Array<keyof TemplateReportRow>>(
     fields.map(({ key }) => key),
@@ -49,6 +52,11 @@ export default function BarcodeQrCodeTemplatesPage({
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [deleteIds, setDeleteIds] = useState<string[]>([]);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [notice, setNotice] = useState("");
   const router = useRouter();
   const templateBaseHref =
     `/dashboard/${workspaceId}/organizations/${organizationId}/design-development/barcode-qr-code/templates`;
@@ -92,6 +100,38 @@ export default function BarcodeQrCodeTemplatesPage({
     };
   }, [loadAttempt, organizationId, workspaceId]);
 
+  const requestDelete = (ids: string[]) => {
+    setDeleteIds(ids);
+    setDeleteError("");
+  };
+
+  const deleteSelectedTemplates = async () => {
+    setIsDeleting(true);
+    setDeleteError("");
+    try {
+      const query = new URLSearchParams({ organizationId, workspaceId });
+      const response = await fetch(`/api/orders/qr-templates?${query}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: deleteIds }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || "Unable to delete QR templates.");
+      }
+
+      const deletedIds = new Set(deleteIds);
+      setRecords((current) => current.filter((record) => !deletedIds.has(record.id)));
+      setSelectedIds((current) => current.filter((id) => !deletedIds.has(id)));
+      setNotice(`${data.deletedCount} QR template${data.deletedCount === 1 ? "" : "s"} deleted.`);
+      setDeleteIds([]);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "Unable to delete QR templates.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <section className="min-w-0 space-y-4">
       <header className="space-y-1">
@@ -117,6 +157,7 @@ export default function BarcodeQrCodeTemplatesPage({
           </Button>
         </div>
       )}
+      {notice && <p className="text-sm text-[var(--erp-success)]" role="status">{notice}</p>}
       <ReportGrid
         title="Template Report"
         records={records}
@@ -127,8 +168,31 @@ export default function BarcodeQrCodeTemplatesPage({
         }
         storageKey={`barcode-qr-code-templates:${organizationId}`}
         rowIdSelector={(record) => record.id}
-        selectedIds={[]}
+        selectedIds={selectedIds}
+        selectable={canManage}
+        onToggleSelectAll={(checked, recordIds) =>
+          setSelectedIds((current) => checked
+            ? [...new Set([...current, ...recordIds])]
+            : current.filter((id) => !recordIds.includes(id)))
+        }
+        onToggleRowSelection={(recordId, checked) =>
+          setSelectedIds((current) => checked
+            ? [...new Set([...current, recordId])]
+            : current.filter((id) => id !== recordId))
+        }
+        onBulkDeleteSelected={canManage ? () => requestDelete(selectedIds) : undefined}
+        bulkDeleteSelectedLabel="Delete selected"
         onRecordClick={(record) => router.push(`${templateBaseHref}/${encodeURIComponent(record.id)}`)}
+        rowActions={canManage ? (record) => (
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            onClick={() => requestDelete([record.id])}
+          >
+            Delete
+          </Button>
+        ) : undefined}
         toolbarActions={
           <Button
             type="button"
@@ -145,6 +209,48 @@ export default function BarcodeQrCodeTemplatesPage({
         emptyMessage="No templates found."
         isLoading={isLoading}
       />
+      {deleteIds.length > 0 && (
+        <Modal
+          open
+          onClose={() => {
+            if (!isDeleting) setDeleteIds([]);
+          }}
+          ariaLabelledBy="delete-qr-templates-title"
+          size="square"
+          variant="danger"
+          closeOnBackdrop={!isDeleting}
+        >
+          <div className="space-y-4 p-6">
+            <div>
+              <h2 id="delete-qr-templates-title" className="text-lg font-semibold text-slate-900">
+                Delete selected QR templates?
+              </h2>
+              <p className="mt-2 text-sm text-slate-600">
+                {deleteIds.length} template{deleteIds.length === 1 ? "" : "s"} will be removed. Existing print requests keep their saved QR design snapshots.
+              </p>
+            </div>
+            {deleteError && <p className="text-sm text-[var(--erp-danger)]" role="alert">{deleteError}</p>}
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setDeleteIds([])}
+                disabled={isDeleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => void deleteSelectedTemplates()}
+                disabled={isDeleting}
+              >
+                {isDeleting ? "Deleting..." : `Delete ${deleteIds.length} template${deleteIds.length === 1 ? "" : "s"}`}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </section>
   );
 }

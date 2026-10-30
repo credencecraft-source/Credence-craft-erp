@@ -35,21 +35,43 @@ model Contact {
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 
-  organization      Organization             @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  roles             ContactRoleAssignment[]
-  tax_registrations ContactTaxRegistration[]
-  addresses         ContactAddress[]
-  bank_accounts     ContactBankAccount[]
-  purchase_orders   PurchaseOrder[]
-  sales_orders      MerchandisingOrder[]
-  legacy_vendors    MasterVendor[]
-  legacy_buyers     MasterBuyer[]
+  organization           Organization                         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  roles                  ContactRoleAssignment[]
+  tax_registrations      ContactTaxRegistration[]
+  addresses              ContactAddress[]
+  bank_accounts          ContactBankAccount[]
+  purchase_orders        PurchaseOrder[]
+  sales_orders           MerchandisingOrder[]
+  legacy_vendors         MasterVendor[]
+  legacy_buyers          MasterBuyer[]
+  price_list_assignments PriceListContactAssignment[]
+  distributor_mappings   ContactDistributorDealerAssignment[] @relation("DistributorContact")
+  dealer_mappings        ContactDistributorDealerAssignment[] @relation("DealerContact")
+  role_parent_mappings   ContactRoleMapping[]                 @relation("RoleMappingParent")
+  role_mapped_contacts   ContactRoleMapping[]                 @relation("RoleMappingContact")
 
   @@unique([organization_id, id])
   @@unique([organization_id, code])
   @@index([organization_id, legal_name])
   @@index([organization_id, is_active, display_name])
   @@map("contacts")
+}
+
+model PriceListContactAssignment {
+  id                  String   @id @default(cuid())
+  organization_id     String
+  price_list_value_id String   @map("sales_channel_value_id")
+  contact_id          String
+  created_at          DateTime @default(now())
+
+  organization Organization      @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "scca_organization_fkey")
+  price_list   MasterModuleValue @relation(fields: [price_list_value_id], references: [id], onDelete: Cascade, map: "scca_sales_channel_value_fkey")
+  contact      Contact           @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Cascade, map: "scca_organization_contact_fkey")
+
+  @@unique([organization_id, price_list_value_id, contact_id], map: "scca_organization_channel_contact_key")
+  @@index([organization_id, price_list_value_id, created_at], map: "scca_organization_channel_created_idx")
+  @@index([organization_id, contact_id], map: "scca_organization_contact_idx")
+  @@map("sales_channel_contact_assignments")
 }
 
 model ContactCodeCounter {
@@ -86,6 +108,45 @@ model ContactRoleAssignment {
   @@id([organization_id, contact_id, role_code])
   @@index([organization_id, role_code, is_active])
   @@map("contact_role_assignments")
+}
+
+model ContactDistributorDealerAssignment {
+  id              String   @id @default(cuid())
+  organization_id String
+  distributor_id  String
+  dealer_id       String
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  distributor  Contact      @relation("DistributorContact", fields: [organization_id, distributor_id], references: [organization_id, id], onDelete: Cascade)
+  dealer       Contact      @relation("DealerContact", fields: [organization_id, dealer_id], references: [organization_id, id], onDelete: Cascade)
+
+  @@unique([organization_id, distributor_id, dealer_id])
+  @@unique([organization_id, dealer_id], map: "contact_distributor_dealer_org_dealer_key")
+  @@index([organization_id, distributor_id, created_at])
+  @@index([organization_id, dealer_id])
+  @@map("contact_distributor_dealer_assignments")
+}
+
+model ContactRoleMapping {
+  id                    String   @id @default(cuid())
+  organization_id       String
+  parent_role_code      String   @db.VarChar(40)
+  parent_contact_id     String
+  mapped_contact_id     String
+  commission_percentage Decimal  @default(0) @db.Decimal(5, 2)
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  parent_contact Contact      @relation("RoleMappingParent", fields: [organization_id, parent_contact_id], references: [organization_id, id], onDelete: Cascade)
+  mapped_contact Contact      @relation("RoleMappingContact", fields: [organization_id, mapped_contact_id], references: [organization_id, id], onDelete: Cascade)
+
+  @@unique([organization_id, parent_role_code, parent_contact_id, mapped_contact_id])
+  @@unique([organization_id, parent_role_code, mapped_contact_id])
+  @@index([organization_id, parent_role_code, parent_contact_id, created_at])
+  @@map("contact_role_mappings")
 }
 
 model ContactTaxRegistration {

@@ -26,6 +26,11 @@ describe("mobile organization module navigation", () => {
             href: "/advance-booking/order/advance-booking",
           },
           {
+            key: "order-form",
+            label: "Order Form",
+            href: "/advance-booking/order/order-form",
+          },
+          {
             key: "quotation",
             label: "Quotation",
             href: "/advance-booking/quotation",

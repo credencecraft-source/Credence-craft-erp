@@ -30,6 +30,8 @@ describe("OrderQrStickerPreview", () => {
     }));
 
     expect(markup).toContain('aria-label="Sticker preview, 50 by 30 millimeters"');
+    expect(markup).toContain("aspect-ratio:50 / 30");
+    expect(markup).toContain("border-2 border-dashed border-[var(--erp-brand)]");
     expect(markup).toContain("left:70%;top:12%;width:31.2%;aspect-ratio:1");
     expect(markup).toContain("left:14%;top:81%;width:52%;color:#123456;font-size:18px;font-weight:700;text-decoration:underline");
     expect(markup).toContain("Order Number: ORD-1");

@@ -10,7 +10,9 @@ import {
   requireOrganizationContext,
   requireOrganizationPermission,
 } from "@/lib/services/organizations/organization-service";
-import { advanceOrderQrPrintRequestStatus } from "@/lib/services/orders/order-qr-print-request-service";
+import {
+  advanceOrderQrPrintRequestStatus,
+} from "@/lib/services/orders/order-qr-print-request-service";
 import {
   isOrderQrPrintRequestStatus,
   type OrderQrPrintRequestStatus,
@@ -67,14 +69,21 @@ export async function PATCH(
     } catch {
       return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 });
     }
+    if (typeof body === "object" && body !== null && "pageSetupTemplateId" in body) {
+      return NextResponse.json(
+        { error: "Page Setup is assigned by the QR template and cannot be changed on a print request." },
+        { status: 409 },
+      );
+    }
+
     const targetStatus = typeof body === "object" && body !== null && "status" in body
       ? body.status
       : undefined;
+    const { requestId } = await context.params;
     if (!isOrderQrPrintRequestStatus(targetStatus)) {
       return NextResponse.json({ error: "Select a valid request status." }, { status: 400 });
     }
 
-    const { requestId } = await context.params;
     const result = await advanceOrderQrPrintRequestStatus(
       authorization.organization.id,
       authorization.user.id,

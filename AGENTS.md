@@ -63,6 +63,12 @@ These are persistent project governance requirements for all future human, AI, a
 - Reuse existing domain detail routes and preserve lifecycle controls. Never fetch an organization record by an unscoped ID and authorize it afterward. Add missing detail routes by reviewed domain cohort, with regression and browser coverage for authorization, view/edit, cancel/save/error behavior.
 - Apply this standard to every new organization form and report. Migrate existing forms and reports in cohorts rather than mass-rewriting unrelated routes in one change.
 
+## Organization Module Report And Submission Standard
+
+- Every new organization module and materially reworked module must show each record category through the shared `ReportGrid` in `components/reports/report-grid-display.tsx`, or an existing shared report pattern with equivalent behavior. Provide a consistent title, search, meaningful status/column filters, user-controlled column visibility, locale-aware formatting, organization-scoped saved preferences, safe row/action semantics, and explicit loading/error/empty states. Do not invent a parallel page-local report table.
+- A create form must be entered only through an explicit New/Create action, and have a clear cancel/back-to-report action. Do not leave it permanently stacked above its report. After successful submission, show confirmation and return to the owning report tab/list so the saved record is visible; on validation or save failure, preserve the entered values and keep the form available with actionable error feedback.
+- In multi-tab modules, give each record category its own report view and return successful creates to that category. Keep operational detail/checklist actions in the relevant record view or selected-row panel; do not make report rows clickable without a real tenant-authorized detail destination.
+
 ## Organization Interaction Performance Standard
 
 - Audit every organization interaction: route/module switches, master list/detail/create/edit, report filter/record open, popup open/lookups, input, submit, cancel, edit, and delete.

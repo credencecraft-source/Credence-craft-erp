@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   purchaseOrderUpdateMany: vi.fn(),
   purchaseOrderDelete: vi.fn(),
   generalPurchaseOrderRequestUpdateMany: vi.fn(),
+  generalPurchaseOrderGroupUpdateMany: vi.fn(),
   approvalRequestCreate: vi.fn(),
   approvalRequestDeleteMany: vi.fn(),
   approvalRequestFindFirst: vi.fn(),
@@ -20,6 +21,7 @@ const transaction = {
   masterPurchaseOrder: { findMany: mocks.masterFindMany },
   purchaseOrder: { findFirst: mocks.purchaseOrderFindFirst, updateMany: mocks.purchaseOrderUpdateMany, delete: mocks.purchaseOrderDelete },
   generalPurchaseOrderRequest: { updateMany: mocks.generalPurchaseOrderRequestUpdateMany },
+  generalPurchaseOrderGroup: { updateMany: mocks.generalPurchaseOrderGroupUpdateMany },
   approvalRequest: {
     create: mocks.approvalRequestCreate,
     deleteMany: mocks.approvalRequestDeleteMany,
@@ -57,6 +59,7 @@ describe("vendor Purchase Order generation", () => {
     mocks.purchaseOrderUpdateMany.mockResolvedValue({ count: 1 });
     mocks.purchaseOrderDelete.mockResolvedValue({});
     mocks.generalPurchaseOrderRequestUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.generalPurchaseOrderGroupUpdateMany.mockResolvedValue({ count: 1 });
     mocks.approvalRequestCreate.mockResolvedValue({ id: "request-1" });
     mocks.approvalRequestDeleteMany.mockResolvedValue({ count: 0 });
     mocks.approvalRequestFindFirst.mockResolvedValue({
@@ -99,6 +102,7 @@ describe("vendor Purchase Order generation", () => {
       id: "po-1",
       status: "DRAFT",
       generalPurchaseOrderRequests: [{ id: "request-1", status: "PO_CREATED" }],
+      lines: [{ general_purchase_order_group_id: "group-1" }],
       inventoryReceipts: [],
       gateEntries: [],
     });
@@ -116,6 +120,14 @@ describe("vendor Purchase Order generation", () => {
     });
     expect(mocks.purchaseOrderDelete).toHaveBeenCalledWith({
       where: { id: "po-1", organization_id: "org-1" },
+    });
+    expect(mocks.generalPurchaseOrderGroupUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["group-1"] },
+        organization_id: "org-1",
+        status: "PO_CREATED",
+      },
+      data: { status: "MASTER_GROUPED" },
     });
   });
 
@@ -162,22 +174,24 @@ describe("vendor Purchase Order generation", () => {
   });
 
   it("returns a tenant-scoped compact Purchase Order report page", async () => {
-    const reportOrder = (id: string) => ({
+    const reportOrder = (id: string, procurementType: string) => ({
       id,
       entity_id: "entity-1",
       entity: { id: "entity-1", entity_name: "Factory" },
       display_no: 1,
       purchase_order_no: `PO-${id}`,
       status: "DRAFT",
+      procurement_type: procurementType,
+      is_asset_purchase: procurementType === "GENERAL",
       po_date: new Date("2026-10-01T00:00:00Z"),
       delivery_date: null,
       created_at: new Date("2026-10-01T00:00:00Z"),
       vendor: { id: "vendor-1", vendor: "Vendor", legacy_metadata: null },
     });
     mocks.purchaseOrderFindMany.mockResolvedValue([
-      reportOrder("po-1"),
-      reportOrder("po-2"),
-      reportOrder("po-3"),
+      reportOrder("po-1", "GENERAL"),
+      reportOrder("po-2", "STYLE_WISE"),
+      reportOrder("po-3", "STYLE_WISE"),
     ]);
     mocks.queryRaw.mockResolvedValue([
       { purchase_order_id: "po-1", total: "6", gst_values: ["5"], hsn_codes: ["5208"], buying_uoms: ["ROLL"] },
@@ -187,8 +201,8 @@ describe("vendor Purchase Order generation", () => {
     await expect(listPurchaseOrderReportPage("org-1", { cursor: "previous-page", limit: 2, search: "Factory" }))
       .resolves.toMatchObject({
         purchaseOrders: [
-          { id: "po-1", total: 6, gstValues: [5], hsnCodes: ["5208"], buyingUoms: ["ROLL"] },
-          { id: "po-2", total: 12.5, gstValues: [5, 12], hsnCodes: ["5208", "5512"], buyingUoms: ["ROLL", "PCS"] },
+          { id: "po-1", procurementType: "GENERAL", isAssetPurchase: true, total: 6, gstValues: [5], hsnCodes: ["5208"], buyingUoms: ["ROLL"] },
+          { id: "po-2", procurementType: "STYLE_WISE", isAssetPurchase: false, total: 12.5, gstValues: [5, 12], hsnCodes: ["5208", "5512"], buyingUoms: ["ROLL", "PCS"] },
         ],
         nextCursor: "po-2",
       });
@@ -206,6 +220,26 @@ describe("vendor Purchase Order generation", () => {
       orderBy: [{ created_at: "desc" }, { id: "desc" }],
       select: expect.not.objectContaining({ lines: expect.anything() }),
     }));
+    expect(mocks.purchaseOrderFindMany.mock.calls[0][0].select).toMatchObject({
+      procurement_type: true,
+      is_asset_purchase: true,
+    });
     expect(mocks.queryRaw).toHaveBeenCalledOnce();
+  });
+
+  it("filters Asset Purchase Order report pages to asset-classified General POs", async () => {
+    mocks.purchaseOrderFindMany.mockResolvedValue([]);
+    mocks.queryRaw.mockResolvedValue([]);
+
+    await expect(listPurchaseOrderReportPage("org-1", { assetOnly: true }))
+      .resolves.toMatchObject({ purchaseOrders: [], nextCursor: null });
+
+    expect(mocks.purchaseOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "org-1",
+        procurement_type: "GENERAL",
+        is_asset_purchase: true,
+      },
+    }));
   });
 });

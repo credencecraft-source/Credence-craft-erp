@@ -2,19 +2,21 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import QRCode from "qrcode";
+import { useRouter } from "next/navigation";
 
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import Modal from "@/components/ui/Modal";
+import {
+  createOrderQrPrintPdf,
+  createOrderQrStickerDataUrls,
+} from "@/components/erp/order-qr-print-output";
 import type {
   OrderQrPrintRequestStatus,
   OrderQrPrintRequestType,
 } from "@/lib/services/orders/order-qr-print-request-contract";
 import {
-  DEFAULT_QR_FIELD_STYLE,
-  getA4StickerGrid,
-  ORDER_QR_TEMPLATE_FIELDS,
   type OrderQrDisplayFieldStyle,
   type OrderQrTemplateLayout,
   type OrderQrTemplateFieldKey,
@@ -38,6 +40,15 @@ type RequestRecord = {
   stickerWidthMm: number;
   stickerLengthMm: number;
   qrPayload: string;
+  printQuantity: number;
+  bulkItems: Array<{
+    orderId: string;
+    orderNo: string;
+    styleName: string;
+    quantity: number;
+    qrPayload: string;
+    displayValues: Partial<Record<OrderQrTemplateFieldKey, string>>;
+  }>;
   requestedAt: string;
 };
 
@@ -59,6 +70,8 @@ type ReportRow = {
   printerType: OrderQrTemplateLayout["printerType"];
   pdfPaperSize: OrderQrTemplateLayout["pdfPaperSize"];
   qrPayload: string;
+  printQuantity: number;
+  bulkItems: RequestRecord["bulkItems"];
   requestedAt: string;
 };
 
@@ -67,6 +80,7 @@ const fields: Array<{ key: keyof ReportRow; label: string }> = [
   { key: "requestType", label: "Request" },
   { key: "templateName", label: "Template" },
   { key: "status", label: "Status" },
+  { key: "printQuantity", label: "Print Quantity" },
   { key: "printerType", label: "Printer" },
   { key: "pdfPaperSize", label: "PDF Paper" },
   { key: "qrSize", label: "QR Size" },
@@ -79,9 +93,11 @@ const statuses = ["ALL", "PENDING", "IN_PROGRESS", "COMPLETED"] as const;
 export default function BarcodeQrPrintDownloadPage({
   workspaceId,
   organizationId,
+  canManage,
 }: {
   workspaceId: string;
   organizationId: string;
+  canManage: boolean;
 }) {
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [visibleFields, setVisibleFields] = useState<Array<keyof ReportRow>>(
@@ -93,6 +109,11 @@ export default function BarcodeQrPrintDownloadPage({
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [updatingId, setUpdatingId] = useState("");
   const [actionError, setActionError] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [deleteIds, setDeleteIds] = useState<string[]>([]);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [notice, setNotice] = useState("");
+  const router = useRouter();
 
   const query = useMemo(
     () => new URLSearchParams({ organizationId, workspaceId }),
@@ -136,8 +157,10 @@ export default function BarcodeQrPrintDownloadPage({
         id: request.id,
         orderId: request.orderId,
         orderNo: request.orderNo,
-        requestType: request.requestType === "PRINT" ? "Print" : "Download",
-        templateName: request.templateName ?? "Order Number only",
+        requestType: request.bulkItems.length > 0
+          ? "Bulk QR Request"
+          : request.requestType === "PRINT" ? "Print" : "Download",
+        templateName: request.templateName ?? "Saved template unavailable",
         status: request.status,
         qrSize: `${request.qrSize} px`,
         stickerWidthMm: request.stickerWidthMm,
@@ -150,6 +173,8 @@ export default function BarcodeQrPrintDownloadPage({
         printerType: request.layout.printerType,
         pdfPaperSize: request.layout.pdfPaperSize,
         qrPayload: request.qrPayload,
+        printQuantity: request.printQuantity,
+        bulkItems: request.bulkItems,
         requestedAt: new Date(request.requestedAt).toLocaleString(),
       })),
     [requests, selectedStatus],
@@ -201,125 +226,16 @@ export default function BarcodeQrPrintDownloadPage({
 
     setActionError("");
     try {
-      const qrDataUrl = await QRCode.toDataURL(record.qrPayload, {
-        errorCorrectionLevel: "H",
-        margin: 2,
-        width: Number.parseInt(record.qrSize, 10),
-      });
-      const widthPx = Math.max(1, Math.round(record.stickerWidthMm * 96 / 25.4));
-      const heightPx = Math.max(1, Math.round(record.stickerLengthMm * 96 / 25.4));
-      const resolution = Math.min(2, 4096 / widthPx, 4096 / heightPx);
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(widthPx * resolution));
-      canvas.height = Math.max(1, Math.round(heightPx * resolution));
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("Canvas is unavailable.");
-      context.scale(resolution, resolution);
-      context.fillStyle = "#FFFFFF";
-      context.fillRect(0, 0, widthPx, heightPx);
-
-      const qrImage = new window.Image();
-      await new Promise<void>((resolve, reject) => {
-        qrImage.onload = () => resolve();
-        qrImage.onerror = () => reject(new Error("QR image could not be loaded."));
-        qrImage.src = qrDataUrl;
-      });
-
-      const qrExtent = Math.max(1, Math.min(widthPx, heightPx) * 0.52);
-      const qrX = widthPx * record.layout.qr.x / 100;
-      const qrY = heightPx * record.layout.qr.y / 100;
-      context.drawImage(qrImage, qrX, qrY, qrExtent, qrExtent);
-
-      const selectedDisplayFields = record.displayFields;
-      selectedDisplayFields.forEach((fieldKey, index) => {
-        const label = ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === fieldKey)?.label ?? fieldKey;
-        const value = record.displayValues[fieldKey] ?? "";
-        const style = {
-          ...DEFAULT_QR_FIELD_STYLE,
-          ...record.displayFieldStyles[fieldKey],
-        };
-        const fontSize = Math.max(6, Math.min(style.fontSize, heightPx * 0.3));
-        const position = record.layout.fields[fieldKey]
-          ?? { x: 44, y: 16 + index * 16 };
-        const textX = widthPx * position.x / 100;
-        const textY = heightPx * position.y / 100;
-        const textWidth = Math.max(1, widthPx - textX);
-        context.fillStyle = style.color;
-        context.font = `${style.bold ? "700" : "400"} ${fontSize}px Arial, sans-serif`;
-        const baseline = Math.min(heightPx - 1, textY + fontSize);
-        const displayText = value ? `${label}: ${value}` : label;
-        context.fillText(displayText, textX, baseline, textWidth);
-        if (style.underline) {
-          const textWidthPx = Math.min(textWidth, context.measureText(displayText).width);
-          context.strokeStyle = style.color;
-          context.lineWidth = Math.max(1, fontSize / 16);
-          context.beginPath();
-          context.moveTo(textX, baseline + Math.max(1, fontSize / 12));
-          context.lineTo(textX + textWidthPx, baseline + Math.max(1, fontSize / 12));
-          context.stroke();
-        }
-      });
-      const dataUrl = canvas.toDataURL("image/png");
-      if (record.printerType === "LASER") {
-        const grid = getA4StickerGrid(
-          record.stickerWidthMm,
-          record.stickerLengthMm,
-          record.pdfPaperSize,
-        );
-        if (!grid) {
-          throw new Error(
-            "The sticker does not fit on the selected A4 page. Change the paper orientation or sticker size.",
-          );
-        }
-        const { jsPDF } = await import("jspdf");
-        const pdf = new jsPDF({
-          orientation: grid.portrait ? "portrait" : "landscape",
-          unit: "mm",
-          format: "a4",
-        });
-        for (let row = 0; row < grid.rows; row += 1) {
-          for (let column = 0; column < grid.columns; column += 1) {
-            pdf.addImage(
-              dataUrl,
-              "PNG",
-              grid.marginMm + column * (record.stickerWidthMm + grid.gapMm),
-              grid.marginMm + row * (record.stickerLengthMm + grid.gapMm),
-              record.stickerWidthMm,
-              record.stickerLengthMm,
-            );
-          }
-        }
-        if (printWindow) {
-          const pdfUrl = URL.createObjectURL(pdf.output("blob"));
-          printWindow.location.assign(pdfUrl);
-        } else {
-          pdf.save(`order-${record.orderNo}-a4-stickers.pdf`);
-        }
-        return;
-      }
+      const stickerDataUrls = await createOrderQrStickerDataUrls(record);
+      const pdfBlob = await createOrderQrPrintPdf(record, stickerDataUrls);
       if (printWindow) {
-        const image = printWindow.document.createElement("img");
-        image.src = dataUrl;
-        image.alt = `QR code for order ${record.orderNo}`;
-        image.style.width = `${record.stickerWidthMm}mm`;
-        image.style.height = `${record.stickerLengthMm}mm`;
-        image.onload = () => {
-          const style = printWindow?.document.createElement("style");
-          if (style) {
-            style.textContent =
-              `@page{size:${record.stickerWidthMm}mm ${record.stickerLengthMm}mm;margin:0}` +
-              "html,body{width:100%;height:100%;margin:0;padding:0;overflow:hidden}" +
-              "img{display:block;object-fit:fill}";
-            printWindow?.document.head.append(style);
-          }
-          printWindow?.focus();
-          printWindow?.print();
-        };
-        printWindow.document.body.replaceChildren(image);
+        printWindow.location.assign(URL.createObjectURL(pdfBlob));
       } else {
         const download = document.createElement("a");
-        download.href = dataUrl;
-        download.download = `order-${record.orderNo}-sticker.png`;
+        download.href = URL.createObjectURL(pdfBlob);
+        download.download = record.printerType === "LASER"
+          ? `order-${record.orderNo}-a4-stickers.pdf`
+          : `order-${record.orderNo}-sticker-labels.pdf`;
         download.click();
       }
     } catch (error) {
@@ -331,10 +247,43 @@ export default function BarcodeQrPrintDownloadPage({
     }
   };
 
+  const requestDelete = (ids: string[]) => {
+    setDeleteIds(ids);
+    setActionError("");
+  };
+
+  const deleteSelectedRequests = async () => {
+    setIsDeleting(true);
+    setActionError("");
+    try {
+      const response = await fetch(`/api/orders/qr-print-requests?${query}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: deleteIds }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || "Unable to delete QR print/download requests.");
+      }
+      const deletedIds = new Set(deleteIds);
+      setRequests((current) => current.filter((request) => !deletedIds.has(request.id)));
+      setSelectedIds((current) => current.filter((id) => !deletedIds.has(id)));
+      setNotice(`${data.deletedCount} pending request${data.deletedCount === 1 ? "" : "s"} deleted.`);
+      setDeleteIds([]);
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "Unable to delete QR print/download requests.",
+      );
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const visibleRows = rows;
   const orderBaseHref =
     `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order`;
-
+  const requestBaseHref =
+    `/dashboard/${workspaceId}/organizations/${organizationId}/design-development/barcode-qr-code/print-download`;
   return (
     <section className="min-w-0 space-y-4">
       <header className="space-y-1">
@@ -366,6 +315,7 @@ export default function BarcodeQrPrintDownloadPage({
       {actionError && (
         <p className="text-sm text-[var(--erp-danger)]" role="alert">{actionError}</p>
       )}
+      {notice && <p className="text-sm text-[var(--erp-success)]" role="status">{notice}</p>}
 
       <ReportGrid
         title="QR Print/Download Request Report"
@@ -377,10 +327,27 @@ export default function BarcodeQrPrintDownloadPage({
         }
         storageKey={`barcode-qr-print-download-requests:${organizationId}`}
         rowIdSelector={(record) => record.id}
-        selectedIds={[]}
+        selectedIds={selectedIds}
+        selectable={canManage}
+        rowSelectable={(record) => record.status === "PENDING"}
+        onToggleSelectAll={(checked, recordIds) =>
+          setSelectedIds((current) => checked
+            ? [...new Set([...current, ...recordIds])]
+            : current.filter((id) => !recordIds.includes(id)))
+        }
+        onToggleRowSelection={(recordId, checked) =>
+          setSelectedIds((current) => checked
+            ? [...new Set([...current, recordId])]
+            : current.filter((id) => id !== recordId))
+        }
+        onBulkDeleteSelected={canManage ? () => requestDelete(selectedIds) : undefined}
+        bulkDeleteSelectedLabel="Delete pending"
         statusOptions={statuses}
         selectedStatus={selectedStatus}
         onStatusChange={setSelectedStatus}
+        onRecordClick={(record) => router.push(
+          `${requestBaseHref}/${encodeURIComponent(record.id)}`,
+        )}
         toolbarActions={(
           <Button
             type="button"
@@ -397,22 +364,35 @@ export default function BarcodeQrPrintDownloadPage({
         )}
         rowActions={(record) => (
           <div className="flex flex-wrap items-center gap-2">
-            <Link
-              href={`${orderBaseHref}/${encodeURIComponent(record.orderId)}`}
-              className="text-sm font-medium text-[var(--erp-brand)] hover:underline"
-            >
-              Open Order
-            </Link>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => void processOutputRequest(record)}
-            >
-              {record.printerType === "LASER"
-                ? record.requestType === "Print" ? "Open A4 PDF" : "Download A4 PDF"
-                : record.requestType === "Print" ? "Print Sticker" : "Download Sticker"}
-            </Button>
+            {record.bulkItems.length > 0 ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => router.push(`${requestBaseHref}/${encodeURIComponent(record.id)}`)}
+              >
+                Review bulk request
+              </Button>
+            ) : (
+              <>
+                <Link
+                  href={`${orderBaseHref}/${encodeURIComponent(record.orderId)}`}
+                  className="text-sm font-medium text-[var(--erp-brand)] hover:underline"
+                >
+                  Open Order
+                </Link>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void processOutputRequest(record)}
+                >
+                  {record.printerType === "LASER"
+                    ? record.requestType === "Print" ? "Open A4 PDF" : "Download A4 PDF"
+                    : record.requestType === "Print" ? "Print Sticker" : "Download Sticker"}
+                </Button>
+              </>
+            )}
             {record.status !== "COMPLETED" && (
               <Button
                 type="button"
@@ -424,6 +404,16 @@ export default function BarcodeQrPrintDownloadPage({
                 {updatingId === record.id
                   ? "Saving..."
                   : record.status === "PENDING" ? "Start" : "Complete"}
+              </Button>
+            )}
+            {canManage && record.status === "PENDING" && (
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                onClick={() => requestDelete([record.id])}
+              >
+                Delete
               </Button>
             )}
           </div>
@@ -449,6 +439,48 @@ export default function BarcodeQrPrintDownloadPage({
           : `No ${selectedStatus.replaceAll("_", " ").toLowerCase()} requests found.`}
         isLoading={isLoading}
       />
+      {deleteIds.length > 0 && (
+        <Modal
+          open
+          onClose={() => {
+            if (!isDeleting) setDeleteIds([]);
+          }}
+          ariaLabelledBy="delete-qr-requests-title"
+          size="square"
+          variant="danger"
+          closeOnBackdrop={!isDeleting}
+        >
+          <div className="space-y-4 p-6">
+            <div>
+              <h2 id="delete-qr-requests-title" className="text-lg font-semibold text-slate-900">
+                Delete selected pending requests?
+              </h2>
+              <p className="mt-2 text-sm text-slate-600">
+                {deleteIds.length} pending QR print/download request{deleteIds.length === 1 ? "" : "s"} will be removed. In-progress and completed requests are retained.
+              </p>
+            </div>
+            {actionError && <p className="text-sm text-[var(--erp-danger)]" role="alert">{actionError}</p>}
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setDeleteIds([])}
+                disabled={isDeleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => void deleteSelectedRequests()}
+                disabled={isDeleting}
+              >
+                {isDeleting ? "Deleting..." : `Delete ${deleteIds.length} request${deleteIds.length === 1 ? "" : "s"}`}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </section>
   );
 }

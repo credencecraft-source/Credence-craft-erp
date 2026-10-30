@@ -959,6 +959,19 @@ export async function deleteOrders(orderIds: string[], organizationId: string, u
   const ids = [...new Set(orderIds.filter(Boolean))];
   if (ids.length === 0) return { deletedCount: 0 };
 
+  const linkedBookings = await prisma.advanceBooking.findMany({
+    where: { organization_id: organizationId, order_id: { in: ids } },
+    select: { booking_no: true },
+    take: 6,
+  });
+  if (linkedBookings.length > 0) {
+    const bookingNumbers = linkedBookings.slice(0, 5).map((booking) => booking.booking_no).join(", ");
+    const additionalBookings = linkedBookings.length > 5 ? " and other bookings" : "";
+    throw new Error(
+      `Cannot delete these orders because advance booking${linkedBookings.length === 1 ? "" : "s"} ${bookingNumbers}${additionalBookings} still reference them. Resolve or delete the linked bookings in Advance Booking first. Any linked quotations or GRN fulfillment must be handled before those bookings can be deleted.`,
+    );
+  }
+
   const protectedGrns = await prisma.factoryGrn.findMany({
     where: {
       organization_id: organizationId,
@@ -998,7 +1011,7 @@ export async function deleteOrders(orderIds: string[], organizationId: string, u
   } catch (error) {
     const errorCode = typeof error === "object" && error !== null && "code" in error ? error.code : null;
     if (errorCode === "P2003") {
-      throw new Error("One or more selected orders have production or GRN records and cannot be deleted.");
+      throw new Error("One or more selected orders still have related business records, such as advance bookings, production, or GRN records. Resolve those records before deleting the orders.");
     }
     throw error;
   }

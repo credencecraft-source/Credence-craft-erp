@@ -302,6 +302,200 @@ export async function getDistributionQuotation(
   };
 }
 
+export async function listDistributionOrderForms(organizationId: string) {
+  const forms = await prisma.distributionOrderForm.findMany({
+    where: { organization_id: organizationId },
+    include: {
+      lines: {
+        orderBy: [{ created_at: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          source_booking_id: true,
+          booking_no: true,
+          order_no: true,
+          brand: true,
+          style_name: true,
+          quantity: true,
+        },
+      },
+    },
+    orderBy: [{ order_form_date: "desc" }, { created_at: "desc" }],
+  });
+  return forms.map((form) => ({
+    id: form.id,
+    orderFormNo: form.order_form_no,
+    orderFormDate: form.order_form_date.toISOString().slice(0, 10),
+    customer: form.customer,
+    status: form.status,
+    quotationId: form.quotation_id,
+    totalQuantity: form.total_quantity,
+    subtotal: form.subtotal.toFixed(2),
+    createdAt: form.created_at.toISOString(),
+    lines: form.lines,
+  }));
+}
+
+export async function createDistributionOrderFormFromBookings(
+  organizationId: string,
+  userId: string,
+  bookingIds: string[],
+  vendorId: string | null,
+  contactId: string | null,
+) {
+  const selectedVendorId = vendorId?.trim() || null;
+  const selectedContactId = contactId?.trim() || null;
+  if (Boolean(selectedVendorId) === Boolean(selectedContactId)) {
+    throw new Error("Select either a Dealer or a Contact Master contact for the Order Form.");
+  }
+  if (bookingIds.length === 0 || bookingIds.length > 100 || bookingIds.some((id) => !id.trim())) {
+    throw new Error("Select between one and 100 advance bookings for an Order Form.");
+  }
+  if (new Set(bookingIds).size !== bookingIds.length) {
+    throw new Error("Each advance booking can only be included once in an Order Form.");
+  }
+
+  const created = await prisma.$transaction(async (transaction) => {
+    let vendorIdForForm: string | null = null;
+    let customer: string;
+    if (selectedContactId) {
+      const contact = await transaction.contact.findFirst({
+        where: { organization_id: organizationId, id: selectedContactId },
+        select: { id: true, legal_name: true, display_name: true },
+      });
+      if (!contact) throw new Error("Select a Contact Master contact from this organization.");
+      customer = contact.display_name || contact.legal_name;
+      if (!customer.trim()) throw new Error("The selected Contact Master contact does not have a display name.");
+    } else {
+      if (!selectedVendorId) throw new Error("Select an active Dealer for the Order Form.");
+      const vendor = await transaction.masterVendor.findFirst({
+        where: { organization_id: organizationId, id: selectedVendorId, is_active: true },
+        select: { id: true, vendor: true },
+      });
+      if (!vendor) throw new Error("Select an active Dealer for the Order Form.");
+      vendorIdForForm = vendor.id;
+      customer = vendor.vendor;
+    }
+
+    const bookings = await transaction.advanceBooking.findMany({
+      where: { organization_id: organizationId, id: { in: bookingIds } },
+      include: {
+        order: { select: { orderNo: true } },
+        sizeLines: { select: { booked_quantity: true } },
+        distributionOrderFormLines: { select: { id: true }, take: 1 },
+      },
+    });
+    if (bookings.length !== bookingIds.length) {
+      throw new Error("One or more selected bookings are unavailable in this organization.");
+    }
+    const alreadyAssigned = bookings.find((booking) => booking.distributionOrderFormLines.length > 0);
+    if (alreadyAssigned) {
+      throw new Error(`Booking ${bookingIds.find((id) => id === alreadyAssigned.id) ?? ""} already belongs to an Order Form.`);
+    }
+
+    const orderedBookings = bookingIds.map((id) => bookings.find((booking) => booking.id === id)!);
+    const totalQuantity = orderedBookings.reduce(
+      (sum, booking) => sum + booking.sizeLines.reduce((lineSum, line) => lineSum + line.booked_quantity, 0),
+      0,
+    );
+    const orderForm = await transaction.distributionOrderForm.create({
+      data: {
+        organization_id: organizationId,
+        vendor_id: vendorIdForForm,
+        contact_id: selectedContactId,
+        order_form_no: await reserveProcurementDocumentNumber(organizationId, "DISTRIBUTION_ORDER_FORM", transaction),
+        order_form_date: new Date(),
+        customer,
+        status: "DRAFT",
+        total_quantity: totalQuantity,
+        subtotal: new Prisma.Decimal(0),
+        created_by: userId,
+      },
+      include: { lines: true },
+    });
+    await transaction.distributionOrderFormLine.createMany({
+      data: orderedBookings.map((booking) => ({
+        organization_id: organizationId,
+        order_form_id: orderForm.id,
+        source_booking_id: booking.id,
+        booking_no: booking.booking_no,
+        order_no: booking.order.orderNo,
+        brand: booking.brand,
+        style_name: booking.style_name,
+        quantity: booking.sizeLines.reduce((sum, line) => sum + line.booked_quantity, 0),
+      })),
+    });
+
+    await createAuditEvent({
+      organizationId,
+      userId,
+      module: "Distribution",
+      action: "CREATE_DISTRIBUTION_ORDER_FORM",
+      entityType: "DistributionOrderForm",
+      entityId: orderForm.id,
+      details: {
+        order_form_no: orderForm.order_form_no,
+        booking_ids: bookingIds,
+        total_quantity: totalQuantity,
+      },
+    }, transaction);
+
+    return {
+      id: orderForm.id,
+      orderFormNo: orderForm.order_form_no,
+      orderFormDate: orderForm.order_form_date.toISOString().slice(0, 10),
+      customer: orderForm.customer,
+      status: orderForm.status,
+      totalQuantity: orderForm.total_quantity,
+      subtotal: orderForm.subtotal.toFixed(2),
+      createdAt: orderForm.created_at.toISOString(),
+    };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
+
+  return created;
+}
+
+export async function createDistributionQuotationFromOrderForms(
+  organizationId: string,
+  userId: string,
+  orderFormIds: string[],
+  vendorId: string | null,
+  contactId: string | null,
+) {
+  if (orderFormIds.length === 0 || orderFormIds.length > 100 || new Set(orderFormIds).size !== orderFormIds.length) {
+    throw new Error("Select between one and 100 Order Forms.");
+  }
+  const forms = await prisma.distributionOrderForm.findMany({
+    where: { organization_id: organizationId, id: { in: orderFormIds }, quotation_id: null, status: "DRAFT" },
+    include: { lines: { select: { source_booking_id: true } } },
+  });
+  if (forms.length !== orderFormIds.length) {
+    throw new Error("One or more selected Order Forms are unavailable or already converted.");
+  }
+  const distinctVendorIds = [...new Set(forms.map((form) => form.vendor_id).filter((id): id is string => Boolean(id)))];
+  const distinctContactIds = [...new Set(forms.map((form) => form.contact_id).filter((id): id is string => Boolean(id)))];
+  if (distinctVendorIds.length > 1 || distinctContactIds.length > 1 ||
+      (distinctVendorIds.length > 0 && distinctContactIds.length > 0)) {
+    throw new Error("Selected Order Forms must belong to the same Customer/Contact before creating a quotation.");
+  }
+  if (!vendorId && !contactId) {
+    vendorId = distinctVendorIds[0] ?? null;
+    contactId = distinctContactIds[0] ?? null;
+  }
+  const bookingIds = forms.flatMap((form) => form.lines.map((line) => line.source_booking_id));
+  const quotation = await createDistributionQuotationFromBookings(
+    organizationId,
+    userId,
+    bookingIds,
+    vendorId,
+    contactId,
+  );
+  await prisma.distributionOrderForm.updateMany({
+    where: { organization_id: organizationId, id: { in: orderFormIds }, quotation_id: null, status: "DRAFT" },
+    data: { quotation_id: quotation.id, status: "CONVERTED" },
+  });
+  return quotation;
+}
+
 export async function createDistributionQuotationFromBookings(
   organizationId: string,
   userId: string,

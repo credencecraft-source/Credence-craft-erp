@@ -12,7 +12,7 @@ const purchaseOrderInclude = {
   entity: { select: { id: true, entity_name: true } },
   vendor: { select: { id: true, vendor: true, legacy_metadata: true, gst_number: true, registered_state: true, registeredState: { select: { state: true } } } },
   sources: { select: { master_purchase_order_id: true } },
-  lines: { orderBy: { source_order_no: "asc" as const }, include: { masterPurchaseOrder: { select: { display_no: true, master_po_no: true, lines: { select: { stock_uom: true } }, sourceRecords: { select: { groupedPurchaseOrder: { select: { buying_uom: true } } } } } } } },
+  lines: { orderBy: { source_order_no: "asc" as const }, include: { masterPurchaseOrder: { select: { display_no: true, master_po_no: true, lines: { select: { stock_uom: true } }, sourceRecords: { select: { groupedPurchaseOrder: { select: { buying_uom: true } } } } } }, generalPurchaseOrderGroup: { select: { display_no: true } } } },
 } as const;
 
 const purchaseOrderReportSelect = {
@@ -22,6 +22,8 @@ const purchaseOrderReportSelect = {
   display_no: true,
   purchase_order_no: true,
   status: true,
+  procurement_type: true,
+  is_asset_purchase: true,
   po_date: true,
   delivery_date: true,
   created_at: true,
@@ -45,6 +47,8 @@ function serializePurchaseOrder(order: Prisma.PurchaseOrderGetPayload<{ include:
     purchaseOrderNo: order.display_no ? `PO-${order.display_no}` : order.purchase_order_no,
     purchaseOrderInternalNo: order.purchase_order_no,
     status: order.status,
+    procurementType: order.procurement_type,
+    isAssetPurchase: order.is_asset_purchase,
     poDate: order.po_date,
     deliveryDate: order.delivery_date,
     createdAt: order.created_at,
@@ -73,6 +77,9 @@ function serializePurchaseOrder(order: Prisma.PurchaseOrderGetPayload<{ include:
       hsnCode: line.hsn_code,
       total: numberValue(line.total),
       masterGroupId: line.masterPurchaseOrder?.display_no ? `MGP-${line.masterPurchaseOrder.display_no}` : line.master_purchase_order_id,
+      generalGroupId: line.generalPurchaseOrderGroup?.display_no
+        ? `GMG-${line.generalPurchaseOrderGroup.display_no}`
+        : line.general_purchase_order_group_id,
     })),
   };
 }
@@ -204,20 +211,31 @@ export async function generatePurchaseOrders(organizationId: string, masterPurch
   return serializePurchaseOrder(createdOrder);
 }
 
-export async function listPurchaseOrders(organizationId: string) {
-  const orders = await prisma.purchaseOrder.findMany({ where: { organization_id: organizationId }, include: purchaseOrderInclude, orderBy: { created_at: "desc" } });
+export async function listPurchaseOrders(
+  organizationId: string,
+  { assetOnly = false }: { assetOnly?: boolean } = {},
+) {
+  const orders = await prisma.purchaseOrder.findMany({
+    where: {
+      organization_id: organizationId,
+      ...(assetOnly ? { procurement_type: "GENERAL", is_asset_purchase: true } : {}),
+    },
+    include: purchaseOrderInclude,
+    orderBy: { created_at: "desc" },
+  });
   return orders.map(serializePurchaseOrder);
 }
 
 export async function listPurchaseOrderReportPage(
   organizationId: string,
-  input: { cursor?: string; limit?: number; search?: string } = {},
+  input: { cursor?: string; limit?: number; search?: string; assetOnly?: boolean } = {},
 ) {
   const limit = Math.min(100, Math.max(1, Math.trunc(input.limit ?? 50)));
   const search = String(input.search ?? "").trim().slice(0, 100);
   const rows = await prisma.purchaseOrder.findMany({
     where: {
       organization_id: organizationId,
+      ...(input.assetOnly ? { procurement_type: "GENERAL", is_asset_purchase: true } : {}),
       ...(search ? {
         OR: [
           { purchase_order_no: { contains: search, mode: "insensitive" } },
@@ -290,6 +308,8 @@ export async function listPurchaseOrderReportPage(
     entityName: order.entity?.entity_name ?? "Missing Entity",
     purchaseOrderNo: order.display_no ? `PO-${order.display_no}` : order.purchase_order_no,
     status: order.status,
+    procurementType: order.procurement_type,
+    isAssetPurchase: order.is_asset_purchase,
     poDate: order.po_date,
     deliveryDate: order.delivery_date,
     createdAt: order.created_at,
@@ -324,6 +344,7 @@ export async function deletePurchaseOrder(organizationId: string, id: string, ac
         where: { organization_id: organizationId },
         select: { id: true, status: true },
       },
+      lines: { select: { general_purchase_order_group_id: true } },
       inventoryReceipts: { select: { id: true, receipt_no: true } },
       gateEntries: { select: { id: true, entry_no: true } },
     },
@@ -371,6 +392,31 @@ export async function deletePurchaseOrder(organizationId: string, id: string, ac
         entityType: "PurchaseOrder",
         entityId: order.id,
         details: { request_count: restored.count },
+      }, transaction);
+    }
+    const generalGroupIds = order.lines
+      .map((line) => line.general_purchase_order_group_id)
+      .filter((groupId): groupId is string => Boolean(groupId));
+    if (generalGroupIds.length > 0) {
+      const restoredGroups = await transaction.generalPurchaseOrderGroup.updateMany({
+        where: {
+          id: { in: generalGroupIds },
+          organization_id: organizationId,
+          status: "PO_CREATED",
+        },
+        data: { status: "MASTER_GROUPED" },
+      });
+      if (restoredGroups.count !== generalGroupIds.length) {
+        throw new Error("General PO Master Groups changed before the Purchase Order could be deleted.");
+      }
+      await createAuditEvent({
+        organizationId,
+        userId: actorUserId,
+        module: "Procurement",
+        action: "RESTORE_GENERAL_PO_MASTER_GROUPS",
+        entityType: "PurchaseOrder",
+        entityId: order.id,
+        details: { general_group_ids: generalGroupIds },
       }, transaction);
     }
     await transaction.purchaseOrder.delete({

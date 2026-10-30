@@ -32,19 +32,21 @@ const reportFields: Array<{ key: ReceiptField; label: string }> = [
 const number = (value: number | string | null | undefined) => Number(value ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 const formatDate = (value: string | null | undefined) => (value ? new Date(value).toLocaleDateString("en-IN") : "To be confirmed");
 
-export default function RmGrnReportPage() {
+export default function RmGrnReportPage({ assetMode = false }: { assetMode?: boolean }) {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
   const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
-  const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/grn`;
+  const basePath = assetMode
+    ? `/dashboard/${workspaceId}/organizations/${organizationId}/asset-management/asset-grn`
+    : `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/grn`;
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [visibleFields, setVisibleFields] = useState<ReceiptField[]>(reportFields.map((field) => field.key));
 
   useEffect(() => {
-    void fetch(`/api/inventory/receipts?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" })
+    void fetch(`/api/inventory/receipts?organizationId=${encodeURIComponent(organizationId)}${assetMode ? "&isAssetPurchase=true" : ""}`, { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Unable to load GRN report.");
@@ -52,7 +54,7 @@ export default function RmGrnReportPage() {
       })
       .catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load GRN report."))
       .finally(() => setLoading(false));
-  }, [organizationId]);
+  }, [assetMode, organizationId]);
 
   const reportRows = useMemo(
     () =>
@@ -83,11 +85,11 @@ export default function RmGrnReportPage() {
     <div className="mx-auto max-w-[1500px] space-y-4">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
-          <h1 className="mt-3 text-2xl font-bold text-slate-900">RM GRN Report</h1>
+          <h1 className="mt-3 text-2xl font-bold text-slate-900">{assetMode ? "Asset GRN Report" : "RM GRN Report"}</h1>
         </div>
 
         <Button type="button" variant="primary" size="sm" onClick={() => router.push(`${basePath}/create`)}>
-          Create GRN
+          {assetMode ? "Create Asset GRN" : "Create GRN"}
         </Button>
       </header>
 
@@ -98,12 +100,13 @@ export default function RmGrnReportPage() {
       ) : (
         <div className="erp-surface overflow-hidden">
           <ReportGrid
-            title="RM GRN Register"
+            title={assetMode ? "Asset GRN Register" : "RM GRN Register"}
             records={reportRows}
             fields={reportFields}
             visibleFields={visibleFields}
             onVisibleFieldsChange={(next) => setVisibleFields(next as ReceiptField[])}
             rowIdSelector={(row) => row.id}
+            storageKey={`${assetMode ? "asset" : "rm"}-grn-report-columns-${organizationId}`}
             selectedIds={[]}
             selectable={false}
             onRowClick={(recordId) => router.push(`${basePath}/report/${encodeURIComponent(recordId)}`)}
@@ -129,7 +132,7 @@ export default function RmGrnReportPage() {
                   return "";
               }
             }}
-            emptyMessage="No raw-material GRN records found."
+            emptyMessage={assetMode ? "No asset GRN records found." : "No raw-material GRN records found."}
           />
         </div>
       )}

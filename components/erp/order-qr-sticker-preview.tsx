@@ -80,7 +80,7 @@ export default function OrderQrStickerPreview({
     <div
       ref={rootRef}
       aria-label={`Sticker preview, ${stickerWidthMm} by ${stickerLengthMm} millimeters`}
-      className={`relative w-full overflow-hidden rounded border border-[var(--erp-border)] bg-white ${className}`}
+      className={`relative w-full overflow-hidden rounded border-2 border-dashed border-[var(--erp-brand)] bg-white ${className}`}
       style={{ aspectRatio: `${stickerWidthMm} / ${stickerLengthMm}` }}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}

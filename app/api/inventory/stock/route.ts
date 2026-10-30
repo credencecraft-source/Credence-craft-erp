@@ -12,14 +12,18 @@ export async function GET(request: Request) {
     const user = await requireSessionUser();
     const url = new URL(request.url);
     const organization = await requireOrganizationContext(user.id, url.searchParams.get("organizationId") ?? "");
-    const type = url.searchParams.get("type") === "FG" ? "FG" : "RM";
+    const requestedType = url.searchParams.get("type") ?? "RM";
+    if (!["FG", "RM", "ASSET"].includes(requestedType)) {
+      return NextResponse.json({ error: "Stock type must be RM, ASSET, or FG." }, { status: 400 });
+    }
+    const type = requestedType as "FG" | "RM" | "ASSET";
     const stock = type === "FG"
       ? await prisma.finishedGoodsStock.findMany({
         where: { organization_id: organization.id },
         orderBy: [{ location_id: "asc" }, { style_name: "asc" }],
         include: { location: { select: { location_name: true } } },
       })
-      : await listRawMaterialGeneralInventory(organization.id);
+      : await listRawMaterialGeneralInventory(organization.id, { assetOnly: type === "ASSET" });
     return NextResponse.json({ type, stock });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load stock." }, { status: 400 });
@@ -67,6 +71,7 @@ export async function POST(request: Request) {
       locationId: readText(input.locationId),
       quantity: readText(input.quantity),
       reason: readText(input.reason),
+      isAssetStock: input.isAssetStock === true,
     });
     return NextResponse.json({ stock }, { status: 201 });
   } catch (error) {

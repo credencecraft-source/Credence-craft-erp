@@ -64,8 +64,16 @@ import {
   listContactLookupOptions,
   updateContact,
 } from "./contact-master-service";
+import { ContactValidationError, parseContactInput } from "./contact-master-validation";
 
 describe("contact master numbering", () => {
+  it("rejects assigning Distributor and Dealer roles to the same Contact", () => {
+    expect(() => parseContactInput({
+      legalName: "ACME",
+      roles: ["DISTRIBUTOR", "DEALER"],
+    })).toThrowError(ContactValidationError);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.tx.contactCodeCounter.upsert
@@ -215,6 +223,17 @@ describe("contact master numbering", () => {
       skip: 0,
       take: 100,
     });
+  });
+
+  it("can restrict the contact lookup to active organization contacts", async () => {
+    mocks.tx.contact.findMany.mockResolvedValue([]);
+
+    await listContactLookupOptions("org-1", undefined, { take: 50, activeOnly: true });
+
+    expect(mocks.tx.contact.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-1", is_active: true },
+      take: 50,
+    }));
   });
 
   it("loads a bounded, tenant-scoped contact report page", async () => {

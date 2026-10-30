@@ -885,6 +885,7 @@ async function createOrganizationDummyDataForUser(
         organization_id: organization.id,
         raw_material_type_id: rawMaterialType.id,
         raw_material_category: item.name,
+        is_asset: false,
         is_active: true,
         sort_order: rawCategoryOffset + index,
         legacy_metadata: metadata,

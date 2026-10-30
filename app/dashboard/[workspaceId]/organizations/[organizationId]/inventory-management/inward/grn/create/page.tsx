@@ -20,12 +20,14 @@ type PurchaseOrder = {
 
 type LocationOption = { id: string; label: string };
 
-export default function CreateGrnPage() {
+export default function CreateGrnPage({ assetMode = false }: { assetMode?: boolean }) {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
   const workspaceId = params?.workspaceId ?? "demo";
   const organizationId = params?.organizationId ?? "demo-org";
-  const grnPath = `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/grn`;
+  const grnPath = assetMode
+    ? `/dashboard/${workspaceId}/organizations/${organizationId}/asset-management/asset-grn`
+    : `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/inward/grn`;
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [purchaseOrderId, setPurchaseOrderId] = useState("");
   const [locations, setLocations] = useState<LocationOption[]>([]);
@@ -36,7 +38,7 @@ export default function CreateGrnPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    void fetch(`/api/orders/purchase-orders?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" })
+    void fetch(`/api/orders/purchase-orders?organizationId=${encodeURIComponent(organizationId)}${assetMode ? "&isAssetPurchase=true" : ""}`, { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Unable to load Purchase Orders.");
@@ -44,7 +46,7 @@ export default function CreateGrnPage() {
       })
       .catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to load Purchase Orders."))
       .finally(() => setLoading(false));
-  }, [organizationId]);
+  }, [assetMode, organizationId]);
 
   const selectedOrder = purchaseOrders.find((order) => order.id === purchaseOrderId);
 
@@ -75,7 +77,7 @@ export default function CreateGrnPage() {
     event.preventDefault();
     setError("");
     if (!selectedOrder?.entityId || !locationId) {
-      setError("Select a Purchase Order and Location before saving the RM GRN.");
+      setError(`Select a Purchase Order and Location before saving the ${assetMode ? "Asset" : "RM"} GRN.`);
       return;
     }
 
@@ -84,10 +86,10 @@ export default function CreateGrnPage() {
       const response = await fetch("/api/inventory/receipts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ organizationId, purchaseOrderId, locationId, createOnly: true }),
+        body: JSON.stringify({ organizationId, purchaseOrderId, locationId, createOnly: true, ...(assetMode ? { assetPurchaseOnly: true } : {}) }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Unable to create RM GRN.");
+      if (!response.ok) throw new Error(data.error || `Unable to create ${assetMode ? "Asset" : "RM"} GRN.`);
       router.replace(`${grnPath}/verification`);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to create RM GRN.");
@@ -100,11 +102,11 @@ export default function CreateGrnPage() {
     <UiPage as="div">
       <Section className="space-y-4">
         <Link href={`${grnPath}/report`} className="text-xs font-semibold text-emerald-700">
-          &larr; RM GRN Report
+          &larr; {assetMode ? "Asset GRN Report" : "RM GRN Report"}
         </Link>
         <header>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Purchase Order Receiving</p>
-          <h1 className="mt-2 text-2xl font-bold text-slate-900">Create GRN</h1>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">{assetMode ? "Asset Purchase Order Receiving" : "Purchase Order Receiving"}</p>
+          <h1 className="mt-2 text-2xl font-bold text-slate-900">{assetMode ? "Create Asset GRN" : "Create GRN"}</h1>
         </header>
         {error ? <Card role="alert" className="border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</Card> : null}
         <form onSubmit={(event) => void createGrn(event)}>
@@ -152,7 +154,7 @@ export default function CreateGrnPage() {
             </div>
             <div className="flex justify-end">
               <Button type="submit" disabled={saving || loading || locationsLoading || !selectedOrder?.entityId || !locationId}>
-                {saving ? "Saving RM GRN..." : "Submit"}
+                {saving ? `Saving ${assetMode ? "Asset" : "RM"} GRN...` : "Submit"}
               </Button>
             </div>
           </Card>
