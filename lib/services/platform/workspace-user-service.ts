@@ -14,6 +14,7 @@ import {
   normalizeProfileName,
 } from "@/lib/auth/validation-rules";
 import { organizationUsageCountSelect } from "@/lib/services/organizations/organization-usage-statistics-service";
+import { normalizeInternationalMobileNumber } from "@/lib/phone/international-mobile-number";
 
 export class WorkspaceUserServiceError extends Error {}
 
@@ -24,6 +25,7 @@ const workspaceUserReportSelect = {
   full_name: true,
   email: true,
   email_verified: true,
+  send_auth_otp_to_credencecraft_only: true,
   mobile_number: true,
   mobile_verified_at: true,
   created_at: true,
@@ -130,6 +132,50 @@ export async function getWorkspaceUser(userId: string) {
   const totalRecordsByOrganizationId =
     await getOrganizationRecordTotals(organizationIds);
   return addWorkspaceUsage(user, totalRecordsByOrganizationId);
+}
+
+export async function setWorkspaceUserAuthOtpRecipient(
+  userId: string,
+  enabled: boolean,
+) {
+  const admin = await requirePlatformSessionAdmin();
+  const normalizedUserId = typeof userId === "string" ? userId.trim() : "";
+  if (!normalizedUserId || typeof enabled !== "boolean") {
+    throw new WorkspaceUserServiceError(
+      "Workspace user OTP recipient setting is invalid.",
+    );
+  }
+
+  await prisma.$transaction(async (transaction) => {
+    const user = await transaction.workspaceUser.findUnique({
+      where: { id: normalizedUserId },
+      select: {
+        id: true,
+        send_auth_otp_to_credencecraft_only: true,
+      },
+    });
+    if (!user) throw new WorkspaceUserServiceError("Workspace user not found.");
+    if (user.send_auth_otp_to_credencecraft_only === enabled) return;
+
+    await transaction.workspaceUser.update({
+      where: { id: user.id },
+      data: { send_auth_otp_to_credencecraft_only: enabled },
+    });
+    await transaction.platformAuditEvent.create({
+      data: {
+        platform_admin_id: admin.id,
+        action: "WORKSPACE_USER_AUTH_OTP_RECIPIENT_UPDATED",
+        entity_type: "WorkspaceUser",
+        entity_id: user.id,
+        details: {
+          sendAuthOtpToCredencecraftOnly: {
+            before: user.send_auth_otp_to_credencecraft_only,
+            after: enabled,
+          },
+        },
+      },
+    });
+  });
 }
 
 export async function deleteWorkspaceUser(userId: string) {
@@ -339,12 +385,6 @@ export async function updateWorkspaceUser(input: UpdateWorkspaceUserInput) {
   if (email && !isValidEmail(email)) {
     throw new WorkspaceUserServiceError("Enter a valid email address or leave it blank.");
   }
-  if (mobileNumber && !/^\+?[1-9]\d{7,14}$/.test(mobileNumber)) {
-    throw new WorkspaceUserServiceError(
-      "Enter a mobile number with country code or leave it blank.",
-    );
-  }
-
   try {
     await prisma.$transaction(async (transaction) => {
       const user = await transaction.workspaceUser.findUnique({
@@ -361,10 +401,24 @@ export async function updateWorkspaceUser(input: UpdateWorkspaceUserInput) {
       });
       if (!user) throw new WorkspaceUserServiceError("Workspace user not found.");
 
-      const normalizedMobileNumber = mobileNumber?.replace(/^\+/, "") ?? null;
+      const submittedMobileNumber = mobileNumber?.replace(/^\+/, "") ?? null;
       const emailChanged = email !== user.email;
       const profileNameChanged = profileName !== user.profile_name;
-      const mobileChanged = normalizedMobileNumber !== user.mobile_number;
+      const mobileChanged = submittedMobileNumber !== user.mobile_number;
+      if (
+        mobileChanged &&
+        submittedMobileNumber &&
+        !normalizeInternationalMobileNumber(submittedMobileNumber)
+      ) {
+        throw new WorkspaceUserServiceError(
+          "For India, enter country code +91 and a valid 10-digit mobile number.",
+        );
+      }
+      const normalizedMobileNumber = mobileChanged
+        ? submittedMobileNumber
+          ? normalizeInternationalMobileNumber(submittedMobileNumber)
+          : null
+        : user.mobile_number;
       const emailVerificationReset =
         input.resetEmailVerification || emailChanged || !email;
       const mobileVerificationReset =

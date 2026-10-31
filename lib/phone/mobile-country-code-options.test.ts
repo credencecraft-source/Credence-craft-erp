@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  getDisplayMobileNumber,
   MOBILE_COUNTRY_CODE_OPTIONS,
   splitStoredMobileNumber,
 } from "./mobile-country-code-options";
@@ -20,11 +21,37 @@ describe("mobile country-code options", () => {
     });
   });
 
+  it("shows the Indian country code separately from the 10-digit mobile number", () => {
+    expect(splitStoredMobileNumber("919194711099")).toEqual({
+      countryCode: "+91",
+      nationalNumber: "9194711099",
+    });
+  });
+
   it("keeps an unrecognized legacy number intact instead of guessing its code", () => {
     expect(splitStoredMobileNumber("9876543210")).toEqual({
       countryCode: "",
       nationalNumber: "9876543210",
     });
+  });
+
+  it("does not split malformed Indian mobile numbers as valid country-code numbers", () => {
+    expect(splitStoredMobileNumber("9191947110999")).toEqual({
+      countryCode: "",
+      nationalNumber: "9191947110999",
+    });
+  });
+
+  it("displays the national number after removing a duplicated Indian country code", () => {
+    expect(getDisplayMobileNumber("91919471110999")).toBe("9471110999");
+    expect(splitStoredMobileNumber("91919471110999")).toEqual({
+      countryCode: "+91",
+      nationalNumber: "9471110999",
+    });
+  });
+
+  it("does not display malformed long values as mobile numbers", () => {
+    expect(getDisplayMobileNumber("9191947110999")).toBe("");
   });
 
   it("offers the selected default in the shared code suggestions", () => {

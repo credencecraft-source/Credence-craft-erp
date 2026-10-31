@@ -35,12 +35,12 @@ describe("mobile email OTP route", () => {
     vi.clearAllMocks();
   });
 
-  it("validates mobile numbers before account lookup", async () => {
+  it("rejects Indian numbers with an invalid national number length before account lookup", async () => {
     const response = await post(
       new Request("http://localhost/api/auth/mobile-otp/email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "send", mobileNumber: "+919876543210" }),
+        body: JSON.stringify({ action: "send", mobileNumber: "9198765432100" }),
       }),
     );
 

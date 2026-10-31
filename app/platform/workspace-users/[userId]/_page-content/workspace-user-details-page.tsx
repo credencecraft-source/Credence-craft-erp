@@ -8,6 +8,7 @@ import {
   getWorkspaceUser,
   deleteWorkspaceUser,
   refreshWorkspaceUserEmailFromOrganization,
+  setWorkspaceUserAuthOtpRecipient,
   updateWorkspaceUser,
   WorkspaceUserServiceError,
   type UpdateWorkspaceUserInput,
@@ -83,6 +84,25 @@ export default async function WorkspaceUserDetailsPage({
     }
   }
 
+  async function saveAuthOtpRecipient(enabled: boolean) {
+    "use server";
+
+    try {
+      await setWorkspaceUserAuthOtpRecipient(workspaceUserId, enabled);
+      revalidatePath("/platform/workspace-users");
+      revalidatePath(`/platform/workspace-users/${encodeURIComponent(workspaceUserId)}`);
+      return { ok: true as const };
+    } catch (error) {
+      if (error instanceof WorkspaceUserServiceError) {
+        return { ok: false as const, error: error.message };
+      }
+      return {
+        ok: false as const,
+        error: "Unable to update the authentication OTP recipient. Please try again.",
+      };
+    }
+  }
+
   return (
     <Page className="max-w-5xl">
       <Section>
@@ -94,6 +114,8 @@ export default async function WorkspaceUserDetailsPage({
             profileName: user.profile_name,
             email: user.email,
             emailVerified: user.email ? user.email_verified : false,
+            sendAuthOtpToCredencecraftOnly:
+              user.send_auth_otp_to_credencecraft_only,
             mobileNumber: user.mobile_number,
             mobileVerified: Boolean(user.mobile_number && user.mobile_verified_at),
             createdAt: user.created_at.toLocaleString(),
@@ -109,6 +131,7 @@ export default async function WorkspaceUserDetailsPage({
           deleteError={query.error}
           saveWorkspaceUser={saveWorkspaceUser}
           refreshOrganizationEmail={refreshOrganizationEmail}
+          saveAuthOtpRecipient={saveAuthOtpRecipient}
         />
       </Section>
     </Page>

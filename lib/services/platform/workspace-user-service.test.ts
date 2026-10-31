@@ -66,6 +66,7 @@ import {
   deleteWorkspaceUser,
   listWorkspaceUsers,
   refreshWorkspaceUserEmailFromOrganization,
+  setWorkspaceUserAuthOtpRecipient,
   updateWorkspaceUser,
 } from "./workspace-user-service";
 
@@ -136,6 +137,7 @@ describe("platform workspace-user report service", () => {
       profile_name: "member",
       email: "member@example.com",
       email_verified: true,
+      send_auth_otp_to_credencecraft_only: false,
       mobile_number: "919876543210",
       mobile_verified_at: new Date("2026-10-01T00:00:00Z"),
     });
@@ -173,6 +175,42 @@ describe("platform workspace-user report service", () => {
         canDelete: true,
       }),
     ]);
+  });
+
+  it("saves and audits the per-user exclusive authentication OTP recipient setting", async () => {
+    findUniqueUserMock.mockResolvedValueOnce({
+      id: "user-1",
+      send_auth_otp_to_credencecraft_only: false,
+    });
+
+    await setWorkspaceUserAuthOtpRecipient(" user-1 ", true);
+
+    expect(updateUserMock).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: { send_auth_otp_to_credencecraft_only: true },
+    });
+    expect(platformAuditCreateMock).toHaveBeenCalledWith({
+      data: {
+        platform_admin_id: "platform-admin-1",
+        action: "WORKSPACE_USER_AUTH_OTP_RECIPIENT_UPDATED",
+        entity_type: "WorkspaceUser",
+        entity_id: "user-1",
+        details: {
+          sendAuthOtpToCredencecraftOnly: { before: false, after: true },
+        },
+      },
+    });
+  });
+
+  it("does not save the OTP recipient setting for a missing workspace user", async () => {
+    findUniqueUserMock.mockResolvedValueOnce(null);
+
+    await expect(
+      setWorkspaceUserAuthOtpRecipient("missing-user", true),
+    ).rejects.toThrow("Workspace user not found.");
+
+    expect(updateUserMock).not.toHaveBeenCalled();
+    expect(platformAuditCreateMock).not.toHaveBeenCalled();
   });
 
   it("deletes a workspace user only when there are no organization memberships", async () => {
@@ -390,6 +428,23 @@ describe("platform workspace-user report service", () => {
     ).rejects.toThrow("Enter a valid email address or leave it blank.");
 
     expect(transactionMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects Indian mobile numbers that do not have a 10-digit subscriber number", async () => {
+    await expect(
+      updateWorkspaceUser({
+        userId: "user-1",
+        fullName: "Workspace Member",
+        profileName: "member",
+        email: "member@example.com",
+        mobileNumber: "9198765432100",
+        resetEmailVerification: false,
+        resetMobileVerification: false,
+      }),
+    ).rejects.toThrow("10-digit mobile number");
+
+    expect(updateUserMock).not.toHaveBeenCalled();
+    expect(platformAuditCreateMock).not.toHaveBeenCalled();
   });
 
   it("rejects duplicate email addresses", async () => {

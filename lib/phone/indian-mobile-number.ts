@@ -1,4 +1,9 @@
 const INDIAN_MOBILE_PATTERN = /^91[6-9]\d{9}$/;
+const INDIAN_NATIONAL_MOBILE_PATTERN = /^[6-9]\d{9}$/;
+
+export function isValidIndianNationalMobileNumber(value: string) {
+  return INDIAN_NATIONAL_MOBILE_PATTERN.test(value);
+}
 
 export function getCanonicalIndianMobileNumber(value: string | null | undefined) {
   let digits = value?.trim().replace(/^p:/i, "").replace(/\D/g, "") ?? "";

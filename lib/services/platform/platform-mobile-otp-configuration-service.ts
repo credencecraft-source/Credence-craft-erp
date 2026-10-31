@@ -1,6 +1,7 @@
 import { decryptSecret, encryptSecret } from "@/lib/auth/secret-cryptography";
 import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
+import { normalizeInternationalMobileNumber } from "@/lib/phone/international-mobile-number";
 
 const CONFIGURATION_ID = "default";
 
@@ -187,8 +188,7 @@ export async function verifyPlatformMobileOtpAccessToken(accessToken: string) {
     return null;
   }
 
-  const mobileNumber = payload.message.trim().replace(/^\+/, "");
-  return /^\d{7,15}$/.test(mobileNumber) ? mobileNumber : null;
+  return normalizeInternationalMobileNumber(payload.message);
 }
 
 export async function savePlatformMobileOtpConfiguration(

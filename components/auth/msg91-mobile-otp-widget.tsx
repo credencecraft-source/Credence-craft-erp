@@ -4,6 +4,8 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import { isValidIndianNationalMobileNumber } from "@/lib/phone/indian-mobile-number";
+import { isValidInternationalMobileNumber } from "@/lib/phone/international-mobile-number";
 import { MOBILE_COUNTRY_CODE_OPTIONS } from "@/lib/phone/mobile-country-code-options";
 
 type WidgetCallback = (data: unknown) => void;
@@ -192,14 +194,31 @@ export default function Msg91MobileOtpWidget({
   async function sendOtp() {
     const dialCode = normalizeMobileNumber(countryCode);
     const nationalNumber = normalizeMobileNumber(mobileNumber);
-    if (!/^\d{1,4}$/.test(dialCode) || !/^\d{6,14}$/.test(nationalNumber)) {
+    if (!/^\d{1,4}$/.test(dialCode)) {
       setMessage("Enter a valid country code and mobile number.");
       return;
     }
 
+    if (
+      dialCode === "91"
+        ? !isValidIndianNationalMobileNumber(nationalNumber)
+        : !/^\d{6,14}$/.test(nationalNumber)
+    ) {
+      setMessage(
+        dialCode === "91"
+          ? "Enter exactly 10 digits for an Indian mobile number."
+          : "Enter a valid mobile number for the selected country.",
+      );
+      return;
+    }
+
     const identifier = `${dialCode}${nationalNumber}`;
-    if (!/^\d{7,15}$/.test(identifier)) {
-      setMessage("The country code and mobile number must contain 7 to 15 digits.");
+    if (!isValidInternationalMobileNumber(identifier)) {
+      setMessage(
+        dialCode === "91"
+          ? "Enter a 10-digit Indian mobile number after country code +91."
+          : "Enter a valid international mobile number.",
+      );
       return;
     }
     setBusy(true);
@@ -346,11 +365,21 @@ export default function Msg91MobileOtpWidget({
           inputMode="tel"
           autoComplete="tel-national"
           value={mobileNumber}
-          onChange={(event) =>
-            setMobileNumber(event.target.value.replace(/\D/g, "").slice(0, 14))
-          }
+          onChange={(event) => setMobileNumber(event.target.value.replace(/\D/g, ""))}
+          onPaste={(event) => {
+            if (normalizeMobileNumber(countryCode) !== "91") return;
+            event.preventDefault();
+            const pastedDigits = normalizeMobileNumber(
+              event.clipboardData.getData("text"),
+            );
+            if (pastedDigits.length > 10) {
+              setMessage("Paste only the 10-digit mobile number, without +91.");
+              return;
+            }
+            setMobileNumber(pastedDigits);
+          }}
           placeholder="98765 43210"
-          maxLength={14}
+          maxLength={normalizeMobileNumber(countryCode) === "91" ? 10 : 14}
           disabled={otpSent || busy}
           className="min-h-9 bg-white px-2.5 py-2 text-sm"
         />

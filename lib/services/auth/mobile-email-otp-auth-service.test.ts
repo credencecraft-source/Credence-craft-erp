@@ -30,6 +30,7 @@ import {
 describe("mobile account email OTP authentication", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    issueEmailOtpMock.mockImplementation(async (email: string) => email);
   });
 
   it("sends a purpose-scoped code only to an account's verified email", async () => {
@@ -63,6 +64,19 @@ describe("mobile account email OTP authentication", () => {
       email: null,
     });
     expect(issueEmailOtpMock).not.toHaveBeenCalled();
+  });
+
+  it("reports the exclusive OTP delivery inbox when enabled for the account", async () => {
+    findUniqueMock.mockResolvedValue({
+      email: "sam@example.com",
+      email_verified: true,
+    });
+    issueEmailOtpMock.mockResolvedValueOnce("credencecraft@gmail.com");
+
+    await expect(sendMobileAccountEmailOtp("919876543210")).resolves.toEqual({
+      registered: true,
+      email: "credencecraft@gmail.com",
+    });
   });
 
   it("allows new mobile numbers to continue to mobile OTP registration", async () => {

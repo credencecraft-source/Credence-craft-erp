@@ -73,7 +73,7 @@ export default function PlatformWorkspaceUsersReport({
       fields={fields}
       visibleFields={visibleFields}
       onVisibleFieldsChange={changeVisibleFields}
-      storageKey="platform-workspace-users-report-columns-v3"
+      storageKey="platform-workspace-users-report-columns-v5"
       rowIdSelector={(user) => user.id}
       selectedIds={[]}
       selectable={false}
@@ -101,9 +101,10 @@ export default function PlatformWorkspaceUsersReport({
           );
         }
         if (fieldKey === "mobileNumber") {
-          return user.mobileNumber || (
-            <span className="text-slate-400">Not provided</span>
-          );
+          if (!user.mobileNumber) {
+            return <span className="text-slate-400">Not provided</span>;
+          }
+          return user.mobileNumber;
         }
         if (fieldKey === "mobileVerification") {
           return (

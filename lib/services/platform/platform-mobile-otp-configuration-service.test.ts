@@ -350,4 +350,26 @@ describe("platform mobile OTP configuration service", () => {
       verifyPlatformMobileOtpAccessToken("header.payload.signature"),
     ).resolves.toBeNull();
   });
+
+  it("rejects MSG91 India numbers unless they contain a 10-digit subscriber number", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ type: "success", message: "9198765432100" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    findUniqueMock.mockResolvedValue({
+      id: "default",
+      widget_id: "widget-123",
+      token_auth_encrypted: encryptSecret("client-token"),
+      auth_key_encrypted: encryptSecret("server-key"),
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    await expect(
+      verifyPlatformMobileOtpAccessToken("header.payload.signature"),
+    ).resolves.toBeNull();
+  });
 });

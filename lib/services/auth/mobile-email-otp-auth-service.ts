@@ -17,8 +17,11 @@ export async function sendMobileAccountEmailOtp(mobileNumber: string) {
     return { registered: true as const, email: null };
   }
 
-  await issueEmailOtp(user.email, MOBILE_LOGIN_OTP_PURPOSE);
-  return { registered: true as const, email: user.email };
+  const deliveryEmail = await issueEmailOtp(
+    user.email,
+    MOBILE_LOGIN_OTP_PURPOSE,
+  );
+  return { registered: true as const, email: deliveryEmail };
 }
 
 export async function verifyMobileAccountEmailOtp(

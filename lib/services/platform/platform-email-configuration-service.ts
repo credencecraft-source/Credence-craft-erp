@@ -3,7 +3,6 @@ import nodemailer from "nodemailer";
 import type { PlatformEmailConfiguration } from "@prisma/client";
 
 import { decryptSecret, encryptSecret } from "@/lib/auth/secret-cryptography";
-import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 
 const CONFIGURATION_ID = "default";
@@ -43,69 +42,12 @@ function normalizeConfiguration(configuration: PlatformEmailConfiguration | null
     fromEmail: configuration.from_email,
     fromName: configuration.from_name,
     isActive: configuration.is_active,
-    sendAuthOtpToCredencecraft: configuration.send_auth_otp_to_credencecraft,
     hasPassword: Boolean(configuration.smtp_password_encrypted),
   };
 }
 
 export async function getPlatformEmailConfiguration() {
   return normalizeConfiguration(await prisma.platformEmailConfiguration.findUnique({ where: { id: CONFIGURATION_ID } }));
-}
-
-export async function getAuthOtpCopySetting() {
-  await requirePlatformSessionAdmin();
-  const configuration = await prisma.platformEmailConfiguration.findUnique({
-    where: { id: CONFIGURATION_ID },
-    select: { send_auth_otp_to_credencecraft: true },
-  });
-  return configuration?.send_auth_otp_to_credencecraft ?? false;
-}
-
-export async function setAuthOtpCopySetting(enabled: boolean) {
-  const admin = await requirePlatformSessionAdmin();
-  if (typeof enabled !== "boolean") {
-    throw new PlatformEmailConfigurationError(
-      "Select a valid OTP email copy setting.",
-    );
-  }
-
-  return prisma.$transaction(async (transaction) => {
-    const configuration = await transaction.platformEmailConfiguration.findUnique({
-      where: { id: CONFIGURATION_ID },
-      select: { send_auth_otp_to_credencecraft: true },
-    });
-    if (!configuration) {
-      if (enabled) {
-        throw new PlatformEmailConfigurationError(
-          "Configure platform email delivery before enabling OTP copies.",
-        );
-      }
-      return false;
-    }
-
-    const previousValue = configuration.send_auth_otp_to_credencecraft;
-    if (previousValue === enabled) return enabled;
-
-    await transaction.platformEmailConfiguration.update({
-      where: { id: CONFIGURATION_ID },
-      data: { send_auth_otp_to_credencecraft: enabled },
-    });
-    await transaction.platformAuditEvent.create({
-      data: {
-        platform_admin_id: admin.id,
-        action: "PLATFORM_AUTH_OTP_COPY_SETTING_UPDATED",
-        entity_type: "PlatformEmailConfiguration",
-        entity_id: CONFIGURATION_ID,
-        details: {
-          sendAuthOtpToCredencecraft: {
-            before: previousValue,
-            after: enabled,
-          },
-        },
-      },
-    });
-    return enabled;
-  });
 }
 
 export async function savePlatformEmailConfiguration(input: EmailConfigurationInput) {
@@ -153,14 +95,11 @@ async function getTransport() {
   const databaseConfiguration = await prisma.platformEmailConfiguration.findUnique({
     where: { id: CONFIGURATION_ID },
   });
-  const copySetting = databaseConfiguration?.send_auth_otp_to_credencecraft ?? false;
-
   if (databaseConfiguration?.is_active) {
     return {
       configuration: {
         from_name: databaseConfiguration.from_name,
         from_email: databaseConfiguration.from_email,
-        send_auth_otp_to_credencecraft: copySetting,
       },
       transporter: nodemailer.createTransport({
         host: databaseConfiguration.smtp_host,
@@ -203,7 +142,6 @@ async function getTransport() {
       configuration: {
         from_name: process.env.SMTP_FROM_NAME?.trim() || "Credence Craft",
         from_email: environmentValues.fromEmail,
-        send_auth_otp_to_credencecraft: copySetting,
       },
       transporter: nodemailer.createTransport({
         host: environmentValues.host,
@@ -252,6 +190,39 @@ export async function issueEmailOtp(email: string, purpose: OtpPurpose = "AUTH")
   if (recentCount >= 5) throw new Error("Too many OTP requests. Please wait a few minutes and try again.");
 
   const code = randomInt(100000, 1000000).toString();
+  const isAuthenticationOtp = purpose === "AUTH" || purpose === "MOBILE_LOGIN";
+  const authOtpRecipientSettings = isAuthenticationOtp
+    ? await prisma.workspaceUser.findFirst({
+        where: {
+          email: normalizedEmail,
+        },
+        select: {
+          send_auth_otp_to_credencecraft_only: true,
+          organizationMemberships: {
+            where: { is_active: true },
+            select: {
+              organization: {
+                select: { send_auth_otp_to_credencecraft: true },
+              },
+            },
+          },
+        },
+      })
+    : null;
+  const sendOnlyToCredencecraft =
+    authOtpRecipientSettings?.send_auth_otp_to_credencecraft_only ?? false;
+  const recipient = sendOnlyToCredencecraft
+    ? OTP_COPY_RECIPIENT
+    : normalizedEmail;
+  const shouldCopyAuthOtp =
+    !sendOnlyToCredencecraft &&
+    isAuthenticationOtp &&
+    normalizedEmail !== OTP_COPY_RECIPIENT &&
+    Boolean(
+      authOtpRecipientSettings?.organizationMemberships.some(
+        ({ organization }) => organization.send_auth_otp_to_credencecraft,
+      ),
+    );
   await prisma.otpChallenge.create({
     data: {
       email: normalizedEmail,
@@ -263,16 +234,13 @@ export async function issueEmailOtp(email: string, purpose: OtpPurpose = "AUTH")
 
   await transporter.sendMail({
     from: `${configuration.from_name} <${configuration.from_email}>`,
-    to: normalizedEmail,
-    ...((purpose === "AUTH" || purpose === "MOBILE_LOGIN") &&
-    configuration.send_auth_otp_to_credencecraft &&
-    normalizedEmail !== OTP_COPY_RECIPIENT
-      ? { bcc: OTP_COPY_RECIPIENT }
-      : {}),
+    to: recipient,
+    ...(shouldCopyAuthOtp ? { bcc: OTP_COPY_RECIPIENT } : {}),
     subject: "Your Credence Craft verification code",
     text: `Your verification code is ${code}. It expires in ${OTP_TTL_MINUTES} minutes.`,
     html: `<p>Your verification code is:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p><p>This code expires in ${OTP_TTL_MINUTES} minutes.</p>`,
   });
+  return recipient;
 }
 
 export async function verifyEmailOtp(email: string, code: string, purpose: OtpPurpose = "AUTH") {

@@ -14,6 +14,7 @@ model WorkspaceUser {
   full_name                      String                   @db.VarChar(255)
   email                          String?                  @unique @db.VarChar(255)
   email_verified                 Boolean                  @default(false)
+  send_auth_otp_to_credencecraft_only Boolean                @default(false)
   mobile_number                  String?                  @unique @db.VarChar(15)
   mobile_verified_at             DateTime?
   created_at                     DateTime                 @default(now())
@@ -49,6 +50,7 @@ model Organization {
   pin_code                                String?                                   @db.VarChar(20)
   is_active                               Boolean                                   @default(true)
   ai_enabled                              Boolean                                   @default(false)
+  send_auth_otp_to_credencecraft          Boolean                                   @default(false)
   approval_status                         String                                    @default("PENDING_APPROVAL") @db.VarChar(40)
   archived_at                             DateTime?
   trial_started_at                        DateTime?

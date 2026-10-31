@@ -9,6 +9,7 @@ import {
   sendMobileAccountEmailOtp,
   verifyMobileAccountEmailOtp,
 } from "@/lib/services/auth/mobile-email-otp-auth-service";
+import { normalizeInternationalMobileNumber } from "@/lib/phone/international-mobile-number";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -43,21 +44,24 @@ export async function POST(request: Request) {
     );
   }
 
-  if (
-    !isRecord(body) ||
-    typeof body.mobileNumber !== "string" ||
-    !/^\d{7,15}$/.test(body.mobileNumber) ||
-    (body.action !== "send" && body.action !== "verify")
-  ) {
+  if (!isRecord(body) || typeof body.mobileNumber !== "string" ||
+    (body.action !== "send" && body.action !== "verify")) {
     return NextResponse.json(
       { error: "Enter a valid mobile number." },
+      { status: 400 },
+    );
+  }
+  const mobileNumber = normalizeInternationalMobileNumber(body.mobileNumber);
+  if (!mobileNumber) {
+    return NextResponse.json(
+      { error: "For India, enter country code +91 and a valid 10-digit mobile number." },
       { status: 400 },
     );
   }
 
   try {
     if (body.action === "send") {
-      const account = await sendMobileAccountEmailOtp(body.mobileNumber);
+      const account = await sendMobileAccountEmailOtp(mobileNumber);
       return NextResponse.json({
         ok: true,
         registered: account.registered,
@@ -76,7 +80,7 @@ export async function POST(request: Request) {
     }
 
     const user = await verifyMobileAccountEmailOtp(
-      body.mobileNumber,
+      mobileNumber,
       body.otp,
     );
     if (!user) {

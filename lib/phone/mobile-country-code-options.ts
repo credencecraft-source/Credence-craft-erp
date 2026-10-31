@@ -1,3 +1,5 @@
+import { isValidInternationalMobileNumber } from "./international-mobile-number";
+
 export const MOBILE_COUNTRY_CODE_OPTIONS = [
   { code: "+91", country: "India" },
   { code: "+1", country: "United States / Canada" },
@@ -32,9 +34,14 @@ export const MOBILE_COUNTRY_CODE_OPTIONS = [
 ] as const;
 
 export function splitStoredMobileNumber(mobileNumber: string | null) {
-  const digits = mobileNumber?.replace(/\D/g, "") ?? "";
+  let digits = mobileNumber?.replace(/\D/g, "") ?? "";
   if (!digits) {
     return { countryCode: "+91", nationalNumber: "" };
+  }
+
+  const duplicatedIndianCode = digits.match(/^9191([6-9]\d{9})$/);
+  if (duplicatedIndianCode) {
+    digits = `91${duplicatedIndianCode[1]}`;
   }
 
   if (digits.length >= 11) {
@@ -45,6 +52,7 @@ export function splitStoredMobileNumber(mobileNumber: string | null) {
         const nationalLength = digits.length - codeDigits.length;
         return (
           digits.startsWith(codeDigits) &&
+          (codeDigits !== "91" || isValidInternationalMobileNumber(digits)) &&
           nationalLength >= 6 &&
           nationalLength <= 14
         );
@@ -59,4 +67,12 @@ export function splitStoredMobileNumber(mobileNumber: string | null) {
   }
 
   return { countryCode: "", nationalNumber: digits };
+}
+
+export function getDisplayMobileNumber(mobileNumber: string | null) {
+  const digits = mobileNumber?.replace(/\D/g, "") ?? "";
+  if (!digits) return "";
+  const { countryCode, nationalNumber } = splitStoredMobileNumber(mobileNumber);
+  if (countryCode) return nationalNumber;
+  return digits.length === 10 ? digits : "";
 }
