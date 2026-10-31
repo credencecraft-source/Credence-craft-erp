@@ -79,6 +79,11 @@ describe("contact master validation", () => {
       .toThrow(/must belong to separate contacts/);
   });
 
+  it("allows partial role updates to retain conflicting roles for removal", () => {
+    expect(parseContactInput(baseContact({ code: undefined, roles: ["AGENT", "DISTRIBUTOR"] }), true).roles)
+      .toEqual(["AGENT", "DISTRIBUTOR"]);
+  });
+
   it("allows non-conflicting roles alongside one restricted role", () => {
     expect(parseContactInput(baseContact({ roles: ["CUSTOMER", "AGENT"] })).roles)
       .toEqual(["CUSTOMER", "AGENT"]);

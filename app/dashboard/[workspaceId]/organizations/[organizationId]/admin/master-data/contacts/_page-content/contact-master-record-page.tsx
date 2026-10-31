@@ -972,7 +972,7 @@ export default function ContactMasterRecordPage({
                           ? [...form.roles.filter((item) => item !== role.code), role.code]
                           : form.roles.filter((item) => item !== role.code);
                         const roleCombinationError = getContactRoleCombinationError(nextRoles);
-                        if (roleCombinationError) {
+                        if (checked && roleCombinationError) {
                           setError(roleCombinationError);
                           return;
                         }

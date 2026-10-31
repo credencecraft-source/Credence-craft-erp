@@ -262,7 +262,7 @@ export function parseContactInput(value: unknown, partial = false): Partial<Cont
     }
     if (new Set(parsedRoles).size !== parsedRoles.length) throw new ContactValidationError("Duplicate contact roles are not allowed.", ["roles"]);
     const roleCombinationError = getContactRoleCombinationError(parsedRoles);
-    if (roleCombinationError) {
+    if (!partial && roleCombinationError) {
       throw new ContactValidationError(roleCombinationError, ["roles"]);
     }
     output.roles = parsedRoles;

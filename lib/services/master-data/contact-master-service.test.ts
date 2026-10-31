@@ -36,8 +36,8 @@ const mocks = vi.hoisted(() => {
     auditEvent: { createMany: vi.fn() },
     masterVendor: { findFirst: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
     masterBuyer: { findFirst: vi.fn(), count: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
-    purchaseOrder: { findMany: vi.fn() },
-    merchandisingOrder: { findMany: vi.fn() },
+    purchaseOrder: { findMany: vi.fn(), count: vi.fn() },
+    merchandisingOrder: { findMany: vi.fn(), count: vi.fn() },
   };
   const createAuditEvent = vi.fn();
   return {
@@ -87,6 +87,8 @@ describe("contact master numbering", () => {
     mocks.tx.masterVendor.findFirst.mockResolvedValue(null);
     mocks.tx.masterBuyer.findFirst.mockResolvedValue(null);
     mocks.tx.masterBuyer.count.mockResolvedValue(0);
+    mocks.tx.purchaseOrder.count.mockResolvedValue(0);
+    mocks.tx.merchandisingOrder.count.mockResolvedValue(0);
     mocks.tx.contact.create.mockImplementation((args) => {
       const created = args.data.code;
       mocks.tx.contact.findFirst.mockImplementation(() => ({
@@ -175,6 +177,41 @@ describe("contact master numbering", () => {
       expect.any(Function),
       { maxWait: 10000, timeout: 30000 },
     );
+  });
+
+  it("allows removing a role from an already-conflicting contact", async () => {
+    mocks.tx.contactRoleDefinition.findMany.mockResolvedValue([
+      { code: "DISTRIBUTOR" },
+      { code: "DEALER" },
+    ]);
+    mocks.tx.contactRoleAssignment.findMany.mockResolvedValue([
+      { role_code: "AGENT", is_active: true },
+      { role_code: "DISTRIBUTOR", is_active: true },
+      { role_code: "DEALER", is_active: true },
+    ]);
+
+    await updateContact("org-1", "user-1", "contact-CT1", {
+      roles: ["DISTRIBUTOR", "DEALER"],
+    });
+
+    expect(mocks.tx.contactRoleAssignment.deleteMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-1", contact_id: "contact-CT1", role_code: "AGENT" },
+    });
+  });
+
+  it("rejects assigning a conflicting restricted role during an update", async () => {
+    mocks.tx.contactRoleDefinition.findMany.mockResolvedValue([
+      { code: "AGENT" },
+      { code: "DISTRIBUTOR" },
+    ]);
+    mocks.tx.contactRoleAssignment.findMany.mockResolvedValue([
+      { role_code: "AGENT", is_active: true },
+    ]);
+
+    await expect(updateContact("org-1", "user-1", "contact-CT1", {
+      roles: ["AGENT", "DISTRIBUTOR"],
+    })).rejects.toThrow(/must belong to separate contacts/);
+    expect(mocks.tx.contactRoleAssignment.createMany).not.toHaveBeenCalled();
   });
 
   it("lists only organization-scoped contact names and IDs for lookup", async () => {

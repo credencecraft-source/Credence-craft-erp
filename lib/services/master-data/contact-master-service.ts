@@ -11,6 +11,7 @@ import { createAuditEvent } from "@/lib/services/organizations/audit-event-servi
 
 import {
   ContactValidationError,
+  getContactRoleCombinationError,
   normalizeAndValidateGstin,
   parseContactInput,
   type ContactInput,
@@ -148,6 +149,18 @@ async function saveDetails(
       where: { organization_id: organizationId, contact_id: contactId },
       select: { role_code: true, is_active: true },
     });
+    const activeRoleCodes = new Set(
+      currentAssignments.filter((assignment) => assignment.is_active).map((assignment) => assignment.role_code),
+    );
+    const addsRestrictedRole = input.roles.some((roleCode) =>
+      ["AGENT", "DISTRIBUTOR", "DEALER"].includes(roleCode) && !activeRoleCodes.has(roleCode),
+    );
+    const roleCombinationError = addsRestrictedRole
+      ? getContactRoleCombinationError(input.roles)
+      : null;
+    if (roleCombinationError) {
+      throw new ContactValidationError(roleCombinationError, ["roles"]);
+    }
     const currentRoleCodes = new Set(currentAssignments.map((assignment) => assignment.role_code));
     const requestedRoleCodes = new Set(input.roles);
     for (const assignment of currentAssignments) {
