@@ -899,16 +899,48 @@ export async function createDistributionMasterQuotations(
         total_quantity: true,
         subtotal: true,
         vendor: { select: { contact_id: true } },
+        orderForms: {
+          select: {
+            contact_id: true,
+            vendor_id: true,
+          },
+        },
       },
     });
     if (children.length !== quotationIds.length) {
       throw new Error("One or more selected quotations are unavailable or already grouped.");
     }
     const orderedChildren = quotationIds.map((id) => children.find((child) => child.id === id)!);
+    const sourceVendorIds = [...new Set(
+      orderedChildren.flatMap((quotation) =>
+        (quotation.orderForms ?? []).map((orderForm) => orderForm.vendor_id).filter((id): id is string => Boolean(id)),
+      ),
+    )];
+    const sourceVendors = sourceVendorIds.length > 0
+      ? await transaction.masterVendor.findMany({
+        where: { organization_id: organizationId, id: { in: sourceVendorIds } },
+        select: { id: true, contact_id: true },
+      })
+      : [];
+    const sourceVendorContactById = new Map(
+      sourceVendors.filter((vendor) => vendor.contact_id).map((vendor) => [vendor.id, vendor.contact_id!]),
+    );
+    const sourceContactIdsByQuotation = new Map(orderedChildren.map((quotation) => [
+      quotation.id,
+      [...new Set([
+        quotation.vendor?.contact_id,
+        ...(quotation.orderForms ?? []).flatMap((orderForm) => [
+          orderForm.contact_id,
+          orderForm.vendor_id ? sourceVendorContactById.get(orderForm.vendor_id) : null,
+        ]),
+      ].filter((id): id is string => Boolean(id)))],
+    ]));
     const quotationContactIds = [...new Set(
-      orderedChildren
-        .map((quotation) => quotation.vendor?.contact_id || selectedParty?.contactId)
-        .filter((id): id is string => Boolean(id)),
+      selectedParty
+        ? orderedChildren
+            .map((quotation) => quotation.vendor?.contact_id || selectedParty.contactId)
+            .filter((id): id is string => Boolean(id))
+        : [...sourceContactIdsByQuotation.values()].flat(),
     )];
     const dealerContactIds = quotationContactIds.length > 0
       ? (await transaction.contactRoleAssignment.findMany({
@@ -960,10 +992,19 @@ export async function createDistributionMasterQuotations(
       if (alwaysBillToDistributor) billToDistributorByDealer.set(dealerId, mapping.distributor_id);
     }
 
+    const activeDealerIds = new Set(dealerContactIds);
+    const dealerIdsByQuotation = new Map(
+      orderedChildren.map((quotation) => [
+        quotation.id,
+        (sourceContactIdsByQuotation.get(quotation.id) ?? []).filter((contactId) => activeDealerIds.has(contactId)),
+      ]),
+    );
+
     if (
       !selectedParty &&
       orderedChildren.some((quotation) =>
-        !quotation.vendor?.contact_id || !billToDistributorByDealer.has(quotation.vendor.contact_id),
+        dealerIdsByQuotation.get(quotation.id)?.length !== 1 ||
+        !billToDistributorByDealer.has(dealerIdsByQuotation.get(quotation.id)?.[0] ?? ""),
       )
     ) {
       return null;
@@ -1006,7 +1047,9 @@ export async function createDistributionMasterQuotations(
       quotations: typeof orderedChildren;
     }>();
     for (const quotation of orderedChildren) {
-      const dealerId = quotation.vendor?.contact_id || selectedParty?.contactId;
+      const dealerId = selectedParty
+        ? quotation.vendor?.contact_id || selectedParty.contactId
+        : dealerIdsByQuotation.get(quotation.id)?.[0];
       const distributorId = dealerId ? billToDistributorByDealer.get(dealerId) : undefined;
       let groupParty = selectedParty;
       if (distributorId) {
