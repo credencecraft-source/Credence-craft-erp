@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     masterVendor: { findFirst: vi.fn(), findMany: vi.fn() },
     distributionOrderForm: { findMany: vi.fn(), updateMany: vi.fn() },
     contactDistributorDealerAssignment: { findMany: vi.fn() },
+    contactRoleAssignment: { findMany: vi.fn() },
     contactRoleSetting: { findMany: vi.fn() },
     distributionQuotationLine: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     distributionQuotation: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
@@ -114,6 +115,7 @@ describe("distribution quotation persistence", () => {
     mocks.transaction.distributionOrderForm.findMany.mockResolvedValue([]);
     mocks.transaction.distributionOrderForm.updateMany.mockResolvedValue({ count: 0 });
     mocks.transaction.contactDistributorDealerAssignment.findMany.mockResolvedValue([]);
+    mocks.transaction.contactRoleAssignment.findMany.mockResolvedValue([]);
     mocks.transaction.contactRoleSetting.findMany.mockResolvedValue([]);
     mocks.transaction.distributionQuotationLine.findFirst.mockResolvedValue(null);
     mocks.transaction.distributionQuotationLine.findMany.mockResolvedValue([]);
@@ -714,6 +716,7 @@ describe("distribution quotation persistence", () => {
     mocks.transaction.masterVendor.findFirst
       .mockResolvedValueOnce({ id: "dealer-vendor", vendor: "DEALER VENDOR", contact_id: "dealer-contact" });
     mocks.transaction.distributionQuotation.findMany.mockResolvedValue([child]);
+    mocks.transaction.contactRoleAssignment.findMany.mockResolvedValue([{ contact_id: "dealer-contact" }]);
     mocks.transaction.contactDistributorDealerAssignment.findMany.mockResolvedValue([{
       dealer_id: "dealer-contact",
       distributor_id: "distributor-contact",
@@ -754,6 +757,16 @@ describe("distribution quotation persistence", () => {
       },
       select: { dealer_id: true, distributor_id: true },
     });
+    expect(mocks.transaction.contactRoleAssignment.findMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: "internal-org-1",
+        contact_id: { in: ["dealer-contact"] },
+        role_code: "DEALER",
+        is_active: true,
+        role: { is_active: true },
+      },
+      select: { contact_id: true },
+    });
     expect(mocks.transaction.contactRoleSetting.findMany).toHaveBeenCalledWith({
       where: {
         organization_id: "internal-org-1",
@@ -779,6 +792,165 @@ describe("distribution quotation persistence", () => {
     }), mocks.transaction);
   });
 
+  it("automatically creates against the mapped Distributor when the Dealer role and setting are active", async () => {
+    const child = {
+      id: "quote-auto",
+      quotation_no: "QT-AUTO",
+      order_no: "ORD-AUTO",
+      total_quantity: 30,
+      subtotal: new Prisma.Decimal("12.50"),
+      vendor: { contact_id: "dealer-contact" },
+    };
+    const master = {
+      ...createdQuotation,
+      id: "master-auto",
+      vendor_id: null,
+      customer: "DISTRIBUTOR CONTACT",
+      quotation_no: "MQT-AUTO",
+      mode: "MASTER",
+      total_quantity: 30,
+      subtotal: new Prisma.Decimal("12.50"),
+      lines: [],
+    };
+    mocks.transaction.distributionQuotation.findMany.mockResolvedValue([child]);
+    mocks.transaction.contactRoleAssignment.findMany.mockResolvedValue([{ contact_id: "dealer-contact" }]);
+    mocks.transaction.contactDistributorDealerAssignment.findMany.mockResolvedValue([{
+      dealer_id: "dealer-contact",
+      distributor_id: "distributor-contact",
+    }]);
+    mocks.transaction.contactRoleSetting.findMany.mockResolvedValue([{
+      contact_id: "distributor-contact",
+      mapped_contact_id: "dealer-contact",
+      always_bill_to_distributor: true,
+      use_common_settings: false,
+    }]);
+    mocks.transaction.contact.findMany.mockResolvedValue([{
+      id: "distributor-contact",
+      legal_name: "DISTRIBUTOR LEGAL NAME",
+      display_name: "DISTRIBUTOR CONTACT",
+    }]);
+    mocks.transaction.distributionQuotation.create.mockResolvedValue(master);
+    mocks.transaction.distributionQuotation.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(createDistributionMasterQuotations(
+      "internal-org-1",
+      "user-1",
+      ["quote-auto"],
+      null,
+    )).resolves.toMatchObject([{ id: "master-auto", customer: "DISTRIBUTOR CONTACT", mode: "MASTER" }]);
+
+    expect(mocks.transaction.contactRoleAssignment.findMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: "internal-org-1",
+        contact_id: { in: ["dealer-contact"] },
+        role_code: "DEALER",
+        is_active: true,
+        role: { is_active: true },
+      },
+      select: { contact_id: true },
+    });
+    expect(mocks.transaction.distributionQuotation.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ vendor_id: null, customer: "DISTRIBUTOR CONTACT" }),
+    }));
+  });
+
+  it("requires counterparty selection when the Distributor setting is disabled", async () => {
+    mocks.transaction.distributionQuotation.findMany.mockResolvedValue([{
+      id: "quote-disabled",
+      quotation_no: "QT-DISABLED",
+      order_no: "ORD-DISABLED",
+      total_quantity: 10,
+      subtotal: new Prisma.Decimal("10"),
+      vendor: { contact_id: "dealer-contact" },
+    }]);
+    mocks.transaction.contactRoleAssignment.findMany.mockResolvedValue([{ contact_id: "dealer-contact" }]);
+    mocks.transaction.contactDistributorDealerAssignment.findMany.mockResolvedValue([{
+      dealer_id: "dealer-contact",
+      distributor_id: "distributor-contact",
+    }]);
+    mocks.transaction.contactRoleSetting.findMany.mockResolvedValue([{
+      contact_id: "distributor-contact",
+      mapped_contact_id: "dealer-contact",
+      always_bill_to_distributor: false,
+      use_common_settings: false,
+    }]);
+
+    await expect(createDistributionMasterQuotations(
+      "internal-org-1",
+      "user-1",
+      ["quote-disabled"],
+      null,
+    )).resolves.toBeNull();
+    expect(mocks.transaction.distributionQuotation.create).not.toHaveBeenCalled();
+  });
+
+  it("requires counterparty selection when the Dealer has no mapped Distributor", async () => {
+    mocks.transaction.distributionQuotation.findMany.mockResolvedValue([{
+      id: "quote-unmapped",
+      quotation_no: "QT-UNMAPPED",
+      order_no: "ORD-UNMAPPED",
+      total_quantity: 10,
+      subtotal: new Prisma.Decimal("10"),
+      vendor: { contact_id: "dealer-contact" },
+    }]);
+    mocks.transaction.contactRoleAssignment.findMany.mockResolvedValue([{ contact_id: "dealer-contact" }]);
+
+    await expect(createDistributionMasterQuotations(
+      "internal-org-1",
+      "user-1",
+      ["quote-unmapped"],
+      null,
+    )).resolves.toBeNull();
+    expect(mocks.transaction.contactRoleSetting.findMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.distributionQuotation.create).not.toHaveBeenCalled();
+  });
+
+  it("does not automatically bill a non-Dealer contact through a matching assignment", async () => {
+    mocks.transaction.distributionQuotation.findMany.mockResolvedValue([{
+      id: "quote-non-dealer",
+      quotation_no: "QT-NON-DEALER",
+      order_no: "ORD-NON-DEALER",
+      total_quantity: 10,
+      subtotal: new Prisma.Decimal("10"),
+      vendor: { contact_id: "customer-contact" },
+    }]);
+    mocks.transaction.contactRoleAssignment.findMany.mockResolvedValue([]);
+
+    await expect(createDistributionMasterQuotations(
+      "internal-org-1",
+      "user-1",
+      ["quote-non-dealer"],
+      null,
+    )).resolves.toBeNull();
+    expect(mocks.transaction.contactDistributorDealerAssignment.findMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.distributionQuotation.create).not.toHaveBeenCalled();
+  });
+
+  it("does not use a cross-organization Dealer mapping for automatic billing", async () => {
+    mocks.transaction.distributionQuotation.findMany.mockResolvedValue([{
+      id: "quote-tenant",
+      quotation_no: "QT-TENANT",
+      order_no: "ORD-TENANT",
+      total_quantity: 10,
+      subtotal: new Prisma.Decimal("10"),
+      vendor: { contact_id: "dealer-contact" },
+    }]);
+    mocks.transaction.contactRoleAssignment.findMany.mockResolvedValue([{ contact_id: "dealer-contact" }]);
+
+    await expect(createDistributionMasterQuotations(
+      "internal-org-1",
+      "user-1",
+      ["quote-tenant"],
+      null,
+    )).resolves.toBeNull();
+
+    expect(mocks.transaction.contactDistributorDealerAssignment.findMany).toHaveBeenCalledWith({
+      where: { organization_id: "internal-org-1", dealer_id: { in: ["dealer-contact"] } },
+      select: { dealer_id: true, distributor_id: true },
+    });
+    expect(mocks.transaction.distributionQuotation.create).not.toHaveBeenCalled();
+  });
+
   it("creates separate sales orders for quotations billed to different Distributors", async () => {
     const children = [
       {
@@ -799,6 +971,10 @@ describe("distribution quotation persistence", () => {
       },
     ];
     mocks.transaction.distributionQuotation.findMany.mockResolvedValue(children);
+    mocks.transaction.contactRoleAssignment.findMany.mockResolvedValue([
+      { contact_id: "dealer-a" },
+      { contact_id: "dealer-b" },
+    ]);
     mocks.transaction.contactDistributorDealerAssignment.findMany.mockResolvedValue([
       { dealer_id: "dealer-a", distributor_id: "distributor-a" },
       { dealer_id: "dealer-b", distributor_id: "distributor-b" },
@@ -869,6 +1045,45 @@ describe("distribution quotation persistence", () => {
       2,
       expect.objectContaining({ where: expect.objectContaining({ id: { in: ["quote-b"] } }) }),
     );
+  });
+
+  it("does not apply Distributor billing to a manually selected non-Dealer contact", async () => {
+    mocks.transaction.masterVendor.findFirst.mockReset().mockResolvedValue({
+      id: "selected-vendor",
+      vendor: "SELECTED VENDOR",
+      contact_id: "customer-contact",
+    });
+    mocks.transaction.distributionQuotation.findMany.mockResolvedValue([{
+      id: "quote-non-dealer-selected",
+      quotation_no: "QT-NON-DEALER-SELECTED",
+      order_no: "ORD-NON-DEALER-SELECTED",
+      total_quantity: 10,
+      subtotal: new Prisma.Decimal("10"),
+      vendor: { contact_id: "customer-contact" },
+    }]);
+    mocks.transaction.contactDistributorDealerAssignment.findMany.mockResolvedValue([{
+      dealer_id: "customer-contact",
+      distributor_id: "distributor-contact",
+    }]);
+    mocks.transaction.contactRoleSetting.findMany.mockResolvedValue([{
+      contact_id: "distributor-contact",
+      mapped_contact_id: "customer-contact",
+      always_bill_to_distributor: true,
+      use_common_settings: false,
+    }]);
+
+    await createDistributionMasterQuotations(
+      "internal-org-1",
+      "user-1",
+      ["quote-non-dealer-selected"],
+      "selected-vendor",
+    );
+
+    expect(mocks.transaction.contactDistributorDealerAssignment.findMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.contactRoleSetting.findMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.distributionQuotation.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ vendor_id: "selected-vendor", customer: "SELECTED VENDOR" }),
+    }));
   });
 
   it("rejects a Contact Master contact from outside the organization", async () => {

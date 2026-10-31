@@ -89,22 +89,53 @@ describe("distribution master quotation API", () => {
     );
   });
 
-  it("requires exactly one vendor or Contact Master selection", async () => {
+  it("delegates automatic Distributor routing to the organization-scoped service", async () => {
     const response = await POST(post({
       organizationId: "public-org",
-      quotationIds: ["quote-1", "quote-2"],
+      quotationIds: ["quote-1"],
     }));
 
-    expect(response.status).toBe(400);
-    expect(mocks.createDistributionMasterQuotations).not.toHaveBeenCalled();
+    expect(response.status).toBe(201);
+    expect(mocks.createDistributionMasterQuotations).toHaveBeenCalledWith(
+      "internal-org-1",
+      "user-1",
+      ["quote-1"],
+      null,
+      null,
+    );
+  });
 
-    const bothResponse = await POST(post({
+  it("asks the client for a counterparty when automatic routing is not eligible", async () => {
+    mocks.createDistributionMasterQuotations.mockResolvedValueOnce(null);
+    const response = await POST(post({
+      organizationId: "public-org",
+      quotationIds: ["quote-1"],
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ requiresCounterpartySelection: true });
+  });
+
+  it("rejects simultaneous Vendor and Contact selections", async () => {
+    const response = await POST(post({
       organizationId: "public-org",
       quotationIds: ["quote-1"],
       vendorId: "vendor-1",
       contactId: "contact-1",
     }));
-    expect(bothResponse.status).toBe(400);
+
+    expect(response.status).toBe(400);
+    expect(mocks.createDistributionMasterQuotations).not.toHaveBeenCalled();
+  });
+
+  it("does not call the creation service when the user lacks organization access", async () => {
+    mocks.requireOrganizationContext.mockRejectedValueOnce(new Error("Access denied"));
+    const response = await POST(post({
+      organizationId: "foreign-public-org",
+      quotationIds: ["foreign-quote"],
+    }));
+
+    expect(response.status).toBe(400);
     expect(mocks.createDistributionMasterQuotations).not.toHaveBeenCalled();
   });
 });

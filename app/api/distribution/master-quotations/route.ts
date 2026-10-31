@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     }
     const vendorId = typeof body.vendorId === "string" && body.vendorId.trim() ? body.vendorId.trim() : null;
     const contactId = typeof body.contactId === "string" && body.contactId.trim() ? body.contactId.trim() : null;
-    if (Boolean(vendorId) === Boolean(contactId)) {
+    if (vendorId && contactId) {
       throw new Error("Select either a Vendor Master vendor or a Contact Master contact for the sales order.");
     }
     const quotations = await createDistributionMasterQuotations(
@@ -31,6 +31,9 @@ export async function POST(request: Request) {
       vendorId,
       contactId,
     );
+    if (!quotations) {
+      return NextResponse.json({ requiresCounterpartySelection: true });
+    }
     return NextResponse.json({ quotations }, { status: 201 });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {

@@ -179,10 +179,12 @@ export default function QuotationListPage() {
   );
   const selectionError = validateMasterQuotationChildSelection(selectedIds, validationQuotes);
 
-  async function createSalesOrder() {
-    const isContactSelection = selectedCounterparty.startsWith("contact:");
-    const counterpartyId = selectedCounterparty.slice(selectedCounterparty.indexOf(":") + 1);
-    if (!counterpartyId) {
+  async function createSalesOrder(tryAutomaticDistributorBilling = false) {
+    const isContactSelection = !tryAutomaticDistributorBilling && selectedCounterparty.startsWith("contact:");
+    const counterpartyId = tryAutomaticDistributorBilling
+      ? ""
+      : selectedCounterparty.slice(selectedCounterparty.indexOf(":") + 1);
+    if (!tryAutomaticDistributorBilling && !counterpartyId) {
       setError("Select a Vendor or Contact for the sales order.");
       return;
     }
@@ -195,11 +197,17 @@ export default function QuotationListPage() {
         body: JSON.stringify({
           organizationId,
           quotationIds: selectedIds,
-          vendorId: isContactSelection ? null : counterpartyId,
-          contactId: isContactSelection ? counterpartyId : null,
+          vendorId: tryAutomaticDistributorBilling || isContactSelection ? null : counterpartyId,
+          contactId: tryAutomaticDistributorBilling || !isContactSelection ? null : counterpartyId,
         }),
       });
       const data = await response.json().catch(() => null);
+      if (response.ok && tryAutomaticDistributorBilling && data?.requiresCounterpartySelection === true) {
+        setSelectedCounterparty("");
+        setShowAllContacts(false);
+        setIsSalesOrderModalOpen(true);
+        return;
+      }
       if (
         !response.ok ||
         !Array.isArray(data?.quotations) ||
@@ -334,7 +342,11 @@ export default function QuotationListPage() {
               title={selectionError || undefined}
               onClick={() => {
                 setError("");
-                setIsSalesOrderModalOpen(true);
+                if (selectedIds.length === 0) {
+                  setIsSalesOrderModalOpen(true);
+                  return;
+                }
+                void createSalesOrder(true);
               }}
             >
               {`Create Sales Order${selectedIds.length ? ` (${selectedIds.length})` : ""}`}
