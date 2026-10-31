@@ -71,6 +71,7 @@ interface ReportGridProps<T> {
   wrapCells?: boolean;
   compact?: boolean;
   displayMode?: "table" | "cards";
+  cardColumns?: 1 | 2 | 3;
   cardBadge?: (record: T) => ReactNode;
   toolbarActions?: ReactNode;
   onSearchQueryChange?: (query: string) => void;
@@ -125,6 +126,7 @@ function ReportGridImplementation<T>({
   wrapCells = false,
   compact = false,
   displayMode = "table",
+  cardColumns = 3,
   cardBadge,
   toolbarActions,
   onSearchQueryChange,
@@ -432,7 +434,13 @@ function ReportGridImplementation<T>({
                 ) : null}
               </div>
             ) : null}
-            <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <div className={`grid min-w-0 grid-cols-1 gap-4 ${
+              cardColumns === 1
+                ? ""
+                : cardColumns === 2
+                  ? "sm:grid-cols-2"
+                  : "sm:grid-cols-2 xl:grid-cols-3"
+            }`}>
               {filteredRecords.map((record) => {
                 const recordId = rowIdSelector(record);
                 const isSelected = selectedIdSet.has(recordId);

@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
-import { createDistributionMasterQuotation } from "@/lib/services/distribution/quotation-service";
+import { createDistributionMasterQuotations } from "@/lib/services/distribution/quotation-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function POST(request: Request) {
@@ -24,18 +24,18 @@ export async function POST(request: Request) {
     if (Boolean(vendorId) === Boolean(contactId)) {
       throw new Error("Select either a Vendor Master vendor or a Contact Master contact for the sales order.");
     }
-    const quotation = await createDistributionMasterQuotation(
+    const quotations = await createDistributionMasterQuotations(
       organization.id,
       user.id,
       body.quotationIds,
       vendorId,
       contactId,
     );
-    return NextResponse.json({ quotation }, { status: 201 });
+    return NextResponse.json({ quotations }, { status: 201 });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (["P2021", "P2022"].includes(error.code)) {
-        return NextResponse.json({ error: "Advance Booking quotations are unavailable until their database migration is deployed." }, { status: 503 });
+        return NextResponse.json({ error: "Sales Order creation is unavailable until the required database migrations are deployed." }, { status: 503 });
       }
       if (["P2002", "P2034"].includes(error.code)) {
         return NextResponse.json({ error: "Quotation data changed while saving. Reload and try again." }, { status: 409 });

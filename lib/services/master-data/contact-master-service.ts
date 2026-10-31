@@ -403,6 +403,14 @@ const contactSelect = {
   created_at: true,
   updated_at: true,
   roles: { where: { is_active: true }, select: { role_code: true }, orderBy: { role_code: "asc" as const } },
+  distributor_mappings: { select: { dealer: { select: { id: true } } } },
+  dealer_mappings: { select: { distributor: { select: { id: true } } } },
+  role_parent_mappings: {
+    select: { id: true, parent_role_code: true, mapped_contact: { select: { id: true } } },
+  },
+  role_mapped_contacts: {
+    select: { id: true, parent_role_code: true, parent_contact: { select: { id: true } } },
+  },
   tax_registrations: {
     orderBy: { gstin: "asc" as const },
     select: { id: true, gstin: true, state_code: true, legal_name: true, registration_type: true, status: true, verified_at: true },

@@ -18,13 +18,14 @@ type ContactOption = { id: string; code: string; label: string };
 
 type QuotationField = keyof Pick<
   DistributionQuotationSummary,
-  "quotationNo" | "orderNo" | "customer" | "mode" | "status" | "totalQuantity" | "subtotal" | "createdAt"
+  "quotationNo" | "orderNo" | "customer" | "contactRole" | "mode" | "status" | "totalQuantity" | "subtotal" | "createdAt"
 >;
 
 const fields: Array<{ key: QuotationField; label: string }> = [
   { key: "quotationNo", label: "Quotation No" },
   { key: "orderNo", label: "Order No" },
   { key: "customer", label: "Customer / Contact" },
+  { key: "contactRole", label: "Contact Role" },
   { key: "mode", label: "Type" },
   { key: "status", label: "Status" },
   { key: "totalQuantity", label: "Total Qty" },
@@ -199,11 +200,24 @@ export default function QuotationListPage() {
         }),
       });
       const data = await response.json().catch(() => null);
-      if (!response.ok || typeof data?.quotation?.id !== "string") {
+      if (
+        !response.ok ||
+        !Array.isArray(data?.quotations) ||
+        data.quotations.length === 0 ||
+        data.quotations.some((quotation: { id?: unknown }) => typeof quotation?.id !== "string")
+      ) {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to create sales order.");
       }
       setIsSalesOrderModalOpen(false);
-      router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/sales-order/${encodeURIComponent(data.quotation.id)}`);
+      setSelectedIds([]);
+      if (data.quotations.length === 1) {
+        router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/sales-order/${encodeURIComponent(data.quotations[0].id)}`);
+      } else {
+        setNotice(
+          `Created ${data.quotations.length} Sales Orders according to the selected Dealers' Distributor billing settings. Review them in Sales Orders.`,
+        );
+        await loadQuotations();
+      }
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "Unable to create sales order.");
     } finally {
@@ -242,9 +256,17 @@ export default function QuotationListPage() {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to delete the selected quotations.");
       }
       const deletedCount = data.deleted.length;
+      const reopenedOrderFormCount = data.deleted.reduce(
+        (total: number, item: { reopenedOrderFormCount?: unknown }) =>
+          total + (typeof item.reopenedOrderFormCount === "number" ? item.reopenedOrderFormCount : 0),
+        0,
+      );
       setSelectedIds([]);
       setIsBulkDeleteDialogOpen(false);
-      setNotice(`Deleted ${deletedCount} quotation${deletedCount === 1 ? "" : "s"}. Source bookings were not deleted.`);
+      const reopenedNotice = reopenedOrderFormCount > 0
+        ? ` Reopened ${reopenedOrderFormCount} Order Form${reopenedOrderFormCount === 1 ? "" : "s"} for quotation creation.`
+        : "";
+      setNotice(`Deleted ${deletedCount} quotation${deletedCount === 1 ? "" : "s"}.${reopenedNotice} Source bookings were not deleted.`);
       await loadQuotations();
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the selected quotations.");
@@ -288,7 +310,9 @@ export default function QuotationListPage() {
           fields={fields}
           visibleFields={visibleFields}
           onVisibleFieldsChange={(next) => setVisibleFields(next as QuotationField[])}
-          storageKey={`distribution-quotation-report-columns:${organizationId}`}
+          storageKey={`distribution-quotation-report-columns-v2:${organizationId}`}
+          legacyStorageKey={`distribution-quotation-report-columns:${organizationId}`}
+          legacyFieldsToAdd={["contactRole"]}
           rowIdSelector={getQuotationRowId}
           selectedIds={selectedIds}
           onToggleSelectAll={(checked) => setSelectedIds(checked ? regularQuotations.map((quotation) => quotation.id) : [])}

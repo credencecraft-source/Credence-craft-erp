@@ -40,6 +40,17 @@ const quotationSummarySelect = {
   created_at: true,
 };
 
+const quotationRegisterSelect = {
+  ...quotationSummarySelect,
+  vendor_id: true,
+  orderForms: {
+    select: {
+      contact_id: true,
+      vendor_id: true,
+    },
+  },
+};
+
 const quotationPartyInclude = {
   select: {
     vendor: true,
@@ -216,11 +227,72 @@ function mapQuotationSummary(
 export async function listDistributionQuotations(organizationId: string) {
   const quotations = await prisma.distributionQuotation.findMany({
     where: { organization_id: organizationId },
-    select: quotationSummarySelect,
+    select: quotationRegisterSelect,
     orderBy: [{ quotation_date: "desc" }, { created_at: "desc" }],
     take: 500,
   });
-  return { quotations: quotations.map(mapQuotationSummary) };
+  const vendorIds = [...new Set(quotations.flatMap((quotation) => [
+    ...(quotation.vendor_id ? [quotation.vendor_id] : []),
+    ...quotation.orderForms.flatMap((orderForm) => orderForm.vendor_id ? [orderForm.vendor_id] : []),
+  ]))];
+  const vendors = vendorIds.length
+    ? await prisma.masterVendor.findMany({
+        where: { organization_id: organizationId, id: { in: vendorIds } },
+        select: { id: true, contact_id: true },
+      })
+    : [];
+  const contactIdByVendorId = new Map(vendors.map((vendor) => [vendor.id, vendor.contact_id]));
+  const contactIds = [...new Set(quotations.flatMap((quotation) => [
+    ...(quotation.vendor_id && contactIdByVendorId.has(quotation.vendor_id)
+      ? [contactIdByVendorId.get(quotation.vendor_id)!]
+      : []),
+    ...quotation.orderForms.flatMap((orderForm) => {
+      const contactId = orderForm.contact_id
+        ?? (orderForm.vendor_id ? contactIdByVendorId.get(orderForm.vendor_id) : null);
+      return contactId ? [contactId] : [];
+    }),
+  ]))];
+  const roleAssignments = contactIds.length
+    ? await prisma.contactRoleAssignment.findMany({
+        where: {
+          organization_id: organizationId,
+          contact_id: { in: contactIds },
+          is_active: true,
+          role: { is_active: true },
+        },
+        select: {
+          contact_id: true,
+          role: { select: { label: true } },
+        },
+        orderBy: [{ contact_id: "asc" }, { role_code: "asc" }],
+      })
+    : [];
+  const rolesByContactId = new Map<string, Set<string>>();
+  for (const assignment of roleAssignments) {
+    const roles = rolesByContactId.get(assignment.contact_id) ?? new Set<string>();
+    roles.add(assignment.role.label);
+    rolesByContactId.set(assignment.contact_id, roles);
+  }
+
+  return {
+    quotations: quotations.map((quotation) => {
+      const contactIdsForQuotation = new Set([
+        ...(quotation.vendor_id && contactIdByVendorId.has(quotation.vendor_id)
+          ? [contactIdByVendorId.get(quotation.vendor_id)!]
+          : []),
+        ...quotation.orderForms.flatMap((orderForm) => {
+          const contactId = orderForm.contact_id
+            ?? (orderForm.vendor_id ? contactIdByVendorId.get(orderForm.vendor_id) : null);
+          return contactId ? [contactId] : [];
+        }),
+      ]);
+      const contactRole = [...contactIdsForQuotation]
+        .flatMap((contactId) => [...(rolesByContactId.get(contactId) ?? [])])
+        .filter((role, index, roles) => roles.indexOf(role) === index)
+        .join(", ") || "—";
+      return { ...mapQuotationSummary(quotation), contactRole };
+    }),
+  };
 }
 
 export async function getDistributionQuotation(
@@ -321,11 +393,54 @@ export async function listDistributionOrderForms(organizationId: string) {
     },
     orderBy: [{ order_form_date: "desc" }, { created_at: "desc" }],
   });
+  const vendorIds = [...new Set(
+    forms.flatMap((form) => form.vendor_id && !form.contact_id ? [form.vendor_id] : []),
+  )];
+  const vendors = vendorIds.length
+    ? await prisma.masterVendor.findMany({
+        where: { organization_id: organizationId, id: { in: vendorIds } },
+        select: { id: true, contact_id: true },
+      })
+    : [];
+  const contactIdByVendorId = new Map(vendors.map((vendor) => [vendor.id, vendor.contact_id]));
+  const contactIds = [...new Set(
+    forms.flatMap((form) => {
+      const contactId = form.contact_id
+        ?? (form.vendor_id ? contactIdByVendorId.get(form.vendor_id) : null);
+      return contactId ? [contactId] : [];
+    }),
+  )];
+  const roleAssignments = contactIds.length
+    ? await prisma.contactRoleAssignment.findMany({
+        where: {
+          organization_id: organizationId,
+          contact_id: { in: contactIds },
+          is_active: true,
+          role: { is_active: true },
+        },
+        select: {
+          contact_id: true,
+          role_code: true,
+          role: { select: { label: true } },
+        },
+        orderBy: [{ contact_id: "asc" }, { role_code: "asc" }],
+      })
+    : [];
+  const rolesByContactId = new Map<string, string[]>();
+  for (const assignment of roleAssignments) {
+    const roles = rolesByContactId.get(assignment.contact_id) ?? [];
+    roles.push(assignment.role.label);
+    rolesByContactId.set(assignment.contact_id, roles);
+  }
+
   return forms.map((form) => ({
     id: form.id,
     orderFormNo: form.order_form_no,
     orderFormDate: form.order_form_date.toISOString().slice(0, 10),
     customer: form.customer,
+    contactRole: (rolesByContactId.get(
+      form.contact_id ?? (form.vendor_id ? contactIdByVendorId.get(form.vendor_id) : null) ?? "",
+    ) ?? []).join(", ") || "—",
     status: form.status,
     quotationId: form.quotation_id,
     totalQuantity: form.total_quantity,
@@ -718,7 +833,7 @@ export async function saveDistributionQuotationDraft(
   return mapQuotation(organizationId, record);
 }
 
-export async function createDistributionMasterQuotation(
+export async function createDistributionMasterQuotations(
   organizationId: string,
   userId: string,
   quotationIds: string[],
@@ -736,16 +851,25 @@ export async function createDistributionMasterQuotation(
   if (new Set(quotationIds).size !== quotationIds.length || quotationIds.some((id) => !id.trim())) {
     throw new Error("Each regular quotation can only be included once.");
   }
-  const record = await prisma.$transaction(async (transaction) => {
-    let vendor: { id: string; vendor: string } | null = null;
-    let customer: string;
+  const records = await prisma.$transaction(async (transaction) => {
+    let selectedParty: {
+      vendorId: string | null;
+      vendorName: string | null;
+      customer: string;
+      contactId: string | null;
+    };
     if (selectedVendorId) {
-      vendor = await transaction.masterVendor.findFirst({
+      const vendor = await transaction.masterVendor.findFirst({
         where: { organization_id: organizationId, id: selectedVendorId, is_active: true },
-        select: { id: true, vendor: true },
+        select: { id: true, vendor: true, contact_id: true },
       });
       if (!vendor) throw new Error("Select an active Vendor Master vendor.");
-      customer = vendor.vendor;
+      selectedParty = {
+        vendorId: vendor.id,
+        vendorName: vendor.vendor,
+        customer: vendor.vendor,
+        contactId: vendor.contact_id,
+      };
     } else {
       if (!selectedContactId) throw new Error("Select a Contact Master contact for the sales order.");
       const contact = await transaction.contact.findFirst({
@@ -753,8 +877,14 @@ export async function createDistributionMasterQuotation(
         select: { id: true, legal_name: true, display_name: true },
       });
       if (!contact) throw new Error("Select a Contact Master contact from this organization.");
-      customer = contact.display_name || contact.legal_name;
+      const customer = contact.display_name || contact.legal_name;
       if (!customer.trim()) throw new Error("The selected Contact Master contact does not have a display name.");
+      selectedParty = {
+        vendorId: null,
+        vendorName: null,
+        customer,
+        contactId: contact.id,
+      };
     }
     const children = await transaction.distributionQuotation.findMany({
       where: {
@@ -769,61 +899,193 @@ export async function createDistributionMasterQuotation(
         order_no: true,
         total_quantity: true,
         subtotal: true,
+        vendor: { select: { contact_id: true } },
       },
     });
     if (children.length !== quotationIds.length) {
       throw new Error("One or more selected quotations are unavailable or already grouped.");
     }
     const orderedChildren = quotationIds.map((id) => children.find((child) => child.id === id)!);
-    const totalQuantity = orderedChildren.reduce((sum, child) => sum + child.total_quantity, 0);
-    if (!Number.isSafeInteger(totalQuantity)) throw new Error("The selected quotation quantities exceed the supported total.");
-    const orderNumbers = [...new Set(orderedChildren.flatMap((child) => child.order_no.split(",").map((value) => value.trim()).filter(Boolean)))];
-    const subtotal = orderedChildren.reduce((sum, child) => sum.add(child.subtotal), new Prisma.Decimal(0));
-    const master = await transaction.distributionQuotation.create({
-      data: {
-        organization_id: organizationId,
-        vendor_id: vendor?.id ?? null,
-        quotation_no: await reserveProcurementDocumentNumber(organizationId, "DISTRIBUTION_MASTER_QUOTATION", transaction),
-        quotation_date: new Date(),
-        order_no: orderNumbers.join(", "),
-        customer,
-        mode: "MASTER",
-        status: "DRAFT",
-        total_quantity: totalQuantity,
-        subtotal,
-        created_by: userId,
-      },
-      include: quotationInclude,
-    });
-    const linked = await transaction.distributionQuotation.updateMany({
-      where: {
-        organization_id: organizationId,
-        id: { in: quotationIds },
-        parent_quotation_id: null,
-        mode: { in: ["SINGLE", "MULTIPLE"] },
-      },
-      data: { parent_quotation_id: master.id },
-    });
-    if (linked.count !== quotationIds.length) throw new Error("Selected quotations changed. Reload and try again.");
-    await createAuditEvent({
-      organizationId,
-      userId,
-      module: "Distribution",
-      action: "CREATE_DISTRIBUTION_MASTER_QUOTATION",
-      entityType: "DistributionQuotation",
-      entityId: master.id,
-      details: {
-        quotation_no: master.quotation_no,
-        child_quotation_nos: orderedChildren.map((child) => child.quotation_no),
-        vendor_id: vendor?.id ?? null,
-        ...(vendor ? { vendor_name: vendor.vendor } : {}),
-        ...(selectedContactId ? { contact_id: selectedContactId, contact_name: customer } : {}),
-        total_quantity: totalQuantity,
-      },
-    }, transaction);
-    return master;
+    const dealerContactIds = [...new Set(
+      orderedChildren
+        .map((quotation) => quotation.vendor?.contact_id || selectedParty.contactId)
+        .filter((id): id is string => Boolean(id)),
+    )];
+    const dealerMappings = dealerContactIds.length > 0
+      ? await transaction.contactDistributorDealerAssignment.findMany({
+        where: { organization_id: organizationId, dealer_id: { in: dealerContactIds } },
+        select: { dealer_id: true, distributor_id: true },
+      })
+      : [];
+    const distributorIds = [...new Set(dealerMappings.map((mapping) => mapping.distributor_id))];
+    const roleSettings = distributorIds.length > 0
+      ? await transaction.contactRoleSetting.findMany({
+        where: {
+          organization_id: organizationId,
+          contact_id: { in: distributorIds },
+          role_code: "DISTRIBUTOR",
+        },
+        select: {
+          contact_id: true,
+          mapped_contact_id: true,
+          always_bill_to_distributor: true,
+          use_common_settings: true,
+        },
+      })
+      : [];
+    const billToDistributorByDealer = new Map<string, string>();
+    for (const dealerId of dealerContactIds) {
+      const mapping = dealerMappings.find((item) => item.dealer_id === dealerId);
+      if (!mapping) continue;
+      const commonSettings = roleSettings.find((setting) =>
+        setting.contact_id === mapping.distributor_id && setting.mapped_contact_id === null,
+      );
+      const individualSettings = roleSettings.find((setting) =>
+        setting.contact_id === mapping.distributor_id && setting.mapped_contact_id === dealerId,
+      );
+      const alwaysBillToDistributor = commonSettings?.use_common_settings
+        ? commonSettings.always_bill_to_distributor
+        : individualSettings?.always_bill_to_distributor ?? false;
+      if (alwaysBillToDistributor) billToDistributorByDealer.set(dealerId, mapping.distributor_id);
+    }
+
+    const billToDistributorIds = [...new Set(billToDistributorByDealer.values())];
+    const distributors = billToDistributorIds.length > 0
+      ? await transaction.contact.findMany({
+        where: { organization_id: organizationId, id: { in: billToDistributorIds } },
+        select: { id: true, legal_name: true, display_name: true },
+      })
+      : [];
+    const distributorContacts = new Map(distributors.map((contact) => [contact.id, contact]));
+    const distributorVendors = billToDistributorIds.length > 0
+      ? await transaction.masterVendor.findMany({
+        where: {
+          organization_id: organizationId,
+          contact_id: { in: billToDistributorIds },
+          is_active: true,
+        },
+        select: { id: true, vendor: true, contact_id: true },
+      })
+      : [];
+    const distributorVendorByContact = new Map(
+      distributorVendors.filter((vendor) => vendor.contact_id).map((vendor) => [vendor.contact_id!, vendor]),
+    );
+
+    const selectedPartyKey = selectedParty.vendorId
+      ? `vendor:${selectedParty.vendorId}`
+      : `contact:${selectedParty.contactId}`;
+    const orderGroups = new Map<string, {
+      vendorId: string | null;
+      vendorName: string | null;
+      customer: string;
+      contactId: string | null;
+      distributorContactId: string | null;
+      dealerContactIds: Set<string>;
+      quotations: typeof orderedChildren;
+    }>();
+    for (const quotation of orderedChildren) {
+      const dealerId = quotation.vendor?.contact_id || selectedParty.contactId;
+      const distributorId = dealerId ? billToDistributorByDealer.get(dealerId) : undefined;
+      let groupParty = selectedParty;
+      if (distributorId) {
+        const distributor = distributorContacts.get(distributorId);
+        if (!distributor) {
+          throw new Error("A mapped Distributor is unavailable. Update the Dealer mapping before creating Sales Orders.");
+        }
+        const customer = distributor.display_name || distributor.legal_name;
+        if (!customer.trim()) {
+          throw new Error("A mapped Distributor does not have a name. Update Contact Master before creating Sales Orders.");
+        }
+        const distributorVendor = distributorVendorByContact.get(distributorId);
+        groupParty = {
+          vendorId: distributorVendor?.id ?? null,
+          vendorName: distributorVendor?.vendor ?? null,
+          customer,
+          contactId: distributorId,
+        };
+      }
+      const groupKey = distributorId ? `distributor:${distributorId}` : selectedPartyKey;
+      let group = orderGroups.get(groupKey);
+      if (!group) {
+        group = {
+          ...groupParty,
+          distributorContactId: distributorId ?? null,
+          dealerContactIds: new Set<string>(),
+          quotations: [],
+        };
+        orderGroups.set(groupKey, group);
+      }
+      if (distributorId && dealerId) group.dealerContactIds.add(dealerId);
+      group.quotations.push(quotation);
+    }
+
+    const createdMasters = [];
+    for (const group of orderGroups.values()) {
+      const totalQuantity = group.quotations.reduce((sum, child) => sum + child.total_quantity, 0);
+      if (!Number.isSafeInteger(totalQuantity)) {
+        throw new Error("The selected quotation quantities exceed the supported total.");
+      }
+      const orderNumbers = [...new Set(
+        group.quotations.flatMap((child) => child.order_no.split(",").map((value) => value.trim()).filter(Boolean)),
+      )];
+      const groupQuotationIds = group.quotations.map((child) => child.id);
+      const subtotal = group.quotations.reduce((sum, child) => sum.add(child.subtotal), new Prisma.Decimal(0));
+      const master = await transaction.distributionQuotation.create({
+        data: {
+          organization_id: organizationId,
+          vendor_id: group.vendorId,
+          quotation_no: await reserveProcurementDocumentNumber(organizationId, "DISTRIBUTION_MASTER_QUOTATION", transaction),
+          quotation_date: new Date(),
+          order_no: orderNumbers.join(", "),
+          customer: group.customer,
+          mode: "MASTER",
+          status: "DRAFT",
+          total_quantity: totalQuantity,
+          subtotal,
+          created_by: userId,
+        },
+        include: quotationInclude,
+      });
+      const linked = await transaction.distributionQuotation.updateMany({
+        where: {
+          organization_id: organizationId,
+          id: { in: groupQuotationIds },
+          parent_quotation_id: null,
+          mode: { in: ["SINGLE", "MULTIPLE"] },
+        },
+        data: { parent_quotation_id: master.id },
+      });
+      if (linked.count !== groupQuotationIds.length) {
+        throw new Error("Selected quotations changed. Reload and try again.");
+      }
+      await createAuditEvent({
+        organizationId,
+        userId,
+        module: "Distribution",
+        action: "CREATE_DISTRIBUTION_MASTER_QUOTATION",
+        entityType: "DistributionQuotation",
+        entityId: master.id,
+        details: {
+          quotation_no: master.quotation_no,
+          child_quotation_nos: group.quotations.map((child) => child.quotation_no),
+          vendor_id: group.vendorId,
+          ...(group.vendorName ? { vendor_name: group.vendorName } : {}),
+          ...(selectedContactId ? { contact_id: selectedContactId } : {}),
+          ...(group.distributorContactId
+            ? {
+              bill_to_distributor_contact_id: group.distributorContactId,
+              dealer_contact_ids: [...group.dealerContactIds],
+              bill_to_distributor_name: group.customer,
+            }
+            : selectedContactId ? { contact_name: group.customer } : {}),
+          total_quantity: totalQuantity,
+        },
+      }, transaction);
+      createdMasters.push(master);
+    }
+    return createdMasters;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
-  return mapQuotation(organizationId, record);
+  return Promise.all(records.map((record) => mapQuotation(organizationId, record)));
 }
 
 export async function deleteDistributionQuotations(
@@ -861,6 +1123,53 @@ export async function deleteDistributionQuotations(
     const includesRegular = orderedQuotations.some((quotation) => quotation.mode !== "MASTER");
     if (includesMaster && includesRegular) {
       throw new Error("Delete sales orders and regular quotations in separate selections.");
+    }
+
+    const linkedOrderForms = await transaction.distributionOrderForm.findMany({
+      where: {
+        organization_id: organizationId,
+        quotation_id: { in: quotationIds },
+      },
+      select: { id: true, order_form_no: true, quotation_id: true, status: true },
+    });
+    const orderFormInUnexpectedState = linkedOrderForms.find((orderForm) => orderForm.status !== "CONVERTED");
+    if (orderFormInUnexpectedState) {
+      throw new Error(
+        `Cannot reopen distribution order form ${orderFormInUnexpectedState.order_form_no} because it is not in the converted state. Resolve its lifecycle before retrying.`,
+      );
+    }
+    if (linkedOrderForms.length > 0) {
+      const reopened = await transaction.distributionOrderForm.updateMany({
+        where: {
+          organization_id: organizationId,
+          id: { in: linkedOrderForms.map((orderForm) => orderForm.id) },
+          quotation_id: { in: quotationIds },
+          status: "CONVERTED",
+        },
+        data: { quotation_id: null, status: "DRAFT" },
+      });
+      if (reopened.count !== linkedOrderForms.length) {
+        throw new Error("One or more linked order forms changed state. Reload and try again.");
+      }
+
+      for (const orderForm of linkedOrderForms) {
+        const quotation = orderedQuotations.find((item) => item.id === orderForm.quotation_id);
+        await createAuditEvent({
+          organizationId,
+          userId,
+          module: "Distribution",
+          action: "REOPEN_DISTRIBUTION_ORDER_FORM",
+          entityType: "DistributionOrderForm",
+          entityId: orderForm.id,
+          details: {
+            order_form_no: orderForm.order_form_no,
+            previous_status: "CONVERTED",
+            status: "DRAFT",
+            previous_quotation_id: orderForm.quotation_id,
+            previous_quotation_no: quotation?.quotation_no ?? null,
+          },
+        }, transaction);
+      }
     }
 
     const linkedQuotationIds = orderedQuotations.flatMap((quotation) =>
@@ -956,6 +1265,7 @@ export async function deleteDistributionQuotations(
       quotationNo: quotation.quotation_no,
       mode: quotation.mode,
       unlinkedQuotationCount: quotation.mode === "MASTER" ? quotation.childQuotations.length : 0,
+      reopenedOrderFormCount: linkedOrderForms.filter((orderForm) => orderForm.quotation_id === quotation.id).length,
     }));
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
 }

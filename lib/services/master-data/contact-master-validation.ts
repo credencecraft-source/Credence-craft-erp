@@ -68,6 +68,14 @@ export class ContactValidationError extends Error {
   }
 }
 
+export function getContactRoleCombinationError(roles: readonly string[]) {
+  const restrictedRoles = ["AGENT", "DISTRIBUTOR", "DEALER"];
+  const selectedRestrictedRoles = restrictedRoles.filter((role) => roles.includes(role));
+  return selectedRestrictedRoles.length > 1
+    ? "Agent, Distributor, and Dealer roles must belong to separate contacts. Choose only one."
+    : null;
+}
+
 function withFieldPrefix<T>(prefix: string, action: () => T): T {
   try {
     return action();
@@ -253,8 +261,9 @@ export function parseContactInput(value: unknown, partial = false): Partial<Cont
       throw new ContactValidationError("Contact roles must use uppercase letters, digits, and underscores.", ["roles"]);
     }
     if (new Set(parsedRoles).size !== parsedRoles.length) throw new ContactValidationError("Duplicate contact roles are not allowed.", ["roles"]);
-    if (parsedRoles.includes("DISTRIBUTOR") && parsedRoles.includes("DEALER")) {
-      throw new ContactValidationError("A contact cannot be both Distributor and Dealer. Choose one role.", ["roles"]);
+    const roleCombinationError = getContactRoleCombinationError(parsedRoles);
+    if (roleCombinationError) {
+      throw new ContactValidationError(roleCombinationError, ["roles"]);
     }
     output.roles = parsedRoles;
   }

@@ -23,6 +23,11 @@ enum ContactTaxRegistrationStatus {
   CANCELLED
 }
 
+enum ContactRoleCommissionType {
+  PERCENTAGE
+  FLAT_PER_PIECE
+}
+
 model Contact {
   id              String   @id @default(cuid())
   organization_id String
@@ -49,6 +54,8 @@ model Contact {
   dealer_mappings        ContactDistributorDealerAssignment[] @relation("DealerContact")
   role_parent_mappings   ContactRoleMapping[]                 @relation("RoleMappingParent")
   role_mapped_contacts   ContactRoleMapping[]                 @relation("RoleMappingContact")
+  role_settings_owned    ContactRoleSetting[]                 @relation("ContactRoleSettingOwner")
+  role_settings_mapped   ContactRoleSetting[]                 @relation("ContactRoleSettingMappedContact")
 
   @@unique([organization_id, id])
   @@unique([organization_id, code])
@@ -147,6 +154,32 @@ model ContactRoleMapping {
   @@unique([organization_id, parent_role_code, mapped_contact_id])
   @@index([organization_id, parent_role_code, parent_contact_id, created_at])
   @@map("contact_role_mappings")
+}
+
+model ContactRoleSetting {
+  id                         String                    @id @default(cuid())
+  organization_id            String
+  contact_id                 String
+  role_code                  String                    @db.VarChar(40)
+  mapped_contact_id          String?
+  enabled                    Boolean                   @default(true)
+  notifications              Boolean                   @default(true)
+  block_billing              Boolean                   @default(false)
+  always_bill_to_distributor Boolean                   @default(false)
+  allow_orders               Boolean                   @default(true)
+  note                       String?                   @db.VarChar(500)
+  commission_type            ContactRoleCommissionType @default(PERCENTAGE)
+  use_common_settings        Boolean                   @default(false)
+  created_at                 DateTime                  @default(now())
+  updated_at                 DateTime                  @updatedAt
+
+  organization   Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  contact        Contact      @relation("ContactRoleSettingOwner", fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Cascade)
+  mapped_contact Contact?    @relation("ContactRoleSettingMappedContact", fields: [organization_id, mapped_contact_id], references: [organization_id, id], onDelete: Cascade)
+
+  @@unique([organization_id, contact_id, role_code, mapped_contact_id], map: "contact_role_settings_target_key")
+  @@index([organization_id, contact_id, role_code], map: "contact_role_settings_scope_idx")
+  @@map("contact_role_settings")
 }
 
 model ContactTaxRegistration {

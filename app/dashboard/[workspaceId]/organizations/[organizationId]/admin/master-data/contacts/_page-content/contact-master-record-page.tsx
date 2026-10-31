@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Save, Settings2 } from "lucide-react";
 
 import Button from "@/components/ui/Button";
+import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
@@ -14,6 +15,8 @@ import Select from "@/components/ui/Select";
 import Switch from "@/components/ui/Switch";
 import Tabs from "@/components/ui/Tabs";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import { getContactRoleCombinationError } from "@/lib/services/master-data/contact-master-validation";
+import type { ContactRoleSettingsValues } from "@/lib/services/master-data/contact-role-settings-service";
 
 type RoleCode = "CUSTOMER" | "VENDOR" | "AGENT" | "DISTRIBUTOR" | "DEALER";
 type AddressUsage = "BILLING" | "SHIPPING" | "BOTH";
@@ -197,12 +200,16 @@ export default function ContactMasterRecordPage({
   contactId,
   createMode = false,
   initialContact = null,
+  initialCommonRoleSettings = {},
+  roleSettingsError,
 }: {
   organizationId: string;
   workspaceId: string;
   contactId?: string;
   createMode?: boolean;
   initialContact?: ContactData | null;
+  initialCommonRoleSettings?: Record<string, boolean> | null;
+  roleSettingsError?: string;
 }) {
   const router = useRouter();
   const endpoint = `/api/organizations/${encodeURIComponent(organizationId)}/contacts`;
@@ -210,6 +217,7 @@ export default function ContactMasterRecordPage({
   const [form, setForm] = useState<ContactForm>(() => initialContact ? toForm(initialContact) : emptyForm());
   const [activeTab, setActiveTab] = useState<TabId>("contact");
   const [activeRoleTab, setActiveRoleTab] = useState<RoleCode>("CUSTOMER");
+  const mappedEntityLabel = activeRoleTab === "AGENT" ? "Customer" : "Contact";
   const [editing, setEditing] = useState(createMode);
   const [loading, setLoading] = useState(!createMode && !initialContact);
   const [saving, setSaving] = useState(false);
@@ -232,6 +240,38 @@ export default function ContactMasterRecordPage({
   const [roleMappedContactIds, setRoleMappedContactIds] = useState<string[]>([]);
   const [roleModalOpen, setRoleModalOpen] = useState(false);
   const [agentCommissionPercentage, setAgentCommissionPercentage] = useState("0");
+  const [commonRoleSettings, setCommonRoleSettings] = useState<Record<string, boolean>>(initialCommonRoleSettings ?? {});
+  const [commonRoleSettingsAvailable] = useState(initialCommonRoleSettings !== null);
+  const [savingCommonRoleSettings, setSavingCommonRoleSettings] = useState<Record<string, boolean>>({});
+
+  const setCommonRoleSetting = async (roleCode: RoleCode, checked: boolean) => {
+    if (!contactId) return;
+    setSavingCommonRoleSettings((current) => ({ ...current, [roleCode]: true }));
+    setError("");
+    try {
+      const response = await fetch(
+        `${endpoint}/${encodeURIComponent(contactId)}/role-settings/${encodeURIComponent(roleCode)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scope: "common", useCommonSettings: checked }),
+        },
+      );
+      const result = await response.json() as ContactRoleSettingsValues | { error?: string };
+      if (!response.ok || typeof result !== "object" || result === null || !("useCommonSettings" in result)) {
+        throw new Error(
+          typeof result === "object" && result !== null && "error" in result && typeof result.error === "string"
+            ? result.error
+            : "Unable to update common role settings.",
+        );
+      }
+      setCommonRoleSettings((current) => ({ ...current, [roleCode]: result.useCommonSettings }));
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to update common role settings.");
+    } finally {
+      setSavingCommonRoleSettings((current) => ({ ...current, [roleCode]: false }));
+    }
+  };
 
   useEffect(() => {
     if (!contactId || initialContact) return;
@@ -366,6 +406,10 @@ export default function ContactMasterRecordPage({
 
   const title = contact?.display_name || contact?.legal_name || (createMode ? "New contact" : "Contact");
   const detailHref = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/contacts`;
+  const assignedRoleCodes = new Set((contact?.roles ?? []).map(({ role_code }) => role_code));
+  const restrictedRoleCodes: RoleCode[] = ["AGENT", "DISTRIBUTOR", "DEALER"];
+  const assignedRestrictedRoles = restrictedRoleCodes.filter((roleCode) => assignedRoleCodes.has(roleCode));
+  const conflictingRestrictedRoles = assignedRestrictedRoles.filter((roleCode) => roleCode !== activeRoleTab);
 
   const saveContact = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -489,13 +533,13 @@ export default function ContactMasterRecordPage({
         }),
       });
       const result = await response.json() as DistributorDealerRow[] | { error?: string };
-      if (!response.ok || !Array.isArray(result)) throw new Error("error" in result ? result.error ?? "Unable to add Contact." : "Unable to add Contact.");
+      if (!response.ok || !Array.isArray(result)) throw new Error("error" in result ? result.error ?? `Unable to add ${mappedEntityLabel}.` : `Unable to add ${mappedEntityLabel}.`);
       setRoleMappedRows(result);
       setRoleMappedContactIds(result.map((row) => row.id));
-      setNotice(`Contact added under ${roleLabels.get(activeRoleTab)}.`);
+      setNotice(`${mappedEntityLabel} added under ${roleLabels.get(activeRoleTab)}.`);
       closeRoleModal();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to add Contact.");
+      setError(saveError instanceof Error ? saveError.message : `Unable to add ${mappedEntityLabel}.`);
     } finally {
       setMappingLoading(false);
     }
@@ -551,35 +595,66 @@ export default function ContactMasterRecordPage({
   }
 
   return (
-    <div className="w-full min-w-0 space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <Link href={detailHref} className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--erp-brand)] underline-offset-4 hover:underline">
-            <ArrowLeft aria-hidden="true" className="h-4 w-4" /> Back to contacts
-          </Link>
-          <p className="erp-eyebrow mt-4">Unified Contact Master</p>
-          <h1 className="mt-2 break-words text-2xl font-bold text-[var(--erp-text)]">{editing ? (createMode ? "Create contact" : "Edit contact") : title}</h1>
-          {!createMode && contact ? <p className="mt-1 text-sm text-slate-600">{contact.code} · {(editing ? form.isActive : contact.is_active) ? "Active" : "Inactive"}</p> : null}
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          {editing && contactId ? (
-            <div className="flex items-center gap-3 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] px-4 py-2">
-              <div>
-                <p className="text-sm font-semibold text-[var(--erp-text)]">Contact status</p>
-                <p className="text-xs text-[var(--erp-muted)]">{form.isActive ? "Active" : "Inactive"}</p>
+    <div className="w-full min-w-0 space-y-4">
+      {!createMode && contact ? (
+        <div className="flex min-h-24 w-full flex-col items-start justify-between gap-4 rounded-2xl border border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] px-5 py-4 shadow-[var(--erp-shadow)] md:flex-row md:items-center md:px-7">
+          <div className="flex min-w-0 items-center gap-4">
+            <Link
+              href={detailHref}
+              aria-label="Back to contacts"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] text-[var(--erp-brand)] shadow-sm transition hover:border-[var(--erp-brand)] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)]"
+            >
+              <ArrowLeft aria-hidden="true" className="h-5 w-5" />
+            </Link>
+            <div className="min-w-0">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="rounded-full border border-[var(--erp-brand)] bg-[var(--erp-surface)] px-2.5 py-0.5 text-[0.65rem] font-bold uppercase tracking-[0.16em] text-[var(--erp-brand)]">
+                  Contact profile
+                </span>
               </div>
-              <Switch
-                checked={form.isActive}
-                label="Active contact"
-                onCheckedChange={(isActive) => setForm((current) => ({ ...current, isActive }))}
-              />
+              <h1 className="break-words text-2xl font-bold leading-tight text-[var(--erp-text)] md:text-3xl">{title}</h1>
+              <div aria-label="Current contact roles" className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-[var(--erp-muted)]">Current roles</span>
+                {contact.roles.length
+                  ? contact.roles.map(({ role_code }) => (
+                    <Badge key={role_code}>{roleLabels.get(role_code) ?? role_code}</Badge>
+                  ))
+                  : <Badge>None assigned</Badge>}
+              </div>
             </div>
-          ) : null}
-          {!editing && contact ? <Button onClick={() => { setForm(toForm(contact)); setEditing(true); setActiveTab("contact"); }}>Edit contact</Button> : null}
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2.5">
+            <span className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] px-3 py-2 text-sm font-bold text-[var(--erp-text)]">
+              {contact.code}
+            </span>
+            <Badge>{(editing ? form.isActive : contact.is_active) ? "Active" : "Inactive"}</Badge>
+            {editing && contactId ? (
+              <div className="flex items-center gap-3 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] px-3 py-1.5">
+                <span className="text-sm font-semibold text-[var(--erp-text)]">{form.isActive ? "Active" : "Inactive"}</span>
+                <Switch
+                  checked={form.isActive}
+                  label="Active contact"
+                  onCheckedChange={(isActive) => setForm((current) => ({ ...current, isActive }))}
+                />
+              </div>
+            ) : null}
+            {!editing && contact ? <Button onClick={() => { setForm(toForm(contact)); setEditing(true); setActiveTab("contact"); }}>Edit contact</Button> : null}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex min-h-20 items-center rounded-2xl border border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] px-5 py-4 shadow-[var(--erp-shadow)]">
+          <Link href={detailHref} className="mr-4 flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface)] text-[var(--erp-brand)]">
+            <ArrowLeft aria-hidden="true" className="h-5 w-5" />
+          </Link>
+          <div>
+            <span className="rounded-full border border-[var(--erp-brand)] bg-[var(--erp-surface)] px-2.5 py-0.5 text-[0.65rem] font-bold uppercase tracking-[0.16em] text-[var(--erp-brand)]">Contact profile</span>
+            <h1 className="mt-1 text-3xl font-bold text-[var(--erp-text)]">Create contact</h1>
+          </div>
+        </div>
+      )}
 
       {error ? <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-danger)]" role="alert">{error}</p> : null}
+      {roleSettingsError ? <p className="rounded-xl border border-[var(--erp-warning)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-warning)]" role="alert">{roleSettingsError}</p> : null}
       {notice ? <p className="rounded-xl border border-[var(--erp-success)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-success)]" role="status">{notice}</p> : null}
 
       <Card className="w-full max-w-none space-y-5">
@@ -611,20 +686,55 @@ export default function ContactMasterRecordPage({
                   compact
                 />
                 <div role="tabpanel" className="space-y-3">
-                  <h2 className="text-base font-semibold text-[var(--erp-text)]">{roleLabels.get(activeRoleTab)}</h2>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-base font-semibold text-[var(--erp-text)]">{roleLabels.get(activeRoleTab)}</h2>
                   {contact.roles.some((role) => role.role_code === activeRoleTab)
-                    ? <p className="text-sm text-[var(--erp-success)]" role="status">This contact has the {roleLabels.get(activeRoleTab)} role.</p>
-                    : <EmptyDetail>{`This contact does not have the ${roleLabels.get(activeRoleTab) ?? activeRoleTab} role.`}</EmptyDetail>}
+                    ? <span className="rounded-full border border-[var(--erp-success)] px-2.5 py-1 text-xs font-semibold text-[var(--erp-success)]" role="status">Assigned role</span>
+                    : <span className="rounded-full border border-[var(--erp-border)] px-2.5 py-1 text-xs font-medium text-[var(--erp-muted)]">Role not assigned</span>}
+                  </div>
+                  {contactId && commonRoleSettingsAvailable && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] px-4 py-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[var(--erp-text)]">Common {roleLabels.get(activeRoleTab)} settings</p>
+                        <p className="text-xs text-[var(--erp-muted)]">
+                          {commonRoleSettings[activeRoleTab]
+                            ? "Apply one settings profile to every mapped record."
+                            : "Configure each mapped record independently."}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-3">
+                        <Switch
+                          checked={Boolean(commonRoleSettings[activeRoleTab])}
+                          label={`Use common ${roleLabels.get(activeRoleTab)} settings`}
+                          onCheckedChange={(checked) => void setCommonRoleSetting(activeRoleTab, checked)}
+                          disabled={Boolean(savingCommonRoleSettings[activeRoleTab])}
+                        />
+                        {commonRoleSettings[activeRoleTab] ? (
+                          <Link
+                            href={`${detailHref}/${encodeURIComponent(contactId)}/ROLE/${activeRoleTab.toLowerCase()}/common-settings/settings`}
+                            aria-label={`Open common ${roleLabels.get(activeRoleTab)} settings`}
+                            title={`Common ${roleLabels.get(activeRoleTab)} settings`}
+                            className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] text-[var(--erp-brand)] shadow-sm transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+                          >
+                            <Settings2 className="h-4 w-4" aria-hidden="true" />
+                          </Link>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
                   {activeRoleTab === "DISTRIBUTOR" ? (
                     <div className="space-y-4">
-                      {!distributorMappingConfirmed ? (
-                        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--erp-border)] p-4">
-                          <p className="text-sm font-medium text-[var(--erp-text)]">Is this a Distributor?</p>
-                          <Button type="button" onClick={confirmDistributor} disabled={mappingLoading}>Yes</Button>
-                          <Button type="button" variant="secondary" onClick={() => setDistributorMappingConfirmed(false)}>No</Button>
-                        </div>
-                      ) : (
+                      {conflictingRestrictedRoles.length ? (
+                        <p className="rounded-xl border border-[var(--erp-warning)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-warning)]" role="status">
+                          This contact is already assigned as {conflictingRestrictedRoles.map((roleCode) => roleLabels.get(roleCode)).join(", ")}. Agent, Distributor, and Dealer roles must use separate contacts. Correct the contact roles before managing Distributor relationships.
+                        </p>
+                      ) : distributorMappingConfirmed ? (
                         <>
+                          {assignedRoleCodes.has("DISTRIBUTOR") ? (
+                            <p className="rounded-xl border border-[var(--erp-info)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-info)]" role="status">
+                              Distributor is already assigned to this contact. Manage its linked Dealers below.
+                            </p>
+                          ) : null}
                           <ReportGrid
                             title="Mapped Dealers"
                             records={distributorDealerRows}
@@ -632,14 +742,16 @@ export default function ContactMasterRecordPage({
                               { key: "code", label: "Dealer Code" },
                               { key: "name", label: "Dealer Name" },
                               { key: "status", label: "Status" },
+                              { key: "actions", label: "Settings" },
                             ]}
-                            visibleFields={["code", "name", "status"]}
+                            visibleFields={["code", "name", "status", "actions"]}
                             onVisibleFieldsChange={() => undefined}
                             storageKey={`distributor-dealers-${organizationId}-${contactId}`}
                             rowIdSelector={(row) => row.id}
                             selectable={false}
                             selectedIds={[]}
                             displayMode="cards"
+                            cardColumns={1}
                             cardBadge={() => "Dealer"}
                             onRowClick={(dealerId) => router.push(`${detailHref}/${encodeURIComponent(dealerId)}`)}
                             onNewOrder={openDealerModal}
@@ -652,71 +764,104 @@ export default function ContactMasterRecordPage({
                             renderCell={(fieldKey, row) => {
                               if (fieldKey === "code") return row.code;
                               if (fieldKey === "name") return row.displayName || row.legalName;
-                              if (fieldKey === "commission") return `${row.commissionPercentage ?? "0"}%`;
+                              if (fieldKey === "actions" && commonRoleSettingsAvailable && !commonRoleSettings.DISTRIBUTOR && contactId) {
+                                return (
+                                  <div className="flex justify-end">
+                                    <Link
+                                      href={`${detailHref}/${encodeURIComponent(contactId)}/ROLE/distributor/individual-settings/${encodeURIComponent(row.id)}/settings`}
+                                      aria-label={`Open settings for ${row.displayName || row.legalName}`}
+                                      title="Individual Dealer settings"
+                                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] text-[var(--erp-muted)] shadow-sm transition hover:border-[var(--erp-brand)] hover:bg-[var(--erp-brand-soft)] hover:text-[var(--erp-brand)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+                                    >
+                                      <Settings2 className="h-4 w-4" aria-hidden="true" />
+                                    </Link>
+                                  </div>
+                                );
+                              }
+                              if (fieldKey === "actions") return null;
                               return row.isActive ? "Active" : "Inactive";
                             }}
                             emptyMessage="No Dealers are mapped to this Distributor."
                           />
                         </>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--erp-border)] p-4">
+                          <p className="text-sm font-medium text-[var(--erp-text)]">Is this a Distributor?</p>
+                          <Button type="button" onClick={confirmDistributor} disabled={mappingLoading}>Yes</Button>
+                          <Button type="button" variant="secondary" onClick={() => setDistributorMappingConfirmed(false)}>No</Button>
+                        </div>
                       )}
                     </div>
                   ) : null}
                   {activeRoleTab === "AGENT" || activeRoleTab === "DEALER" ? (
                     <div className="space-y-4">
-                      {!roleMappingConfirmed ? (
+                      {conflictingRestrictedRoles.length ? (
+                        <p className="rounded-xl border border-[var(--erp-warning)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-warning)]" role="status">
+                          This contact is already assigned as {conflictingRestrictedRoles.map((roleCode) => roleLabels.get(roleCode)).join(", ")}. Agent, Distributor, and Dealer roles must use separate contacts. Correct the contact roles before managing {roleLabels.get(activeRoleTab)} relationships.
+                        </p>
+                      ) : roleMappingConfirmed ? (
+                        <>
+                          {assignedRoleCodes.has(activeRoleTab) ? (
+                            <p className="rounded-xl border border-[var(--erp-info)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-info)]" role="status">
+                              {roleLabels.get(activeRoleTab)} is already assigned to this contact. Manage its mapped records below.
+                            </p>
+                          ) : null}
+                          <ReportGrid
+                            title={activeRoleTab === "AGENT" ? "Mapped Customers" : "Mapped Contacts"}
+                            records={roleMappedRows}
+                            fields={[
+                              { key: "code", label: "Contact Code" },
+                              { key: "name", label: activeRoleTab === "AGENT" ? "Customer Name" : "Contact Name" },
+                              { key: "status", label: "Status" },
+                              ...(activeRoleTab === "AGENT" ? [{ key: "commission", label: "Commission %" }] : []),
+                              { key: "actions", label: "Settings" },
+                            ]}
+                            visibleFields={activeRoleTab === "AGENT" ? ["code", "name", "status", "commission", "actions"] : ["code", "name", "status", "actions"]}
+                            onVisibleFieldsChange={() => undefined}
+                            storageKey={`${activeRoleTab.toLowerCase()}-contacts-${organizationId}-${contactId}`}
+                            rowIdSelector={(row) => row.id}
+                            selectable={false}
+                            selectedIds={[]}
+                            displayMode="cards"
+                            cardColumns={1}
+                            cardBadge={() => roleLabels.get(activeRoleTab) ?? activeRoleTab}
+                            onRowClick={(mappedContactId) => router.push(`${detailHref}/${encodeURIComponent(mappedContactId)}`)}
+                            onNewOrder={openRoleModal}
+                            newActionLabel={`+ Add ${mappedEntityLabel}`}
+                            getSearchValue={(fieldKey, row) => fieldKey === "code"
+                              ? row.code
+                              : fieldKey === "name"
+                                ? row.displayName || row.legalName
+                                : row.isActive ? "Active" : "Inactive"}
+                            renderCell={(fieldKey, row) => {
+                              if (fieldKey === "code") return row.code;
+                              if (fieldKey === "name") return row.displayName || row.legalName;
+                              if (fieldKey === "actions" && commonRoleSettingsAvailable && !commonRoleSettings[activeRoleTab] && contactId) {
+                                return (
+                                  <div className="flex justify-end">
+                                    <Link
+                                      href={`${detailHref}/${encodeURIComponent(contactId)}/ROLE/${activeRoleTab.toLowerCase()}/individual-settings/${encodeURIComponent(row.id)}/settings`}
+                                      aria-label={`Open ${roleLabels.get(activeRoleTab)} settings for ${row.displayName || row.legalName}`}
+                                      title={`Individual ${roleLabels.get(activeRoleTab)} settings`}
+                                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] text-[var(--erp-muted)] shadow-sm transition-colors hover:border-[var(--erp-brand)] hover:bg-[var(--erp-brand-soft)] hover:text-[var(--erp-brand)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
+                                    >
+                                      <Settings2 className="h-4 w-4" aria-hidden="true" />
+                                    </Link>
+                                  </div>
+                                );
+                              }
+                              if (fieldKey === "actions") return null;
+                              return row.isActive ? "Active" : "Inactive";
+                            }}
+                            emptyMessage={`No ${activeRoleTab === "AGENT" ? "Customers" : "Contacts"} are mapped to this ${roleLabels.get(activeRoleTab)}.`}
+                          />
+                        </>
+                      ) : (
                         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--erp-border)] p-4">
                           <p className="text-sm font-medium text-[var(--erp-text)]">Is this a {roleLabels.get(activeRoleTab)}?</p>
                           <Button type="button" onClick={confirmRoleMapping} disabled={mappingLoading}>Yes</Button>
                           <Button type="button" variant="secondary" onClick={() => setRoleMappingConfirmed(false)}>No</Button>
                         </div>
-                      ) : (
-                        <ReportGrid
-                          title={`Mapped Contacts`}
-                          records={roleMappedRows}
-                          fields={[
-                            { key: "code", label: "Contact Code" },
-                            { key: "name", label: "Contact Name" },
-                            { key: "status", label: "Status" },
-                            ...(activeRoleTab === "AGENT" ? [{ key: "commission", label: "Commission %" }] : []),
-                            ...(activeRoleTab === "AGENT" ? [{ key: "actions", label: "Actions" }] : []),
-                          ]}
-                          visibleFields={activeRoleTab === "AGENT" ? ["code", "name", "status", "commission", "actions"] : ["code", "name", "status"]}
-                          onVisibleFieldsChange={() => undefined}
-                          storageKey={`${activeRoleTab.toLowerCase()}-contacts-${organizationId}-${contactId}`}
-                          rowIdSelector={(row) => row.id}
-                          selectable={false}
-                          selectedIds={[]}
-                          displayMode="cards"
-                          cardBadge={() => roleLabels.get(activeRoleTab) ?? activeRoleTab}
-                          onRowClick={(mappedContactId) => router.push(`${detailHref}/${encodeURIComponent(mappedContactId)}`)}
-                          onNewOrder={openRoleModal}
-                          newActionLabel="+ Add Contact"
-                          getSearchValue={(fieldKey, row) => fieldKey === "code"
-                            ? row.code
-                            : fieldKey === "name"
-                              ? row.displayName || row.legalName
-                              : row.isActive ? "Active" : "Inactive"}
-                          renderCell={(fieldKey, row) => {
-                            if (fieldKey === "code") return row.code;
-                            if (fieldKey === "name") return row.displayName || row.legalName;
-                            if (fieldKey === "actions" && activeRoleTab === "AGENT" && contactId) {
-                              return (
-                                <div className="flex justify-end">
-                                  <Link
-                                    href={`${detailHref}/${encodeURIComponent(contactId)}/role/agent/settings`}
-                                    aria-label="Open Agent role settings"
-                                    title="Agent role settings"
-                                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] text-[var(--erp-muted)] shadow-sm transition-colors hover:border-[var(--erp-brand)] hover:bg-[var(--erp-brand-soft)] hover:text-[var(--erp-brand)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)] focus-visible:ring-offset-2"
-                                  >
-                                    <Settings2 className="h-4 w-4" aria-hidden="true" />
-                                  </Link>
-                                </div>
-                              );
-                            }
-                            return row.isActive ? "Active" : "Inactive";
-                          }}
-                          emptyMessage={`No Contacts are mapped to this ${roleLabels.get(activeRoleTab)}.`}
-                        />
                       )}
                     </div>
                   ) : null}
@@ -823,24 +968,16 @@ export default function ContactMasterRecordPage({
                       checked={form.roles.includes(role.code)}
                       onChange={(event) => {
                         const checked = event.currentTarget.checked;
-                        if (checked && role.code === "DEALER" && form.roles.includes("DISTRIBUTOR")) {
-                          setError("A contact cannot be both Distributor and Dealer. Remove the Distributor role first.");
+                        const nextRoles = checked
+                          ? [...form.roles.filter((item) => item !== role.code), role.code]
+                          : form.roles.filter((item) => item !== role.code);
+                        const roleCombinationError = getContactRoleCombinationError(nextRoles);
+                        if (roleCombinationError) {
+                          setError(roleCombinationError);
                           return;
                         }
-                        if (checked && role.code === "DISTRIBUTOR" && form.roles.includes("DEALER")) {
-                          setError("A contact cannot be both Distributor and Dealer. Remove the Dealer role first.");
-                          return;
-                        }
-                        setForm((current) => ({
-                          ...current,
-                          roles: checked
-                            ? role.code === "DEALER"
-                              ? [...current.roles.filter((item) => item !== "DISTRIBUTOR" && item !== role.code), role.code]
-                              : role.code === "DISTRIBUTOR"
-                                ? [...current.roles.filter((item) => item !== "DEALER" && item !== role.code), role.code]
-                                : [...current.roles.filter((item) => item !== role.code), role.code]
-                            : current.roles.filter((item) => item !== role.code),
-                        }));
+                        setError("");
+                        setForm((current) => ({ ...current, roles: nextRoles }));
                       }}
                       label={`Assign ${role.label} role`}
                     />
@@ -1042,16 +1179,16 @@ export default function ContactMasterRecordPage({
         open={roleModalOpen}
         onClose={closeRoleModal}
         size="square"
-        ariaLabel={`Add Contact under ${roleLabels.get(activeRoleTab)}`}
+        ariaLabel={`Add ${mappedEntityLabel} under ${roleLabels.get(activeRoleTab)}`}
         closeOnBackdrop={!mappingLoading}
       >
         <div className="space-y-5 p-6">
           <div>
             <p className="erp-eyebrow">{roleLabels.get(activeRoleTab)} mapping</p>
-            <h2 className="mt-2 text-lg font-semibold text-[var(--erp-text)]">Add Contact</h2>
+            <h2 className="mt-2 text-lg font-semibold text-[var(--erp-text)]">Add {mappedEntityLabel}</h2>
           </div>
           <Input
-            label="Contact name"
+            label={`${mappedEntityLabel} name`}
             type="search"
             value={roleLookupQuery}
             onChange={(event) => {
@@ -1077,13 +1214,13 @@ export default function ContactMasterRecordPage({
                   <span className="block">{row.label}</span>
                   <span className="block text-xs text-[var(--erp-muted)]">{row.code}</span>
                 </button>
-              )) : <p className="px-4 py-3 text-sm text-[var(--erp-muted)]">No matching Contacts found.</p>}
+              )) : <p className="px-4 py-3 text-sm text-[var(--erp-muted)]">No matching {mappedEntityLabel.toLowerCase()}s found.</p>}
             </div>
-          ) : <p className="text-sm text-[var(--erp-muted)]">Enter at least 2 characters to search Contacts.</p>}
+          ) : <p className="text-sm text-[var(--erp-muted)]">Enter at least 2 characters to search {mappedEntityLabel.toLowerCase()}s.</p>}
           <div className="flex justify-end gap-2 border-t border-[var(--erp-border)] pt-4">
             <Button type="button" variant="secondary" onClick={closeRoleModal} disabled={mappingLoading}>Cancel</Button>
             <Button type="button" onClick={addRoleMappedContact} disabled={mappingLoading || !selectedRoleContact}>
-              {mappingLoading ? "Adding..." : "Add Contact"}
+              {mappingLoading ? "Adding..." : `Add ${mappedEntityLabel}`}
             </Button>
           </div>
         </div>

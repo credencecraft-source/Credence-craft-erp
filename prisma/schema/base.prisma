@@ -108,6 +108,7 @@ model Organization {
   contacts                                Contact[]
   contactCodeCounter                      ContactCodeCounter?
   contactRoleAssignments                  ContactRoleAssignment[]
+  contactRoleSettings                     ContactRoleSetting[]
   contactTaxRegistrations                 ContactTaxRegistration[]
   contactAddresses                        ContactAddress[]
   contactBankAccounts                     ContactBankAccount[]

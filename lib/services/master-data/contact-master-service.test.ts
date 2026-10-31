@@ -67,10 +67,10 @@ import {
 import { ContactValidationError, parseContactInput } from "./contact-master-validation";
 
 describe("contact master numbering", () => {
-  it("rejects assigning Distributor and Dealer roles to the same Contact", () => {
+  it("rejects assigning Agent, Distributor, and Dealer roles to the same Contact", () => {
     expect(() => parseContactInput({
       legalName: "ACME",
-      roles: ["DISTRIBUTOR", "DEALER"],
+      roles: ["AGENT", "DISTRIBUTOR"],
     })).toThrowError(ContactValidationError);
   });
 

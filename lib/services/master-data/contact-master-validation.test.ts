@@ -70,6 +70,20 @@ describe("contact master validation", () => {
     expect(contact.roles).toEqual([]);
   });
 
+  it.each([
+    ["AGENT", "DISTRIBUTOR"],
+    ["AGENT", "DEALER"],
+    ["DISTRIBUTOR", "DEALER"],
+  ])("rejects assigning %s and %s roles to the same contact", (firstRole, secondRole) => {
+    expect(() => parseContactInput(baseContact({ roles: [firstRole, secondRole] })))
+      .toThrow(/must belong to separate contacts/);
+  });
+
+  it("allows non-conflicting roles alongside one restricted role", () => {
+    expect(parseContactInput(baseContact({ roles: ["CUSTOMER", "AGENT"] })).roles)
+      .toEqual(["CUSTOMER", "AGENT"]);
+  });
+
   it("allows an address without a city", () => {
     const contact = parseContactInput(baseContact({
       addresses: [{

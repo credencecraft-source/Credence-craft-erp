@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
-  createDistributionMasterQuotation: vi.fn(),
+  createDistributionMasterQuotations: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({ requireSessionUser: mocks.requireSessionUser }));
@@ -11,7 +11,7 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
 }));
 vi.mock("@/lib/services/distribution/quotation-service", () => ({
-  createDistributionMasterQuotation: mocks.createDistributionMasterQuotation,
+  createDistributionMasterQuotations: mocks.createDistributionMasterQuotations,
 }));
 
 import { POST } from "./route";
@@ -27,7 +27,7 @@ describe("distribution master quotation API", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
-    mocks.createDistributionMasterQuotation.mockResolvedValue({ id: "master-1" });
+    mocks.createDistributionMasterQuotations.mockResolvedValue([{ id: "master-1" }]);
   });
 
   it("creates a master quotation with a selected Vendor Master vendor", async () => {
@@ -39,12 +39,13 @@ describe("distribution master quotation API", () => {
     }));
 
     expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ quotations: [{ id: "master-1" }] });
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
       "user-1",
       "public-org",
       ["OWNER", "ADMIN", "MERCHANDISING"],
     );
-    expect(mocks.createDistributionMasterQuotation).toHaveBeenCalledWith(
+    expect(mocks.createDistributionMasterQuotations).toHaveBeenCalledWith(
       "internal-org-1",
       "user-1",
       ["quote-1", "quote-2"],
@@ -62,7 +63,7 @@ describe("distribution master quotation API", () => {
     }));
 
     expect(response.status).toBe(201);
-    expect(mocks.createDistributionMasterQuotation).toHaveBeenCalledWith(
+    expect(mocks.createDistributionMasterQuotations).toHaveBeenCalledWith(
       "internal-org-1",
       "user-1",
       ["quote-1"],
@@ -79,7 +80,7 @@ describe("distribution master quotation API", () => {
     }));
 
     expect(response.status).toBe(201);
-    expect(mocks.createDistributionMasterQuotation).toHaveBeenCalledWith(
+    expect(mocks.createDistributionMasterQuotations).toHaveBeenCalledWith(
       "internal-org-1",
       "user-1",
       ["quote-1"],
@@ -95,7 +96,7 @@ describe("distribution master quotation API", () => {
     }));
 
     expect(response.status).toBe(400);
-    expect(mocks.createDistributionMasterQuotation).not.toHaveBeenCalled();
+    expect(mocks.createDistributionMasterQuotations).not.toHaveBeenCalled();
 
     const bothResponse = await POST(post({
       organizationId: "public-org",
@@ -104,6 +105,6 @@ describe("distribution master quotation API", () => {
       contactId: "contact-1",
     }));
     expect(bothResponse.status).toBe(400);
-    expect(mocks.createDistributionMasterQuotation).not.toHaveBeenCalled();
+    expect(mocks.createDistributionMasterQuotations).not.toHaveBeenCalled();
   });
 });

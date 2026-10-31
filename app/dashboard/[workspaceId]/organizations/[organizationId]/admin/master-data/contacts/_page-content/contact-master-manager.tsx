@@ -7,6 +7,7 @@ import { Plus } from "lucide-react";
 
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import type { ContactWorkbookRecord } from "@/lib/master-data/contact-records-workbook-parser";
 
@@ -15,10 +16,10 @@ type ContactRecord = ContactWorkbookRecord;
 const CONTACT_REPORT_FIELDS = [
   { key: "contact", label: "Contact" },
   { key: "roles", label: "Roles" },
+  { key: "related_count", label: "Related count" },
   { key: "gstins", label: "GSTIN" },
   { key: "addresses_banks", label: "Addresses / banks" },
   { key: "status", label: "Status" },
-  { key: "actions", label: "Actions" },
 ];
 
 const ROLE_LABELS: Record<string, string> = {
@@ -28,6 +29,45 @@ const ROLE_LABELS: Record<string, string> = {
   DISTRIBUTOR: "Distributor",
   DEALER: "Dealer",
 };
+
+function getRelatedCount(contact: ContactRecord, roleCode = "") {
+  const counts = new Map<string, number>();
+  const add = (key: string) => counts.set(key, 1);
+  if (roleCode === "DISTRIBUTOR") {
+    for (const mapping of contact.distributor_mappings ?? []) add(`dealer:${mapping.dealer.id}`);
+    return counts.size;
+  }
+  if (roleCode === "AGENT") {
+    for (const mapping of contact.role_parent_mappings ?? []) {
+      if (mapping.parent_role_code === roleCode) add(`${roleCode}:${mapping.mapped_contact.id}`);
+    }
+    return counts.size;
+  }
+  if (roleCode === "DEALER") {
+    for (const mapping of contact.dealer_mappings ?? []) add(`distributor:${mapping.distributor.id}`);
+    for (const mapping of contact.role_parent_mappings ?? []) {
+      if (mapping.parent_role_code === roleCode) add(`${roleCode}:${mapping.mapped_contact.id}`);
+    }
+    return counts.size;
+  }
+  if (roleCode === "CUSTOMER" || roleCode === "VENDOR") {
+    for (const mapping of contact.role_mapped_contacts ?? []) add(`${mapping.parent_role_code}:${mapping.parent_contact.id}`);
+    return counts.size;
+  }
+  for (const mapping of contact.distributor_mappings ?? []) add(`dealer:${mapping.dealer.id}`);
+  for (const mapping of contact.dealer_mappings ?? []) add(`distributor:${mapping.distributor.id}`);
+  for (const mapping of contact.role_parent_mappings ?? []) {
+    add(`${mapping.parent_role_code}:${mapping.mapped_contact.id}`);
+  }
+  for (const mapping of contact.role_mapped_contacts ?? []) {
+    add(`${mapping.parent_role_code}:${mapping.parent_contact.id}`);
+  }
+  return counts.size;
+}
+
+function getRelationshipTotal(records: ContactRecord[], roleCode = "") {
+  return records.reduce((sum, contact) => sum + getRelatedCount(contact, roleCode), 0);
+}
 
 const CONTACT_PAGE_SIZE = 200;
 
@@ -43,6 +83,8 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
   const contactRequestSequence = useRef(0);
   const contactOffset = useRef(0);
   const [hasMoreContacts, setHasMoreContacts] = useState(false);
+  const [roleSummaryContacts, setRoleSummaryContacts] = useState<ContactRecord[]>([]);
+  const [roleFilter, setRoleFilter] = useState<string>("");
 
   const endpoint = `/api/organizations/${encodeURIComponent(organizationId)}/contacts`;
   const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/contacts`;
@@ -84,28 +126,26 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
 
   useEffect(() => {
     const controller = new AbortController();
+    void fetch(endpoint, { signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json() as ContactRecord[] | { error?: string };
+        if (!response.ok || !Array.isArray(data)) return;
+        setRoleSummaryContacts(data);
+      })
+      .catch((summaryError) => {
+        if (!(summaryError instanceof Error && summaryError.name === "AbortError")) return;
+      });
+    return () => controller.abort();
+  }, [endpoint]);
+
+  useEffect(() => {
+    const controller = new AbortController();
     const timer = window.setTimeout(() => void loadContacts(search, controller.signal), 200);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
     };
   }, [loadContacts, search]);
-
-  const deactivateContact = async (contact: ContactRecord) => {
-    if (!window.confirm(`Deactivate ${contact.display_name || contact.legal_name}?`)) return;
-    setError("");
-    setNotice("");
-    try {
-      const response = await fetch(`${endpoint}/${encodeURIComponent(contact.id)}`, { method: "DELETE" });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error ?? "Unable to deactivate contact.");
-      setSelectedIds((current) => current.filter((id) => id !== contact.id));
-      setNotice("Contact deactivated. Existing documents are unchanged.");
-      await loadContacts(search);
-    } catch (deactivateError) {
-      setError(deactivateError instanceof Error ? deactivateError.message : "Unable to deactivate contact.");
-    }
-  };
 
   const deactivateSelectedContacts = async () => {
     const activeIds = contacts
@@ -210,9 +250,91 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
       {error ? <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-danger)]" role="alert">{error}</p> : null}
       {notice ? <p className="rounded-xl border border-[var(--erp-success)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-success)]" role="status">{notice}</p> : null}
 
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+        <Card className={roleFilter === ""
+          ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] p-0"
+          : "p-0"}>
+          <button
+            type="button"
+            aria-pressed={roleFilter === ""}
+            onClick={() => setRoleFilter("")}
+            className="w-full p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)]"
+          >
+            <span className="block text-xs font-bold uppercase tracking-[0.12em] text-[var(--erp-muted)]">All Contacts</span>
+            <span className="mt-1 block text-2xl font-bold text-[var(--erp-text)]">{roleSummaryContacts.length}</span>
+            <span className="mt-1 block text-xs text-[var(--erp-muted)]">
+              {getRelationshipTotal(roleSummaryContacts)} relationships
+            </span>
+          </button>
+        </Card>
+        {Object.entries(ROLE_LABELS).map(([roleCode, roleLabel]) => {
+          const count = roleSummaryContacts.filter((contact) =>
+            contact.roles.some((role) => role.role_code === roleCode),
+          ).length;
+          const relationshipCount = roleSummaryContacts
+            .filter((contact) => contact.roles.some((role) => role.role_code === roleCode))
+            .reduce((sum, contact) => sum + getRelatedCount(contact, roleCode), 0);
+          const selected = roleFilter === roleCode;
+          return (
+            <Card
+              key={roleCode}
+              className={selected
+                ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] p-0"
+                : "p-0"}
+            >
+              <button
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setRoleFilter((current) => current === roleCode ? "" : roleCode)}
+                className="w-full p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)]"
+              >
+                <span className="block text-xs font-bold uppercase tracking-[0.12em] text-[var(--erp-muted)]">{roleLabel}</span>
+                <span className="mt-1 block text-2xl font-bold text-[var(--erp-text)]">{count}</span>
+                <span className="mt-1 block text-xs text-[var(--erp-muted)]">
+                  {relationshipCount > 0
+                    ? `${relationshipCount} relationship${relationshipCount === 1 ? "" : "s"}`
+                    : "Contacts"}
+                </span>
+              </button>
+            </Card>
+          );
+        })}
+        {(() => {
+          const uncategorizedContacts = roleSummaryContacts.filter((contact) => contact.roles.length === 0);
+          const count = uncategorizedContacts.length;
+          const selected = roleFilter === "__UNCATEGORIZED__";
+          return (
+            <Card className={selected
+              ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] p-0"
+              : "p-0"}>
+              <button
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setRoleFilter((current) => current === "__UNCATEGORIZED__" ? "" : "__UNCATEGORIZED__")}
+                className="w-full p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)]"
+              >
+                <span className="block text-xs font-bold uppercase tracking-[0.12em] text-[var(--erp-muted)]">Uncategorized</span>
+                <span className="mt-1 block text-2xl font-bold text-[var(--erp-text)]">{count}</span>
+                <span className="mt-1 block text-xs text-[var(--erp-muted)]">
+                  {getRelationshipTotal(uncategorizedContacts)} relationships
+                </span>
+              </button>
+            </Card>
+          );
+        })()}
+      </div>
+
       <ReportGrid
-        title="Contact records"
-        records={contacts}
+        title={roleFilter === ""
+          ? "All Contact records"
+          : roleFilter === "__UNCATEGORIZED__"
+            ? "Uncategorized Contact records"
+            : `${ROLE_LABELS[roleFilter] ?? roleFilter} Contact records`}
+        records={roleFilter
+          ? contacts.filter((contact) => roleFilter === "__UNCATEGORIZED__"
+            ? contact.roles.length === 0
+            : contact.roles.some((role) => role.role_code === roleFilter))
+          : contacts}
         fields={CONTACT_REPORT_FIELDS}
         visibleFields={visibleFields}
         onVisibleFieldsChange={(fields) => setVisibleFields(fields.map(String))}
@@ -244,6 +366,8 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
               return `${contact.code} ${contact.display_name ?? ""} ${contact.legal_name}`;
             case "roles":
               return contact.roles.map(({ role_code }) => ROLE_LABELS[role_code] ?? role_code).join(" ");
+            case "related_count":
+              return String(getRelatedCount(contact, roleFilter));
             case "gstins":
               return contact.tax_registrations.map(({ gstin }) => gstin).join(" ");
             case "addresses_banks":
@@ -265,6 +389,8 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
               );
             case "roles":
               return contact.roles.map(({ role_code }) => ROLE_LABELS[role_code] ?? role_code).join(", ") || "—";
+            case "related_count":
+              return getRelatedCount(contact, roleFilter);
             case "gstins":
               return contact.tax_registrations.map(({ gstin }) => gstin).join(", ") || "—";
             case "addresses_banks":
@@ -278,33 +404,6 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
                 >
                   {contact.is_active ? "Active" : "Inactive"}
                 </Badge>
-              );
-            case "actions":
-              return (
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      router.push(`${basePath}/${encodeURIComponent(contact.id)}`);
-                    }}
-                  >
-                    Open
-                  </Button>
-                  {contact.is_active ? (
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void deactivateContact(contact);
-                      }}
-                    >
-                      Deactivate
-                    </Button>
-                  ) : null}
-                </div>
               );
             default:
               return "";

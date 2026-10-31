@@ -114,6 +114,30 @@ export function proxy(request: NextRequest) {
     );
   }
 
+  const roleSettingsMatch = pathname.match(
+    /^\/dashboard\/([^/]+)\/organizations\/([^/]+)\/admin\/master-data\/contacts\/([^/]+)\/role\/([^/]+)\/(common-settings|individual-settings)(?:\/([^/]+))?(?:\/(settings|settingsthis))?\/?$/,
+  );
+  if (roleSettingsMatch) {
+    const [, workspaceId, organizationId, contactId, roleName, scope, mappingId, pageName] =
+      roleSettingsMatch;
+    const normalizedRoleName = roleName.toUpperCase();
+    let internalPath =
+      `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/contacts/${contactId}/ROLE/${normalizedRoleName}/${scope}`;
+    if (scope === "individual-settings" && mappingId) {
+      internalPath += `/${mappingId}`;
+    }
+    if (pageName || scope === "common-settings") {
+      internalPath += "/settings";
+    }
+    const rewriteUrl = request.nextUrl.clone();
+    rewriteUrl.pathname = internalPath;
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set("x-current-path", pathname);
+    return NextResponse.rewrite(rewriteUrl, {
+      request: { headers: requestHeaders },
+    });
+  }
+
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-current-path", pathname);
 

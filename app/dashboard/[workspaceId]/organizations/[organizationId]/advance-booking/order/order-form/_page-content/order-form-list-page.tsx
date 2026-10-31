@@ -12,6 +12,7 @@ type OrderFormRow = {
   orderFormNo: string;
   orderFormDate: string;
   customer: string;
+  contactRole: string;
   status: string;
   quotationId: string | null;
   totalQuantity: number;
@@ -22,6 +23,7 @@ type OrderFormRow = {
 const fields = [
   { key: "orderFormNo" as const, label: "Order Form No" },
   { key: "customer" as const, label: "Customer / Contact" },
+  { key: "contactRole" as const, label: "Contact Role" },
   { key: "status" as const, label: "Status" },
   { key: "totalQuantity" as const, label: "Total Qty" },
   { key: "subtotal" as const, label: "Subtotal" },
@@ -105,7 +107,9 @@ export default function OrderFormListPage() {
             fields={fields}
             visibleFields={visibleFields}
             onVisibleFieldsChange={(nextFields) => setVisibleFields(nextFields as (typeof fields)[number]["key"][])}
-            storageKey="distribution-order-form-list"
+            storageKey="distribution-order-form-list-v2"
+            legacyStorageKey="distribution-order-form-list"
+            legacyFieldsToAdd={["contactRole"]}
             rowIdSelector={(row) => row.id}
             selectedIds={selectedIds}
             selectable

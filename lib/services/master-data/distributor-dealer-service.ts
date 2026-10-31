@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/database/prisma-client";
+import { getContactRoleCombinationError } from "./contact-master-validation";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 
 export type DistributorDealerRow = {
@@ -85,35 +86,41 @@ export async function replaceDistributorDealers(
     });
     if (!distributor) throw new Error("Distributor contact not found.");
 
-    const parentDealerAssignment = await tx.contactRoleAssignment.findFirst({
+    const conflictingParentAssignments = await tx.contactRoleAssignment.findMany({
       where: {
         organization_id: organizationId,
         contact_id: distributorId,
-        role_code: "DEALER",
+        role_code: { in: ["AGENT", "DEALER"] },
         is_active: true,
       },
       select: { role_code: true },
     });
-    if (parentDealerAssignment) {
-      throw new Error("A Contact cannot be both Distributor and Dealer. Remove the Dealer role first.");
+    const parentRoleCombinationError = getContactRoleCombinationError([
+      "DISTRIBUTOR",
+      ...conflictingParentAssignments.map(({ role_code }) => role_code),
+    ]);
+    if (parentRoleCombinationError) {
+      throw new Error(parentRoleCombinationError);
     }
 
     if (uniqueDealerIds.length) {
-      const distributorAssignments = await tx.contactRoleAssignment.findMany({
+      const conflictingDealerAssignments = await tx.contactRoleAssignment.findMany({
         where: {
           organization_id: organizationId,
           contact_id: { in: uniqueDealerIds },
-          role_code: "DISTRIBUTOR",
+          role_code: { in: ["AGENT", "DISTRIBUTOR"] },
           is_active: true,
         },
         select: {
+          role_code: true,
           contact: { select: { display_name: true, legal_name: true, code: true } },
         },
       });
-      if (distributorAssignments.length) {
-        const distributor = distributorAssignments[0].contact;
-        const name = distributor.display_name || distributor.legal_name;
-        throw new Error(`${name} (${distributor.code}) is already assigned the Distributor role and cannot be a Dealer.`);
+      if (conflictingDealerAssignments.length) {
+        const conflictingContact = conflictingDealerAssignments[0].contact;
+        const name = conflictingContact.display_name || conflictingContact.legal_name;
+        const roleLabel = conflictingDealerAssignments[0].role_code === "AGENT" ? "Agent" : "Distributor";
+        throw new Error(`${name} (${conflictingContact.code}) is already assigned the ${roleLabel} role and cannot be a Dealer.`);
       }
 
       const dealers = await tx.contact.findMany({
@@ -213,7 +220,39 @@ export async function removeDistributorDealer(
   return listDistributorDealers(organizationId, distributorId);
 }
 
+export async function getDistributorDealerMapping(
+  organizationId: string,
+  distributorId: string,
+  mappingId: string,
+) {
+  return prisma.contactDistributorDealerAssignment.findFirst({
+    where: {
+      organization_id: organizationId,
+      distributor_id: distributorId,
+      OR: [{ id: mappingId }, { dealer_id: mappingId }],
+    },
+    select: { id: true, dealer_id: true },
+  });
+}
+
 export type RoleMappedContactRow = DistributorDealerRow;
+
+export async function getRoleMappingAssignment(
+  organizationId: string,
+  parentRoleCode: "AGENT" | "DEALER",
+  parentContactId: string,
+  mappingId: string,
+) {
+  return prisma.contactRoleMapping.findFirst({
+    where: {
+      organization_id: organizationId,
+      parent_role_code: parentRoleCode,
+      parent_contact_id: parentContactId,
+      OR: [{ id: mappingId }, { mapped_contact_id: mappingId }],
+    },
+    select: { id: true, mapped_contact_id: true },
+  });
+}
 
 export async function listRoleMappedContacts(
   organizationId: string,
@@ -268,19 +307,21 @@ export async function replaceRoleMappedContacts(
     });
     if (!parent) throw new Error(`${roleCode === "AGENT" ? "Agent" : "Dealer"} contact not found.`);
 
-    if (roleCode === "DEALER") {
-      const parentDistributorAssignment = await tx.contactRoleAssignment.findFirst({
-        where: {
-          organization_id: organizationId,
-          contact_id: parentContactId,
-          role_code: "DISTRIBUTOR",
-          is_active: true,
-        },
-        select: { role_code: true },
-      });
-      if (parentDistributorAssignment) {
-        throw new Error("A Contact cannot be both Distributor and Dealer. Remove the Distributor role first.");
-      }
+    const conflictingParentAssignments = await tx.contactRoleAssignment.findMany({
+      where: {
+        organization_id: organizationId,
+        contact_id: parentContactId,
+        role_code: { in: ["AGENT", "DISTRIBUTOR", "DEALER"].filter((role) => role !== roleCode) },
+        is_active: true,
+      },
+      select: { role_code: true },
+    });
+    const parentRoleCombinationError = getContactRoleCombinationError([
+      roleCode,
+      ...conflictingParentAssignments.map(({ role_code }) => role_code),
+    ]);
+    if (parentRoleCombinationError) {
+      throw new Error(parentRoleCombinationError);
     }
 
     if (uniqueIds.length) {
