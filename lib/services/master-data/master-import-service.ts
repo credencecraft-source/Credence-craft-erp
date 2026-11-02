@@ -1461,6 +1461,7 @@ type ArticleImportMasterSuggestion = {
   label: string;
   fields: Record<string, unknown>;
   articleFieldUpdates?: Record<string, unknown>;
+  action?: "create-category-subcategory-pair";
 };
 
 type ArticleImportDependencyError = ImportValidationError & {
@@ -1788,9 +1789,30 @@ export async function validateArticleImportSupportingMasters(
   } else if (subcategoryLabel && subcategory) {
     if (!isUsable(subcategory, subcategoryLabel, "Finished Goods Subcategory")) return { errors, suggestions };
     if (category && subcategory.category_id !== category.id) {
+      const hierarchyProductType = productLabel || category.product_master_id || "";
+      const relatedMasters: ArticleImportMasterSuggestion[] = hierarchyProductType
+        ? [
+            {
+              moduleKey: "category",
+              label: subcategoryLabel,
+              fields: { Product_Master: hierarchyProductType, Category_Name: subcategoryLabel },
+              articleFieldUpdates: { Category: subcategoryLabel },
+              action: "create-category-subcategory-pair",
+            },
+            {
+              moduleKey: "sub-category",
+              label: categoryLabel,
+              fields: { category: subcategoryLabel, sub_category: categoryLabel },
+              articleFieldUpdates: { Subcategory: categoryLabel },
+              action: "create-category-subcategory-pair",
+            },
+          ]
+        : [];
+      suggestions.push(...relatedMasters);
       errors.push({
         message: `Finished Goods Subcategory "${subcategoryLabel}" belongs to a different Finished Goods Category than "${categoryLabel}".`,
         fieldPaths: ["Category", "Subcategory"],
+        ...(relatedMasters.length ? { relatedMasters } : {}),
       });
       return { errors, suggestions };
     }

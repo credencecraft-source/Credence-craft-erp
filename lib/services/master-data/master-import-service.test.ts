@@ -98,6 +98,7 @@ import {
   saveMasterImportRow,
   stageMasterImportJob,
   transitionMasterImportJob,
+  validateArticleImportSupportingMasters,
   validateMasterImportJob,
 } from "./master-import-service";
 
@@ -167,6 +168,106 @@ describe("master import service", () => {
     expect(MASTER_IMPORT_REPORT_PAGE_SIZE).toBe(1_000);
     expect(MASTER_IMPORT_VALIDATION_BATCH_SIZE).toBe(10_000);
     expect(MASTER_IMPORT_PLAN_SIZE).toBe(1_000);
+  });
+
+  it("suggests creating a separate category and subcategory when the imported pair has mismatched parents", async () => {
+    mocks.prisma.masterBrand.findFirst.mockResolvedValue({
+      id: "brand-1",
+      brand: "ACME",
+      is_active: true,
+      legacy_metadata: null,
+    });
+    mocks.prisma.masterProduct.findFirst.mockResolvedValue({
+      id: "type-1",
+      product_master_name: "FINISHED GOODS",
+      is_active: true,
+      legacy_metadata: null,
+    });
+    mocks.prisma.masterCategory.findFirst.mockResolvedValue({
+      id: "category-coord-set",
+      category_name: "COORD SET",
+      product_master_id: "type-1",
+      is_active: true,
+      legacy_metadata: null,
+    });
+    mocks.prisma.masterSubCategory.findFirst.mockResolvedValue({
+      id: "subcategory-indigo-denim",
+      sub_category: "INDIGO DENIM",
+      category_id: "another-category",
+      is_active: true,
+      legacy_metadata: null,
+    });
+
+    const result = await validateArticleImportSupportingMasters(
+      mocks.prisma as unknown as Parameters<typeof validateArticleImportSupportingMasters>[0],
+      "org-internal",
+      {
+        Brand: "ACME",
+        Product_Master: "FINISHED GOODS",
+        Category: "COORD SET",
+        Subcategory: "INDIGO DENIM",
+      },
+      {},
+    );
+
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        message: 'Finished Goods Subcategory "INDIGO DENIM" belongs to a different Finished Goods Category than "COORD SET".',
+        fieldPaths: ["Category", "Subcategory"],
+        relatedMasters: [
+          expect.objectContaining({
+            moduleKey: "category",
+            label: "INDIGO DENIM",
+            fields: { Product_Master: "FINISHED GOODS", Category_Name: "INDIGO DENIM" },
+            articleFieldUpdates: { Category: "INDIGO DENIM" },
+            action: "create-category-subcategory-pair",
+          }),
+          expect.objectContaining({
+            moduleKey: "sub-category",
+            label: "COORD SET",
+            fields: { category: "INDIGO DENIM", sub_category: "COORD SET" },
+            articleFieldUpdates: { Subcategory: "COORD SET" },
+            action: "create-category-subcategory-pair",
+          }),
+        ],
+      }),
+    ]));
+  });
+
+  it("uses the existing category's Finished Goods Type when the Article row omits it", async () => {
+    mocks.prisma.masterBrand.findFirst.mockResolvedValue({
+      id: "brand-1",
+      brand: "ACME",
+      is_active: true,
+      legacy_metadata: null,
+    });
+    mocks.prisma.masterCategory.findFirst.mockResolvedValue({
+      id: "category-coord-set",
+      category_name: "COORD SET",
+      product_master_id: "type-1",
+      is_active: true,
+      legacy_metadata: null,
+    });
+    mocks.prisma.masterSubCategory.findFirst.mockResolvedValue({
+      id: "subcategory-indigo-denim",
+      sub_category: "INDIGO DENIM",
+      category_id: "another-category",
+      is_active: true,
+      legacy_metadata: null,
+    });
+
+    const result = await validateArticleImportSupportingMasters(
+      mocks.prisma as unknown as Parameters<typeof validateArticleImportSupportingMasters>[0],
+      "org-internal",
+      { Brand: "ACME", Category: "COORD SET", Subcategory: "INDIGO DENIM" },
+      {},
+    );
+
+    expect(result.suggestions[0]).toMatchObject({
+      moduleKey: "category",
+      label: "INDIGO DENIM",
+      fields: { Product_Master: "type-1" },
+    });
   });
 
   beforeEach(() => {

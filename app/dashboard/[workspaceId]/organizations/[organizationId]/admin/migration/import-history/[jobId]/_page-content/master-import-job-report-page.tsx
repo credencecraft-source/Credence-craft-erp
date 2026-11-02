@@ -27,6 +27,10 @@ import {
   createContactCorrectionRow,
 } from "@/lib/master-data/contact-import-corrections";
 import { CONTACT_WORKBOOK_COLUMNS } from "@/lib/master-data/contact-records-workbook-columns";
+import {
+  readRelatedMasterSuggestions,
+  type RelatedMasterSuggestion,
+} from "@/lib/master-data/master-import-correction-suggestions";
 import type { ContactInput } from "@/lib/services/master-data/contact-master-validation";
 import {
   contactTemplateFieldName,
@@ -70,12 +74,6 @@ type ImportRow = {
 };
 
 type ImportModule = { key: string; label: string; fields: ImportReportField[] };
-type RelatedMasterSuggestion = {
-  moduleKey: string;
-  label: string;
-  fields: Record<string, unknown>;
-  articleFieldUpdates?: Record<string, unknown>;
-};
 type ReportRow = Record<string, string> & {
   id: string;
   rowNumber: string;
@@ -224,26 +222,6 @@ function readRowValidationErrors(payload: unknown) {
       : [];
     return [{ message: formatImportCorrectionError(error.message), fieldPaths }];
   });
-}
-
-function readRelatedMasterSuggestions(payload: unknown): RelatedMasterSuggestion[] {
-  if (!isRecord(payload) || !Array.isArray(payload.validationErrors)) return [];
-  const suggestions = new Map<string, RelatedMasterSuggestion>();
-  for (const error of payload.validationErrors) {
-    if (!isRecord(error) || !Array.isArray(error.relatedMasters)) continue;
-    for (const value of error.relatedMasters) {
-      if (!isRecord(value) || typeof value.moduleKey !== "string" || typeof value.label !== "string"
-        || !isRecord(value.fields)) continue;
-      const suggestion: RelatedMasterSuggestion = {
-        moduleKey: value.moduleKey,
-        label: value.label,
-        fields: value.fields,
-        ...(isRecord(value.articleFieldUpdates) ? { articleFieldUpdates: value.articleFieldUpdates } : {}),
-      };
-      suggestions.set(`${suggestion.moduleKey}:${suggestion.label.toLocaleLowerCase()}`, suggestion);
-    }
-  }
-  return [...suggestions.values()];
 }
 
 function recordIdentity(payload: unknown, rowNumber: number) {
@@ -1169,17 +1147,51 @@ export default function MasterImportJobReportPage({
 
   const createMissingRelatedMasters = async () => {
     if (!job || job.moduleKey !== "article" || !correctionRow || relatedMasterSuggestions.length === 0) return;
-    if (relatedMasterSuggestions.some((suggestion) => suggestion.moduleKey === "size-group")) {
-      setCorrectionError("Create the Size Group using the dedicated form so you can review its Brand and sizes.");
-      return;
-    }
+    const hierarchyAction = relatedMasterSuggestions.some(
+      (suggestion) => suggestion.action === "create-category-subcategory-pair",
+    );
     const sourceRow = rows.find((row) => String(row.rowNumber) === correctionRow.id);
     if (!sourceRow || !isRecord(sourceRow.payload)) return;
+    const sourceFields = isRecord(sourceRow.payload.fields) ? sourceRow.payload.fields : {};
     setIsSavingCorrection(true);
     setCorrectionError("");
     try {
       const fieldOverrides: Record<string, unknown> = {};
-      for (const suggestion of relatedMasterSuggestions) {
+      if (hierarchyAction) {
+        const categorySuggestion = relatedMasterSuggestions.find((suggestion) => suggestion.moduleKey === "category");
+        const subcategorySuggestion = relatedMasterSuggestions.find((suggestion) => suggestion.moduleKey === "sub-category");
+        const productType = String(categorySuggestion?.fields.Product_Master ?? "").trim();
+        const existingCategory = String(sourceFields.Category ?? "").trim();
+        if (!categorySuggestion || !subcategorySuggestion || (!productType && !existingCategory)) {
+          throw new Error("The Finished Goods Category correction details are incomplete. Revalidate the row and try again.");
+        }
+        const hierarchyQuery = new URLSearchParams({ workspaceId });
+        const response = await fetch(
+          `/api/organizations/${encodeURIComponent(organizationId)}/master-data/finished-goods-category-hierarchy?${hierarchyQuery}`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              productType,
+              existingCategory,
+              category: categorySuggestion.label,
+              subcategory: subcategorySuggestion.label,
+            }),
+          },
+        );
+        const result: unknown = await response.json();
+        if (!response.ok) {
+          throw new Error(readError(result, "Unable to create the Finished Goods Category and Subcategory."));
+        }
+        for (const suggestion of relatedMasterSuggestions.filter(
+          (item) => item.action === "create-category-subcategory-pair",
+        )) {
+          Object.assign(fieldOverrides, suggestion.articleFieldUpdates ?? {});
+        }
+      }
+      for (const suggestion of relatedMasterSuggestions.filter(
+        (item) => item.action !== "create-category-subcategory-pair" && item.moduleKey !== "size-group",
+      )) {
         const baseEndpoint = `/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(suggestion.moduleKey)}`;
         const query = new URLSearchParams({
           search: suggestion.label,
@@ -1862,9 +1874,15 @@ export default function MasterImportJobReportPage({
         relatedMasterActions={relatedMasterSuggestions.length > 0 ? (
           <div className="space-y-3 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
             <div>
-              <h3 className="text-sm font-semibold text-[var(--erp-text)]">Missing related masters</h3>
+              <h3 className="text-sm font-semibold text-[var(--erp-text)]">
+                {relatedMasterSuggestions.some((suggestion) => suggestion.action === "create-category-subcategory-pair")
+                  ? "Create a new Finished Goods Category and Subcategory"
+                  : "Missing related masters"}
+              </h3>
               <p className="mt-1 text-sm text-[var(--erp-muted)]">
-                Create the listed organization masters, then this row will be saved and revalidated. It will remain in Errors if any issue is still unresolved.
+                {relatedMasterSuggestions.some((suggestion) => suggestion.action === "create-category-subcategory-pair")
+                  ? "Create the indicated Finished Goods Category and link its Subcategory. If that Subcategory already exists, its parent Category will change for all records using it. This row will then be updated and revalidated."
+                  : "Create the listed organization masters, then this row will be saved and revalidated. It will remain in Errors if any issue is still unresolved."}
               </p>
               <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--erp-text)]">
                 {relatedMasterSuggestions.map((suggestion) => (
@@ -1880,22 +1898,23 @@ export default function MasterImportJobReportPage({
             {relatedMasterSuggestions.some((suggestion) => suggestion.moduleKey === "size-group") ? (
               <Button
                 type="button"
-                variant="primary"
+                variant="secondary"
                 onClick={openSizeGroupCreation}
                 disabled={isSavingCorrection}
               >
                 Create Size Group
               </Button>
-            ) : (
+            ) : null}
+            {relatedMasterSuggestions.some((suggestion) => suggestion.moduleKey !== "size-group") ? (
               <Button
                 type="button"
-                variant="secondary"
+                variant="primary"
                 onClick={() => void createMissingRelatedMasters()}
                 disabled={isSavingCorrection}
               >
                 {isSavingCorrection ? "Creating and revalidating..." : "Create missing masters and revalidate"}
               </Button>
-            )}
+            ) : null}
           </div>
         ) : null}
         showValidateRowAction={false}
