@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { ArrowLeft, Plus, Save, Settings2 } from "lucide-react";
 
 import Button from "@/components/ui/Button";
@@ -10,17 +11,28 @@ import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
-import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import Switch from "@/components/ui/Switch";
 import Tabs from "@/components/ui/Tabs";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import {
+  buildContactSavePayload,
+  emptyContactForm,
+  mergeContactSaveResponse,
+  toContactForm,
+  type AddressUsage,
+  type ContactData,
+  type ContactSaveResponse,
+  type ContactForm,
+} from "@/lib/master-data/contact-master-form";
 import { getContactRoleCombinationError } from "@/lib/services/master-data/contact-master-validation";
 import type { ContactRoleSettingsValues } from "@/lib/services/master-data/contact-role-settings-service";
 
+const Modal = dynamic(() => import("@/components/ui/Modal"), { ssr: false });
+
 type RoleCode = "CUSTOMER" | "VENDOR" | "AGENT" | "DISTRIBUTOR" | "DEALER";
-type AddressUsage = "BILLING" | "SHIPPING" | "BOTH";
 type TabId = "contact" | "roles" | "gst" | "billing" | "shipping" | "bank";
+type ContactLookupRow = { id: string; code: string; label: string };
 type DistributorDealerRow = {
   id: string;
   mappingId: string;
@@ -29,83 +41,6 @@ type DistributorDealerRow = {
   displayName: string | null;
   isActive: boolean;
   commissionPercentage?: string | null;
-};
-
-export type ContactData = {
-  id: string;
-  code: string;
-  legal_name: string;
-  display_name: string | null;
-  email: string | null;
-  phone: string | null;
-  is_active: boolean;
-  roles: Array<{ role_code: string }>;
-  tax_registrations: Array<{
-    gstin: string;
-    legal_name: string;
-    registration_type: string;
-    status: string;
-  }>;
-  addresses: Array<{
-    id: string;
-    tax_registration: { gstin: string } | null;
-    label: string | null;
-    usage: AddressUsage;
-    address_line_1: string;
-    address_line_2: string | null;
-    city: string;
-    state_name: string;
-    state_code: string | null;
-    postal_code: string;
-    country_code: string;
-    is_default_billing: boolean;
-    is_default_shipping: boolean;
-  }>;
-  bank_accounts?: Array<{
-    id: string;
-    account_holder_name?: string;
-    account_number_masked: string;
-    ifsc_code?: string;
-    bank_name?: string;
-    branch?: string | null;
-    is_default?: boolean;
-  }>;
-};
-
-type ContactForm = {
-  code: string;
-  legalName: string;
-  displayName: string;
-  email: string;
-  phone: string;
-  isActive: boolean;
-  roles: string[];
-  taxRegistrations: Array<{ gstin: string; legalName: string; registrationType: string; status: string }>;
-  addresses: Array<{
-    id?: string;
-    taxRegistrationGstin: string;
-    label: string;
-    usage: AddressUsage;
-    addressLine1: string;
-    addressLine2: string;
-    city: string;
-    stateName: string;
-    stateCode: string;
-    postalCode: string;
-    countryCode: string;
-    isDefaultBilling: boolean;
-    isDefaultShipping: boolean;
-  }>;
-  bankAccounts: Array<{
-    id?: string;
-    accountHolderName: string;
-    accountNumber: string;
-    accountNumberMasked?: string;
-    ifscCode: string;
-    bankName: string;
-    branch: string;
-    isDefault: boolean;
-  }>;
 };
 
 const ROLE_OPTIONS: Array<{ code: RoleCode; label: string }> = [
@@ -124,64 +59,6 @@ const TABS: Array<{ value: TabId; label: string }> = [
   { value: "shipping", label: "Shipping address" },
   { value: "bank", label: "Bank accounts" },
 ];
-
-function emptyForm(): ContactForm {
-  return {
-    code: "",
-    legalName: "",
-    displayName: "",
-    email: "",
-    phone: "",
-    isActive: true,
-    roles: [],
-    taxRegistrations: [],
-    addresses: [],
-    bankAccounts: [],
-  };
-}
-
-function toForm(contact: ContactData): ContactForm {
-  return {
-    code: contact.code,
-    legalName: contact.legal_name,
-    displayName: contact.display_name ?? "",
-    email: contact.email ?? "",
-    phone: contact.phone ?? "",
-    isActive: contact.is_active,
-    roles: contact.roles.map((role) => role.role_code),
-    taxRegistrations: contact.tax_registrations.map((registration) => ({
-      gstin: registration.gstin,
-      legalName: registration.legal_name,
-      registrationType: registration.registration_type,
-      status: registration.status,
-    })),
-    addresses: contact.addresses.map((address) => ({
-      id: address.id,
-      taxRegistrationGstin: address.tax_registration?.gstin ?? "",
-      label: address.label ?? "",
-      usage: address.usage,
-      addressLine1: address.address_line_1,
-      addressLine2: address.address_line_2 ?? "",
-      city: address.city,
-      stateName: address.state_name,
-      stateCode: address.state_code ?? "",
-      postalCode: address.postal_code,
-      countryCode: address.country_code || "IN",
-      isDefaultBilling: address.is_default_billing,
-      isDefaultShipping: address.is_default_shipping,
-    })),
-    bankAccounts: (contact.bank_accounts ?? []).map((account) => ({
-      id: account.id,
-      accountHolderName: account.account_holder_name ?? "",
-      accountNumber: "",
-      accountNumberMasked: account.account_number_masked,
-      ifscCode: account.ifsc_code ?? "",
-      bankName: account.bank_name ?? "",
-      branch: account.branch ?? "",
-      isDefault: account.is_default ?? false,
-    })),
-  };
-}
 
 function addressText(address: ContactData["addresses"][number]) {
   return [
@@ -214,7 +91,7 @@ export default function ContactMasterRecordPage({
   const router = useRouter();
   const endpoint = `/api/organizations/${encodeURIComponent(organizationId)}/contacts`;
   const [contact, setContact] = useState<ContactData | null>(initialContact);
-  const [form, setForm] = useState<ContactForm>(() => initialContact ? toForm(initialContact) : emptyForm());
+  const [form, setForm] = useState<ContactForm>(() => initialContact ? toContactForm(initialContact) : emptyContactForm());
   const [activeTab, setActiveTab] = useState<TabId>("contact");
   const [activeRoleTab, setActiveRoleTab] = useState<RoleCode>("CUSTOMER");
   const mappedEntityLabel = activeRoleTab === "AGENT" ? "Customer" : "Contact";
@@ -222,20 +99,19 @@ export default function ContactMasterRecordPage({
   const [loading, setLoading] = useState(!createMode && !initialContact);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [roleValidationError, setRoleValidationError] = useState("");
   const [notice, setNotice] = useState("");
   const roleLabels = useMemo(() => new Map<string, string>(ROLE_OPTIONS.map((role) => [role.code, role.label])), []);
   const [distributorDealerRows, setDistributorDealerRows] = useState<DistributorDealerRow[]>([]);
-  const [distributorMappingConfirmed, setDistributorMappingConfirmed] = useState(false);
   const [dealerLookupQuery, setDealerLookupQuery] = useState("");
-  const [dealerLookupRows, setDealerLookupRows] = useState<Array<{ id: string; code: string; label: string }>>([]);
+  const [dealerLookupState, setDealerLookupState] = useState<{ query: string; rows: ContactLookupRow[] } | null>(null);
   const [selectedDealerIds, setSelectedDealerIds] = useState<string[]>([]);
   const [mappingLoading, setMappingLoading] = useState(false);
   const [dealerModalOpen, setDealerModalOpen] = useState(false);
   const [selectedDealer, setSelectedDealer] = useState<{ id: string; code: string; label: string } | null>(null);
-  const [roleMappingConfirmed, setRoleMappingConfirmed] = useState(false);
   const [roleMappedRows, setRoleMappedRows] = useState<DistributorDealerRow[]>([]);
   const [roleLookupQuery, setRoleLookupQuery] = useState("");
-  const [roleLookupRows, setRoleLookupRows] = useState<Array<{ id: string; code: string; label: string }>>([]);
+  const [roleLookupState, setRoleLookupState] = useState<{ query: string; rows: ContactLookupRow[] } | null>(null);
   const [selectedRoleContact, setSelectedRoleContact] = useState<{ id: string; code: string; label: string } | null>(null);
   const [roleMappedContactIds, setRoleMappedContactIds] = useState<string[]>([]);
   const [roleModalOpen, setRoleModalOpen] = useState(false);
@@ -243,6 +119,19 @@ export default function ContactMasterRecordPage({
   const [commonRoleSettings, setCommonRoleSettings] = useState<Record<string, boolean>>(initialCommonRoleSettings ?? {});
   const [commonRoleSettingsAvailable] = useState(initialCommonRoleSettings !== null);
   const [savingCommonRoleSettings, setSavingCommonRoleSettings] = useState<Record<string, boolean>>({});
+  const distributorRoleAssigned = Boolean(contact?.roles.some((role) => role.role_code === "DISTRIBUTOR"));
+  const activeRoleAssigned = Boolean(contact?.roles.some((role) => role.role_code === activeRoleTab));
+  const dealerSearch = dealerLookupQuery.trim();
+  const dealerLookupRows = distributorRoleAssigned && dealerSearch.length >= 2 && dealerLookupState?.query === dealerSearch
+    ? dealerLookupState.rows
+    : [];
+  const roleSearch = roleLookupQuery.trim();
+  const roleLookupRows = activeRoleAssigned
+    && ["AGENT", "DEALER"].includes(activeRoleTab)
+    && roleSearch.length >= 2
+    && roleLookupState?.query === roleSearch
+    ? roleLookupState.rows
+    : [];
 
   const setCommonRoleSetting = async (roleCode: RoleCode, checked: boolean) => {
     if (!contactId) return;
@@ -285,7 +174,7 @@ export default function ContactMasterRecordPage({
         if (!response.ok || !("id" in result)) throw new Error("error" in result ? result.error ?? "Unable to load contact." : "Unable to load contact.");
         if (!cancelled) {
           setContact(result);
-          setForm(toForm(result));
+          setForm(toContactForm(result));
         }
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load contact.");
@@ -297,7 +186,7 @@ export default function ContactMasterRecordPage({
   }, [contactId, endpoint, initialContact]);
 
   useEffect(() => {
-    if (!contactId || activeTab !== "roles" || activeRoleTab !== "DISTRIBUTOR" || !distributorMappingConfirmed) return;
+    if (!contactId || activeTab !== "roles" || activeRoleTab !== "DISTRIBUTOR" || !distributorRoleAssigned) return;
     const timer = window.setTimeout(async () => {
       try {
         const response = await fetch(`${endpoint}/${encodeURIComponent(contactId)}/dealers`);
@@ -310,13 +199,13 @@ export default function ContactMasterRecordPage({
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [activeRoleTab, activeTab, contactId, distributorMappingConfirmed, endpoint]);
+  }, [activeRoleTab, activeTab, contactId, distributorRoleAssigned, endpoint]);
 
   useEffect(() => {
-    if (!distributorMappingConfirmed || dealerLookupQuery.trim().length < 2) {
-      setDealerLookupRows([]);
+    if (!distributorRoleAssigned || dealerLookupQuery.trim().length < 2) {
       return;
     }
+    const search = dealerLookupQuery.trim();
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
@@ -324,7 +213,7 @@ export default function ContactMasterRecordPage({
           activeOnly: "true",
           limit: "20",
           offset: "0",
-          search: dealerLookupQuery.trim(),
+          search,
           excludedDistributorId: contactId ?? "",
         });
         const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/contacts/lookup?${params.toString()}`, {
@@ -333,7 +222,10 @@ export default function ContactMasterRecordPage({
         });
         const result = await response.json() as Array<{ id: string; code: string; label: string }> | { error?: string };
         if (!response.ok || !Array.isArray(result)) throw new Error("error" in result ? result.error ?? "Unable to search Contacts." : "Unable to search Contacts.");
-        setDealerLookupRows(result.filter((row) => row.id !== contactId && !selectedDealerIds.includes(row.id)));
+        setDealerLookupState({
+          query: search,
+          rows: result.filter((row) => row.id !== contactId && !selectedDealerIds.includes(row.id)),
+        });
       } catch (lookupError) {
         if (!(lookupError instanceof Error && lookupError.name === "AbortError")) {
           setError(lookupError instanceof Error ? lookupError.message : "Unable to search Contacts.");
@@ -344,19 +236,10 @@ export default function ContactMasterRecordPage({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [contactId, dealerLookupQuery, distributorMappingConfirmed, organizationId, selectedDealerIds]);
+  }, [contactId, dealerLookupQuery, distributorRoleAssigned, organizationId, selectedDealerIds]);
 
   useEffect(() => {
-    if (activeRoleTab === "DISTRIBUTOR") {
-      setDistributorMappingConfirmed(Boolean(contact?.roles.some((role) => role.role_code === "DISTRIBUTOR")));
-    }
-    if (activeRoleTab === "AGENT" || activeRoleTab === "DEALER") {
-      setRoleMappingConfirmed(Boolean(contact?.roles.some((role) => role.role_code === activeRoleTab)));
-    }
-  }, [activeRoleTab, contact]);
-
-  useEffect(() => {
-    if (!contactId || !["AGENT", "DEALER"].includes(activeRoleTab) || !roleMappingConfirmed) return;
+    if (!contactId || !["AGENT", "DEALER"].includes(activeRoleTab) || !activeRoleAssigned) return;
     const timer = window.setTimeout(async () => {
       try {
         const response = await fetch(`${endpoint}/${encodeURIComponent(contactId)}/role-mappings/${activeRoleTab}`);
@@ -369,13 +252,13 @@ export default function ContactMasterRecordPage({
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [activeRoleTab, contactId, endpoint, roleMappingConfirmed]);
+  }, [activeRoleAssigned, activeRoleTab, contactId, endpoint]);
 
   useEffect(() => {
-    if (!roleMappingConfirmed || !["AGENT", "DEALER"].includes(activeRoleTab) || roleLookupQuery.trim().length < 2) {
-      setRoleLookupRows([]);
+    if (!activeRoleAssigned || !["AGENT", "DEALER"].includes(activeRoleTab) || roleLookupQuery.trim().length < 2) {
       return;
     }
+    const search = roleLookupQuery.trim();
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
@@ -383,7 +266,7 @@ export default function ContactMasterRecordPage({
           activeOnly: "true",
           limit: "20",
           offset: "0",
-          search: roleLookupQuery.trim(),
+          search,
         });
         const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/contacts/lookup?${params.toString()}`, {
           signal: controller.signal,
@@ -391,7 +274,10 @@ export default function ContactMasterRecordPage({
         });
         const result = await response.json() as Array<{ id: string; code: string; label: string }> | { error?: string };
         if (!response.ok || !Array.isArray(result)) throw new Error("error" in result ? result.error ?? "Unable to search Contacts." : "Unable to search Contacts.");
-        setRoleLookupRows(result.filter((row) => row.id !== contactId && !roleMappedContactIds.includes(row.id)));
+        setRoleLookupState({
+          query: search,
+          rows: result.filter((row) => row.id !== contactId && !roleMappedContactIds.includes(row.id)),
+        });
       } catch (lookupError) {
         if (!(lookupError instanceof Error && lookupError.name === "AbortError")) {
           setError(lookupError instanceof Error ? lookupError.message : "Unable to search Contacts.");
@@ -402,17 +288,33 @@ export default function ContactMasterRecordPage({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [activeRoleTab, contactId, organizationId, roleLookupQuery, roleMappingConfirmed, roleMappedContactIds]);
+  }, [activeRoleAssigned, activeRoleTab, contactId, organizationId, roleLookupQuery, roleMappedContactIds]);
 
   const title = contact?.display_name || contact?.legal_name || (createMode ? "New contact" : "Contact");
   const detailHref = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/contacts`;
-  const assignedRoleCodes = new Set((contact?.roles ?? []).map(({ role_code }) => role_code));
+  const effectiveRoleCodes = editing
+    ? form.roles
+    : (contact?.roles ?? []).map(({ role_code }) => role_code);
+  const assignedRoleCodes = new Set(effectiveRoleCodes);
   const restrictedRoleCodes: RoleCode[] = ["AGENT", "DISTRIBUTOR", "DEALER"];
   const assignedRestrictedRoles = restrictedRoleCodes.filter((roleCode) => assignedRoleCodes.has(roleCode));
   const conflictingRestrictedRoles = assignedRestrictedRoles.filter((roleCode) => roleCode !== activeRoleTab);
 
   const saveContact = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const roleCombinationError = getContactRoleCombinationError(form.roles);
+    if (roleCombinationError) {
+      setRoleValidationError(roleCombinationError);
+      setActiveTab("roles");
+      return;
+    }
+    setRoleValidationError("");
+    const payload = buildContactSavePayload(form, contactId && contact ? toContactForm(contact) : undefined);
+    if (contactId && Object.keys(payload).length === 0) {
+      setNotice("No changes to save.");
+      setEditing(false);
+      return;
+    }
     setSaving(true);
     setError("");
     setNotice("");
@@ -420,31 +322,15 @@ export default function ContactMasterRecordPage({
       const response = await fetch(contactId ? `${endpoint}/${encodeURIComponent(contactId)}` : endpoint, {
         method: contactId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          legalName: form.legalName,
-          displayName: form.displayName || null,
-          email: form.email || null,
-          phone: form.phone || null,
-          isActive: form.isActive,
-          roles: form.roles,
-          taxRegistrations: form.taxRegistrations,
-          addresses: form.addresses,
-          bankAccounts: form.bankAccounts.map(({ id, accountHolderName, accountNumber, ifscCode, bankName, branch, isDefault }) => ({
-            id,
-            accountHolderName,
-            accountNumber,
-            ifscCode,
-            bankName,
-            branch,
-            isDefault,
-          })),
-        }),
+        body: JSON.stringify(payload),
       });
-      const result = await response.json() as ContactData | { error?: string };
+      const result = await response.json() as ContactSaveResponse | { error?: string };
       if (!response.ok || !("id" in result)) throw new Error("error" in result ? result.error ?? "Unable to save contact." : "Unable to save contact.");
-      setContact(result);
-      setForm(toForm(result));
+      const savedContact = mergeContactSaveResponse(contact, result);
+      setContact(savedContact);
+      setForm(toContactForm(savedContact));
       setEditing(false);
+      setRoleValidationError("");
       setNotice(contactId ? "Contact updated." : "Contact created.");
       if (!contactId) router.replace(`${detailHref}/${encodeURIComponent(result.id)}`);
     } catch (saveError) {
@@ -456,7 +342,7 @@ export default function ContactMasterRecordPage({
 
   const openDealerModal = () => {
     setDealerLookupQuery("");
-    setDealerLookupRows([]);
+    setDealerLookupState(null);
     setSelectedDealer(null);
     setDealerModalOpen(true);
   };
@@ -464,7 +350,7 @@ export default function ContactMasterRecordPage({
   const closeDealerModal = () => {
     setDealerModalOpen(false);
     setDealerLookupQuery("");
-    setDealerLookupRows([]);
+    setDealerLookupState(null);
     setSelectedDealer(null);
   };
 
@@ -492,19 +378,9 @@ export default function ContactMasterRecordPage({
     }
   };
 
-  const confirmDistributor = () => {
-    setDistributorMappingConfirmed(true);
-    setSelectedDealerIds(distributorDealerRows.map((row) => row.id));
-  };
-
-  const confirmRoleMapping = () => {
-    setRoleMappingConfirmed(true);
-    setRoleMappedContactIds(roleMappedRows.map((row) => row.id));
-  };
-
   const openRoleModal = () => {
     setRoleLookupQuery("");
-    setRoleLookupRows([]);
+    setRoleLookupState(null);
     setSelectedRoleContact(null);
     setAgentCommissionPercentage("0");
     setRoleModalOpen(true);
@@ -513,7 +389,7 @@ export default function ContactMasterRecordPage({
   const closeRoleModal = () => {
     setRoleModalOpen(false);
     setRoleLookupQuery("");
-    setRoleLookupRows([]);
+    setRoleLookupState(null);
     setSelectedRoleContact(null);
     setAgentCommissionPercentage("0");
   };
@@ -550,8 +426,9 @@ export default function ContactMasterRecordPage({
       router.push(detailHref);
       return;
     }
-    if (contact) setForm(toForm(contact));
+    if (contact) setForm(toContactForm(contact));
     setError("");
+    setRoleValidationError("");
     setEditing(false);
   };
 
@@ -638,7 +515,7 @@ export default function ContactMasterRecordPage({
                 />
               </div>
             ) : null}
-            {!editing && contact ? <Button onClick={() => { setForm(toForm(contact)); setEditing(true); setActiveTab("contact"); }}>Edit contact</Button> : null}
+            {!editing && contact ? <Button onClick={() => { setForm(toContactForm(contact)); setRoleValidationError(""); setEditing(true); setActiveTab("contact"); }}>Edit contact</Button> : null}
           </div>
         </div>
       ) : (
@@ -680,12 +557,20 @@ export default function ContactMasterRecordPage({
                 <Tabs
                   tabs={ROLE_OPTIONS.map((role) => ({ value: role.code, label: role.label }))}
                   value={activeRoleTab}
-                  onChange={setActiveRoleTab}
+                  onChange={(role) => {
+                    setRoleValidationError("");
+                    setActiveRoleTab(role);
+                  }}
                   ariaLabel="Contact business roles"
                   scrollable
                   compact
                 />
                 <div role="tabpanel" className="space-y-3">
+                  {roleValidationError ? (
+                    <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-danger)]" role="alert">
+                      {roleValidationError}
+                    </p>
+                  ) : null}
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="text-base font-semibold text-[var(--erp-text)]">{roleLabels.get(activeRoleTab)}</h2>
                   {contact.roles.some((role) => role.role_code === activeRoleTab)
@@ -728,13 +613,11 @@ export default function ContactMasterRecordPage({
                         <p className="rounded-xl border border-[var(--erp-warning)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-warning)]" role="status">
                           This contact is already assigned as {conflictingRestrictedRoles.map((roleCode) => roleLabels.get(roleCode)).join(", ")}. Agent, Distributor, and Dealer roles must use separate contacts. Correct the contact roles before managing Distributor relationships.
                         </p>
-                      ) : distributorMappingConfirmed ? (
+                      ) : distributorRoleAssigned ? (
                         <>
-                          {assignedRoleCodes.has("DISTRIBUTOR") ? (
-                            <p className="rounded-xl border border-[var(--erp-info)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-info)]" role="status">
-                              Distributor is already assigned to this contact. Manage its linked Dealers below.
-                            </p>
-                          ) : null}
+                          <p className="rounded-xl border border-[var(--erp-info)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-info)]" role="status">
+                            Manage the Dealers linked to this Distributor below.
+                          </p>
                           <ReportGrid
                             title="Mapped Dealers"
                             records={distributorDealerRows}
@@ -785,10 +668,10 @@ export default function ContactMasterRecordPage({
                           />
                         </>
                       ) : (
-                        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--erp-border)] p-4">
-                          <p className="text-sm font-medium text-[var(--erp-text)]">Is this a Distributor?</p>
-                          <Button type="button" onClick={confirmDistributor} disabled={mappingLoading}>Yes</Button>
-                          <Button type="button" variant="secondary" onClick={() => setDistributorMappingConfirmed(false)}>No</Button>
+                        <div className="rounded-xl border border-[var(--erp-border)] p-4">
+                          <p className="text-sm text-[var(--erp-muted)]">
+                            Distributor is not assigned. Use Edit contact and select the Distributor role checkbox to enable Dealer mappings.
+                          </p>
                         </div>
                       )}
                     </div>
@@ -799,13 +682,11 @@ export default function ContactMasterRecordPage({
                         <p className="rounded-xl border border-[var(--erp-warning)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-warning)]" role="status">
                           This contact is already assigned as {conflictingRestrictedRoles.map((roleCode) => roleLabels.get(roleCode)).join(", ")}. Agent, Distributor, and Dealer roles must use separate contacts. Correct the contact roles before managing {roleLabels.get(activeRoleTab)} relationships.
                         </p>
-                      ) : roleMappingConfirmed ? (
+                      ) : activeRoleAssigned ? (
                         <>
-                          {assignedRoleCodes.has(activeRoleTab) ? (
-                            <p className="rounded-xl border border-[var(--erp-info)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-info)]" role="status">
-                              {roleLabels.get(activeRoleTab)} is already assigned to this contact. Manage its mapped records below.
-                            </p>
-                          ) : null}
+                          <p className="rounded-xl border border-[var(--erp-info)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-info)]" role="status">
+                            Manage the mapped records for this {roleLabels.get(activeRoleTab)} below.
+                          </p>
                           <ReportGrid
                             title={activeRoleTab === "AGENT" ? "Mapped Customers" : "Mapped Contacts"}
                             records={roleMappedRows}
@@ -857,10 +738,10 @@ export default function ContactMasterRecordPage({
                           />
                         </>
                       ) : (
-                        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--erp-border)] p-4">
-                          <p className="text-sm font-medium text-[var(--erp-text)]">Is this a {roleLabels.get(activeRoleTab)}?</p>
-                          <Button type="button" onClick={confirmRoleMapping} disabled={mappingLoading}>Yes</Button>
-                          <Button type="button" variant="secondary" onClick={() => setRoleMappingConfirmed(false)}>No</Button>
+                        <div className="rounded-xl border border-[var(--erp-border)] p-4">
+                          <p className="text-sm text-[var(--erp-muted)]">
+                            {roleLabels.get(activeRoleTab)} is not assigned. Use Edit contact and select the {roleLabels.get(activeRoleTab)} role checkbox to enable mapped records.
+                          </p>
                         </div>
                       )}
                     </div>
@@ -956,7 +837,10 @@ export default function ContactMasterRecordPage({
                 <Tabs
                   tabs={ROLE_OPTIONS.map((role) => ({ value: role.code, label: role.label }))}
                   value={activeRoleTab}
-                  onChange={setActiveRoleTab}
+                  onChange={(role) => {
+                    setRoleValidationError("");
+                    setActiveRoleTab(role);
+                  }}
                   ariaLabel="Contact business roles"
                   scrollable
                   compact
@@ -973,14 +857,17 @@ export default function ContactMasterRecordPage({
                           : form.roles.filter((item) => item !== role.code);
                         const roleCombinationError = getContactRoleCombinationError(nextRoles);
                         if (checked && roleCombinationError) {
-                          setError(roleCombinationError);
+                          setRoleValidationError(roleCombinationError);
                           return;
                         }
-                        setError("");
+                        setRoleValidationError("");
                         setForm((current) => ({ ...current, roles: nextRoles }));
                       }}
                       label={`Assign ${role.label} role`}
                     />
+                    {roleValidationError ? (
+                      <p className="mt-2 text-sm text-[var(--erp-danger)]" role="alert">{roleValidationError}</p>
+                    ) : null}
                   </div>
                 ))}
               </section>
@@ -1138,10 +1025,11 @@ export default function ContactMasterRecordPage({
           {dealerLookupQuery.trim().length >= 2 ? (
             <div className="max-h-64 overflow-y-auto rounded-xl border border-[var(--erp-border)]">
               {dealerLookupRows.length ? dealerLookupRows.map((row) => (
-                <button
+                <Button
                   key={row.id}
                   type="button"
-                  className={`w-full border-b border-[var(--erp-border)] px-4 py-3 text-left text-sm last:border-b-0 ${
+                  variant="ghost"
+                  className={`w-full justify-start rounded-none border-b border-[var(--erp-border)] px-4 py-3 text-left text-sm last:border-b-0 ${
                     selectedDealer?.id === row.id
                       ? "bg-[var(--erp-surface-soft)] font-semibold text-[var(--erp-text)]"
                       : "text-[var(--erp-text)] hover:bg-[var(--erp-surface-soft)]"
@@ -1150,7 +1038,7 @@ export default function ContactMasterRecordPage({
                 >
                   <span className="block">{row.label}</span>
                   <span className="block text-xs text-[var(--erp-muted)]">{row.code}</span>
-                </button>
+                </Button>
               )) : <p className="px-4 py-3 text-sm text-[var(--erp-muted)]">No matching Contacts found.</p>}
             </div>
           ) : <p className="text-sm text-[var(--erp-muted)]">Enter at least 2 characters to search Contacts.</p>}
@@ -1201,10 +1089,11 @@ export default function ContactMasterRecordPage({
           {roleLookupQuery.trim().length >= 2 ? (
             <div className="max-h-64 overflow-y-auto rounded-xl border border-[var(--erp-border)]">
               {roleLookupRows.length ? roleLookupRows.map((row) => (
-                <button
+                <Button
                   key={row.id}
                   type="button"
-                  className={`w-full border-b border-[var(--erp-border)] px-4 py-3 text-left text-sm last:border-b-0 ${
+                  variant="ghost"
+                  className={`w-full justify-start rounded-none border-b border-[var(--erp-border)] px-4 py-3 text-left text-sm last:border-b-0 ${
                     selectedRoleContact?.id === row.id
                       ? "bg-[var(--erp-surface-soft)] font-semibold text-[var(--erp-text)]"
                       : "text-[var(--erp-text)] hover:bg-[var(--erp-surface-soft)]"
@@ -1213,7 +1102,7 @@ export default function ContactMasterRecordPage({
                 >
                   <span className="block">{row.label}</span>
                   <span className="block text-xs text-[var(--erp-muted)]">{row.code}</span>
-                </button>
+                </Button>
               )) : <p className="px-4 py-3 text-sm text-[var(--erp-muted)]">No matching {mappedEntityLabel.toLowerCase()}s found.</p>}
             </div>
           ) : <p className="text-sm text-[var(--erp-muted)]">Enter at least 2 characters to search {mappedEntityLabel.toLowerCase()}s.</p>}

@@ -224,13 +224,62 @@ function mapQuotationSummary(
   };
 }
 
-export async function listDistributionQuotations(organizationId: string) {
-  const quotations = await prisma.distributionQuotation.findMany({
-    where: { organization_id: organizationId },
+export async function listDistributionQuotations(
+  organizationId: string,
+  options: { includeContactRole?: boolean; cursor?: string } = {},
+) {
+  const cursor = decodeDistributionCursor(options.cursor);
+  const where: Prisma.DistributionQuotationWhereInput = options.includeContactRole === false
+    ? { organization_id: organizationId, mode: "MASTER" }
+    : { organization_id: organizationId, mode: { not: "MASTER" }, parent_quotation_id: null };
+  if (cursor) {
+    where.OR = [
+      { quotation_date: { lt: cursor.date } },
+      { quotation_date: cursor.date, created_at: { lt: cursor.createdAt } },
+      {
+        quotation_date: cursor.date,
+        created_at: cursor.createdAt,
+        id: { lt: cursor.id },
+      },
+    ];
+  }
+
+  if (options.includeContactRole === false) {
+    const page = await prisma.distributionQuotation.findMany({
+      where,
+      select: {
+        ...quotationSummarySelect,
+        _count: { select: { childQuotations: true } },
+      },
+      orderBy: [{ quotation_date: "desc" }, { created_at: "desc" }, { id: "desc" }],
+      take: DISTRIBUTION_REPORT_PAGE_SIZE + 1,
+    });
+    const hasMore = page.length > DISTRIBUTION_REPORT_PAGE_SIZE;
+    const quotations = hasMore ? page.slice(0, DISTRIBUTION_REPORT_PAGE_SIZE) : page;
+    return {
+      quotations: quotations.map((quotation) => ({
+        ...mapQuotationSummary(quotation),
+        contactRole: "",
+        childCount: quotation._count.childQuotations,
+      })),
+      nextCursor: hasMore
+        ? encodeDistributionCursor({
+            id: quotations[quotations.length - 1].id,
+            date: quotations[quotations.length - 1].quotation_date,
+            createdAt: quotations[quotations.length - 1].created_at,
+          })
+        : null,
+    };
+  }
+
+  const page = await prisma.distributionQuotation.findMany({
+    where,
     select: quotationRegisterSelect,
-    orderBy: [{ quotation_date: "desc" }, { created_at: "desc" }],
-    take: 500,
+    orderBy: [{ quotation_date: "desc" }, { created_at: "desc" }, { id: "desc" }],
+    take: DISTRIBUTION_REPORT_PAGE_SIZE + 1,
   });
+  const hasMore = page.length > DISTRIBUTION_REPORT_PAGE_SIZE;
+  const quotations = hasMore ? page.slice(0, DISTRIBUTION_REPORT_PAGE_SIZE) : page;
   const vendorIds = [...new Set(quotations.flatMap((quotation) => [
     ...(quotation.vendor_id ? [quotation.vendor_id] : []),
     ...quotation.orderForms.flatMap((orderForm) => orderForm.vendor_id ? [orderForm.vendor_id] : []),
@@ -292,6 +341,13 @@ export async function listDistributionQuotations(organizationId: string) {
         .join(", ") || "—";
       return { ...mapQuotationSummary(quotation), contactRole };
     }),
+    nextCursor: hasMore
+      ? encodeDistributionCursor({
+          id: quotations[quotations.length - 1].id,
+          date: quotations[quotations.length - 1].quotation_date,
+          createdAt: quotations[quotations.length - 1].created_at,
+        })
+      : null,
   };
 }
 
@@ -374,25 +430,89 @@ export async function getDistributionQuotation(
   };
 }
 
-export async function listDistributionOrderForms(organizationId: string) {
-  const forms = await prisma.distributionOrderForm.findMany({
-    where: { organization_id: organizationId },
-    include: {
-      lines: {
-        orderBy: [{ created_at: "asc" }, { id: "asc" }],
-        select: {
-          id: true,
-          source_booking_id: true,
-          booking_no: true,
-          order_no: true,
-          brand: true,
-          style_name: true,
-          quantity: true,
-        },
+const DISTRIBUTION_REPORT_PAGE_SIZE = 100;
+
+function encodeDistributionCursor(record: { id: string; date: Date; createdAt: Date }) {
+  return Buffer.from(JSON.stringify({
+    id: record.id,
+    date: record.date.toISOString(),
+    createdAt: record.createdAt.toISOString(),
+  })).toString("base64url");
+}
+
+function decodeDistributionCursor(value: string | undefined) {
+  if (!value) return null;
+  if (value.length > 512 || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new Error("The Distribution report page cursor is invalid. Refresh the report.");
+  }
+
+  let decoded: { id?: unknown; date?: unknown; createdAt?: unknown };
+  try {
+    decoded = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as typeof decoded;
+  } catch {
+    throw new Error("The Distribution report page cursor is invalid. Refresh the report.");
+  }
+  if (
+    typeof decoded !== "object" ||
+    decoded === null ||
+    Array.isArray(decoded) ||
+    typeof decoded.id !== "string" ||
+    !decoded.id.trim() ||
+    typeof decoded.date !== "string" ||
+    typeof decoded.createdAt !== "string"
+  ) {
+    throw new Error("The Distribution report page cursor is invalid. Refresh the report.");
+  }
+
+  const date = new Date(decoded.date);
+  const createdAt = new Date(decoded.createdAt);
+  if (!Number.isFinite(date.getTime()) || !Number.isFinite(createdAt.getTime())) {
+    throw new Error("The Distribution report page cursor is invalid. Refresh the report.");
+  }
+  return { id: decoded.id, date, createdAt };
+}
+
+export async function listDistributionOrderForms(
+  organizationId: string,
+  cursorValue?: string,
+) {
+  const cursor = decodeDistributionCursor(cursorValue);
+  const where: Prisma.DistributionOrderFormWhereInput = {
+    organization_id: organizationId,
+    status: "DRAFT",
+  };
+  if (cursor) {
+    where.OR = [
+      { order_form_date: { lt: cursor.date } },
+      { order_form_date: cursor.date, created_at: { lt: cursor.createdAt } },
+      {
+        order_form_date: cursor.date,
+        created_at: cursor.createdAt,
+        id: { lt: cursor.id },
       },
+    ];
+  }
+
+  const page = await prisma.distributionOrderForm.findMany({
+    where,
+    select: {
+      id: true,
+      order_form_no: true,
+      order_form_date: true,
+      customer: true,
+      contact_id: true,
+      vendor_id: true,
+      status: true,
+      quotation_id: true,
+      total_quantity: true,
+      subtotal: true,
+      created_at: true,
     },
-    orderBy: [{ order_form_date: "desc" }, { created_at: "desc" }],
+    orderBy: [{ order_form_date: "desc" }, { created_at: "desc" }, { id: "desc" }],
+    take: DISTRIBUTION_REPORT_PAGE_SIZE + 1,
   });
+  const hasMore = page.length > DISTRIBUTION_REPORT_PAGE_SIZE;
+  const forms = hasMore ? page.slice(0, DISTRIBUTION_REPORT_PAGE_SIZE) : page;
   const vendorIds = [...new Set(
     forms.flatMap((form) => form.vendor_id && !form.contact_id ? [form.vendor_id] : []),
   )];
@@ -433,21 +553,98 @@ export async function listDistributionOrderForms(organizationId: string) {
     rolesByContactId.set(assignment.contact_id, roles);
   }
 
-  return forms.map((form) => ({
-    id: form.id,
-    orderFormNo: form.order_form_no,
-    orderFormDate: form.order_form_date.toISOString().slice(0, 10),
-    customer: form.customer,
-    contactRole: (rolesByContactId.get(
-      form.contact_id ?? (form.vendor_id ? contactIdByVendorId.get(form.vendor_id) : null) ?? "",
-    ) ?? []).join(", ") || "—",
-    status: form.status,
-    quotationId: form.quotation_id,
-    totalQuantity: form.total_quantity,
-    subtotal: form.subtotal.toFixed(2),
-    createdAt: form.created_at.toISOString(),
-    lines: form.lines,
-  }));
+  return {
+    orderForms: forms.map((form) => ({
+      id: form.id,
+      orderFormNo: form.order_form_no,
+      orderFormDate: form.order_form_date.toISOString().slice(0, 10),
+      customer: form.customer,
+      contactRole: (rolesByContactId.get(
+        form.contact_id ?? (form.vendor_id ? contactIdByVendorId.get(form.vendor_id) : null) ?? "",
+      ) ?? []).join(", ") || "—",
+      status: form.status,
+      quotationId: form.quotation_id,
+      totalQuantity: form.total_quantity,
+      subtotal: form.subtotal.toFixed(2),
+      createdAt: form.created_at.toISOString(),
+    })),
+    nextCursor: hasMore
+      ? encodeDistributionCursor({
+          id: forms[forms.length - 1].id,
+          date: forms[forms.length - 1].order_form_date,
+          createdAt: forms[forms.length - 1].created_at,
+        })
+      : null,
+  };
+}
+
+export async function deleteDistributionOrderForms(
+  organizationId: string,
+  userId: string,
+  orderFormIds: string[],
+) {
+  if (
+    orderFormIds.length === 0 ||
+    orderFormIds.length > 500 ||
+    orderFormIds.some((id) => !id.trim()) ||
+    new Set(orderFormIds).size !== orderFormIds.length
+  ) {
+    throw new Error("Select between one and 500 unique Order Forms to delete.");
+  }
+
+  return prisma.$transaction(async (transaction) => {
+    const orderForms = await transaction.distributionOrderForm.findMany({
+      where: { organization_id: organizationId, id: { in: orderFormIds } },
+      select: {
+        id: true,
+        order_form_no: true,
+        quotation_id: true,
+        status: true,
+        lines: { select: { booking_no: true } },
+      },
+    });
+    if (orderForms.length !== orderFormIds.length) {
+      throw new Error("One or more selected Order Forms were not found in this organization.");
+    }
+
+    const orderedOrderForms = orderFormIds.map((id) => orderForms.find((orderForm) => orderForm.id === id)!);
+    if (orderedOrderForms.some((orderForm) => orderForm.status !== "DRAFT" || orderForm.quotation_id !== null)) {
+      throw new Error("Only unconverted draft Order Forms can be deleted.");
+    }
+
+    const deleted = await transaction.distributionOrderForm.deleteMany({
+      where: {
+        organization_id: organizationId,
+        id: { in: orderFormIds },
+        status: "DRAFT",
+        quotation_id: null,
+      },
+    });
+    if (deleted.count !== orderedOrderForms.length) {
+      throw new Error("One or more selected Order Forms changed while deleting. Reload and try again.");
+    }
+
+    await transaction.auditEvent.createMany({
+      data: orderedOrderForms.map((orderForm) => ({
+        organization_id: organizationId,
+        user_id: userId,
+        module: "Distribution",
+        action: "DELETE_DISTRIBUTION_ORDER_FORM",
+        entity_type: "DistributionOrderForm",
+        entity_id: orderForm.id,
+        details: {
+          order_form_no: orderForm.order_form_no,
+          status: orderForm.status,
+          booking_nos: orderForm.lines.map((line) => line.booking_no),
+        },
+      })),
+    });
+
+    return orderedOrderForms.map((orderForm) => ({
+      id: orderForm.id,
+      orderFormNo: orderForm.order_form_no,
+    }));
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
 }
 
 export async function createDistributionOrderFormFromBookings(
@@ -1221,24 +1418,26 @@ export async function deleteDistributionQuotations(
         throw new Error("One or more linked order forms changed state. Reload and try again.");
       }
 
-      for (const orderForm of linkedOrderForms) {
-        const quotation = orderedQuotations.find((item) => item.id === orderForm.quotation_id);
-        await createAuditEvent({
-          organizationId,
-          userId,
-          module: "Distribution",
-          action: "REOPEN_DISTRIBUTION_ORDER_FORM",
-          entityType: "DistributionOrderForm",
-          entityId: orderForm.id,
-          details: {
-            order_form_no: orderForm.order_form_no,
-            previous_status: "CONVERTED",
-            status: "DRAFT",
-            previous_quotation_id: orderForm.quotation_id,
-            previous_quotation_no: quotation?.quotation_no ?? null,
-          },
-        }, transaction);
-      }
+      await transaction.auditEvent.createMany({
+        data: linkedOrderForms.map((orderForm) => {
+          const quotation = orderedQuotations.find((item) => item.id === orderForm.quotation_id);
+          return {
+            organization_id: organizationId,
+            user_id: userId,
+            module: "Distribution",
+            action: "REOPEN_DISTRIBUTION_ORDER_FORM",
+            entity_type: "DistributionOrderForm",
+            entity_id: orderForm.id,
+            details: {
+              order_form_no: orderForm.order_form_no,
+              previous_status: "CONVERTED",
+              status: "DRAFT",
+              previous_quotation_id: orderForm.quotation_id,
+              previous_quotation_no: quotation?.quotation_no ?? null,
+            },
+          };
+        }),
+      });
     }
 
     const linkedQuotationIds = orderedQuotations.flatMap((quotation) =>
@@ -1312,22 +1511,22 @@ export async function deleteDistributionQuotations(
       throw new Error("One or more selected quotations changed while deleting. Reload and try again.");
     }
 
-    for (const quotation of orderedQuotations) {
-      await createAuditEvent({
-        organizationId,
-        userId,
+    await transaction.auditEvent.createMany({
+      data: orderedQuotations.map((quotation) => ({
+        organization_id: organizationId,
+        user_id: userId,
         module: "Distribution",
         action: quotation.mode === "MASTER" ? "DELETE_DISTRIBUTION_MASTER_QUOTATION" : "DELETE_DISTRIBUTION_QUOTATION",
-        entityType: "DistributionQuotation",
-        entityId: quotation.id,
+        entity_type: "DistributionQuotation",
+        entity_id: quotation.id,
         details: {
           quotation_no: quotation.quotation_no,
           mode: quotation.mode,
           child_quotation_nos: quotation.childQuotations.map((child) => child.quotation_no),
           booking_nos: quotation.lines.map((line) => line.booking_no),
         },
-      }, transaction);
-    }
+      })),
+    });
 
     return orderedQuotations.map((quotation) => ({
       id: quotation.id,

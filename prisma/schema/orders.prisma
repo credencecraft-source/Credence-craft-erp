@@ -47,6 +47,7 @@ model MerchandisingOrder {
   @@unique([organization_id, id])
   @@index([organization_id, entity_id, created_at])
   @@index([organization_id, created_at])
+  @@index([organization_id, finalStatus, created_at(sort: Desc), id(sort: Desc)], map: "merch_orders_org_status_created_id_idx")
   @@index([organization_id, contact_id])
   @@map("merchandising_orders")
 }
@@ -688,6 +689,7 @@ model PosSalesInvoice {
   created_at      DateTime              @default(now())
   organization    Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   lines           PosSalesInvoiceLine[]
+  fgMaterialIssues FGMaterialIssue[]     @relation("FGIssuePosInvoice")
 
   @@unique([organization_id, invoice_no])
   @@unique([organization_id, id])
@@ -1069,7 +1071,9 @@ model FinishedGoodsSkuStock {
   organization          Organization         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   location              MasterLocation       @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
   purchase_bill_line    PosPurchaseBillLine? @relation(fields: [purchase_bill_line_id], references: [id], onDelete: SetNull)
+  fgMaterialIssueLines  FGMaterialIssueLine[]
 
+  @@unique([organization_id, id])
   @@unique([organization_id, sku_code])
   @@unique([organization_id, barcode])
   @@index([organization_id, style_name])
@@ -1116,6 +1120,7 @@ model FinishedGoodsGeneralStockReceipt {
   order                    MerchandisingOrder        @relation(fields: [organization_id, order_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_general_stock_receipts_order_fkey")
   grnLine                  WorkOrderInventoryGrnLine @relation(fields: [grn_id, work_order_id, grn_line_id], references: [grn_id, work_order_id, id], onDelete: Restrict, map: "finished_goods_general_stock_receipts_grn_line_fkey")
   posSalesLines            PosSalesInvoiceLine[]
+  fgMaterialIssueLines     FGMaterialIssueLine[]
 
   @@unique([organization_id, id], map: "fg_general_receipt_org_id_key")
   @@unique([grn_id, work_order_id, grn_line_id], map: "fg_general_stock_grn_line_scope_key")
@@ -1170,6 +1175,7 @@ model FinishedGoodsAllocatedStockReceipt {
   bookingAssignment        AdvanceBookingWorkOrderAssignment      @relation(fields: [organization_id, booking_assignment_id], references: [organization_id, id], onDelete: Restrict, map: "finished_goods_allocated_stock_receipts_booking_assignment_fkey")
   grnLine                  WorkOrderInventoryGrnLine              @relation(fields: [grn_id, work_order_id, grn_line_id], references: [grn_id, work_order_id, id], onDelete: Restrict, map: "finished_goods_allocated_stock_receipts_grn_line_fkey")
   grnAllocation            WorkOrderInventoryGrnBookingAllocation @relation(fields: [grn_allocation_id], references: [id], onDelete: Restrict, map: "finished_goods_allocated_stock_receipts_grn_allocation_fkey")
+  fgMaterialIssueLines     FGMaterialIssueLine[]
 
   @@unique([organization_id, id], map: "fg_allocated_receipt_org_id_key")
   @@unique([organization_id, grn_line_id, booking_assignment_id], map: "fg_allocated_receipt_line_assignment_key")
@@ -1263,6 +1269,7 @@ model FinishedGoodsOutwardBoxLine {
   organization    Organization                    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   box             FinishedGoodsOutwardBox         @relation(fields: [organization_id, box_id], references: [organization_id, id], onDelete: Restrict)
   requestLine     FinishedGoodsOutwardRequestLine @relation(fields: [organization_id, request_line_id], references: [organization_id, id], onDelete: Restrict)
+  fgMaterialIssueLines FGMaterialIssueLine[]
 
   @@unique([organization_id, id])
   @@unique([organization_id, box_id, request_line_id])
@@ -1279,6 +1286,7 @@ model FinishedGoodsOutwardShipment {
   created_at      DateTime                          @default(now())
   organization    Organization                      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   boxes           FinishedGoodsOutwardShipmentBox[]
+  fgMaterialIssues FGMaterialIssue[]               @relation("FGIssuePackingList")
 
   @@unique([organization_id, packing_list_no])
   @@unique([organization_id, id])
@@ -1337,6 +1345,98 @@ model GateEntry {
   @@map("gate_entries")
 }
 
+enum FGMaterialIssueSource {
+  PACKING_LIST
+  POS_INVOICE
+  MANUAL_ADJUSTMENT
+}
+
+enum FGMaterialIssueMovement {
+  ISSUE
+  REVERSAL
+}
+
+enum FGMaterialIssueStockType {
+  SKU
+  GENERAL
+  ALLOCATED
+}
+
+model FGMaterialIssue {
+  id               String                  @id @default(cuid())
+  organization_id  String
+  issue_no         String                  @db.VarChar(100)
+  source_type      FGMaterialIssueSource
+  movement         FGMaterialIssueMovement
+  packing_list_id  String?
+  pos_invoice_id   String?
+  reversal_of_id   String?
+  idempotency_key  String                  @db.VarChar(160)
+  source_reference String?                 @db.VarChar(255)
+  issued_by        String?
+  issued_at        DateTime                @default(now())
+  reason           String?                 @db.VarChar(1000)
+  created_at       DateTime                @default(now())
+
+  organization Organization                     @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  packingList  FinishedGoodsOutwardShipment?    @relation("FGIssuePackingList", fields: [organization_id, packing_list_id], references: [organization_id, id], onDelete: Restrict)
+  posInvoice   PosSalesInvoice?                 @relation("FGIssuePosInvoice", fields: [organization_id, pos_invoice_id], references: [organization_id, id], onDelete: Restrict)
+  reversalOf   FGMaterialIssue?                 @relation("FGIssueReversal", fields: [organization_id, reversal_of_id], references: [organization_id, id], onDelete: Restrict)
+  reversals    FGMaterialIssue[]                @relation("FGIssueReversal")
+  lines        FGMaterialIssueLine[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, issue_no])
+  @@unique([organization_id, idempotency_key])
+  @@index([organization_id, issued_at, id])
+  @@index([organization_id, source_type, issued_at])
+  @@index([organization_id, packing_list_id])
+  @@index([organization_id, pos_invoice_id])
+  @@map("fg_material_issues")
+}
+
+model FGMaterialIssueLine {
+  id                   String                     @id @default(cuid())
+  organization_id      String
+  issue_id             String
+  line_no              Int
+  stock_type           FGMaterialIssueStockType
+  sku_stock_id         String?
+  general_receipt_id   String?
+  allocated_receipt_id String?
+  shipment_box_line_id String?
+  pos_invoice_line_id  String?
+  reversal_of_line_id  String?
+  item_code            String?                    @db.VarChar(100)
+  style_name           String                     @db.VarChar(255)
+  article_no           String?                    @db.VarChar(255)
+  size                 String?                    @db.VarChar(100)
+  colour               String?                    @db.VarChar(150)
+  quantity             Decimal                    @db.Decimal(14, 2)
+  uom_code             String                     @db.VarChar(50)
+  stock_before         Decimal                    @db.Decimal(14, 2)
+  stock_after          Decimal                    @db.Decimal(14, 2)
+  created_at           DateTime                   @default(now())
+
+  issue            FGMaterialIssue                       @relation(fields: [organization_id, issue_id], references: [organization_id, id], onDelete: Restrict)
+  skuStock         FinishedGoodsSkuStock?                @relation(fields: [organization_id, sku_stock_id], references: [organization_id, id], onDelete: Restrict)
+  generalReceipt  FinishedGoodsGeneralStockReceipt?     @relation(fields: [organization_id, general_receipt_id], references: [organization_id, id], onDelete: Restrict)
+  allocatedReceipt FinishedGoodsAllocatedStockReceipt?  @relation(fields: [organization_id, allocated_receipt_id], references: [organization_id, id], onDelete: Restrict)
+  shipmentBoxLine FinishedGoodsOutwardBoxLine?            @relation(fields: [organization_id, shipment_box_line_id], references: [organization_id, id], onDelete: Restrict)
+  reversalOfLine  FGMaterialIssueLine?                    @relation("FGIssueLineReversal", fields: [organization_id, reversal_of_line_id], references: [organization_id, id], onDelete: Restrict)
+  reversals       FGMaterialIssueLine[]                   @relation("FGIssueLineReversal")
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, issue_id, line_no])
+  @@index([organization_id, general_receipt_id, issue_id])
+  @@index([organization_id, allocated_receipt_id, issue_id])
+  @@index([organization_id, sku_stock_id, issue_id])
+  @@index([organization_id, shipment_box_line_id])
+  @@index([organization_id, pos_invoice_line_id])
+  @@index([organization_id, reversal_of_line_id])
+  @@map("fg_material_issue_lines")
+}
+
 model AdvanceBooking {
   id                                  String                               @id @default(cuid())
   organization_id                     String
@@ -1360,6 +1460,7 @@ model AdvanceBooking {
 
   @@unique([organization_id, id])
   @@unique([organization_id, booking_no])
+  @@index([organization_id, created_at(sort: Desc), id(sort: Desc)])
   @@index([organization_id, order_id, created_at])
   @@map("advance_bookings")
 }

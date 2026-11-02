@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
@@ -10,6 +10,7 @@ import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import { toggleVisibleReportSelection } from "@/components/reports/report-grid-filtering";
 import { validateMasterQuotationChildSelection } from "@/lib/services/distribution/quotation-selection-service";
 import type { DistributionQuotationSummary } from "./quotation-types";
 
@@ -50,53 +51,97 @@ export default function QuotationListPage() {
   const [quotations, setQuotations] = useState<DistributionQuotationSummary[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [visibleFields, setVisibleFields] = useState<QuotationField[]>(fields.map(({ key }) => key));
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isCreatingSalesOrder, setIsCreatingSalesOrder] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
-  const [vendors, setVendors] = useState<VendorOption[]>([]);
+  const [vendorLookup, setVendorLookup] = useState<{ organizationId: string; options: VendorOption[] } | null>(null);
   const [selectedCounterparty, setSelectedCounterparty] = useState("");
   const [showAllContacts, setShowAllContacts] = useState(false);
   const [allContacts, setAllContacts] = useState<ContactOption[]>([]);
   const [contactSearch, setContactSearch] = useState("");
   const [isLoadingAllContacts, setIsLoadingAllContacts] = useState(false);
   const [allContactsError, setAllContactsError] = useState("");
-  const [isLoadingVendors, setIsLoadingVendors] = useState(true);
+  const [isLoadingVendors, setIsLoadingVendors] = useState(false);
   const [vendorError, setVendorError] = useState("");
+  const [vendorLookupRetryCount, setVendorLookupRetryCount] = useState(0);
   const [isSalesOrderModalOpen, setIsSalesOrderModalOpen] = useState(false);
+  const listRequestRef = useRef<AbortController | null>(null);
+  const loadingMoreRef = useRef(false);
+  const vendors = vendorLookup?.organizationId === organizationId ? vendorLookup.options : [];
 
-  const loadQuotations = useCallback(async () => {
-    setIsLoading(true);
+  const loadQuotations = useCallback(async (cursor?: string) => {
+    if (cursor && loadingMoreRef.current) return;
+    loadingMoreRef.current = Boolean(cursor);
+    if (cursor) setIsLoadingMore(true);
+    else {
+      setIsLoading(true);
+      setIsLoadingMore(false);
+      setNextCursor(null);
+    }
+    listRequestRef.current?.abort();
+    const controller = new AbortController();
+    listRequestRef.current = controller;
     setError("");
     try {
       const query = new URLSearchParams({ organizationId });
-      const response = await fetch(`/api/distribution/quotations?${query}`, { cache: "no-store" });
+      if (cursor) query.set("cursor", cursor);
+      const response = await fetch(`/api/distribution/quotations?${query}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       const data = await response.json().catch(() => null);
-      if (!response.ok || !Array.isArray(data?.quotations)) {
+      if (controller.signal.aborted) return;
+      if (
+        !response.ok ||
+        !Array.isArray(data?.quotations) ||
+        !(typeof data.nextCursor === "string" || data.nextCursor === null)
+      ) {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to load quotations.");
       }
-      setQuotations(data.quotations as DistributionQuotationSummary[]);
+      const pageQuotations = data.quotations as DistributionQuotationSummary[];
+      setQuotations((current) => cursor ? [...current, ...pageQuotations] : pageQuotations);
+      setNextCursor(data.nextCursor);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load quotations.");
+      if (!controller.signal.aborted) {
+        setError(loadError instanceof Error ? loadError.message : "Unable to load quotations.");
+      }
     } finally {
-      setIsLoading(false);
+      if (listRequestRef.current === controller) {
+        listRequestRef.current = null;
+        loadingMoreRef.current = false;
+        if (cursor) setIsLoadingMore(false);
+        else setIsLoading(false);
+      }
     }
   }, [organizationId]);
 
   useEffect(() => {
-    void Promise.resolve().then(loadQuotations);
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (active) void loadQuotations();
+    });
+    return () => {
+      active = false;
+      listRequestRef.current?.abort();
+      listRequestRef.current = null;
+      loadingMoreRef.current = false;
+    };
   }, [loadQuotations]);
 
   useEffect(() => {
+    if (!isSalesOrderModalOpen || vendorLookup?.organizationId === organizationId) return;
     const controller = new AbortController();
     const loadVendors = async () => {
       setIsLoadingVendors(true);
       setVendorError("");
       try {
         const response = await fetch(
-          `/api/organizations/${encodeURIComponent(organizationId)}/master-data/vendor?includeInactive=false&includeDummyData=true`,
+          `/api/organizations/${encodeURIComponent(organizationId)}/master-data/vendor?includeInactive=false&includeDummyData=true&shape=select`,
           { cache: "no-store", signal: controller.signal },
         );
         const data = await response.json().catch(() => null);
@@ -109,7 +154,7 @@ export default function QuotationListPage() {
           )
           .map((value: { id: string; label: string }) => ({ id: value.id, label: value.label.trim() }))
           .sort((left: VendorOption, right: VendorOption) => left.label.localeCompare(right.label));
-        setVendors(options);
+        setVendorLookup({ organizationId, options });
       } catch (loadError) {
         if (!controller.signal.aborted) {
           setVendorError(loadError instanceof Error ? loadError.message : "Unable to load Vendor Master.");
@@ -120,7 +165,7 @@ export default function QuotationListPage() {
     };
     void Promise.resolve().then(loadVendors);
     return () => controller.abort();
-  }, [organizationId]);
+  }, [isSalesOrderModalOpen, organizationId, vendorLookup, vendorLookupRetryCount]);
 
   const loadAllContacts = useCallback(async (search: string, signal?: AbortSignal) => {
     setIsLoadingAllContacts(true);
@@ -178,6 +223,8 @@ export default function QuotationListPage() {
     [regularQuotations],
   );
   const selectionError = validateMasterQuotationChildSelection(selectedIds, validationQuotes);
+  const isCheckingAutomaticDistributorBilling =
+    selectedIds.length > 0 && isCreatingSalesOrder && !selectedCounterparty;
 
   async function createSalesOrder(tryAutomaticDistributorBilling = false) {
     const isContactSelection = !tryAutomaticDistributorBilling && selectedCounterparty.startsWith("contact:");
@@ -234,7 +281,8 @@ export default function QuotationListPage() {
   }
 
   function requestBulkDelete() {
-    const selectedQuotations = regularQuotations.filter((quotation) => selectedIds.includes(quotation.id));
+    const selectedIdSet = new Set(selectedIds);
+    const selectedQuotations = regularQuotations.filter((quotation) => selectedIdSet.has(quotation.id));
     if (selectedQuotations.length !== selectedIds.length) {
       setError("One or more selected quotations are no longer in this report. Refresh and select them again.");
       return;
@@ -275,7 +323,8 @@ export default function QuotationListPage() {
         ? ` Reopened ${reopenedOrderFormCount} Order Form${reopenedOrderFormCount === 1 ? "" : "s"} for quotation creation.`
         : "";
       setNotice(`Deleted ${deletedCount} quotation${deletedCount === 1 ? "" : "s"}.${reopenedNotice} Source bookings were not deleted.`);
-      await loadQuotations();
+      const deletedIds = new Set(selectedIds);
+      setQuotations((current) => current.filter((quotation) => !deletedIds.has(quotation.id)));
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the selected quotations.");
     } finally {
@@ -304,9 +353,9 @@ export default function QuotationListPage() {
           </Button>
         </div>
       </header>
-      {vendorError || error ? (
+      {error ? (
         <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-          {vendorError || error}
+          {error}
         </p>
       ) : null}
       {notice ? <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{notice}</p> : null}
@@ -323,7 +372,9 @@ export default function QuotationListPage() {
           legacyFieldsToAdd={["contactRole"]}
           rowIdSelector={getQuotationRowId}
           selectedIds={selectedIds}
-          onToggleSelectAll={(checked) => setSelectedIds(checked ? regularQuotations.map((quotation) => quotation.id) : [])}
+          onToggleSelectAll={(checked, recordIds) =>
+            setSelectedIds((current) => toggleVisibleReportSelection(current, recordIds, checked))
+          }
           onToggleRowSelection={(id, checked) => setSelectedIds((current) =>
             checked ? current.includes(id) ? current : [...current, id] : current.filter((value) => value !== id),
           )}
@@ -346,6 +397,9 @@ export default function QuotationListPage() {
                   setIsSalesOrderModalOpen(true);
                   return;
                 }
+                setSelectedCounterparty("");
+                setShowAllContacts(false);
+                setIsSalesOrderModalOpen(true);
                 void createSalesOrder(true);
               }}
             >
@@ -356,6 +410,13 @@ export default function QuotationListPage() {
           renderCell={renderQuotationCell}
         />
       </Card>
+      {nextCursor ? (
+        <div className="flex justify-center">
+          <Button type="button" variant="secondary" onClick={() => void loadQuotations(nextCursor)} disabled={isLoadingMore}>
+            {isLoadingMore ? "Loading quotations..." : "Load more quotations"}
+          </Button>
+        </div>
+      ) : null}
       <Modal
           open={isBulkDeleteDialogOpen}
           onClose={() => {
@@ -390,7 +451,7 @@ export default function QuotationListPage() {
           if (!isCreatingSalesOrder) setIsSalesOrderModalOpen(false);
         }}
         ariaLabelledBy="sales-order-counterparty-title"
-        size="sm"
+        size="square"
         closeOnBackdrop={!isCreatingSalesOrder}
       >
         <form
@@ -402,7 +463,11 @@ export default function QuotationListPage() {
         >
           <div>
             <h2 id="sales-order-counterparty-title" className="text-lg font-semibold text-slate-900">Create Sales Order</h2>
-            <p className="mt-1 text-sm text-slate-600">Choose a Vendor or enable LIST ALL to select any Contact Master contact.</p>
+            <p className="mt-1 text-sm text-slate-600">
+              {isCheckingAutomaticDistributorBilling
+                ? "Checking distributor billing. Vendor selection will be available if a manual choice is needed."
+                : "Choose a Vendor or enable LIST ALL to select any Contact Master contact."}
+            </p>
           </div>
           <Checkbox
             label="LIST ALL"
@@ -417,6 +482,20 @@ export default function QuotationListPage() {
             }}
             disabled={isCreatingSalesOrder}
           />
+          {!showAllContacts && vendorError ? (
+            <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-700">
+              <span>{vendorError}</span>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setVendorLookupRetryCount((count) => count + 1)}
+                disabled={isLoadingVendors}
+              >
+                Retry Vendors
+              </Button>
+            </div>
+          ) : null}
           {showAllContacts ? (
           <>
             <Input
@@ -443,7 +522,13 @@ export default function QuotationListPage() {
             <option value="">
               {showAllContacts
                 ? isLoadingAllContacts ? "Searching contacts..." : "Select a Contact"
-                : isLoadingVendors ? "Loading vendors..." : "Select a Vendor"}
+                : isCheckingAutomaticDistributorBilling
+                  ? "Checking distributor billing..."
+                  : isLoadingVendors
+                  ? "Loading vendors..."
+                  : vendors.length === 0
+                    ? "No active vendors available"
+                    : "Select a Vendor"}
             </option>
             {showAllContacts
               ? allContacts.map((contact) => (

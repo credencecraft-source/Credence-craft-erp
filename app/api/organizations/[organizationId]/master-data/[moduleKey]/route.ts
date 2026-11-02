@@ -3,6 +3,7 @@ import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { getOrganizationForUser, getOrganizationShellContext, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { createMasterValueForOrganization, getActiveOrganizationDummyDataBatch, getMasterDefinition, getMasterValuesForOrganization, getSizeGroupSizesForOrganization } from "@/lib/master-data/master-data-constants";
+import { listVendorSelectOptionsForOrganization } from "@/lib/services/master-data/vendor-select-lookup-service";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-registry";
 
 type OrderedMasterValue = {
@@ -91,6 +92,18 @@ export async function GET(
     if (profile) profile.organizationMs = performance.now() - organizationStartedAt;
     if (!organization) {
       return respond({ error: "Organization not found" }, { status: 404 });
+    }
+
+    if (moduleKey === "vendor" && includeDummyData && searchParams.get("shape") === "select") {
+      lookupStartedAt = profile ? performance.now() : undefined;
+      const vendorOptions = await listVendorSelectOptionsForOrganization(organization.id, {
+        limit,
+        includeInactive,
+      });
+      if (profile && lookupStartedAt !== undefined) {
+        profile.lookupMs = performance.now() - lookupStartedAt;
+      }
+      return respond(vendorOptions);
     }
 
     if (moduleKey === "order-lookups") {

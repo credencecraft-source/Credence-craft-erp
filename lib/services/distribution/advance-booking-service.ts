@@ -310,6 +310,7 @@ function bookingSearchFilter(organizationId: string, search: string | undefined)
   if (normalizedSearch.length > 100) {
     throw new Error("Advance Booking search must be 100 characters or fewer.");
   }
+  if (normalizedSearch.length < 3) return undefined;
   const contains = { contains: normalizedSearch, mode: "insensitive" as const };
   return {
     AND: [
@@ -352,6 +353,7 @@ async function listAdvanceBookingRegister(
     where: {
       organization_id: organizationId,
       quotationLines: { none: {} },
+      distributionOrderFormLines: { none: {} },
       ...(bookingSearchFilter(organizationId, search) ?? {}),
       ...(cursor
         ? {
@@ -840,14 +842,14 @@ export async function deleteAdvanceBookings(
     if (deleted.count !== bookingIds.length) {
       throw new Error("Selected bookings changed while deleting. Reload and try again.");
     }
-    for (const booking of bookings) {
-      await createAuditEvent({
-        organizationId,
-        userId,
+    await transaction.auditEvent.createMany({
+      data: bookings.map((booking) => ({
+        organization_id: organizationId,
+        user_id: userId,
         module: "Distribution",
         action: "DELETE_ADVANCE_BOOKING",
-        entityType: "AdvanceBooking",
-        entityId: booking.id,
+        entity_type: "AdvanceBooking",
+        entity_id: booking.id,
         details: {
           booking_no: booking.booking_no,
           size_count: booking.sizeLines.length,
@@ -857,8 +859,8 @@ export async function deleteAdvanceBookings(
             0,
           ),
         },
-      }, transaction);
-    }
+      })),
+    });
     return { deletedBookingNos: bookings.map((booking) => booking.booking_no) };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 30000 });
 }

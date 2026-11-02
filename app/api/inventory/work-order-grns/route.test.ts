@@ -4,8 +4,17 @@ const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
   createWorkOrderInventoryGrn: vi.fn(),
+  deleteWorkOrderInventoryGrns: vi.fn(),
   listWorkOrderInventoryGrns: vi.fn(),
   listWorkOrdersForReceiving: vi.fn(),
+  WorkOrderGrnDeletionConflictError: class WorkOrderGrnDeletionConflictError extends Error {
+    constructor(
+      message: string,
+      readonly issues: Array<{ id: string; type: string; documentNo: string }> = [],
+    ) {
+      super(message);
+    }
+  },
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({
@@ -18,14 +27,22 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 
 vi.mock("@/lib/services/inventory/work-order-grn-service", () => ({
   createWorkOrderInventoryGrn: mocks.createWorkOrderInventoryGrn,
+  deleteWorkOrderInventoryGrns: mocks.deleteWorkOrderInventoryGrns,
   listWorkOrderInventoryGrns: mocks.listWorkOrderInventoryGrns,
   listWorkOrdersForReceiving: mocks.listWorkOrdersForReceiving,
+  WorkOrderGrnDeletionConflictError: mocks.WorkOrderGrnDeletionConflictError,
 }));
 
-import { GET, POST } from "./route";
+import { DELETE, GET, POST } from "./route";
 
 const postRequest = (body: unknown) => new Request("http://localhost/api/inventory/work-order-grns", {
   method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+const deleteRequest = (body: unknown) => new Request("http://localhost/api/inventory/work-order-grns", {
+  method: "DELETE",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
 });
@@ -38,6 +55,7 @@ describe("work-order GRN route", () => {
     mocks.listWorkOrderInventoryGrns.mockResolvedValue({ grns: [], nextCursor: null });
     mocks.listWorkOrdersForReceiving.mockResolvedValue({ workOrders: [], nextCursor: null });
     mocks.createWorkOrderInventoryGrn.mockResolvedValue({ id: "grn-1" });
+    mocks.deleteWorkOrderInventoryGrns.mockResolvedValue([{ id: "grn-1", grnNo: "FGRN-1" }]);
   });
 
   it("requires authentication before the organization-scoped register can be read", async () => {
@@ -171,5 +189,77 @@ describe("work-order GRN route", () => {
     const response = await GET(new Request("http://localhost/api/inventory/work-order-grns?organizationId=public-org"));
 
     expect(response.status).toBe(503);
+  });
+
+  it("deletes selected GRNs through authorized internal organization and inventory permissions", async () => {
+    const response = await DELETE(deleteRequest({
+      organizationId: "public-org",
+      grnIds: ["grn-1", "grn-2"],
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      deleted: [{ id: "grn-1", grnNo: "FGRN-1" }],
+    });
+    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
+      "user-1",
+      "public-org",
+      ["OWNER", "ADMIN", "INVENTORY"],
+    );
+    expect(mocks.deleteWorkOrderInventoryGrns).toHaveBeenCalledWith(
+      "internal-org-1",
+      "user-1",
+      ["grn-1", "grn-2"],
+    );
+  });
+
+  it("rejects invalid bulk deletion selections before calling the service", async () => {
+    const emptySelection = await DELETE(deleteRequest({ organizationId: "public-org", grnIds: [] }));
+    const duplicateSelection = await DELETE(deleteRequest({ organizationId: "public-org", grnIds: ["grn-1", "grn-1"] }));
+    const oversizedSelection = await DELETE(deleteRequest({
+      organizationId: "public-org",
+      grnIds: Array.from({ length: 101 }, (_, index) => `grn-${index}`),
+    }));
+
+    expect(emptySelection.status).toBe(400);
+    expect(duplicateSelection.status).toBe(400);
+    expect(oversizedSelection.status).toBe(400);
+    expect(mocks.deleteWorkOrderInventoryGrns).not.toHaveBeenCalled();
+  });
+
+  it("returns a conflict when linked material has been issued", async () => {
+    const issues = [{
+      id: "invoice-1",
+      type: "POS_INVOICE",
+      documentNo: "POS-001",
+    }];
+    mocks.deleteWorkOrderInventoryGrns.mockRejectedValue(
+      new mocks.WorkOrderGrnDeletionConflictError(
+        "This GRN cannot be deleted because material has already been issued against it.",
+        issues,
+      ),
+    );
+
+    const response = await DELETE(deleteRequest({
+      organizationId: "public-org",
+      grnIds: ["grn-1"],
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "This GRN cannot be deleted because material has already been issued against it.",
+      issues,
+    });
+  });
+
+  it("does not call bulk delete if authentication or organization authorization fails", async () => {
+    mocks.requireSessionUser.mockRejectedValueOnce(new Error("Authentication required."));
+    const unauthenticated = await DELETE(deleteRequest({ organizationId: "public-org", grnIds: ["grn-1"] }));
+    mocks.requireOrganizationContext.mockRejectedValueOnce(new Error("Insufficient organization permissions."));
+    const unauthorized = await DELETE(deleteRequest({ organizationId: "public-org", grnIds: ["grn-1"] }));
+
+    expect(unauthenticated.status).toBe(400);
+    expect(unauthorized.status).toBe(400);
+    expect(mocks.deleteWorkOrderInventoryGrns).not.toHaveBeenCalled();
   });
 });

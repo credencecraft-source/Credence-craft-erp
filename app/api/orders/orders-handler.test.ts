@@ -60,6 +60,43 @@ describe("merchandising orders list API", () => {
     );
   });
 
+  it("passes search and validated column filters to the tenant-scoped list service", async () => {
+    const filters = { buyer: { operator: "contains", value: "Acme" } };
+    const response = await GET(new Request(
+      `http://localhost/api/orders?organizationId=public-org-id&limit=25&status=Draft&search=Jacket&filters=${encodeURIComponent(JSON.stringify(filters))}`,
+    ));
+
+    expect(response.status).toBe(200);
+    expect(mocks.listOrdersPage).toHaveBeenCalledWith("internal-org-1", {
+      cursor: undefined,
+      limit: 25,
+      status: "Draft",
+      search: "Jacket",
+      filters,
+      purpose: undefined,
+      includeArticleMetadata: true,
+    });
+  });
+
+  it("rejects malformed or oversized server-side list filters", async () => {
+    const malformed = await GET(new Request(
+      "http://localhost/api/orders?organizationId=public-org-id&filters=%7B",
+    ));
+    const oversizedPage = await GET(new Request(
+      "http://localhost/api/orders?organizationId=public-org-id&limit=101",
+    ));
+    const invalidQuantityOperator = await GET(new Request(
+      `http://localhost/api/orders?organizationId=public-org-id&filters=${encodeURIComponent(JSON.stringify({
+        orderQty: { operator: "contains", value: "4" },
+      }))}`,
+    ));
+
+    expect(malformed.status).toBe(400);
+    expect(oversizedPage.status).toBe(400);
+    expect(invalidQuantityOperator.status).toBe(400);
+    expect(mocks.listOrdersPage).not.toHaveBeenCalled();
+  });
+
   it("returns a JSON server error for unexpected list failures", async () => {
     mocks.listOrdersPage.mockRejectedValue(new Error("Unexpected database query failure."));
 

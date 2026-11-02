@@ -47,7 +47,33 @@ describe("distribution quotation API", () => {
     const response = await GET(new Request("http://localhost/api/distribution/quotations?organizationId=public-org"));
     expect(response.status).toBe(200);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
-    expect(mocks.listDistributionQuotations).toHaveBeenCalledWith("internal-org-1");
+    expect(mocks.listDistributionQuotations).toHaveBeenCalledWith(
+      "internal-org-1",
+      { includeContactRole: true },
+    );
+  });
+
+  it("uses the minimal summary view for the Sales Order list", async () => {
+    const response = await GET(new Request(
+      "http://localhost/api/distribution/quotations?organizationId=public-org&view=sales-order",
+    ));
+
+    expect(response.status).toBe(200);
+    expect(mocks.listDistributionQuotations).toHaveBeenCalledWith(
+      "internal-org-1",
+      { includeContactRole: false },
+    );
+  });
+
+  it("passes pagination cursors through after organization authorization", async () => {
+    await GET(new Request(
+      "http://localhost/api/distribution/quotations?organizationId=public-org&cursor=cursor-token",
+    ));
+
+    expect(mocks.listDistributionQuotations).toHaveBeenCalledWith(
+      "internal-org-1",
+      { includeContactRole: true, cursor: "cursor-token" },
+    );
   });
 
   it("creates a database quotation from booking IDs only for authorized merchandising roles", async () => {

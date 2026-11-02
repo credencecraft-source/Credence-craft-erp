@@ -7,10 +7,12 @@ import {
   createContact,
   deactivateContacts,
   deleteUnusedContacts,
+  getContactRoleCounts,
   listContacts,
+  listContactReportPage,
 } from "@/lib/services/master-data/contact-master-service";
 import { ContactValidationError } from "@/lib/services/master-data/contact-master-validation";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
 
 type AuthorizationResult =
   | { authorized: false; response: NextResponse }
@@ -19,16 +21,20 @@ type AuthorizationResult =
 async function authorizedContext(organizationPublicId: string) {
   const user = await getSessionUser();
   if (!user?.workspace_id) return { authorized: false, response: NextResponse.json({ error: "Authentication is required." }, { status: 401 }) } satisfies AuthorizationResult;
-  const organization = await getOrganizationForUser(user.id, organizationPublicId);
-  if (!organization) return { authorized: false, response: NextResponse.json({ error: "Organization not found." }, { status: 404 }) } satisfies AuthorizationResult;
+  let organization: { id: string } | null;
   try {
-    await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
+    organization = await getOrganizationForUserWithPermission(
+      user.id,
+      organizationPublicId,
+      "MANAGE_MASTER_DATA",
+    );
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Access denied:")) {
       return { authorized: false, response: NextResponse.json({ error: "You do not have permission to manage contacts." }, { status: 403 }) } satisfies AuthorizationResult;
     }
     throw error;
   }
+  if (!organization) return { authorized: false, response: NextResponse.json({ error: "Organization not found." }, { status: 404 }) } satisfies AuthorizationResult;
   return { authorized: true, userId: user.id, organizationId: organization.id } satisfies AuthorizationResult;
 }
 
@@ -75,16 +81,26 @@ export async function GET(
     if (!auth.authorized) return auth.response;
     const searchParams = new URL(request.url).searchParams;
     const search = searchParams.get("search") ?? undefined;
+    if (searchParams.get("summary") === "true") {
+      return NextResponse.json(await getContactRoleCounts(auth.organizationId));
+    }
     const rawLimit = searchParams.get("limit");
     const rawOffset = searchParams.get("offset");
     if (rawLimit !== null || rawOffset !== null) {
       const limit = rawLimit === null ? 200 : Number(rawLimit);
       const offset = rawOffset === null ? 0 : Number(rawOffset);
+      const roleCode = searchParams.get("roleCode") ?? undefined;
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200
-        || !Number.isSafeInteger(offset) || offset < 0) {
+        || !Number.isSafeInteger(offset) || offset < 0
+        || (roleCode !== undefined && !["CUSTOMER", "VENDOR", "AGENT", "DISTRIBUTOR", "DEALER", "__UNCATEGORIZED__"].includes(roleCode))) {
         return NextResponse.json({ error: "Contact list pagination is invalid." }, { status: 400 });
       }
-      return NextResponse.json(await listContacts(auth.organizationId, search, undefined, { skip: offset, take: limit }));
+      return NextResponse.json(await listContactReportPage(
+        auth.organizationId,
+        search,
+        undefined,
+        { skip: offset, take: limit, roleCode },
+      ));
     }
     return NextResponse.json(await listContacts(auth.organizationId, search));
   } catch (error) {

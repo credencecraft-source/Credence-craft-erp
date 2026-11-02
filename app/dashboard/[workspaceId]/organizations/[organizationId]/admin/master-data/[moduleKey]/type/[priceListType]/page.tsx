@@ -4,7 +4,7 @@ import PriceListTypeDetail from "../../_page-content/price-list-type-detail";
 import { resolvePriceListType } from "@/lib/master-data/price-list-type-resolver";
 import { getMasterValuesForOrganization } from "@/lib/master-data/master-data-constants";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
 
 export default async function PriceListTypePage({
   params,
@@ -22,9 +22,8 @@ export default async function PriceListTypePage({
   const user = await requireSessionUser();
   if (!user.workspace_id) redirect("/");
   if (user.workspace_id !== workspaceId) notFound();
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
   if (!organization) notFound();
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const values = await getMasterValuesForOrganization(organization.id, "price-list", true);
   const records = values

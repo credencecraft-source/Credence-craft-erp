@@ -2,12 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   organizationFindFirst: vi.fn(),
+  organizationPermissionFindUnique: vi.fn(),
   startOrganizationTrialOnFirstOpen: vi.fn(),
   hasOrganizationTrialAccess: vi.fn(),
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
-  prisma: { organization: { findFirst: mocks.organizationFindFirst } },
+  prisma: {
+    organization: { findFirst: mocks.organizationFindFirst },
+    organizationRolePermission: { findUnique: mocks.organizationPermissionFindUnique },
+  },
 }));
 vi.mock("@/lib/auth/platform-session-manager", () => ({
   requirePlatformSessionAdmin: vi.fn(),
@@ -22,7 +26,7 @@ vi.mock("./organization-process-template-service", () => ({
   ensureDefaultProcessTemplate: vi.fn(),
 }));
 
-import { requireOrganizationContext } from "./organization-service";
+import { getOrganizationForUserWithPermission, requireOrganizationContext } from "./organization-service";
 
 const activeTrialOrganization = {
   id: "internal-org-1",
@@ -46,6 +50,36 @@ beforeEach(() => {
 });
 
 describe("organization access and trial performance", () => {
+  it("authorizes a public organization and returns only its internal ID in one owner lookup", async () => {
+    mocks.organizationFindFirst.mockResolvedValueOnce({
+      id: "internal-org-1",
+      memberships: [{ role: "OWNER" }],
+    });
+    await expect(getOrganizationForUserWithPermission("user-1", "public-org-1", "MANAGE_MASTER_DATA"))
+      .resolves.toEqual({ id: "internal-org-1" });
+
+    expect(mocks.organizationFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "public-org-1",
+        is_active: true,
+        memberships: {
+          some: {
+            workspace_user_id: "user-1",
+            is_active: true,
+          },
+        },
+      },
+      select: expect.objectContaining({
+        id: true,
+        memberships: expect.objectContaining({
+          where: { workspace_user_id: "user-1", is_active: true },
+          select: { role: true },
+        }),
+      }),
+    }));
+    expect(mocks.organizationPermissionFindUnique).not.toHaveBeenCalled();
+  });
+
   it("uses the authorized active-trial snapshot without starting a transaction or rereading organization state", async () => {
     await expect(requireOrganizationContext("user-1", "public-org-1", ["OWNER"])).resolves.toEqual({
       id: "internal-org-1",

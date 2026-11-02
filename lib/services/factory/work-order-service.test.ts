@@ -82,6 +82,7 @@ import {
   createWorkOrders,
   createWorkOrdersForSampleOrders,
   deleteWorkOrder,
+  deleteWorkOrders,
   listWorkOrderAllocationsByArticle,
   listWorkOrderArticles,
   listWorkOrders,
@@ -444,6 +445,50 @@ describe("factory work-order batch creation", () => {
         entityId: "work-order-1",
       }), mocks.transaction);
       expect(mocks.factoryWorkOrderDelete).toHaveBeenCalledWith({ where: { id: "work-order-1" } });
+    });
+
+    it("deletes selected work orders in one tenant-scoped serializable transaction", async () => {
+      const untouchedWorkOrder = {
+        status: "OPEN",
+        rawMaterialOutwardRequests: [],
+        productionUpdates: [],
+        bundleTransfers: [],
+        grns: [],
+        inventoryGrns: [],
+        sizeLines: [],
+        dailyProductionReportLines: [],
+        processController: null,
+      };
+      mocks.factoryWorkOrderFindFirst
+        .mockResolvedValueOnce({ id: "work-order-1", ...untouchedWorkOrder })
+        .mockResolvedValueOnce({ id: "work-order-2", ...untouchedWorkOrder });
+
+      await expect(deleteWorkOrders("internal-org-1", "user-1", ["work-order-1", "work-order-2"]))
+        .resolves.toBeUndefined();
+
+      expect(mocks.prismaTransaction).toHaveBeenCalledTimes(1);
+      expect(mocks.prismaTransaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: "Serializable",
+        maxWait: 10000,
+        timeout: 30000,
+      });
+      expect(mocks.factoryWorkOrderFindFirst).toHaveBeenCalledTimes(2);
+      expect(mocks.factoryWorkOrderFindFirst).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        where: { id: "work-order-1", organization_id: "internal-org-1" },
+      }));
+      expect(mocks.factoryWorkOrderFindFirst).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        where: { id: "work-order-2", organization_id: "internal-org-1" },
+      }));
+      expect(mocks.factoryWorkOrderDelete).toHaveBeenNthCalledWith(1, { where: { id: "work-order-1" } });
+      expect(mocks.factoryWorkOrderDelete).toHaveBeenNthCalledWith(2, { where: { id: "work-order-2" } });
+      expect(mocks.createAuditEvent).toHaveBeenCalledTimes(2);
+    });
+
+    it("rejects duplicated work-order IDs before starting a transaction", async () => {
+      await expect(deleteWorkOrders("internal-org-1", "user-1", ["work-order-1", " work-order-1 "]))
+        .rejects.toThrow("Select between 1 and 100 unique work orders to delete.");
+
+      expect(mocks.prismaTransaction).not.toHaveBeenCalled();
     });
   });
 

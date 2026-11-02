@@ -8,7 +8,7 @@ import PriceListContactReport from "../../../admin/master-data/[moduleKey]/[reco
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { prisma } from "@/lib/database/prisma-client";
 import { groupArticleMatrixRows } from "@/lib/master-data/article-import-workbook";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
 import {
   MASTER_DEFINITIONS,
   createMasterValueForOrganization,
@@ -322,13 +322,11 @@ export async function createMasterValueAction(formData: FormData) {
     notFound();
   }
 
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
 
   if (!organization) {
     notFound();
   }
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
-
   let articleVariants: Array<{ id?: string; fields: Record<string, unknown> }> | undefined;
   try {
     if (moduleKey === "article") {
@@ -458,13 +456,11 @@ export async function updateMasterValueAction(formData: FormData) {
     notFound();
   }
 
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
 
   if (!organization) {
     notFound();
   }
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
-
   const childField = definition.fields.find((field) => (field.type === "child-list" && field.childModuleKey) || (field.type === "lookup" && field.multiple && field.lookupModuleKey));
   let articleVariants: Array<{ id?: string; fields: Record<string, unknown> }> | undefined;
   try {
@@ -578,13 +574,11 @@ async function deleteMasterValueAction(formData: FormData) {
     notFound();
   }
 
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
 
   if (!organization) {
     notFound();
   }
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
-
   const definition = getMasterDefinition(moduleKey);
   if (!definition || definition.hidden) {
     notFound();
@@ -621,9 +615,8 @@ async function deleteSelectedMasterValuesAction(formData: FormData) {
   if (!user.workspace_id) redirect("/");
   if (user.workspace_id !== workspaceId) notFound();
 
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
   if (!organization) notFound();
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   if (moduleKey === "price-list") {
     redirect(`${returnPath}?error=${encodeURIComponent("Price List records cannot be deleted.")}`);
@@ -659,9 +652,8 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
   if (!user.workspace_id) redirect("/");
   if (user.workspace_id !== workspaceId) notFound();
 
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
   if (!organization) notFound();
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   let rows: ParsedMasterWorkbookRow[];
   let parseFailures: MasterRecordsImportResult["failures"] = [];
@@ -929,13 +921,11 @@ export default async function MasterDataEditorPage({
     notFound();
   }
 
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
 
   if (!organization) {
     notFound();
   }
-
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const definition = getMasterDefinition(moduleKey) ?? MASTER_DEFINITIONS.find((candidate) => candidate.key === moduleKey);
 

@@ -932,113 +932,138 @@ export async function updateWorkOrder(organizationId: string, userId: string, wo
   }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
 }
 
-export async function deleteWorkOrder(organizationId: string, userId: string, workOrderId: string) {
-  await prisma.$transaction(async (transaction) => {
-    const workOrder = await transaction.factoryWorkOrder.findFirst({
-      where: { id: workOrderId, organization_id: organizationId },
-      select: {
-        id: true,
-        status: true,
-        rawMaterialOutwardRequests: {
-          where: { organization_id: organizationId, status: { not: "CANCELLED" } },
-          select: { request_no: true },
-          take: 1,
-        },
-        productionUpdates: { select: { id: true }, take: 1 },
-        bundleTransfers: { select: { id: true }, take: 1 },
-        grns: { select: { id: true }, take: 1 },
-        inventoryGrns: { select: { grn_no: true }, take: 1 },
-        sizeLines: { select: { bookingAssignments: { select: { id: true }, take: 1 } } },
-        dailyProductionReportLines: { select: { id: true }, take: 1 },
-        processController: { select: { processes: { where: { OR: [{ completed_qty: { gt: 0 } }, { received_qty: { gt: 0 } }] }, select: { id: true }, take: 1 } } },
+async function deleteWorkOrderInTransaction(
+  transaction: Prisma.TransactionClient,
+  organizationId: string,
+  userId: string,
+  workOrderId: string,
+) {
+  const workOrder = await transaction.factoryWorkOrder.findFirst({
+    where: { id: workOrderId, organization_id: organizationId },
+    select: {
+      id: true,
+      status: true,
+      rawMaterialOutwardRequests: {
+        where: { organization_id: organizationId, status: { not: "CANCELLED" } },
+        select: { request_no: true },
+        take: 1,
       },
-    });
-    if (!workOrder) throw new Error("Work order was not found in this organization.");
-    const outwardRequest = workOrder.rawMaterialOutwardRequests[0];
-    if (outwardRequest) {
-      throw new Error(
-        `This work order cannot be deleted because it has raw-material outward request ${outwardRequest.request_no}. Keep the work order to preserve its inventory history.`,
-      );
-    }
-    const inventoryGrn = workOrder.inventoryGrns[0];
-    if (inventoryGrn) {
-      throw new Error(
-        `This work order cannot be deleted because it has inventory GRN ${inventoryGrn.grn_no}. Keep the work order to preserve its receiving history.`,
-      );
-    }
-    if (workOrder.sizeLines.some((line) => line.bookingAssignments.length > 0)) {
-      throw new Error("This work order cannot be deleted because advance-booking quantities are assigned to it.");
-    }
-    const hasActivity = workOrder.productionUpdates.length > 0
-      || workOrder.bundleTransfers.length > 0
-      || workOrder.grns.length > 0
-      || workOrder.inventoryGrns.length > 0
-      || workOrder.dailyProductionReportLines.length > 0
-      || (workOrder.processController?.processes.length ?? 0) > 0;
-    if (hasActivity || workOrder.status !== "OPEN") {
-      throw new Error("Only an untouched OPEN work order can be deleted. Cancel or reverse operational activity instead.");
-    }
+      productionUpdates: { select: { id: true }, take: 1 },
+      bundleTransfers: { select: { id: true }, take: 1 },
+      grns: { select: { id: true }, take: 1 },
+      inventoryGrns: { select: { grn_no: true }, take: 1 },
+      sizeLines: { select: { bookingAssignments: { select: { id: true }, take: 1 } } },
+      dailyProductionReportLines: { select: { id: true }, take: 1 },
+      processController: { select: { processes: { where: { OR: [{ completed_qty: { gt: 0 } }, { received_qty: { gt: 0 } }] }, select: { id: true }, take: 1 } } },
+    },
+  });
+  if (!workOrder) throw new Error("Work order was not found in this organization.");
+  const outwardRequest = workOrder.rawMaterialOutwardRequests[0];
+  if (outwardRequest) {
+    throw new Error(
+      `This work order cannot be deleted because it has raw-material outward request ${outwardRequest.request_no}. Keep the work order to preserve its inventory history.`,
+    );
+  }
+  const inventoryGrn = workOrder.inventoryGrns[0];
+  if (inventoryGrn) {
+    throw new Error(
+      `This work order cannot be deleted because it has inventory GRN ${inventoryGrn.grn_no}. Keep the work order to preserve its receiving history.`,
+    );
+  }
+  if (workOrder.sizeLines.some((line) => line.bookingAssignments.length > 0)) {
+    throw new Error("This work order cannot be deleted because advance-booking quantities are assigned to it.");
+  }
+  const hasActivity = workOrder.productionUpdates.length > 0
+    || workOrder.bundleTransfers.length > 0
+    || workOrder.grns.length > 0
+    || workOrder.inventoryGrns.length > 0
+    || workOrder.dailyProductionReportLines.length > 0
+    || (workOrder.processController?.processes.length ?? 0) > 0;
+  if (hasActivity || workOrder.status !== "OPEN") {
+    throw new Error("Only an untouched OPEN work order can be deleted. Cancel or reverse operational activity instead.");
+  }
 
-    const cancelledRequests = await transaction.rawMaterialOutwardRequest.findMany({
+  const cancelledRequests = await transaction.rawMaterialOutwardRequest.findMany({
+    where: {
+      organization_id: organizationId,
+      work_order_id: workOrderId,
+      status: "CANCELLED",
+    },
+    select: {
+      id: true,
+      request_no: true,
+      lines: {
+        select: {
+          id: true,
+          status: true,
+          boxLines: { select: { id: true }, take: 1 },
+        },
+      },
+    },
+  });
+  if (cancelledRequests.some((request) => request.lines.some(
+    (line) => line.status !== "CANCELLED" || line.boxLines.length > 0,
+  ))) {
+    throw new Error("A cancelled raw-material request has incomplete cancellation history. Resolve it before deleting this work order.");
+  }
+  const cancelledRequestLineIds = cancelledRequests.flatMap((request) => request.lines.map((line) => line.id));
+  if (cancelledRequestLineIds.length > 0) {
+    const deletedLines = await transaction.rawMaterialOutwardRequestLine.deleteMany({
       where: {
+        id: { in: cancelledRequestLineIds },
         organization_id: organizationId,
-        work_order_id: workOrderId,
         status: "CANCELLED",
       },
-      select: {
-        id: true,
-        request_no: true,
-        lines: {
-          select: {
-            id: true,
-            status: true,
-            boxLines: { select: { id: true }, take: 1 },
-          },
-        },
+    });
+    if (deletedLines.count !== cancelledRequestLineIds.length) {
+      throw new Error("A cancelled raw-material request changed before the work order could be deleted. Reload and try again.");
+    }
+  }
+  if (cancelledRequests.length > 0) {
+    const deletedRequests = await transaction.rawMaterialOutwardRequest.deleteMany({
+      where: {
+        id: { in: cancelledRequests.map((request) => request.id) },
+        organization_id: organizationId,
+        status: "CANCELLED",
       },
     });
-    if (cancelledRequests.some((request) => request.lines.some(
-      (line) => line.status !== "CANCELLED" || line.boxLines.length > 0,
-    ))) {
-      throw new Error("A cancelled raw-material request has incomplete cancellation history. Resolve it before deleting this work order.");
+    if (deletedRequests.count !== cancelledRequests.length) {
+      throw new Error("A cancelled raw-material request changed before the work order could be deleted. Reload and try again.");
     }
-    const cancelledRequestLineIds = cancelledRequests.flatMap((request) => request.lines.map((line) => line.id));
-    if (cancelledRequestLineIds.length > 0) {
-      const deletedLines = await transaction.rawMaterialOutwardRequestLine.deleteMany({
-        where: {
-          id: { in: cancelledRequestLineIds },
-          organization_id: organizationId,
-          status: "CANCELLED",
-        },
-      });
-      if (deletedLines.count !== cancelledRequestLineIds.length) {
-        throw new Error("A cancelled raw-material request changed before the work order could be deleted. Reload and try again.");
-      }
-    }
-    if (cancelledRequests.length > 0) {
-      const deletedRequests = await transaction.rawMaterialOutwardRequest.deleteMany({
-        where: {
-          id: { in: cancelledRequests.map((request) => request.id) },
-          organization_id: organizationId,
-          status: "CANCELLED",
-        },
-      });
-      if (deletedRequests.count !== cancelledRequests.length) {
-        throw new Error("A cancelled raw-material request changed before the work order could be deleted. Reload and try again.");
-      }
-    }
+  }
 
-    await createAuditEvent({
-      organizationId,
-      userId,
-      module: "Factory Management",
-      action: "DELETE_WORK_ORDER",
-      entityType: "FactoryWorkOrder",
-      entityId: workOrderId,
-      details: cancelledRequests.length > 0
-        ? { removedCancelledOutwardRequests: cancelledRequests.map((request) => request.request_no) }
-        : undefined,
-    }, transaction);
-    await transaction.factoryWorkOrder.delete({ where: { id: workOrderId } });
+  await createAuditEvent({
+    organizationId,
+    userId,
+    module: "Factory Management",
+    action: "DELETE_WORK_ORDER",
+    entityType: "FactoryWorkOrder",
+    entityId: workOrderId,
+    details: cancelledRequests.length > 0
+      ? { removedCancelledOutwardRequests: cancelledRequests.map((request) => request.request_no) }
+      : undefined,
+  }, transaction);
+  await transaction.factoryWorkOrder.delete({ where: { id: workOrderId } });
+}
+
+export async function deleteWorkOrders(organizationId: string, userId: string, workOrderIds: string[]) {
+  const normalizedWorkOrderIds = workOrderIds.map((id) => id.trim());
+  if (
+    normalizedWorkOrderIds.length < 1
+    || normalizedWorkOrderIds.length > 100
+    || normalizedWorkOrderIds.some((id) => !id || id.length > 255)
+    || new Set(normalizedWorkOrderIds).size !== normalizedWorkOrderIds.length
+  ) {
+    throw new Error("Select between 1 and 100 unique work orders to delete.");
+  }
+
+  await prisma.$transaction(async (transaction) => {
+    for (const workOrderId of normalizedWorkOrderIds) {
+      await deleteWorkOrderInTransaction(transaction, organizationId, userId, workOrderId);
+    }
   }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
+}
+
+export async function deleteWorkOrder(organizationId: string, userId: string, workOrderId: string) {
+  await deleteWorkOrders(organizationId, userId, [workOrderId]);
 }

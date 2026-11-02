@@ -4,7 +4,7 @@ import PriceListContactReport from "../../../[recordCode]/_page-content/price-li
 import { resolvePriceListType } from "@/lib/master-data/price-list-type-resolver";
 import { getPriceListRecord } from "@/lib/services/master-data/price-list-contact-service";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
 
 export default async function PriceListGroupPage({
   params,
@@ -26,9 +26,8 @@ export default async function PriceListGroupPage({
   const user = await requireSessionUser();
   if (!user.workspace_id) redirect("/");
   if (user.workspace_id !== workspaceId) notFound();
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
   if (!organization) notFound();
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const group = await getPriceListRecord(organization.id, groupId);
   const metadata = group.metadata && typeof group.metadata === "object" && !Array.isArray(group.metadata)

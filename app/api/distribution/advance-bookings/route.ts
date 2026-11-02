@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
+import { measureDatabaseQueries } from "@/lib/database/prisma-query-timing";
 import {
   createAdvanceBooking,
   deleteAdvanceBookings,
@@ -35,24 +36,38 @@ function errorResponse(error: unknown, fallback: string) {
 
 export async function GET(request: Request) {
   try {
-    const user = await requireSessionUser();
     const search = new URL(request.url).searchParams;
-    const organization = await requireOrganizationContext(user.id, search.get("organizationId") ?? "");
+    const authorization = await measureDatabaseQueries(async () => {
+      const user = await requireSessionUser();
+      const organization = await requireOrganizationContext(user.id, search.get("organizationId") ?? "");
+      return organization.id;
+    });
     const bookingRecordId = search.get("bookingId")?.trim();
     if (bookingRecordId) {
-      return NextResponse.json(await getAdvanceBookingById(organization.id, bookingRecordId));
+      return NextResponse.json(await getAdvanceBookingById(authorization.value, bookingRecordId));
     }
     const bookingId = search.get("assignableWorkOrdersFor")?.trim();
     if (bookingId) {
-      return NextResponse.json(await listAssignableWorkOrders(organization.id, bookingId));
+      return NextResponse.json(await listAssignableWorkOrders(authorization.value, bookingId));
     }
     const limit = Number(search.get("limit") ?? 100);
-    return NextResponse.json(await listAdvanceBookings(organization.id, {
+    const list = await measureDatabaseQueries(() => listAdvanceBookings(authorization.value, {
       cursor: search.get("cursor") || undefined,
       limit: Number.isFinite(limit) ? limit : 100,
       view: search.get("view") ?? undefined,
       search: search.get("search") ?? undefined,
     }));
+    const response = NextResponse.json(list.value);
+    if (process.env.NODE_ENV === "development") {
+      response.headers.set("Server-Timing", [
+        `auth;dur=${authorization.durationMs.toFixed(1)}`,
+        `authdb;dur=${authorization.databaseDurationMs.toFixed(1)}`,
+        `list;dur=${list.durationMs.toFixed(1)}`,
+        `listdb;dur=${list.databaseDurationMs.toFixed(1)}`,
+        `listqueries;desc="${list.queryCount}"`,
+      ].join(", "));
+    }
+    return response;
   } catch (error) {
     return errorResponse(error, "Unable to load advance bookings.");
   }

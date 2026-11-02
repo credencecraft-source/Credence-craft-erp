@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
     inventoryReceiptLine: { findMany: vi.fn() },
     inventoryReceipt: { create: vi.fn(), findFirst: inventoryReceiptFindFirst, deleteMany: inventoryReceiptDeleteMany },
     rawMaterialStock: { create: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
+    rawMaterialStockBooking: { findMany: vi.fn(), deleteMany: vi.fn() },
   };
   return {
     inventoryReceiptFindMany: vi.fn(),
@@ -75,6 +76,8 @@ describe("inventory receipt verification posting", () => {
       lines: [{ id: "receipt-line-1", purchase_order_line_id: "po-line-1", raw_material: "Cotton", accepted_quantity: new Prisma.Decimal("4") }],
     });
     mocks.transaction.rawMaterialStock.create.mockResolvedValue({});
+    mocks.transaction.rawMaterialStockBooking.findMany.mockResolvedValue([]);
+    mocks.transaction.rawMaterialStockBooking.deleteMany.mockResolvedValue({ count: 0 });
     mocks.inventoryReceiptFindFirst.mockResolvedValue(null);
     mocks.inventoryReceiptDeleteMany.mockResolvedValue({ count: 1 });
     mocks.transaction.rawMaterialStock.findFirst.mockResolvedValue(null);
@@ -270,6 +273,13 @@ describe("inventory receipt verification posting", () => {
       quantity_reserved: new Prisma.Decimal("2"),
       quantity_issued: new Prisma.Decimal("0"),
     });
+    mocks.transaction.rawMaterialStockBooking.findMany.mockResolvedValueOnce([{
+      id: "booking-1",
+      booked_quantity: new Prisma.Decimal("2"),
+      fulfilled_quantity: new Prisma.Decimal("0"),
+      status: "BOOKED",
+    }]);
+    mocks.transaction.rawMaterialStockBooking.deleteMany.mockResolvedValueOnce({ count: 1 });
 
     const response = await DELETE(new Request("http://localhost/api/inventory/receipts?organizationId=public-org&receiptId=receipt-1", {
       method: "DELETE",
@@ -282,8 +292,18 @@ describe("inventory receipt verification posting", () => {
         id: "stock-1",
         organization_id: "internal-org-1",
       }),
-      data: { quantity_on_hand: { decrement: new Prisma.Decimal("4") } },
+      data: {
+        quantity_on_hand: { decrement: new Prisma.Decimal("4") },
+        quantity_reserved: { decrement: new Prisma.Decimal("2") },
+      },
     }));
+    expect(mocks.transaction.rawMaterialStockBooking.deleteMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: "internal-org-1",
+        take_from_stock_id: "stock-1",
+        id: { in: ["booking-1"] },
+      },
+    });
     expect(mocks.inventoryReceiptDeleteMany).toHaveBeenCalledWith({
       where: { id: "receipt-1", organization_id: "internal-org-1" },
     });
@@ -332,7 +352,7 @@ describe("inventory receipt verification posting", () => {
     }));
   });
 
-  it("keeps the GRN when accepted stock is no longer available to reverse", async () => {
+  it("keeps the GRN when accepted stock is insufficient to reverse after reservations are released", async () => {
     mocks.inventoryReceiptFindFirst.mockResolvedValue({
       id: "receipt-1",
       receipt_no: "GRN-1",
@@ -342,10 +362,16 @@ describe("inventory receipt verification posting", () => {
       lines: [{ id: "receipt-line-1", raw_material: "Cotton", accepted_quantity: new Prisma.Decimal("4") }],
     });
     mocks.transaction.rawMaterialStock.findFirst.mockResolvedValue({
-      quantity_on_hand: new Prisma.Decimal("5"),
+      quantity_on_hand: new Prisma.Decimal("3"),
       quantity_reserved: new Prisma.Decimal("2"),
       quantity_issued: new Prisma.Decimal("0"),
     });
+    mocks.transaction.rawMaterialStockBooking.findMany.mockResolvedValueOnce([{
+      id: "booking-1",
+      booked_quantity: new Prisma.Decimal("2"),
+      fulfilled_quantity: new Prisma.Decimal("0"),
+      status: "BOOKED",
+    }]);
 
     const response = await DELETE(new Request("http://localhost/api/inventory/receipts?organizationId=public-org&receiptId=receipt-1", {
       method: "DELETE",
@@ -357,7 +383,7 @@ describe("inventory receipt verification posting", () => {
     expect(mocks.createAuditEvent).not.toHaveBeenCalled();
   });
 
-  it("keeps a GRN after style/order allocation so allocated inventory cannot be orphaned", async () => {
+  it("deletes a zero-issued GRN and its order allocations", async () => {
     mocks.inventoryReceiptFindFirst.mockResolvedValue({
       id: "receipt-1",
       receipt_no: "GRN-1",
@@ -370,7 +396,14 @@ describe("inventory receipt verification posting", () => {
         accepted_quantity: new Prisma.Decimal("110"),
         rmGrnVerification: {
           fresh_excess: new Prisma.Decimal("10"),
-          allocations: [{ orderAllocations: [{ id: "order-allocation-1" }] }],
+          allocations: [{
+            id: "verification-allocation-1",
+            orderAllocations: [{
+              id: "order-allocation-1",
+              grouped_purchase_order_line_id: "group-line-1",
+              allocated_quantity: new Prisma.Decimal("8"),
+            }],
+          }],
         },
       }],
     });
@@ -379,8 +412,119 @@ describe("inventory receipt verification posting", () => {
       method: "DELETE",
     }));
 
+    expect(response.status).toBe(200);
+    expect(mocks.transaction.rawMaterialStock.findFirst).toHaveBeenCalledTimes(1);
+    expect(mocks.inventoryReceiptDeleteMany).toHaveBeenCalledWith({
+      where: { id: "receipt-1", organization_id: "internal-org-1" },
+    });
+    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      entityType: "InventoryReceipt",
+      details: expect.objectContaining({
+        removed_grn_order_allocations: [{
+          verification_allocation_id: "verification-allocation-1",
+          order_allocation_id: "order-allocation-1",
+          grouped_purchase_order_line_id: "group-line-1",
+          allocated_quantity: "8",
+        }],
+      }),
+    }), mocks.transaction);
+  });
+
+  it("blocks deletion with the issued-material message when receipt stock has been issued", async () => {
+    mocks.inventoryReceiptFindFirst.mockResolvedValue({
+      id: "receipt-1",
+      receipt_no: "GRN-1",
+      purchase_order_id: "po-1",
+      entity_id: "entity-1",
+      location_id: "location-1",
+      lines: [{ id: "receipt-line-1", raw_material: "Cotton", accepted_quantity: new Prisma.Decimal("4") }],
+    });
+    mocks.transaction.rawMaterialStock.findFirst.mockResolvedValue({
+      id: "stock-1",
+      quantity_on_hand: new Prisma.Decimal("4"),
+      quantity_reserved: new Prisma.Decimal("0"),
+      quantity_issued: new Prisma.Decimal("1"),
+    });
+
+    const response = await DELETE(new Request("http://localhost/api/inventory/receipts?organizationId=public-org&receiptId=receipt-1", {
+      method: "DELETE",
+    }));
+
     expect(response.status).toBe(409);
-    expect(mocks.transaction.rawMaterialStock.findFirst).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({
+      error: "This GRN cannot be deleted because material has already been issued against it. Reverse or return the issued material first.",
+    });
+    expect(mocks.transaction.rawMaterialStockBooking.findMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.rawMaterialStock.updateMany).not.toHaveBeenCalled();
+    expect(mocks.inventoryReceiptDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.createAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("blocks deletion if an allocation records fulfilled material despite a zero stock issue counter", async () => {
+    mocks.inventoryReceiptFindFirst.mockResolvedValue({
+      id: "receipt-1",
+      receipt_no: "GRN-1",
+      purchase_order_id: "po-1",
+      entity_id: "entity-1",
+      location_id: "location-1",
+      lines: [{ id: "receipt-line-1", raw_material: "Cotton", accepted_quantity: new Prisma.Decimal("4") }],
+    });
+    mocks.transaction.rawMaterialStock.findFirst.mockResolvedValue({
+      id: "stock-1",
+      quantity_on_hand: new Prisma.Decimal("4"),
+      quantity_reserved: new Prisma.Decimal("0"),
+      quantity_issued: new Prisma.Decimal("0"),
+    });
+    mocks.transaction.rawMaterialStockBooking.findMany.mockResolvedValueOnce([{
+      id: "booking-1",
+      booked_quantity: new Prisma.Decimal("2"),
+      fulfilled_quantity: new Prisma.Decimal("1"),
+      status: "FULFILLED",
+    }]);
+
+    const response = await DELETE(new Request("http://localhost/api/inventory/receipts?organizationId=public-org&receiptId=receipt-1", {
+      method: "DELETE",
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "This GRN cannot be deleted because material has already been issued against it. Reverse or return the issued material first.",
+    });
+    expect(mocks.transaction.rawMaterialStock.updateMany).not.toHaveBeenCalled();
+    expect(mocks.inventoryReceiptDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("blocks deletion when reservation totals cannot be reconciled to stock bookings", async () => {
+    mocks.inventoryReceiptFindFirst.mockResolvedValue({
+      id: "receipt-1",
+      receipt_no: "GRN-1",
+      purchase_order_id: "po-1",
+      entity_id: "entity-1",
+      location_id: "location-1",
+      lines: [{ id: "receipt-line-1", raw_material: "Cotton", accepted_quantity: new Prisma.Decimal("4") }],
+    });
+    mocks.transaction.rawMaterialStock.findFirst.mockResolvedValue({
+      id: "stock-1",
+      quantity_on_hand: new Prisma.Decimal("4"),
+      quantity_reserved: new Prisma.Decimal("2"),
+      quantity_issued: new Prisma.Decimal("0"),
+    });
+    mocks.transaction.rawMaterialStockBooking.findMany.mockResolvedValueOnce([{
+      id: "booking-1",
+      booked_quantity: new Prisma.Decimal("1"),
+      fulfilled_quantity: new Prisma.Decimal("0"),
+      status: "BOOKED",
+    }]);
+
+    const response = await DELETE(new Request("http://localhost/api/inventory/receipts?organizationId=public-org&receiptId=receipt-1", {
+      method: "DELETE",
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "Cannot safely delete this GRN because stock reservations do not match their booking records. Reconcile the reservations first.",
+    });
+    expect(mocks.transaction.rawMaterialStock.updateMany).not.toHaveBeenCalled();
     expect(mocks.inventoryReceiptDeleteMany).not.toHaveBeenCalled();
   });
 });

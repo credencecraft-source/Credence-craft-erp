@@ -7,16 +7,29 @@ import { Plus } from "lucide-react";
 
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import Card from "@/components/ui/Card";
 import { ReportGrid } from "@/components/reports/report-grid-display";
-import type { ContactWorkbookRecord } from "@/lib/master-data/contact-records-workbook-parser";
+import { filterContactRecordsByRole } from "@/lib/master-data/contact-master-report";
 
-type ContactRecord = ContactWorkbookRecord;
+type ContactRecord = {
+  id: string;
+  code: string;
+  legal_name: string;
+  display_name: string | null;
+  is_active: boolean;
+  roles: Array<{ role_code: string }>;
+  distributor_mappings: Array<{ dealer: { id: string } }>;
+  dealer_mappings: Array<{ distributor: { id: string } }>;
+  role_parent_mappings: Array<{ parent_role_code: string; mapped_contact: { id: string } }>;
+  role_mapped_contacts: Array<{ parent_contact: { id: string } }>;
+  tax_registrations: Array<{ gstin: string }>;
+  addresses: Array<{ id: string }>;
+  bank_accounts: Array<{ id: string }>;
+};
 
 const CONTACT_REPORT_FIELDS = [
   { key: "contact", label: "Contact" },
   { key: "roles", label: "Roles" },
-  { key: "related_count", label: "Related count" },
+  { key: "related_count", label: "Related records" },
   { key: "gstins", label: "GSTIN" },
   { key: "addresses_banks", label: "Addresses / banks" },
   { key: "status", label: "Status" },
@@ -31,45 +44,42 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 function getRelatedCount(contact: ContactRecord, roleCode = "") {
-  const counts = new Map<string, number>();
-  const add = (key: string) => counts.set(key, 1);
+  const recordIds = new Set<string>();
+  const add = (related: { id: string }) => recordIds.add(related.id);
   if (roleCode === "DISTRIBUTOR") {
-    for (const mapping of contact.distributor_mappings ?? []) add(`dealer:${mapping.dealer.id}`);
-    return counts.size;
+    for (const mapping of contact.distributor_mappings ?? []) add(mapping.dealer);
+    return recordIds.size;
   }
   if (roleCode === "AGENT") {
     for (const mapping of contact.role_parent_mappings ?? []) {
-      if (mapping.parent_role_code === roleCode) add(`${roleCode}:${mapping.mapped_contact.id}`);
+      if (mapping.parent_role_code === roleCode) add(mapping.mapped_contact);
     }
-    return counts.size;
+    return recordIds.size;
   }
   if (roleCode === "DEALER") {
-    for (const mapping of contact.dealer_mappings ?? []) add(`distributor:${mapping.distributor.id}`);
+    for (const mapping of contact.dealer_mappings ?? []) add(mapping.distributor);
     for (const mapping of contact.role_parent_mappings ?? []) {
-      if (mapping.parent_role_code === roleCode) add(`${roleCode}:${mapping.mapped_contact.id}`);
+      if (mapping.parent_role_code === roleCode) add(mapping.mapped_contact);
     }
-    return counts.size;
+    return recordIds.size;
   }
   if (roleCode === "CUSTOMER" || roleCode === "VENDOR") {
-    for (const mapping of contact.role_mapped_contacts ?? []) add(`${mapping.parent_role_code}:${mapping.parent_contact.id}`);
-    return counts.size;
+    for (const mapping of contact.role_mapped_contacts ?? []) add(mapping.parent_contact);
+    return recordIds.size;
   }
-  for (const mapping of contact.distributor_mappings ?? []) add(`dealer:${mapping.dealer.id}`);
-  for (const mapping of contact.dealer_mappings ?? []) add(`distributor:${mapping.distributor.id}`);
+  for (const mapping of contact.distributor_mappings ?? []) add(mapping.dealer);
+  for (const mapping of contact.dealer_mappings ?? []) add(mapping.distributor);
   for (const mapping of contact.role_parent_mappings ?? []) {
-    add(`${mapping.parent_role_code}:${mapping.mapped_contact.id}`);
+    add(mapping.mapped_contact);
   }
   for (const mapping of contact.role_mapped_contacts ?? []) {
-    add(`${mapping.parent_role_code}:${mapping.parent_contact.id}`);
+    add(mapping.parent_contact);
   }
-  return counts.size;
+  return recordIds.size;
 }
 
-function getRelationshipTotal(records: ContactRecord[], roleCode = "") {
-  return records.reduce((sum, contact) => sum + getRelatedCount(contact, roleCode), 0);
-}
-
-const CONTACT_PAGE_SIZE = 200;
+const CONTACT_PAGE_SIZE = 100;
+const CONTACT_SEARCH_MIN_LENGTH = 3;
 
 export default function ContactMasterManager({ organizationId, workspaceId }: { organizationId: string; workspaceId: string }) {
   const router = useRouter();
@@ -83,11 +93,33 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
   const contactRequestSequence = useRef(0);
   const contactOffset = useRef(0);
   const [hasMoreContacts, setHasMoreContacts] = useState(false);
-  const [roleSummaryContacts, setRoleSummaryContacts] = useState<ContactRecord[]>([]);
   const [roleFilter, setRoleFilter] = useState<string>("");
+  const [roleCounts, setRoleCounts] = useState<Record<string, number> | null>(null);
+  const [roleCountError, setRoleCountError] = useState("");
+  const roleFilteredContacts = filterContactRecordsByRole(contacts, roleFilter);
+  const effectiveSearch = search.trim().length >= CONTACT_SEARCH_MIN_LENGTH ? search.trim() : "";
 
   const endpoint = `/api/organizations/${encodeURIComponent(organizationId)}/contacts`;
   const basePath = `/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/contacts`;
+
+  const loadRoleCounts = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const response = await fetch(`${endpoint}?summary=true`, { signal });
+      const data = await response.json() as Record<string, unknown> & { error?: string };
+      if (!response.ok) throw new Error(data.error ?? "Unable to load contact role counts.");
+      if (Object.values(data).some((value) =>
+        typeof value !== "number" || !Number.isSafeInteger(value) || value < 0,
+      )) {
+        throw new Error("The contact role count response was invalid.");
+      }
+      if (signal?.aborted) return;
+      setRoleCounts(data as Record<string, number>);
+      setRoleCountError("");
+    } catch (summaryError) {
+      if (signal?.aborted || (summaryError instanceof Error && summaryError.name === "AbortError")) return;
+      setRoleCountError(summaryError instanceof Error ? summaryError.message : "Unable to load contact role counts.");
+    }
+  }, [endpoint]);
 
   const loadContacts = useCallback(async (query: string, signal?: AbortSignal, append = false) => {
     const requestSequence = ++contactRequestSequence.current;
@@ -100,21 +132,32 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
         offset: String(offset),
       });
       if (query) queryParams.set("search", query);
+      if (roleFilter) queryParams.set("roleCode", roleFilter);
       const response = await fetch(
         `${endpoint}?${queryParams.toString()}`,
         { signal },
       );
-      const data = await response.json() as ContactRecord[] | { error?: string };
-      if (!response.ok) throw new Error(!Array.isArray(data) ? data.error ?? "Unable to load contacts." : "Unable to load contacts.");
+      const data = await response.json() as {
+        records?: ContactRecord[];
+        hasMore?: boolean;
+        error?: string;
+      };
+      if (
+        !response.ok
+        || !Array.isArray(data.records)
+        || typeof data.hasMore !== "boolean"
+      ) {
+        throw new Error(data.error ?? "Unable to load contacts.");
+      }
       if (signal?.aborted || requestSequence !== contactRequestSequence.current) return;
-      const loadedContacts = data as ContactRecord[];
+      const loadedContacts = data.records;
       setContacts((current) => {
         if (!append) return loadedContacts;
         const existingIds = new Set(current.map(({ id }) => id));
         return [...current, ...loadedContacts.filter(({ id }) => !existingIds.has(id))];
       });
       contactOffset.current = offset + loadedContacts.length;
-      setHasMoreContacts(loadedContacts.length === CONTACT_PAGE_SIZE);
+      setHasMoreContacts(data.hasMore);
     } catch (loadError) {
       if (signal?.aborted || requestSequence !== contactRequestSequence.current) return;
       if (loadError instanceof Error && loadError.name === "AbortError") return;
@@ -122,30 +165,37 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
     } finally {
       if (!signal?.aborted && requestSequence === contactRequestSequence.current) setLoading(false);
     }
-  }, [endpoint]);
+  }, [endpoint, roleFilter]);
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(endpoint, { signal: controller.signal })
+    void fetch(`${endpoint}?summary=true`, { signal: controller.signal })
       .then(async (response) => {
-        const data = await response.json() as ContactRecord[] | { error?: string };
-        if (!response.ok || !Array.isArray(data)) return;
-        setRoleSummaryContacts(data);
+        const data = await response.json() as Record<string, unknown> & { error?: string };
+        if (!response.ok) throw new Error(data.error ?? "Unable to load contact role counts.");
+        if (Object.values(data).some((value) =>
+          typeof value !== "number" || !Number.isSafeInteger(value) || value < 0,
+        )) {
+          throw new Error("The contact role count response was invalid.");
+        }
+        setRoleCounts(data as Record<string, number>);
+        setRoleCountError("");
       })
       .catch((summaryError) => {
-        if (!(summaryError instanceof Error && summaryError.name === "AbortError")) return;
+        if (controller.signal.aborted || (summaryError instanceof Error && summaryError.name === "AbortError")) return;
+        setRoleCountError(summaryError instanceof Error ? summaryError.message : "Unable to load contact role counts.");
       });
     return () => controller.abort();
   }, [endpoint]);
 
   useEffect(() => {
     const controller = new AbortController();
-    const timer = window.setTimeout(() => void loadContacts(search, controller.signal), 200);
+    const timer = window.setTimeout(() => void loadContacts(effectiveSearch, controller.signal), 200);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [loadContacts, search]);
+  }, [effectiveSearch, loadContacts, roleFilter]);
 
   const deactivateSelectedContacts = async () => {
     const activeIds = contacts
@@ -179,7 +229,10 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
       }
       setSelectedIds([]);
       setNotice(`${result.deactivatedCount} contact${result.deactivatedCount === 1 ? "" : "s"} deactivated. Existing documents are unchanged.`);
-      await loadContacts(search);
+      const deactivatedIds = new Set(activeIds);
+      setContacts((current) => current.map((contact) => deactivatedIds.has(contact.id)
+        ? { ...contact, is_active: false }
+        : contact));
     } catch (deactivateError) {
       setError(deactivateError instanceof Error ? deactivateError.message : "Unable to deactivate selected contacts.");
     }
@@ -227,7 +280,39 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
         `${result.deletedCount} unused contact${result.deletedCount === 1 ? "" : "s"} deleted.`
         + (retainedCount ? ` ${retainedCount} used contact${retainedCount === 1 ? " was" : "s were"} retained: ${result.retainedContactCodes.join(", ")}.` : ""),
       );
-      await loadContacts(search);
+      const deletedCount = result.deletedCount;
+      const retainedCodes = new Set(
+        result.retainedContactCodes.filter((code): code is string => typeof code === "string"),
+      );
+      const removedContacts = contacts.filter((contact) =>
+        selectedIds.includes(contact.id) && !retainedCodes.has(contact.code),
+      );
+      const removedIds = new Set(removedContacts.map((contact) => contact.id));
+      contactOffset.current = Math.max(0, contactOffset.current - removedIds.size);
+      setContacts((current) => current.filter((contact) => !removedIds.has(contact.id)));
+      if (removedContacts.length === deletedCount) {
+        setRoleCounts((current) => {
+          if (!current) return current;
+          const roleDeltas: Record<string, number> = {};
+          let uncategorizedDelta = 0;
+          for (const contact of removedContacts) {
+            const roles = new Set(contact.roles.map(({ role_code }) => role_code));
+            if (roles.size === 0) uncategorizedDelta += 1;
+            for (const roleCode of roles) roleDeltas[roleCode] = (roleDeltas[roleCode] ?? 0) + 1;
+          }
+          return {
+            ...current,
+            total: Math.max(0, current.total - deletedCount),
+            __UNCATEGORIZED__: Math.max(0, current.__UNCATEGORIZED__ - uncategorizedDelta),
+            ...Object.fromEntries(Object.entries(roleDeltas).map(([roleCode, count]) => [
+              roleCode,
+              Math.max(0, (current[roleCode] ?? 0) - count),
+            ])),
+          };
+        });
+      } else {
+        await loadRoleCounts();
+      }
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Unable to delete selected contacts.");
     }
@@ -248,78 +333,60 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
       </div>
 
       {error ? <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-danger)]" role="alert">{error}</p> : null}
+      {roleCountError ? <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-danger)]" role="alert">{roleCountError}</p> : null}
       {notice ? <p className="rounded-xl border border-[var(--erp-success)] bg-[var(--erp-surface)] px-4 py-3 text-sm text-[var(--erp-success)]" role="status">{notice}</p> : null}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-        <Card className={roleFilter === ""
-          ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] p-0"
-          : "p-0"}>
-          <button
-            type="button"
+        <Button
+            variant="card"
             aria-pressed={roleFilter === ""}
-            onClick={() => setRoleFilter("")}
-            className="w-full p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)]"
+            onClick={() => {
+              setSelectedIds([]);
+              setRoleFilter("");
+            }}
+            className={`w-full p-4 ${roleFilter === "" ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)]" : ""}`}
           >
             <span className="block text-xs font-bold uppercase tracking-[0.12em] text-[var(--erp-muted)]">All Contacts</span>
-            <span className="mt-1 block text-2xl font-bold text-[var(--erp-text)]">{roleSummaryContacts.length}</span>
-            <span className="mt-1 block text-xs text-[var(--erp-muted)]">
-              {getRelationshipTotal(roleSummaryContacts)} relationships
-            </span>
-          </button>
-        </Card>
+            <span className="mt-1 block text-2xl font-bold text-[var(--erp-text)]">{roleCounts?.total ?? "—"}</span>
+            <span className="mt-1 block text-xs text-[var(--erp-muted)]">Contacts</span>
+        </Button>
         {Object.entries(ROLE_LABELS).map(([roleCode, roleLabel]) => {
-          const count = roleSummaryContacts.filter((contact) =>
-            contact.roles.some((role) => role.role_code === roleCode),
-          ).length;
-          const relationshipCount = roleSummaryContacts
-            .filter((contact) => contact.roles.some((role) => role.role_code === roleCode))
-            .reduce((sum, contact) => sum + getRelatedCount(contact, roleCode), 0);
+          const count = roleCounts?.[roleCode];
           const selected = roleFilter === roleCode;
           return (
-            <Card
+            <Button
               key={roleCode}
-              className={selected
-                ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] p-0"
-                : "p-0"}
+              variant="card"
+              aria-pressed={selected}
+              onClick={() => {
+                setSelectedIds([]);
+                setRoleFilter((current) => current === roleCode ? "" : roleCode);
+              }}
+              className={`w-full p-4 ${selected ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)]" : ""}`}
             >
-              <button
-                type="button"
-                aria-pressed={selected}
-                onClick={() => setRoleFilter((current) => current === roleCode ? "" : roleCode)}
-                className="w-full p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)]"
-              >
                 <span className="block text-xs font-bold uppercase tracking-[0.12em] text-[var(--erp-muted)]">{roleLabel}</span>
-                <span className="mt-1 block text-2xl font-bold text-[var(--erp-text)]">{count}</span>
-                <span className="mt-1 block text-xs text-[var(--erp-muted)]">
-                  {relationshipCount > 0
-                    ? `${relationshipCount} relationship${relationshipCount === 1 ? "" : "s"}`
-                    : "Contacts"}
-                </span>
-              </button>
-            </Card>
+                <span className="mt-1 block text-2xl font-bold text-[var(--erp-text)]">{count ?? "—"}</span>
+                <span className="mt-1 block text-xs text-[var(--erp-muted)]">Contacts</span>
+            </Button>
           );
         })}
         {(() => {
-          const uncategorizedContacts = roleSummaryContacts.filter((contact) => contact.roles.length === 0);
-          const count = uncategorizedContacts.length;
+          const count = roleCounts?.__UNCATEGORIZED__;
           const selected = roleFilter === "__UNCATEGORIZED__";
           return (
-            <Card className={selected
-              ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] p-0"
-              : "p-0"}>
-              <button
-                type="button"
-                aria-pressed={selected}
-                onClick={() => setRoleFilter((current) => current === "__UNCATEGORIZED__" ? "" : "__UNCATEGORIZED__")}
-                className="w-full p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--erp-brand)]"
-              >
+            <Button
+              variant="card"
+              aria-pressed={selected}
+              onClick={() => {
+                setSelectedIds([]);
+                setRoleFilter((current) => current === "__UNCATEGORIZED__" ? "" : "__UNCATEGORIZED__");
+              }}
+              className={`w-full p-4 ${selected ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)]" : ""}`}
+            >
                 <span className="block text-xs font-bold uppercase tracking-[0.12em] text-[var(--erp-muted)]">Uncategorized</span>
-                <span className="mt-1 block text-2xl font-bold text-[var(--erp-text)]">{count}</span>
-                <span className="mt-1 block text-xs text-[var(--erp-muted)]">
-                  {getRelationshipTotal(uncategorizedContacts)} relationships
-                </span>
-              </button>
-            </Card>
+                <span className="mt-1 block text-2xl font-bold text-[var(--erp-text)]">{count ?? "—"}</span>
+                <span className="mt-1 block text-xs text-[var(--erp-muted)]">Contacts</span>
+            </Button>
           );
         })()}
       </div>
@@ -330,11 +397,7 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
           : roleFilter === "__UNCATEGORIZED__"
             ? "Uncategorized Contact records"
             : `${ROLE_LABELS[roleFilter] ?? roleFilter} Contact records`}
-        records={roleFilter
-          ? contacts.filter((contact) => roleFilter === "__UNCATEGORIZED__"
-            ? contact.roles.length === 0
-            : contact.roles.some((role) => role.role_code === roleFilter))
-          : contacts}
+        records={roleFilteredContacts}
         fields={CONTACT_REPORT_FIELDS}
         visibleFields={visibleFields}
         onVisibleFieldsChange={(fields) => setVisibleFields(fields.map(String))}
@@ -360,6 +423,8 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
           setSelectedIds([]);
           setSearch(query);
         }}
+        serverSideSearch
+        searchMinLength={CONTACT_SEARCH_MIN_LENGTH}
         getSearchValue={(fieldKey, contact) => {
           switch (fieldKey) {
             case "contact":
@@ -410,7 +475,7 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
           }
         }}
         isLoading={loading}
-        emptyMessage={search ? "No matching contacts." : "No contacts yet. Create a contact to start assigning business roles and tax registrations."}
+        emptyMessage={effectiveSearch ? "No matching contacts." : "No contacts yet. Create a contact to start assigning business roles and tax registrations."}
       />
       {hasMoreContacts ? (
         <div className="flex justify-center">
@@ -419,7 +484,7 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
             disabled={loading}
             onClick={() => void loadContacts(search, undefined, true)}
           >
-            {loading ? "Loading contacts..." : "Load more contacts"}
+            {loading ? "Loading contacts..." : `Load ${CONTACT_PAGE_SIZE} more contacts`}
           </Button>
         </div>
       ) : null}

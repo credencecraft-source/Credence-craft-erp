@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
 
 import ContactMasterRecordPage from "./contact-master-record-page";
 
@@ -15,9 +15,8 @@ export default async function ContactMasterCreatePage({
   if (!user.workspace_id) redirect("/");
   if (user.workspace_id !== workspaceId) notFound();
 
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
   if (!organization) notFound();
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   return <ContactMasterRecordPage organizationId={organizationId} workspaceId={workspaceId} createMode />;
 }

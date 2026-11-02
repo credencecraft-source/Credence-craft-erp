@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
@@ -9,6 +9,7 @@ import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import Table from "@/components/ui/Table";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import { toggleVisibleReportSelection } from "@/components/reports/report-grid-filtering";
 import type { DistributionQuotationSummary } from "../../quotation/_page-content/quotation-types";
 
 type SalesOrderRow = DistributionQuotationSummary & { childCount: number };
@@ -262,10 +263,12 @@ export default function SalesOrderListPage() {
   const [quotations, setQuotations] = useState<DistributionQuotationSummary[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [visibleFields, setVisibleFields] = useState<SalesOrderField[]>(fields.map(({ key }) => key));
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [pdfError, setPdfError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
   const [pdfLoadingOrderId, setPdfLoadingOrderId] = useState<string | null>(null);
@@ -278,27 +281,67 @@ export default function SalesOrderListPage() {
   const [isAllocating, setIsAllocating] = useState(false);
   const [showAllocationConfirmation, setShowAllocationConfirmation] = useState(false);
   const [selectedWorkOrders, setSelectedWorkOrders] = useState<Record<string, string>>({});
+  const listRequestRef = useRef<AbortController | null>(null);
+  const loadingMoreRef = useRef(false);
 
-  const loadQuotations = useCallback(async () => {
-    setIsLoading(true);
+  const loadQuotations = useCallback(async (cursor?: string) => {
+    if (cursor && loadingMoreRef.current) return;
+    loadingMoreRef.current = Boolean(cursor);
+    if (cursor) setIsLoadingMore(true);
+    else {
+      setIsLoading(true);
+      setIsLoadingMore(false);
+      setNextCursor(null);
+    }
+    listRequestRef.current?.abort();
+    const controller = new AbortController();
+    listRequestRef.current = controller;
     setError("");
     try {
       const query = new URLSearchParams({ organizationId });
-      const response = await fetch(`/api/distribution/quotations?${query}`, { cache: "no-store" });
+      query.set("view", "sales-order");
+      if (cursor) query.set("cursor", cursor);
+      const response = await fetch(`/api/distribution/quotations?${query}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       const data = await response.json().catch(() => null);
-      if (!response.ok || !Array.isArray(data?.quotations)) {
+      if (controller.signal.aborted) return;
+      if (
+        !response.ok ||
+        !Array.isArray(data?.quotations) ||
+        !(typeof data.nextCursor === "string" || data.nextCursor === null)
+      ) {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to load sales orders.");
       }
-      setQuotations(data.quotations as DistributionQuotationSummary[]);
+      const pageQuotations = data.quotations as DistributionQuotationSummary[];
+      setQuotations((current) => cursor ? [...current, ...pageQuotations] : pageQuotations);
+      setNextCursor(data.nextCursor);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load sales orders.");
+      if (!controller.signal.aborted) {
+        setError(loadError instanceof Error ? loadError.message : "Unable to load sales orders.");
+      }
     } finally {
-      setIsLoading(false);
+      if (listRequestRef.current === controller) {
+        listRequestRef.current = null;
+        loadingMoreRef.current = false;
+        if (cursor) setIsLoadingMore(false);
+        else setIsLoading(false);
+      }
     }
   }, [organizationId]);
 
   useEffect(() => {
-    void Promise.resolve().then(loadQuotations);
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (active) void loadQuotations();
+    });
+    return () => {
+      active = false;
+      listRequestRef.current?.abort();
+      listRequestRef.current = null;
+      loadingMoreRef.current = false;
+    };
   }, [loadQuotations]);
 
   useEffect(() => {
@@ -322,30 +365,18 @@ export default function SalesOrderListPage() {
     return () => controller.abort();
   }, [autoAllocateOrder, organizationId]);
 
-  const salesOrders = useMemo<SalesOrderRow[]>(() => {
-    const childCounts = new Map<string, number>();
-    for (const quotation of quotations) {
-      if (quotation.parentQuotationId) {
-        childCounts.set(
-          quotation.parentQuotationId,
-          (childCounts.get(quotation.parentQuotationId) ?? 0) + 1,
-        );
-      }
-    }
-    return quotations
-      .filter((quotation) => quotation.mode === "MASTER")
-      .map((quotation) => ({
-        ...quotation,
-        childCount: childCounts.get(quotation.id) ?? 0,
-      }));
-  }, [quotations]);
+  const salesOrders = useMemo<SalesOrderRow[]>(
+    () => quotations.map((quotation) => ({ ...quotation, childCount: quotation.childCount ?? 0 })),
+    [quotations],
+  );
 
   function openDetails(id: string) {
     router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/sales-order/${encodeURIComponent(id)}`);
   }
 
   function requestBulkDelete() {
-    const selectedOrders = salesOrders.filter((order) => selectedIds.includes(order.id));
+    const selectedIdSet = new Set(selectedIds);
+    const selectedOrders = salesOrders.filter((order) => selectedIdSet.has(order.id));
     if (selectedOrders.length !== selectedIds.length) {
       setError("One or more selected sales orders are no longer in this report. Refresh and select them again.");
       return;
@@ -385,7 +416,12 @@ export default function SalesOrderListPage() {
       setNotice(
         `Deleted ${deletedCount} sales order${deletedCount === 1 ? "" : "s"}; ${unlinkedCount} linked quotation${unlinkedCount === 1 ? "" : "s"} remain in the quotation register.`,
       );
-      await loadQuotations();
+      const deletedIds = new Set(selectedIds);
+      setQuotations((current) => current
+        .filter((quotation) => !deletedIds.has(quotation.id))
+        .map((quotation) => quotation.parentQuotationId && deletedIds.has(quotation.parentQuotationId)
+          ? { ...quotation, parentQuotationId: null }
+          : quotation));
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the selected sales orders.");
     } finally {
@@ -813,7 +849,9 @@ export default function SalesOrderListPage() {
           rowIdSelector={getSalesOrderRowId}
           selectedIds={selectedIds}
           rowSelectable={(order) => order.status === "DRAFT"}
-          onToggleSelectAll={(checked, recordIds) => setSelectedIds(checked ? recordIds : [])}
+          onToggleSelectAll={(checked, recordIds) =>
+            setSelectedIds((current) => toggleVisibleReportSelection(current, recordIds, checked))
+          }
           onToggleRowSelection={(id, checked) => setSelectedIds((current) =>
             checked ? current.includes(id) ? current : [...current, id] : current.filter((value) => value !== id),
           )}
@@ -847,6 +885,13 @@ export default function SalesOrderListPage() {
           renderCell={renderSalesOrderCell}
         />
       </Card>
+      {nextCursor ? (
+        <div className="flex justify-center">
+          <Button type="button" variant="secondary" onClick={() => void loadQuotations(nextCursor)} disabled={isLoadingMore}>
+            {isLoadingMore ? "Loading sales orders..." : "Load more sales orders"}
+          </Button>
+        </div>
+      ) : null}
       <Modal
         open={isBulkDeleteDialogOpen}
         onClose={() => {

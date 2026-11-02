@@ -21,10 +21,18 @@ export type ContactWorkbookRecord = {
   phone: string | null;
   is_active: boolean;
   roles: Array<{ role_code: string }>;
-  distributor_mappings?: Array<{ dealer: { id: string } }>;
-  dealer_mappings?: Array<{ distributor: { id: string } }>;
-  role_parent_mappings?: Array<{ id: string; parent_role_code: string; mapped_contact: { id: string } }>;
-  role_mapped_contacts?: Array<{ id: string; parent_role_code: string; parent_contact: { id: string } }>;
+  distributor_mappings?: Array<{ dealer: { id: string; code: string; legal_name: string; display_name: string | null } }>;
+  dealer_mappings?: Array<{ distributor: { id: string; code: string; legal_name: string; display_name: string | null } }>;
+  role_parent_mappings?: Array<{
+    id: string;
+    parent_role_code: string;
+    mapped_contact: { id: string; code: string; legal_name: string; display_name: string | null };
+  }>;
+  role_mapped_contacts?: Array<{
+    id: string;
+    parent_role_code: string;
+    parent_contact: { id: string; code: string; legal_name: string; display_name: string | null };
+  }>;
   tax_registrations: Array<{
     gstin: string;
     legal_name: string;

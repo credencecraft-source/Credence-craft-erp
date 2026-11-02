@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
-import { createWorkOrder, createWorkOrders, getWorkOrderAllocation, listOrdersByArticle, listWorkOrderAllocationsByArticle, listWorkOrderArticles, listWorkOrders } from "@/lib/services/factory/work-order-service";
+import { createWorkOrder, createWorkOrders, deleteWorkOrders, getWorkOrderAllocation, listOrdersByArticle, listWorkOrderAllocationsByArticle, listWorkOrderArticles, listWorkOrders } from "@/lib/services/factory/work-order-service";
 
 export async function GET(request: Request) {
   try {
@@ -74,5 +74,50 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
     }
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to create work order." }, { status: 400 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const user = await requireSessionUser();
+    const body: unknown = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Submit a valid list of work orders to delete." }, { status: 400 });
+    }
+
+    const payload = body as Record<string, unknown>;
+    const organizationId = typeof payload.organizationId === "string" ? payload.organizationId.trim() : "";
+    const rawWorkOrderIds = payload.workOrderIds;
+    if (
+      !Array.isArray(rawWorkOrderIds)
+      || rawWorkOrderIds.length < 1
+      || rawWorkOrderIds.length > 100
+      || !rawWorkOrderIds.every((id): id is string => typeof id === "string" && Boolean(id.trim()) && id.length <= 255)
+    ) {
+      return NextResponse.json({ error: "Select between 1 and 100 unique work orders to delete." }, { status: 400 });
+    }
+    const workOrderIds = rawWorkOrderIds.map((id) => id.trim());
+    if (new Set(workOrderIds).size !== workOrderIds.length) {
+      return NextResponse.json({ error: "Select between 1 and 100 unique work orders to delete." }, { status: 400 });
+    }
+
+    const organization = await requireOrganizationContext(
+      user.id,
+      organizationId,
+      ["OWNER", "ADMIN", "MERCHANDISING"],
+    );
+    await deleteWorkOrders(organization.id, user.id, workOrderIds);
+    return NextResponse.json({ deleted: workOrderIds });
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      console.error("Unable to delete work orders because the database is unavailable.", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+      return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to delete work orders." },
+      { status: 400 },
+    );
   }
 }

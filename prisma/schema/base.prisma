@@ -138,6 +138,7 @@ model Organization {
   posPurchaseRecords                      PosPurchaseRecord[]
   posPurchaseBills                        PosPurchaseBill[]
   posSalesInvoices                        PosSalesInvoice[]
+  fgMaterialIssues                        FGMaterialIssue[]
   subscriptions                           Subscription[]
   segmentPrices                           OrganizationSegmentPrice[]
   invitations                             OrganizationInvitation[]

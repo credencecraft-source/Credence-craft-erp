@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { useState } from "react";
 import { useFormStatus } from "react-dom";
 
@@ -12,8 +13,9 @@ import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Select from "@/components/ui/Select";
 import Tabs from "@/components/ui/Tabs";
-import ArticleQuickCreateDialog from "./article-quick-create-dialog";
 import type { QuickCreateLookupOption } from "@/lib/master-data/quick-create-lookup-options";
+
+const ArticleQuickCreateDialog = dynamic(() => import("./article-quick-create-dialog"), { ssr: false });
 
 type ArticleOption = {
   id: string;

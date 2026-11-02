@@ -2,26 +2,28 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
-  getOrganizationForUser: vi.fn(),
-  requireOrganizationPermission: vi.fn(),
+  getOrganizationForUserWithPermission: vi.fn(),
   createContact: vi.fn(),
   deactivateContacts: vi.fn(),
   deleteUnusedContacts: vi.fn(),
   listContacts: vi.fn(),
+  listContactReportPage: vi.fn(),
+  getContactRoleCounts: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({
   getSessionUser: mocks.getSessionUser,
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
-  getOrganizationForUser: mocks.getOrganizationForUser,
-  requireOrganizationPermission: mocks.requireOrganizationPermission,
+  getOrganizationForUserWithPermission: mocks.getOrganizationForUserWithPermission,
 }));
 vi.mock("@/lib/services/master-data/contact-master-service", () => ({
   createContact: mocks.createContact,
   deactivateContacts: mocks.deactivateContacts,
   deleteUnusedContacts: mocks.deleteUnusedContacts,
   listContacts: mocks.listContacts,
+  listContactReportPage: mocks.listContactReportPage,
+  getContactRoleCounts: mocks.getContactRoleCounts,
 }));
 vi.mock("@/lib/database/database-errors", () => ({
   DATABASE_UNAVAILABLE_MESSAGE: "Database unavailable.",
@@ -34,9 +36,10 @@ describe("organization contact master API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getSessionUser.mockResolvedValue({ id: "workspace-user-1", workspace_id: "workspace-1" });
-    mocks.getOrganizationForUser.mockResolvedValue({ id: "internal-org-1" });
-    mocks.requireOrganizationPermission.mockResolvedValue({});
+    mocks.getOrganizationForUserWithPermission.mockResolvedValue({ id: "internal-org-1" });
     mocks.listContacts.mockResolvedValue([]);
+    mocks.listContactReportPage.mockResolvedValue({ records: [], hasMore: false });
+    mocks.getContactRoleCounts.mockResolvedValue({ total: 0, uncategorized: 0 });
     mocks.createContact.mockResolvedValue({ id: "contact-1", code: "ACME-01" });
     mocks.deactivateContacts.mockResolvedValue({ deactivatedCount: 2 });
     mocks.deleteUnusedContacts.mockResolvedValue({ deletedCount: 1, retainedContactCodes: [] });
@@ -50,39 +53,64 @@ describe("organization contact master API", () => {
     );
 
     expect(response.status).toBe(401);
-    expect(mocks.listContacts).not.toHaveBeenCalled();
+    expect(mocks.listContactReportPage).not.toHaveBeenCalled();
   });
 
   it("does not expose contacts when the route organization is not a member organization", async () => {
-    mocks.getOrganizationForUser.mockResolvedValue(null);
+    mocks.getOrganizationForUserWithPermission.mockResolvedValue(null);
     const response = await GET(
       new Request("http://localhost/api/organizations/other-org/contacts"),
       { params: Promise.resolve({ organizationId: "other-org" }) },
     );
 
     expect(response.status).toBe(404);
-    expect(mocks.listContacts).not.toHaveBeenCalled();
+    expect(mocks.listContactReportPage).not.toHaveBeenCalled();
   });
 
   it("enforces the master-data permission before listing", async () => {
-    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: Insufficient permissions."));
+    mocks.getOrganizationForUserWithPermission.mockRejectedValue(new Error("Access denied: Insufficient permissions."));
     const response = await GET(
       new Request("http://localhost/api/organizations/public-org/contacts"),
       { params: Promise.resolve({ organizationId: "public-org" }) },
     );
 
     expect(response.status).toBe(403);
-    expect(mocks.listContacts).not.toHaveBeenCalled();
+    expect(mocks.listContactReportPage).not.toHaveBeenCalled();
   });
 
-  it("supports authorized bounded pagination for complete workbook exports", async () => {
+  it("supports authorized bounded pagination and returns an exact total", async () => {
     const response = await GET(
-      new Request("http://localhost/api/organizations/public-org/contacts?limit=200&offset=400"),
+      new Request("http://localhost/api/organizations/public-org/contacts?limit=100&offset=100&roleCode=DISTRIBUTOR"),
       { params: Promise.resolve({ organizationId: "public-org" }) },
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.listContacts).toHaveBeenCalledWith("internal-org-1", undefined, undefined, { skip: 400, take: 200 });
+    expect(mocks.listContactReportPage).toHaveBeenCalledWith("internal-org-1", undefined, undefined, {
+      skip: 100,
+      take: 100,
+      roleCode: "DISTRIBUTOR",
+    });
+    await expect(response.json()).resolves.toEqual({ records: [], hasMore: false });
+  });
+
+  it("returns exact tenant-scoped role summary counts", async () => {
+    mocks.getContactRoleCounts.mockResolvedValue({
+      total: 800,
+      uncategorized: 772,
+      CUSTOMER: 4,
+      VENDOR: 4,
+      AGENT: 4,
+      DISTRIBUTOR: 5,
+      DEALER: 27,
+    });
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/contacts?summary=true"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.getContactRoleCounts).toHaveBeenCalledWith("internal-org-1");
+    await expect(response.json()).resolves.toMatchObject({ total: 800, DISTRIBUTOR: 5 });
   });
 
   it("rejects invalid contact pagination", async () => {
@@ -92,7 +120,17 @@ describe("organization contact master API", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(mocks.listContacts).not.toHaveBeenCalled();
+    expect(mocks.listContactReportPage).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsupported role filters", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/contacts?limit=100&roleCode=ADMIN"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.listContactReportPage).not.toHaveBeenCalled();
   });
 
   it("creates contacts using the authorized internal organization ID", async () => {
@@ -106,8 +144,11 @@ describe("organization contact master API", () => {
     );
 
     expect(response.status).toBe(201);
-    expect(mocks.getOrganizationForUser).toHaveBeenCalledWith("workspace-user-1", "public-org");
-    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("workspace-user-1", "internal-org-1", "MANAGE_MASTER_DATA");
+    expect(mocks.getOrganizationForUserWithPermission).toHaveBeenCalledWith(
+      "workspace-user-1",
+      "public-org",
+      "MANAGE_MASTER_DATA",
+    );
     expect(mocks.createContact).toHaveBeenCalledWith("internal-org-1", "workspace-user-1", { code: "ACME-01", legalName: "Acme" });
   });
 
@@ -135,7 +176,6 @@ describe("organization contact master API", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith("workspace-user-1", "internal-org-1", "MANAGE_MASTER_DATA");
     expect(mocks.deactivateContacts).toHaveBeenCalledWith("internal-org-1", "workspace-user-1", ["contact-1", "contact-2"]);
   });
 
@@ -170,7 +210,7 @@ describe("organization contact master API", () => {
   });
 
   it("rejects unauthorized bulk contact operations before invoking the service", async () => {
-    mocks.requireOrganizationPermission.mockRejectedValue(new Error("Access denied: Insufficient permissions."));
+    mocks.getOrganizationForUserWithPermission.mockRejectedValue(new Error("Access denied: Insufficient permissions."));
     const response = await DELETE(
       new Request("http://localhost/api/organizations/public-org/contacts", {
         method: "DELETE",

@@ -6,7 +6,7 @@ import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
 import { MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
 import { MASTER_DATA_CATEGORIES, getMastersForCategory } from "@/app/dashboard/[workspaceId]/organizations/[organizationId]/settings/master-data/master-data-categories";
 
@@ -27,16 +27,15 @@ export default async function MasterDataListPage({
     notFound();
   }
 
-  const organization = await getOrganizationForUser(
+  const organization = await getOrganizationForUserWithPermission(
     user.id,
     organizationId,
+    "MANAGE_MASTER_DATA",
   );
 
   if (!organization) {
     notFound();
   }
-
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const masters = MASTER_DEFINITIONS
     .filter((master) => !master.hidden)

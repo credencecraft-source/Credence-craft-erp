@@ -1,22 +1,19 @@
 "use client";
 
-import { useEffect, useState, startTransition, useCallback, useRef } from "react";
+import { useEffect, useState, startTransition, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { QrCode } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
-import OrderQrStickerPreview from "@/components/erp/order-qr-sticker-preview";
-import ArticleBasedOrderDialog from "@/components/erp/article-based-order-dialog";
-import MerchandisingOrderVariantDialog from "@/components/erp/merchandising-order-variant-dialog";
-import { ReportGrid } from "@/components/reports/report-grid-display";
+import { ReportGrid, type FilterOperator } from "@/components/reports/report-grid-display";
 import Select from "@/components/ui/Select";
 import Table from "@/components/ui/Table";
 import Tabs from "@/components/ui/Tabs";
-import QRCode from "qrcode";
 import {
   ORDER_QR_TEMPLATE_SIZES,
   ORDER_QR_TEMPLATE_FIELDS,
@@ -32,6 +29,19 @@ import {
   MAX_ORDER_QR_PRINT_REQUEST_LABELS,
 } from "@/lib/services/orders/order-qr-print-request-contract";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
+
+const OrderQrStickerPreview = dynamic(
+  () => import("@/components/erp/order-qr-sticker-preview"),
+  { ssr: false },
+);
+const ArticleBasedOrderDialog = dynamic(
+  () => import("@/components/erp/article-based-order-dialog"),
+  { ssr: false },
+);
+const MerchandisingOrderVariantDialog = dynamic(
+  () => import("@/components/erp/merchandising-order-variant-dialog"),
+  { ssr: false },
+);
 
 type OrderRecord = {
   id: string;
@@ -159,6 +169,7 @@ type FilterableOrderField =
 const reportFilterFields: Array<{
   key: FilterableOrderField;
   label: string;
+  filterOperators?: FilterOperator[];
 }> = [
   { key: "orderNo", label: "Order No" },
   { key: "entityName", label: "Entity Name" },
@@ -173,7 +184,7 @@ const reportFilterFields: Array<{
   { key: "buyer", label: "Buyer" },
   { key: "brand", label: "Brand" },
   { key: "sizeGroup", label: "Size Group" },
-  { key: "orderQty", label: "Order Qty" },
+  { key: "orderQty", label: "Order Qty", filterOperators: ["is", "empty"] },
   { key: "deliveryDate", label: "Delivery Date" },
   { key: "processStatus", label: "Process Status" },
   { key: "finalStatus", label: "Final Status" },
@@ -220,6 +231,12 @@ export default function MerchandisingOrdersPage({
   const [retryCursor, setRetryCursor] = useState<string | null>(null);
   const [selectedStatus, setSelectedStatus] =
     useState<(typeof dsStatusOptions)[number]>("Draft");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [orderColumnFilters, setOrderColumnFilters] = useState<Record<string, {
+    operator: "contains" | "is" | "notContains" | "empty";
+    value: string;
+  }>>({});
 
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [showBulkQrRequest, setShowBulkQrRequest] = useState(false);
@@ -264,11 +281,15 @@ export default function MerchandisingOrdersPage({
   );
   const lastLoadedAt = useRef(0);
   const skipInitialStatusFetch = useRef(true);
+  const latestOrderRequest = useRef<AbortController | null>(null);
 
-  const selectedQrOrders = selectedOrderIds.flatMap((id) => {
-    const order = orders.find((candidate) => candidate.id === id);
-    return order ? [order] : [];
-  });
+  const selectedQrOrders = useMemo(
+    () => selectedOrderIds.flatMap((id) => {
+      const order = orders.find((candidate) => candidate.id === id);
+      return order ? [order] : [];
+    }),
+    [orders, selectedOrderIds],
+  );
   const selectedQrTemplate = qrTemplates.find((template) => template.id === selectedQrTemplateId);
   const sampleQrOrder = selectedQrOrders[0];
   const sampleQrQuantity = sampleQrOrder
@@ -315,7 +336,17 @@ export default function MerchandisingOrdersPage({
     setLoadError("");
     setRetryCursor(cursor ?? null);
     if (append) setIsLoadingMore(true);
-    else setIsLoadingOrders(true);
+    else {
+      setIsLoadingOrders(true);
+      setIsLoadingMore(false);
+    }
+    if (signal?.aborted) return;
+    const requestController = new AbortController();
+    const abortRequest = () => requestController.abort();
+    signal?.addEventListener("abort", abortRequest, { once: true });
+    latestOrderRequest.current?.abort();
+    latestOrderRequest.current = requestController;
+    const requestSignal = requestController.signal;
 
     try {
       const query = new URLSearchParams({
@@ -323,8 +354,15 @@ export default function MerchandisingOrdersPage({
         limit: String(ORDERS_PAGE_SIZE),
         status: selectedStatus,
       });
+      if (debouncedSearchQuery) query.set("search", debouncedSearchQuery);
+      if (Object.keys(orderColumnFilters).length > 0) {
+        query.set("filters", JSON.stringify(orderColumnFilters));
+      }
       if (cursor) query.set("cursor", cursor);
-      const response = await fetch(`/api/orders?${query.toString()}`, { cache: "no-store", signal });
+      const response = await fetch(`/api/orders?${query.toString()}`, {
+        cache: "no-store",
+        signal: requestSignal,
+      });
       const contentType = response.headers.get("content-type") ?? "";
       if (!response.ok || !contentType.includes("application/json")) {
         throw new Error(`Orders request failed: ${response.status} ${response.statusText} (${contentType || "non-json"})`);
@@ -339,11 +377,24 @@ export default function MerchandisingOrdersPage({
       setLoadError(error instanceof Error ? error.message : "Unable to load orders.");
     }
     finally {
-      if (signal?.aborted) return;
+      signal?.removeEventListener("abort", abortRequest);
+      const isCurrentRequest = latestOrderRequest.current === requestController;
+      if (isCurrentRequest) latestOrderRequest.current = null;
+      if (!isCurrentRequest) return;
+      if (requestSignal.aborted) {
+        if (append) setIsLoadingMore(false);
+        else setIsLoadingOrders(false);
+        return;
+      }
       if (append) setIsLoadingMore(false);
       else setIsLoadingOrders(false);
     }
-  }, [organizationId, selectedStatus]);
+  }, [debouncedSearchQuery, orderColumnFilters, organizationId, selectedStatus]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -360,6 +411,7 @@ export default function MerchandisingOrdersPage({
     window.addEventListener("focus", handleFocus);
     return () => {
       controller.abort();
+      latestOrderRequest.current?.abort();
       window.removeEventListener("focus", handleFocus);
     };
   }, [loadOrders]);
@@ -409,11 +461,12 @@ export default function MerchandisingOrdersPage({
   useEffect(() => {
     let active = true;
     if (!showBulkQrRequest || !sampleQrPayload || !selectedQrTemplate) return;
-    void QRCode.toDataURL(sampleQrPayload, {
-      errorCorrectionLevel: "H",
-      margin: 2,
-      width: selectedQrTemplate.qrSize,
-    })
+    void import("qrcode")
+      .then(({ default: QRCode }) => QRCode.toDataURL(sampleQrPayload, {
+        errorCorrectionLevel: "H",
+        margin: 2,
+        width: selectedQrTemplate.qrSize,
+      }))
       .then((dataUrl) => {
         if (active) setSampleQrPreview({ key: sampleQrPreviewKey, dataUrl });
       })
@@ -432,10 +485,10 @@ export default function MerchandisingOrdersPage({
 
   const filteredOrders = orders;
 
-  const loadMoreOrders = () => {
+  const loadMoreOrders = useCallback(() => {
     if (!nextCursor || isLoadingMore) return;
     void loadOrders(undefined, true, nextCursor, true);
-  };
+  }, [isLoadingMore, loadOrders, nextCursor]);
 
   const handleSelectOrder = useCallback((orderId: string) => {
     startTransition(() => {
@@ -449,6 +502,17 @@ export default function MerchandisingOrdersPage({
     setOrders([]);
     setNextCursor(null);
     setSelectedStatus(status as (typeof dsStatusOptions)[number]);
+  }, []);
+
+  const handleSearchQueryChange = useCallback((query: string) => {
+    setSearchQuery(query);
+  }, []);
+
+  const handleOrderColumnFiltersChange = useCallback((filters: Record<string, {
+    operator: "contains" | "is" | "notContains" | "empty";
+    value: string;
+  }>) => {
+    setOrderColumnFilters(filters);
   }, []);
 
   const handleToggleOrderSelection = useCallback((orderId: string, checked: boolean) => {
@@ -540,7 +604,7 @@ export default function MerchandisingOrdersPage({
     });
   }, [organizationId, router, workspaceId]);
 
-  const openBulkQrRequest = () => {
+  const openBulkQrRequest = useCallback(() => {
     setQrRequestError("");
     setBulkQrQuantityMode("PCS");
     setBulkQrQuantities(Object.fromEntries(selectedQrOrders.map((order) => [
@@ -548,7 +612,29 @@ export default function MerchandisingOrdersPage({
       String(Math.max(1, Number(order.orderQty) || 1)),
     ])));
     setShowBulkQrRequest(true);
-  };
+  }, [selectedQrOrders]);
+
+  const handleOpenArticleOrderDialog = useCallback(() => {
+    setArticleOrderSuccess("");
+    setShowArticleOrderDialog(true);
+  }, []);
+
+  const renderOrderReportCell = useCallback((fieldKey: string, order: OrderRecord) => {
+    if (fieldKey === "orderNo") {
+      return (
+        <Link
+          href={`/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/${encodeURIComponent(order.id)}`}
+          prefetch={false}
+          onClick={(event) => event.stopPropagation()}
+          aria-label={`Open order ${order.orderNo}`}
+          className="font-semibold text-[var(--erp-brand)] underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--erp-brand)]"
+        >
+          {normalizeUppercase(order.orderNo)}
+        </Link>
+      );
+    }
+    return renderOrderCell(fieldKey, order);
+  }, [organizationId, workspaceId]);
 
   const submitBulkQrRequest = async () => {
     setQrRequestError("");
@@ -831,6 +917,11 @@ export default function MerchandisingOrdersPage({
           statusOptions={dsStatusOptions}
           selectedStatus={selectedStatus}
           onStatusChange={handleStatusChange}
+          serverSideSearch
+          serverSideFilters
+          searchMinLength={2}
+          onSearchQueryChange={handleSearchQueryChange}
+          onColumnFiltersChange={handleOrderColumnFiltersChange}
           onNewOrder={handleNewOrder}
           toolbarActions={(
             <div className="flex flex-wrap items-center gap-2">
@@ -851,10 +942,7 @@ export default function MerchandisingOrdersPage({
                 variant="secondary"
                 size="sm"
                 className="h-7 px-2.5 text-[11px]"
-                onClick={() => {
-                  setArticleOrderSuccess("");
-                  setShowArticleOrderDialog(true);
-                }}
+                onClick={handleOpenArticleOrderDialog}
               >
                 Create Order from Article
               </Button>
@@ -866,22 +954,7 @@ export default function MerchandisingOrdersPage({
           bulkUploadDisabled={isPreparingBulkWorkbook}
           onRowAction={handleVariantOrder}
           rowActionLabel="Variant"
-          renderCell={(fieldKey, order) => {
-            if (fieldKey === "orderNo") {
-              return (
-                <Link
-                  href={`/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/${encodeURIComponent(order.id)}`}
-                  prefetch={false}
-                  onClick={(event) => event.stopPropagation()}
-                  aria-label={`Open order ${order.orderNo}`}
-                  className="font-semibold text-[var(--erp-brand)] underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--erp-brand)]"
-                >
-                  {normalizeUppercase(order.orderNo)}
-                </Link>
-              );
-            }
-            return renderOrderCell(fieldKey, order);
-          }}
+          renderCell={renderOrderReportCell}
         />
         {nextCursor && !loadError && (
           <div className="mt-3 flex justify-center">

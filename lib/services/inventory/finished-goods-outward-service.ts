@@ -1,6 +1,11 @@
-import { Prisma } from "@prisma/client";
+import {
+  FGMaterialIssueMovement,
+  FGMaterialIssueSource,
+  Prisma,
+} from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { createFgMaterialIssue } from "@/lib/services/inventory/fg-issued-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
@@ -787,6 +792,7 @@ export async function markFinishedGoodsOutwardShipmentShipped(input: {
                 lines: {
                   select: {
                     quantity: true,
+                    id: true,
                     requestLine: {
                       select: {
                         id: true,
@@ -797,6 +803,10 @@ export async function markFinishedGoodsOutwardShipmentShipped(input: {
                         shipped_quantity: true,
                         picked_quantity: true,
                         style_name: true,
+                        sku_code: true,
+                        article_no: true,
+                        size: true,
+                        colour: true,
                       },
                     },
                   },
@@ -868,11 +878,13 @@ export async function markFinishedGoodsOutwardShipmentShipped(input: {
       stockBefore: string;
       stockAfter: string;
     }> = [];
+    const stockBeforeByKey = new Map<string, Prisma.Decimal>();
     for (const stock of stockQuantities.values()) {
       const current = await findStock(transaction, input.organizationId, stock.stockType, stock.stockId);
       if (!current || current.currentStock.lt(stock.quantity)) {
         throw new Error("FG stock changed or is insufficient for this shipment. Reload and try again.");
       }
+      stockBeforeByKey.set(`${stock.stockType}:${stock.stockId}`, current.currentStock);
       await decrementStock(transaction, input.organizationId, stock.stockType, stock.stockId, stock.quantity);
       stockAdjustments.push({
         stockType: stock.stockType,
@@ -895,13 +907,54 @@ export async function markFinishedGoodsOutwardShipmentShipped(input: {
       });
       if (updated.count !== 1) throw new Error("An FG request line changed before shipment. Reload and try again.");
     }
+    const issuedAt = new Date();
     await transaction.finishedGoodsOutwardShipment.updateMany({
       where: { id: shipment.id, organization_id: input.organizationId },
-      data: { shipped_at: new Date(), shipped_by: input.actorName },
+      data: { shipped_at: issuedAt, shipped_by: input.actorName },
     });
     await refreshRequestStatuses(transaction, input.organizationId, [...new Set(
       [...lineQuantities.values()].map(({ line }) => line.request_id),
     )]);
+    const consumedByStockKey = new Map<string, Prisma.Decimal>();
+    const issueLines = shipment.boxes.flatMap(({ box }) => box.lines.map((boxLine) => {
+      const line = boxLine.requestLine;
+      const stockType = line.source_stock_type;
+      if (!isStockType(stockType)) throw new Error("An FG packing list contains an invalid stock source.");
+      const stockKey = `${stockType}:${line.source_stock_id}`;
+      const previouslyConsumed = consumedByStockKey.get(stockKey) ?? new Prisma.Decimal(0);
+      const stockBefore = stockBeforeByKey.get(stockKey);
+      if (!stockBefore) throw new Error("An FG stock snapshot is missing for a packing-list line.");
+      const lineStockBefore = stockBefore.minus(previouslyConsumed);
+      const lineStockAfter = lineStockBefore.minus(boxLine.quantity);
+      consumedByStockKey.set(stockKey, previouslyConsumed.plus(boxLine.quantity));
+      return {
+        stockType,
+        ...(stockType === "SKU" ? { skuStockId: line.source_stock_id } : {}),
+        ...(stockType === "GENERAL" ? { generalReceiptId: line.source_stock_id } : {}),
+        ...(stockType === "ALLOCATED" ? { allocatedReceiptId: line.source_stock_id } : {}),
+        shipmentBoxLineId: boxLine.id,
+        itemCode: line.sku_code,
+        styleName: line.style_name,
+        articleNo: line.article_no,
+        size: line.size,
+        colour: line.colour,
+        quantity: boxLine.quantity,
+        uomCode: "PCS",
+        stockBefore: lineStockBefore,
+        stockAfter: lineStockAfter,
+      };
+    }));
+    await createFgMaterialIssue(transaction, {
+      organizationId: input.organizationId,
+      sourceType: FGMaterialIssueSource.PACKING_LIST,
+      movement: FGMaterialIssueMovement.ISSUE,
+      packingListId: shipment.id,
+      idempotencyKey: `fg-packing-list:${shipment.id}:issue`,
+      sourceReference: shipment.packing_list_no,
+      issuedBy: input.actorId,
+      issuedAt,
+      lines: issueLines,
+    });
     await createAuditEvent({
       organizationId: input.organizationId, userId: input.actorId, module: "Inventory Management",
       action: "FG_STOCK_OUTWARD_SHIPPED", entityType: "FinishedGoodsOutwardShipment",
@@ -975,6 +1028,7 @@ export async function reverseFinishedGoodsOutwardShipment(input: {
                 box_no: true,
                 lines: {
                   select: {
+                    id: true,
                     request_line_id: true,
                     quantity: true,
                     requestLine: {
@@ -992,6 +1046,7 @@ export async function reverseFinishedGoodsOutwardShipment(input: {
                         brand: true,
                         size: true,
                         colour: true,
+                        sku_code: true,
                       },
                     },
                   },
@@ -1003,7 +1058,7 @@ export async function reverseFinishedGoodsOutwardShipment(input: {
       },
     });
     if (!shipment) throw new Error("The FG shipment was not found in this organization.");
-    const [originalShipmentEvent, previousReversal] = await Promise.all([
+    const [originalShipmentEvent, previousReversal, originalIssue] = await Promise.all([
       transaction.auditEvent.findFirst({
         where: {
           organization_id: input.organizationId,
@@ -1021,6 +1076,17 @@ export async function reverseFinishedGoodsOutwardShipment(input: {
           entity_id: shipment.id,
         },
         select: { id: true },
+      }),
+      transaction.fGMaterialIssue.findFirst({
+        where: {
+          organization_id: input.organizationId,
+          packing_list_id: shipment.id,
+          movement: FGMaterialIssueMovement.ISSUE,
+        },
+        select: {
+          id: true,
+          lines: { select: { id: true, shipment_box_line_id: true } },
+        },
       }),
     ]);
     if (!originalShipmentEvent) throw new Error("The FG shipment has no posted audit record and cannot be reversed safely.");
@@ -1051,7 +1117,11 @@ export async function reverseFinishedGoodsOutwardShipment(input: {
       }
     }
 
+    const stockBeforeByKey = new Map<string, Prisma.Decimal>();
     for (const stock of stockQuantities.values()) {
+      const current = await findStock(transaction, input.organizationId, stock.stockType, stock.stockId);
+      if (!current) throw new Error("An FG stock record was not found while reversing the shipment.");
+      stockBeforeByKey.set(`${stock.stockType}:${stock.stockId}`, current.currentStock);
       await restoreStock(transaction, input.organizationId, stock.stockType, stock.stockId, stock.quantity);
     }
 
@@ -1086,6 +1156,53 @@ export async function reverseFinishedGoodsOutwardShipment(input: {
     }
 
     await refreshRequestStatuses(transaction, input.organizationId, [...requestIds]);
+    const originalLineIdByBoxLineId = new Map(
+      (originalIssue?.lines ?? []).flatMap((line) => line.shipment_box_line_id
+        ? [[line.shipment_box_line_id, line.id] as const]
+        : []),
+    );
+    const restoredByStockKey = new Map<string, Prisma.Decimal>();
+    const reversalLines = shipment.boxes.flatMap(({ box }) => box.lines.map((boxLine) => {
+      const line = boxLine.requestLine;
+      const stockType = line.source_stock_type;
+      if (!isStockType(stockType)) throw new Error("An FG shipment contains an invalid stock source.");
+      const stockKey = `${stockType}:${line.source_stock_id}`;
+      const previouslyRestored = restoredByStockKey.get(stockKey) ?? new Prisma.Decimal(0);
+      const stockBefore = stockBeforeByKey.get(stockKey);
+      if (!stockBefore) throw new Error("An FG stock snapshot is missing for a shipment reversal line.");
+      const lineStockBefore = stockBefore.plus(previouslyRestored);
+      const lineStockAfter = lineStockBefore.plus(boxLine.quantity);
+      restoredByStockKey.set(stockKey, previouslyRestored.plus(boxLine.quantity));
+      return {
+        stockType,
+        ...(stockType === "SKU" ? { skuStockId: line.source_stock_id } : {}),
+        ...(stockType === "GENERAL" ? { generalReceiptId: line.source_stock_id } : {}),
+        ...(stockType === "ALLOCATED" ? { allocatedReceiptId: line.source_stock_id } : {}),
+        shipmentBoxLineId: boxLine.id,
+        reversalOfLineId: originalLineIdByBoxLineId.get(boxLine.id),
+        itemCode: line.sku_code,
+        styleName: line.style_name,
+        articleNo: line.article_no,
+        size: line.size,
+        colour: line.colour,
+        quantity: boxLine.quantity,
+        uomCode: "PCS",
+        stockBefore: lineStockBefore,
+        stockAfter: lineStockAfter,
+      };
+    }));
+    await createFgMaterialIssue(transaction, {
+      organizationId: input.organizationId,
+      sourceType: FGMaterialIssueSource.PACKING_LIST,
+      movement: FGMaterialIssueMovement.REVERSAL,
+      packingListId: shipment.id,
+      reversalOfId: originalIssue?.id,
+      idempotencyKey: `fg-packing-list:${shipment.id}:reversal`,
+      sourceReference: shipment.packing_list_no,
+      issuedBy: input.actorId,
+      reason: "FG packing-list shipment reversal",
+      lines: reversalLines,
+    });
     await createAuditEvent({
       organizationId: input.organizationId, userId: input.actorId, module: "Inventory Management",
       action: "FG_STOCK_OUTWARD_SHIPMENT_REVERSED", entityType: "FinishedGoodsOutwardShipment",

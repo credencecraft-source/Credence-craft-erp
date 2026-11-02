@@ -7,7 +7,7 @@ import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
 import { getMasterDataCategory, getMastersForCategory } from "../../../settings/master-data/master-data-categories";
 import DefaultMasterDataPage from "../../../settings/master-data/[moduleKey]/master-data-editor-page";
 
@@ -33,13 +33,11 @@ async function CategoryMasterListingPage({
     notFound();
   }
 
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
 
   if (!organization) {
     notFound();
   }
-
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const masters = MASTER_DEFINITIONS.filter((master) => !master.hidden)
     .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));

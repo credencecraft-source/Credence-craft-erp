@@ -16,6 +16,337 @@ import {
 
 type Database = Prisma.TransactionClient;
 
+export type WorkOrderGrnIssueReference = {
+  id: string;
+  type: "POS_INVOICE" | "FG_OUTWARD_REQUEST" | "FG_STOCK_RECEIPT";
+  documentNo: string;
+  stockType?: "GENERAL" | "ALLOCATED";
+  issueNo?: string;
+};
+
+export class WorkOrderGrnDeletionConflictError extends Error {
+  constructor(
+    message: string,
+    readonly issues: WorkOrderGrnIssueReference[] = [],
+  ) {
+    super(message);
+    this.name = "WorkOrderGrnDeletionConflictError";
+  }
+}
+
+export async function deleteWorkOrderInventoryGrns(
+  organizationId: string,
+  userId: string,
+  grnIds: string[],
+) {
+  if (grnIds.length < 1 || grnIds.length > 100 || new Set(grnIds).size !== grnIds.length) {
+    throw new Error("Select between 1 and 100 unique Work Order GRNs to delete.");
+  }
+
+  return prisma.$transaction(async (transaction) => {
+    const grns = await transaction.workOrderInventoryGrn.findMany({
+      where: { organization_id: organizationId, id: { in: grnIds } },
+      select: {
+        id: true,
+        grn_no: true,
+        work_order_id: true,
+        lines: {
+          select: {
+            id: true,
+            generalStockReceipt: {
+              select: {
+                id: true,
+                entity_id: true,
+                location_id: true,
+                style_name: true,
+                size: true,
+                quantity_in: true,
+                quantity_out: true,
+                current_stock: true,
+              },
+            },
+            bookingAllocations: {
+              select: {
+                id: true,
+                allocated_quantity: true,
+                finishedGoodsStockReceipt: {
+                  select: {
+                    id: true,
+                    entity_id: true,
+                    location_id: true,
+                    style_name: true,
+                    size: true,
+                    quantity_in: true,
+                    quantity_out: true,
+                    current_stock: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (grns.length !== grnIds.length) {
+      throw new WorkOrderGrnDeletionConflictError(
+        "One or more selected Work Order GRNs were not found in this organization. Refresh the report and try again.",
+      );
+    }
+
+    const generalReceipts = grns.flatMap((grn) => grn.lines.flatMap((line) =>
+      line.generalStockReceipt ? [line.generalStockReceipt] : [],
+    ));
+    const allocatedReceipts = grns.flatMap((grn) => grn.lines.flatMap((line) =>
+      line.bookingAllocations.flatMap((allocation) =>
+        allocation.finishedGoodsStockReceipt ? [allocation.finishedGoodsStockReceipt] : [],
+      ),
+    ));
+    const generalReceiptIds = generalReceipts.map((receipt) => receipt.id);
+    const allocatedReceiptIds = allocatedReceipts.map((receipt) => receipt.id);
+    const outwardStockIds = [
+      ...generalReceiptIds.map((id) => ({ source_stock_type: "GENERAL", source_stock_id: id })),
+      ...allocatedReceiptIds.map((id) => ({ source_stock_type: "ALLOCATED", source_stock_id: id })),
+    ];
+
+    const [salesLines, outwardLines, ledgerLines] = await Promise.all([
+      generalReceiptIds.length > 0
+        ? transaction.posSalesInvoiceLine.findMany({
+            where: {
+              organization_id: organizationId,
+              general_stock_receipt_id: { in: generalReceiptIds },
+            },
+            select: {
+              invoice: { select: { id: true, invoice_no: true } },
+            },
+          })
+        : Promise.resolve([]),
+      outwardStockIds.length > 0
+        ? transaction.finishedGoodsOutwardRequestLine.findMany({
+            where: { organization_id: organizationId, OR: outwardStockIds },
+            select: {
+              id: true,
+              source_stock_type: true,
+              source_stock_id: true,
+              shipped_quantity: true,
+              request: { select: { id: true, request_no: true } },
+            },
+          })
+        : Promise.resolve([]),
+      generalReceiptIds.length > 0 || allocatedReceiptIds.length > 0
+        ? transaction.fGMaterialIssueLine.findMany({
+            where: {
+              organization_id: organizationId,
+              OR: [
+                ...(generalReceiptIds.length > 0 ? [{ general_receipt_id: { in: generalReceiptIds } }] : []),
+                ...(allocatedReceiptIds.length > 0 ? [{ allocated_receipt_id: { in: allocatedReceiptIds } }] : []),
+              ],
+            },
+            select: {
+              general_receipt_id: true,
+              allocated_receipt_id: true,
+              issue: {
+                select: {
+                  id: true,
+                  issue_no: true,
+                  pos_invoice_id: true,
+                  source_reference: true,
+                },
+              },
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+    const issuedOutwardLines = outwardLines.filter((line) => line.shipped_quantity.greaterThan(0));
+    const issueReferences = new Map<string, WorkOrderGrnIssueReference>();
+    for (const saleLine of salesLines) {
+      issueReferences.set(`POS_INVOICE:${saleLine.invoice.id}`, {
+        id: saleLine.invoice.id,
+        type: "POS_INVOICE",
+        documentNo: saleLine.invoice.invoice_no,
+      });
+    }
+    for (const outwardLine of issuedOutwardLines) {
+      issueReferences.set(`FG_OUTWARD_REQUEST:${outwardLine.request.id}`, {
+        id: outwardLine.request.id,
+        type: "FG_OUTWARD_REQUEST",
+        documentNo: outwardLine.request.request_no,
+      });
+    }
+    for (const ledgerLine of ledgerLines) {
+      const { issue } = ledgerLine;
+      if (issue.pos_invoice_id) {
+        issueReferences.set(`POS_INVOICE:${issue.pos_invoice_id}`, {
+          id: issue.pos_invoice_id,
+          type: "POS_INVOICE",
+          documentNo: issue.source_reference ?? issue.issue_no,
+          issueNo: issue.issue_no,
+        });
+        continue;
+      }
+
+      const isAllocated = ledgerLine.allocated_receipt_id !== null;
+      const receiptId = ledgerLine.general_receipt_id ?? ledgerLine.allocated_receipt_id;
+      if (receiptId) {
+        issueReferences.set(`FG_STOCK_RECEIPT:${receiptId}`, {
+          id: receiptId,
+          type: "FG_STOCK_RECEIPT",
+          documentNo: receiptId,
+          stockType: isAllocated ? "ALLOCATED" : "GENERAL",
+          issueNo: issue.issue_no,
+        });
+      }
+    }
+    const linkedIssues = [...issueReferences.values()];
+    const hasIssuedStock = linkedIssues.length > 0;
+    if (hasIssuedStock) {
+      throw new WorkOrderGrnDeletionConflictError(
+        "This GRN cannot be deleted because material has already been issued against it.",
+        linkedIssues,
+      );
+    }
+
+    const stockReversals = new Map<string, {
+      entityId: string;
+      locationId: string;
+      styleName: string;
+      size: string | null;
+      quantityOnHand: Prisma.Decimal;
+      quantityReserved: Prisma.Decimal;
+    }>();
+    for (const receipt of generalReceipts) {
+      const key = `${receipt.entity_id}:${receipt.location_id}:${receipt.style_name}:${receipt.size ?? ""}`;
+      const reversal = stockReversals.get(key) ?? {
+        entityId: receipt.entity_id,
+        locationId: receipt.location_id,
+        styleName: receipt.style_name,
+        size: receipt.size,
+        quantityOnHand: new Prisma.Decimal(0),
+        quantityReserved: new Prisma.Decimal(0),
+      };
+      reversal.quantityOnHand = reversal.quantityOnHand.plus(receipt.current_stock);
+      stockReversals.set(key, reversal);
+    }
+    for (const receipt of allocatedReceipts) {
+      const key = `${receipt.entity_id}:${receipt.location_id}:${receipt.style_name}:${receipt.size ?? ""}`;
+      const reversal = stockReversals.get(key) ?? {
+        entityId: receipt.entity_id,
+        locationId: receipt.location_id,
+        styleName: receipt.style_name,
+        size: receipt.size,
+        quantityOnHand: new Prisma.Decimal(0),
+        quantityReserved: new Prisma.Decimal(0),
+      };
+      reversal.quantityOnHand = reversal.quantityOnHand.plus(receipt.current_stock);
+      reversal.quantityReserved = reversal.quantityReserved.plus(receipt.current_stock);
+      stockReversals.set(key, reversal);
+    }
+    for (const reversal of stockReversals.values()) {
+      await transaction.finishedGoodsStock.updateMany({
+        where: {
+          organization_id: organizationId,
+          entity_id: reversal.entityId,
+          location_id: reversal.locationId,
+          style_name: reversal.styleName,
+          size: reversal.size,
+        },
+        data: {
+          quantity_on_hand: { decrement: reversal.quantityOnHand },
+          quantity_reserved: { decrement: reversal.quantityReserved },
+        },
+      });
+    }
+
+    const outwardLineIds = outwardLines.map((line) => line.id);
+    if (outwardLineIds.length > 0) {
+      await transaction.finishedGoodsOutwardBoxLine.deleteMany({
+        where: { organization_id: organizationId, request_line_id: { in: outwardLineIds } },
+      });
+      const deletedOutwardLines = await transaction.finishedGoodsOutwardRequestLine.deleteMany({
+        where: { organization_id: organizationId, id: { in: outwardLineIds }, shipped_quantity: 0 },
+      });
+      if (deletedOutwardLines.count !== outwardLineIds.length) {
+        throw new WorkOrderGrnDeletionConflictError(
+          "Finished-goods outward requests changed while deleting this GRN. Reload and try again.",
+        );
+      }
+    }
+
+    if (allocatedReceiptIds.length > 0) {
+      const deletedAllocatedReceipts = await transaction.finishedGoodsAllocatedStockReceipt.deleteMany({
+        where: { organization_id: organizationId, id: { in: allocatedReceiptIds } },
+      });
+      if (deletedAllocatedReceipts.count !== allocatedReceiptIds.length) {
+        throw new WorkOrderGrnDeletionConflictError(
+          "Allocated finished-goods stock changed while deleting this GRN. Reload and try again.",
+        );
+      }
+    }
+    const allocationIds = grns.flatMap((grn) => grn.lines.flatMap((line) =>
+      line.bookingAllocations.map((allocation) => allocation.id),
+    ));
+    if (allocationIds.length > 0) {
+      const deletedAllocations = await transaction.workOrderInventoryGrnBookingAllocation.deleteMany({
+        where: { organization_id: organizationId, id: { in: allocationIds } },
+      });
+      if (deletedAllocations.count !== allocationIds.length) {
+        throw new WorkOrderGrnDeletionConflictError(
+          "Work Order GRN allocations changed while deleting. Reload and try again.",
+        );
+      }
+    }
+    if (generalReceiptIds.length > 0) {
+      const deletedGeneralReceipts = await transaction.finishedGoodsGeneralStockReceipt.deleteMany({
+        where: { organization_id: organizationId, id: { in: generalReceiptIds } },
+      });
+      if (deletedGeneralReceipts.count !== generalReceiptIds.length) {
+        throw new WorkOrderGrnDeletionConflictError(
+          "General finished-goods stock changed while deleting this GRN. Reload and try again.",
+        );
+      }
+    }
+
+    const result = await transaction.workOrderInventoryGrn.deleteMany({
+      where: { organization_id: organizationId, id: { in: grnIds } },
+    });
+    if (result.count !== grnIds.length) {
+      throw new WorkOrderGrnDeletionConflictError(
+        "One or more Work Order GRNs changed while being deleted. Refresh the report and try again.",
+      );
+    }
+
+    for (const grn of grns) {
+      await createAuditEvent({
+        organizationId,
+        userId,
+        module: "Inventory Management",
+        action: "DELETE_WORK_ORDER_GRN",
+        entityType: "WorkOrderInventoryGrn",
+        entityId: grn.id,
+        details: {
+          grn_no: grn.grn_no,
+          work_order_id: grn.work_order_id,
+          deleted_line_ids: grn.lines.map((line) => line.id),
+          deleted_line_count: grn.lines.length,
+          removed_general_stock_receipt_ids: generalReceiptIds,
+          removed_allocated_stock_receipt_ids: allocatedReceiptIds,
+          removed_booking_allocation_ids: allocationIds,
+          removed_outward_request_line_ids: outwardLineIds,
+          finished_goods_stock_reversals: [...stockReversals.values()].map((reversal) => ({
+            entity_id: reversal.entityId,
+            location_id: reversal.locationId,
+            style_name: reversal.styleName,
+            size: reversal.size,
+            quantity_on_hand_reversed: reversal.quantityOnHand.toString(),
+            quantity_reserved_released: reversal.quantityReserved.toString(),
+          })),
+        },
+      }, transaction);
+    }
+
+    return grns.map(({ id, grn_no }) => ({ id, grnNo: grn_no }));
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
 function parseGrnDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("Enter a valid GRN date.");
   const date = new Date(`${value}T00:00:00.000Z`);

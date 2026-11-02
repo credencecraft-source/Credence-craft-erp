@@ -56,12 +56,23 @@ const grnReconciliationSelect = {
 
 type OutwardLine = {
   id: string;
+  source_stock_type: string;
   source_stock_id: string;
   status: string;
   requested_quantity: Prisma.Decimal;
   picked_quantity: Prisma.Decimal;
   shipped_quantity: Prisma.Decimal;
   request: { id: string; request_no: string; status: string };
+};
+
+type StockReceiptReconciliation = {
+  stockType: "GENERAL" | "ALLOCATED";
+  receiptId: string;
+  currentQuantityOut: number;
+  expectedQuantityOut: number;
+  currentStock: number;
+  expectedCurrentStock: number;
+  changed: boolean;
 };
 
 type IssuedItem = {
@@ -85,6 +96,7 @@ type ReconciliationLine = {
   changed: boolean;
   skipped: string | null;
   blockers: string[];
+  stockReceipts: StockReceiptReconciliation[];
   issuedItems: IssuedItem[];
 };
 
@@ -94,20 +106,6 @@ type ReconciliationRecord = {
   status: string;
   lines: ReconciliationLine[];
 };
-
-function validStockLedger(input: {
-  quantity_in: number;
-  quantity_out: number;
-  current_stock: number;
-}) {
-  return Number.isSafeInteger(input.quantity_in)
-    && Number.isSafeInteger(input.quantity_out)
-    && Number.isSafeInteger(input.current_stock)
-    && input.quantity_in >= 0
-    && input.quantity_out >= 0
-    && input.current_stock >= 0
-    && input.current_stock + input.quantity_out === input.quantity_in;
-}
 
 export async function reconcileSelectedWorkOrderGrns(
   organizationId: string,
@@ -137,15 +135,26 @@ export async function reconcileSelectedWorkOrderGrns(
         allocation.finishedGoodsStockReceipt ? [allocation.finishedGoodsStockReceipt.id] : [],
       )),
     );
-    const outwardLines: OutwardLine[] = allocatedReceiptIds.length > 0
+    const generalReceiptIds = records.flatMap((record) =>
+      record.lines.flatMap((line) => line.generalStockReceipt ? [line.generalStockReceipt.id] : []),
+    );
+    const allReceiptIds = [...new Set([...generalReceiptIds, ...allocatedReceiptIds])];
+    const outwardLines: OutwardLine[] = allReceiptIds.length > 0
       ? await transaction.finishedGoodsOutwardRequestLine.findMany({
           where: {
             organization_id: organizationId,
-            source_stock_type: "ALLOCATED",
-            source_stock_id: { in: allocatedReceiptIds },
+            OR: [
+              ...(generalReceiptIds.length > 0
+                ? [{ source_stock_type: "GENERAL", source_stock_id: { in: generalReceiptIds } }]
+                : []),
+              ...(allocatedReceiptIds.length > 0
+                ? [{ source_stock_type: "ALLOCATED", source_stock_id: { in: allocatedReceiptIds } }]
+                : []),
+            ],
           },
           select: {
             id: true,
+            source_stock_type: true,
             source_stock_id: true,
             status: true,
             picked_quantity: true,
@@ -157,11 +166,216 @@ export async function reconcileSelectedWorkOrderGrns(
           },
         })
       : [];
+    const [salesLines, issueLines] = await Promise.all([
+      generalReceiptIds.length > 0
+        ? transaction.posSalesInvoiceLine.findMany({
+            where: {
+              organization_id: organizationId,
+              general_stock_receipt_id: { in: generalReceiptIds },
+            },
+            select: { general_stock_receipt_id: true, quantity: true },
+          })
+        : Promise.resolve([]),
+      allReceiptIds.length > 0
+        ? transaction.fGMaterialIssueLine.findMany({
+            where: {
+              organization_id: organizationId,
+              OR: [
+                ...(generalReceiptIds.length > 0
+                  ? [{ general_receipt_id: { in: generalReceiptIds } }]
+                  : []),
+                ...(allocatedReceiptIds.length > 0
+                  ? [{ allocated_receipt_id: { in: allocatedReceiptIds } }]
+                  : []),
+              ],
+            },
+            select: {
+              id: true,
+              stock_type: true,
+              general_receipt_id: true,
+              allocated_receipt_id: true,
+              shipment_box_line_id: true,
+              pos_invoice_line_id: true,
+              shipmentBoxLine: {
+                select: {
+                  requestLine: {
+                    select: { source_stock_type: true, source_stock_id: true },
+                  },
+                },
+              },
+              quantity: true,
+              stock_before: true,
+              stock_after: true,
+              reversal_of_line_id: true,
+              issue: { select: { id: true, movement: true, source_type: true } },
+              reversalOfLine: {
+                select: {
+                  id: true,
+                  stock_type: true,
+                  general_receipt_id: true,
+                  allocated_receipt_id: true,
+                  quantity: true,
+                  issue: { select: { movement: true, source_type: true } },
+                },
+              },
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const receiptKeyFor = (
+      stockType: string,
+      generalReceiptId: string | null,
+      allocatedReceiptId: string | null,
+    ) => {
+      if (stockType === "GENERAL" && generalReceiptId && !allocatedReceiptId) {
+        return `GENERAL:${generalReceiptId}`;
+      }
+      if (stockType === "ALLOCATED" && allocatedReceiptId && !generalReceiptId) {
+        return `ALLOCATED:${allocatedReceiptId}`;
+      }
+      return null;
+    };
+    const issueQuantityByReceipt = new Map<string, number>();
+    const issueQuantityByLineId = new Map<string, number>();
+    const reversalQuantityByLineId = new Map<string, number>();
+    const ledgerBlockersByReceipt = new Map<string, string[]>();
+    const addLedgerBlocker = (key: string | null, message: string) => {
+      if (!key) return;
+      const current = ledgerBlockersByReceipt.get(key) ?? [];
+      current.push(message);
+      ledgerBlockersByReceipt.set(key, current);
+    };
+    const validLedgerLines = new Map<string, {
+      key: string;
+      movement: string;
+      sourceType: string;
+      quantity: number;
+      reversalOfLineId: string | null;
+      reversalOfLine: (typeof issueLines)[number]["reversalOfLine"];
+    }>();
+    for (const issueLine of issueLines) {
+      const key = receiptKeyFor(
+        issueLine.stock_type,
+        issueLine.general_receipt_id,
+        issueLine.allocated_receipt_id,
+      );
+      const referencedReceiptKeys = [
+        ...(issueLine.general_receipt_id && generalReceiptIds.includes(issueLine.general_receipt_id)
+          ? [`GENERAL:${issueLine.general_receipt_id}`]
+          : []),
+        ...(issueLine.allocated_receipt_id && allocatedReceiptIds.includes(issueLine.allocated_receipt_id)
+          ? [`ALLOCATED:${issueLine.allocated_receipt_id}`]
+          : []),
+      ];
+      const quantity = issueLine.quantity.toNumber();
+      const expectedStockAfter = issueLine.issue?.movement === "ISSUE"
+        ? issueLine.stock_before.minus(issueLine.quantity)
+        : issueLine.stock_before.plus(issueLine.quantity);
+      if (
+        !key
+        || !Number.isSafeInteger(quantity)
+        || quantity <= 0
+        || !issueLine.issue
+        || (issueLine.issue.movement !== "ISSUE" && issueLine.issue.movement !== "REVERSAL")
+        || !issueLine.stock_before.isFinite()
+        || issueLine.stock_before.lt(0)
+        || !issueLine.stock_after.isFinite()
+        || issueLine.stock_after.lt(0)
+        || !expectedStockAfter.equals(issueLine.stock_after)
+      ) {
+        for (const referencedKey of referencedReceiptKeys) {
+          addLedgerBlocker(referencedKey, "An FG issue ledger line is invalid and cannot be used to recalculate this receipt.");
+        }
+        continue;
+      }
+      if (
+        (issueLine.issue.movement === "ISSUE"
+          && issueLine.issue.source_type === "POS_INVOICE"
+          && (issueLine.stock_type !== "GENERAL" || !issueLine.general_receipt_id || !issueLine.pos_invoice_line_id))
+        || (issueLine.issue.movement === "ISSUE"
+          && issueLine.issue.source_type === "PACKING_LIST"
+          && !issueLine.shipment_box_line_id)
+        || (issueLine.issue.source_type === "PACKING_LIST"
+          && (!issueLine.shipmentBoxLine
+            || issueLine.shipmentBoxLine.requestLine.source_stock_type !== issueLine.stock_type
+            || issueLine.shipmentBoxLine.requestLine.source_stock_id
+              !== (issueLine.general_receipt_id ?? issueLine.allocated_receipt_id)))
+      ) {
+        addLedgerBlocker(key, "An FG issue ledger line has inconsistent source details.");
+        continue;
+      }
+      validLedgerLines.set(issueLine.id, {
+        key,
+        movement: issueLine.issue.movement,
+        sourceType: issueLine.issue.source_type,
+        quantity,
+        reversalOfLineId: issueLine.reversal_of_line_id,
+        reversalOfLine: issueLine.reversalOfLine,
+      });
+      if (issueLine.issue.movement === "ISSUE") {
+        issueQuantityByReceipt.set(key, (issueQuantityByReceipt.get(key) ?? 0) + quantity);
+        issueQuantityByLineId.set(issueLine.id, quantity);
+      }
+    }
+    for (const issueLine of issueLines) {
+      const validLine = validLedgerLines.get(issueLine.id);
+      if (!validLine || validLine.movement !== "REVERSAL") continue;
+      const original = validLine.reversalOfLine;
+      const originalQuantity = validLine.reversalOfLineId
+        ? issueQuantityByLineId.get(validLine.reversalOfLineId)
+        : undefined;
+      const originalKey = original
+        ? receiptKeyFor(original.stock_type, original.general_receipt_id, original.allocated_receipt_id)
+        : null;
+      if (
+        !validLine.reversalOfLineId
+        || !original
+        || original.issue.movement !== "ISSUE"
+        || original.issue.source_type !== validLine.sourceType
+        || originalKey !== validLine.key
+        || originalQuantity === undefined
+      ) {
+        addLedgerBlocker(validLine.key, "An FG reversal is not linked to a matching issue line.");
+        continue;
+      }
+      const reversed = (reversalQuantityByLineId.get(validLine.reversalOfLineId) ?? 0) + validLine.quantity;
+      reversalQuantityByLineId.set(validLine.reversalOfLineId, reversed);
+      if (reversed > originalQuantity) {
+        addLedgerBlocker(validLine.key, "FG reversal quantities exceed their original issue.");
+        continue;
+      }
+      issueQuantityByReceipt.set(
+        validLine.key,
+        (issueQuantityByReceipt.get(validLine.key) ?? 0) - validLine.quantity,
+      );
+    }
+    const documentIssueQuantityByReceipt = new Map<string, number>();
+    for (const saleLine of salesLines) {
+      const key = `GENERAL:${saleLine.general_stock_receipt_id}`;
+      documentIssueQuantityByReceipt.set(
+        key,
+        (documentIssueQuantityByReceipt.get(key) ?? 0) + saleLine.quantity,
+      );
+    }
+    for (const outwardLine of outwardLines) {
+      const key = `${outwardLine.source_stock_type}:${outwardLine.source_stock_id}`;
+      const shippedQuantity = outwardLine.shipped_quantity.toNumber();
+      if (!Number.isSafeInteger(shippedQuantity) || shippedQuantity < 0) {
+        addLedgerBlocker(key, "A shipped outward quantity is invalid and cannot be reconciled.");
+        continue;
+      }
+      documentIssueQuantityByReceipt.set(
+        key,
+        (documentIssueQuantityByReceipt.get(key) ?? 0) + shippedQuantity,
+      );
+    }
     const outwardLinesByReceiptId = new Map<string, OutwardLine[]>();
     for (const line of outwardLines) {
-      const lines = outwardLinesByReceiptId.get(line.source_stock_id) ?? [];
+      const key = `${line.source_stock_type}:${line.source_stock_id}`;
+      const lines = outwardLinesByReceiptId.get(key) ?? [];
       lines.push(line);
-      outwardLinesByReceiptId.set(line.source_stock_id, lines);
+      outwardLinesByReceiptId.set(key, lines);
     }
 
     const results: ReconciliationRecord[] = [];
@@ -177,6 +391,17 @@ export async function reconcileSelectedWorkOrderGrns(
         const allocatedQuantity = allocationQuantities.reduce((total, quantity) => total + quantity, 0);
         const approvedQuantity = line.approved_quantity;
         const lineIssuedItems: IssuedItem[] = [];
+        const stockPlans: Array<{
+          key: string;
+          stockType: "GENERAL" | "ALLOCATED";
+          receiptId: string;
+          quantityIn: number;
+          quantityOut: number;
+          currentStock: number;
+          expectedQuantityOut: number;
+          expectedCurrentStock: number;
+        }> = [];
+        const stockReceipts: StockReceiptReconciliation[] = [];
 
         for (const allocation of line.bookingAllocations) {
           const receipt = allocation.finishedGoodsStockReceipt;
@@ -186,18 +411,19 @@ export async function reconcileSelectedWorkOrderGrns(
             || receipt.organization_id !== organizationId
             || receipt.grn_allocation_id !== allocation.id
             || receipt.quantity_in !== allocation.allocated_quantity
-            || !validStockLedger(receipt)
+            || !Number.isSafeInteger(receipt.quantity_out)
+            || receipt.quantity_out < 0
+            || !Number.isSafeInteger(receipt.current_stock)
+            || receipt.current_stock < 0
           ) {
             blockers.push(`Booking allocation ${allocation.id} has an inconsistent stock receipt.`);
             continue;
           }
-          const relatedOutwardLines = outwardLinesByReceiptId.get(receipt.id) ?? [];
-          let linkedShippedQuantity = 0;
+          const relatedOutwardLines = outwardLinesByReceiptId.get(`ALLOCATED:${receipt.id}`) ?? [];
           for (const outwardLine of relatedOutwardLines) {
             const picked = Number(outwardLine.picked_quantity);
             const shipped = Number(outwardLine.shipped_quantity);
             const requested = Number(outwardLine.requested_quantity);
-            linkedShippedQuantity += shipped;
             const reserved = Math.max(requested - shipped, 0);
             if (shipped > 0 || picked > 0 || (outwardLine.request.status !== "CANCELLED" && reserved > 0)) {
               lineIssuedItems.push({
@@ -209,20 +435,6 @@ export async function reconcileSelectedWorkOrderGrns(
                 requestStatus: outwardLine.request.status,
               });
             }
-          }
-          if (linkedShippedQuantity > receipt.quantity_out) {
-            blockers.push(`Booking allocation ${allocation.id} issued quantity exceeds its stock receipt ledger.`);
-          }
-          const unlinkedIssuedQuantity = receipt.quantity_out - linkedShippedQuantity;
-          if (unlinkedIssuedQuantity > 0) {
-            lineIssuedItems.push({
-              bookingNo: allocation.bookingAssignment.bookingSizeLine.booking.booking_no,
-              quantityIssued: unlinkedIssuedQuantity,
-              reservedQuantity: 0,
-              requestNo: "Unlinked stock issue",
-              requestId: "",
-              requestStatus: "ISSUED",
-            });
           }
         }
         const uniqueIssuedItems = [...new Map(lineIssuedItems.map((item) => [
@@ -243,6 +455,7 @@ export async function reconcileSelectedWorkOrderGrns(
             changed: false,
             skipped: "This line is still awaiting verification.",
             blockers,
+            stockReceipts,
             issuedItems: uniqueIssuedItems,
           });
           continue;
@@ -265,16 +478,125 @@ export async function reconcileSelectedWorkOrderGrns(
         }
         if (generalReceipt && (
           generalReceipt.organization_id !== organizationId
-          || !validStockLedger(generalReceipt)
+          || !Number.isSafeInteger(generalReceipt.quantity_in)
+          || generalReceipt.quantity_in < 0
         )) {
-          blockers.push("The general-stock receipt ledger is inconsistent.");
+          blockers.push("The general-stock receipt quantity is invalid.");
         }
 
-        const changed = blockers.length === 0 && (
+        const planReceipt = (
+          stockType: "GENERAL" | "ALLOCATED",
+          receiptId: string,
+          quantityIn: number,
+          quantityOut: number,
+          currentStock: number,
+          allocationQuantity: number,
+        ) => {
+          const key = `${stockType}:${receiptId}`;
+          const issuedQuantity = issueQuantityByReceipt.get(key) ?? 0;
+          const documentIssueQuantity = documentIssueQuantityByReceipt.get(key) ?? 0;
+          blockers.push(...(ledgerBlockersByReceipt.get(key) ?? []));
+          if (!Number.isSafeInteger(documentIssueQuantity) || documentIssueQuantity < 0) {
+            blockers.push(`${stockType} receipt ${receiptId} has invalid source-document quantities.`);
+          }
+          if (documentIssueQuantity > issuedQuantity) {
+            blockers.push(
+              `${stockType} receipt ${receiptId} has POS or shipped quantities not fully represented in the FG issue ledger.`,
+            );
+          }
+          const expectedQuantityOut = allocationQuantity + issuedQuantity;
+          if (
+            !Number.isSafeInteger(quantityIn)
+            || quantityIn < 0
+            || !Number.isSafeInteger(issuedQuantity)
+            || issuedQuantity < 0
+            || !Number.isSafeInteger(expectedQuantityOut)
+            || expectedQuantityOut < 0
+            || expectedQuantityOut > quantityIn
+            || !Number.isSafeInteger(quantityOut)
+            || !Number.isSafeInteger(currentStock)
+          ) {
+            blockers.push(`${stockType} receipt ${receiptId} cannot be reconciled to its verified ledger quantities.`);
+            return;
+          }
+          stockPlans.push({
+            key,
+            stockType,
+            receiptId,
+            quantityIn,
+            quantityOut,
+            currentStock,
+            expectedQuantityOut,
+            expectedCurrentStock: quantityIn - expectedQuantityOut,
+          });
+        };
+        if (generalReceipt) {
+          planReceipt(
+            "GENERAL",
+            generalReceipt.id,
+            generalReceipt.quantity_in,
+            generalReceipt.quantity_out,
+            generalReceipt.current_stock,
+            allocatedQuantity,
+          );
+        }
+        for (const allocation of line.bookingAllocations) {
+          const receipt = allocation.finishedGoodsStockReceipt;
+          if (receipt && receipt.organization_id === organizationId && receipt.grn_allocation_id === allocation.id) {
+            planReceipt(
+              "ALLOCATED",
+              receipt.id,
+              receipt.quantity_in,
+              receipt.quantity_out,
+              receipt.current_stock,
+              0,
+            );
+          }
+        }
+
+        const stockChanged = stockPlans.some((plan) =>
+          plan.quantityOut !== plan.expectedQuantityOut
+          || plan.currentStock !== plan.expectedCurrentStock,
+        );
+        for (const plan of stockPlans) {
+          const changed = plan.quantityOut !== plan.expectedQuantityOut
+            || plan.currentStock !== plan.expectedCurrentStock;
+          if (apply && changed && blockers.length === 0) {
+            const where = {
+              id: plan.receiptId,
+              organization_id: organizationId,
+              quantity_in: plan.quantityIn,
+              quantity_out: plan.quantityOut,
+              current_stock: plan.currentStock,
+            };
+            const data = {
+              quantity_out: plan.expectedQuantityOut,
+              current_stock: plan.expectedCurrentStock,
+            };
+            const updated = plan.stockType === "GENERAL"
+              ? await transaction.finishedGoodsGeneralStockReceipt.updateMany({ where, data })
+              : await transaction.finishedGoodsAllocatedStockReceipt.updateMany({ where, data });
+            if (updated.count !== 1) {
+              throw new Error(`${plan.stockType} stock receipt changed during reconciliation. Reload and try again.`);
+            }
+          }
+          stockReceipts.push({
+            stockType: plan.stockType,
+            receiptId: plan.receiptId,
+            currentQuantityOut: plan.quantityOut,
+            expectedQuantityOut: plan.expectedQuantityOut,
+            currentStock: plan.currentStock,
+            expectedCurrentStock: plan.expectedCurrentStock,
+            changed: apply ? changed && blockers.length === 0 : changed,
+          });
+        }
+
+        const countersChanged = (
           line.advance_booked_quantity !== allocatedQuantity
           || line.general_inventory_quantity !== expectedGeneralQuantity
         );
-        if (apply && changed) {
+        const changed = blockers.length === 0 && (countersChanged || stockChanged);
+        if (apply && countersChanged && blockers.length === 0) {
           const updated = await transaction.workOrderInventoryGrnLine.updateMany({
             where: {
               id: line.id,
@@ -292,6 +614,8 @@ export async function reconcileSelectedWorkOrderGrns(
           if (updated.count !== 1) {
             throw new Error(`GRN ${record.grn_no} changed during reconciliation. Reload and try again.`);
           }
+        }
+        if (apply && changed) {
           changedLines.push({
             lineId: line.id,
             size: label,
@@ -300,6 +624,7 @@ export async function reconcileSelectedWorkOrderGrns(
             allocatedQuantity,
             previousGeneralQuantity: line.general_inventory_quantity,
             generalQuantity: expectedGeneralQuantity,
+            stockReceipts: stockReceipts.filter((receipt) => receipt.changed),
           });
         }
 
@@ -315,6 +640,7 @@ export async function reconcileSelectedWorkOrderGrns(
           changed: apply ? changed && blockers.length === 0 : changed,
           skipped: null,
           blockers,
+          stockReceipts,
           issuedItems: uniqueIssuedItems,
         });
         issuedItems.push(...lineIssuedItems);
@@ -341,7 +667,7 @@ export async function reconcileSelectedWorkOrderGrns(
           organizationId,
           userId,
           module: "Inventory Management",
-          action: "RECONCILE_WORK_ORDER_GRN_ALLOCATION_TOTALS",
+          action: "RECONCILE_WORK_ORDER_GRN_STOCK_AND_ALLOCATION_TOTALS",
           entityType: "WorkOrderInventoryGrn",
           entityId: String(entry.grnId),
           details: entry,

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
+import { measureDatabaseQueries } from "@/lib/database/prisma-query-timing";
 import {
   createDistributionQuotationFromBookings,
   createDistributionQuotationFromOrderForms,
@@ -34,12 +35,28 @@ function quotationErrorResponse(error: unknown, fallback: string) {
 
 export async function GET(request: Request) {
   try {
-    const user = await requireSessionUser();
-    const organization = await requireOrganizationContext(
-      user.id,
-      new URL(request.url).searchParams.get("organizationId") ?? "",
-    );
-    return NextResponse.json(await listDistributionQuotations(organization.id));
+    const search = new URL(request.url).searchParams;
+    const authorization = await measureDatabaseQueries(async () => {
+      const user = await requireSessionUser();
+      const organization = await requireOrganizationContext(user.id, search.get("organizationId") ?? "");
+      return organization.id;
+    });
+    const cursor = search.get("cursor");
+    const list = await measureDatabaseQueries(() => listDistributionQuotations(authorization.value, {
+      includeContactRole: search.get("view") !== "sales-order",
+      ...(cursor ? { cursor } : {}),
+    }));
+    const response = NextResponse.json(list.value);
+    if (process.env.NODE_ENV === "development") {
+      response.headers.set("Server-Timing", [
+        `auth;dur=${authorization.durationMs.toFixed(1)}`,
+        `authdb;dur=${authorization.databaseDurationMs.toFixed(1)}`,
+        `list;dur=${list.durationMs.toFixed(1)}`,
+        `listdb;dur=${list.databaseDurationMs.toFixed(1)}`,
+        `listqueries;desc="${list.queryCount}"`,
+      ].join(", "));
+    }
+    return response;
   } catch (error) {
     return quotationErrorResponse(error, "Unable to load Advance Booking quotations.");
   }

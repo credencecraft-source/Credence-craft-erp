@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
@@ -14,6 +14,7 @@ import Select from "@/components/ui/Select";
 import Badge from "@/components/ui/Badge";
 import {
   filterIndexedReportRecords,
+  getEffectiveReportSearchQuery,
   getReportSearchValue,
   type FilterOperator,
   type IndexedReportRow,
@@ -25,6 +26,7 @@ export type { FilterOperator } from "./report-grid-filtering";
 interface ReportGridField<T> {
   key: keyof T | string;
   label: string;
+  filterOperators?: FilterOperator[];
 }
 
 interface ReportGridProps<T> {
@@ -75,7 +77,10 @@ interface ReportGridProps<T> {
   cardBadge?: (record: T) => ReactNode;
   toolbarActions?: ReactNode;
   onSearchQueryChange?: (query: string) => void;
+  onColumnFiltersChange?: (filters: Record<string, { operator: FilterOperator; value: string }>) => void;
   serverSideSearch?: boolean;
+  serverSideFilters?: boolean;
+  searchMinLength?: number;
   getSearchValue?: (fieldKey: string, record: T) => string;
   renderCell: (fieldKey: string, record: T) => React.ReactNode;
   isLoading?: boolean;
@@ -130,7 +135,10 @@ function ReportGridImplementation<T>({
   cardBadge,
   toolbarActions,
   onSearchQueryChange,
+  onColumnFiltersChange,
   serverSideSearch = false,
+  serverSideFilters = false,
+  searchMinLength = 0,
   getSearchValue,
   renderCell,
   isLoading = false,
@@ -140,6 +148,7 @@ function ReportGridImplementation<T>({
   const hasRowClick = Boolean(onRowClick || onRecordClick);
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
+  const effectiveSearchQuery = getEffectiveReportSearchQuery(deferredSearchQuery, searchMinLength);
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, { operator: FilterOperator; value: string }>>({});
   
@@ -184,42 +193,49 @@ function ReportGridImplementation<T>({
     }
   }, [fields, legacyFieldsToAdd, legacyStorageKey, onVisibleFieldsChange, storageKey, visibleFields]);
 
-  const handleOpenColumnModal = (e: React.MouseEvent) => {
+  const handleOpenColumnModal = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setTempVisibleFields([...visibleFields]);
     setShowColumnModal(true);
-  };
+  }, [visibleFields]);
 
-  const handleTempToggleField = (fieldKey: string) => {
+  const handleTempToggleField = useCallback((fieldKey: string) => {
     setTempVisibleFields((prev) =>
       prev.includes(fieldKey) ? prev.filter((k) => k !== fieldKey) : [...prev, fieldKey]
     );
-  };
+  }, []);
 
-  const handleSaveColumns = () => {
+  const handleSaveColumns = useCallback(() => {
     onVisibleFieldsChange(tempVisibleFields);
     if (storageKey) localStorage.setItem(storageKey, JSON.stringify(tempVisibleFields));
     setShowColumnModal(false);
-  };
+  }, [onVisibleFieldsChange, storageKey, tempVisibleFields]);
 
-  const openFilterModal = () => {
+  const openFilterModal = useCallback(() => {
     const currentMap: Record<string, { operator: FilterOperator; value: string }> = {};
     for (const f of fields) {
-      currentMap[String(f.key)] = columnFilters[String(f.key)] ?? { operator: "contains", value: "" };
+      const operators = f.filterOperators ?? ["contains", "is", "notContains", "empty"];
+      const activeFilter = columnFilters[String(f.key)];
+      const operator = activeFilter && operators.includes(activeFilter.operator)
+        ? activeFilter.operator
+        : operators[0] ?? "contains";
+      currentMap[String(f.key)] = activeFilter
+        ? { ...activeFilter, operator }
+        : { operator, value: "" };
     }
     setTempFilters(currentMap);
     setShowFilterModal(true);
-  };
+  }, [columnFilters, fields]);
 
-  const handleTempFilterChange = (fieldKey: string, operator: FilterOperator, value: string) => {
+  const handleTempFilterChange = useCallback((fieldKey: string, operator: FilterOperator, value: string) => {
     setTempFilters((prev) => ({
       ...prev,
       [fieldKey]: { operator, value },
     }));
-  };
+  }, []);
 
-  const applyAllFilters = () => {
+  const applyAllFilters = useCallback(() => {
     const active: Record<string, { operator: FilterOperator; value: string }> = {};
     for (const [key, filter] of Object.entries(tempFilters)) {
       if (filter.operator === "empty" || filter.value.trim() !== "") {
@@ -227,10 +243,11 @@ function ReportGridImplementation<T>({
       }
     }
     setColumnFilters(active);
+    onColumnFiltersChange?.(active);
     setShowFilterModal(false);
-  };
+  }, [onColumnFiltersChange, tempFilters]);
 
-  const clearAllFilters = () => {
+  const clearAllFilters = useCallback(() => {
     setTempFilters(() => {
       const resetMap: Record<string, { operator: FilterOperator; value: string }> = {};
       for (const f of fields) {
@@ -238,11 +255,17 @@ function ReportGridImplementation<T>({
       }
       return resetMap;
     });
-  };
+  }, [fields]);
 
-  const removeAllAppliedFilters = () => {
+  const removeAllAppliedFilters = useCallback(() => {
     setColumnFilters({});
-  };
+    onColumnFiltersChange?.({});
+  }, [onColumnFiltersChange]);
+  const handleSearchChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const query = event.target.value;
+    setSearchQuery(query);
+    onSearchQueryChange?.(getEffectiveReportSearchQuery(query, searchMinLength));
+  }, [onSearchQueryChange, searchMinLength]);
 
   const visibleFieldDefinitions = useMemo(
     () => fields.filter((field) => visibleFields.includes(field.key)),
@@ -258,7 +281,9 @@ function ReportGridImplementation<T>({
     [columnFilters, visibleFieldDefinitions],
   );
   const indexedRecords = useMemo(
-    () => records.map<IndexedReportRow<T>>((record) => {
+    () => serverSideSearch && serverSideFilters
+      ? []
+      : records.map<IndexedReportRow<T>>((record) => {
       const searchableValues: Record<string, string> = {};
       for (const fieldKey of indexedFieldKeys) {
         searchableValues[fieldKey] = getReportSearchValue(record, fieldKey, getSearchValue, renderCell);
@@ -270,13 +295,15 @@ function ReportGridImplementation<T>({
           .join(" "),
         searchableValues,
       };
-    }),
-    [getSearchValue, indexedFieldKeys, records, renderCell, visibleFieldDefinitions],
+      }),
+    [getSearchValue, indexedFieldKeys, records, renderCell, serverSideFilters, serverSideSearch, visibleFieldDefinitions],
   );
 
   const filteredRecords = useMemo(
-    () => filterIndexedReportRecords(indexedRecords, serverSideSearch ? "" : deferredSearchQuery, columnFilters),
-    [columnFilters, deferredSearchQuery, indexedRecords, serverSideSearch],
+    () => serverSideFilters
+      ? records
+      : filterIndexedReportRecords(indexedRecords, serverSideSearch ? "" : effectiveSearchQuery, columnFilters),
+    [columnFilters, effectiveSearchQuery, indexedRecords, records, serverSideFilters, serverSideSearch],
   );
   const selectableRecords = filteredRecords.filter((record) => rowSelectable?.(record) ?? true);
   const allFilteredSelected = selectableRecords.length > 0
@@ -311,7 +338,7 @@ function ReportGridImplementation<T>({
 
   useEffect(() => {
     if (virtualizeRows) tableContainerRef.current?.scrollTo({ top: 0 });
-  }, [columnFilters, deferredSearchQuery, virtualizeRows]);
+  }, [columnFilters, effectiveSearchQuery, virtualizeRows]);
 
   return (
     <div className={`${compact ? "space-y-2" : "space-y-2.5"} text-[11px]`}>
@@ -334,10 +361,7 @@ function ReportGridImplementation<T>({
           <Input
             placeholder="Search report..."
             value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              onSearchQueryChange?.(e.target.value);
-            }}
+            onChange={handleSearchChange}
             className="w-48 h-7 text-[11px] py-1 px-2"
           />
 
@@ -720,7 +744,8 @@ function ReportGridImplementation<T>({
             <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
               {fields.map((field) => {
                 const currentFilter = tempFilters[String(field.key)] ?? { operator: "contains", value: "" };
-                return (
+                        const operators = field.filterOperators ?? ["contains", "is", "notContains", "empty"];
+                        return (
                   <div key={String(field.key)} className="grid grid-cols-3 gap-2.5 items-center">
                     <div className="text-[11px] font-medium text-slate-700 truncate" title={field.label}>
                       {field.label}
@@ -731,12 +756,15 @@ function ReportGridImplementation<T>({
                         onChange={(e) =>
                           handleTempFilterChange(String(field.key), e.target.value as FilterOperator, currentFilter.value)
                         }
-                        options={[
-                          { value: "contains", label: "Contains" },
-                          { value: "is", label: "Is Exact" },
-                          { value: "notContains", label: "Does Not Contain" },
-                          { value: "empty", label: "Is Empty" },
-                        ]}
+                        options={operators.map((operator) => ({
+                          value: operator,
+                          label: {
+                            contains: "Contains",
+                            is: "Is Exact",
+                            notContains: "Does Not Contain",
+                            empty: "Is Empty",
+                          }[operator],
+                        }))}
                         className="h-7 rounded-md p-1 text-[11px]"
                       />
                     </div>

@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
 import { getContact } from "@/lib/services/master-data/contact-master-service";
 import {
   ContactRoleSettingsUnavailableError,
@@ -20,24 +20,30 @@ export default async function ContactMasterDetailPage({
   if (!user.workspace_id) redirect("/");
   if (user.workspace_id !== workspaceId) notFound();
 
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(
+    user.id,
+    organizationId,
+    "MANAGE_MASTER_DATA",
+  );
   if (!organization) notFound();
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
-  const contact = await getContact(organization.id, contactId);
-  if (!contact) notFound();
-  let initialCommonRoleSettings: Record<string, boolean> | null;
-  let roleSettingsError: string | undefined;
-  try {
-    initialCommonRoleSettings = await getContactCommonRoleModes(
-      organization.id,
-      contact.id,
-      contact.roles.map(({ role_code }) => role_code),
-    );
-  } catch (error) {
+  const roleSettingsPromise = getContactCommonRoleModes(
+    organization.id,
+    contactId,
+    ["CUSTOMER", "VENDOR", "AGENT", "DISTRIBUTOR", "DEALER"],
+  ).then((commonRoleSettings) => ({ commonRoleSettings, error: undefined })).catch((error: unknown) => {
     if (!(error instanceof ContactRoleSettingsUnavailableError)) throw error;
-    initialCommonRoleSettings = null;
-    roleSettingsError = error.message;
-  }
+    return { commonRoleSettings: null, error: error.message };
+  });
+  const [contact, roleSettings] = await Promise.all([
+    getContact(organization.id, contactId),
+    roleSettingsPromise,
+  ]);
+  if (!contact) notFound();
+  const activeRoleCodes = new Set(contact.roles.map(({ role_code }) => role_code));
+  const initialCommonRoleSettings = roleSettings.commonRoleSettings
+    ? Object.fromEntries(Object.entries(roleSettings.commonRoleSettings)
+      .filter(([roleCode]) => activeRoleCodes.has(roleCode)))
+    : null;
 
   return (
     <ContactMasterRecordPage
@@ -47,7 +53,7 @@ export default async function ContactMasterDetailPage({
       contactId={contactId}
       initialContact={contact}
       initialCommonRoleSettings={initialCommonRoleSettings}
-      roleSettingsError={roleSettingsError}
+      roleSettingsError={roleSettings.error}
     />
   );
 }

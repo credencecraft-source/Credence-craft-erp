@@ -3,10 +3,19 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { isDatabaseUnavailableError, DATABASE_UNAVAILABLE_MESSAGE } from "@/lib/database/database-errors";
-import { createWorkOrderInventoryGrn, listWorkOrderInventoryGrns, listWorkOrdersForReceiving } from "@/lib/services/inventory/work-order-grn-service";
+import {
+  createWorkOrderInventoryGrn,
+  deleteWorkOrderInventoryGrns,
+  listWorkOrderInventoryGrns,
+  listWorkOrdersForReceiving,
+  WorkOrderGrnDeletionConflictError,
+} from "@/lib/services/inventory/work-order-grn-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 function errorResponse(error: unknown, fallback: string) {
+  if (error instanceof WorkOrderGrnDeletionConflictError) {
+    return NextResponse.json({ error: error.message, issues: error.issues }, { status: 409 });
+  }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2021" || error.code === "P2022") {
       return NextResponse.json({ error: "Work Order GRN is unavailable until its database migration is deployed." }, { status: 503 });
@@ -75,6 +84,7 @@ export async function POST(request: Request) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new Error("Submit a valid Work Order GRN form.");
     }
+
     const organization = await requireOrganizationContext(
       user.id,
       String(body.organizationId ?? ""),
@@ -107,5 +117,37 @@ export async function POST(request: Request) {
     return NextResponse.json({ grn }, { status: 201 });
   } catch (error) {
     return errorResponse(error, "Unable to submit Work Order GRN.");
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const user = await requireSessionUser();
+    const body: unknown = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Submit a valid list of Work Order GRNs to delete." }, { status: 400 });
+    }
+    const payload = body as Record<string, unknown>;
+    const organization = await requireOrganizationContext(
+      user.id,
+      String(payload.organizationId ?? ""),
+      ["OWNER", "ADMIN", "INVENTORY"],
+    );
+    const rawGrnIds = payload.grnIds;
+    if (
+      !Array.isArray(rawGrnIds)
+      || rawGrnIds.length < 1
+      || rawGrnIds.length > 100
+      || rawGrnIds.some((id: unknown) => typeof id !== "string" || !id.trim() || id.length > 255)
+      || new Set(rawGrnIds).size !== rawGrnIds.length
+    ) {
+      return NextResponse.json({ error: "Select between 1 and 100 unique Work Order GRNs to delete." }, { status: 400 });
+    }
+    const grnIds: string[] = rawGrnIds.map((id: string) => id.trim());
+
+    const deleted = await deleteWorkOrderInventoryGrns(organization.id, user.id, grnIds);
+    return NextResponse.json({ deleted });
+  } catch (error) {
+    return errorResponse(error, "Unable to delete the selected Work Order GRNs.");
   }
 }

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getMasterDefinition: vi.fn(),
   getMasterValuesForOrganization: vi.fn(),
   getSizeGroupSizesForOrganization: vi.fn(),
+  listVendorSelectOptionsForOrganization: vi.fn(),
   syncSizeGroupSizes: vi.fn(),
 }));
 
@@ -32,6 +33,9 @@ vi.mock("@/lib/master-data/master-data-constants", () => ({
 vi.mock("@/lib/database/database-errors", () => ({
   DATABASE_UNAVAILABLE_MESSAGE: "Database unavailable.",
   isDatabaseUnavailableError: vi.fn(() => false),
+}));
+vi.mock("@/lib/services/master-data/vendor-select-lookup-service", () => ({
+  listVendorSelectOptionsForOrganization: mocks.listVendorSelectOptionsForOrganization,
 }));
 
 import { GET, POST } from "./route";
@@ -115,6 +119,25 @@ describe("organization master-data lookup route", () => {
       true,
       expect.objectContaining({ parentId: "category-id", limit: 200 }),
     );
+  });
+
+  it("uses the compact tenant-scoped vendor select query when requested", async () => {
+    mocks.listVendorSelectOptionsForOrganization.mockResolvedValue([
+      { id: "vendor-id", label: "Vendor One" },
+    ]);
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/master-data/vendor?includeInactive=false&includeDummyData=true&shape=select&limit=150"),
+      contextFor("vendor"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual([{ id: "vendor-id", label: "Vendor One" }]);
+    expect(mocks.listVendorSelectOptionsForOrganization).toHaveBeenCalledExactlyOnceWith(
+      "internal-org-1",
+      { limit: 150, includeInactive: false },
+    );
+    expect(mocks.getMasterValuesForOrganization).not.toHaveBeenCalled();
   });
 
   it("groups size links by group once and preserves group size options", async () => {

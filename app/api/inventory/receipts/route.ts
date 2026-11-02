@@ -293,7 +293,13 @@ export async function DELETE(request: Request) {
                 select: {
                   fresh_excess: true,
                   allocations: {
-                    select: { orderAllocations: { select: { id: true }, where: { organization_id: organization.id } } },
+                    select: {
+                      id: true,
+                      orderAllocations: {
+                        where: { organization_id: organization.id },
+                        select: { id: true, grouped_purchase_order_line_id: true, allocated_quantity: true },
+                      },
+                    },
                   },
                 },
               },
@@ -305,11 +311,24 @@ export async function DELETE(request: Request) {
 
       const legacyStockToReverse = new Map<string, Prisma.Decimal>();
       const stockReversals: Array<{ raw_material: string; quantity_reversed: string }> = [];
+      const releasedStockBookings: Array<{
+        stock_id: string;
+        booking_count: number;
+        booking_ids: string[];
+        quantity_reserved_released: string;
+      }> = [];
+      const removedOrderAllocations = receipt.lines.flatMap((line) =>
+        (line.rmGrnVerification?.allocations ?? []).flatMap((allocation) =>
+          allocation.orderAllocations.map((orderAllocation) => ({
+            verification_allocation_id: allocation.id,
+            order_allocation_id: orderAllocation.id,
+            grouped_purchase_order_line_id: orderAllocation.grouped_purchase_order_line_id,
+            allocated_quantity: orderAllocation.allocated_quantity.toString(),
+          })),
+        ),
+      );
       for (const line of receipt.lines) {
         if (!line.raw_material) continue;
-        if (line.rmGrnVerification?.allocations.some((allocation) => allocation.orderAllocations.length > 0)) {
-          throw new GrnDeletionConflictError("Cannot delete this GRN because its verified quantity has been allocated to an order. Reverse the order allocation first.");
-        }
         const quantityToReverse = line.rmGrnVerification?.fresh_excess ?? line.accepted_quantity;
         if (!quantityToReverse.greaterThan(0) && !line.rmGrnVerification) continue;
         const stock = await transaction.rawMaterialStock.findFirst({
@@ -324,13 +343,33 @@ export async function DELETE(request: Request) {
           );
           continue;
         }
+        if (stock.quantity_issued.greaterThan(0)) {
+          throw new GrnDeletionConflictError(
+            "This GRN cannot be deleted because material has already been issued against it. Reverse or return the issued material first.",
+          );
+        }
+        const stockBookings = await transaction.rawMaterialStockBooking.findMany({
+          where: { organization_id: organization.id, take_from_stock_id: stock.id },
+          select: { id: true, booked_quantity: true, fulfilled_quantity: true, status: true },
+        });
+        if (stockBookings.some((booking) => booking.fulfilled_quantity.greaterThan(0))) {
+          throw new GrnDeletionConflictError(
+            "This GRN cannot be deleted because material has already been issued against it. Reverse or return the issued material first.",
+          );
+        }
+        const reservedBookingQuantity = stockBookings
+          .filter((booking) => booking.status === "BOOKED")
+          .reduce((total, booking) => total.plus(booking.booked_quantity), new Prisma.Decimal(0));
+        if (!stock.quantity_reserved.equals(reservedBookingQuantity)) {
+          throw new GrnDeletionConflictError(
+            "Cannot safely delete this GRN because stock reservations do not match their booking records. Reconcile the reservations first.",
+          );
+        }
+        const stockBookingIds = stockBookings.map((booking) => booking.id);
         const stockQuantityToReverse = line.rmGrnVerification
           ? stock.quantity_on_hand
           : quantityToReverse;
-        if (
-          stock.quantity_on_hand.minus(stock.quantity_reserved).lessThan(stockQuantityToReverse)
-          || stock.quantity_issued.greaterThan(0)
-        ) {
+        if (stock.quantity_on_hand.lessThan(stockQuantityToReverse)) {
           throw new GrnDeletionConflictError("Cannot delete this GRN because accepted stock has since been used or reserved. Reverse that inventory activity first.");
         }
 
@@ -340,12 +379,33 @@ export async function DELETE(request: Request) {
             organization_id: organization.id,
             quantity_on_hand: stock.quantity_on_hand,
             quantity_reserved: stock.quantity_reserved,
-            quantity_issued: stock.quantity_issued,
+            quantity_issued: new Prisma.Decimal(0),
           },
-          data: { quantity_on_hand: { decrement: stockQuantityToReverse } },
+          data: {
+            quantity_on_hand: { decrement: stockQuantityToReverse },
+            quantity_reserved: { decrement: reservedBookingQuantity },
+          },
         });
         if (updated.count !== 1) {
           throw new GrnDeletionConflictError("Stock changed while deleting this GRN. Reload the record and try again.");
+        }
+        if (stockBookingIds.length > 0) {
+          const deletedBookings = await transaction.rawMaterialStockBooking.deleteMany({
+            where: {
+              organization_id: organization.id,
+              take_from_stock_id: stock.id,
+              id: { in: stockBookingIds },
+            },
+          });
+          if (deletedBookings.count !== stockBookingIds.length) {
+            throw new GrnDeletionConflictError("Stock bookings changed while deleting this GRN. Reload the record and try again.");
+          }
+          releasedStockBookings.push({
+            stock_id: stock.id,
+            booking_count: deletedBookings.count,
+            booking_ids: stockBookingIds,
+            quantity_reserved_released: reservedBookingQuantity.toString(),
+          });
         }
         stockReversals.push({ raw_material: line.raw_material, quantity_reversed: stockQuantityToReverse.toString() });
       }
@@ -359,8 +419,13 @@ export async function DELETE(request: Request) {
             raw_material: rawMaterial,
             source_type: "LEGACY",
           },
-          select: { id: true, quantity_on_hand: true, quantity_reserved: true },
+          select: { id: true, quantity_on_hand: true, quantity_reserved: true, quantity_issued: true },
         });
+        if (stock?.quantity_issued.greaterThan(0)) {
+          throw new GrnDeletionConflictError(
+            "This GRN cannot be deleted because material has already been issued against it. Reverse or return the issued material first.",
+          );
+        }
         if (!stock || stock.quantity_on_hand.minus(stock.quantity_reserved).lessThan(acceptedQuantity)) {
           throw new GrnDeletionConflictError("Cannot delete this GRN because accepted stock has since been used or reserved. Reverse that inventory activity first.");
         }
@@ -392,6 +457,8 @@ export async function DELETE(request: Request) {
           purchase_order_id: receipt.purchase_order_id,
           deleted_line_count: receipt.lines.length,
           reversed_general_inventory_stock: stockReversals,
+          released_stock_bookings: releasedStockBookings,
+          removed_grn_order_allocations: removedOrderAllocations,
         },
       }, transaction);
 

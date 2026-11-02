@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   reserveNumber: vi.fn(),
   createAuditEvent: vi.fn(),
+  createFgMaterialIssue: vi.fn(),
   requireOrganizationAccess: vi.fn(),
   tx: {
     finishedGoodsSkuStock: { findFirst: vi.fn(), updateMany: vi.fn() },
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     finishedGoodsOutwardShipment: { create: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
     finishedGoodsOutwardShipmentBox: { createMany: vi.fn(), deleteMany: vi.fn() },
     auditEvent: { findFirst: vi.fn() },
+    fGMaterialIssue: { findFirst: vi.fn() },
   },
   prisma: {
     $transaction: vi.fn(),
@@ -35,6 +37,9 @@ vi.mock("@/lib/services/organizations/audit-event-service", () => ({ createAudit
 vi.mock("@/lib/services/organizations/organization-service", () => ({ requireOrganizationAccess: mocks.requireOrganizationAccess }));
 vi.mock("@/lib/services/orders/procurement-document-number-service", () => ({
   reserveProcurementDocumentNumber: mocks.reserveNumber,
+}));
+vi.mock("@/lib/services/inventory/fg-issued-service", () => ({
+  createFgMaterialIssue: mocks.createFgMaterialIssue,
 }));
 
 import { Prisma } from "@prisma/client";
@@ -72,8 +77,10 @@ describe("finished-goods-outward-service", () => {
     mocks.prisma.$transaction.mockImplementation(async (callback) => callback(mocks.tx));
     mocks.reserveNumber.mockResolvedValue("FGR-1");
     mocks.createAuditEvent.mockResolvedValue({});
+    mocks.createFgMaterialIssue.mockResolvedValue({ id: "issue-1", issue_no: "FG-ISS-1" });
     mocks.requireOrganizationAccess.mockResolvedValue({ organization_id: "org-1", role: "INVENTORY" });
     mocks.tx.finishedGoodsOutwardRequestLine.findMany.mockResolvedValue([]);
+    mocks.tx.fGMaterialIssue.findFirst.mockResolvedValue(null);
     mocks.prisma.finishedGoodsSkuStock.findMany.mockResolvedValue([]);
     mocks.prisma.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
     mocks.prisma.finishedGoodsAllocatedStockReceipt.findMany.mockResolvedValue([]);
@@ -671,6 +678,7 @@ describe("finished-goods-outward-service", () => {
         box: {
           box_no: "BOX-1",
           lines: [{
+            id: "box-line-1",
             quantity: new Prisma.Decimal(4),
             requestLine: {
               id: "line-1",
@@ -722,6 +730,7 @@ describe("finished-goods-outward-service", () => {
         box: {
           box_no: "BOX-1",
           lines: [{
+            id: "box-line-1",
             quantity: new Prisma.Decimal(4),
             requestLine: {
               id: "line-1",
@@ -775,6 +784,20 @@ describe("finished-goods-outward-service", () => {
     expect(mocks.tx.finishedGoodsOutwardShipment.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "packing-list-1", organization_id: "org-1" },
       data: expect.objectContaining({ shipped_by: "Inventory User" }),
+    }));
+    expect(mocks.createFgMaterialIssue).toHaveBeenCalledWith(mocks.tx, expect.objectContaining({
+      organizationId: "org-1",
+      sourceType: "PACKING_LIST",
+      movement: "ISSUE",
+      packingListId: "packing-list-1",
+      sourceReference: "FGL-1",
+      lines: [expect.objectContaining({
+        shipmentBoxLineId: "box-line-1",
+        allocatedReceiptId: "receipt-1",
+        quantity: new Prisma.Decimal(4),
+        stockBefore: new Prisma.Decimal(7),
+        stockAfter: new Prisma.Decimal(3),
+      })],
     }));
     expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "FG_STOCK_OUTWARD_SHIPPED",
@@ -929,6 +952,7 @@ describe("finished-goods-outward-service", () => {
         box: {
           box_no: "FG-BOX-1",
           lines: [{
+            id: "box-line-1",
             request_line_id: "line-1",
             quantity: new Prisma.Decimal(4),
             requestLine: {
@@ -948,6 +972,17 @@ describe("finished-goods-outward-service", () => {
     mocks.tx.auditEvent.findFirst
       .mockResolvedValueOnce({ id: "posted-audit" })
       .mockResolvedValueOnce(null);
+    mocks.tx.finishedGoodsAllocatedStockReceipt.findFirst.mockResolvedValue({
+      id: "receipt-1",
+      style_name: "Shirt",
+      order_no: "ORD-1",
+      article_no: "ART-1",
+      brand: null,
+      size: "M",
+      colour: "Blue",
+      current_stock: new Prisma.Decimal(3),
+      location: { location_name: "Main Store" },
+    });
     mocks.tx.finishedGoodsAllocatedStockReceipt.updateMany.mockResolvedValue({ count: 1 });
     mocks.tx.finishedGoodsOutwardShipmentBox.deleteMany.mockResolvedValue({ count: 1 });
     mocks.tx.finishedGoodsOutwardBoxLine.aggregate.mockResolvedValue({
@@ -973,6 +1008,20 @@ describe("finished-goods-outward-service", () => {
     expect(mocks.tx.finishedGoodsOutwardShipmentBox.deleteMany).toHaveBeenCalledWith({
       where: { organization_id: "org-1", shipment_id: "shipment-1" },
     });
+    expect(mocks.createFgMaterialIssue).toHaveBeenCalledWith(mocks.tx, expect.objectContaining({
+      organizationId: "org-1",
+      sourceType: "PACKING_LIST",
+      movement: "REVERSAL",
+      packingListId: "shipment-1",
+      sourceReference: "FGL-1",
+      lines: [expect.objectContaining({
+        shipmentBoxLineId: "box-line-1",
+        allocatedReceiptId: "receipt-1",
+        quantity: new Prisma.Decimal(4),
+        stockBefore: new Prisma.Decimal(3),
+        stockAfter: new Prisma.Decimal(7),
+      })],
+    }));
     expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "FG_STOCK_OUTWARD_SHIPMENT_REVERSED",
       entityId: "shipment-1",

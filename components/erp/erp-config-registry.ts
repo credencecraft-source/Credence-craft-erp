@@ -254,6 +254,7 @@ export const ERP_MODULES: ErpModule[] = [
         children: [
           { key: "raw-material-dc", label: "Raw Material DC", pathSegment: "raw-material-dc" },
           { key: "fg-stock-dc", label: "FG Stock DC", pathSegment: "fg-stock-dc" },
+          { key: "fg-issued", label: "FG Issued", pathSegment: "fg-issued" },
         ],
       },
     ],

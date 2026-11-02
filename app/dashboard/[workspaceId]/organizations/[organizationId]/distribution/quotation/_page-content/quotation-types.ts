@@ -39,4 +39,5 @@ export type DistributionQuotationSummary = Pick<
   "id" | "quotationNo" | "quotationDate" | "customer" | "orderNo" | "mode" | "status" | "totalQuantity" | "subtotal" | "createdAt" | "parentQuotationId"
 > & {
   contactRole: string;
+  childCount?: number;
 };

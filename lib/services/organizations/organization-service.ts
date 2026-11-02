@@ -384,6 +384,49 @@ export async function getOrganizationForUser(workspaceUserId: string, organizati
   });
 }
 
+export async function getOrganizationForUserWithPermission(
+  workspaceUserId: string,
+  publicOrganizationId: string,
+  permission: OrganizationPermission,
+) {
+  const organization = await prisma.organization.findFirst({
+    where: {
+      organization_id: publicOrganizationId,
+      is_active: true,
+      memberships: {
+        some: {
+          workspace_user_id: workspaceUserId,
+          is_active: true,
+        },
+      },
+    },
+    select: {
+      id: true,
+      memberships: {
+        where: { workspace_user_id: workspaceUserId, is_active: true },
+        select: { role: true },
+        take: 1,
+      },
+    },
+  });
+  const role = organization?.memberships[0]?.role;
+  if (!organization || !role) return null;
+  if (role !== "OWNER" && !(DEFAULT_ROLE_PERMISSIONS[role] || []).includes(permission)) {
+    const granted = await prisma.organizationRolePermission.findUnique({
+      where: {
+        organization_id_role_permission: {
+          organization_id: organization.id,
+          role,
+          permission,
+        },
+      },
+      select: { id: true },
+    });
+    if (!granted) throw new Error("Access denied: This role does not have the required permission.");
+  }
+  return { id: organization.id };
+}
+
 export async function getOrganizationShellContext(workspaceUserId: string, organizationId: string) {
   return prisma.organization.findFirst({
     where: {

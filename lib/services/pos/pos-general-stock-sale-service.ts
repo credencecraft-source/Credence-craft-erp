@@ -1,6 +1,12 @@
-import { Prisma } from "@prisma/client";
+import {
+  FGMaterialIssueMovement,
+  FGMaterialIssueSource,
+  FGMaterialIssueStockType,
+  Prisma,
+} from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { createFgMaterialIssue } from "@/lib/services/inventory/fg-issued-service";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
 
@@ -270,8 +276,42 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       }
     }
 
-    await transaction.posSalesInvoiceLine.createMany({
+    const createdInvoiceLines = await transaction.posSalesInvoiceLine.createManyAndReturn({
       data: invoiceLines.map((line) => ({ ...line, invoice_id: invoice.id })),
+      select: { id: true, general_stock_receipt_id: true },
+    });
+    const invoiceLineIdByReceiptId = new Map(
+      createdInvoiceLines.map((line) => [line.general_stock_receipt_id, line.id]),
+    );
+    await createFgMaterialIssue(transaction, {
+      organizationId: input.organizationId,
+      sourceType: FGMaterialIssueSource.POS_INVOICE,
+      movement: FGMaterialIssueMovement.ISSUE,
+      posInvoiceId: invoice.id,
+      idempotencyKey: `pos-invoice:${invoice.id}:issue`,
+      sourceReference: invoiceNo,
+      issuedBy: input.actorId,
+      lines: invoiceLines.map((line) => {
+        const stock = stockById.get(line.general_stock_receipt_id);
+        if (!stock) throw new Error("A posted POS invoice line has no matching General stock record.");
+        const stockBefore = new Prisma.Decimal(stock.current_stock);
+        const quantity = new Prisma.Decimal(line.quantity);
+        const posInvoiceLineId = invoiceLineIdByReceiptId.get(line.general_stock_receipt_id);
+        if (!posInvoiceLineId) throw new Error("A posted POS invoice line could not be linked to its stock movement.");
+        return {
+          stockType: FGMaterialIssueStockType.GENERAL,
+          generalReceiptId: stock.id,
+          posInvoiceLineId,
+          styleName: line.style_name,
+          articleNo: line.article_no,
+          size: line.size,
+          colour: line.colour,
+          quantity,
+          uomCode: "PCS",
+          stockBefore,
+          stockAfter: stockBefore.minus(quantity),
+        };
+      }),
     });
     await createAuditEvent({
       organizationId: input.organizationId,

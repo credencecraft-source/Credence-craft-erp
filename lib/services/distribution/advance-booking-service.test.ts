@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
     advanceBooking: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
     factoryWorkOrder: { findFirst: vi.fn(), findMany: vi.fn() },
     advanceBookingWorkOrderAssignment: { findMany: vi.fn(), updateMany: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
+    auditEvent: { createMany: vi.fn() },
   },
   createAuditEvent: vi.fn(),
   reserveProcurementDocumentNumber: vi.fn(),
@@ -66,6 +67,7 @@ describe("advance-booking persistence", () => {
     mocks.transaction.advanceBookingSizeLine.findMany.mockResolvedValue([]);
     mocks.transaction.advanceBookingSizeLine.groupBy.mockResolvedValue([]);
     mocks.transaction.advanceBookingWorkOrderAssignment.deleteMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.auditEvent.createMany.mockResolvedValue({ count: 1 });
     mocks.reserveProcurementDocumentNumber.mockResolvedValue("BK-1");
     mocks.transaction.advanceBooking.create.mockResolvedValue({
       id: "booking-record-1",
@@ -472,11 +474,13 @@ describe("advance-booking persistence", () => {
     });
     expect(mocks.transaction.advanceBookingWorkOrderAssignment.deleteMany.mock.invocationCallOrder[0])
       .toBeLessThan(mocks.transaction.advanceBooking.deleteMany.mock.invocationCallOrder[0]);
-    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
-      action: "DELETE_ADVANCE_BOOKING",
-      entityId: "booking-record-1",
-      details: expect.objectContaining({ unassigned_work_order_count: 1 }),
-    }), mocks.transaction);
+    expect(mocks.transaction.auditEvent.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({
+        action: "DELETE_ADVANCE_BOOKING",
+        entity_id: "booking-record-1",
+        details: expect.objectContaining({ unassigned_work_order_count: 1 }),
+      })],
+    });
   });
 
   it("blocks booking deletion while a quotation references it", async () => {
@@ -659,6 +663,14 @@ describe("advance-booking persistence", () => {
     }));
   });
 
+  it("does not apply wildcard search for terms shorter than three characters", async () => {
+    await listAdvanceBookings("internal-org-1", { limit: 25, search: "ab" });
+
+    expect(mocks.prisma.advanceBooking.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.not.objectContaining({ AND: expect.anything() }),
+    }));
+  });
+
   it("aggregates assignment and fulfillment totals without including child allocation rows", async () => {
     mocks.prisma.advanceBookingWorkOrderAssignment.findMany.mockResolvedValue([
       { id: "assignment-m", booking_size_line_id: "size-m", assigned_quantity: 6 },
@@ -700,7 +712,7 @@ describe("advance-booking persistence", () => {
     expect(mocks.prisma.advanceBooking.findMany).not.toHaveBeenCalled();
   });
 
-  it("filters quoted bookings in the order register query before pagination", async () => {
+  it("filters quoted and order-form bookings in the order register query before pagination", async () => {
     mocks.prisma.advanceBooking.findMany.mockResolvedValue([{
       id: "unquoted-booking-record",
       order_id: "order-1",
@@ -718,6 +730,7 @@ describe("advance-booking persistence", () => {
       where: {
         organization_id: "internal-org-1",
         quotationLines: { none: {} },
+        distributionOrderFormLines: { none: {} },
       },
       select: expect.objectContaining({
         id: true,

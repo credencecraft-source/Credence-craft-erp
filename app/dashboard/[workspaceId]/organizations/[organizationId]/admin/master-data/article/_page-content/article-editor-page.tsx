@@ -7,7 +7,7 @@ import {
   getMasterValuesForOrganization,
   getSizeGroupSizesForOrganization,
 } from "@/lib/master-data/master-data-constants";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
 import { createMasterValueAction, updateMasterValueAction } from "@/app/dashboard/[workspaceId]/organizations/[organizationId]/settings/master-data/[moduleKey]/master-data-editor-page";
 
 type PageProps = {
@@ -34,9 +34,8 @@ export default async function ArticleEditorPage({ params, searchParams }: PagePr
   if (!user.workspace_id) redirect("/");
   if (user.workspace_id !== workspaceId) notFound();
 
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
   if (!organization) notFound();
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const recordResults = recordCode
     ? await getMasterValuesForOrganization(organization.id, "article", true, {

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   requireOrganizationContext: vi.fn(),
   createWorkOrder: vi.fn(),
   createWorkOrders: vi.fn(),
+  deleteWorkOrders: vi.fn(),
   getWorkOrderAllocation: vi.fn(),
   listOrdersByArticle: vi.fn(),
   listWorkOrderAllocationsByArticle: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 vi.mock("@/lib/services/factory/work-order-service", () => ({
   createWorkOrder: mocks.createWorkOrder,
   createWorkOrders: mocks.createWorkOrders,
+  deleteWorkOrders: mocks.deleteWorkOrders,
   getWorkOrderAllocation: mocks.getWorkOrderAllocation,
   listOrdersByArticle: mocks.listOrdersByArticle,
   listWorkOrderAllocationsByArticle: mocks.listWorkOrderAllocationsByArticle,
@@ -30,11 +32,16 @@ vi.mock("@/lib/services/factory/work-order-service", () => ({
   listWorkOrders: mocks.listWorkOrders,
 }));
 
-import { GET, POST } from "./route";
+import { DELETE, GET, POST } from "./route";
 import { DATABASE_UNAVAILABLE_MESSAGE } from "@/lib/database/database-errors";
 
 const jsonRequest = (body: unknown) => new Request("http://localhost/api/factory/work-orders", {
   method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+const deleteRequest = (body: unknown) => new Request("http://localhost/api/factory/work-orders", {
+  method: "DELETE",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
 });
@@ -46,6 +53,7 @@ describe("factory work-orders route", () => {
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
     mocks.createWorkOrder.mockResolvedValue({ id: "work-order-1" });
     mocks.createWorkOrders.mockResolvedValue([{ id: "work-order-1" }]);
+    mocks.deleteWorkOrders.mockResolvedValue(undefined);
     mocks.listWorkOrders.mockResolvedValue({ workOrders: [], nextCursor: null });
   });
 
@@ -113,5 +121,36 @@ describe("factory work-orders route", () => {
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({ error: DATABASE_UNAVAILABLE_MESSAGE });
+  });
+
+  it("deletes selected work orders with tenant-scoped authorization", async () => {
+    const response = await DELETE(deleteRequest({
+      organizationId: "public-org",
+      workOrderIds: ["work-order-1", "work-order-2"],
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ deleted: ["work-order-1", "work-order-2"] });
+    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
+      "user-1",
+      "public-org",
+      ["OWNER", "ADMIN", "MERCHANDISING"],
+    );
+    expect(mocks.deleteWorkOrders).toHaveBeenCalledWith(
+      "internal-org-1",
+      "user-1",
+      ["work-order-1", "work-order-2"],
+    );
+  });
+
+  it("rejects duplicated selected IDs before authorization or deletion", async () => {
+    const response = await DELETE(deleteRequest({
+      organizationId: "public-org",
+      workOrderIds: ["work-order-1", " work-order-1 "],
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.requireOrganizationContext).not.toHaveBeenCalled();
+    expect(mocks.deleteWorkOrders).not.toHaveBeenCalled();
   });
 });

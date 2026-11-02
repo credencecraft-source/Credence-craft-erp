@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Modal from "@/components/ui/Modal";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import { toggleVisibleReportSelection } from "@/components/reports/report-grid-filtering";
 
 type OrderFormRow = {
   id: string;
@@ -30,37 +32,91 @@ const fields = [
   { key: "createdAt" as const, label: "Created Date" },
 ];
 
+function getOrderFormRowId(row: OrderFormRow) {
+  return row.id;
+}
+
+function renderOrderFormCell(field: string, row: OrderFormRow) {
+  if (field === "createdAt") return row.createdAt.slice(0, 10);
+  const value = row[field as keyof OrderFormRow];
+  return value === null || value === undefined ? "" : String(value);
+}
+
 export default function OrderFormListPage() {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
   const organizationId = params.organizationId;
   const [rows, setRows] = useState<OrderFormRow[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [visibleFields, setVisibleFields] = useState<(typeof fields)[number]["key"][]>(fields.map((field) => field.key));
+  const listRequestRef = useRef<AbortController | null>(null);
+  const loadingMoreRef = useRef(false);
+  const draftRows = useMemo(() => rows.filter((row) => row.status === "DRAFT"), [rows]);
 
-  const loadRows = useCallback(async () => {
-    setIsLoading(true);
+  const loadRows = useCallback(async (cursor?: string) => {
+    if (cursor && loadingMoreRef.current) return;
+    loadingMoreRef.current = Boolean(cursor);
+    if (cursor) setIsLoadingMore(true);
+    else {
+      setIsLoading(true);
+      setIsLoadingMore(false);
+      setNextCursor(null);
+    }
+    listRequestRef.current?.abort();
+    const controller = new AbortController();
+    listRequestRef.current = controller;
     setError("");
     try {
       const query = new URLSearchParams({ organizationId });
-      const response = await fetch(`/api/distribution/order-forms?${query}`, { cache: "no-store" });
+      if (cursor) query.set("cursor", cursor);
+      const response = await fetch(`/api/distribution/order-forms?${query}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       const data = await response.json().catch(() => null);
-      if (!response.ok || !Array.isArray(data?.orderForms)) {
+      if (controller.signal.aborted) return;
+      if (
+        !response.ok ||
+        !Array.isArray(data?.orderForms) ||
+        !(typeof data.nextCursor === "string" || data.nextCursor === null)
+      ) {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to load Order Forms.");
       }
-      setRows(data.orderForms);
+      setRows((current) => cursor ? [...current, ...data.orderForms] : data.orderForms);
+      setNextCursor(data.nextCursor);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load Order Forms.");
+      if (!controller.signal.aborted) {
+        setError(loadError instanceof Error ? loadError.message : "Unable to load Order Forms.");
+      }
     } finally {
-      setIsLoading(false);
+      if (listRequestRef.current === controller) {
+        listRequestRef.current = null;
+        loadingMoreRef.current = false;
+        if (cursor) setIsLoadingMore(false);
+        else setIsLoading(false);
+      }
     }
   }, [organizationId]);
 
   useEffect(() => {
-    void loadRows();
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (active) void loadRows();
+    });
+    return () => {
+      active = false;
+      listRequestRef.current?.abort();
+      listRequestRef.current = null;
+      loadingMoreRef.current = false;
+    };
   }, [loadRows]);
 
   async function createQuotation() {
@@ -85,6 +141,50 @@ export default function OrderFormListPage() {
     }
   }
 
+  function requestBulkDelete() {
+    const selectedIdSet = new Set(selectedIds);
+    const selectedRows = rows.filter((row) => selectedIdSet.has(row.id));
+    if (selectedRows.length !== selectedIds.length) {
+      setError("One or more selected Order Forms are no longer in this report. Refresh and select them again.");
+      return;
+    }
+    if (selectedRows.some((row) => row.status !== "DRAFT" || row.quotationId !== null)) {
+      setError("Only unconverted draft Order Forms can be deleted.");
+      return;
+    }
+    setError("");
+    setNotice("");
+    setIsBulkDeleteDialogOpen(true);
+  }
+
+  async function deleteSelectedOrderForms() {
+    if (isBulkDeleting || selectedIds.length === 0) return;
+    setIsBulkDeleting(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/distribution/order-forms", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId, orderFormIds: selectedIds }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data?.deleted) || data.deleted.length !== selectedIds.length) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Unable to delete the selected Order Forms.");
+      }
+      const deletedCount = data.deleted.length;
+      setSelectedIds([]);
+      setIsBulkDeleteDialogOpen(false);
+      setNotice(`Deleted ${deletedCount} Order Form${deletedCount === 1 ? "" : "s"}. Their source bookings remain.`);
+      const deletedIds = new Set(selectedIds);
+      setRows((current) => current.filter((row) => !deletedIds.has(row.id)));
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the selected Order Forms.");
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  }
+
   return (
     <Card>
       <div className="space-y-4 p-4">
@@ -98,41 +198,70 @@ export default function OrderFormListPage() {
           </Button>
         </div>
         {error ? <p role="alert" className="text-sm text-red-700">{error}</p> : null}
-        {isLoading ? (
-          <p className="text-sm text-slate-600">Loading Order Forms...</p>
-        ) : (
-          <ReportGrid
+        {notice ? <p role="status" className="text-sm text-emerald-700">{notice}</p> : null}
+        <ReportGrid
             title="Order Forms"
-            records={rows.filter((row) => row.status === "DRAFT")}
+            records={draftRows}
             fields={fields}
             visibleFields={visibleFields}
             onVisibleFieldsChange={(nextFields) => setVisibleFields(nextFields as (typeof fields)[number]["key"][])}
             storageKey="distribution-order-form-list-v2"
             legacyStorageKey="distribution-order-form-list"
             legacyFieldsToAdd={["contactRole"]}
-            rowIdSelector={(row) => row.id}
+            rowIdSelector={getOrderFormRowId}
             selectedIds={selectedIds}
             selectable
-            onToggleSelectAll={(checked, recordIds) => {
-              setSelectedIds((current) =>
-                checked ? [...new Set([...current, ...recordIds])] : current.filter((id) => !recordIds.includes(id)),
-              );
-            }}
+            onToggleSelectAll={(checked, recordIds) =>
+              setSelectedIds((current) => toggleVisibleReportSelection(current, recordIds, checked))
+            }
             onToggleRowSelection={(recordId, checked) => {
               setSelectedIds((current) =>
                 checked ? [...new Set([...current, recordId])] : current.filter((id) => id !== recordId),
               );
             }}
-            renderCell={(field, row) => {
-              if (field === "createdAt") return row.createdAt.slice(0, 10);
-              const value = row[field as keyof OrderFormRow];
-              return value === null || value === undefined ? "" : String(value);
-            }}
+            rowSelectable={(row) => row.status === "DRAFT" && row.quotationId === null}
+            onBulkDeleteSelected={requestBulkDelete}
+            bulkDeleteSelectedLabel="Delete Order Forms"
+            renderCell={renderOrderFormCell}
             isLoading={isLoading}
-            emptyMessage="No draft Order Forms found."
+            emptyMessage={isLoading ? "Loading Order Forms..." : "No draft Order Forms found."}
           />
-        )}
+        {nextCursor ? (
+          <div className="flex justify-center">
+            <Button type="button" variant="secondary" onClick={() => void loadRows(nextCursor)} disabled={isLoadingMore}>
+              {isLoadingMore ? "Loading Order Forms..." : "Load more Order Forms"}
+            </Button>
+          </div>
+        ) : null}
       </div>
+      <Modal
+        open={isBulkDeleteDialogOpen}
+        onClose={() => {
+          if (!isBulkDeleting) setIsBulkDeleteDialogOpen(false);
+        }}
+        ariaLabelledBy="bulk-delete-order-forms-title"
+        size="square"
+        variant="danger"
+        closeOnBackdrop={!isBulkDeleting}
+      >
+        <div className="space-y-4 p-6">
+          <div>
+            <h2 id="bulk-delete-order-forms-title" className="text-lg font-semibold text-slate-900">Delete selected Order Forms?</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              {selectedIds.length} draft Order Form{selectedIds.length === 1 ? "" : "s"} will be deleted. Their source bookings will remain.
+            </p>
+          </div>
+          {error ? <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => setIsBulkDeleteDialogOpen(false)} disabled={isBulkDeleting}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={() => void deleteSelectedOrderForms()} disabled={isBulkDeleting}>
+              {isBulkDeleting ? "Deleting..." : `Delete ${selectedIds.length} Order Form${selectedIds.length === 1 ? "" : "s"}`}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </Card>
   );
 }

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   filterIndexedReportRecords,
+  getEffectiveReportSearchQuery,
   getReportSearchValue,
+  toggleVisibleReportSelection,
   type IndexedReportRow,
 } from "./report-grid-filtering";
 
@@ -22,6 +24,23 @@ const rows: IndexedReportRow<{ id: string }>[] = [
     searchableValues: { orderNo: "od-300", season: "" },
   },
 ];
+
+describe("toggleVisibleReportSelection", () => {
+  it("toggles the filtered rows without dropping hidden selections", () => {
+    expect(toggleVisibleReportSelection(["hidden", "visible"], ["visible", "next"], true))
+      .toEqual(["hidden", "visible", "next"]);
+    expect(toggleVisibleReportSelection(["hidden", "visible", "next"], ["visible", "next"], false))
+      .toEqual(["hidden"]);
+  });
+});
+
+describe("getEffectiveReportSearchQuery", () => {
+  it("applies a minimum search length after trimming whitespace", () => {
+    expect(getEffectiveReportSearchQuery("  AB ", 3)).toBe("");
+    expect(getEffectiveReportSearchQuery(" ABC ", 3)).toBe("ABC");
+    expect(getEffectiveReportSearchQuery(" AB ")).toBe("AB");
+  });
+});
 
 describe("filterIndexedReportRecords", () => {
   it("matches the global query against the precomputed visible-field text", () => {

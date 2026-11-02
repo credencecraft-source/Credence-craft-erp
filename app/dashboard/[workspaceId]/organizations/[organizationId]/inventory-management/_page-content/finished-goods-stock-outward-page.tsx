@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, PackageCheck, Printer, Trash2, Truck } from "lucide-react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
@@ -162,6 +162,8 @@ function DocumentTable({ lines }: { lines: Array<{
 
 export default function FinishedGoodsStockOutwardPage() {
   const { organizationId } = useParams<{ workspaceId: string; organizationId: string }>();
+  const searchParams = useSearchParams();
+  const linkedIssueRequestId = searchParams.get("requestId")?.trim() ?? "";
   const [workflow, setWorkflow] = useState<Workflow>(emptyWorkflow);
   const [stage, setStage] = useState<Stage>("accept");
   const [loading, setLoading] = useState(true);
@@ -173,7 +175,6 @@ export default function FinishedGoodsStockOutwardPage() {
   const [boxNumber, setBoxNumber] = useState("");
   const [selectedBox, setSelectedBox] = useState<OutwardBox | null>(null);
   const [printDocument, setPrintDocument] = useState<PrintDocument | null>(null);
-
   const loadWorkflow = useCallback(async () => {
     if (!organizationId) return;
     try {
@@ -234,6 +235,10 @@ export default function FinishedGoodsStockOutwardPage() {
     .filter((line) => line.status === "PICKED" && Number(line.shippedQuantity) === 0 && (packedByRequestLine.get(line.id) ?? 0) === 0)
     .map((line) => ({ request, line }))), [packedByRequestLine, workflow.requests]);
   const boxesAvailableForPackingList = useMemo(() => workflow.boxes.filter((box) => !box.shipment), [workflow.boxes]);
+  const linkedIssueRequest = useMemo(
+    () => workflow.requests.find((request) => request.id === linkedIssueRequestId) ?? null,
+    [linkedIssueRequestId, workflow.requests],
+  );
 
   const counts = useMemo(() => ({
     accept: workflow.requests.filter((request) => request.status === "REQUESTED").length,
@@ -363,6 +368,51 @@ export default function FinishedGoodsStockOutwardPage() {
                 </Card>
               ))}
             </div>
+
+            {linkedIssueRequestId ? (
+              linkedIssueRequest ? (
+                <Card className="space-y-3" aria-label="Linked finished-goods outward issue">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-muted)]">Linked issue record</p>
+                      <h2 className="mt-1 text-base font-semibold text-[var(--erp-text)]">
+                        {linkedIssueRequest.requestNo}
+                      </h2>
+                    </div>
+                    <Badge>{linkedIssueRequest.status.replaceAll("_", " ")}</Badge>
+                  </div>
+                  <p className="text-sm text-[var(--erp-muted)]">
+                    Request ID: {linkedIssueRequest.id} · Requested {new Date(linkedIssueRequest.requestedAt).toLocaleString("en-IN")}
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[640px] text-left text-sm">
+                      <thead className="erp-table-head">
+                        <tr>
+                          <th className="p-3">Finished good</th>
+                          <th className="p-3">Article / Order</th>
+                          <th className="p-3 text-right">Requested</th>
+                          <th className="p-3 text-right">Shipped</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--erp-border)]">
+                        {linkedIssueRequest.lines.map((line) => (
+                          <tr key={line.id}>
+                            <td className="p-3 font-semibold">{line.styleName || "-"}</td>
+                            <td className="p-3">{line.articleNo || "-"}<span className="block text-xs text-[var(--erp-muted)]">{line.orderNo || "-"}</span></td>
+                            <td className="p-3 text-right">{quantity(line.requestedQuantity)}</td>
+                            <td className="p-3 text-right font-semibold">{quantity(line.shippedQuantity)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              ) : (
+                <Card role="alert" className="text-sm text-[var(--erp-danger-text)]">
+                  The linked FG outward request {linkedIssueRequestId} is no longer available in this organization.
+                </Card>
+              )
+            ) : null}
 
             <Tabs ariaLabel="Finished goods outward stages" tabs={tabs} value={stage} onChange={setStage} compact />
             {error && <Card role="alert" className="border-[var(--erp-danger)] bg-[var(--erp-surface-soft)] text-sm text-[var(--erp-danger)]">{error}</Card>}

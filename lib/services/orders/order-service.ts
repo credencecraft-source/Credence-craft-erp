@@ -123,6 +123,33 @@ export type OrderPageCursor = {
   id: string;
 };
 
+export type OrderListFilter = {
+  operator: "contains" | "is" | "notContains" | "empty";
+  value: string;
+};
+
+export type OrderListFilters = Partial<Record<
+  | "orderNo"
+  | "entityName"
+  | "category"
+  | "subCategory"
+  | "season"
+  | "article"
+  | "articleCode"
+  | "variantCode"
+  | "styleName"
+  | "colors"
+  | "buyer"
+  | "brand"
+  | "sizeGroup"
+  | "orderQty"
+  | "deliveryDate"
+  | "processStatus"
+  | "finalStatus"
+  | "sourceStatus",
+  OrderListFilter
+>>;
+
 export function toDateOnly(value: Date | string | null | undefined) {
   if (!value) return null;
   return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
@@ -200,12 +227,274 @@ export async function listOrders(organizationId: string, limit = 100) {
   return page.orders;
 }
 
+function nullableTextCondition(filter: OrderListFilter) {
+  if (filter.operator === "is") return { equals: filter.value, mode: "insensitive" as const };
+  if (filter.operator === "notContains") {
+    return { not: { contains: filter.value, mode: "insensitive" as const } };
+  }
+  return { contains: filter.value, mode: "insensitive" as const };
+}
+
+function textColumnFilter(
+  field: Exclude<keyof NonNullable<OrderListFilters>, "articleCode" | "variantCode" | "orderQty" | "deliveryDate">,
+  filter: OrderListFilter,
+): Prisma.MerchandisingOrderWhereInput {
+  if (filter.operator === "empty") {
+    if (field === "orderNo") return { orderNo: "" };
+    return { OR: [{ [field]: null }, { [field]: "" }] } as Prisma.MerchandisingOrderWhereInput;
+  }
+  return { [field]: nullableTextCondition(filter) } as Prisma.MerchandisingOrderWhereInput;
+}
+
+function getDateRange(value: string) {
+  const match = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(value);
+  if (!match) return null;
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const month = monthText ? Number(monthText) : 1;
+  const day = dayText ? Number(dayText) : 1;
+  const start = new Date(Date.UTC(year, month - 1, day));
+  if (
+    start.getUTCFullYear() !== year
+    || start.getUTCMonth() !== month - 1
+    || start.getUTCDate() !== day
+  ) return null;
+  const end = dayText
+    ? new Date(Date.UTC(year, month - 1, day + 1))
+    : monthText
+      ? new Date(Date.UTC(year, month, 1))
+      : new Date(Date.UTC(year + 1, 0, 1));
+  return { start, end };
+}
+
+function deliveryDateColumnFilter(filter: OrderListFilter): Prisma.MerchandisingOrderWhereInput {
+  if (filter.operator === "empty") return { deliveryDate: null };
+  const range = getDateRange(filter.value);
+  if (!range) throw new Error("Enter a delivery-date filter as YYYY, YYYY-MM, or YYYY-MM-DD.");
+  const matchingRange = { gte: range.start, lt: range.end };
+  if (filter.operator === "notContains") {
+    return { OR: [{ deliveryDate: null }, { NOT: { deliveryDate: matchingRange } }] };
+  }
+  return { deliveryDate: matchingRange };
+}
+
+function orderQuantityColumnFilter(filter: OrderListFilter): Prisma.MerchandisingOrderWhereInput {
+  if (filter.operator === "empty") return { orderQty: null };
+  if (filter.operator !== "is") {
+    throw new Error("Order quantity filters support exact or empty matching only.");
+  }
+  if (!/^-?\d+$/.test(filter.value)) throw new Error("Enter an order quantity as a whole number.");
+  const quantity = Number(filter.value);
+  if (!Number.isSafeInteger(quantity)) throw new Error("Order quantity filter is outside the supported range.");
+  return { orderQty: quantity };
+}
+
+async function articleCodeColumnFilter(organizationId: string, filter: OrderListFilter) {
+  const codeCondition = filter.operator === "empty"
+    ? { AND: [{ article_code: { not: null } }, { article_code: { not: "" } }] }
+    : filter.operator === "notContains"
+      ? {
+          AND: [
+            { article_code: { not: null } },
+            { article_code: { not: "" } },
+            { article_code: nullableTextCondition({ ...filter, operator: "contains" }) },
+          ],
+        }
+      : { article_code: nullableTextCondition(filter) };
+  const articles = await prisma.masterArticle.findMany({
+    where: { organization_id: organizationId, ...codeCondition },
+    select: { article: true },
+  });
+  const names = articles.map(({ article }) => article);
+  if (filter.operator === "contains" || filter.operator === "is") {
+    return { article: { in: names } } satisfies Prisma.MerchandisingOrderWhereInput;
+  }
+  return {
+    OR: [{ article: null }, { article: { notIn: names } }],
+  } satisfies Prisma.MerchandisingOrderWhereInput;
+}
+
+async function variantCodeColumnFilter(organizationId: string, filter: OrderListFilter) {
+  const codeCondition = filter.operator === "empty"
+    ? { AND: [{ variant_code: { not: null } }, { variant_code: { not: "" } }] }
+    : filter.operator === "notContains"
+      ? {
+          AND: [
+            { variant_code: { not: null } },
+            { variant_code: { not: "" } },
+            { variant_code: nullableTextCondition({ ...filter, operator: "contains" }) },
+          ],
+        }
+      : { variant_code: nullableTextCondition(filter) };
+  const variants = await prisma.masterArticleVariant.findMany({
+    where: {
+      organization_id: organizationId,
+      article: { organization_id: organizationId },
+      color: { organization_id: organizationId },
+      ...codeCondition,
+    },
+    select: {
+      article: { select: { article: true } },
+      color: { select: { colors: true } },
+    },
+  });
+  const matchingPairs = variants.map(({ article, color }) => ({
+    AND: [{ article: article.article }, { colors: color.colors }],
+  }));
+  if (filter.operator === "contains" || filter.operator === "is") {
+    return { OR: matchingPairs } satisfies Prisma.MerchandisingOrderWhereInput;
+  }
+  if (matchingPairs.length === 0) return {};
+  return {
+    OR: [
+      { article: null },
+      { colors: null },
+      { NOT: { OR: matchingPairs } },
+    ],
+  } satisfies Prisma.MerchandisingOrderWhereInput;
+}
+
 export async function listOrdersPage(
   organizationId: string,
-  options: { cursor?: string; limit?: number; status?: string; includeArticleMetadata?: boolean } = {},
+  options: {
+    cursor?: string;
+    limit?: number;
+    status?: string;
+    search?: string;
+    filters?: OrderListFilters;
+    purpose?: "advance-booking";
+    includeArticleMetadata?: boolean;
+  } = {},
 ) {
   const cursor = decodeOrderCursor(options.cursor);
   const take = Math.min(Math.max(options.limit ?? 100, 1), 100);
+  const select = options.purpose === "advance-booking"
+    ? {
+        id: true,
+        orderNo: true,
+        entityName: true,
+        buyer: true,
+        brand: true,
+        styleName: true,
+        orderQty: true,
+        deliveryDate: true,
+        finalStatus: true,
+        created_at: true,
+      }
+    : {
+        id: true,
+        orderNo: true,
+        entityName: true,
+        entity_id: true,
+        category: true,
+        subCategory: true,
+        season: true,
+        article: true,
+        styleName: true,
+        colors: true,
+        buyer: true,
+        brand: true,
+        sizeGroup: true,
+        orderQty: true,
+        deliveryDate: true,
+        finalStatus: true,
+        processStatus: true,
+        sourceStatus: true,
+        created_at: true,
+      };
+
+  const andConditions: Prisma.MerchandisingOrderWhereInput[] = [];
+  const search = options.purpose === "advance-booking" ? "" : options.search?.trim() ?? "";
+  if (search) {
+    const searchConditions: Prisma.MerchandisingOrderWhereInput[] = [
+      ...([
+        "orderNo",
+        "entityName",
+        "category",
+        "subCategory",
+        "season",
+        "article",
+        "styleName",
+        "colors",
+        "buyer",
+        "brand",
+        "sizeGroup",
+        "processStatus",
+        "finalStatus",
+        "sourceStatus",
+      ] as const).map((field) => ({
+        [field]: { contains: search, mode: "insensitive" as const },
+      })),
+    ];
+    if (/^-?\d+$/.test(search) && Number.isSafeInteger(Number(search))) {
+      searchConditions.push({ orderQty: Number(search) });
+    }
+    const dateRange = getDateRange(search);
+    if (dateRange) searchConditions.push({ deliveryDate: { gte: dateRange.start, lt: dateRange.end } });
+
+    const [matchingArticles, matchingVariants] = await Promise.all([
+      prisma.masterArticle.findMany({
+        where: {
+          organization_id: organizationId,
+          article_code: { contains: search, mode: "insensitive" },
+        },
+        select: { article: true },
+      }),
+      prisma.masterArticleVariant.findMany({
+        where: {
+          organization_id: organizationId,
+          article: { organization_id: organizationId },
+          color: { organization_id: organizationId },
+          variant_code: { contains: search, mode: "insensitive" },
+        },
+        select: {
+          article: { select: { article: true } },
+          color: { select: { colors: true } },
+        },
+      }),
+    ]);
+    if (matchingArticles.length > 0) {
+      searchConditions.push({ article: { in: matchingArticles.map(({ article }) => article) } });
+    }
+    if (matchingVariants.length > 0) {
+      searchConditions.push({
+        OR: matchingVariants.map(({ article, color }) => ({
+          AND: [{ article: article.article }, { colors: color.colors }],
+        })),
+      });
+    }
+    andConditions.push({ OR: searchConditions });
+  }
+
+  for (const [field, filter] of Object.entries(options.filters ?? {})) {
+    if (!filter) continue;
+    if (field === "articleCode") {
+      andConditions.push(await articleCodeColumnFilter(organizationId, filter));
+    } else if (field === "variantCode") {
+      andConditions.push(await variantCodeColumnFilter(organizationId, filter));
+    } else if (field === "orderQty") {
+      andConditions.push(orderQuantityColumnFilter(filter));
+    } else if (field === "deliveryDate") {
+      andConditions.push(deliveryDateColumnFilter(filter));
+    } else if (field === "orderNo"
+      || field === "entityName"
+      || field === "category"
+      || field === "subCategory"
+      || field === "season"
+      || field === "article"
+      || field === "styleName"
+      || field === "colors"
+      || field === "buyer"
+      || field === "brand"
+      || field === "sizeGroup"
+      || field === "processStatus"
+      || field === "finalStatus"
+      || field === "sourceStatus") {
+      andConditions.push(textColumnFilter(field, filter));
+    } else {
+      throw new Error("An order-list column filter is invalid.");
+    }
+  }
 
   const orders = await prisma.merchandisingOrder.findMany({
     where: {
@@ -219,28 +508,9 @@ export async function listOrdersPage(
             ],
           }
         : {}),
+      ...(andConditions.length > 0 ? { AND: andConditions } : {}),
     },
-    select: {
-      id: true,
-      orderNo: true,
-      entityName: true,
-      entity_id: true,
-      category: true,
-      subCategory: true,
-      season: true,
-      article: true,
-      styleName: true,
-      colors: true,
-      buyer: true,
-      brand: true,
-      sizeGroup: true,
-      orderQty: true,
-      deliveryDate: true,
-      finalStatus: true,
-      processStatus: true,
-      sourceStatus: true,
-      created_at: true,
-    },
+    select,
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
     take: take + 1,
   });
@@ -248,36 +518,62 @@ export async function listOrdersPage(
   const hasNextPage = orders.length > take;
   const pageOrders = hasNextPage ? orders.slice(0, take) : orders;
   const lastOrder = pageOrders.at(-1);
+  const nextCursor = hasNextPage && lastOrder
+    ? encodeOrderCursor({ createdAt: lastOrder.created_at.toISOString(), id: lastOrder.id })
+    : null;
+
+  if (options.purpose === "advance-booking") {
+    return {
+      orders: pageOrders.map((order) => ({
+        ...order,
+        articleCode: null,
+        variantCode: null,
+        deliveryDate: toDateOnly(order.deliveryDate),
+      })),
+      nextCursor,
+    };
+  }
+
   const articleNames = [...new Set(pageOrders
     .map((order) => order.article?.trim())
     .filter((article): article is string => Boolean(article)))];
-  const articleRows = options.includeArticleMetadata !== false && articleNames.length > 0
-    ? await prisma.masterArticle.findMany({
-        where: { organization_id: organizationId, article: { in: articleNames } },
-        select: { id: true, article: true, article_code: true },
-      })
-    : [];
+  const articleColors = [...new Set(pageOrders
+    .map((order) => order.colors?.trim())
+    .filter((color): color is string => Boolean(color)))];
+  const [articleRows, articleVariants] = options.includeArticleMetadata !== false && articleNames.length > 0
+    ? await Promise.all([
+        prisma.masterArticle.findMany({
+          where: { organization_id: organizationId, article: { in: articleNames } },
+          select: { id: true, article: true, article_code: true },
+        }),
+        articleColors.length > 0
+          ? prisma.masterArticleVariant.findMany({
+              where: {
+                organization_id: organizationId,
+                article: {
+                  organization_id: organizationId,
+                  article: { in: articleNames },
+                },
+                color: {
+                  organization_id: organizationId,
+                  colors: { in: articleColors, mode: "insensitive" },
+                },
+              },
+              select: {
+                article: { select: { id: true, article: true } },
+                variant_code: true,
+                color: { select: { organization_id: true, colors: true } },
+              },
+            })
+          : Promise.resolve([]),
+      ])
+    : [[], []];
   const articleCodes = new Map(articleRows.map((article) => [article.article, article.article_code]));
   const articleIdsByName = new Map(articleRows.map((article) => [article.article, article.id]));
-  const articleIds = [...new Set(articleRows.map((article) => article.id))];
-  const articleVariants = options.includeArticleMetadata !== false && articleIds.length > 0
-    ? await prisma.masterArticleVariant.findMany({
-        where: {
-          organization_id: organizationId,
-          article_id: { in: articleIds },
-          color: { organization_id: organizationId },
-        },
-        select: {
-          article_id: true,
-          variant_code: true,
-          color: { select: { organization_id: true, colors: true } },
-        },
-      })
-    : [];
   const variantCodes = new Map(articleVariants
     .filter((variant) => variant.color.organization_id === organizationId && variant.variant_code)
     .map((variant) => [
-      `${variant.article_id}:${variant.color.colors.trim().toLocaleLowerCase()}`,
+      `${variant.article.id}:${variant.color.colors.trim().toLocaleLowerCase()}`,
       variant.variant_code,
     ]));
 
@@ -292,9 +588,7 @@ export async function listOrdersPage(
       })(),
       deliveryDate: toDateOnly(order.deliveryDate),
     })),
-    nextCursor: hasNextPage && lastOrder
-      ? encodeOrderCursor({ createdAt: lastOrder.created_at.toISOString(), id: lastOrder.id })
-      : null,
+    nextCursor,
   };
 }
 
@@ -972,6 +1266,17 @@ export async function deleteOrders(orderIds: string[], organizationId: string, u
     );
   }
 
+  const linkedWorkOrders = await prisma.factoryWorkOrder.findMany({
+    where: { organization_id: organizationId, order_id: { in: ids } },
+    select: { work_order_no: true },
+    take: 1,
+  });
+  if (linkedWorkOrders.length > 0) {
+    throw new Error(
+      "These orders cannot be deleted because work order(s) are created for them. Delete the related work orders first before deleting the order.",
+    );
+  }
+
   const protectedGrns = await prisma.factoryGrn.findMany({
     where: {
       organization_id: organizationId,
@@ -985,6 +1290,17 @@ export async function deleteOrders(orderIds: string[], organizationId: string, u
     const workOrderNumbers = protectedGrns.map((grn) => grn.workOrder.work_order_no).join(", ");
     throw new Error(
       `These orders cannot be deleted because work order${protectedGrns.length === 1 ? "" : "s"} ${workOrderNumbers} ${protectedGrns.length === 1 ? "has" : "have"} GRN records. Close or reverse the related production records first.`,
+    );
+  }
+
+  const protectedStockReceipts = await prisma.finishedGoodsGeneralStockReceipt.findMany({
+    where: { organization_id: organizationId, order_id: { in: ids } },
+    select: { order_no: true },
+    take: 1,
+  });
+  if (protectedStockReceipts.length > 0) {
+    throw new Error(
+      "These orders cannot be deleted because finished goods general stock receipt records exist for them. Reverse or remove the related stock receipts first.",
     );
   }
 
@@ -1216,6 +1532,7 @@ async function createOrderAuditEvents(
   organizationId: string,
   userId: string | undefined,
   orders: Array<{ id: string; orderNo: string; finalStatus: string }>,
+  database: Pick<Prisma.TransactionClient, "auditEvent"> = prisma,
 ) {
   for (const order of orders) {
     await createAuditEvent({
@@ -1226,7 +1543,7 @@ async function createOrderAuditEvents(
       entityType: "MerchandisingOrder",
       entityId: order.id,
       details: { order_no: order.orderNo, status: order.finalStatus },
-    });
+    }, database);
   }
 }
 
@@ -1261,7 +1578,7 @@ export async function createOrdersAtomically(
   options: Pick<CreateOrderOptions, "sourceStatus"> = {},
 ) {
   if (!organizationId) throw new Error("Organization is required to create orders.");
-  if (inputs.length === 0 || inputs.length > 100) throw new Error("Select between 1 and 100 colors to create orders.");
+  if (inputs.length === 0 || inputs.length > 500) throw new Error("Create between 1 and 500 orders at a time.");
 
   const formRestriction = await getEffectiveSegmentFormRestriction(organizationId, "merchandising_orders");
   const preparedOrders: PreparedCreateOrder[] = [];
@@ -1276,10 +1593,10 @@ export async function createOrdersAtomically(
     for (const prepared of preparedOrders) {
       orders.push(await createOrderWithinTransaction(transaction, organizationId, prepared, formRestriction, options));
     }
+    await createOrderAuditEvents(organizationId, userId, orders, transaction);
     return orders;
   }, { maxWait: 10000, timeout: Math.max(30000, inputs.length * 1000) });
 
-  await createOrderAuditEvents(organizationId, userId, createdOrders);
   return createdOrders;
 }
 

@@ -255,44 +255,55 @@ export default function BulkOrderCreationPage() {
     setIsSubmitting(true);
     setResults([]);
     setShowSummary(false);
-    const orderResults: OrderResult[] = [];
-
-    for (const row of rows) {
-      if (!row.order) {
-        orderResults.push({
+    const invalidResults = rows.flatMap((row) => row.order
+      ? []
+      : [{
           spreadsheetRow: row.spreadsheetRow,
           success: false,
           message: row.errors.join(" "),
-        });
-        setResults([...orderResults]);
-        continue;
-      }
+        }]);
 
-      try {
-        const response = await fetch(`/api/orders?organizationId=${encodeURIComponent(organizationId)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(row.order),
-        });
-        const data = await response.json().catch(() => null);
-        if (!response.ok) {
-          throw new Error(
-            typeof data?.error === "string" ? data.error : `Order API returned HTTP ${response.status}.`,
-          );
-        }
-        orderResults.push({ spreadsheetRow: row.spreadsheetRow, success: true, message: "Order created." });
-      } catch (error) {
-        orderResults.push({
+    try {
+      const response = await fetch(`/api/orders/batch?organizationId=${encodeURIComponent(organizationId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orders: validRows.map((row) => row.order) }),
+      });
+      const data: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = typeof data === "object" && data !== null
+          && "error" in data && typeof data.error === "string"
+          ? data.error
+          : `Order batch API returned HTTP ${response.status}.`;
+        throw new Error(message);
+      }
+      if (typeof data !== "object" || data === null
+        || !("orders" in data) || !Array.isArray(data.orders)
+        || data.orders.length !== validRows.length) {
+        throw new Error("The batch response did not confirm every submitted order.");
+      }
+      setResults([
+        ...invalidResults,
+        ...validRows.map((row) => ({
+          spreadsheetRow: row.spreadsheetRow,
+          success: true,
+          message: "Order created.",
+        })),
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to create the order batch.";
+      setResults([
+        ...invalidResults,
+        ...validRows.map((row) => ({
           spreadsheetRow: row.spreadsheetRow,
           success: false,
-          message: error instanceof Error ? error.message : "Unable to create order.",
-        });
-      }
-      setResults([...orderResults]);
+          message: `No orders in this batch were created. ${message}`,
+        })),
+      ]);
+    } finally {
+      setIsSubmitting(false);
+      setShowSummary(true);
     }
-
-    setIsSubmitting(false);
-    setShowSummary(true);
   };
 
   const handleSubmit = async () => {

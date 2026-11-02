@@ -646,6 +646,16 @@ export async function getMasterValuesForOrganization(
         ...(includeInactive ? {} : { is_active: true }),
         ...(search ? { OR: searchConditions } : {}),
       },
+      select: {
+        id: true,
+        value_id: true,
+        label: true,
+        code: true,
+        description: true,
+        is_active: true,
+        metadata: true,
+        parent_id: true,
+      },
       orderBy: [{ sort_order: "asc" }, { label: "asc" }],
       take: limit,
     });

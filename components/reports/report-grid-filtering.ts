@@ -6,6 +6,22 @@ export interface IndexedReportRow<T> {
   searchableValues: Record<string, string>;
 }
 
+export function toggleVisibleReportSelection(
+  selectedIds: string[],
+  visibleIds: string[],
+  checked: boolean,
+) {
+  const visibleIdSet = new Set(visibleIds);
+  return checked
+    ? [...new Set([...selectedIds, ...visibleIds])]
+    : selectedIds.filter((id) => !visibleIdSet.has(id));
+}
+
+export function getEffectiveReportSearchQuery(query: string, minimumLength = 0) {
+  const normalizedQuery = query.trim();
+  return normalizedQuery.length >= minimumLength ? normalizedQuery : "";
+}
+
 export function getReportSearchValue<T>(
   record: T,
   fieldKey: string,

@@ -9,7 +9,7 @@ import {
   updateContact,
 } from "@/lib/services/master-data/contact-master-service";
 import { ContactValidationError } from "@/lib/services/master-data/contact-master-validation";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
 
 type AuthorizationResult =
   | { authorized: false; response: NextResponse }
@@ -18,16 +18,20 @@ type AuthorizationResult =
 async function authorizedContext(organizationPublicId: string) {
   const user = await getSessionUser();
   if (!user?.workspace_id) return { authorized: false, response: NextResponse.json({ error: "Authentication is required." }, { status: 401 }) } satisfies AuthorizationResult;
-  const organization = await getOrganizationForUser(user.id, organizationPublicId);
-  if (!organization) return { authorized: false, response: NextResponse.json({ error: "Organization not found." }, { status: 404 }) } satisfies AuthorizationResult;
+  let organization: { id: string } | null;
   try {
-    await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
+    organization = await getOrganizationForUserWithPermission(
+      user.id,
+      organizationPublicId,
+      "MANAGE_MASTER_DATA",
+    );
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Access denied:")) {
       return { authorized: false, response: NextResponse.json({ error: "You do not have permission to manage contacts." }, { status: 403 }) } satisfies AuthorizationResult;
     }
     throw error;
   }
+  if (!organization) return { authorized: false, response: NextResponse.json({ error: "Organization not found." }, { status: 404 }) } satisfies AuthorizationResult;
   return { authorized: true, userId: user.id, organizationId: organization.id } satisfies AuthorizationResult;
 }
 
@@ -65,6 +69,16 @@ function handleError(error: unknown, operation: string) {
   return NextResponse.json({ error: "Unable to complete the contact request." }, { status: 500 });
 }
 
+function contactSaveResponse(data: unknown) {
+  if (process.env.NODE_ENV !== "development" || process.env.ERP_LOOKUP_QUERY_TIMING !== "1") {
+    return NextResponse.json(data);
+  }
+  const startedAt = performance.now();
+  const response = NextResponse.json(data);
+  console.info(`[Contact API timing] response serialization ${(performance.now() - startedAt).toFixed(1)}ms`);
+  return response;
+}
+
 export async function GET(
   _request: Request,
   context: { params: Promise<{ organizationId: string; contactId: string }> },
@@ -93,7 +107,7 @@ export async function PATCH(
     const body = await parseJson(request);
     const contact = await updateContact(auth.organizationId, auth.userId, contactId, body);
     return contact
-      ? NextResponse.json(contact)
+      ? contactSaveResponse(contact)
       : NextResponse.json({ error: "Contact not found." }, { status: 404 });
   } catch (error) {
     return handleError(error, "update");

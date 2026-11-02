@@ -85,3 +85,16 @@ describe("Asset Management module navigation", () => {
     expect(getErpModuleForBusinessTypeName("Asset Management")?.key).toBe("asset-management");
   });
 });
+
+describe("Inventory Management outward navigation", () => {
+  it("places FG Issued beneath Outward", () => {
+    const inventory = ERP_MODULES.find((module) => module.key === "inventory-management");
+    const outward = inventory?.children.find((child) => child.key === "outward");
+
+    expect(outward?.children).toContainEqual({
+      key: "fg-issued",
+      label: "FG Issued",
+      pathSegment: "fg-issued",
+    });
+  });
+});

@@ -1,16 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import dynamic from "next/dynamic";
 import { useParams, useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
-import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
-import Select from "@/components/ui/Select";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+import type { AdvanceBookingCreateFormProps } from "./advance-booking-create-form";
+import type { AdvanceBookingContactLookupDialogProps } from "./advance-booking-contact-lookup-dialog";
+import type { AdvanceBookingAllocationDialogProps } from "./advance-booking-allocation-dialog";
 import {
   filterBookingsWaitingForWorkOrderAssignment,
   filterAdvanceBookingsForView,
@@ -200,10 +202,24 @@ function renderBookingCell(fieldKey: string, booking: BookingReportRow) {
 
 const emptySizes = (): Record<string, number> => ({});
 
+const AdvanceBookingCreateForm = dynamic<AdvanceBookingCreateFormProps>(
+  () => import("./advance-booking-create-form"),
+  { ssr: false, loading: () => <p role="status" className="text-sm text-slate-600">Loading booking form...</p> },
+);
+const AdvanceBookingContactLookupDialog = dynamic<AdvanceBookingContactLookupDialogProps>(
+  () => import("./advance-booking-contact-lookup-dialog"),
+  { ssr: false },
+);
+const AdvanceBookingAllocationDialog = dynamic<AdvanceBookingAllocationDialogProps>(
+  () => import("./advance-booking-allocation-dialog"),
+  { ssr: false },
+);
+
 export default function AdvanceBookingPage({ view = "booking" }: { view?: "booking" | "fulfillment" | "shipment" } = {}) {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
   const organizationId = params?.organizationId ?? "demo-org";
+  const skipNextBookingFetch = useRef(false);
 
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [ordersLoadedFor, setOrdersLoadedFor] = useState("");
@@ -258,6 +274,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   const [visibleReportFields, setVisibleReportFields] = useState<BookingReportField[]>(
     [...bookingReportFields.map(({ key }) => key), "totalAllocated"],
   );
+  const isSearchBelowThreshold = bookingSearch.trim().length > 0 && bookingSearch.trim().length < 3;
 
   const loadBookings = useCallback(async (
     signal?: AbortSignal,
@@ -301,6 +318,11 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
 
   useEffect(() => {
     if (view === "booking" && isCreating) return;
+    if (skipNextBookingFetch.current) {
+      skipNextBookingFetch.current = false;
+      return;
+    }
+    if (isSearchBelowThreshold) return;
     const controller = new AbortController();
     const load = () => {
       if (!controller.signal.aborted) void loadBookings(controller.signal, { search: bookingSearch });
@@ -310,7 +332,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [bookingSearch, isCreating, loadBookings, view]);
+  }, [bookingSearch, isCreating, isSearchBelowThreshold, loadBookings, view]);
 
   const selectedOrder = orderDetails?.organizationId === organizationId && orderDetails.id === selectedOrderId
     ? orderDetails.order
@@ -348,7 +370,9 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
   }, [orderBookings]);
 
   const reportRows = useMemo<BookingReportRow[]>(
-    () =>
+    () => isSearchBelowThreshold
+      ? []
+      :
       filterAdvanceBookingsForView(
         bookings.filter((booking) => Boolean(booking.orderId)),
         view,
@@ -360,7 +384,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             .map((line) => `${line.size}: ${line.bookedQuantity}`)
             .join(", "),
         })),
-    [bookings, view],
+    [bookings, isSearchBelowThreshold, view],
   );
   const workOrderTrackingRows = useMemo(
     () => view === "shipment"
@@ -375,11 +399,17 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     [reportRows, view],
   );
   const selectedReportBookings = useMemo(
-    () => workOrderTrackingRows.filter((booking) => selectedBookingIds.includes(booking.bookingId)),
+    () => {
+      const selectedIds = new Set(selectedBookingIds);
+      return workOrderTrackingRows.filter((booking) => selectedIds.has(booking.bookingId));
+    },
     [workOrderTrackingRows, selectedBookingIds],
   );
   const selectedShipmentBookings = useMemo(
-    () => shipmentTrackingRows.filter((booking) => selectedBookingIds.includes(booking.bookingId)),
+    () => {
+      const selectedIds = new Set(selectedBookingIds);
+      return shipmentTrackingRows.filter((booking) => selectedIds.has(booking.bookingId));
+    },
     [shipmentTrackingRows, selectedBookingIds],
   );
   const quotationSelectionError = validateBookingQuotationSelection(selectedReportBookings);
@@ -564,10 +594,10 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     }
   }
 
-  async function loadMoreBookings() {
+  const loadMoreBookings = useCallback(async () => {
     if (!nextBookingCursor || isLoadingMoreBookings || isLoadingBookings) return;
     await loadBookings(undefined, { cursor: nextBookingCursor, search: bookingSearch });
-  }
+  }, [bookingSearch, isLoadingBookings, isLoadingMoreBookings, loadBookings, nextBookingCursor]);
 
   function updateEntry(size: SizeKey, value: string) {
     const parsed = value === "" ? 0 : Number(value);
@@ -642,6 +672,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       ]);
       setEntry(emptySizes());
       setStatus(`Advance booking ${createdBooking.bookingId} submitted.`);
+      skipNextBookingFetch.current = true;
       setIsCreating(false);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to save advance booking.");
@@ -650,23 +681,23 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     }
   }
 
-  function matchingWorkOrderSizeLine(workOrder: AssignableWorkOrder | null, size: string) {
+  const matchingWorkOrderSizeLine = useCallback((workOrder: AssignableWorkOrder | null, size: string) => {
     return workOrder?.sizeLines.find((line) =>
       line.size.trim().toLocaleUpperCase() === size.trim().toLocaleUpperCase(),
     );
-  }
+  }, []);
 
-  function plannedStockQuantity(line: BookingRecord["sizes"][number]) {
+  const plannedStockQuantity = useCallback((line: BookingRecord["sizes"][number]) => {
     if (allocationPlan !== "general-stock-first" || assignmentBooking?.orderSourceStatus !== "ARTICLE_BASED") return 0;
     return Math.min(line.generalInventoryAvailableQuantity, line.unassignedQuantity);
-  }
+  }, [allocationPlan, assignmentBooking?.orderSourceStatus]);
 
-  function plannedWorkOrderQuantity(line: BookingRecord["sizes"][number]) {
+  const plannedWorkOrderQuantity = useCallback((line: BookingRecord["sizes"][number]) => {
     if (allocationPlan === "general-stock-first" && !selectedAssignmentWorkOrder) return 0;
     return Math.max(line.unassignedQuantity - plannedStockQuantity(line), 0);
-  }
+  }, [allocationPlan, plannedStockQuantity, selectedAssignmentWorkOrder]);
 
-  async function openAssignment(booking: BookingRecord) {
+  const openAssignment = useCallback(async (booking: BookingRecord) => {
     setAssignmentBooking(booking);
     setAssignableWorkOrders([]);
     setSelectedAssignmentWorkOrderId("");
@@ -689,9 +720,9 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     } finally {
       setIsLoadingAssignment(false);
     }
-  }
+  }, [organizationId]);
 
-  async function saveBookingAllocation() {
+  const saveBookingAllocation = useCallback(async () => {
     if (!assignmentBooking || isSavingAssignment) return;
     const generalStockLines: Array<{ bookingSizeLineId: string; quantity: number }> = [];
     const workOrderLines: Array<{ bookingSizeLineId: string; assignedQuantity: number }> = [];
@@ -771,13 +802,22 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     } finally {
       setIsSavingAssignment(false);
     }
-  }
+  }, [
+    assignmentBooking,
+    isSavingAssignment,
+    loadBookings,
+    matchingWorkOrderSizeLine,
+    organizationId,
+    plannedStockQuantity,
+    plannedWorkOrderQuantity,
+    selectedAssignmentWorkOrder,
+  ]);
 
-  function startCreating() {
+  const startCreating = useCallback(() => {
     setError("");
     setStatus("");
     setIsCreating(true);
-  }
+  }, []);
 
   async function createQuotationFromSelectedBookings(selectedBookings: BookingRecord[]) {
     if (view !== "booking") return;
@@ -915,6 +955,157 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
     }
   }
 
+  const handleReportFieldsChange = useCallback((fields: string[]) => {
+    setVisibleReportFields(orderBookingReportFields(fields as BookingReportField[]));
+  }, []);
+  const handleSearchQueryChange = useCallback((search: string) => {
+    setBookingSearch(search);
+    if (search.trim().length > 0 && search.trim().length < 3) {
+      setSelectedBookingIds([]);
+      setIsLoadingBookings(false);
+    }
+  }, []);
+  const handleToggleSelectAll = useCallback((checked: boolean, recordIds: string[]) => {
+    setSelectedBookingIds(checked ? recordIds : []);
+  }, []);
+  const handleToggleRowSelection = useCallback((bookingId: string, checked: boolean) => {
+    setSelectedBookingIds((current) => checked
+      ? current.includes(bookingId) ? current : [...current, bookingId]
+      : current.filter((id) => id !== bookingId));
+  }, []);
+  const handleBookingRowClick = useCallback((bookingId: string) => {
+    const booking = workOrderTrackingRows.find((record) => record.bookingId === bookingId);
+    if (booking) handleOpenShipmentDetails(booking);
+  }, [handleOpenShipmentDetails, workOrderTrackingRows]);
+  const handleShipmentRowClick = useCallback((bookingId: string) => {
+    const booking = shipmentTrackingRows.find((record) => record.bookingId === bookingId);
+    if (booking) handleOpenShipmentDetails(booking);
+  }, [handleOpenShipmentDetails, shipmentTrackingRows]);
+  const handleBookingRowAction = useCallback((bookingId: string) => {
+    const booking = workOrderTrackingRows.find((record) => record.bookingId === bookingId);
+    if (booking) void openAssignment(booking);
+  }, [openAssignment, workOrderTrackingRows]);
+  const rowActionDisabledSelector = useCallback((booking: BookingReportRow) =>
+    booking.totalUnassigned <= 0 || isLoadingBookings || isSavingAssignment,
+  [isLoadingBookings, isSavingAssignment]);
+  const rowActionHiddenSelector = useCallback((booking: BookingReportRow) => !booking.salesOrderNo, []);
+  const refreshBookings = useCallback(() => {
+    void loadBookings(undefined, { preservePages: true, search: bookingSearch });
+  }, [bookingSearch, loadBookings]);
+  const openQuotationContactLookup = useCallback(() => {
+    setError("");
+    setIsQuotationVendorModalOpen(true);
+  }, []);
+  const openFinishedGoodsRequest = useCallback(() => {
+    setFinishedGoodsRequestQuantities(Object.fromEntries(
+      selectedShipmentBookings.flatMap((booking) =>
+        booking.sizes.map((size) => [size.id, String(size.fulfilledQuantity)]),
+      ),
+    ));
+    setFinishedGoodsRequestError("");
+    setIsFinishedGoodsRequestOpen(true);
+  }, [selectedShipmentBookings]);
+
+  const bookingToolbarActions = useMemo(() => (
+    <>
+      {view === "booking" ? (
+        <Button
+          type="button"
+          variant="destructive"
+          size="sm"
+          disabled={selectedBookingIds.length === 0 || isLoadingBookings || isDeletingBookings}
+          onClick={() => setShowDeleteBookingsConfirmation(true)}
+        >
+          Delete Booking{selectedBookingIds.length === 1 ? "" : "s"}{selectedBookingIds.length > 0 ? ` (${selectedBookingIds.length})` : ""}
+        </Button>
+      ) : null}
+      {view === "booking" ? (
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          disabled={Boolean(quotationSelectionError) || isLoadingBookings || isCreatingQuotation}
+          title={quotationSelectionError || undefined}
+          onClick={openQuotationContactLookup}
+        >
+          {isCreatingQuotation ? "Creating Order Form..." : `Confirm${selectedBookingIds.length > 0 ? ` (${selectedBookingIds.length})` : ""}`}
+        </Button>
+      ) : null}
+      <Button type="button" variant="secondary" size="sm" onClick={refreshBookings} disabled={isLoadingBookings}>
+        Refresh bookings
+      </Button>
+      {nextBookingCursor && !isSearchBelowThreshold ? (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => void loadMoreBookings()}
+          disabled={isLoadingBookings || isLoadingMoreBookings}
+        >
+          {isLoadingMoreBookings ? "Loading..." : "Load more"}
+        </Button>
+      ) : null}
+    </>
+  ), [
+    isCreatingQuotation,
+    isDeletingBookings,
+    isLoadingBookings,
+    isLoadingMoreBookings,
+    loadMoreBookings,
+    nextBookingCursor,
+    isSearchBelowThreshold,
+    openQuotationContactLookup,
+    quotationSelectionError,
+    refreshBookings,
+    selectedBookingIds.length,
+    view,
+  ]);
+  const shipmentToolbarActions = useMemo(() => {
+    const vendorMissing = selectedShipmentBookings.some(
+      (booking) => !booking.quotationVendor?.trim() || !booking.masterQuotationVendor?.trim(),
+    );
+    return (
+      <>
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          disabled={selectedShipmentBookings.length === 0 || isLoadingBookings || isRequestingFinishedGoods || vendorMissing}
+          title={vendorMissing
+            ? "Quotation and Sales Order vendors are required before requesting finished goods."
+            : undefined}
+          onClick={openFinishedGoodsRequest}
+        >
+          Request FG Quantity{selectedShipmentBookings.length > 0 ? ` (${selectedShipmentBookings.length})` : ""}
+        </Button>
+        <Button type="button" variant="secondary" size="sm" onClick={refreshBookings} disabled={isLoadingBookings}>
+          Refresh bookings
+        </Button>
+        {nextBookingCursor && !isSearchBelowThreshold ? (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => void loadMoreBookings()}
+            disabled={isLoadingBookings || isLoadingMoreBookings}
+          >
+            {isLoadingMoreBookings ? "Loading..." : "Load more"}
+          </Button>
+        ) : null}
+      </>
+    );
+  }, [
+    isLoadingBookings,
+    isLoadingMoreBookings,
+    isRequestingFinishedGoods,
+    loadMoreBookings,
+    nextBookingCursor,
+    isSearchBelowThreshold,
+    openFinishedGoodsRequest,
+    refreshBookings,
+    selectedShipmentBookings,
+  ]);
+
   return (
     <div className="w-full min-w-0 space-y-3 p-2">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -976,261 +1167,71 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       ) : null}
 
       {isCreating ? (
-        <Card className="space-y-3 p-3 shadow-none">
-          <form onSubmit={handleSubmit} className="space-y-3">
-            <section className="space-y-3">
-              <div className="border-b border-slate-200 pb-2">
-                <h2 className="text-base font-semibold text-slate-900">Advance Booking Header</h2>
-                <p className="mt-1 text-sm text-slate-600">Choose an order, then enter quantities by finished-goods size.</p>
-              </div>
-              <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                <Input label="Booking ID" value="Generated when saved" readOnly />
-                <Select
-                  label="Order No"
-                  value={selectedOrderId}
-                  onChange={(event) => {
-                    setSelectedOrderId(event.target.value);
-                    setEntry(emptySizes());
-                    setError("");
-                    setOrderDetailsError("");
-                  }}
-                  options={orders.map((order) => ({
-                    label: `${order.orderNo}${order.entityName || order.buyer ? ` · ${order.entityName ?? order.buyer}` : ""}`,
-                    value: order.id,
-                  }))}
-                  disabled={isLoadingOrders || orders.length === 0}
-                  required
-                />
-                <Input label="Brand" value={selectedOrder?.brand ?? ""} readOnly />
-                <Input label="Style" value={selectedOrder?.styleName ?? ""} readOnly />
-                <Input label="Delivery Date" type="date" value={selectedOrder?.deliveryDate?.slice(0, 10) ?? ""} readOnly />
-              </div>
-              {isLoadingOrders ? (
-                <p role="status" className="text-sm text-slate-600">Loading organization orders...</p>
-              ) : null}
-              {orders.length === 0 && !isLoadingOrders && !ordersError ? (
-                <p role="status" className="text-sm text-slate-600">No merchandising orders are available for advance booking.</p>
-              ) : null}
-              {nextOrderCursor ? (
-                <Button type="button" variant="secondary" size="sm" onClick={() => void loadMoreOrders()} disabled={isLoadingMoreOrders}>
-                  {isLoadingMoreOrders ? "Loading orders..." : "Load more orders"}
-                </Button>
-              ) : null}
-              {orderDetailsError ? (
-                <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-700">
-                  <span>{orderDetailsError}</span>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => {
-                      setOrderDetailsError("");
-                      setOrderDetailsRetry((current) => current + 1);
-                    }}
-                  >
-                    Retry order details
-                  </Button>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="space-y-3">
-              <div className="border-b border-slate-200 pb-2">
-                <h2 className="text-base font-semibold text-slate-900">Finished Goods Sizes</h2>
-                <p className="mt-1 text-sm text-slate-600">
-                  Book Qty may exceed the current balance. Excess booked is calculated automatically.
-                </p>
-              </div>
-              {!selectedOrder ? (
-                <p role="status" className="text-sm text-slate-600">
-                  {selectedOrderId ? "Loading selected order sizes..." : "Select an organization order to load its finished-goods sizes."}
-                </p>
-              ) : Object.keys(finishedGoodsBySize).length ? null : (
-                <p role="status" className="text-sm text-slate-600">This order has no finished-goods size quantities.</p>
-              )}
-              <div className="max-w-full overflow-x-auto rounded-lg border border-slate-200">
-                <table className="w-full min-w-[52rem] text-left text-sm">
-                  <thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-600">
-                    <tr>
-                      <th scope="col" className="px-3 py-2">Size</th>
-                      <th scope="col" className="px-3 py-2">Order Qty</th>
-                      <th scope="col" className="px-3 py-2">Already Booked</th>
-                      <th scope="col" className="px-3 py-2">Balance to Book</th>
-                      <th scope="col" className="px-3 py-2">Excess booked</th>
-                      <th scope="col" className="px-3 py-2">Book Qty</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 bg-white">
-                    {Object.keys(finishedGoodsBySize).length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="px-4 py-6 text-center text-sm text-slate-500">
-                          Select an order with finished-goods sizes to enter booking quantities.
-                        </td>
-                      </tr>
-                    )}
-                    {Object.keys(finishedGoodsBySize).map((size) => {
-                      const orderQty = finishedGoodsBySize[size];
-                      const alreadyBooked = bookedTotals[size] ?? 0;
-                      const balanceToBook = Math.max(0, orderQty - alreadyBooked);
-                      const excessBooked = Math.max(0, (entry[size] ?? 0) - balanceToBook);
-
-                      return (
-                        <tr key={size}>
-                          <td className="px-3 py-1.5 font-medium text-slate-700">{size}</td>
-                          <td className="px-3 py-1.5 text-slate-700">{orderQty}</td>
-                          <td className="px-3 py-1.5 text-slate-700">{alreadyBooked}</td>
-                          <td className="px-3 py-1.5 font-medium text-slate-900">{balanceToBook}</td>
-                          <td className="px-3 py-1.5">
-                            <Input
-                              type="number"
-                              value={String(excessBooked)}
-                              className="max-w-40"
-                              disabled
-                              readOnly
-                              aria-label={`Excess booked quantity for size ${size}`}
-                            />
-                          </td>
-                          <td className="px-3 py-1.5">
-                            <Input
-                              type="number"
-                              min={0}
-                              max={2147483647}
-                              step={1}
-                              value={String(entry[size] ?? 0)}
-                              onChange={(event) => updateEntry(size, event.target.value)}
-                              className="max-w-40"
-                              disabled={!selectedOrder}
-                              aria-label={`Booking quantity for size ${size}`}
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            {error ? (
-              <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                {error}
-              </p>
-            ) : null}
-
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3">
-              <p role="status" className="text-sm text-slate-600">
-                {!selectedOrder
-                  ? "Select an order to enable saving."
-                  : "Ready to save."}
-              </p>
-              <div className="flex flex-wrap justify-end gap-3">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => {
-                    setIsCreating(false);
-                    setEntry(emptySizes());
-                    setError("");
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  disabled={!selectedOrder || Boolean(bookingsError) || isSubmittingBooking}
-                  title={!selectedOrder ? "Select an order before saving." : undefined}
-                >
-                  {isSubmittingBooking ? "Saving booking..." : "Submit Advance Booking"}
-                </Button>
-              </div>
-            </div>
-          </form>
-        </Card>
+        <AdvanceBookingCreateForm
+          orders={orders}
+          selectedOrder={selectedOrder}
+          selectedOrderId={selectedOrderId}
+          isLoadingOrders={isLoadingOrders}
+          ordersError={ordersError}
+          nextOrderCursor={nextOrderCursor}
+          isLoadingMoreOrders={isLoadingMoreOrders}
+          onOrderChange={(orderId) => {
+            setSelectedOrderId(orderId);
+            setEntry(emptySizes());
+            setError("");
+            setOrderDetailsError("");
+          }}
+          onLoadMoreOrders={() => void loadMoreOrders()}
+          orderDetailsError={orderDetailsError}
+          onRetryOrderDetails={() => {
+            setOrderDetailsError("");
+            setOrderDetailsRetry((current) => current + 1);
+          }}
+          finishedGoodsBySize={finishedGoodsBySize}
+          bookedTotals={bookedTotals}
+          entry={entry}
+          onEntryChange={updateEntry}
+          error={error}
+          bookingsError={bookingsError}
+          isSubmittingBooking={isSubmittingBooking}
+          onSubmit={handleSubmit}
+          onCancel={() => {
+            setIsCreating(false);
+            setEntry(emptySizes());
+            setError("");
+          }}
+        />
       ) : (
         <>
         {view !== "shipment" ? <Card className="p-1 shadow-none">
           <ReportGrid
             title={view === "fulfillment" ? "Work Order Tracking Report" : "Advance Bookings"}
             records={workOrderTrackingRows}
-            onSearchQueryChange={setBookingSearch}
+            onSearchQueryChange={handleSearchQueryChange}
             serverSideSearch
             isLoading={isLoadingBookings}
             fields={view === "fulfillment" ? fulfillmentReportFields : advanceBookingReportFields}
             visibleFields={visibleReportFields}
-            onVisibleFieldsChange={(fields) => setVisibleReportFields(orderBookingReportFields(fields as BookingReportField[]))}
+            onVisibleFieldsChange={handleReportFieldsChange}
             storageKey={`distribution-booking-report-columns:v2:${organizationId}`}
             rowIdSelector={getBookingRowId}
             selectedIds={selectedBookingIds}
             selectable={view === "booking"}
-            onToggleSelectAll={(checked) => setSelectedBookingIds(checked ? workOrderTrackingRows.map((booking) => booking.bookingId) : [])}
-            onToggleRowSelection={(bookingId, checked) => setSelectedBookingIds((current) =>
-              checked
-                ? current.includes(bookingId) ? current : [...current, bookingId]
-                : current.filter((id) => id !== bookingId),
-            )}
-            onRowClick={(bookingId) => {
-              const booking = workOrderTrackingRows.find((record) => record.bookingId === bookingId);
-              if (booking) handleOpenShipmentDetails(booking);
-            }}
-            onRowAction={view === "fulfillment" ? (bookingId) => {
-              const booking = workOrderTrackingRows.find((record) => record.bookingId === bookingId);
-              if (booking) void openAssignment(booking);
-            } : undefined}
+            onToggleSelectAll={handleToggleSelectAll}
+            onToggleRowSelection={handleToggleRowSelection}
+            onRowClick={handleBookingRowClick}
+            onRowAction={view === "fulfillment" ? handleBookingRowAction : undefined}
             rowActionPosition="start"
             rowActionLabel="Allocate"
-            rowActionDisabledSelector={(booking) =>
-              booking.totalUnassigned <= 0 || isLoadingBookings || isSavingAssignment
-            }
-            rowActionHiddenSelector={(booking) => !booking.salesOrderNo}
+            rowActionDisabledSelector={rowActionDisabledSelector}
+            rowActionHiddenSelector={rowActionHiddenSelector}
             onNewOrder={view === "booking" ? startCreating : undefined}
             newActionLabel="Create Advance Booking"
-            toolbarActions={(
-              <>
-                {view === "booking" ? (
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    size="sm"
-                    disabled={selectedBookingIds.length === 0 || isLoadingBookings || isDeletingBookings}
-                    onClick={() => setShowDeleteBookingsConfirmation(true)}
-                  >
-                    Delete Booking{selectedBookingIds.length === 1 ? "" : "s"}{selectedBookingIds.length > 0 ? ` (${selectedBookingIds.length})` : ""}
-                  </Button>
-                ) : null}
-                {view === "booking" ? (
-                  <Button
-                    type="button"
-                    variant="primary"
-                    size="sm"
-                    disabled={Boolean(quotationSelectionError) || isLoadingBookings || isCreatingQuotation}
-                    title={quotationSelectionError || undefined}
-                    onClick={() => {
-                      setError("");
-                      setIsQuotationVendorModalOpen(true);
-                    }}
-                  >
-                    {isCreatingQuotation ? "Creating Order Form..." : `Confirm${selectedBookingIds.length > 0 ? ` (${selectedBookingIds.length})` : ""}`}
-                  </Button>
-                ) : null}
-                <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings(undefined, { preservePages: true, search: bookingSearch })} disabled={isLoadingBookings}>
-                  Refresh bookings
-                </Button>
-                {nextBookingCursor ? (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => void loadMoreBookings()}
-                    disabled={isLoadingBookings || isLoadingMoreBookings}
-                  >
-                    {isLoadingMoreBookings ? "Loading..." : "Load more"}
-                  </Button>
-                ) : null}
-              </>
-            )}
+            toolbarActions={bookingToolbarActions}
             emptyMessage={isLoadingBookings
               ? "Loading advance bookings..."
+              : isSearchBelowThreshold
+                ? "Enter at least 3 characters to search bookings."
               : view === "fulfillment"
                 ? reportRows.length === 0
                   ? "No advance bookings have a quotation yet."
@@ -1244,68 +1245,25 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
             <ReportGrid
               title="Shipment Tracking"
               records={shipmentTrackingRows}
-              onSearchQueryChange={setBookingSearch}
+              onSearchQueryChange={handleSearchQueryChange}
               serverSideSearch
               isLoading={isLoadingBookings}
               fields={shipmentTrackingReportFields}
               visibleFields={visibleReportFields}
-              onVisibleFieldsChange={(fields) => setVisibleReportFields(orderBookingReportFields(fields as BookingReportField[]))}
+              onVisibleFieldsChange={handleReportFieldsChange}
               storageKey={`distribution-shipment-tracking-report-columns:v2:${organizationId}`}
               rowIdSelector={getBookingRowId}
               selectedIds={selectedBookingIds}
               selectable
-              onToggleSelectAll={(checked) => setSelectedBookingIds(checked ? shipmentTrackingRows.map((booking) => booking.bookingId) : [])}
-              onToggleRowSelection={(bookingId, checked) => setSelectedBookingIds((current) =>
-                checked
-                  ? current.includes(bookingId) ? current : [...current, bookingId]
-                  : current.filter((id) => id !== bookingId),
-              )}
+              onToggleSelectAll={handleToggleSelectAll}
+              onToggleRowSelection={handleToggleRowSelection}
               onRecordClick={handleOpenShipmentDetails}
-              onRowClick={(bookingId) => {
-                const booking = shipmentTrackingRows.find((record) => record.bookingId === bookingId);
-                if (booking) handleOpenShipmentDetails(booking);
-              }}
-              toolbarActions={(
-                <>
-                  <Button
-                    type="button"
-                    variant="primary"
-                    size="sm"
-                    disabled={selectedShipmentBookings.length === 0 || isLoadingBookings || isRequestingFinishedGoods ||
-                      selectedShipmentBookings.some((booking) => !booking.quotationVendor?.trim() || !booking.masterQuotationVendor?.trim())}
-                    title={selectedShipmentBookings.some((booking) => !booking.quotationVendor?.trim() || !booking.masterQuotationVendor?.trim())
-                      ? "Quotation and Sales Order vendors are required before requesting finished goods."
-                      : undefined}
-                    onClick={() => {
-                      setFinishedGoodsRequestQuantities(Object.fromEntries(
-                        selectedShipmentBookings.flatMap((booking) =>
-                          booking.sizes.map((size) => [size.id, String(size.fulfilledQuantity)]),
-                        ),
-                      ));
-                      setFinishedGoodsRequestError("");
-                      setIsFinishedGoodsRequestOpen(true);
-                    }}
-                  >
-                    Request FG Quantity{selectedShipmentBookings.length > 0 ? ` (${selectedShipmentBookings.length})` : ""}
-                  </Button>
-                  <Button type="button" variant="secondary" size="sm" onClick={() => void loadBookings(undefined, { preservePages: true, search: bookingSearch })} disabled={isLoadingBookings}>
-                    Refresh bookings
-                  </Button>
-                  {nextBookingCursor ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => void loadMoreBookings()}
-                      disabled={isLoadingBookings || isLoadingMoreBookings}
-                    >
-                      {isLoadingMoreBookings ? "Loading..." : "Load more"}
-                    </Button>
-                  ) : null}
-                </>
-              )}
+              onRowClick={handleShipmentRowClick}
+              toolbarActions={shipmentToolbarActions}
               emptyMessage={isLoadingBookings
                 ? "Loading shipment tracking..."
+                : isSearchBelowThreshold
+                  ? "Enter at least 3 characters to search bookings."
                 : "No quoted bookings have fulfilled quantities or fully assigned quantities yet."}
               renderCell={renderShipmentBookingCell}
             />
@@ -1384,318 +1342,50 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
           </footer>
         </div>
       </Modal>
-      <Modal
-        open={isQuotationVendorModalOpen}
-        onClose={() => {
-          if (!isCreatingQuotation) setIsQuotationVendorModalOpen(false);
-        }}
-        ariaLabelledBy="quotation-vendor-title"
-        size="sm"
-        closeOnBackdrop={!isCreatingQuotation}
-      >
-        <form
-          className="space-y-4 p-6"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void createQuotationFromSelectedBookings(selectedReportBookings);
+      {isQuotationVendorModalOpen ? (
+        <AdvanceBookingContactLookupDialog
+          isCreatingQuotation={isCreatingQuotation}
+          search={contactLookupSearch}
+          onSearchChange={(search) => {
+            setContactLookupSearch(search);
+            setSelectedQuotationVendorId("");
           }}
-        >
-          <header className="space-y-1">
-            <h2 id="quotation-vendor-title" className="text-lg font-semibold text-slate-900">Confirm Order Form</h2>
-            <p className="text-sm text-slate-600">Select the Contact name for this Order Form.</p>
-          </header>
-          <Input
-            label="Search Contact Master"
-            value={contactLookupSearch}
-            onChange={(event) => {
-              setContactLookupSearch(event.target.value);
-              setSelectedQuotationVendorId("");
-            }}
-            placeholder="Search name or code"
-            disabled={isCreatingQuotation}
-          />
-          <Select
-            label="Contact Name"
-            required
-            value={selectedQuotationVendorId}
-            onChange={(event) => {
-              setSelectedQuotationVendorId(event.target.value);
-              setError("");
-            }}
-            options={[
-              {
-                label: isLoadingAllContacts ? "Searching contacts..." : "Select a Contact",
-                value: "",
-              },
-              ...(currentAllContactVendors ?? []).map((contact) => ({
-                label: contact.label,
-                value: `contact:${contact.contactId ?? contact.id}`,
-              })),
-            ]}
-            disabled={isLoadingAllContacts || isCreatingQuotation}
-          />
-          {allContactsError ? (
-            <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-700">
-              <span>{allContactsError}</span>
-              <Button type="button" variant="secondary" size="sm" onClick={() => void loadAllContacts(contactLookupSearch)} disabled={isLoadingAllContacts}>
-                Retry Contact Search
-              </Button>
-            </div>
-          ) : null}
-          {currentAllContactVendors?.length === 0 && !isLoadingAllContacts && !allContactsError ? (
-            <p role="status" className="text-sm text-slate-600">No contacts are available in Contact Master.</p>
-          ) : null}
-          {error ? <p role="alert" className="text-sm text-red-700">{error}</p> : null}
-          <footer className="flex justify-end gap-3 border-t border-[var(--erp-border)] pt-4">
-            <Button type="button" variant="secondary" onClick={() => setIsQuotationVendorModalOpen(false)} disabled={isCreatingQuotation}>
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={!selectedQuotationVendorId || isLoadingAllContacts || isCreatingQuotation}
-            >
-              {isCreatingQuotation ? "Creating..." : "Submit Order Form"}
-            </Button>
-          </footer>
-        </form>
-      </Modal>
-      <Modal
-        open={assignmentBooking !== null}
-        onClose={() => { if (!isSavingAssignment) setAssignmentBooking(null); }}
-        ariaLabelledBy="advance-booking-assignment-title"
-        ariaDescribedBy="advance-booking-assignment-description"
-        size="2xl"
-      >
-        {assignmentBooking ? (
-          <div className="space-y-6 p-6">
-            <header className="space-y-2">
-              <h2 id="advance-booking-assignment-title" className="text-xl font-semibold text-slate-900">
-                Allocate Booking
-              </h2>
-              <p id="advance-booking-assignment-description" className="text-sm text-slate-600">
-                {assignmentBooking.bookingId} · {assignmentBooking.orderNo}. Choose an allocation plan and review the automatic size-wise quantities.
-              </p>
-            </header>
-
-            <div className="grid gap-3 sm:grid-cols-3">
-              {[
-                { label: "Booking balance", value: assignmentBooking.totalUnassigned },
-                {
-                  label: "Order type",
-                  value: assignmentBooking.orderSourceStatus === "ARTICLE_BASED" ? "Article-based" : "Direct",
-                },
-                {
-                  label: assignmentBooking.orderSourceStatus === "ARTICLE_BASED" && allocationPlan === "general-stock-first"
-                    ? "Available to take from stock"
-                    : "To work order",
-                  value: isLoadingAssignment
-                    ? "Loading…"
-                    : assignmentBooking.orderSourceStatus === "ARTICLE_BASED"
-                      ? allocationPlan === "general-stock-first"
-                        ? assignmentBooking.sizes.reduce((sum, line) => sum + plannedStockQuantity(line), 0)
-                        : assignmentBooking.sizes.reduce((sum, line) => sum + plannedWorkOrderQuantity(line), 0)
-                      : selectedAssignmentWorkOrder
-                        ? assignmentBooking.totalUnassigned
-                        : "Select below",
-                },
-              ].map((item) => (
-                <div key={item.label} className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
-                  <p className="text-xs font-medium uppercase tracking-wide text-slate-600">{item.label}</p>
-                  <p className="mt-1 text-lg font-semibold text-slate-900">{item.value}</p>
-                </div>
-              ))}
-            </div>
-
-            {isLoadingAssignment ? (
-              <p role="status" className="text-sm text-slate-600">Loading work orders for this booking...</p>
-            ) : (
-              <Select
-                label={allocationPlan === "work-order-only"
-                  ? "Work Order (required)"
-                  : "Work Order for remaining quantities (optional)"}
-                value={selectedAssignmentWorkOrderId}
-                onChange={(event) => {
-                  setSelectedAssignmentWorkOrderId(event.target.value);
-                  setAssignmentError("");
-                }}
-                disabled={assignableWorkOrders.length === 0}
-                options={[
-                  {
-                    label: assignableWorkOrders.length
-                      ? allocationPlan === "general-stock-first"
-                        ? "Leave remaining quantity in Work Order Tracking"
-                        : "Choose a work order"
-                      : "No work orders available",
-                    value: "",
-                  },
-                  ...assignableWorkOrders.map((workOrder) => ({
-                    label: `${workOrder.workOrderNo} · ${workOrder.status}`,
-                    value: workOrder.id,
-                  })),
-                ]}
-              />
-            )}
-
-            {assignmentBooking.orderSourceStatus === "ARTICLE_BASED" ? (
-              <section className="space-y-2" aria-labelledby="allocation-plan-label">
-                <h3 id="allocation-plan-label" className="text-sm font-semibold text-slate-900">Allocation plan</h3>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Button
-                    type="button"
-                    variant="card"
-                    size="sm"
-                    className={`min-h-0 w-full p-3 ${
-                      allocationPlan === "general-stock-first"
-                        ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)]"
-                        : ""
-                    }`}
-                    aria-pressed={allocationPlan === "general-stock-first"}
-                    disabled={isSavingAssignment}
-                    onClick={() => setAllocationPlan("general-stock-first")}
-                  >
-                    <span className="block text-sm font-semibold">Use available General Stock first</span>
-                    <span className="block whitespace-normal text-xs font-normal text-slate-600">
-                      Submit matching stock by itself. Any balance stays in Work Order Tracking unless you select a Work Order.
-                    </span>
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="card"
-                    size="sm"
-                    className={`min-h-0 w-full p-3 ${
-                      allocationPlan === "work-order-only"
-                        ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)]"
-                        : ""
-                    }`}
-                    aria-pressed={allocationPlan === "work-order-only"}
-                    disabled={isSavingAssignment}
-                    onClick={() => setAllocationPlan("work-order-only")}
-                  >
-                    <span className="block text-sm font-semibold">Allocate full quantity to Work Order</span>
-                    <span className="block whitespace-normal text-xs font-normal text-slate-600">
-                      Leave General Stock untouched and assign the full balance.
-                    </span>
-                  </Button>
-                </div>
-              </section>
-            ) : null}
-
-            <section className="space-y-3">
-              <div>
-                <h3 className="text-sm font-semibold text-slate-900">Size-wise allocation</h3>
-                <p className="text-sm text-slate-600">
-                  {assignmentBooking.orderSourceStatus === "ARTICLE_BASED"
-                    ? allocationPlan === "general-stock-first"
-                      ? selectedAssignmentWorkOrder
-                        ? "Available stock is used first. The remaining quantity is assigned to the selected Work Order."
-                        : "Available stock can be submitted by itself. Any balance remains in Work Order Tracking."
-                      : "The full remaining quantity for each size will be assigned to the work order."
-                    : "Direct orders have no reusable Article stock. Allocate quantities to a work order only."}
-                </p>
-              </div>
-              <div className="max-w-full overflow-x-auto rounded-lg border border-[var(--erp-border)]">
-                <table className="w-full min-w-[52rem] text-left text-sm">
-                  <thead className="border-b border-[var(--erp-border)] bg-[var(--erp-surface-soft)] text-xs font-semibold uppercase text-slate-600">
-                    <tr>
-                      <th scope="col" className="px-3 py-3">Size</th>
-                      <th scope="col" className="px-3 py-3">Booking balance</th>
-                      {assignmentBooking.orderSourceStatus === "ARTICLE_BASED" ? (
-                        <>
-                          <th scope="col" className="px-3 py-3">General stock</th>
-                          <th scope="col" className="px-3 py-3">Take from stock</th>
-                        </>
-                      ) : null}
-                      <th scope="col" className="px-3 py-3">Work-order balance</th>
-                      <th scope="col" className="px-3 py-3">Assign to work order</th>
-                      <th scope="col" className="px-3 py-3">Remaining</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--erp-border)]">
-                    {assignmentBooking.sizes.map((line) => {
-                      const stockQuantity = plannedStockQuantity(line);
-                      const quantityToWorkOrder = plannedWorkOrderQuantity(line);
-                      const workOrderLine = matchingWorkOrderSizeLine(selectedAssignmentWorkOrder, line.size);
-                      const workOrderBalance = workOrderLine?.availableQuantity ?? 0;
-                      const notYetAllocated = Math.max(line.unassignedQuantity - stockQuantity - quantityToWorkOrder, 0);
-                      return (
-                        <tr key={line.id}>
-                          <td className="px-3 py-3 font-medium text-slate-900">{line.size}</td>
-                          <td className="px-3 py-3">{line.unassignedQuantity}</td>
-                          {assignmentBooking.orderSourceStatus === "ARTICLE_BASED" ? (
-                            <>
-                              <td className="px-3 py-3">{line.generalInventoryAvailableQuantity}</td>
-                              <td className="px-3 py-3 font-medium">{stockQuantity}</td>
-                            </>
-                          ) : null}
-                          <td className="px-3 py-3">
-                            {selectedAssignmentWorkOrder
-                              ? workOrderLine?.availableQuantity ?? "Size unavailable"
-                              : allocationPlan === "general-stock-first"
-                                ? "Optional"
-                                : "Select a work order"}
-                          </td>
-                          <td className="px-3 py-3 font-medium">{quantityToWorkOrder}</td>
-                          <td className="px-3 py-3">
-                            {selectedAssignmentWorkOrder && quantityToWorkOrder > workOrderBalance
-                              ? `${quantityToWorkOrder - workOrderBalance} over work-order balance`
-                              : notYetAllocated}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-            {assignmentBooking.sizes.some((line) => line.assignments.length > 0) ? (
-              <section className="space-y-2">
-                <h3 className="text-sm font-semibold text-slate-800">Existing work-order assignments</h3>
-                <ul className="space-y-1 text-sm text-slate-600">
-                  {assignmentBooking.sizes.flatMap((line) => line.assignments.map((assignment) => (
-                    <li key={assignment.id}>
-                      {line.size}: {assignment.workOrderNo} · {assignment.assignedQuantity} assigned · {assignment.fulfilledQuantity} fulfilled
-                    </li>
-                  )))}
-                </ul>
-              </section>
-            ) : null}
-            {assignmentError ? <p role="alert" className="text-sm text-red-700">{assignmentError}</p> : null}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--erp-border)] pt-4">
-              <p className="text-sm text-slate-600">
-                General Stock can be submitted alone. Any unassigned balance stays in Work Order Tracking; selected stock and Work Order allocations save together.
-              </p>
-              <div className="flex flex-wrap justify-end gap-3">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => setAssignmentBooking(null)}
-                  disabled={isSavingAssignment}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  variant="primary"
-                  onClick={() => void saveBookingAllocation()}
-                  disabled={isLoadingAssignment || isSavingAssignment || (
-                    !assignmentBooking.sizes.some((line) =>
-                      plannedStockQuantity(line) > 0 || plannedWorkOrderQuantity(line) > 0,
-                    ) ||
-                    assignmentBooking.sizes.some((line) => plannedWorkOrderQuantity(line) > 0) &&
-                    !selectedAssignmentWorkOrder
-                  ) || assignmentBooking.sizes.some((line) => {
-                    const workOrderLine = matchingWorkOrderSizeLine(selectedAssignmentWorkOrder, line.size);
-                    return plannedWorkOrderQuantity(line) > (workOrderLine?.availableQuantity ?? 0);
-                  })}
-                >
-                  {isSavingAssignment ? "Saving allocation..." : "Save Allocation"}
-                </Button>
-              </div>
-            </div>
-          </div>
-        ) : null}
-      </Modal>
+          selectedContactId={selectedQuotationVendorId}
+          onContactChange={(contactId) => {
+            setSelectedQuotationVendorId(contactId);
+            setError("");
+          }}
+          contacts={currentAllContactVendors}
+          isLoadingContacts={isLoadingAllContacts}
+          contactsError={allContactsError}
+          onRetry={() => void loadAllContacts(contactLookupSearch)}
+          error={error}
+          onSubmit={() => void createQuotationFromSelectedBookings(selectedReportBookings)}
+          onClose={() => setIsQuotationVendorModalOpen(false)}
+        />
+      ) : null}
+      {assignmentBooking ? (
+        <AdvanceBookingAllocationDialog
+          booking={assignmentBooking}
+          assignableWorkOrders={assignableWorkOrders}
+          selectedWorkOrder={selectedAssignmentWorkOrder}
+          selectedWorkOrderId={selectedAssignmentWorkOrderId}
+          isLoading={isLoadingAssignment}
+          isSaving={isSavingAssignment}
+          allocationPlan={allocationPlan}
+          error={assignmentError}
+          plannedStockQuantity={plannedStockQuantity}
+          plannedWorkOrderQuantity={plannedWorkOrderQuantity}
+          matchingWorkOrderSizeLine={matchingWorkOrderSizeLine}
+          onWorkOrderChange={(workOrderId) => {
+            setSelectedAssignmentWorkOrderId(workOrderId);
+            setAssignmentError("");
+          }}
+          onAllocationPlanChange={setAllocationPlan}
+          onClose={() => setAssignmentBooking(null)}
+          onSave={() => void saveBookingAllocation()}
+        />
+      ) : null}
       <Modal
         open={showDeleteBookingsConfirmation}
         onClose={() => {

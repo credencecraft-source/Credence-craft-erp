@@ -13,7 +13,8 @@ const mocks = vi.hoisted(() => ({
     advanceBooking: { findMany: vi.fn() },
     contact: { findFirst: vi.fn(), findMany: vi.fn() },
     masterVendor: { findFirst: vi.fn(), findMany: vi.fn() },
-    distributionOrderForm: { findMany: vi.fn(), updateMany: vi.fn() },
+    distributionOrderForm: { findMany: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
+    auditEvent: { createMany: vi.fn() },
     contactDistributorDealerAssignment: { findMany: vi.fn() },
     contactRoleAssignment: { findMany: vi.fn() },
     contactRoleSetting: { findMany: vi.fn() },
@@ -34,6 +35,7 @@ import {
   createDistributionMasterQuotations,
   createDistributionQuotationFromBookings,
   deleteDistributionQuotation,
+  deleteDistributionOrderForms,
   deleteDistributionQuotations,
   getDistributionQuotation,
   listDistributionOrderForms,
@@ -114,6 +116,8 @@ describe("distribution quotation persistence", () => {
     mocks.transaction.contact.findMany.mockResolvedValue([]);
     mocks.transaction.distributionOrderForm.findMany.mockResolvedValue([]);
     mocks.transaction.distributionOrderForm.updateMany.mockResolvedValue({ count: 0 });
+    mocks.transaction.distributionOrderForm.deleteMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.auditEvent.createMany.mockResolvedValue({ count: 1 });
     mocks.transaction.contactDistributorDealerAssignment.findMany.mockResolvedValue([]);
     mocks.transaction.contactRoleAssignment.findMany.mockResolvedValue([]);
     mocks.transaction.contactRoleSetting.findMany.mockResolvedValue([]);
@@ -185,6 +189,7 @@ describe("distribution quotation persistence", () => {
 
     const result = await listDistributionOrderForms("internal-org-1");
 
+    expect(mocks.prisma.distributionOrderForm.findMany.mock.calls[0][0].select).not.toHaveProperty("lines");
     expect(mocks.prisma.masterVendor.findMany).toHaveBeenCalledWith({
       where: { organization_id: "internal-org-1", id: { in: ["vendor-1"] } },
       select: { id: true, contact_id: true },
@@ -197,7 +202,82 @@ describe("distribution quotation persistence", () => {
         role: { is_active: true },
       }),
     }));
-    expect(result.map((form) => form.contactRole)).toEqual(["Customer", "Dealer"]);
+    expect(result.orderForms.map((form) => form.contactRole)).toEqual(["Customer", "Dealer"]);
+    expect(result.nextCursor).toBeNull();
+    expect(mocks.prisma.distributionOrderForm.findMany.mock.calls[0][0]).toMatchObject({
+      where: { organization_id: "internal-org-1", status: "DRAFT" },
+      take: 101,
+      orderBy: [{ order_form_date: "desc" }, { created_at: "desc" }, { id: "desc" }],
+    });
+  });
+
+  it("limits Order Form report pages and returns a stable keyset cursor", async () => {
+    const orderFormDate = new Date("2026-10-07T00:00:00.000Z");
+    const createdAt = new Date("2026-10-07T12:00:00.000Z");
+    mocks.prisma.distributionOrderForm.findMany.mockResolvedValue(
+      Array.from({ length: 101 }, (_, index) => ({
+        id: `form-${index}`,
+        order_form_no: `OF-${index}`,
+        order_form_date: orderFormDate,
+        customer: "Customer",
+        contact_id: null,
+        vendor_id: null,
+        status: "DRAFT",
+        quotation_id: null,
+        total_quantity: 1,
+        subtotal: new Prisma.Decimal("1.00"),
+        created_at: createdAt,
+      })),
+    );
+
+    const result = await listDistributionOrderForms("internal-org-1");
+
+    expect(result.orderForms).toHaveLength(100);
+    expect(result.nextCursor).toBeTruthy();
+    expect(JSON.parse(Buffer.from(result.nextCursor!, "base64url").toString("utf8"))).toEqual({
+      id: "form-99",
+      date: orderFormDate.toISOString(),
+      createdAt: createdAt.toISOString(),
+    });
+  });
+
+  it("applies Order Form cursors inside the authorized organization query", async () => {
+    const cursor = Buffer.from(JSON.stringify({
+      id: "form-previous",
+      date: "2026-10-07T00:00:00.000Z",
+      createdAt: "2026-10-07T12:00:00.000Z",
+    })).toString("base64url");
+    mocks.prisma.distributionOrderForm.findMany.mockResolvedValue([]);
+
+    await listDistributionOrderForms("internal-org-1", cursor);
+
+    expect(mocks.prisma.distributionOrderForm.findMany.mock.calls[0][0].where).toEqual({
+      organization_id: "internal-org-1",
+      status: "DRAFT",
+      OR: [
+        { order_form_date: { lt: new Date("2026-10-07T00:00:00.000Z") } },
+        {
+          order_form_date: new Date("2026-10-07T00:00:00.000Z"),
+          created_at: { lt: new Date("2026-10-07T12:00:00.000Z") },
+        },
+        {
+          order_form_date: new Date("2026-10-07T00:00:00.000Z"),
+          created_at: new Date("2026-10-07T12:00:00.000Z"),
+          id: { lt: "form-previous" },
+        },
+      ],
+    });
+  });
+
+  it("rejects malformed report cursors before querying", async () => {
+    await expect(listDistributionOrderForms("internal-org-1", "invalid cursor")).rejects.toThrow(
+      "The Distribution report page cursor is invalid.",
+    );
+    const encodedNull = Buffer.from("null").toString("base64url");
+    await expect(listDistributionOrderForms("internal-org-1", encodedNull)).rejects.toThrow(
+      "The Distribution report page cursor is invalid.",
+    );
+    expect(mocks.prisma.distributionOrderForm.findMany).not.toHaveBeenCalled();
   });
 
   it("keeps ordinary master sales order reads summary-only", async () => {
@@ -355,7 +435,11 @@ describe("distribution quotation persistence", () => {
     const result = await listDistributionQuotations("internal-org-1");
 
     expect(mocks.prisma.distributionQuotation.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { organization_id: "internal-org-1" },
+      where: {
+        organization_id: "internal-org-1",
+        mode: { not: "MASTER" },
+        parent_quotation_id: null,
+      },
       select: expect.objectContaining({
         id: true,
         quotation_no: true,
@@ -363,7 +447,7 @@ describe("distribution quotation persistence", () => {
         vendor_id: true,
         orderForms: expect.anything(),
       }),
-      take: 500,
+      take: 101,
     }));
     expect(mocks.prisma.distributionQuotation.findMany.mock.calls[0][0].select).not.toHaveProperty("lines");
     expect(mocks.prisma.masterVendor.findMany).toHaveBeenCalledWith({
@@ -386,6 +470,32 @@ describe("distribution quotation persistence", () => {
     });
     expect(result.quotations[1].contactRole).toBe("Customer");
     expect(result.quotations[0]).not.toHaveProperty("lines");
+  });
+
+  it("uses a minimal summary query when loading sales orders", async () => {
+    mocks.prisma.distributionQuotation.findMany.mockResolvedValue([{
+      ...createdQuotation,
+      vendor_id: "vendor-1",
+      _count: { childQuotations: 2 },
+    }]);
+
+    const result = await listDistributionQuotations("internal-org-1", { includeContactRole: false });
+
+    expect(mocks.prisma.distributionQuotation.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "internal-org-1", mode: "MASTER" },
+      select: expect.objectContaining({
+        id: true,
+        mode: true,
+        parent_quotation_id: true,
+        _count: { select: { childQuotations: true } },
+      }),
+      take: 101,
+    }));
+    expect(mocks.prisma.distributionQuotation.findMany.mock.calls[0][0].select).not.toHaveProperty("orderForms");
+    expect(mocks.prisma.masterVendor.findMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.contactRoleAssignment.findMany).not.toHaveBeenCalled();
+    expect(result.quotations[0]).toMatchObject({ id: "quotation-1", quotationNo: "QT-1", childCount: 2 });
+    expect(result.quotations[0].contactRole).toBe("");
   });
 
   it("creates a quotation transactionally and returns only fields needed by the creation screen", async () => {
@@ -1206,10 +1316,12 @@ describe("distribution quotation persistence", () => {
         parent_quotation_id: null,
       },
     }));
-    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
-      action: "DELETE_DISTRIBUTION_MASTER_QUOTATION",
-      entityId: "master-1",
-    }), mocks.transaction);
+    expect(mocks.transaction.auditEvent.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({
+        action: "DELETE_DISTRIBUTION_MASTER_QUOTATION",
+        entity_id: "master-1",
+      })],
+    });
   });
 
   it("requires deleting the master before a child and protects non-draft quotations", async () => {
@@ -1260,10 +1372,12 @@ describe("distribution quotation persistence", () => {
         parent_quotation_id: null,
       },
     }));
-    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
-      action: "DELETE_DISTRIBUTION_QUOTATION",
-      details: expect.objectContaining({ booking_nos: ["BK-1"] }),
-    }), mocks.transaction);
+    expect(mocks.transaction.auditEvent.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({
+        action: "DELETE_DISTRIBUTION_QUOTATION",
+        details: expect.objectContaining({ booking_nos: ["BK-1"] }),
+      })],
+    });
   });
 
   it("reopens converted order forms when deleting their draft quotation", async () => {
@@ -1303,12 +1417,14 @@ describe("distribution quotation persistence", () => {
       data: { quotation_id: null, status: "DRAFT" },
     });
     expect(mocks.transaction.distributionQuotation.deleteMany).toHaveBeenCalled();
-    expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
-      action: "REOPEN_DISTRIBUTION_ORDER_FORM",
-      entityType: "DistributionOrderForm",
-      entityId: "order-form-1",
-      details: expect.objectContaining({ previous_status: "CONVERTED", status: "DRAFT" }),
-    }), mocks.transaction);
+    expect(mocks.transaction.auditEvent.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({
+        action: "REOPEN_DISTRIBUTION_ORDER_FORM",
+        entity_type: "DistributionOrderForm",
+        entity_id: "order-form-1",
+        details: expect.objectContaining({ previous_status: "CONVERTED", status: "DRAFT" }),
+      })],
+    });
   });
 
   it("does not delete a quotation linked to an order form in another lifecycle state", async () => {
@@ -1375,7 +1491,12 @@ describe("distribution quotation persistence", () => {
         parent_quotation_id: null,
       },
     }));
-    expect(mocks.createAuditEvent).toHaveBeenCalledTimes(2);
+    expect(mocks.transaction.auditEvent.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({ entity_id: "quote-1" }),
+        expect.objectContaining({ entity_id: "quote-2" }),
+      ]),
+    });
   });
 
   it("deletes selected sales orders and unlinks, but does not delete, their regular quotations", async () => {
@@ -1508,6 +1629,98 @@ describe("distribution quotation persistence", () => {
   it("rejects duplicate IDs before opening a transaction", async () => {
     await expect(deleteDistributionQuotations("internal-org-1", "user-1", ["quote-1", "quote-1"]))
       .rejects.toThrow("unique quotations");
+
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("deletes unconverted draft Order Forms atomically and audits each record", async () => {
+    mocks.transaction.distributionOrderForm.findMany.mockResolvedValue([
+      {
+        id: "order-form-1",
+        order_form_no: "OF-1",
+        quotation_id: null,
+        status: "DRAFT",
+        lines: [{ booking_no: "BK-1" }],
+      },
+      {
+        id: "order-form-2",
+        order_form_no: "OF-2",
+        quotation_id: null,
+        status: "DRAFT",
+        lines: [{ booking_no: "BK-2" }],
+      },
+    ]);
+    mocks.transaction.distributionOrderForm.deleteMany.mockResolvedValue({ count: 2 });
+
+    const result = await deleteDistributionOrderForms(
+      "internal-org-1",
+      "user-1",
+      ["order-form-1", "order-form-2"],
+    );
+
+    expect(result).toEqual([
+      { id: "order-form-1", orderFormNo: "OF-1" },
+      { id: "order-form-2", orderFormNo: "OF-2" },
+    ]);
+    expect(mocks.transaction.distributionOrderForm.findMany).toHaveBeenCalledWith({
+      where: { organization_id: "internal-org-1", id: { in: ["order-form-1", "order-form-2"] } },
+      select: expect.objectContaining({ lines: { select: { booking_no: true } } }),
+    });
+    expect(mocks.transaction.distributionOrderForm.deleteMany).toHaveBeenCalledWith({
+      where: {
+        organization_id: "internal-org-1",
+        id: { in: ["order-form-1", "order-form-2"] },
+        status: "DRAFT",
+        quotation_id: null,
+      },
+    });
+    expect(mocks.transaction.auditEvent.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          action: "DELETE_DISTRIBUTION_ORDER_FORM",
+          entity_id: "order-form-1",
+          details: expect.objectContaining({ booking_nos: ["BK-1"] }),
+        }),
+        expect.objectContaining({
+          action: "DELETE_DISTRIBUTION_ORDER_FORM",
+          entity_id: "order-form-2",
+          details: expect.objectContaining({ booking_nos: ["BK-2"] }),
+        }),
+      ]),
+    });
+    expect(mocks.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    }));
+  });
+
+  it("rejects converted Order Forms without deleting any selected form", async () => {
+    mocks.transaction.distributionOrderForm.findMany.mockResolvedValue([{
+      id: "order-form-1",
+      order_form_no: "OF-1",
+      quotation_id: "quote-1",
+      status: "CONVERTED",
+      lines: [],
+    }]);
+
+    await expect(deleteDistributionOrderForms("internal-org-1", "user-1", ["order-form-1"]))
+      .rejects.toThrow("Only unconverted draft Order Forms can be deleted");
+
+    expect(mocks.transaction.distributionOrderForm.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.auditEvent.createMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing or cross-organization Order Form in a bulk selection", async () => {
+    mocks.transaction.distributionOrderForm.findMany.mockResolvedValue([]);
+
+    await expect(deleteDistributionOrderForms("internal-org-1", "user-1", ["order-form-1"]))
+      .rejects.toThrow("not found in this organization");
+
+    expect(mocks.transaction.distributionOrderForm.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate Order Form IDs before opening a transaction", async () => {
+    await expect(deleteDistributionOrderForms("internal-org-1", "user-1", ["order-form-1", "order-form-1"]))
+      .rejects.toThrow("unique Order Forms");
 
     expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
   });

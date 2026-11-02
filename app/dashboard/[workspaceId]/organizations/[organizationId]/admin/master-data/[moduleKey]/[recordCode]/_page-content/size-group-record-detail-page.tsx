@@ -5,7 +5,7 @@ import {
   getMasterValuesForOrganization,
   getSizeGroupSizesForOrganization,
 } from "@/lib/master-data/master-data-constants";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
 import { updateMasterValueAction } from "@/app/dashboard/[workspaceId]/organizations/[organizationId]/settings/master-data/[moduleKey]/master-data-editor-page";
 import SizeGroupRecordEditor from "./size-group-record-editor";
 
@@ -27,9 +27,8 @@ export default async function SizeGroupRecordDetailPage({
   if (!user.workspace_id) redirect("/");
   if (user.workspace_id !== workspaceId) notFound();
 
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
   if (!organization) notFound();
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const [records, referenceData] = await Promise.all([
     getMasterValuesForOrganization(organization.id, "size-group", true, {

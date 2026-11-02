@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useFormStatus } from "react-dom";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Settings2 } from "lucide-react";
@@ -11,7 +12,6 @@ import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
-import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import type { MasterRecordsImportAction } from "@/components/master-data/master-records-excel-actions";
@@ -26,6 +26,8 @@ import {
   loadQuickCreateLookupOptions,
   type QuickCreateLookupOption,
 } from "@/lib/master-data/quick-create-lookup-options";
+
+const Modal = dynamic(() => import("@/components/ui/Modal"), { ssr: false });
 
 type MasterLookupOption = QuickCreateLookupOption;
 type MasterSelectOption = { value: string; label: string };
@@ -322,10 +324,8 @@ export function MasterRecordsTable({
   saved,
 }: MasterRecordsTableProps) {
   const router = useRouter();
-  const [editingRecord, setEditingRecord] = useState<MasterRecord | null>(() => formMode === "edit" ? initialRecord ?? null : null);
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
   const [deleteDialog, setDeleteDialog] = useState<{ kind: "single"; record: MasterRecord } | { kind: "selected" } | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
   const [createFields, setCreateFields] = useState<Record<string, unknown>>(() => Object.fromEntries(fields.map((field) => [
     field.key,
     field.initialValue ?? (field.type === "checkbox" ? false : field.multiple ? [] : ""),
@@ -557,16 +557,6 @@ export function MasterRecordsTable({
   const openLegacyEditor = useCallback((record: MasterRecord) => {
     router.push(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}/${encodeURIComponent(record.value_id)}`);
   }, [moduleKey, organizationId, router, workspaceId]);
-
-  const closeEditor = () => {
-    setEditingRecord(null);
-    setEditFields({});
-  };
-
-  const closeCreateModal = () => {
-    setShowCreateModal(false);
-    setCreateFields({});
-  };
 
   const openQuickMaster = async (masterKey: string, target: QuickMasterTarget) => {
     const definition = getMasterDefinition(masterKey);
@@ -958,8 +948,8 @@ export function MasterRecordsTable({
           />
       );
     if (field.type === "lookup") {
-      const selectedValue = field.multiple && value === undefined && editingRecord
-        ? childRecords.filter((item) => item.parentId === editingRecord.id || item.parentId === editingRecord.value_id).map((item) => item.label)
+      const selectedValue = field.multiple && value === undefined && initialRecord
+        ? childRecords.filter((item) => item.parentId === initialRecord.id || item.parentId === initialRecord.value_id).map((item) => item.label)
         : value;
       const options = getLookupOptions(field, values);
       if (field.multiple) {
@@ -1199,8 +1189,8 @@ export function MasterRecordsTable({
       const childFields = field.childFields ?? [];
       const childValues = Array.isArray(value)
         ? value.map((item) => typeof item === "object" && item !== null ? item : { [childFields[0]?.key ?? "value"]: String(item ?? "") })
-        : editingRecord
-          ? childRecords.filter((item) => item.parentId === editingRecord.id || item.parentId === editingRecord.value_id).map((item) => ({ ...(item.fields ?? { [childFields[0]?.key ?? "value"]: item.label }), ...(item.id ? { id: item.id } : {}) }))
+        : initialRecord
+          ? childRecords.filter((item) => item.parentId === initialRecord.id || item.parentId === initialRecord.value_id).map((item) => ({ ...(item.fields ?? { [childFields[0]?.key ?? "value"]: item.label }), ...(item.id ? { id: item.id } : {}) }))
           : [{}];
       const normalizedValues = childValues.length > 0 ? childValues as Array<Record<string, unknown>> : [{}];
       return (
@@ -1637,6 +1627,7 @@ export function MasterRecordsTable({
         newActionLabel="+ Add Record"
         renderCell={renderReportCell}
         getSearchValue={getReportSearchValue}
+        searchMinLength={3}
         displayMode={moduleKey === "price-list" ? "cards" : "table"}
         emptyMessage={`No ${moduleLabel.toLowerCase()} records found.`}
       />
@@ -1683,59 +1674,18 @@ export function MasterRecordsTable({
         </div>
       </Modal>
 
-      {/* CREATE MODAL */}
-      {showCreateModal && (
-        <div className="erp-popup-backdrop">
-          <div className={`erp-popup-panel flex h-[calc(100dvh-1.5rem)] max-h-[56rem] ${moduleKey === "raw-material" ? "w-[min(96vw,72rem)]" : moduleKey === "article" ? "w-[min(96vw,82rem)]" : "w-[min(96vw,90rem)]"} max-w-none flex-col space-y-4 p-5`}>
-            <div className={`flex min-w-0 justify-between gap-4 border-b pb-3 ${moduleKey === "article" ? "items-start border-slate-200" : "items-center border-slate-100"}`}>
-              <div className="min-w-0">
-                {moduleKey === "article" ? <p className="erp-eyebrow">Article master</p> : null}
-                <h3 className={moduleKey === "article" ? "mt-1 text-lg font-semibold text-slate-900" : "text-sm font-bold text-slate-900"}>Add New {moduleLabel}</h3>
-                {moduleKey === "article" ? <p className="mt-1 text-sm text-slate-500">Enter article details and configure its color variants.</p> : null}
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={`Close add ${moduleLabel} form`}
-                onClick={closeCreateModal}
-              >
-                ✕
-              </Button>
-            </div>
-            <form action={createAction} className="flex min-h-0 flex-1 flex-col space-y-4">
-              <input type="hidden" name="workspaceId" value={workspaceId} />
-              <input type="hidden" name="organizationId" value={organizationId} />
-              <input type="hidden" name="moduleKey" value={moduleKey} />
-
-              <div className={`grid min-h-0 flex-1 grid-cols-1 content-start gap-x-6 gap-y-4 overflow-y-auto pr-2 ${moduleKey === "raw-material" ? "sm:grid-cols-2" : moduleKey === "article" ? "sm:grid-cols-2 xl:grid-cols-4" : "sm:grid-cols-2 xl:grid-cols-3"}`}>
-                {orderedFields.map((field) => shouldHideRawMaterialField(field.key, createFields)
-                  ? null
-                  : moduleKey === "raw-material" && rawMaterialShowAllFieldKeys.has(field.key) && createFields.Show_All1 !== true
-                    ? <input key={field.key} type="hidden" name={`field_${field.key}`} value={String(createFields[field.key] ?? "")} />
-                    : renderField(field, createFields, setCreateFields, moduleKey === "article"))}
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={closeCreateModal}
-                >
-                  Cancel
-                </Button>
-                <SubmitButton>Save Record</SubmitButton>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {currentQuickMaster && (
-        <div className="erp-popup-backdrop">
-          <div className="erp-popup-panel flex max-h-[calc(100dvh-2rem)] w-[min(96vw,48rem)] max-w-none flex-col space-y-4 p-5">
+        <Modal
+          open
+          onClose={closeQuickMaster}
+          ariaLabelledBy="master-quick-create-title"
+          size="rectangle"
+        >
+          <div className="space-y-4 p-6">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900">Add New {getMasterDefinition(currentQuickMaster)?.label ?? "Master"}</h3>
+              <h2 id="master-quick-create-title" className="text-lg font-semibold text-[var(--erp-text)]">
+                Add New {getMasterDefinition(currentQuickMaster)?.label ?? "Master"}
+              </h2>
               <Button type="button" variant="ghost" size="sm" onClick={closeQuickMaster}>✕</Button>
             </div>
             {isLoadingQuickMasterOptions ? (
@@ -1759,51 +1709,7 @@ export function MasterRecordsTable({
               </Button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* EDIT MODAL */}
-      {editingRecord && (
-        <div className="erp-popup-backdrop">
-          <div className={`erp-popup-panel ${moduleKey === "raw-material" ? "flex h-[calc(100dvh-1.5rem)] max-h-[56rem] w-[min(96vw,72rem)] max-w-none flex-col" : "w-full max-w-lg"} space-y-4 p-5`}>
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900">Edit: {editingRecord.label}</h3>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={closeEditor}
-              >
-                ✕
-              </Button>
-            </div>
-            <form action={updateAction} className={moduleKey === "raw-material" ? "flex min-h-0 flex-1 flex-col space-y-4" : "space-y-4"}>
-              <input type="hidden" name="workspaceId" value={workspaceId} />
-              <input type="hidden" name="organizationId" value={organizationId} />
-              <input type="hidden" name="moduleKey" value={moduleKey} />
-              <input type="hidden" name="valueId" value={editingRecord.value_id} />
-
-              <div className={moduleKey === "raw-material" ? "grid min-h-0 flex-1 grid-cols-1 content-start gap-x-6 gap-y-4 overflow-y-auto pr-2 sm:grid-cols-2" : "max-h-96 space-y-3 overflow-y-auto pr-1"}>
-                {orderedFields.map((field) => shouldHideRawMaterialField(field.key, editFields)
-                  ? null
-                  : moduleKey === "raw-material" && rawMaterialShowAllFieldKeys.has(field.key) && editFields.Show_All1 !== true
-                    ? <input key={field.key} type="hidden" name={`field_${field.key}`} value={String(editFields[field.key] ?? "")} />
-                    : renderField(field, editFields, setEditFields))}
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={closeEditor}
-                >
-                  Cancel
-                </Button>
-                <SubmitButton>Save Changes</SubmitButton>
-              </div>
-            </form>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

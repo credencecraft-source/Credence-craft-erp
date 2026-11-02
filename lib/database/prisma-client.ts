@@ -1,5 +1,9 @@
 import { PrismaClient } from "@prisma/client";
 import { isDatabaseUnavailableError } from "@/lib/database/database-errors";
+import {
+  isDatabaseQueryTimingEnabled,
+  recordDatabaseQueryDuration,
+} from "@/lib/database/prisma-query-timing";
 
 // ERP rule: transient database blips should not add multi-second user-facing latency
 // to every button click across the application. Keep retries bounded and fail fast.
@@ -47,12 +51,16 @@ function createPrismaClient(): PrismaClient {
           && process.env.ERP_LOOKUP_QUERY_TIMING === "1"
           && model !== null
           && (model.toLowerCase().startsWith("master")
+            || model.startsWith("Contact")
             || model === "Organization"
+            || model === "AuditEvent"
             || model === "OrganizationDummyDataBatch");
-        const startedAt = shouldProfile ? performance.now() : 0;
+        const shouldMeasure = shouldProfile || isDatabaseQueryTimingEnabled();
+        const startedAt = shouldMeasure ? performance.now() : 0;
         try {
           return await withConnectionRetry(() => query(args), { runInTransaction });
         } finally {
+          if (shouldMeasure) recordDatabaseQueryDuration(performance.now() - startedAt);
           if (shouldProfile && model) {
             console.info(
               `[Prisma lookup query] ${model}.${context.operation} ${(performance.now() - startedAt).toFixed(1)}ms`,

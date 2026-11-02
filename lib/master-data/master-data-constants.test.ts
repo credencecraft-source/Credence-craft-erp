@@ -113,6 +113,16 @@ describe("organization master record queries", () => {
     });
     expect(models.masterModuleValue.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { module_id: "org-channel-module", is_active: true },
+      select: {
+        id: true,
+        value_id: true,
+        label: true,
+        code: true,
+        description: true,
+        is_active: true,
+        metadata: true,
+        parent_id: true,
+      },
     }));
     expect(values).toEqual([expect.objectContaining({
       id: "channel-id",
@@ -149,6 +159,16 @@ describe("organization master record queries", () => {
           { code: { equals: "web", mode: "insensitive" } },
         ]),
       }),
+      select: {
+        id: true,
+        value_id: true,
+        label: true,
+        code: true,
+        description: true,
+        is_active: true,
+        metadata: true,
+        parent_id: true,
+      },
       take: 2,
     }));
     expect(values).toEqual([expect.objectContaining({

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
         return { id: `contact-${code}` };
       }),
       findMany: vi.fn(),
+      count: vi.fn(),
       findFirst: vi.fn(() => ({
         id: `contact-${code}`,
         code,
@@ -43,12 +44,13 @@ const mocks = vi.hoisted(() => {
   return {
     tx,
     createAuditEvent,
+    queryRaw: vi.fn(),
     transaction: vi.fn((callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
   };
 });
 
 vi.mock("@/lib/database/prisma-client", () => ({
-  prisma: { $transaction: mocks.transaction, contact: mocks.tx.contact },
+  prisma: { $transaction: mocks.transaction, $queryRaw: mocks.queryRaw, contact: mocks.tx.contact },
 }));
 vi.mock("@/lib/auth/secret-cryptography", () => ({ encryptSecret: vi.fn() }));
 vi.mock("@/lib/services/organizations/audit-event-service", () => ({
@@ -60,7 +62,10 @@ import {
   deactivateContacts,
   deleteUnusedContacts,
   getContact,
+  getContactCount,
+  getContactRoleCounts,
   listContacts,
+  listContactReportPage,
   listContactLookupOptions,
   updateContact,
 } from "./contact-master-service";
@@ -89,6 +94,15 @@ describe("contact master numbering", () => {
     mocks.tx.masterBuyer.count.mockResolvedValue(0);
     mocks.tx.purchaseOrder.count.mockResolvedValue(0);
     mocks.tx.merchandisingOrder.count.mockResolvedValue(0);
+    mocks.queryRaw.mockResolvedValue([{
+      total: BigInt(0),
+      uncategorized: BigInt(0),
+      customer: BigInt(0),
+      vendor: BigInt(0),
+      agent: BigInt(0),
+      distributor: BigInt(0),
+      dealer: BigInt(0),
+    }]);
     mocks.tx.contact.create.mockImplementation((args) => {
       const created = args.data.code;
       mocks.tx.contact.findFirst.mockImplementation(() => ({
@@ -177,6 +191,34 @@ describe("contact master numbering", () => {
       expect.any(Function),
       { maxWait: 10000, timeout: 30000 },
     );
+    expect(mocks.tx.contact.findFirst).toHaveBeenCalledTimes(2);
+  });
+
+  it("avoids reloading the full contact graph for a phone-only update", async () => {
+    const updated = await updateContact("org-1", "user-1", "contact-CT1", {
+      phone: "9990000000",
+    });
+
+    if (!updated) throw new Error("Expected the contact update to succeed.");
+    expect(updated).toMatchObject({ id: expect.any(String), phone: "9990000000" });
+    expect(Object.keys(updated).sort()).toEqual(["id", "phone"]);
+    expect(mocks.tx.contact.findFirst).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.contact.updateMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-1", id: expect.any(String) },
+      data: { phone: "9990000000" },
+    });
+    expect(mocks.createAuditEvent).toHaveBeenCalledOnce();
+  });
+
+  it("does not query unchanged contact sections when saving bank-account-only changes", async () => {
+    await updateContact("org-1", "user-1", "contact-CT1", { bankAccounts: [] });
+
+    expect(mocks.tx.contact.updateMany).not.toHaveBeenCalled();
+    expect(mocks.tx.contactRoleAssignment.findMany).not.toHaveBeenCalled();
+    expect(mocks.tx.contactTaxRegistration.findMany).not.toHaveBeenCalled();
+    expect(mocks.tx.contactAddress.findMany).not.toHaveBeenCalled();
+    expect(mocks.tx.masterVendor.findFirst).not.toHaveBeenCalled();
+    expect(mocks.tx.masterBuyer.findFirst).not.toHaveBeenCalled();
   });
 
   it("allows removing a role from an already-conflicting contact", async () => {
@@ -292,6 +334,94 @@ describe("contact master numbering", () => {
       orderBy: [{ legal_name: "asc" }, { id: "asc" }],
       skip: 200,
       take: 200,
+    }));
+  });
+
+  it("does not build substring filters for contact searches shorter than three characters", async () => {
+    mocks.tx.contact.findMany.mockResolvedValue([]);
+
+    await listContacts("org-1", " AB ");
+    expect(mocks.tx.contact.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { organization_id: "org-1" },
+    }));
+
+    await listContactLookupOptions("org-1", undefined, { search: " A " });
+    expect(mocks.tx.contact.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { organization_id: "org-1" },
+    }));
+  });
+
+  it("filters a bounded contact report page by the selected active role", async () => {
+    mocks.tx.contact.findMany.mockResolvedValue([]);
+
+    await listContacts("org-1", undefined, undefined, {
+      skip: 100,
+      take: 100,
+      roleCode: "DISTRIBUTOR",
+    });
+
+    expect(mocks.tx.contact.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "org-1",
+        roles: { some: { role_code: "DISTRIBUTOR", is_active: true } },
+      },
+      skip: 100,
+      take: 100,
+    }));
+  });
+
+  it("loads a bounded report projection and uses one extra row to detect more pages", async () => {
+    const records = Array.from({ length: 3 }, (_, index) => ({ id: `contact-${index}`, code: `CT${index}` }));
+    mocks.tx.contact.findMany.mockResolvedValue(records);
+
+    await expect(listContactReportPage("org-1", undefined, undefined, { skip: 100, take: 2 }))
+      .resolves.toEqual({ records: records.slice(0, 2), hasMore: true });
+
+    expect(mocks.tx.contact.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-1" },
+      orderBy: [{ legal_name: "asc" }, { id: "asc" }],
+      skip: 100,
+      take: 3,
+      select: expect.objectContaining({
+        id: true,
+        code: true,
+        roles: expect.objectContaining({ select: { role_code: true } }),
+        tax_registrations: { select: { gstin: true } },
+        addresses: { where: { is_active: true }, select: { id: true } },
+        bank_accounts: { where: { is_active: true }, select: { id: true } },
+      }),
+    }));
+    expect(mocks.queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("counts role-filtered records and organization role totals", async () => {
+    mocks.tx.contact.count.mockResolvedValue(0);
+
+    await getContactCount("org-1", undefined, "__UNCATEGORIZED__");
+    expect(mocks.tx.contact.count).toHaveBeenCalledWith({
+      where: { organization_id: "org-1", roles: { none: { is_active: true } } },
+    });
+
+    mocks.queryRaw.mockResolvedValue([{
+      total: BigInt(3),
+      uncategorized: BigInt(1),
+      customer: BigInt(2),
+      vendor: BigInt(1),
+      agent: BigInt(0),
+      distributor: BigInt(1),
+      dealer: BigInt(1),
+    }]);
+    await expect(getContactRoleCounts("org-1")).resolves.toEqual({
+      total: 3,
+      uncategorized: 1,
+      CUSTOMER: 2,
+      VENDOR: 1,
+      AGENT: 0,
+      DISTRIBUTOR: 1,
+      DEALER: 1,
+    });
+    expect(mocks.queryRaw).toHaveBeenCalledWith(expect.objectContaining({
+      values: ["org-1"],
     }));
   });
 

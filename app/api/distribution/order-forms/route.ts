@@ -3,20 +3,40 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
+import { measureDatabaseQueries } from "@/lib/database/prisma-query-timing";
 import {
   createDistributionOrderFormFromBookings,
+  deleteDistributionOrderForms,
   listDistributionOrderForms,
 } from "@/lib/services/distribution/quotation-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function GET(request: Request) {
   try {
-    const user = await requireSessionUser();
-    const organization = await requireOrganizationContext(
-      user.id,
-      new URL(request.url).searchParams.get("organizationId") ?? "",
-    );
-    return NextResponse.json({ orderForms: await listDistributionOrderForms(organization.id) });
+    const url = new URL(request.url);
+    const authorization = await measureDatabaseQueries(async () => {
+      const user = await requireSessionUser();
+      const organization = await requireOrganizationContext(
+        user.id,
+        url.searchParams.get("organizationId") ?? "",
+      );
+      return organization.id;
+    });
+    const list = await measureDatabaseQueries(() => listDistributionOrderForms(
+      authorization.value,
+      url.searchParams.get("cursor") ?? undefined,
+    ));
+    const response = NextResponse.json(list.value);
+    if (process.env.NODE_ENV === "development") {
+      response.headers.set("Server-Timing", [
+        `auth;dur=${authorization.durationMs.toFixed(1)}`,
+        `authdb;dur=${authorization.databaseDurationMs.toFixed(1)}`,
+        `list;dur=${list.durationMs.toFixed(1)}`,
+        `listdb;dur=${list.databaseDurationMs.toFixed(1)}`,
+        `listqueries;desc="${list.queryCount}"`,
+      ].join(", "));
+    }
+    return response;
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to load Order Forms." },
@@ -60,6 +80,53 @@ export async function POST(request: Request) {
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to create the Order Form." },
+      { status: 400 },
+    );
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const user = await requireSessionUser();
+    const body = await request.json() as Record<string, unknown>;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new Error("Submit a valid bulk Order Form deletion request.");
+    }
+    if (typeof body.organizationId !== "string" || !body.organizationId.trim()) {
+      throw new Error("Select the organization for these Order Form deletions.");
+    }
+    const orderFormIds = body.orderFormIds;
+    if (
+      !Array.isArray(orderFormIds) ||
+      orderFormIds.length === 0 ||
+      orderFormIds.length > 500 ||
+      !orderFormIds.every((id): id is string => typeof id === "string")
+    ) {
+      throw new Error("Select between one and 500 Order Forms to delete.");
+    }
+    const organization = await requireOrganizationContext(
+      user.id,
+      body.organizationId,
+      ["OWNER", "ADMIN", "MERCHANDISING"],
+    );
+    const deleted = await deleteDistributionOrderForms(
+      organization.id,
+      user.id,
+      orderFormIds,
+    );
+    return NextResponse.json({ deleted });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2021", "P2022"].includes(error.code)) {
+      return NextResponse.json({ error: "Order Forms are unavailable until their database migration is deployed." }, { status: 503 });
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2003", "P2034"].includes(error.code)) {
+      return NextResponse.json({ error: "Order Form data changed while processing. Reload and try again." }, { status: 409 });
+    }
+    if (isDatabaseUnavailableError(error)) {
+      return NextResponse.json({ error: DATABASE_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to delete the selected Order Forms." },
       { status: 400 },
     );
   }

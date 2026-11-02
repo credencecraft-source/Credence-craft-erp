@@ -6,7 +6,9 @@ const prismaCounterMock = vi.hoisted(() => ({
   orderFindFirst: vi.fn(),
   orderFindMany: vi.fn(),
   bookingFindMany: vi.fn(),
+  workOrderFindMany: vi.fn(),
   factoryGrnFindMany: vi.fn(),
+  generalStockReceiptFindMany: vi.fn(),
   orderDeleteMany: vi.fn(),
   createAuditEvent: vi.fn(),
   articleFindMany: vi.fn(),
@@ -31,7 +33,11 @@ vi.mock("@/lib/database/prisma-client", () => ({
       deleteMany: prismaCounterMock.orderDeleteMany,
     },
     advanceBooking: { findMany: prismaCounterMock.bookingFindMany },
+    factoryWorkOrder: { findMany: prismaCounterMock.workOrderFindMany },
     factoryGrn: { findMany: prismaCounterMock.factoryGrnFindMany },
+    finishedGoodsGeneralStockReceipt: {
+      findMany: prismaCounterMock.generalStockReceiptFindMany,
+    },
     masterArticle: {
       findMany: prismaCounterMock.articleFindMany,
     },
@@ -163,7 +169,9 @@ describe("deleteOrders", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     prismaCounterMock.bookingFindMany.mockResolvedValue([]);
+    prismaCounterMock.workOrderFindMany.mockResolvedValue([]);
     prismaCounterMock.factoryGrnFindMany.mockResolvedValue([]);
+    prismaCounterMock.generalStockReceiptFindMany.mockResolvedValue([]);
     prismaCounterMock.orderDeleteMany.mockResolvedValue({ count: 1 });
     prismaCounterMock.createAuditEvent.mockResolvedValue({});
   });
@@ -184,14 +192,41 @@ describe("deleteOrders", () => {
       select: { booking_no: true },
       take: 6,
     });
+    expect(prismaCounterMock.workOrderFindMany).not.toHaveBeenCalled();
     expect(prismaCounterMock.factoryGrnFindMany).not.toHaveBeenCalled();
     expect(prismaCounterMock.orderDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("blocks deleting orders linked to work orders before checking GRNs or stock receipts", async () => {
+    prismaCounterMock.workOrderFindMany.mockResolvedValueOnce([
+      { work_order_no: "WO-100" },
+    ]);
+
+    await expect(deleteOrders(["order-1"], "org-1", "user-1"))
+      .rejects.toThrow(
+        "These orders cannot be deleted because work order(s) are created for them. Delete the related work orders first before deleting the order.",
+      );
+
+    expect(prismaCounterMock.workOrderFindMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-1", order_id: { in: ["order-1"] } },
+      select: { work_order_no: true },
+      take: 1,
+    });
+    expect(prismaCounterMock.factoryGrnFindMany).not.toHaveBeenCalled();
+    expect(prismaCounterMock.generalStockReceiptFindMany).not.toHaveBeenCalled();
+    expect(prismaCounterMock.orderDeleteMany).not.toHaveBeenCalled();
+    expect(prismaCounterMock.createAuditEvent).not.toHaveBeenCalled();
   });
 
   it("deletes tenant-scoped orders only when no booking or GRN dependency exists", async () => {
     await expect(deleteOrders(["order-1"], "org-1", "user-1"))
       .resolves.toEqual({ deletedCount: 1 });
 
+    expect(prismaCounterMock.generalStockReceiptFindMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-1", order_id: { in: ["order-1"] } },
+      select: { order_no: true },
+      take: 1,
+    });
     expect(prismaCounterMock.orderDeleteMany).toHaveBeenCalledWith({
       where: { id: { in: ["order-1"] }, organization_id: "org-1" },
     });
@@ -201,6 +236,25 @@ describe("deleteOrders", () => {
       action: "DELETE",
       entityType: "MerchandisingOrder",
     }));
+  });
+
+  it("blocks deleting orders linked to finished-goods general stock receipts", async () => {
+    prismaCounterMock.generalStockReceiptFindMany.mockResolvedValueOnce([
+      { order_no: "OD-100" },
+    ]);
+
+    await expect(deleteOrders(["order-1"], "org-1", "user-1"))
+      .rejects.toThrow(
+        "These orders cannot be deleted because finished goods general stock receipt records exist for them. Reverse or remove the related stock receipts first.",
+      );
+
+    expect(prismaCounterMock.generalStockReceiptFindMany).toHaveBeenCalledWith({
+      where: { organization_id: "org-1", order_id: { in: ["order-1"] } },
+      select: { order_no: true },
+      take: 1,
+    });
+    expect(prismaCounterMock.orderDeleteMany).not.toHaveBeenCalled();
+    expect(prismaCounterMock.createAuditEvent).not.toHaveBeenCalled();
   });
 
   it("returns a safe dependency message if a reference appears during deletion", async () => {
@@ -272,6 +326,107 @@ describe("reserveNextOrderNumbers", () => {
       }));
     });
 
+    it("applies server-side text search and column filters within the organization", async () => {
+      prismaCounterMock.orderFindMany.mockResolvedValue([]);
+      prismaCounterMock.articleFindMany.mockResolvedValue([]);
+      prismaCounterMock.articleVariantFindMany.mockResolvedValue([]);
+
+      await listOrdersPage("org-1", {
+        status: "Draft",
+        search: "Jacket",
+        filters: { buyer: { operator: "contains", value: "Acme" } },
+      });
+
+      expect(prismaCounterMock.orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          organization_id: "org-1",
+          finalStatus: "Draft",
+          AND: [
+            { OR: expect.arrayContaining([
+              { orderNo: { contains: "Jacket", mode: "insensitive" } },
+              { styleName: { contains: "Jacket", mode: "insensitive" } },
+            ]) },
+            { buyer: { contains: "Acme", mode: "insensitive" } },
+          ],
+        }),
+      }));
+      expect(prismaCounterMock.articleFindMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: {
+          organization_id: "org-1",
+          article_code: { contains: "Jacket", mode: "insensitive" },
+        },
+      }));
+    });
+
+    it("uses exact matching for numeric quantities and rejects text operators", async () => {
+      prismaCounterMock.orderFindMany.mockResolvedValue([]);
+
+      await listOrdersPage("org-1", {
+        filters: { orderQty: { operator: "is", value: "42" } },
+      });
+
+      expect(prismaCounterMock.orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ AND: [{ orderQty: 42 }] }),
+      }));
+      await expect(listOrdersPage("org-1", {
+        filters: { orderQty: { operator: "contains", value: "4" } },
+      })).rejects.toThrow("Order quantity filters support exact or empty matching only.");
+    });
+
+    it("filters server-side by computed article codes through tenant-scoped master data", async () => {
+      prismaCounterMock.orderFindMany.mockResolvedValue([]);
+      prismaCounterMock.articleFindMany.mockResolvedValue([{ article: "Jacket" }]);
+
+      await listOrdersPage("org-1", {
+        filters: { articleCode: { operator: "is", value: "AR-1" } },
+      });
+
+      expect(prismaCounterMock.articleFindMany).toHaveBeenCalledWith({
+        where: {
+          organization_id: "org-1",
+          article_code: { equals: "AR-1", mode: "insensitive" },
+        },
+        select: { article: true },
+      });
+      expect(prismaCounterMock.orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          organization_id: "org-1",
+          AND: [{ article: { in: ["Jacket"] } }],
+        }),
+      }));
+    });
+
+    it("uses a minimal order projection for the advance-booking selector", async () => {
+      prismaCounterMock.orderFindMany.mockResolvedValue([
+        {
+          id: "order-1",
+          orderNo: "OD-1",
+          created_at: new Date("2026-10-01T00:00:00.000Z"),
+          deliveryDate: null,
+        },
+      ]);
+
+      const page = await listOrdersPage("org-1", { purpose: "advance-booking" });
+
+      expect(prismaCounterMock.orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+        select: {
+          id: true,
+          orderNo: true,
+          entityName: true,
+          buyer: true,
+          brand: true,
+          styleName: true,
+          orderQty: true,
+          deliveryDate: true,
+          finalStatus: true,
+          created_at: true,
+        },
+      }));
+      expect(prismaCounterMock.articleFindMany).not.toHaveBeenCalled();
+      expect(prismaCounterMock.articleVariantFindMany).not.toHaveBeenCalled();
+      expect(page.orders[0]).toMatchObject({ orderNo: "OD-1", articleCode: null, variantCode: null });
+    });
+
     it("adds organization-scoped article codes to order rows", async () => {
       prismaCounterMock.orderFindMany.mockResolvedValue([
         {
@@ -309,7 +464,11 @@ describe("reserveNextOrderNumbers", () => {
         { id: "article-id", article: "Jacket", article_code: "AR4" },
       ]);
       prismaCounterMock.articleVariantFindMany.mockResolvedValue([
-        { article_id: "article-id", variant_code: "AR4-02", color: { organization_id: "org-1", colors: "Navy" } },
+        {
+          article: { id: "article-id", article: "Jacket" },
+          variant_code: "AR4-02",
+          color: { organization_id: "org-1", colors: "Navy" },
+        },
       ]);
 
       const page = await listOrdersPage("org-1");
@@ -317,11 +476,17 @@ describe("reserveNextOrderNumbers", () => {
       expect(prismaCounterMock.articleVariantFindMany).toHaveBeenCalledWith({
         where: {
           organization_id: "org-1",
-          article_id: { in: ["article-id"] },
-          color: { organization_id: "org-1" },
+          article: {
+            organization_id: "org-1",
+            article: { in: ["Jacket"] },
+          },
+          color: {
+            organization_id: "org-1",
+            colors: { in: ["Navy"], mode: "insensitive" },
+          },
         },
         select: {
-          article_id: true,
+          article: { select: { id: true, article: true } },
           variant_code: true,
           color: { select: { organization_id: true, colors: true } },
         },
@@ -331,6 +496,23 @@ describe("reserveNextOrderNumbers", () => {
         articleCode: "AR4",
         variantCode: "AR4-02",
       });
+    });
+
+    it("skips the variant lookup when page orders have no colors", async () => {
+      prismaCounterMock.orderFindMany.mockResolvedValue([{
+        id: "order-1",
+        article: "Jacket",
+        colors: null,
+        created_at: new Date("2026-10-01T00:00:00.000Z"),
+        deliveryDate: null,
+      }]);
+      prismaCounterMock.articleFindMany.mockResolvedValue([
+        { id: "article-id", article: "Jacket", article_code: "AR4" },
+      ]);
+
+      await listOrdersPage("org-1");
+
+      expect(prismaCounterMock.articleVariantFindMany).not.toHaveBeenCalled();
     });
   });
 

@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
-  getOrganizationForUser: vi.fn(),
-  requireOrganizationPermission: vi.fn(),
+  getOrganizationForUserWithPermission: vi.fn(),
   getContact: vi.fn(),
   updateContact: vi.fn(),
   deactivateContact: vi.fn(),
@@ -13,8 +12,7 @@ vi.mock("@/lib/auth/session-manager", () => ({
   getSessionUser: mocks.getSessionUser,
 }));
 vi.mock("@/lib/services/organizations/organization-service", () => ({
-  getOrganizationForUser: mocks.getOrganizationForUser,
-  requireOrganizationPermission: mocks.requireOrganizationPermission,
+  getOrganizationForUserWithPermission: mocks.getOrganizationForUserWithPermission,
 }));
 vi.mock("@/lib/services/master-data/contact-master-service", () => ({
   getContact: mocks.getContact,
@@ -36,8 +34,7 @@ describe("organization contact item API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getSessionUser.mockResolvedValue({ id: "workspace-user-1", workspace_id: "workspace-1" });
-    mocks.getOrganizationForUser.mockResolvedValue({ id: "internal-org-1" });
-    mocks.requireOrganizationPermission.mockResolvedValue({});
+    mocks.getOrganizationForUserWithPermission.mockResolvedValue({ id: "internal-org-1" });
     mocks.getContact.mockResolvedValue(null);
     mocks.updateContact.mockResolvedValue(null);
     mocks.deactivateContact.mockResolvedValue(null);

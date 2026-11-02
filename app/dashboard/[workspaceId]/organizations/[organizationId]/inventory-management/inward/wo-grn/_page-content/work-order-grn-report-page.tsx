@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Modal from "@/components/ui/Modal";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 
@@ -21,6 +23,15 @@ type ReconciliationLine = {
   changed: boolean;
   skipped: string | null;
   blockers: string[];
+  stockReceipts: Array<{
+    stockType: "GENERAL" | "ALLOCATED";
+    receiptId: string;
+    currentQuantityOut: number;
+    expectedQuantityOut: number;
+    currentStock: number;
+    expectedCurrentStock: number;
+    changed: boolean;
+  }>;
   issuedItems: Array<{
     bookingNo: string;
     quantityIssued: number;
@@ -61,6 +72,7 @@ type WorkOrderGrnRecord = {
   lines: Array<{
     receivedQuantity: number;
     advanceBookedQuantity: number | null;
+    verifiedActualQuantity: number | null;
   }>;
 };
 
@@ -70,6 +82,40 @@ type ReportRecord = WorkOrderGrnRecord & {
   style: string;
   totalReceived: number;
 };
+
+type DeleteIssueReference = {
+  id: string;
+  type: "POS_INVOICE" | "FG_OUTWARD_REQUEST" | "FG_STOCK_RECEIPT";
+  documentNo: string;
+  stockType?: "GENERAL" | "ALLOCATED";
+  issueNo?: string;
+};
+
+type DeleteFailure = {
+  message: string;
+  issues: DeleteIssueReference[];
+};
+
+function isDeleteIssueReference(issue: unknown): issue is DeleteIssueReference {
+  if (!issue || typeof issue !== "object") return false;
+  if (
+    !("id" in issue)
+    || typeof issue.id !== "string"
+    || !("documentNo" in issue)
+    || typeof issue.documentNo !== "string"
+    || !("type" in issue)
+    || (issue.type !== "POS_INVOICE"
+      && issue.type !== "FG_OUTWARD_REQUEST"
+      && issue.type !== "FG_STOCK_RECEIPT")
+  ) {
+    return false;
+  }
+  return (!("issueNo" in issue) || issue.issueNo === undefined || typeof issue.issueNo === "string")
+    && (!("stockType" in issue)
+    || issue.stockType === undefined
+    || issue.stockType === "GENERAL"
+    || issue.stockType === "ALLOCATED");
+}
 
 type ReportField = "grnNo" | "workOrderNo" | "orderNo" | "style" | "receivedDate" | "totalReceived" | "status";
 
@@ -83,6 +129,51 @@ const reportFields: Array<{ key: ReportField; label: string }> = [
   { key: "status", label: "Status" },
 ];
 
+function getIssueHref(issue: DeleteIssueReference, organizationBasePath: string) {
+  if (issue.type === "POS_INVOICE") {
+    return `${organizationBasePath}/pos/invoice/${encodeURIComponent(issue.documentNo)}`;
+  }
+  if (issue.type === "FG_OUTWARD_REQUEST") {
+    const requestQuery = new URLSearchParams({ requestId: issue.id });
+    return `${organizationBasePath}/inventory-management/outward/fg-stock-dc?${requestQuery.toString()}`;
+  }
+  const recordType = issue.stockType === "ALLOCATED" ? "allocated" : "general";
+  return `${organizationBasePath}/inventory-management/stock/fg-stock/record/${recordType}/${encodeURIComponent(issue.id)}`;
+}
+
+function DeleteFailureNotice({
+  failure,
+  organizationBasePath,
+}: {
+  failure: DeleteFailure;
+  organizationBasePath: string;
+}) {
+  return (
+    <div>
+      <p>{failure.message}</p>
+      {failure.issues.length > 0 ? (
+        <ul className="mt-2 list-inside list-disc space-y-1">
+          {failure.issues.map((issue) => (
+            <li key={`${issue.type}:${issue.id}`}>
+              <Link
+                href={getIssueHref(issue, organizationBasePath)}
+                className="font-semibold text-[var(--erp-brand)] underline underline-offset-2"
+              >
+                {issue.type === "POS_INVOICE"
+                  ? `POS Invoice ${issue.documentNo}`
+                  : issue.type === "FG_OUTWARD_REQUEST"
+                    ? `FG Outward Request ${issue.documentNo}`
+                    : `FG Stock Receipt ${issue.documentNo}`}
+                {issue.issueNo ? ` (Material Issue ID: ${issue.issueNo})` : ""}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 export default function WorkOrderGrnReportPage() {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
   const router = useRouter();
@@ -95,10 +186,15 @@ export default function WorkOrderGrnReportPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [deleteNotice, setDeleteNotice] = useState("");
+  const [deleteError, setDeleteError] = useState<DeleteFailure | null>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [reconciliation, setReconciliation] = useState<ReconciliationResult | null>(null);
   const [reconciliationError, setReconciliationError] = useState("");
   const [isReconciling, setIsReconciling] = useState(false);
   const reconciliationStatusRef = useRef<HTMLDivElement>(null);
+  const deleteIssueBasePath = `/dashboard/${params.workspaceId}/organizations/${organizationId}`;
 
   const loadGrns = useCallback(async (cursor?: string) => {
     if (cursor) setLoadingMore(true);
@@ -143,8 +239,15 @@ export default function WorkOrderGrnReportPage() {
       if (!response.ok || !Array.isArray(data?.records)) {
         throw new Error(typeof data?.error === "string" ? data.error : "Unable to reconcile selected Work Order GRNs.");
       }
-      setReconciliation(data as ReconciliationResult);
-      setSelectedIds([]);
+      const reconciliationResult = data as ReconciliationResult;
+      setReconciliation(reconciliationResult);
+      const reconciliationHasBlockers = reconciliationResult.records.some((record) =>
+        record.lines.some((line) => line.blockers.length > 0 || line.skipped !== null),
+      );
+      if (!reconciliationHasBlockers) {
+        setSelectedIds([]);
+        setDeleteError(null);
+      }
       await loadGrns();
     } catch (reconciliationFailure) {
       setReconciliationError(
@@ -156,6 +259,79 @@ export default function WorkOrderGrnReportPage() {
       setIsReconciling(false);
     }
   }, [loadGrns, organizationId, selectedIds]);
+
+  function requestBulkDelete() {
+    if (selectedIds.length > 100) {
+      setDeleteError({ message: "Select no more than 100 Work Order GRNs at a time.", issues: [] });
+      return;
+    }
+    const selectedRows = records.filter((record) => selectedIds.includes(record.id));
+    if (selectedRows.length !== selectedIds.length) {
+      setDeleteError({
+        message: "One or more selected Work Order GRNs are no longer in this report. Refresh and select them again.",
+        issues: [],
+      });
+      return;
+    }
+    setDeleteError(null);
+    setDeleteNotice("");
+    setIsDeleteDialogOpen(true);
+  }
+
+  async function deleteSelectedGrns() {
+    if (isDeleting || selectedIds.length === 0) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      const response = await fetch("/api/inventory/work-order-grns", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId, grnIds: selectedIds }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data?.deleted) || data.deleted.length !== selectedIds.length) {
+        const failure: DeleteFailure = {
+          message: typeof data?.error === "string" ? data.error : "Unable to delete the selected Work Order GRNs.",
+          issues: Array.isArray(data?.issues)
+            ? data.issues.filter(isDeleteIssueReference)
+            : [],
+        };
+        throw failure;
+      }
+      const deletedIds = new Set<string>(
+        data.deleted.flatMap((record: unknown) =>
+          record && typeof record === "object" && "id" in record && typeof record.id === "string"
+            ? [record.id]
+            : [],
+        ),
+      );
+      if (deletedIds.size !== selectedIds.length) {
+        throw new Error("The server returned an incomplete Work Order GRN deletion result. Reload the report to verify.");
+      }
+      setRecords((current) => current.filter((record) => !deletedIds.has(record.id)));
+      setSelectedIds((current) => current.filter((id) => !deletedIds.has(id)));
+      setDeleteNotice(`Deleted ${deletedIds.size} zero-issued Work Order GRN${deletedIds.size === 1 ? "" : "s"}.`);
+      setIsDeleteDialogOpen(false);
+    } catch (deleteFailure) {
+      if (
+        deleteFailure
+        && typeof deleteFailure === "object"
+        && "message" in deleteFailure
+        && typeof deleteFailure.message === "string"
+      ) {
+        setDeleteError({
+          message: deleteFailure.message,
+          issues: "issues" in deleteFailure && Array.isArray(deleteFailure.issues)
+            ? deleteFailure.issues.filter(isDeleteIssueReference)
+            : [],
+        });
+      } else {
+        setDeleteError({ message: "Unable to delete the selected Work Order GRNs.", issues: [] });
+      }
+    } finally {
+      setIsDeleting(false);
+    }
+  }
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => {
@@ -172,6 +348,10 @@ export default function WorkOrderGrnReportPage() {
 
   const reconciliationLines = reconciliation?.records.flatMap((record) => record.lines) ?? [];
   const correctedLineCount = reconciliationLines.filter((line) => line.changed).length;
+  const correctedReceiptCount = reconciliationLines.reduce(
+    (total, line) => total + line.stockReceipts.filter((receipt) => receipt.changed).length,
+    0,
+  );
   const matchedLineCount = reconciliationLines.filter((line) =>
     !line.changed && !line.skipped && line.blockers.length === 0,
   ).length;
@@ -196,6 +376,12 @@ export default function WorkOrderGrnReportPage() {
             <Button variant="secondary" size="sm" onClick={() => void loadGrns()} disabled={loading}>Retry</Button>
           </Card>
         ) : null}
+        {deleteError && !isDeleteDialogOpen ? (
+          <Card role="alert" className="text-sm text-[var(--erp-danger-text)]">
+            <DeleteFailureNotice failure={deleteError} organizationBasePath={deleteIssueBasePath} />
+          </Card>
+        ) : null}
+        {deleteNotice ? <p role="status" className="text-sm text-[var(--erp-success-text)]">{deleteNotice}</p> : null}
         {loading ? <p role="status" className="text-sm text-slate-600">Loading Work Order GRNs...</p> : null}
         {reconciliationError ? (
           <Card role="alert" className="border-[var(--erp-danger)] text-sm">
@@ -214,11 +400,12 @@ export default function WorkOrderGrnReportPage() {
                 <div className="space-y-1">
                   <h2 className="text-base font-semibold text-[var(--erp-text)]">Recalculation status</h2>
                   <p role="status" className="text-sm text-[var(--erp-success-text)]">
-                    {correctedLineCount} counter correction(s) applied; {matchedLineCount} already matched;{" "}
+                    {correctedLineCount} GRN line(s) reconciled; {correctedReceiptCount} stock receipt(s) corrected;{" "}
+                    {matchedLineCount} already matched;{" "}
                     {pendingLineCount} pending verification; {blockedLineCount} blocked.
                   </p>
                   <p className="text-sm text-[var(--erp-muted)]">
-                    Stock receipts, allocation records, issued stock, and audit history were preserved.
+                    Stock balances were recalculated from FG issue/reversal records and active allocations; changes are audited.
                   </p>
                 </div>
                 <Button
@@ -249,6 +436,13 @@ export default function WorkOrderGrnReportPage() {
                             {" "}General: {line.currentGeneralQuantity?.toLocaleString() ?? "—"} → {line.expectedGeneralQuantity.toLocaleString()}
                           </p>
                         ) : null}
+                        {line.stockReceipts.map((receipt) => (
+                          <p key={`${receipt.stockType}:${receipt.receiptId}`} className="text-[var(--erp-muted)]">
+                            {receipt.stockType} receipt · Qty out {receipt.currentQuantityOut.toLocaleString()} →{" "}
+                            {receipt.expectedQuantityOut.toLocaleString()} · Current stock{" "}
+                            {receipt.currentStock.toLocaleString()} → {receipt.expectedCurrentStock.toLocaleString()}
+                          </p>
+                        ))}
                         {line.blockers.map((blocker) => (
                           <p key={blocker} role="alert" className="rounded-md border border-[var(--erp-danger-border)] bg-[var(--erp-danger-bg)] px-3 py-2 text-[var(--erp-danger-text)]">
                             Not recalculated: {blocker}
@@ -267,7 +461,9 @@ export default function WorkOrderGrnReportPage() {
                         ))}
                         {!line.skipped && line.blockers.length === 0 ? (
                           <p className="text-[var(--erp-success-text)]">
-                            {line.changed ? "Counters recalculated successfully." : "Counters already match the allocation records."}
+                            {line.changed
+                              ? "GRN counters and stock receipt balances recalculated successfully."
+                              : "GRN counters and stock receipt balances already match their source records."}
                           </p>
                         ) : null}
                       </div>
@@ -310,6 +506,8 @@ export default function WorkOrderGrnReportPage() {
                 {isReconciling ? "Recalculating..." : `Recalculate selected (${selectedIds.length})`}
               </Button>
             )}
+            onBulkDeleteSelected={requestBulkDelete}
+            bulkDeleteSelectedLabel="Delete selected GRNs"
             onRowClick={(recordId) => router.push(`${basePath}/report/${encodeURIComponent(recordId)}`)}
             onRowAction={() => router.push(`${basePath}/verification`)}
             rowActionLabel="Verify"
@@ -330,6 +528,40 @@ export default function WorkOrderGrnReportPage() {
             </div>
           ) : null}
         </Card>
+        <Modal
+          open={isDeleteDialogOpen}
+          onClose={() => {
+            if (!isDeleting) setIsDeleteDialogOpen(false);
+          }}
+          ariaLabelledBy="bulk-delete-work-order-grns-title"
+          size="square"
+          variant="danger"
+          closeOnBackdrop={!isDeleting}
+        >
+          <div className="space-y-4 p-6">
+            <div>
+              <h2 id="bulk-delete-work-order-grns-title" className="text-lg font-semibold text-slate-900">
+                Delete selected Work Order GRNs?
+              </h2>
+              <p className="mt-2 text-sm text-slate-600">
+                {selectedIds.length} selected GRN{selectedIds.length === 1 ? "" : "s"} and linked stock allocations will be deleted. Deletion is blocked only when a material issue is linked.
+              </p>
+            </div>
+            {deleteError ? (
+              <div role="alert" className="rounded-md border border-[var(--erp-danger-border)] bg-[var(--erp-danger-bg)] px-3 py-2 text-sm text-[var(--erp-danger-text)]">
+                <DeleteFailureNotice failure={deleteError} organizationBasePath={deleteIssueBasePath} />
+              </div>
+            ) : null}
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => setIsDeleteDialogOpen(false)} disabled={isDeleting}>
+                Cancel
+              </Button>
+              <Button type="button" variant="destructive" onClick={() => void deleteSelectedGrns()} disabled={isDeleting}>
+                {isDeleting ? "Deleting..." : `Delete ${selectedIds.length} GRN${selectedIds.length === 1 ? "" : "s"}`}
+              </Button>
+            </div>
+          </div>
+        </Modal>
       </Section>
     </Page>
   );

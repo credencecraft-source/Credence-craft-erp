@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
@@ -9,7 +10,7 @@ import Card from "@/components/ui/Card";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import { ReportGrid } from "@/components/reports/report-grid-display";
-import PriceListContactCreateDialog from "./price-list-contact-create-dialog";
+const PriceListContactCreateDialog = dynamic(() => import("./price-list-contact-create-dialog"), { ssr: false });
 
 type PriceListRecord = {
   id: string;

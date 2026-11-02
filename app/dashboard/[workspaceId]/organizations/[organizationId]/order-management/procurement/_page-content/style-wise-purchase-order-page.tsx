@@ -2,14 +2,38 @@
 
 import { ArrowLeft, Check, ChevronDown, ClipboardCheck, Loader2, PackageSearch, Search, Store, X } from "lucide-react";
 import { useParams } from "next/navigation";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import { text } from "./style-wise-purchase-order-format";
 import type { BomRow, VendorOption, GstOption, MaterialGroup, MaterialCategory, GroupedPurchaseOrder, MasterPurchaseOrder, StyleWiseStage } from "./style-wise-purchase-order-types";
-import { MaterialCategoryCard, MaterialGroupCard, MaterialDetail, StageButton, GroupedPurchaseOrderForm } from "./style-wise-purchase-order-allocation";
-import { PriceApprovalStage } from "./style-wise-purchase-order-approval";
-import { MasterPurchaseOrderReport } from "./style-wise-purchase-order-create";
+import StageButton from "./style-wise-purchase-order-stage-button";
 import Input from "@/components/ui/Input";
+
+const MaterialCategoryCard = dynamic(
+  () => import("./style-wise-purchase-order-allocation").then((module) => module.MaterialCategoryCard),
+  { ssr: false },
+);
+const MaterialGroupCard = dynamic(
+  () => import("./style-wise-purchase-order-allocation").then((module) => module.MaterialGroupCard),
+  { ssr: false },
+);
+const MaterialDetail = dynamic(
+  () => import("./style-wise-purchase-order-allocation").then((module) => module.MaterialDetail),
+  { ssr: false },
+);
+const GroupedPurchaseOrderForm = dynamic(
+  () => import("./style-wise-purchase-order-allocation").then((module) => module.GroupedPurchaseOrderForm),
+  { ssr: false },
+);
+const PriceApprovalStage = dynamic(
+  () => import("./style-wise-purchase-order-approval").then((module) => module.PriceApprovalStage),
+  { ssr: false },
+);
+const MasterPurchaseOrderReport = dynamic(
+  () => import("./style-wise-purchase-order-create").then((module) => module.MasterPurchaseOrderReport),
+  { ssr: false },
+);
 
 
 export type { GroupedPurchaseOrder, MasterPurchaseOrder, StyleWiseStage } from "./style-wise-purchase-order-types";

@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import PriceListContactPicker from "../_page-content/price-list-contact-picker";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { getPriceListRecord } from "@/lib/services/master-data/price-list-contact-service";
-import { getOrganizationForUser, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
 
 export default async function PriceListChildRecordPage({
   params,
@@ -22,9 +22,8 @@ export default async function PriceListChildRecordPage({
   const user = await requireSessionUser();
   if (!user.workspace_id) redirect("/");
   if (user.workspace_id !== workspaceId) notFound();
-  const organization = await getOrganizationForUser(user.id, organizationId);
+  const organization = await getOrganizationForUserWithPermission(user.id, organizationId, "MANAGE_MASTER_DATA");
   if (!organization) notFound();
-  await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
 
   const priceList = await getPriceListRecord(organization.id, recordCode);
   return (

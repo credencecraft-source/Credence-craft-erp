@@ -21,6 +21,15 @@ const MAX_CONTACT_BULK_SELECTION = 200;
 
 type ContactDatabase = typeof prisma;
 type ContactTransaction = Prisma.TransactionClient;
+type ContactProjectionSnapshot = {
+  id: string;
+  legal_name: string;
+  display_name: string | null;
+  email: string | null;
+  is_active: boolean;
+  roles: Array<{ role_code: string }>;
+  tax_registrations: Array<{ gstin: string }>;
+};
 
 function publicContact<T extends {
   bank_accounts?: Array<{ id: string; account_number_last4: string; [key: string]: unknown }>;
@@ -50,8 +59,9 @@ async function syncContactRoleProjections(
   tx: ContactTransaction,
   organizationId: string,
   contactId: string,
+  snapshot?: ContactProjectionSnapshot,
 ) {
-  const contact = await tx.contact.findFirst({
+  const contact = snapshot ?? await tx.contact.findFirst({
     where: { organization_id: organizationId, id: contactId },
     select: {
       id: true,
@@ -416,13 +426,29 @@ const contactSelect = {
   created_at: true,
   updated_at: true,
   roles: { where: { is_active: true }, select: { role_code: true }, orderBy: { role_code: "asc" as const } },
-  distributor_mappings: { select: { dealer: { select: { id: true } } } },
-  dealer_mappings: { select: { distributor: { select: { id: true } } } },
+  distributor_mappings: {
+    select: {
+      dealer: { select: { id: true, code: true, legal_name: true, display_name: true } },
+    },
+  },
+  dealer_mappings: {
+    select: {
+      distributor: { select: { id: true, code: true, legal_name: true, display_name: true } },
+    },
+  },
   role_parent_mappings: {
-    select: { id: true, parent_role_code: true, mapped_contact: { select: { id: true } } },
+    select: {
+      id: true,
+      parent_role_code: true,
+      mapped_contact: { select: { id: true, code: true, legal_name: true, display_name: true } },
+    },
   },
   role_mapped_contacts: {
-    select: { id: true, parent_role_code: true, parent_contact: { select: { id: true } } },
+    select: {
+      id: true,
+      parent_role_code: true,
+      parent_contact: { select: { id: true, code: true, legal_name: true, display_name: true } },
+    },
   },
   tax_registrations: {
     orderBy: { gstin: "asc" as const },
@@ -448,25 +474,55 @@ const contactSelect = {
   },
 };
 
+const contactReportSelect = {
+  id: true,
+  code: true,
+  legal_name: true,
+  display_name: true,
+  is_active: true,
+  roles: { where: { is_active: true }, select: { role_code: true }, orderBy: { role_code: "asc" as const } },
+  distributor_mappings: { select: { dealer: { select: { id: true } } } },
+  dealer_mappings: { select: { distributor: { select: { id: true } } } },
+  role_parent_mappings: {
+    select: { parent_role_code: true, mapped_contact: { select: { id: true } } },
+  },
+  role_mapped_contacts: {
+    select: { parent_contact: { select: { id: true } } },
+  },
+  tax_registrations: { select: { gstin: true } },
+  addresses: { where: { is_active: true }, select: { id: true } },
+  bank_accounts: { where: { is_active: true }, select: { id: true } },
+};
+
+function buildContactWhere(organizationId: string, search?: string, roleCode?: string): Prisma.ContactWhereInput {
+  const normalizedSearch = search?.trim().slice(0, 100);
+  const cleanSearch = normalizedSearch && normalizedSearch.length >= 3 ? normalizedSearch : undefined;
+  return {
+    organization_id: organizationId,
+    ...(cleanSearch ? {
+      OR: [
+        { code: { contains: cleanSearch, mode: "insensitive" } },
+        { legal_name: { contains: cleanSearch, mode: "insensitive" } },
+        { display_name: { contains: cleanSearch, mode: "insensitive" } },
+        { tax_registrations: { some: { gstin: { contains: cleanSearch.toUpperCase() } } } },
+      ],
+    } : {}),
+    ...(roleCode === "__UNCATEGORIZED__"
+      ? { roles: { none: { is_active: true } } }
+      : roleCode
+        ? { roles: { some: { role_code: roleCode, is_active: true } } }
+        : {}),
+  };
+}
+
 export async function listContacts(
   organizationId: string,
   search?: string,
   database: ContactDatabase = prisma,
-  pagination: { skip?: number; take?: number } = {},
+  pagination: { skip?: number; take?: number; roleCode?: string } = {},
 ) {
-  const cleanSearch = search?.trim().slice(0, 100);
   const contacts = await database.contact.findMany({
-    where: {
-      organization_id: organizationId,
-      ...(cleanSearch ? {
-        OR: [
-          { code: { contains: cleanSearch, mode: "insensitive" } },
-          { legal_name: { contains: cleanSearch, mode: "insensitive" } },
-          { display_name: { contains: cleanSearch, mode: "insensitive" } },
-          { tax_registrations: { some: { gstin: { contains: cleanSearch.toUpperCase() } } } },
-        ],
-      } : {}),
-    },
+    where: buildContactWhere(organizationId, search, pagination.roleCode),
     select: contactSelect,
     orderBy: [{ legal_name: "asc" }, { id: "asc" }],
     skip: pagination.skip ?? 0,
@@ -475,12 +531,87 @@ export async function listContacts(
   return contacts.map(publicContact);
 }
 
+export async function listContactReportPage(
+  organizationId: string,
+  search: string | undefined,
+  database: ContactDatabase = prisma,
+  pagination: { skip?: number; take?: number; roleCode?: string } = {},
+) {
+  const take = Math.min(Math.max(pagination.take ?? 100, 1), 200);
+  const contacts = await database.contact.findMany({
+    where: buildContactWhere(organizationId, search, pagination.roleCode),
+    select: contactReportSelect,
+    orderBy: [{ legal_name: "asc" }, { id: "asc" }],
+    skip: pagination.skip ?? 0,
+    take: take + 1,
+  });
+  return {
+    records: contacts.slice(0, take),
+    hasMore: contacts.length > take,
+  };
+}
+
+export async function getContactRoleCounts(organizationId: string, database: ContactDatabase = prisma) {
+  const [counts] = await database.$queryRaw<Array<{
+    total: bigint;
+    uncategorized: bigint;
+    customer: bigint;
+    vendor: bigint;
+    agent: bigint;
+    distributor: bigint;
+    dealer: bigint;
+  }>>(Prisma.sql`
+    SELECT
+      COUNT(DISTINCT contact.id) AS total,
+      COUNT(DISTINCT contact.id) FILTER (WHERE assignment.contact_id IS NULL) AS uncategorized,
+      COUNT(DISTINCT assignment.contact_id) FILTER (WHERE assignment.role_code = 'CUSTOMER') AS customer,
+      COUNT(DISTINCT assignment.contact_id) FILTER (WHERE assignment.role_code = 'VENDOR') AS vendor,
+      COUNT(DISTINCT assignment.contact_id) FILTER (WHERE assignment.role_code = 'AGENT') AS agent,
+      COUNT(DISTINCT assignment.contact_id) FILTER (WHERE assignment.role_code = 'DISTRIBUTOR') AS distributor,
+      COUNT(DISTINCT assignment.contact_id) FILTER (WHERE assignment.role_code = 'DEALER') AS dealer
+    FROM contacts AS contact
+    LEFT JOIN contact_role_assignments AS assignment
+      ON assignment.organization_id = contact.organization_id
+      AND assignment.contact_id = contact.id
+      AND assignment.is_active = TRUE
+    WHERE contact.organization_id = ${organizationId}
+  `);
+  if (!counts) throw new Error("Contact role counts could not be loaded.");
+  const total = Number(counts.total);
+  const uncategorized = Number(counts.uncategorized);
+  if (![total, uncategorized, counts.customer, counts.vendor, counts.agent, counts.distributor, counts.dealer]
+    .every((count) => Number.isSafeInteger(Number(count)) && Number(count) >= 0)) {
+    throw new Error("Contact role counts exceeded the supported range.");
+  }
+  return {
+    total,
+    uncategorized,
+    CUSTOMER: Number(counts.customer),
+    VENDOR: Number(counts.vendor),
+    AGENT: Number(counts.agent),
+    DISTRIBUTOR: Number(counts.distributor),
+    DEALER: Number(counts.dealer),
+  };
+}
+
+export async function getContactCount(
+  organizationId: string,
+  search?: string,
+  roleCode?: string,
+  database: ContactDatabase = prisma,
+) {
+  return database.contact.count({
+    where: buildContactWhere(organizationId, search, roleCode),
+  });
+}
+
 export async function listContactLookupOptions(
   organizationId: string,
   database: ContactDatabase = prisma,
   pagination: { skip?: number; take?: number; search?: string; activeOnly?: boolean; excludedIds?: string[] } = {},
 ) {
-  const search = pagination.search?.trim();
+  const normalizedSearch = pagination.search?.trim();
+  const search = normalizedSearch && normalizedSearch.length >= 3 ? normalizedSearch : undefined;
   const contacts = await database.contact.findMany({
     where: {
       organization_id: organizationId,
@@ -558,7 +689,7 @@ async function createContactInTransaction(
   });
   if (!saved) throw new Error("Created contact could not be loaded.");
   if (input.roles.length > 0) {
-    await syncContactRoleProjections(tx, organizationId, contact.id);
+    await syncContactRoleProjections(tx, organizationId, contact.id, saved);
   }
   return publicContact(saved);
 }
@@ -584,38 +715,69 @@ export async function updateContact(
   value: unknown,
   database: ContactDatabase = prisma,
 ) {
+  const profileSave = process.env.NODE_ENV === "development"
+    && process.env.ERP_LOOKUP_QUERY_TIMING === "1";
+  const validationStartedAt = profileSave ? performance.now() : 0;
   const input = parseContactInput(value, true);
-  return database.$transaction(async (tx) => {
-    const current = await tx.contact.findFirst({
-      where: { organization_id: organizationId, id: contactId },
-      select: { id: true },
-    });
-    if (!current) return null;
-    await tx.contact.updateMany({
-      where: { organization_id: organizationId, id: current.id },
-      data: buildContactData(input),
-    });
-    await saveDetails(tx, organizationId, contactId, input, true);
-    await createAuditEvent({
-      organizationId,
-      userId: actorId,
-      module: "MASTER_DATA",
-      action: "CONTACT_UPDATED",
-      entityType: "Contact",
-      entityId: contactId,
-      details: {
-        changedSections: Object.keys(input).filter((key) => key !== "bankAccounts"),
-        bankAccountCount: input.bankAccounts?.length,
-      },
-    }, tx);
-    const saved = await tx.contact.findFirst({
-      where: { organization_id: organizationId, id: contactId },
-      select: contactSelect,
-    });
-    if (!saved) throw new Error("Updated contact could not be loaded.");
-    await syncContactRoleProjections(tx, organizationId, contactId);
-    return publicContact(saved);
-  }, { maxWait: 10000, timeout: 30000 });
+  if (profileSave) {
+    console.info(`[Contact save timing] validation ${(performance.now() - validationStartedAt).toFixed(1)}ms`);
+  }
+  const transactionStartedAt = profileSave ? performance.now() : 0;
+  try {
+    return await database.$transaction(async (tx) => {
+      const current = await tx.contact.findFirst({
+        where: { organization_id: organizationId, id: contactId },
+        select: { id: true },
+      });
+      if (!current) return null;
+      const contactData = buildContactData(input);
+      if (Object.keys(contactData).length > 0) {
+        await tx.contact.updateMany({
+          where: { organization_id: organizationId, id: current.id },
+          data: contactData,
+        });
+      }
+      await saveDetails(tx, organizationId, contactId, input, true);
+      const auditStartedAt = profileSave ? performance.now() : 0;
+      await createAuditEvent({
+        organizationId,
+        userId: actorId,
+        module: "MASTER_DATA",
+        action: "CONTACT_UPDATED",
+        entityType: "Contact",
+        entityId: contactId,
+        details: {
+          changedSections: Object.keys(input).filter((key) => key !== "bankAccounts"),
+          bankAccountCount: input.bankAccounts?.length,
+        },
+      }, tx);
+      if (profileSave) {
+        console.info(`[Contact save timing] audit ${(performance.now() - auditStartedAt).toFixed(1)}ms`);
+      }
+      if (Object.keys(input).length === 1 && input.phone !== undefined) {
+        return { id: current.id, phone: input.phone };
+      }
+      const saved = await tx.contact.findFirst({
+        where: { organization_id: organizationId, id: contactId },
+        select: contactSelect,
+      });
+      if (!saved) throw new Error("Updated contact could not be loaded.");
+      const projectionFieldsChanged = input.legalName !== undefined
+        || input.displayName !== undefined
+        || input.email !== undefined
+        || input.isActive !== undefined
+        || input.roles !== undefined
+        || input.taxRegistrations !== undefined;
+      if (projectionFieldsChanged) {
+        await syncContactRoleProjections(tx, organizationId, contactId, saved);
+      }
+      return publicContact(saved);
+    }, { maxWait: 10000, timeout: 30000 });
+  } finally {
+    if (profileSave) {
+      console.info(`[Contact save timing] transaction ${(performance.now() - transactionStartedAt).toFixed(1)}ms`);
+    }
+  }
 }
 
 async function deactivateContactRecord(

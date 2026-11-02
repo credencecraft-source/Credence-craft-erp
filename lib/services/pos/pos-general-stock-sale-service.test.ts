@@ -7,11 +7,12 @@ const mocks = vi.hoisted(() => ({
     finishedGoodsStock: { updateMany: vi.fn() },
     masterGst: { findMany: vi.fn() },
     posSalesInvoice: { findFirst: vi.fn(), create: vi.fn() },
-    posSalesInvoiceLine: { createMany: vi.fn() },
+    posSalesInvoiceLine: { createManyAndReturn: vi.fn() },
   },
   prismaTransaction: vi.fn(),
   reserveNumber: vi.fn(),
   createAuditEvent: vi.fn(),
+  createFgMaterialIssue: vi.fn(),
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -22,6 +23,9 @@ vi.mock("@/lib/services/orders/procurement-document-number-service", () => ({
 }));
 vi.mock("@/lib/services/organizations/audit-event-service", () => ({
   createAuditEvent: mocks.createAuditEvent,
+}));
+vi.mock("@/lib/services/inventory/fg-issued-service", () => ({
+  createFgMaterialIssue: mocks.createFgMaterialIssue,
 }));
 
 import { createPosGeneralStockSale } from "./pos-general-stock-sale-service";
@@ -69,7 +73,10 @@ describe("createPosGeneralStockSale", () => {
     mocks.transaction.finishedGoodsStock.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.posSalesInvoice.findFirst.mockResolvedValue(null);
     mocks.transaction.posSalesInvoice.create.mockResolvedValue({ id: "invoice-1" });
-    mocks.transaction.posSalesInvoiceLine.createMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.posSalesInvoiceLine.createManyAndReturn.mockResolvedValue([{
+      id: "invoice-line-1",
+      general_stock_receipt_id: "general-stock-1",
+    }]);
     mocks.reserveNumber.mockResolvedValue("POS-1");
   });
 
@@ -98,7 +105,7 @@ describe("createPosGeneralStockSale", () => {
         quantity_issued: { increment: 2 },
       },
     }));
-    expect(mocks.transaction.posSalesInvoiceLine.createMany).toHaveBeenCalledWith({
+    expect(mocks.transaction.posSalesInvoiceLine.createManyAndReturn).toHaveBeenCalledWith({
       data: [expect.objectContaining({
         organization_id: "organization-1",
         invoice_id: "invoice-1",
@@ -106,7 +113,23 @@ describe("createPosGeneralStockSale", () => {
         quantity: 2,
         taxable_amount: new Prisma.Decimal("180.00"),
       })],
+      select: { id: true, general_stock_receipt_id: true },
     });
+    expect(mocks.createFgMaterialIssue).toHaveBeenCalledWith(mocks.transaction, expect.objectContaining({
+      organizationId: "organization-1",
+      sourceType: "POS_INVOICE",
+      movement: "ISSUE",
+      posInvoiceId: "invoice-1",
+      sourceReference: "POS-1",
+      lines: [expect.objectContaining({
+        generalReceiptId: "general-stock-1",
+        posInvoiceLineId: "invoice-line-1",
+        quantity: new Prisma.Decimal(2),
+        uomCode: "PCS",
+        stockBefore: new Prisma.Decimal(8),
+        stockAfter: new Prisma.Decimal(6),
+      })],
+    }));
     expect(mocks.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       module: "POS",
       action: "POST_GENERAL_FG_SALE",
@@ -179,6 +202,6 @@ describe("createPosGeneralStockSale", () => {
 
     await expect(createPosGeneralStockSale(saleInput)).rejects.toThrow("no longer has enough General stock");
     expect(mocks.transaction.finishedGoodsStock.updateMany).not.toHaveBeenCalled();
-    expect(mocks.transaction.posSalesInvoiceLine.createMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.posSalesInvoiceLine.createManyAndReturn).not.toHaveBeenCalled();
   });
 });

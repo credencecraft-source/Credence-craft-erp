@@ -2,8 +2,72 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
-import { createOrder, deleteOrders, listOrdersPage, toDateOnly, updateOrderWithDetails } from "@/lib/services/orders/order-service";
+import {
+  createOrder,
+  deleteOrders,
+  listOrdersPage,
+  toDateOnly,
+  updateOrderWithDetails,
+  type OrderListFilters,
+} from "@/lib/services/orders/order-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+
+const ORDER_LIST_FILTER_FIELDS = new Set([
+  "orderNo",
+  "entityName",
+  "category",
+  "subCategory",
+  "season",
+  "article",
+  "articleCode",
+  "variantCode",
+  "styleName",
+  "colors",
+  "buyer",
+  "brand",
+  "sizeGroup",
+  "orderQty",
+  "deliveryDate",
+  "processStatus",
+  "finalStatus",
+  "sourceStatus",
+]);
+const ORDER_LIST_FILTER_OPERATORS = new Set(["contains", "is", "notContains", "empty"]);
+
+function parseOrderListFilters(value: string | null): OrderListFilters | null {
+  if (!value) return {};
+  if (value.length > 5000) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+
+  const filters: OrderListFilters = {};
+  const entries = Object.entries(parsed);
+  if (entries.length > ORDER_LIST_FILTER_FIELDS.size) return null;
+  for (const [field, rawFilter] of entries) {
+    if (!ORDER_LIST_FILTER_FIELDS.has(field)
+      || typeof rawFilter !== "object"
+      || rawFilter === null
+      || Array.isArray(rawFilter)) return null;
+    const filter = rawFilter as Record<string, unknown>;
+    if (typeof filter.operator !== "string"
+      || !ORDER_LIST_FILTER_OPERATORS.has(filter.operator)
+      || (field === "orderQty" && filter.operator !== "is" && filter.operator !== "empty")
+      || typeof filter.value !== "string"
+      || filter.value.length > 100
+      || (filter.operator !== "empty" && filter.value.trim().length === 0)) return null;
+    filters[field as keyof OrderListFilters] = {
+      operator: filter.operator as "contains" | "is" | "notContains" | "empty",
+      value: filter.value.trim(),
+    };
+  }
+  return filters;
+}
 
 export async function GET(request: Request) {
   try {
@@ -23,10 +87,26 @@ export async function GET(request: Request) {
     if (status && status.length > 100) {
       return NextResponse.json({ error: "Order status is too long." }, { status: 400 });
     }
+    const rawLimit = searchParams.get("limit");
+    const limit = rawLimit === null ? 100 : Number(rawLimit);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      return NextResponse.json({ error: "Order page size must be between 1 and 100." }, { status: 400 });
+    }
+    const search = searchParams.get("search")?.trim() ?? "";
+    if (search.length > 100) {
+      return NextResponse.json({ error: "Order search must be 100 characters or fewer." }, { status: 400 });
+    }
+    const filters = parseOrderListFilters(searchParams.get("filters"));
+    if (!filters) {
+      return NextResponse.json({ error: "Order column filters are invalid." }, { status: 400 });
+    }
     const page = await listOrdersPage(organization.id, {
       cursor: searchParams.get("cursor") || undefined,
-      limit: Number(searchParams.get("limit") || 100),
+      limit,
       status: status || undefined,
+      search,
+      filters,
+      purpose: searchParams.get("purpose") === "advance-booking" ? "advance-booking" : undefined,
       includeArticleMetadata: searchParams.get("purpose") !== "advance-booking",
     });
     return NextResponse.json(page);

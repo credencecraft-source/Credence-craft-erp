@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ContactValidationError,
+  getContactRoleCombinationError,
   normalizeAndValidateGstin,
   parseContactInput,
 } from "./contact-master-validation";
@@ -77,6 +78,15 @@ describe("contact master validation", () => {
   ])("rejects assigning %s and %s roles to the same contact", (firstRole, secondRole) => {
     expect(() => parseContactInput(baseContact({ roles: [firstRole, secondRole] })))
       .toThrow(/must belong to separate contacts/);
+  });
+
+  it.each([
+    ["AGENT", "DISTRIBUTOR"],
+    ["AGENT", "DEALER"],
+    ["DISTRIBUTOR", "DEALER"],
+  ])("rejects confirming %s when the contact already has %s", (existingRole, requestedRole) => {
+    expect(getContactRoleCombinationError([existingRole, requestedRole]))
+      .toBe("Agent, Distributor, and Dealer roles must belong to separate contacts. Choose only one.");
   });
 
   it("allows partial role updates to retain conflicting roles for removal", () => {
