@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, RefreshCw, Square } from "lucide-react";
+import { ArrowLeft, ExternalLink, RefreshCw, Square } from "lucide-react";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Badge from "@/components/ui/Badge";
@@ -14,6 +14,10 @@ import Page from "@/components/ui/Page";
 import Select from "@/components/ui/Select";
 import Section from "@/components/ui/Section";
 import Tabs from "@/components/ui/Tabs";
+import {
+  getCompatibleExistingSizeGroups,
+  type ExistingSizeGroupOption,
+} from "./master-import-size-group-options";
 import {
   MasterImportCorrection,
   type MasterImportCorrectionRow,
@@ -72,7 +76,6 @@ type RelatedMasterSuggestion = {
   fields: Record<string, unknown>;
   articleFieldUpdates?: Record<string, unknown>;
 };
-type ExistingSizeGroupOption = { id: string; label: string; sizes: string[] };
 type ReportRow = Record<string, string> & {
   id: string;
   rowNumber: string;
@@ -1251,20 +1254,7 @@ export default function MasterImportJobReportPage({
       const requiredSizes = Array.isArray(suggestion.fields.Size)
         ? [...new Set(suggestion.fields.Size.map((size) => String(size).trim().toLocaleLowerCase()).filter(Boolean))]
         : [];
-      const compatibleGroups = payload.flatMap((value): ExistingSizeGroupOption[] => {
-        if (!isRecord(value) || value.is_active !== true || typeof value.id !== "string"
-          || typeof value.label !== "string" || !isRecord(value.fields)
-          || !Array.isArray(value.sizes)) return [];
-        const groupBrandKey = String(value.fields.Brand1 ?? "").trim().toLocaleLowerCase();
-        if (!brandKeys.has(groupBrandKey)) return [];
-        const sizes = value.sizes.flatMap((size) =>
-          isRecord(size) && size.is_active === true && typeof size.label === "string" ? [size.label] : []);
-        const availableSizeKeys = new Set(sizes.map((size) => size.toLocaleLowerCase()));
-        return requiredSizes.every((size) => availableSizeKeys.has(size))
-          ? [{ id: value.id, label: value.label, sizes }]
-          : [];
-      });
-      setExistingSizeGroups(compatibleGroups);
+      setExistingSizeGroups(getCompatibleExistingSizeGroups(payload, brandKeys, requiredSizes));
     } catch (loadError) {
       setCorrectionError(loadError instanceof Error
         ? loadError.message
@@ -1933,132 +1923,194 @@ export default function MasterImportJobReportPage({
         }}
         closeOnBackdrop={!isSavingCorrection}
         ariaLabel="Create Size Group"
-        size="lg"
+        className="flex flex-col"
+        size="rectangle"
       >
         {(() => {
           const suggestion = relatedMasterSuggestions.find((item) => item.moduleKey === "size-group");
+          const selectedSizeGroup = existingSizeGroups.find((group) => group.id === selectedSizeGroupId);
           const requiredSizes = sizeGroupSizes;
           const prerequisiteMasters = relatedMasterSuggestions.filter((item) => item.moduleKey !== "size-group");
           return (
-            <div className="space-y-5 p-6">
-              <header>
-                <h2 className="text-lg font-semibold text-[var(--erp-text)]">Create Size Group</h2>
-                <p className="mt-1 text-sm text-[var(--erp-muted)]">
-                  Review the suggested group. Its required sizes will be linked, then the Article row will be revalidated.
-                </p>
-              </header>
-              {correctionError ? (
-                <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]" role="alert">
-                  {correctionError}
-                </p>
-              ) : null}
-              {prerequisiteMasters.length ? (
-                <div className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
-                  <p className="text-sm font-semibold text-[var(--erp-text)]">Missing prerequisites created before linking</p>
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--erp-muted)]">
-                    {prerequisiteMasters.map((master) => (
-                      <li key={`${master.moduleKey}:${master.label}`}>{master.moduleKey}: {master.label}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-              <Select
-                label="Use an existing Size Group (optional)"
-                value={selectedSizeGroupId}
-                onChange={(event) => {
-                  const selectedGroup = existingSizeGroups.find((group) => group.id === event.target.value);
-                  setSelectedSizeGroupId(selectedGroup?.id ?? "");
-                  setSizeGroupName(selectedGroup?.label ?? suggestion?.label ?? "");
-                }}
-                disabled={isLoadingSizeGroups || isSavingCorrection}
-                hint={isLoadingSizeGroups
-                  ? "Loading compatible Size Groups..."
-                  : existingSizeGroups.length
-                    ? "Only active groups for this Brand containing every required Article size are listed."
-                    : "No compatible existing groups found. Create a new Size Group below."}
-              >
-                <option value="">Create a new Size Group</option>
-                {existingSizeGroups.map((group) => (
-                  <option key={group.id} value={group.id}>
-                    {group.label} ({group.sizes.join(", ")})
-                  </option>
-                ))}
-              </Select>
-              <p className="text-sm text-[var(--erp-muted)]">
-                Rows with the exact same validation issue will also be revalidated after this group is saved. Sizes in the selected group that are not on an Article stay unassigned; no zero quantities are added.
-              </p>
-              <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
-                <Input
-                  label="Size Group Name"
-                  required
-                  value={sizeGroupName}
-                  onChange={(event) => setSizeGroupName(event.target.value)}
-                  disabled={isSavingCorrection || Boolean(selectedSizeGroupId)}
-                />
-                <Input
-                  label="Brand"
-                  required
-                  value={sizeGroupBrand}
+            <div className="flex h-[min(54rem,calc(100dvh-2rem),calc((100vw-2rem)*0.75))] min-h-0 flex-col">
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
+                <header>
+                  <h2 className="text-lg font-semibold text-[var(--erp-text)]">
+                    {selectedSizeGroup ? "Review Existing Size Group" : "Create Size Group"}
+                  </h2>
+                  <p className="mt-1 text-sm text-[var(--erp-muted)]">
+                    {selectedSizeGroup
+                      ? "Review the full group details, then use this existing group to validate the Article row without creating a duplicate."
+                      : "Review the suggested group. Its required sizes will be linked, then the Article row will be revalidated."}
+                  </p>
+                </header>
+                {correctionError ? (
+                  <p className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]" role="alert">
+                    {correctionError}
+                  </p>
+                ) : null}
+                {prerequisiteMasters.length ? (
+                  <div className="rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4">
+                    <p className="text-sm font-semibold text-[var(--erp-text)]">Missing prerequisites created before linking</p>
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--erp-muted)]">
+                      {prerequisiteMasters.map((master) => (
+                        <li key={`${master.moduleKey}:${master.label}`}>{master.moduleKey}: {master.label}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                <Select
+                  label="Use an existing Size Group (optional)"
+                  value={selectedSizeGroupId}
                   onChange={(event) => {
-                    setSizeGroupBrand(event.target.value);
-                    if (selectedSizeGroupId) {
-                      setSelectedSizeGroupId("");
-                      setSizeGroupName(suggestion?.label ?? "");
-                    }
+                    const selectedGroup = existingSizeGroups.find((group) => group.id === event.target.value);
+                    setSelectedSizeGroupId(selectedGroup?.id ?? "");
+                    setSizeGroupName(selectedGroup?.label ?? suggestion?.label ?? "");
+                    setSizeGroupBrand(selectedGroup?.brand ?? String(suggestion?.fields.Brand1 ?? ""));
                   }}
-                  disabled={isSavingCorrection}
-                />
-              </div>
-              <fieldset className="space-y-2">
-                <legend className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-muted)]">
-                  Size order
-                </legend>
-                <p className="text-sm text-[var(--erp-muted)]">
-                  Change the order before creating the Size Group. Use the controls to move each size.
-                </p>
-                <ol className="divide-y divide-[var(--erp-border)] rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)]">
-                  {requiredSizes.map((size, index) => (
-                    <li key={`${size}:${index}`} className="flex min-w-0 items-center justify-between gap-3 p-3">
-                      <span className="min-w-0 font-medium text-[var(--erp-text)]">
-                        {index + 1}. {size}
-                      </span>
-                      <div className="flex shrink-0 gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          aria-label={`Move ${size} up`}
-                          onClick={() => setSizeGroupSizes((current) => {
-                            if (index === 0 || selectedSizeGroupId) return current;
-                            const next = [...current];
-                            [next[index - 1], next[index]] = [next[index], next[index - 1]];
-                            return next;
-                          })}
-                          disabled={index === 0 || isSavingCorrection || Boolean(selectedSizeGroupId)}
-                        >
-                          Move up
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          aria-label={`Move ${size} down`}
-                          onClick={() => setSizeGroupSizes((current) => {
-                            if (index >= current.length - 1 || selectedSizeGroupId) return current;
-                            const next = [...current];
-                            [next[index], next[index + 1]] = [next[index + 1], next[index]];
-                            return next;
-                          })}
-                          disabled={index === requiredSizes.length - 1 || isSavingCorrection || Boolean(selectedSizeGroupId)}
-                        >
-                          Move down
-                        </Button>
-                      </div>
-                    </li>
+                  disabled={isLoadingSizeGroups || isSavingCorrection}
+                  hint={isLoadingSizeGroups
+                    ? "Loading compatible Size Groups..."
+                    : existingSizeGroups.length
+                      ? "Only active groups for this Brand containing every required Article size are listed."
+                      : "No compatible existing groups found. Create a new Size Group below."}
+                >
+                  <option value="">Create a new Size Group</option>
+                  {existingSizeGroups.map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.label} ({group.sizes.join(", ")})
+                    </option>
                   ))}
-                </ol>
-              </fieldset>
-              <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--erp-border)] pt-4">
+                </Select>
+                {selectedSizeGroup ? (
+                  <section
+                    aria-label="Selected Size Group details"
+                    aria-live="polite"
+                    className="space-y-3 rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)] p-4"
+                  >
+                    <header className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="break-words text-sm font-semibold text-[var(--erp-text)]">
+                          {selectedSizeGroup.label}
+                        </h3>
+                        <p className="mt-1 text-xs text-[var(--erp-muted)]">
+                          Existing Size Group · {selectedSizeGroup.sizes.length} active sizes
+                        </p>
+                      </div>
+                      <Link
+                        href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/size-group/${encodeURIComponent(selectedSizeGroup.id)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex shrink-0 items-center gap-2 text-sm font-medium text-[var(--erp-brand)] hover:underline"
+                      >
+                        View full record
+                        <ExternalLink aria-hidden="true" className="size-4" />
+                      </Link>
+                    </header>
+                    <dl className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="min-w-0">
+                        <dt className="text-xs font-medium text-[var(--erp-muted)]">Brand</dt>
+                        <dd className="mt-1 break-words text-sm text-[var(--erp-text)]">
+                          {selectedSizeGroup.brand || "Not recorded"}
+                        </dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-xs font-medium text-[var(--erp-muted)]">Measurement Chart</dt>
+                        <dd className="mt-1 break-words text-sm text-[var(--erp-text)]">
+                          {selectedSizeGroup.measurementChart || "Not set"}
+                        </dd>
+                      </div>
+                      <div className="min-w-0 space-y-2 sm:col-span-2">
+                        <dt className="text-xs font-medium text-[var(--erp-muted)]">
+                          Full size set ({selectedSizeGroup.sizes.length})
+                        </dt>
+                        <dd className="flex flex-wrap gap-2">
+                          {selectedSizeGroup.sizes.map((size, index) => (
+                            <Badge key={`${size}:${index}`}>{size}</Badge>
+                          ))}
+                        </dd>
+                      </div>
+                    </dl>
+                  </section>
+                ) : null}
+                <p className="text-sm text-[var(--erp-muted)]">
+                  Rows with the exact same validation issue will also be revalidated after this group is saved. Sizes in the selected group that are not on an Article stay unassigned; no zero quantities are added.
+                </p>
+                <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Input
+                    label="Size Group Name"
+                    required
+                    value={sizeGroupName}
+                    onChange={(event) => setSizeGroupName(event.target.value)}
+                    disabled={isSavingCorrection || Boolean(selectedSizeGroupId)}
+                  />
+                  <Input
+                    label="Brand"
+                    required
+                    value={sizeGroupBrand}
+                    onChange={(event) => {
+                      setSizeGroupBrand(event.target.value);
+                      if (selectedSizeGroupId) {
+                        setSelectedSizeGroupId("");
+                        setSizeGroupName(suggestion?.label ?? "");
+                      }
+                    }}
+                    disabled={isSavingCorrection}
+                  />
+                </div>
+                <fieldset className="space-y-2">
+                  <legend className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-muted)]">
+                    {selectedSizeGroup ? "Article sizes to validate" : "Size order"}
+                  </legend>
+                  <p className="text-sm text-[var(--erp-muted)]">
+                    {selectedSizeGroup
+                      ? "These required Article sizes stay unchanged. The full size set for the selected group is shown above."
+                      : "Change the order before creating the Size Group. Use the controls to move each size."}
+                  </p>
+                  <ol className="divide-y divide-[var(--erp-border)] rounded-xl border border-[var(--erp-border)] bg-[var(--erp-surface-soft)]">
+                    {requiredSizes.map((size, index) => (
+                      <li key={`${size}:${index}`} className="flex min-w-0 items-center justify-between gap-3 p-3">
+                        <span className="min-w-0 font-medium text-[var(--erp-text)]">
+                          {index + 1}. {size}
+                        </span>
+                        <div className="flex shrink-0 gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            aria-label={`Move ${size} up`}
+                            onClick={() => setSizeGroupSizes((current) => {
+                              if (index === 0 || selectedSizeGroupId) return current;
+                              const next = [...current];
+                              [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                              return next;
+                            })}
+                            disabled={index === 0 || isSavingCorrection || Boolean(selectedSizeGroupId)}
+                          >
+                            Move up
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            aria-label={`Move ${size} down`}
+                            onClick={() => setSizeGroupSizes((current) => {
+                              if (index >= current.length - 1 || selectedSizeGroupId) return current;
+                              const next = [...current];
+                              [next[index], next[index + 1]] = [next[index + 1], next[index]];
+                              return next;
+                            })}
+                            disabled={index === requiredSizes.length - 1 || isSavingCorrection || Boolean(selectedSizeGroupId)}
+                          >
+                            Move down
+                          </Button>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                </fieldset>
+              </div>
+              <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-[var(--erp-border)] bg-[var(--erp-surface)] px-6 py-4">
                 <Button
                   type="button"
                   variant="secondary"
