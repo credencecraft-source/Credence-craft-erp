@@ -7,8 +7,52 @@ import {
   getSizeGroupSizeOrderMapForOrganization,
   sortBySizeGroupOrder,
 } from "@/lib/master-data/master-data-constants";
+import {
+  calculateQuotationTax,
+  type QuotationTaxProfile,
+} from "./quotation-tax-calculation";
+
+const quotationContactSelect = {
+  legal_name: true,
+  display_name: true,
+  email: true,
+  phone: true,
+  addresses: {
+    where: { is_active: true },
+    orderBy: [
+      { is_default_billing: "desc" as const },
+      { is_default_shipping: "desc" as const },
+      { created_at: "asc" as const },
+    ],
+    select: {
+      usage: true,
+      address_line_1: true,
+      address_line_2: true,
+      city: true,
+      state_name: true,
+      state_code: true,
+      postal_code: true,
+      country_code: true,
+      is_default_billing: true,
+      is_default_shipping: true,
+      tax_registration: { select: { gstin: true } },
+    },
+  },
+} satisfies Prisma.ContactSelect;
 
 const quotationInclude = {
+  contact: { select: quotationContactSelect },
+  vendor: {
+    select: {
+      id: true,
+      vendor: true,
+      contact_id: true,
+      gst_number: true,
+      registered_state: true,
+      registeredState: { select: { state: true } },
+      contact: { select: quotationContactSelect },
+    },
+  },
   lines: {
     orderBy: [{ created_at: "asc" as const }, { id: "asc" as const }],
     include: {
@@ -36,6 +80,15 @@ const quotationSummarySelect = {
   status: true,
   total_quantity: true,
   subtotal: true,
+  delivery_charge: true,
+  delivery_tax_rate: true,
+  cgst_amount: true,
+  sgst_amount: true,
+  igst_amount: true,
+  vat_amount: true,
+  sales_tax_amount: true,
+  tax_amount: true,
+  grand_total: true,
   parent_quotation_id: true,
   created_at: true,
 };
@@ -53,35 +106,14 @@ const quotationRegisterSelect = {
 
 const quotationPartyInclude = {
   select: {
+    id: true,
     vendor: true,
+    contact_id: true,
     gst_number: true,
     registered_state: true,
+    registeredState: { select: { state: true } },
     contact: {
-      select: {
-        legal_name: true,
-        email: true,
-        phone: true,
-        addresses: {
-          where: { is_active: true },
-          orderBy: [
-            { is_default_billing: "desc" as const },
-            { is_default_shipping: "desc" as const },
-            { created_at: "asc" as const },
-          ],
-          select: {
-            usage: true,
-            address_line_1: true,
-            address_line_2: true,
-            city: true,
-            state_name: true,
-            postal_code: true,
-            country_code: true,
-            is_default_billing: true,
-            is_default_shipping: true,
-            tax_registration: { select: { gstin: true } },
-          },
-        },
-      },
+      select: quotationContactSelect,
     },
   },
 };
@@ -118,8 +150,10 @@ const masterQuotationPdfInclude = {
 function mapQuotationParty(
   vendor: Prisma.MasterVendorGetPayload<{ select: typeof quotationPartyInclude.select }> | null,
   fallbackName: string,
+  directContact?: Prisma.ContactGetPayload<{ select: typeof quotationContactSelect }> | null,
 ) {
-  const addresses = vendor?.contact?.addresses ?? [];
+  const contact = vendor?.contact ?? directContact ?? null;
+  const addresses = contact?.addresses ?? [];
   const billingAddress = addresses.find((address) =>
     address.is_default_billing && (address.usage === "BILLING" || address.usage === "BOTH"),
   ) ?? addresses.find((address) => address.usage === "BILLING" || address.usage === "BOTH");
@@ -136,18 +170,140 @@ function mapQuotationParty(
       address.country_code,
     ].filter((part): part is string => Boolean(part?.trim())),
     gstin: address.tax_registration?.gstin ?? null,
+    state: address.state_name,
+    stateCode: address.state_code,
   } : null;
 
   return {
-    name: vendor?.vendor ?? fallbackName,
-    legalName: vendor?.contact?.legal_name ?? null,
-    email: vendor?.contact?.email ?? null,
-    phone: vendor?.contact?.phone ?? null,
+    name: vendor?.vendor ?? contact?.display_name ?? contact?.legal_name ?? fallbackName,
+    legalName: contact?.legal_name ?? null,
+    email: contact?.email ?? null,
+    phone: contact?.phone ?? null,
     gstin: vendor?.gst_number ??
       addresses.find((address) => address.tax_registration?.gstin)?.tax_registration?.gstin ?? null,
-    registeredState: vendor?.registered_state ?? null,
+    registeredState: vendor?.registeredState?.state ?? vendor?.registered_state ??
+      billingAddress?.state_name ?? shippingAddress?.state_name ?? null,
     billingAddress: formatAddress(billingAddress),
     shippingAddress: formatAddress(shippingAddress),
+  };
+}
+
+type QuotationTaxDatabase = Pick<Prisma.TransactionClient, "organization" | "organizationTaxProfile" | "masterGst">;
+type QuotationTaxParty = ReturnType<typeof mapQuotationParty>;
+type QuotationTaxOption = {
+  value: string;
+  label: string;
+  taxType: string;
+  cgstRate: string;
+  sgstRate: string;
+  igstRate: string;
+  vatRate: string;
+  salesTaxRate: string;
+};
+
+async function loadQuotationTaxData(
+  organizationId: string,
+  party: QuotationTaxParty,
+  database: QuotationTaxDatabase = prisma,
+) {
+  const [organization, profile, gstRates] = await Promise.all([
+    database.organization.findUnique({
+      where: { id: organizationId },
+      select: { state: true, gst_number: true, country: true },
+    }),
+    database.organizationTaxProfile.findFirst({
+      where: { organization_id: organizationId, is_active: true, is_default: true },
+      orderBy: { updated_at: "desc" },
+      select: {
+        tax_regime: true,
+        country: true,
+        cgst_rate: true,
+        sgst_rate: true,
+        igst_rate: true,
+        vat_rate: true,
+        sales_tax_rate: true,
+      },
+    }),
+    database.masterGst.findMany({
+      where: { organization_id: organizationId, is_active: true, gst: { not: null } },
+      select: { gst: true, cgst_rate: true, sgst_rate: true, igst_rate: true },
+      orderBy: { gst: "asc" },
+    }),
+  ]);
+  if (!organization) throw new Error("Organization tax details are unavailable.");
+
+  const taxProfile: QuotationTaxProfile = {
+    tax_regime: profile?.tax_regime ?? "GST",
+    country: profile?.country ?? organization.country ?? "IN",
+    cgst_rate: profile?.cgst_rate ?? null,
+    sgst_rate: profile?.sgst_rate ?? null,
+    igst_rate: profile?.igst_rate ?? null,
+    vat_rate: profile?.vat_rate ?? null,
+    sales_tax_rate: profile?.sales_tax_rate ?? null,
+  };
+  const regime = taxProfile.tax_regime.trim().toUpperCase();
+  const configuredRates = gstRates.filter((rate): rate is typeof rate & { gst: Prisma.Decimal } => rate.gst !== null);
+  const zeroRate = new Prisma.Decimal(0);
+  const ratesForOptions = regime === "GST"
+    ? [zeroRate, ...configuredRates.map((rate) => rate.gst)]
+    : regime === "VAT"
+      ? [taxProfile.vat_rate ?? zeroRate]
+      : regime === "SALES_TAX"
+        ? [taxProfile.sales_tax_rate ?? zeroRate]
+        : [zeroRate];
+  const uniqueRates = [...new Map(ratesForOptions.map((rate) => [rate.toFixed(2), rate])).values()];
+  const taxOptions: QuotationTaxOption[] = uniqueRates.map((rate) => {
+    const gstRate = configuredRates.find((configured) => configured.gst.eq(rate)) ?? null;
+    const calculated = calculateQuotationTax({
+      taxableAmount: zeroRate,
+      selectedRate: rate,
+      profile: taxProfile,
+      gstRate,
+      organizationState: organization.state,
+      organizationGstin: organization.gst_number,
+      counterpartyState: party.registeredState,
+      counterpartyGstin: party.gstin,
+    });
+    const labelPrefix = regime === "VAT" ? "VAT" : regime === "SALES_TAX" ? "Sales Tax" : regime === "NONE" ? "No Tax" : "GST";
+    return {
+      value: rate.toFixed(2),
+      label: `${labelPrefix} ${rate.toFixed(2)}% · ${calculated.taxType}`,
+      taxType: calculated.taxType,
+      cgstRate: calculated.cgstRate.toFixed(2),
+      sgstRate: calculated.sgstRate.toFixed(2),
+      igstRate: calculated.igstRate.toFixed(2),
+      vatRate: calculated.vatRate.toFixed(2),
+      salesTaxRate: calculated.salesTaxRate.toFixed(2),
+    };
+  });
+
+  return {
+    taxRegime: taxProfile.tax_regime,
+    country: taxProfile.country,
+    options: taxOptions,
+    organizationState: organization.state,
+    organizationGstin: organization.gst_number,
+    counterpartyState: party.registeredState,
+    counterpartyGstin: party.gstin,
+    profile: taxProfile,
+    gstRates: configuredRates,
+  };
+}
+
+async function getQuotationTaxOptions(
+  organizationId: string,
+  quotation: Prisma.DistributionQuotationGetPayload<{ include: typeof quotationInclude }>,
+) {
+  const party = mapQuotationParty(quotation.vendor, quotation.customer, quotation.contact);
+  const taxData = await loadQuotationTaxData(organizationId, party);
+  return {
+    taxRegime: taxData.taxRegime,
+    country: taxData.country,
+    options: taxData.options,
+    organizationState: taxData.organizationState,
+    organizationGstin: taxData.organizationGstin,
+    counterpartyState: taxData.counterpartyState,
+    counterpartyGstin: taxData.counterpartyGstin,
   };
 }
 
@@ -173,12 +329,22 @@ async function mapQuotation(
     validUntil: record.valid_until?.toISOString().slice(0, 10) ?? "",
     orderNo: record.order_no,
     vendorId: record.vendor_id,
+    contactId: record.contact_id,
     customer: record.customer,
     notes: record.notes ?? "",
     mode: record.mode,
     status: record.status,
     totalQuantity: record.total_quantity,
     subtotal: record.subtotal.toFixed(2),
+    deliveryCharge: record.delivery_charge.toFixed(2),
+    deliveryTaxRate: record.delivery_tax_rate.toFixed(2),
+    cgstAmount: record.cgst_amount.toFixed(2),
+    sgstAmount: record.sgst_amount.toFixed(2),
+    igstAmount: record.igst_amount.toFixed(2),
+    vatAmount: record.vat_amount.toFixed(2),
+    salesTaxAmount: record.sales_tax_amount.toFixed(2),
+    taxAmount: record.tax_amount.toFixed(2),
+    grandTotal: record.grand_total.toFixed(2),
     parentQuotationId: record.parent_quotation_id,
     createdAt: record.created_at.toISOString(),
     lines: record.lines.map((line) => {
@@ -201,6 +367,20 @@ async function mapQuotation(
         quantity: line.quantity,
         unitPrice: line.unit_price.toFixed(4),
         lineTotal: line.line_total.toFixed(2),
+        taxRate: line.tax_rate.toFixed(2),
+        taxType: line.tax_type,
+        cgstRate: line.cgst_rate.toFixed(2),
+        sgstRate: line.sgst_rate.toFixed(2),
+        igstRate: line.igst_rate.toFixed(2),
+        vatRate: line.vat_rate.toFixed(2),
+        salesTaxRate: line.sales_tax_rate.toFixed(2),
+        cgstAmount: line.cgst_amount.toFixed(2),
+        sgstAmount: line.sgst_amount.toFixed(2),
+        igstAmount: line.igst_amount.toFixed(2),
+        vatAmount: line.vat_amount.toFixed(2),
+        salesTaxAmount: line.sales_tax_amount.toFixed(2),
+        taxAmount: line.tax_amount.toFixed(2),
+        totalAmount: line.total_amount.toFixed(2),
       };
     }),
   };
@@ -219,6 +399,14 @@ function mapQuotationSummary(
     status: record.status,
     totalQuantity: record.total_quantity,
     subtotal: record.subtotal.toFixed(2),
+    deliveryCharge: record.delivery_charge.toFixed(2),
+    cgstAmount: record.cgst_amount.toFixed(2),
+    sgstAmount: record.sgst_amount.toFixed(2),
+    igstAmount: record.igst_amount.toFixed(2),
+    vatAmount: record.vat_amount.toFixed(2),
+    salesTaxAmount: record.sales_tax_amount.toFixed(2),
+    taxAmount: record.tax_amount.toFixed(2),
+    grandTotal: record.grand_total.toFixed(2),
     parentQuotationId: record.parent_quotation_id,
     createdAt: record.created_at.toISOString(),
   };
@@ -226,12 +414,16 @@ function mapQuotationSummary(
 
 export async function listDistributionQuotations(
   organizationId: string,
-  options: { includeContactRole?: boolean; cursor?: string } = {},
+  options: { includeContactRole?: boolean; cursor?: string; salesOrderCreated?: boolean } = {},
 ) {
   const cursor = decodeDistributionCursor(options.cursor);
   const where: Prisma.DistributionQuotationWhereInput = options.includeContactRole === false
     ? { organization_id: organizationId, mode: "MASTER" }
-    : { organization_id: organizationId, mode: { not: "MASTER" }, parent_quotation_id: null };
+    : {
+        organization_id: organizationId,
+        mode: { not: "MASTER" },
+        parent_quotation_id: options.salesOrderCreated ? { not: null } : null,
+      };
   if (cursor) {
     where.OR = [
       { quotation_date: { lt: cursor.date } },
@@ -354,8 +546,27 @@ export async function listDistributionQuotations(
 export async function getDistributionQuotation(
   organizationId: string,
   quotationId: string,
-  options: { masterOrder?: boolean; includeChildren?: boolean; salesOrderDocument?: boolean } = {},
+  options: {
+    masterOrder?: boolean;
+    includeChildren?: boolean;
+    salesOrderDocument?: boolean;
+    includeTaxOptions?: boolean;
+    quotationDocument?: boolean;
+  } = {},
 ) {
+  if (options.quotationDocument) {
+    const quotation = await prisma.distributionQuotation.findFirst({
+      where: { organization_id: organizationId, id: quotationId, mode: { not: "MASTER" } },
+      include: quotationInclude,
+    });
+    if (!quotation) throw new Error("The quotation was not found in this organization.");
+    return {
+      quotation: await mapQuotation(organizationId, quotation),
+      children: [],
+      quotationParty: mapQuotationParty(quotation.vendor, quotation.customer, quotation.contact),
+    };
+  }
+
   if (options.masterOrder && options.salesOrderDocument) {
     const masterQuotation = await prisma.distributionQuotation.findFirst({
       where: { organization_id: organizationId, id: quotationId, mode: "MASTER" },
@@ -379,7 +590,7 @@ export async function getDistributionQuotation(
         children: await Promise.all(masterQuotation.childQuotations.map((child) =>
           mapQuotation(organizationId, child, sizeOrderByGroup).then((quotation) => ({
             ...quotation,
-            quotationParty: mapQuotationParty(child.vendor, child.customer),
+            quotationParty: mapQuotationParty(child.vendor, child.customer, child.contact),
           })),
         )),
         salesOrderDocument: {
@@ -390,7 +601,7 @@ export async function getDistributionQuotation(
             gstin: masterQuotation.organization.gst_number,
             address: sellerAddress,
           },
-          buyer: mapQuotationParty(masterQuotation.vendor, masterQuotation.customer),
+          buyer: mapQuotationParty(masterQuotation.vendor, masterQuotation.customer, masterQuotation.contact),
         },
       };
     }
@@ -416,7 +627,12 @@ export async function getDistributionQuotation(
       include: quotationInclude,
     });
     if (!quotation) throw new Error("The quotation was not found in this organization.");
-    return { quotation: await mapQuotation(organizationId, quotation), children: [] };
+    const mappedQuotation = await mapQuotation(organizationId, quotation);
+    return {
+      quotation: mappedQuotation,
+      children: [],
+      ...(options.includeTaxOptions ? { taxOptions: await getQuotationTaxOptions(organizationId, quotation) } : {}),
+    };
   }
 
   const quotation = await prisma.distributionQuotation.findFirst({
@@ -427,6 +643,7 @@ export async function getDistributionQuotation(
   return {
     quotation: await mapQuotation(organizationId, quotation),
     children: quotation.childQuotations.map(mapQuotationSummary),
+    ...(options.includeTaxOptions ? { taxOptions: await getQuotationTaxOptions(organizationId, quotation) } : {}),
   };
 }
 
@@ -475,11 +692,13 @@ function decodeDistributionCursor(value: string | undefined) {
 export async function listDistributionOrderForms(
   organizationId: string,
   cursorValue?: string,
+  quotationStatus?: "created" | "not-created",
 ) {
   const cursor = decodeDistributionCursor(cursorValue);
   const where: Prisma.DistributionOrderFormWhereInput = {
     organization_id: organizationId,
-    status: "DRAFT",
+    status: quotationStatus === "created" ? "CONVERTED" : "DRAFT",
+    quotation_id: quotationStatus === "created" ? { not: null } : null,
   };
   if (cursor) {
     where.OR = [
@@ -575,6 +794,121 @@ export async function listDistributionOrderForms(
           createdAt: forms[forms.length - 1].created_at,
         })
       : null,
+  };
+}
+
+export async function getDistributionOrderFormForPdf(organizationId: string, orderFormId: string) {
+  const orderForm = await prisma.distributionOrderForm.findFirst({
+    where: { organization_id: organizationId, id: orderFormId },
+    select: {
+      id: true,
+      order_form_no: true,
+      order_form_date: true,
+      customer: true,
+      status: true,
+      total_quantity: true,
+      quotation_id: true,
+      created_at: true,
+      vendor_id: true,
+      contact_id: true,
+      lines: {
+        orderBy: [{ created_at: "asc" }, { id: "asc" }],
+        select: {
+          booking_no: true,
+          order_no: true,
+          brand: true,
+          style_name: true,
+          quantity: true,
+          sourceBooking: {
+            select: {
+              order: { select: { sizeGroup: true } },
+              sizeLines: {
+                select: { size: true, booked_quantity: true },
+                orderBy: [{ created_at: "asc" }, { id: "asc" }],
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!orderForm) throw new Error("The Order Form was not found in this organization.");
+
+  const vendor = orderForm.vendor_id
+    ? await prisma.masterVendor.findFirst({
+        where: { organization_id: organizationId, id: orderForm.vendor_id },
+        select: quotationPartyInclude.select,
+      })
+    : null;
+  const contactId = vendor?.contact_id ?? orderForm.contact_id;
+  const [contact, organization] = await Promise.all([
+    contactId
+      ? prisma.contact.findFirst({
+          where: { organization_id: organizationId, id: contactId },
+          select: quotationContactSelect,
+        })
+      : Promise.resolve(null),
+    prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: {
+        organization_name: true,
+        organization_email: true,
+        gst_number: true,
+        mobile_number: true,
+        address_line_1: true,
+        address_line_2: true,
+        city: true,
+        state: true,
+        country: true,
+        pin_code: true,
+      },
+    }),
+  ]);
+  if (!organization) throw new Error("The organization details required for the Order Form PDF are unavailable.");
+
+  const sizeGroups = orderForm.lines.map((line) => line.sourceBooking.order?.sizeGroup ?? "");
+  const sizeOrderByGroup = await getSizeGroupSizeOrderMapForOrganization(organizationId, sizeGroups);
+  const sellerAddress = [
+    organization.address_line_1,
+    organization.address_line_2,
+    organization.city,
+    organization.state,
+    organization.pin_code,
+    organization.country,
+  ].filter((part): part is string => Boolean(part?.trim())).join(", ");
+
+  return {
+    orderForm: {
+      id: orderForm.id,
+      orderFormNo: orderForm.order_form_no,
+      orderFormDate: orderForm.order_form_date.toISOString().slice(0, 10),
+      customer: orderForm.customer,
+      status: orderForm.status,
+      totalQuantity: orderForm.total_quantity,
+      hasQuotation: Boolean(orderForm.quotation_id),
+      createdAt: orderForm.created_at.toISOString(),
+      lines: orderForm.lines.map((line) => {
+        const sizeGroup = line.sourceBooking.order?.sizeGroup ?? "";
+        const sizeOrder = sizeOrderByGroup.get(sizeGroup.trim().toLocaleLowerCase()) ?? [];
+        return {
+          bookingNo: line.booking_no,
+          orderNo: line.order_no,
+          brand: line.brand ?? "",
+          styleName: line.style_name ?? "",
+          quantity: line.quantity,
+          sizes: sortBySizeGroupOrder(line.sourceBooking.sizeLines, sizeOrder, (sizeLine) => sizeLine.size)
+            .map((sizeLine) => ({ size: sizeLine.size, bookedQuantity: sizeLine.booked_quantity })),
+        };
+      }),
+    },
+    seller: {
+      name: organization.organization_name,
+      email: organization.organization_email,
+      phone: organization.mobile_number,
+      gstin: organization.gst_number,
+      address: sellerAddress,
+    },
+    buyer: mapQuotationParty(vendor, orderForm.customer, contact),
   };
 }
 
@@ -828,15 +1162,17 @@ export async function createDistributionQuotationFromBookings(
   }
 
   const created = await prisma.$transaction(async (transaction) => {
-    let vendor: { id: string; vendor: string } | null = null;
+    let vendor: { id: string; vendor: string; contact_id: string | null } | null = null;
+    let quotationContactId = selectedContactId;
     let customer: string;
     if (selectedVendorId) {
       vendor = await transaction.masterVendor.findFirst({
         where: { organization_id: organizationId, id: selectedVendorId, is_active: true },
-        select: { id: true, vendor: true },
+        select: { id: true, vendor: true, contact_id: true },
       });
       if (!vendor) throw new Error("Select an active Dealer from Vendor Master for the quotation.");
       customer = vendor.vendor;
+      quotationContactId = vendor.contact_id;
     } else {
       if (!selectedContactId) throw new Error("Select a Contact Master contact for the quotation.");
       const contact = await transaction.contact.findFirst({
@@ -846,7 +1182,7 @@ export async function createDistributionQuotationFromBookings(
       if (!contact) throw new Error("Select a Contact Master contact from this organization.");
       vendor = await transaction.masterVendor.findFirst({
         where: { organization_id: organizationId, contact_id: contact.id },
-        select: { id: true, vendor: true },
+        select: { id: true, vendor: true, contact_id: true },
       });
       customer = contact.display_name || contact.legal_name;
       if (!customer.trim()) throw new Error("The selected Contact Master contact does not have a display name.");
@@ -905,6 +1241,7 @@ export async function createDistributionQuotationFromBookings(
       data: {
         organization_id: organizationId,
         vendor_id: vendor?.id ?? null,
+        contact_id: quotationContactId,
         quotation_no: await reserveProcurementDocumentNumber(organizationId, "DISTRIBUTION_QUOTATION", transaction),
         quotation_date: new Date(),
         order_no: combinedOrderNumbers,
@@ -933,7 +1270,7 @@ export async function createDistributionQuotationFromBookings(
         quotation_no: quotation.quotation_no,
         booking_nos: orderedBookings.map((booking) => booking.booking_no),
         vendor_id: vendor?.id ?? null,
-        ...(selectedContactId ? { contact_id: selectedContactId } : {}),
+        ...(quotationContactId ? { contact_id: quotationContactId } : {}),
         total_quantity: totalQuantity,
       },
     }, transaction);
@@ -954,7 +1291,9 @@ export async function saveDistributionQuotationDraft(
     quotationDate: string;
     validUntil: string;
     notes: string;
-    lines: Array<{ id: string; unitPrice: string }>;
+    deliveryCharge: string;
+    deliveryTaxRate: string;
+    lines: Array<{ id: string; unitPrice: string; taxRate: string }>;
   },
 ) {
   if (!isValidDateOnly(input.quotationDate)) throw new Error("Enter a valid quotation date.");
@@ -969,6 +1308,22 @@ export async function saveDistributionQuotationDraft(
     if (!/^\d{1,10}(\.\d{1,4})?$/.test(unitPrice)) throw new Error("Each unit price must be a non-negative amount with up to four decimal places.");
     return new Prisma.Decimal(unitPrice);
   });
+  const lineTaxRates = input.lines.map(({ taxRate }) => {
+    if (!/^\d{1,3}(?:\.\d{1,2})?$/.test(taxRate)) throw new Error("Each quotation tax rate must be between 0 and 100.");
+    const rate = new Prisma.Decimal(taxRate);
+    if (rate.gt(100)) throw new Error("Each quotation tax rate must be between 0 and 100.");
+    return rate;
+  });
+  if (!/^\d{1,10}(?:\.\d{1,2})?$/.test(input.deliveryCharge)) {
+    throw new Error("Delivery charge must be a valid non-negative amount.");
+  }
+  const deliveryCharge = new Prisma.Decimal(input.deliveryCharge);
+  if (deliveryCharge.gt("999999999999.99")) throw new Error("Delivery charge exceeds the supported amount.");
+  if (!/^\d{1,3}(?:\.\d{1,2})?$/.test(input.deliveryTaxRate)) {
+    throw new Error("Delivery tax rate must be between 0 and 100.");
+  }
+  const deliveryTaxRate = new Prisma.Decimal(input.deliveryTaxRate);
+  if (deliveryTaxRate.gt(100)) throw new Error("Delivery tax rate must be between 0 and 100.");
 
   const record = await prisma.$transaction(async (transaction) => {
     const current = await transaction.distributionQuotation.findFirst({
@@ -979,23 +1334,91 @@ export async function saveDistributionQuotationDraft(
     if (current.status !== "DRAFT" || current.mode === "MASTER") {
       throw new Error("Only draft regular quotations can be edited.");
     }
+    if (current.parent_quotation_id) {
+      throw new Error("This quotation is already included in a Sales Order and can no longer be changed.");
+    }
     if (current.lines.length !== input.lines.length ||
         current.lines.some((line) => !input.lines.some((entry) => entry.id === line.id))) {
       throw new Error("Quotation detail lines changed. Reload the quotation before saving.");
     }
 
+    const party = mapQuotationParty(current.vendor, current.customer, current.contact);
+    const taxData = await loadQuotationTaxData(organizationId, party, transaction);
     let subtotal = new Prisma.Decimal(0);
+    const componentTotals = {
+      cgst: new Prisma.Decimal(0),
+      sgst: new Prisma.Decimal(0),
+      igst: new Prisma.Decimal(0),
+      vat: new Prisma.Decimal(0),
+      salesTax: new Prisma.Decimal(0),
+    };
     for (const line of current.lines) {
       const priceIndex = input.lines.findIndex((entry) => entry.id === line.id);
       const unitPrice = prices[priceIndex];
       const lineTotal = unitPrice.mul(line.quantity).toDecimalPlaces(2);
       subtotal = subtotal.add(lineTotal);
+      const taxRate = lineTaxRates[priceIndex];
+      const gstRate = taxData.gstRates.find((rate) => rate.gst?.eq(taxRate)) ?? null;
+      const tax = calculateQuotationTax({
+        taxableAmount: lineTotal,
+        selectedRate: taxRate,
+        profile: taxData.profile,
+        gstRate,
+        organizationState: taxData.organizationState,
+        organizationGstin: taxData.organizationGstin,
+        counterpartyState: taxData.counterpartyState,
+        counterpartyGstin: taxData.counterpartyGstin,
+      });
+      componentTotals.cgst = componentTotals.cgst.add(tax.cgstAmount);
+      componentTotals.sgst = componentTotals.sgst.add(tax.sgstAmount);
+      componentTotals.igst = componentTotals.igst.add(tax.igstAmount);
+      componentTotals.vat = componentTotals.vat.add(tax.vatAmount);
+      componentTotals.salesTax = componentTotals.salesTax.add(tax.salesTaxAmount);
       const lineUpdate = await transaction.distributionQuotationLine.updateMany({
         where: { organization_id: organizationId, quotation_id: current.id, id: line.id },
-        data: { unit_price: unitPrice, line_total: lineTotal },
+        data: {
+          unit_price: unitPrice,
+          line_total: lineTotal,
+          tax_rate: taxRate,
+          tax_type: tax.taxType,
+          cgst_rate: tax.cgstRate,
+          sgst_rate: tax.sgstRate,
+          igst_rate: tax.igstRate,
+          vat_rate: tax.vatRate,
+          sales_tax_rate: tax.salesTaxRate,
+          cgst_amount: tax.cgstAmount,
+          sgst_amount: tax.sgstAmount,
+          igst_amount: tax.igstAmount,
+          vat_amount: tax.vatAmount,
+          sales_tax_amount: tax.salesTaxAmount,
+          tax_amount: tax.taxAmount,
+          total_amount: tax.totalAmount,
+        },
       });
       if (lineUpdate.count !== 1) throw new Error("A quotation detail line changed. Reload the quotation before saving.");
     }
+    const deliveryGstRate = taxData.gstRates.find((rate) => rate.gst?.eq(deliveryTaxRate)) ?? null;
+    const deliveryTax = calculateQuotationTax({
+      taxableAmount: deliveryCharge,
+      selectedRate: deliveryTaxRate,
+      profile: taxData.profile,
+      gstRate: deliveryGstRate,
+      organizationState: taxData.organizationState,
+      organizationGstin: taxData.organizationGstin,
+      counterpartyState: taxData.counterpartyState,
+      counterpartyGstin: taxData.counterpartyGstin,
+    });
+    componentTotals.cgst = componentTotals.cgst.add(deliveryTax.cgstAmount);
+    componentTotals.sgst = componentTotals.sgst.add(deliveryTax.sgstAmount);
+    componentTotals.igst = componentTotals.igst.add(deliveryTax.igstAmount);
+    componentTotals.vat = componentTotals.vat.add(deliveryTax.vatAmount);
+    componentTotals.salesTax = componentTotals.salesTax.add(deliveryTax.salesTaxAmount);
+    const taxAmount = componentTotals.cgst
+      .plus(componentTotals.sgst)
+      .plus(componentTotals.igst)
+      .plus(componentTotals.vat)
+      .plus(componentTotals.salesTax);
+    const grandTotal = subtotal.plus(deliveryCharge).plus(taxAmount);
     const quotationUpdate = await transaction.distributionQuotation.updateMany({
       where: { organization_id: organizationId, id: current.id, status: "DRAFT" },
       data: {
@@ -1003,6 +1426,15 @@ export async function saveDistributionQuotationDraft(
         valid_until: input.validUntil ? new Date(`${input.validUntil}T00:00:00.000Z`) : null,
         notes: input.notes.trim() || null,
         subtotal,
+        delivery_charge: deliveryCharge,
+        delivery_tax_rate: deliveryTaxRate,
+        cgst_amount: componentTotals.cgst,
+        sgst_amount: componentTotals.sgst,
+        igst_amount: componentTotals.igst,
+        vat_amount: componentTotals.vat,
+        sales_tax_amount: componentTotals.salesTax,
+        tax_amount: taxAmount,
+        grand_total: grandTotal,
       },
     });
     if (quotationUpdate.count !== 1) throw new Error("The draft quotation changed. Reload it before saving.");
@@ -1023,6 +1455,10 @@ export async function saveDistributionQuotationDraft(
         status: current.status,
         before_subtotal: current.subtotal.toFixed(2),
         after_subtotal: updated.subtotal.toFixed(2),
+        delivery_charge: updated.delivery_charge.toFixed(2),
+        tax_amount: updated.tax_amount.toFixed(2),
+        grand_total: updated.grand_total.toFixed(2),
+        line_count: current.lines.length,
       },
     }, transaction);
     return updated;
@@ -1095,6 +1531,15 @@ export async function createDistributionMasterQuotations(
         order_no: true,
         total_quantity: true,
         subtotal: true,
+        delivery_charge: true,
+        cgst_amount: true,
+        sgst_amount: true,
+        igst_amount: true,
+        vat_amount: true,
+        sales_tax_amount: true,
+        tax_amount: true,
+        grand_total: true,
+        contact_id: true,
         vendor: { select: { contact_id: true } },
         orderForms: {
           select: {
@@ -1125,6 +1570,7 @@ export async function createDistributionMasterQuotations(
     const sourceContactIdsByQuotation = new Map(orderedChildren.map((quotation) => [
       quotation.id,
       [...new Set([
+        quotation.contact_id,
         quotation.vendor?.contact_id,
         ...(quotation.orderForms ?? []).flatMap((orderForm) => [
           orderForm.contact_id,
@@ -1295,10 +1741,19 @@ export async function createDistributionMasterQuotations(
       )];
       const groupQuotationIds = group.quotations.map((child) => child.id);
       const subtotal = group.quotations.reduce((sum, child) => sum.add(child.subtotal), new Prisma.Decimal(0));
+      const deliveryCharge = group.quotations.reduce((sum, child) => sum.add(child.delivery_charge), new Prisma.Decimal(0));
+      const cgstAmount = group.quotations.reduce((sum, child) => sum.add(child.cgst_amount), new Prisma.Decimal(0));
+      const sgstAmount = group.quotations.reduce((sum, child) => sum.add(child.sgst_amount), new Prisma.Decimal(0));
+      const igstAmount = group.quotations.reduce((sum, child) => sum.add(child.igst_amount), new Prisma.Decimal(0));
+      const vatAmount = group.quotations.reduce((sum, child) => sum.add(child.vat_amount), new Prisma.Decimal(0));
+      const salesTaxAmount = group.quotations.reduce((sum, child) => sum.add(child.sales_tax_amount), new Prisma.Decimal(0));
+      const taxAmount = group.quotations.reduce((sum, child) => sum.add(child.tax_amount), new Prisma.Decimal(0));
+      const grandTotal = group.quotations.reduce((sum, child) => sum.add(child.grand_total), new Prisma.Decimal(0));
       const master = await transaction.distributionQuotation.create({
         data: {
           organization_id: organizationId,
           vendor_id: group.vendorId,
+          contact_id: group.contactId,
           quotation_no: await reserveProcurementDocumentNumber(organizationId, "DISTRIBUTION_MASTER_QUOTATION", transaction),
           quotation_date: new Date(),
           order_no: orderNumbers.join(", "),
@@ -1307,6 +1762,14 @@ export async function createDistributionMasterQuotations(
           status: "DRAFT",
           total_quantity: totalQuantity,
           subtotal,
+          delivery_charge: deliveryCharge,
+          cgst_amount: cgstAmount,
+          sgst_amount: sgstAmount,
+          igst_amount: igstAmount,
+          vat_amount: vatAmount,
+          sales_tax_amount: salesTaxAmount,
+          tax_amount: taxAmount,
+          grand_total: grandTotal,
           created_by: userId,
         },
         include: quotationInclude,

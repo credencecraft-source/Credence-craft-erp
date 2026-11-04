@@ -6,6 +6,11 @@ const mocks = vi.hoisted(() => ({
   workspaceUserFindMany: vi.fn(),
   skuFindFirst: vi.fn(),
   skuFindMany: vi.fn(),
+  skuCreate: vi.fn(),
+  skuUpdate: vi.fn(),
+  counterUpsert: vi.fn(),
+  transaction: vi.fn(),
+  locationFindFirst: vi.fn(),
   generalReceiptFindFirst: vi.fn(),
   generalReceiptFindMany: vi.fn(),
   allocatedReceiptFindFirst: vi.fn(),
@@ -20,14 +25,17 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 }));
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
+    $transaction: mocks.transaction,
     workspaceUser: { findMany: mocks.workspaceUserFindMany },
-    finishedGoodsSkuStock: { findFirst: mocks.skuFindFirst, findMany: mocks.skuFindMany },
+    finishedGoodsSkuStock: { findFirst: mocks.skuFindFirst, findMany: mocks.skuFindMany, create: mocks.skuCreate, update: mocks.skuUpdate },
+    procurementDocumentCounter: { upsert: mocks.counterUpsert },
+    masterLocation: { findFirst: mocks.locationFindFirst },
     finishedGoodsGeneralStockReceipt: { findFirst: mocks.generalReceiptFindFirst, findMany: mocks.generalReceiptFindMany },
     finishedGoodsAllocatedStockReceipt: { findFirst: mocks.allocatedReceiptFindFirst, findMany: mocks.allocatedReceiptFindMany },
   },
 }));
 
-import { GET } from "./route";
+import { GET, POST, PUT } from "./route";
 
 function createReceipt(overrides: Record<string, unknown> = {}) {
   return {
@@ -74,6 +82,20 @@ describe("finished goods stock report", () => {
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1", role: "INVENTORY" });
     mocks.skuFindMany.mockResolvedValue([]);
     mocks.skuFindFirst.mockResolvedValue(null);
+    mocks.skuCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: "sku-created",
+      ...data,
+    }));
+    mocks.skuUpdate.mockResolvedValue({ id: "sku-record-1", sku_code: "CLASSIC-TEE-BLACK-L", barcode: "POS1" });
+    mocks.counterUpsert.mockResolvedValue({ current_value: 1 });
+    mocks.locationFindFirst.mockResolvedValue({ id: "location-1", entity_id: "entity-1" });
+    mocks.transaction.mockImplementation(async (callback) => callback({
+      finishedGoodsSkuStock: {
+        findFirst: mocks.skuFindFirst,
+        create: mocks.skuCreate,
+      },
+      procurementDocumentCounter: { upsert: mocks.counterUpsert },
+    }));
     mocks.generalReceiptFindFirst.mockResolvedValue(null);
     mocks.generalReceiptFindMany.mockResolvedValue([createReceipt()]);
     mocks.allocatedReceiptFindFirst.mockResolvedValue(null);
@@ -84,6 +106,127 @@ describe("finished goods stock report", () => {
       { id: "submitter-user-id", email: "submitter@example.test" },
       { id: "verifier-user-id", email: "verifier@example.test" },
     ]);
+  });
+
+  it("creates POS stock with a style-colour-size SKU and an automatically reserved barcode", async () => {
+    mocks.skuFindFirst.mockResolvedValue(null);
+    const response = await POST(new Request("http://localhost/api/inventory/stock/fg-sku", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        locationId: "location-1",
+        source: "DIRECT_FROM_POS",
+        styleName: "Classic Tee",
+        colour: "Navy Blue",
+        size: "M",
+        qtyIn: 4,
+        qtyOut: 0,
+      }),
+    }));
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body.record).toMatchObject({
+      sku_code: "CLASSIC-TEE-NAVY-BLUE-M",
+      barcode: "POS1",
+    });
+    expect(mocks.skuFindFirst).toHaveBeenNthCalledWith(1, {
+      where: {
+        organization_id: "internal-org-1",
+        sku_code: "CLASSIC-TEE-NAVY-BLUE-M",
+      },
+      select: { id: true },
+    });
+    expect(mocks.counterUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id_document_type: {
+          organization_id: "internal-org-1",
+          document_type: "POS_BARCODE",
+        },
+      },
+    }));
+    expect(mocks.skuCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        organization_id: "internal-org-1",
+        sku_code: "CLASSIC-TEE-NAVY-BLUE-M",
+        barcode: "POS1",
+        style_name: "CLASSIC TEE",
+        colour: "NAVY BLUE",
+        size: "M",
+      }),
+    }));
+  });
+
+  it("requires style, colour, and size for generated POS SKUs", async () => {
+    const response = await POST(new Request("http://localhost/api/inventory/stock/fg-sku", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        locationId: "location-1",
+        source: "DIRECT_FROM_POS",
+        styleName: "Classic Tee",
+        colour: "",
+        size: "M",
+        qtyIn: 4,
+        qtyOut: 0,
+      }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.skuCreate).not.toHaveBeenCalled();
+    expect(mocks.counterUpsert).not.toHaveBeenCalled();
+  });
+
+  it("recalculates the POS SKU when its variant changes and preserves its barcode", async () => {
+    mocks.skuFindFirst
+      .mockResolvedValueOnce({
+        id: "sku-record-1",
+        organization_id: "internal-org-1",
+        source: "DIRECT_FROM_POS",
+        sku_code: "CLASSIC-TEE-NAVY-M",
+        barcode: "POS1",
+        style_name: "CLASSIC TEE",
+        order_no: "DIRECT",
+        article_no: "DIRECT",
+        size: "M",
+        colour: "NAVY",
+        location_id: "location-1",
+        qty_in: 4,
+        qty_out: 0,
+      })
+      .mockResolvedValueOnce(null);
+    const response = await PUT(new Request("http://localhost/api/inventory/stock/fg-sku", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organizationId: "public-org",
+        recordId: "sku-record-1",
+        styleName: "Classic Tee",
+        orderNo: "DIRECT",
+        articleNo: "DIRECT",
+        colour: "Black",
+        size: "L",
+        locationId: "location-1",
+        qtyIn: 4,
+        qtyOut: 0,
+        source: "DIRECT_FROM_POS",
+        barcode: "CLIENT-SUPPLIED",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.skuUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "sku-record-1", organization_id: "internal-org-1" },
+      data: expect.objectContaining({
+        sku_code: "CLASSIC-TEE-BLACK-L",
+        barcode: "POS1",
+        style_name: "CLASSIC TEE",
+        size: "L",
+        colour: "BLACK",
+      }),
+    }));
   });
 
   it("returns email addresses for GRN submitter and verifier instead of user IDs", async () => {
@@ -123,6 +266,53 @@ describe("finished goods stock report", () => {
     });
   });
 
+  it("limits the POS stock report to POS sources and excludes inventory GRN receipts", async () => {
+    mocks.skuFindMany.mockResolvedValue([
+      { id: "sku-pos", source: "POS_PURCHASE_BILL" },
+    ]);
+
+    const response = await GET(new Request("http://localhost/api/inventory/stock/fg-sku?organizationId=public-org&surface=POS"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mocks.skuFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "internal-org-1",
+        source: { in: ["DIRECT_FROM_POS", "POS", "POS_PURCHASE_BILL"] },
+      },
+    }));
+    expect(mocks.generalReceiptFindMany).not.toHaveBeenCalled();
+    expect(mocks.allocatedReceiptFindMany).not.toHaveBeenCalled();
+    expect(body.records.some((record: { source: string }) => record.source === "POS_PURCHASE_BILL")).toBe(true);
+  });
+
+  it("keeps POS-origin SKU sources in the inventory report", async () => {
+    mocks.skuFindMany.mockResolvedValue([
+      { id: "sku-inventory", source: "DIRECT_FROM_INVENTORY" },
+      { id: "sku-pos", source: "POS_PURCHASE_BILL" },
+    ]);
+
+    const response = await GET(new Request("http://localhost/api/inventory/stock/fg-sku?organizationId=public-org"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mocks.skuFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "internal-org-1" },
+    }));
+    expect(body.records.map((record: { source: string }) => record.source)).toEqual([
+      "DIRECT_FROM_INVENTORY",
+      "POS_PURCHASE_BILL",
+      "WO_ORDER_GRN",
+      "WO_ORDER_GRN",
+    ]);
+    expect(body.records.map((record: { main_source: string; sub_source: string }) => [record.main_source, record.sub_source])).toEqual([
+      ["Inventory Module", "—"],
+      ["POS Module", "POS Bill"],
+      ["Inventory Module", "WO Order GRN"],
+      ["Inventory Module", "WO Order GRN"],
+    ]);
+  });
+
   it("loads one tenant-scoped SKU stock record for its detail page", async () => {
     const skuRecord = {
       id: "sku-record-1",
@@ -139,7 +329,14 @@ describe("finished goods stock report", () => {
     expect(response.status).toBe(200);
     expect(mocks.skuFindFirst).toHaveBeenCalledWith({
       where: { organization_id: "internal-org-1", OR: [{ id: "sku-record-1" }, { sku_code: "sku-record-1" }, { barcode: "sku-record-1" }] },
-      include: { location: { select: { location_name: true } } },
+      include: {
+        location: {
+          select: {
+            location_name: true,
+            entity: { select: { entity_name: true } },
+          },
+        },
+      },
     });
     expect(body.record).toMatchObject({ id: "sku-record-1", location: { location_name: "Warehouse" } });
     expect(body.canEdit).toBe(true);

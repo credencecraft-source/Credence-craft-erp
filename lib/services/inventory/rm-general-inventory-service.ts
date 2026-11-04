@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
+import { getStorageNodePathsForOrganization } from "@/lib/services/inventory/storage-node-service";
 
 const zero = () => new Prisma.Decimal(0);
 
@@ -69,6 +70,10 @@ export async function listRawMaterialGeneralInventory(
     }),
   ]);
   const assetMaterialNames = new Set(assetMaterials.filter((material) => material.is_asset).map((material) => material.raw_material_name));
+  const storagePaths = await getStorageNodePathsForOrganization(
+    organizationId,
+    stockRows.map((row) => row.storage_node_id).filter((id): id is string => Boolean(id)),
+  );
   const categoriesByMaterialName = new Map(
     assetMaterials.map((material) => [
       material.raw_material_name.toLocaleLowerCase(),
@@ -142,6 +147,7 @@ export async function listRawMaterialGeneralInventory(
     const verification = row.receiptLine?.rmGrnVerification;
     return {
       ...row,
+      storage_path: row.storage_node_id ? storagePaths.get(row.storage_node_id) ?? null : null,
       is_asset: isAsset,
       category: categoriesByMaterialName.get(row.raw_material.toLocaleLowerCase()) ?? "Uncategorized",
       source_type: sourceType,
@@ -160,6 +166,7 @@ export async function listRawMaterialGeneralInventory(
       id: `grn:${totals.locationId}:${totals.rawMaterial}`,
       location_id: totals.locationId,
       location: totals.location,
+      storage_path: null,
       raw_material: totals.rawMaterial,
       is_asset: totals.isAsset,
       category: categoriesByMaterialName.get(totals.rawMaterial.toLocaleLowerCase()) ?? "Uncategorized",

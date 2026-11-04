@@ -49,6 +49,8 @@ describe("distribution quotation detail API", () => {
       masterOrder: false,
       includeChildren: true,
       salesOrderDocument: false,
+      includeTaxOptions: false,
+      quotationDocument: false,
     });
   });
 
@@ -60,6 +62,8 @@ describe("distribution quotation detail API", () => {
       masterOrder: true,
       includeChildren: true,
       salesOrderDocument: false,
+      includeTaxOptions: false,
+      quotationDocument: false,
     });
   });
 
@@ -72,6 +76,8 @@ describe("distribution quotation detail API", () => {
       masterOrder: true,
       includeChildren: true,
       salesOrderDocument: true,
+      includeTaxOptions: false,
+      quotationDocument: false,
     });
   });
 
@@ -83,6 +89,23 @@ describe("distribution quotation detail API", () => {
       masterOrder: false,
       includeChildren: false,
       salesOrderDocument: false,
+      includeTaxOptions: true,
+      quotationDocument: false,
+    });
+  });
+
+  it("loads the authorized quotation and party details for its PDF", async () => {
+    const response = await GET(new Request(
+      "http://localhost/api/distribution/quotations/quotation-1?organizationId=public-org&mode=QUOTATION_PDF",
+    ), context);
+
+    expect(response.status).toBe(200);
+    expect(mocks.getDistributionQuotation).toHaveBeenCalledWith("internal-org-1", "quotation-1", {
+      masterOrder: false,
+      includeChildren: false,
+      salesOrderDocument: false,
+      includeTaxOptions: false,
+      quotationDocument: true,
     });
   });
 
@@ -92,7 +115,9 @@ describe("distribution quotation detail API", () => {
       quotationDate: "2026-10-07",
       validUntil: "",
       notes: "Terms",
-      lines: [{ id: "line-1", unitPrice: "12.50" }],
+      deliveryCharge: "0.00",
+      deliveryTaxRate: "0.00",
+      lines: [{ id: "line-1", unitPrice: "12.50", taxRate: "5.00" }],
     }), context);
     expect(response.status).toBe(200);
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
@@ -104,7 +129,9 @@ describe("distribution quotation detail API", () => {
       quotationDate: "2026-10-07",
       validUntil: "",
       notes: "Terms",
-      lines: [{ id: "line-1", unitPrice: "12.50" }],
+      deliveryCharge: "0.00",
+      deliveryTaxRate: "0.00",
+      lines: [{ id: "line-1", unitPrice: "12.50", taxRate: "5.00" }],
     });
   });
 
@@ -114,7 +141,9 @@ describe("distribution quotation detail API", () => {
       quotationDate: "2026-10-07",
       validUntil: "",
       notes: "",
-      lines: [{ id: "line-1", unitPrice: 12.5 }],
+      deliveryCharge: "0.00",
+      deliveryTaxRate: "0.00",
+      lines: [{ id: "line-1", unitPrice: 12.5, taxRate: "5.00" }],
     }), context);
     expect(response.status).toBe(400);
     expect(mocks.saveDistributionQuotationDraft).not.toHaveBeenCalled();

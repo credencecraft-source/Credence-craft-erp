@@ -37,7 +37,7 @@ function getSchemaNotReadyResponse(error: unknown) {
 
 async function authorizeOrganization(
   request: Request,
-  permission: "VIEW_REPORTS" | "CREATE_ORDERS" | "MANAGE_MASTER_DATA",
+  permission: "VIEW_REPORTS" | "CREATE_ORDERS" | "MANAGE_MASTER_DATA" | "CREATE_POS_QR_REQUEST",
 ) {
   const user = await requireSessionUser();
   const url = new URL(request.url);
@@ -58,8 +58,16 @@ async function authorizeOrganization(
   }
 
   try {
-    const organization = await requireOrganizationContext(user.id, organizationId);
-    await requireOrganizationPermission(user.id, organization.organizationId, permission);
+    const organization = permission === "CREATE_POS_QR_REQUEST"
+      ? await requireOrganizationContext(
+        user.id,
+        organizationId,
+        ["OWNER", "ADMIN", "FINANCE", "INVENTORY"],
+      )
+      : await requireOrganizationContext(user.id, organizationId);
+    if (permission !== "CREATE_POS_QR_REQUEST") {
+      await requireOrganizationPermission(user.id, organization.organizationId, permission);
+    }
     return { authorized: true as const, user, organization };
   } catch (error) {
     if (
@@ -97,7 +105,11 @@ export async function GET(request: Request): Promise<NextResponse> {
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
-    const authorization = await authorizeOrganization(request, "CREATE_ORDERS");
+    const sourceType = new URL(request.url).searchParams.get("sourceType");
+    const authorization = await authorizeOrganization(
+      request,
+      sourceType === "POS_PURCHASE_BILL" ? "CREATE_POS_QR_REQUEST" : "CREATE_ORDERS",
+    );
     if (!authorization.authorized) return authorization.response;
 
     let body: unknown;
@@ -110,6 +122,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (!parsed.success) {
       return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
+    if (
+      Boolean(parsed.data.purchaseBillId)
+      !== (sourceType === "POS_PURCHASE_BILL")
+    ) {
+      return NextResponse.json({ error: "Request source does not match the authorized workflow." }, { status: 400 });
+    }
 
     const result = await createOrderQrPrintRequest(
       authorization.organization.id,
@@ -119,13 +137,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (!result.success) {
       if (result.reason === "INVALID_QUANTITY") {
         return NextResponse.json(
-          { error: "A QR request must contain between 1 and 10,000 labels in total." },
+          { error: parsed.data.purchaseBillId
+            ? "A purchase bill QR request must contain between 1 and 10,000 labels in total."
+            : "A QR request must contain between 1 and 10,000 labels in total." },
           { status: 400 },
         );
       }
       if (result.reason === "QR_FIELD_VALUE_MISSING") {
         return NextResponse.json(
-          { error: "The selected QR field has no value on this order." },
+          { error: parsed.data.purchaseBillId
+            ? "The selected QR field has no value on one of the selected purchase bill lines."
+            : "The selected QR field has no value on this order." },
           { status: 400 },
         );
       }
@@ -135,10 +157,18 @@ export async function POST(request: Request): Promise<NextResponse> {
           { status: 409 },
         );
       }
+      if (result.reason === "PURCHASE_BILL_NOT_READY") {
+        return NextResponse.json(
+          { error: "Only posted or approved purchase bills can request QR labels." },
+          { status: 409 },
+        );
+      }
       return NextResponse.json(
         { error: result.reason === "ORDER_NOT_FOUND"
           ? "The selected order was not found in this organization."
-          : "The selected QR template was not found in this organization." },
+          : result.reason === "PURCHASE_BILL_NOT_FOUND"
+            ? "The selected purchase bill or one of its lines was not found in this organization."
+            : "The selected QR template was not found in this organization." },
         { status: 404 },
       );
     }

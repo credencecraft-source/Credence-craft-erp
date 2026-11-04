@@ -14,6 +14,10 @@ import { requireOrganizationContext } from "@/lib/services/organizations/organiz
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
+    const quotationStatus = url.searchParams.get("quotationStatus");
+    if (quotationStatus && quotationStatus !== "created" && quotationStatus !== "not-created") {
+      return NextResponse.json({ error: "Select a valid Order Form quotation status." }, { status: 400 });
+    }
     const authorization = await measureDatabaseQueries(async () => {
       const user = await requireSessionUser();
       const organization = await requireOrganizationContext(
@@ -25,6 +29,7 @@ export async function GET(request: Request) {
     const list = await measureDatabaseQueries(() => listDistributionOrderForms(
       authorization.value,
       url.searchParams.get("cursor") ?? undefined,
+      ...(quotationStatus ? [quotationStatus as "created" | "not-created"] : []),
     ));
     const response = NextResponse.json(list.value);
     if (process.env.NODE_ENV === "development") {

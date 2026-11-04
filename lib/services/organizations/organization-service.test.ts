@@ -21,6 +21,7 @@ const { prismaMock, transactionMock, requirePlatformSessionAdmin, requirePlatfor
     orderProcessController: { deleteMany: vi.fn() },
     merchandisingOrderProcessStep: { deleteMany: vi.fn() },
     eRPSoftware: { create: vi.fn() },
+    eRPModule: { createMany: vi.fn() },
     organizationRoleDefinition: { createMany: vi.fn() },
     organizationRolePermission: { createMany: vi.fn() },
     masterGstType: { createMany: vi.fn() },
@@ -79,6 +80,7 @@ import {
   updateOrganizationApprovalStatus,
   updateOrganizationApprovalStatusWithTransition,
 } from "./organization-service";
+import { ERP_MODULES } from "@/components/erp/erp-config-registry";
 
 const organization = {
   id: "org-internal-id",
@@ -98,6 +100,7 @@ beforeEach(() => {
   );
   transactionMock.$executeRaw.mockResolvedValue(1);
   transactionMock.organization.create.mockResolvedValue(organization);
+  transactionMock.eRPSoftware.create.mockResolvedValue({ id: "erp-software-id" });
   transactionMock.workspaceUser.update.mockResolvedValue({ id: "workspace-user-id" });
   transactionMock.masterGst.findMany.mockResolvedValue([]);
   transactionMock.masterProcess.create.mockImplementation(({ data }: { data: { process_name: string } }) => Promise.resolve({ id: `process-${data.process_name}` }));
@@ -191,6 +194,14 @@ describe("organization creation defaults", () => {
         gst_number: "22AAAAA0000A1Z5",
         mobile_number: "9876543210",
       }),
+    });
+    expect(transactionMock.eRPModule.createMany).toHaveBeenCalledWith({
+      data: ERP_MODULES.map(({ key, label }) => ({
+        software_id: "erp-software-id",
+        module_key: key,
+        module_name: label,
+        status: "disabled",
+      })),
     });
     expect(transactionMock.masterRawMaterialType.createMany).toHaveBeenCalledWith({
       data: [{ organization_id: organization.id, raw_material_type: "Item", is_active: true, sort_order: 0 }],

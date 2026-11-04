@@ -82,62 +82,68 @@ export function MasterModuleSwitcher({
     <div className="flex items-center gap-3">
       {isPending && <NavigationLoadingOverlay label="Loading organization module" />}
       {/* Module Switcher Dropdown */}
-      <div ref={ref} className="relative" aria-busy={isPending}>
-        <Button
-          variant="secondary"
-          size="sm"
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex h-9 min-w-[180px] items-center justify-between rounded-md border border-slate-300 bg-white px-3 text-sm font-medium cursor-pointer shadow-2xs hover:bg-slate-50 transition-colors"
-        >
-          <span className="flex items-center gap-2 uppercase">
-            {selectedLabel}
-          </span>
+      {options.length > 0 ? (
+        <div ref={ref} className="relative" aria-busy={isPending}>
+          <Button
+            variant="secondary"
+            size="sm"
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="flex h-9 min-w-[180px] items-center justify-between rounded-md border border-slate-300 bg-white px-3 text-sm font-medium cursor-pointer shadow-2xs hover:bg-slate-50 transition-colors"
+          >
+            <span className="flex items-center gap-2 uppercase">
+              {selectedLabel}
+            </span>
 
-          <ChevronDown
-            className={`h-4 w-4 text-slate-500 transition-transform duration-200 ${
-              open ? "rotate-180" : ""
-            }`}
-          />
-        </Button>
+            <ChevronDown
+              className={`h-4 w-4 text-slate-500 transition-transform duration-200 ${
+                open ? "rotate-180" : ""
+              }`}
+            />
+          </Button>
 
-        {open && (
-          <div className="absolute right-0 z-50 mt-2 w-64 rounded-md border border-slate-200 bg-white p-1 shadow-xl">
-            {options.map((option) => {
-              const active = option.key === value;
+          {open && (
+            <div className="absolute right-0 z-50 mt-2 w-64 rounded-md border border-slate-200 bg-white p-1 shadow-xl">
+              {options.map((option) => {
+                const active = option.key === value;
 
-              return (
-                <Button
-                  variant={active ? "secondary" : "ghost"}
-                  size="sm"
-                  key={option.key}
-                  type="button"
-                  disabled={isPending}
-                  onMouseEnter={() => prefetchOption(option)}
-                  onFocus={() => prefetchOption(option)}
-                  onClick={() => {
-                    if (isPending) return;
-                    setOpen(false);
-                    if (active) return;
+                return (
+                  <Button
+                    variant={active ? "secondary" : "ghost"}
+                    size="sm"
+                    key={option.key}
+                    type="button"
+                    disabled={isPending}
+                    onMouseEnter={() => prefetchOption(option)}
+                    onFocus={() => prefetchOption(option)}
+                    onClick={() => {
+                      if (isPending) return;
+                      setOpen(false);
+                      if (active) return;
 
-                    startTransition(() => {
-                      router.push(getPath(option));
-                    });
-                  }}
-                  className={`flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm cursor-pointer ${
-                    active
-                      ? "bg-emerald-50 font-semibold text-emerald-700"
-                      : "hover:bg-slate-100 text-slate-700"
-                  }`}
-                >
-                  <span className="uppercase">{option.label}</span>
-                  {active && <Check className="h-4 w-4 text-emerald-600" />}
-                </Button>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                      startTransition(() => {
+                        router.push(getPath(option));
+                      });
+                    }}
+                    className={`flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm cursor-pointer ${
+                      active
+                        ? "bg-emerald-50 font-semibold text-emerald-700"
+                        : "hover:bg-slate-100 text-slate-700"
+                    }`}
+                  >
+                    <span className="uppercase">{option.label}</span>
+                    {active && <Check className="h-4 w-4 text-emerald-600" />}
+                  </Button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ) : (
+        <span className="text-xs font-medium text-[var(--erp-muted)]" role="status">
+          No modules enabled
+        </span>
+      )}
 
       {/* Header-Level Logout Button */}
       <Button

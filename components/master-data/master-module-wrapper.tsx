@@ -2,28 +2,19 @@
 
 import type { SegmentRestriction } from "@prisma/client";
 import { useState, useMemo, useEffect, useTransition, useCallback, useRef, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Layers,
   ArrowLeft,
-  Boxes,
   Bot,
-  BriefcaseBusiness,
-  ClipboardList,
   Crown,
   Headset,
-  Factory,
-  Gauge,
-  Landmark,
-  LayoutGrid,
   Lock,
-  Package,
-  Settings,
   Sparkles,
   Trash2,
-  Truck,
   X,
   ChevronDown,
   ChevronRight,
@@ -41,14 +32,16 @@ import {
 } from "@/components/erp/erp-config-registry";
 import { MasterModuleSwitcher } from "@/components/master-data/master-module-switcher";
 import { SupportTicketTrigger } from "@/components/organizations/support-ticket-trigger";
+import OrganizationModuleVisibilityControl from "@/components/organizations/organization-module-visibility-control";
 import AiCopilotDrawer from "@/components/organizations/ai-copilot-drawer";
 import OrganizationTrialStatus from "@/components/organizations/organization-trial-status";
 import Button from "@/components/ui/Button";
-import Modal from "@/components/ui/Modal";
 import Tabs from "@/components/ui/Tabs";
 import NavigationLinkStatus from "@/components/ui/navigation-link-status";
 import { getPlanRestrictionRouteSegments, getSidebarFeatureKeysForRoute, normalizeRestrictionPart, restrictionMatchesHiddenRoute, restrictionMatchesRoute } from "@/lib/services/platform/plan-restriction-matcher";
 import { isOrganizationTrialInactive } from "@/lib/utilities/organization-trial-visibility";
+
+const Modal = dynamic(() => import("@/components/ui/Modal"), { ssr: false });
 
 type SubItem = {
   key: string;
@@ -78,27 +71,17 @@ type NavigationModuleOption = Pick<ErpModule, "key" | "label" | "pathSegment" | 
 
 const DUMMY_DATA_WIZARD_STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
-const moduleIcons = {
-  online: Gauge,
-  pos: Landmark,
-  "order-management": ClipboardList,
-  "asset-management": Package,
-  "design-development": BriefcaseBusiness,
-  "factory-management": Factory,
-  "quality-management-system": Boxes,
-  "finance-management": Landmark,
-  "inventory-management": Package,
-  distribution: Truck,
-  "security-management": Lock,
-  approvals: ClipboardList,
-  settings: Settings,
-  admin: LayoutGrid,
-} as const;
-
 type MasterModuleWrapperProps = {
   workspaceId: string;
   organizationId: string;
   organizationName: string;
+  moduleStatuses: Array<{ moduleKey: string; status: string; isVisible: boolean }>;
+  canManageModuleVisibility: boolean;
+  updateModuleVisibility: (moduleKey: string, isVisible: boolean) => Promise<{
+    changed?: boolean;
+    error?: string;
+    isVisible?: boolean;
+  }>;
   aiEnabled: boolean;
   canAccessPlatformControlPanel: boolean;
   hasConfiguredPricingType: boolean;
@@ -153,6 +136,9 @@ export function MasterModuleWrapper({
   workspaceId,
   organizationId,
   organizationName,
+  moduleStatuses,
+  canManageModuleVisibility,
+  updateModuleVisibility,
   aiEnabled,
   canAccessPlatformControlPanel,
   hasConfiguredPricingType,
@@ -178,7 +164,6 @@ export function MasterModuleWrapper({
   const isBillingOrSupportRoute =
     pathname.startsWith(`${organizationPath}/settings/pricing`)
     || pathname.startsWith(`${organizationPath}/support-tickets`);
-  const visibilityStorageKey = `erp-visible-modules:${organizationId}`;
   const [trialExpired, setTrialExpired] = useState(false);
   const trialNeedsPricing = isOrganizationTrialInactive(trialEnabled, trialStartedAt, trialEndsAt)
     || trialExpired;
@@ -274,26 +259,6 @@ export function MasterModuleWrapper({
     return ERP_MODULES;
   }, [businessTypes]);
 
-  const [hiddenModuleKeys, setHiddenModuleKeys] = useState<string[]>(() => {
-    if (typeof window === "undefined") return [];
-
-    try {
-      const storedVisibleKeys = JSON.parse(localStorage.getItem(visibilityStorageKey) || "null");
-      if (!Array.isArray(storedVisibleKeys)) return [];
-
-      const visibleKeys = allModuleOptions
-        .map((option) => option.key)
-        .filter((key) => storedVisibleKeys.includes(key));
-      if (visibleKeys.length === 0) return [];
-
-      return allModuleOptions
-        .map((option) => option.key)
-        .filter((key) => !visibleKeys.includes(key));
-    } catch {
-      return [];
-    }
-  });
-  const [moduleSettingsOpen, setModuleSettingsOpen] = useState(false);
   const [pricingDialogOpen, setPricingDialogOpen] = useState(false);
   const [dummyDataHelpOpen, setDummyDataHelpOpen] = useState(false);
   const [dummyDataTab, setDummyDataTab] = useState<"create" | "delete">("create");
@@ -433,25 +398,33 @@ export function MasterModuleWrapper({
     return () => window.clearTimeout(timeoutId);
   }, [dummyDataAvailable, dummyDataStatus.currentStep, dummyDataStatus.status, runDummyDataBuild]);
 
-  const moduleOptions = useMemo(
-    () => allModuleOptions.filter((option) => !hiddenModuleKeys.includes(option.key)),
-    [allModuleOptions, hiddenModuleKeys],
+  const moduleStatusByKey = useMemo(
+    () => new Map(moduleStatuses.map(({ moduleKey, status, isVisible }) => [
+      moduleKey,
+      { status, isVisible },
+    ])),
+    [moduleStatuses],
   );
-
-  const toggleModuleVisibility = (moduleKey: string) => {
-    const isHidden = hiddenModuleKeys.includes(moduleKey);
-    if (!isHidden && moduleOptions.length === 1) return;
-
-    const nextHiddenKeys = isHidden
-      ? hiddenModuleKeys.filter((key) => key !== moduleKey)
-      : [...hiddenModuleKeys, moduleKey];
-    const nextVisibleKeys = allModuleOptions
-      .map((option) => option.key)
-      .filter((key) => !nextHiddenKeys.includes(key));
-
-    setHiddenModuleKeys(nextHiddenKeys);
-    localStorage.setItem(visibilityStorageKey, JSON.stringify(nextVisibleKeys));
-  };
+  const moduleOptions = useMemo(
+    () => allModuleOptions.filter((option) => {
+      const moduleKey = option.moduleKey ?? option.key;
+      const settings = moduleStatusByKey.get(moduleKey);
+      return settings?.status.trim().toLowerCase() === "enabled" && settings.isVisible;
+    }),
+    [allModuleOptions, moduleStatusByKey],
+  );
+  const moduleVisibilityOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return allModuleOptions.flatMap((option) => {
+      const moduleKey = option.moduleKey ?? option.key;
+      const moduleStatus = moduleStatusByKey.get(moduleKey);
+      if (!moduleStatus || moduleStatus.status.trim().toLowerCase() !== "enabled" || seen.has(moduleKey)) {
+        return [];
+      }
+      seen.add(moduleKey);
+      return [{ key: moduleKey, label: option.label, isVisible: moduleStatus.isVisible }];
+    });
+  }, [allModuleOptions, moduleStatusByKey]);
 
   const activeModule = useMemo(() => {
     return (
@@ -752,6 +725,13 @@ export function MasterModuleWrapper({
               </Link>
             )}
             <SupportTicketTrigger organizationId={organizationId} />
+            {canManageModuleVisibility ? (
+              <OrganizationModuleVisibilityControl
+                key={moduleVisibilityOptions.map(({ key, isVisible }) => `${key}:${isVisible}`).join("|")}
+                modules={moduleVisibilityOptions}
+                updateVisibility={updateModuleVisibility}
+              />
+            ) : null}
             {aiEnabled && (
               <Button
                 type="button"
@@ -767,17 +747,6 @@ export function MasterModuleWrapper({
                 <Bot className="h-4 w-4" aria-hidden="true" />
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              type="button"
-              aria-label="Configure visible modules"
-              title="Configure visible modules"
-              onClick={() => setModuleSettingsOpen(true)}
-              className="h-9 w-9 rounded-md border border-slate-200 p-0 text-slate-500 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
-            >
-              <Settings className="h-4 w-4" />
-            </Button>
             <MasterModuleSwitcher
               value={activeModule?.key ?? moduleOptions[0]?.key ?? ""}
               options={moduleOptions}
@@ -834,8 +803,8 @@ export function MasterModuleWrapper({
         </main>
       </div>
 
-      <Modal
-        open={!isBillingOrSupportRoute && (pricingDialogOpen || requiresUserPricingToAccess)}
+      {!isBillingOrSupportRoute && (pricingDialogOpen || requiresUserPricingToAccess) ? <Modal
+        open
         onClose={() => {
           if (!requiresUserPricingToAccess) setPricingDialogOpen(false);
         }}
@@ -923,70 +892,10 @@ export function MasterModuleWrapper({
             </Link>
           )}
         </div>
-      </Modal>
+      </Modal> : null}
 
-      <Modal
-        open={moduleSettingsOpen}
-        onClose={() => setModuleSettingsOpen(false)}
-        ariaLabelledBy="module-visibility-title"
-        size="lg"
-      >
-        <div className="border-b border-slate-200 px-5 py-4">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-600">Workspace view</p>
-              <h2 id="module-visibility-title" className="mt-1 text-lg font-semibold text-slate-900">Visible modules</h2>
-              <p className="mt-1 text-xs text-slate-500">Choose which modules appear in the header menu.</p>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              type="button"
-              aria-label="Close module settings"
-              onClick={() => setModuleSettingsOpen(false)}
-              className="px-2 text-xl leading-none text-slate-400 hover:text-slate-700"
-            >
-              &times;
-            </Button>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-3">
-          {allModuleOptions.map((option) => {
-            const isVisible = !hiddenModuleKeys.includes(option.key);
-            const iconKey = "moduleKey" in option && option.moduleKey ? option.moduleKey : option.key;
-            const Icon = moduleIcons[iconKey as keyof typeof moduleIcons] || LayoutGrid;
-            const canHide = isVisible && moduleOptions.length > 1;
-
-            return (
-              <Button
-                variant="ghost"
-                size="sm"
-                key={option.key}
-                type="button"
-                onClick={() => toggleModuleVisibility(option.key)}
-                className={`flex min-h-20 flex-col items-start justify-between rounded-lg border p-3 text-left transition ${
-                  isVisible
-                    ? "border-emerald-200 bg-emerald-50/70 text-emerald-900 hover:border-emerald-300"
-                    : "border-slate-200 bg-slate-50 text-slate-400 hover:border-slate-300"
-                }`}
-                aria-pressed={isVisible}
-                title={!canHide && isVisible ? "At least one module must remain visible" : undefined}
-              >
-                <span className="flex w-full items-center justify-between">
-                  <span className={`flex h-7 w-7 items-center justify-center rounded-md ${isVisible ? "bg-white text-emerald-600" : "bg-slate-200 text-slate-400"}`}>
-                    <Icon className="h-4 w-4" />
-                  </span>
-                  <span className={`h-1.5 w-1.5 rounded-full ${isVisible ? "bg-emerald-500" : "bg-slate-300"}`} />
-                </span>
-                <span className="mt-2 line-clamp-2 text-xs font-semibold">{option.label}</span>
-              </Button>
-            );
-          })}
-        </div>
-      </Modal>
-
-      <Modal
-        open={dummyDataHelpOpen}
+      {dummyDataHelpOpen ? <Modal
+        open
         onClose={() => {
           setDummyDataHelpOpen(false);
           setDummyDataDeleteConfirmOpen(false);
@@ -1196,7 +1105,7 @@ export function MasterModuleWrapper({
           {dummyDataDeleteNotice ? <p className="text-sm text-emerald-700" role="status">{dummyDataDeleteNotice}</p> : null}
           {dummyDataDeleteError ? <p className="text-sm text-red-700" role="alert">{dummyDataDeleteError}</p> : null}
         </div>
-      </Modal>
+      </Modal> : null}
 
       {blockedNotice && <Modal open onClose={() => setBlockedNotice(null)} ariaLabelledBy="blocked-module-title" size="md">
           <div className="w-full overflow-hidden">

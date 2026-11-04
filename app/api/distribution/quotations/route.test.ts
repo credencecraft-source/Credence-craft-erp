@@ -76,6 +76,39 @@ describe("distribution quotation API", () => {
     );
   });
 
+  it("filters quotation register rows linked to a Sales Order", async () => {
+    const response = await GET(new Request(
+      "http://localhost/api/distribution/quotations?organizationId=public-org&salesOrderStatus=created",
+    ));
+
+    expect(response.status).toBe(200);
+    expect(mocks.listDistributionQuotations).toHaveBeenCalledWith(
+      "internal-org-1",
+      { includeContactRole: true, salesOrderCreated: true },
+    );
+  });
+
+  it("filters quotation register rows not linked to a Sales Order", async () => {
+    await GET(new Request(
+      "http://localhost/api/distribution/quotations?organizationId=public-org&salesOrderStatus=not-created",
+    ));
+
+    expect(mocks.listDistributionQuotations).toHaveBeenCalledWith(
+      "internal-org-1",
+      { includeContactRole: true, salesOrderCreated: false },
+    );
+  });
+
+  it("rejects unsupported Sales Order status filters", async () => {
+    const response = await GET(new Request(
+      "http://localhost/api/distribution/quotations?organizationId=public-org&salesOrderStatus=unknown",
+    ));
+
+    expect(response.status).toBe(400);
+    expect(mocks.requireSessionUser).not.toHaveBeenCalled();
+    expect(mocks.listDistributionQuotations).not.toHaveBeenCalled();
+  });
+
   it("creates a database quotation from booking IDs only for authorized merchandising roles", async () => {
     const response = await POST(post({
       organizationId: "public-org",

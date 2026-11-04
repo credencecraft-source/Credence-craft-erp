@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import Button from "@/components/ui/Button";
@@ -8,6 +8,18 @@ import Card from "@/components/ui/Card";
 import Modal from "@/components/ui/Modal";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import { toggleVisibleReportSelection } from "@/components/reports/report-grid-filtering";
+import Tabs from "@/components/ui/Tabs";
+import {
+  downloadOrderFormPdf,
+  isOrderFormPdfData,
+} from "@/lib/services/distribution/order-form-pdf-generator";
+
+type OrderFormQuotationStatus = "not-created" | "created";
+
+const orderFormStatusTabs = [
+  { value: "not-created", label: "Order Form (No Quotation)" },
+  { value: "created", label: "Quotation Created" },
+] as const;
 
 type OrderFormRow = {
   id: string;
@@ -47,21 +59,24 @@ export default function OrderFormListPage() {
   const router = useRouter();
   const organizationId = params.organizationId;
   const [rows, setRows] = useState<OrderFormRow[]>([]);
+  const [quotationStatus, setQuotationStatus] = useState<OrderFormQuotationStatus>("not-created");
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [pdfLoadingOrderFormId, setPdfLoadingOrderFormId] = useState<string | null>(null);
   const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [visibleFields, setVisibleFields] = useState<(typeof fields)[number]["key"][]>(fields.map((field) => field.key));
   const listRequestRef = useRef<AbortController | null>(null);
   const loadingMoreRef = useRef(false);
-  const draftRows = useMemo(() => rows.filter((row) => row.status === "DRAFT"), [rows]);
-
-  const loadRows = useCallback(async (cursor?: string) => {
+  const loadRows = useCallback(async (
+    cursor?: string,
+    status: OrderFormQuotationStatus = quotationStatus,
+  ) => {
     if (cursor && loadingMoreRef.current) return;
     loadingMoreRef.current = Boolean(cursor);
     if (cursor) setIsLoadingMore(true);
@@ -75,7 +90,7 @@ export default function OrderFormListPage() {
     listRequestRef.current = controller;
     setError("");
     try {
-      const query = new URLSearchParams({ organizationId });
+      const query = new URLSearchParams({ organizationId, quotationStatus: status });
       if (cursor) query.set("cursor", cursor);
       const response = await fetch(`/api/distribution/order-forms?${query}`, {
         cache: "no-store",
@@ -104,7 +119,7 @@ export default function OrderFormListPage() {
         else setIsLoading(false);
       }
     }
-  }, [organizationId]);
+  }, [organizationId, quotationStatus]);
 
   useEffect(() => {
     let active = true;
@@ -138,6 +153,35 @@ export default function OrderFormListPage() {
       setError(createError instanceof Error ? createError.message : "Unable to create the Quotation.");
     } finally {
       setIsCreating(false);
+    }
+  }
+
+  async function downloadOrderForm(orderFormId: string) {
+    if (pdfLoadingOrderFormId) return;
+    setPdfLoadingOrderFormId(orderFormId);
+    setError("");
+    try {
+      const query = new URLSearchParams({ organizationId });
+      const response = await fetch(
+        `/api/distribution/order-forms/${encodeURIComponent(orderFormId)}?${query}`,
+        { cache: "no-store" },
+      );
+      const responseData: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = responseData && typeof responseData === "object" && "error" in responseData &&
+          typeof responseData.error === "string"
+          ? responseData.error
+          : "Unable to load Order Form details for the PDF.";
+        throw new Error(message);
+      }
+      if (!isOrderFormPdfData(responseData)) {
+        throw new Error("The Order Form details returned an incomplete PDF document.");
+      }
+      await downloadOrderFormPdf(responseData);
+    } catch (pdfError) {
+      setError(pdfError instanceof Error ? pdfError.message : "Unable to create the Order Form PDF.");
+    } finally {
+      setPdfLoadingOrderFormId(null);
     }
   }
 
@@ -192,8 +236,29 @@ export default function OrderFormListPage() {
           <div>
             <h1 className="text-lg font-semibold text-slate-900">Order Form</h1>
             <p className="text-sm text-slate-600">Create a Quotation from one or more Order Forms.</p>
+            <div className="mt-3 w-full max-w-md">
+              <Tabs
+                ariaLabel="Order Form quotation status"
+                tabs={orderFormStatusTabs}
+                value={quotationStatus}
+                onChange={(status) => {
+                  setSelectedIds([]);
+                  setRows([]);
+                  setNextCursor(null);
+                  setError("");
+                  setQuotationStatus(status);
+                }}
+                compact
+                scrollable
+              />
+            </div>
           </div>
-          <Button type="button" variant="primary" onClick={() => void createQuotation()} disabled={selectedIds.length === 0 || isCreating}>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={() => void createQuotation()}
+            disabled={quotationStatus === "created" || selectedIds.length === 0 || isCreating}
+          >
             {isCreating ? "Creating Quotation..." : `Create Quotation${selectedIds.length ? ` (${selectedIds.length})` : ""}`}
           </Button>
         </div>
@@ -201,11 +266,11 @@ export default function OrderFormListPage() {
         {notice ? <p role="status" className="text-sm text-emerald-700">{notice}</p> : null}
         <ReportGrid
             title="Order Forms"
-            records={draftRows}
+            records={rows}
             fields={fields}
             visibleFields={visibleFields}
             onVisibleFieldsChange={(nextFields) => setVisibleFields(nextFields as (typeof fields)[number]["key"][])}
-            storageKey="distribution-order-form-list-v2"
+            storageKey={`distribution-order-form-list-v3:${organizationId}`}
             legacyStorageKey="distribution-order-form-list"
             legacyFieldsToAdd={["contactRole"]}
             rowIdSelector={getOrderFormRowId}
@@ -220,11 +285,23 @@ export default function OrderFormListPage() {
               );
             }}
             rowSelectable={(row) => row.status === "DRAFT" && row.quotationId === null}
+            onSecondaryRowAction={(id) => void downloadOrderForm(id)}
+            secondaryRowActionLabel="Order Form PDF"
+            secondaryRowActionDisabledSelector={(row) =>
+              isLoading || pdfLoadingOrderFormId !== null || !row.id
+            }
+            secondaryRowActionLabelSelector={(row) =>
+              pdfLoadingOrderFormId === row.id ? "Preparing PDF..." : "Order Form PDF"
+            }
             onBulkDeleteSelected={requestBulkDelete}
             bulkDeleteSelectedLabel="Delete Order Forms"
             renderCell={renderOrderFormCell}
             isLoading={isLoading}
-            emptyMessage={isLoading ? "Loading Order Forms..." : "No draft Order Forms found."}
+            emptyMessage={isLoading
+              ? "Loading Order Forms..."
+              : quotationStatus === "created"
+                ? "No Order Forms have been converted to a Quotation yet."
+                : "No draft Order Forms are waiting for a Quotation."}
           />
         {nextCursor ? (
           <div className="flex justify-center">

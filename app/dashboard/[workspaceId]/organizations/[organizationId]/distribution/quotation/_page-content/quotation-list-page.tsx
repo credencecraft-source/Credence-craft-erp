@@ -9,13 +9,24 @@ import Checkbox from "@/components/ui/Checkbox";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Select from "@/components/ui/Select";
+import Tabs from "@/components/ui/Tabs";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import { toggleVisibleReportSelection } from "@/components/reports/report-grid-filtering";
 import { validateMasterQuotationChildSelection } from "@/lib/services/distribution/quotation-selection-service";
+import {
+  downloadDistributionQuotationPdf,
+  isDistributionQuotationPdfData,
+} from "@/lib/services/distribution/quotation-pdf-generator";
 import type { DistributionQuotationSummary } from "./quotation-types";
 
 type VendorOption = { id: string; label: string };
 type ContactOption = { id: string; code: string; label: string };
+type QuotationRegisterGroup = "not-created" | "created";
+
+const quotationRegisterTabs = [
+  { value: "not-created", label: "Quotation (No Sales Order)" },
+  { value: "created", label: "Sales Order Created" },
+] as const;
 
 type QuotationField = keyof Pick<
   DistributionQuotationSummary,
@@ -49,6 +60,7 @@ export default function QuotationListPage() {
   const router = useRouter();
   const organizationId = params.organizationId;
   const [quotations, setQuotations] = useState<DistributionQuotationSummary[]>([]);
+  const [quotationRegisterGroup, setQuotationRegisterGroup] = useState<QuotationRegisterGroup>("not-created");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [visibleFields, setVisibleFields] = useState<QuotationField[]>(fields.map(({ key }) => key));
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -57,6 +69,7 @@ export default function QuotationListPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isCreatingSalesOrder, setIsCreatingSalesOrder] = useState(false);
+  const [pdfLoadingQuotationId, setPdfLoadingQuotationId] = useState<string | null>(null);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
   const [vendorLookup, setVendorLookup] = useState<{ organizationId: string; options: VendorOption[] } | null>(null);
@@ -74,7 +87,10 @@ export default function QuotationListPage() {
   const loadingMoreRef = useRef(false);
   const vendors = vendorLookup?.organizationId === organizationId ? vendorLookup.options : [];
 
-  const loadQuotations = useCallback(async (cursor?: string) => {
+  const loadQuotations = useCallback(async (
+    cursor?: string,
+    group: QuotationRegisterGroup = quotationRegisterGroup,
+  ) => {
     if (cursor && loadingMoreRef.current) return;
     loadingMoreRef.current = Boolean(cursor);
     if (cursor) setIsLoadingMore(true);
@@ -88,7 +104,10 @@ export default function QuotationListPage() {
     listRequestRef.current = controller;
     setError("");
     try {
-      const query = new URLSearchParams({ organizationId });
+      const query = new URLSearchParams({
+        organizationId,
+        salesOrderStatus: group,
+      });
       if (cursor) query.set("cursor", cursor);
       const response = await fetch(`/api/distribution/quotations?${query}`, {
         cache: "no-store",
@@ -118,7 +137,7 @@ export default function QuotationListPage() {
         else setIsLoading(false);
       }
     }
-  }, [organizationId]);
+  }, [organizationId, quotationRegisterGroup]);
 
   useEffect(() => {
     let active = true;
@@ -212,7 +231,7 @@ export default function QuotationListPage() {
   }, [contactSearch, isSalesOrderModalOpen, loadAllContacts, showAllContacts]);
 
   const regularQuotations = useMemo(
-    () => quotations.filter((quotation) => quotation.mode !== "MASTER" && !quotation.parentQuotationId),
+    () => quotations.filter((quotation) => quotation.mode !== "MASTER"),
     [quotations],
   );
   const validationQuotes = useMemo(
@@ -336,6 +355,35 @@ export default function QuotationListPage() {
     router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/quotation/${encodeURIComponent(id)}`);
   }
 
+  async function downloadQuotationPdf(quotationId: string) {
+    if (pdfLoadingQuotationId) return;
+    setPdfLoadingQuotationId(quotationId);
+    setError("");
+    try {
+      const query = new URLSearchParams({ organizationId, mode: "QUOTATION_PDF" });
+      const response = await fetch(
+        `/api/distribution/quotations/${encodeURIComponent(quotationId)}?${query}`,
+        { cache: "no-store" },
+      );
+      const responseData: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = responseData && typeof responseData === "object" && "error" in responseData &&
+          typeof responseData.error === "string"
+          ? responseData.error
+          : "Unable to load quotation details for the PDF.";
+        throw new Error(message);
+      }
+      if (!isDistributionQuotationPdfData(responseData)) {
+        throw new Error("The quotation details returned an incomplete PDF document.");
+      }
+      await downloadDistributionQuotationPdf(responseData);
+    } catch (pdfError) {
+      setError(pdfError instanceof Error ? pdfError.message : "Unable to create the quotation PDF.");
+    } finally {
+      setPdfLoadingQuotationId(null);
+    }
+  }
+
   return (
     <div className="w-full min-w-0 space-y-4 p-4 md:p-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -343,6 +391,20 @@ export default function QuotationListPage() {
           <p className="erp-eyebrow">Advance Booking / Quotation</p>
           <h1 className="mt-2 text-3xl font-bold text-slate-900">Quotations</h1>
           <p className="mt-2 text-sm text-slate-600">Database-backed quotation headers and booking-derived detail lines.</p>
+          <div className="mt-3 w-full max-w-md">
+            <Tabs
+              ariaLabel="Quotation Sales Order status"
+              tabs={quotationRegisterTabs}
+              value={quotationRegisterGroup}
+              onChange={(group) => {
+                setSelectedIds([]);
+                setError("");
+                setQuotationRegisterGroup(group);
+              }}
+              compact
+              scrollable
+            />
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="secondary" onClick={() => router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/sales-order`)}>
@@ -378,10 +440,18 @@ export default function QuotationListPage() {
           onToggleRowSelection={(id, checked) => setSelectedIds((current) =>
             checked ? current.includes(id) ? current : [...current, id] : current.filter((value) => value !== id),
           )}
-          rowSelectable={(quotation) => quotation.status === "DRAFT"}
+          rowSelectable={(quotation) => quotation.status === "DRAFT" && !quotation.parentQuotationId}
           onRowClick={(id) => openQuotation(id)}
           onRowAction={(id) => openQuotation(id)}
           rowActionLabel="Open Quotation"
+          onSecondaryRowAction={(id) => void downloadQuotationPdf(id)}
+          secondaryRowActionLabel="Quotation PDF"
+          secondaryRowActionDisabledSelector={(quotation) =>
+            isLoading || pdfLoadingQuotationId !== null || quotation.mode === "MASTER"
+          }
+          secondaryRowActionLabelSelector={(quotation) =>
+            pdfLoadingQuotationId === quotation.id ? "Preparing PDF..." : "Quotation PDF"
+          }
           onBulkDeleteSelected={requestBulkDelete}
           bulkDeleteSelectedLabel="Delete Quotations"
           toolbarActions={(
@@ -406,7 +476,11 @@ export default function QuotationListPage() {
               {`Create Sales Order${selectedIds.length ? ` (${selectedIds.length})` : ""}`}
             </Button>
           )}
-          emptyMessage={isLoading ? "Loading quotations..." : "No ungrouped regular quotations are available. Create one from selected advance bookings."}
+          emptyMessage={isLoading
+            ? "Loading quotations..."
+            : quotationRegisterGroup === "created"
+              ? "No quotations have been grouped into a Sales Order yet."
+              : "No quotations without a Sales Order are available. Create one from selected advance bookings."}
           renderCell={renderQuotationCell}
         />
       </Card>

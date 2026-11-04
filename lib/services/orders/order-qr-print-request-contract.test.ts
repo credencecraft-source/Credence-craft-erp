@@ -89,6 +89,52 @@ describe("order QR print request contract", () => {
     });
   });
 
+  it("accepts purchase bill line requests with per-line quantities", () => {
+    expect(parseCreateOrderQrPrintRequestInput({
+      purchaseBillId: "bill-1",
+      billLines: [
+        { billLineId: "bill-line-1", quantity: 1 },
+        { billLineId: "bill-line-2", quantity: 25 },
+      ],
+      templateId: "template-1",
+      requestType: "PRINT",
+      quantityMode: "BULK_QTY",
+    })).toMatchObject({
+      success: true,
+      data: {
+        purchaseBillId: "bill-1",
+        billLines: [
+          { billLineId: "bill-line-1", quantity: 1 },
+          { billLineId: "bill-line-2", quantity: 25 },
+        ],
+      },
+    });
+  });
+
+  it("rejects duplicate purchase bill lines, invalid PCS quantities, and mixed sources", () => {
+    const shared = { templateId: "template-1", requestType: "PRINT" };
+    expect(parseCreateOrderQrPrintRequestInput({
+      ...shared,
+      purchaseBillId: "bill-1",
+      billLines: [
+        { billLineId: "line-1", quantity: 1 },
+        { billLineId: "line-1", quantity: 1 },
+      ],
+    })).toMatchObject({ success: false });
+    expect(parseCreateOrderQrPrintRequestInput({
+      ...shared,
+      purchaseBillId: "bill-1",
+      billLines: [{ billLineId: "line-1", quantity: 2 }],
+      quantityMode: "PCS",
+    })).toMatchObject({ success: false, error: "PCS requests must use quantity 1 for every selected purchase bill line." });
+    expect(parseCreateOrderQrPrintRequestInput({
+      ...shared,
+      orderId: "order-1",
+      purchaseBillId: "bill-1",
+      billLines: [{ billLineId: "line-1", quantity: 1 }],
+    })).toMatchObject({ success: false });
+  });
+
   it("rejects duplicate orders and aggregate quantities over the request limit", () => {
     for (const bulkOrders of [
       [

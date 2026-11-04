@@ -1,14 +1,20 @@
 // app/dashboard/[workspaceId]/organizations/[organizationId]/organization-shell-layout.tsx
 
-import React from "react";
-import type { OrganizationKycProfile } from "@prisma/client";
+import React, { Suspense } from "react";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { MasterModuleWrapper } from "@/components/master-data/master-module-wrapper";
 import OrganizationKycForm from "./settings/kyc/_page-content/organization-kyc-form";
+import { ERP_MODULES } from "@/components/erp/erp-config-registry";
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
 import { getOrganizationShellContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
+import {
+  OrganizationModuleVisibilityError,
+  isOrganizationModuleAvailable,
+  isOrganizationModuleVisible,
+  setOrganizationModuleVisibility,
+} from "@/lib/services/organizations/organization-module-visibility-service";
 import { getOrganizationKycProfileForUser } from "@/lib/services/organizations/organization-kyc-service";
 import {
   deleteOrganizationDummyData,
@@ -41,6 +47,51 @@ type OrganizationShellLayoutProps = {
     organizationId: string;
   }>;
 };
+
+type KycToolbarOrganization = NonNullable<
+  Awaited<ReturnType<typeof getOrganizationShellContext>>
+>;
+
+async function OrganizationKycToolbarSlot({
+  userId,
+  workspaceId,
+  organizationId,
+  organization,
+}: {
+  userId: string;
+  workspaceId: string;
+  organizationId: string;
+  organization: KycToolbarOrganization;
+}) {
+  const kycProfile = await getOrganizationKycProfileForUser(userId, organization.id).catch((error: unknown) => {
+    if (error instanceof Error && error.message.startsWith("Access denied:")) return null;
+    throw error;
+  });
+  if (kycProfile?.status === "SUBMITTED" || kycProfile?.status === "APPROVED") return null;
+
+  return (
+    <OrganizationKycForm
+      initialProfile={kycProfile}
+      progressStorageKey={`organization-kyc-progress:${workspaceId}:${organizationId}`}
+      saveDraftAction={saveOrganizationKycDraftAction.bind(null, workspaceId, organizationId)}
+      submitAction={submitOrganizationKycAction.bind(null, workspaceId, organizationId)}
+      resetDraftAction={resetOrganizationKycDraftAction.bind(null, workspaceId, organizationId)}
+      registrationSnapshot={{
+        gst_number: organization.gst_number,
+        name: organization.organization_name,
+        address: [
+          organization.address_line_1,
+          organization.address_line_2,
+          organization.city,
+          organization.state,
+          organization.pin_code,
+          organization.country,
+        ].filter(Boolean).join(", "),
+        createdAt: organization.created_at.toISOString().slice(0, 10),
+      }}
+    />
+  );
+}
 
 export default async function OrganizationShellLayout({
   children,
@@ -180,24 +231,12 @@ export default async function OrganizationShellLayout({
       )
     : Promise.resolve();
 
-  const kycProfilePromise = isOrganizationSettingsRoute
-    ? Promise.resolve({ kycProfile: null as OrganizationKycProfile | null, canManageKyc: true })
-    : getOrganizationKycProfileForUser(user.id, organization.id)
-      .then((kycProfile) => ({ kycProfile, canManageKyc: true }))
-      .catch((error: unknown) => {
-        if (error instanceof Error && error.message.startsWith("Access denied:")) {
-          return { kycProfile: null, canManageKyc: false };
-        }
-        throw error;
-      });
-
   const [
     scopedRestrictions,
     activeBusinessTypes,
     dummyDataStatus,
     ,
     organizationHasTrialAccess,
-    kycResult,
   ] = await Promise.all([
     validateOrganizationAccess(organization, currentPath, trialIsActive),
     activeBusinessTypesPromise,
@@ -210,7 +249,6 @@ export default async function OrganizationShellLayout({
     })),
     permissionCheck,
     hasOrganizationTrialAccess(organization.id, now, trialOrganization),
-    kycProfilePromise,
   ]);
 
   if (!organizationHasTrialAccess
@@ -231,36 +269,68 @@ export default async function OrganizationShellLayout({
     return children;
   }
 
-  const { kycProfile, canManageKyc } = kycResult;
+  const moduleStatuses = organization.erpSoftware.flatMap((software) =>
+    software.modules.map(({ module_key, module_name, status, settings }) => ({
+      moduleKey: module_key,
+      moduleName: module_name,
+      status,
+      isVisible: isOrganizationModuleVisible(settings),
+    })),
+  );
+  const routeModule = ERP_MODULES.find(({ pathSegment }) =>
+    currentPath === `${organizationPath}/${pathSegment}`
+    || currentPath.startsWith(`${organizationPath}/${pathSegment}/`),
+  );
+  if (routeModule) {
+    const routeModuleStatus = moduleStatuses.find(({ moduleKey }) => moduleKey === routeModule.key);
+    if (!routeModuleStatus || !isOrganizationModuleAvailable(routeModuleStatus.status, routeModuleStatus.isVisible)) {
+      redirect(`${organizationPath}/access-blocked?message=${encodeURIComponent("This module is not visible for your organization. Contact your organization administrator.")}`);
+    }
+  }
 
-  const kycToolbarControl = canManageKyc && kycProfile?.status !== "SUBMITTED" && kycProfile?.status !== "APPROVED" ? (
-    <OrganizationKycForm
-      initialProfile={kycProfile}
-      progressStorageKey={`organization-kyc-progress:${workspaceId}:${organizationId}`}
-      saveDraftAction={saveOrganizationKycDraftAction.bind(null, workspaceId, organizationId)}
-      submitAction={submitOrganizationKycAction.bind(null, workspaceId, organizationId)}
-      resetDraftAction={resetOrganizationKycDraftAction.bind(null, workspaceId, organizationId)}
-      registrationSnapshot={{
-        gst_number: organization.gst_number,
-        name: organization.organization_name,
-        address: [
-          organization.address_line_1,
-          organization.address_line_2,
-          organization.city,
-          organization.state,
-          organization.pin_code,
-          organization.country,
-        ].filter(Boolean).join(", "),
-        createdAt: organization.created_at.toISOString().slice(0, 10),
-      }}
-    />
-  ) : null;
+  let canManageModuleVisibility = false;
+  try {
+    await requireOrganizationPermission(user.id, organizationId, "ORGANIZATION_SETTINGS");
+    canManageModuleVisibility = true;
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.startsWith("Access denied:")) throw error;
+  }
+
+  async function updateModuleVisibilityAction(moduleKey: string, isVisible: boolean) {
+    "use server";
+    const actionUser = await requireSessionUser();
+    if (actionUser.workspace_id !== workspaceId) {
+      return { error: "Workspace access denied." };
+    }
+
+    let result: Awaited<ReturnType<typeof setOrganizationModuleVisibility>>;
+    try {
+      result = await setOrganizationModuleVisibility(
+        actionUser.id,
+        organizationId,
+        moduleKey,
+        isVisible,
+      );
+    } catch (error) {
+      if (error instanceof OrganizationModuleVisibilityError) {
+        return { error: error.message };
+      }
+      console.error("Organization module visibility update failed", { organizationId });
+      return { error: "Unable to update organization module visibility." };
+    }
+
+    revalidatePath(organizationPath);
+    return result;
+  }
 
   return (
     <MasterModuleWrapper
       workspaceId={workspaceId}
       organizationId={organizationId}
       organizationName={organization.organization_name}
+      moduleStatuses={moduleStatuses}
+      canManageModuleVisibility={canManageModuleVisibility}
+      updateModuleVisibility={updateModuleVisibilityAction}
       canAccessPlatformControlPanel={Boolean(platformAdmin)}
       hasConfiguredPricingType={hasConfiguredPricingType}
       pricingMode={organization.pricing_mode}
@@ -276,7 +346,16 @@ export default async function OrganizationShellLayout({
       trialEndsAt={trialOrganization.trial_ends_at?.toISOString() ?? null}
       startDummyDataWizardStep={startDummyDataWizardStepAction}
       deleteDummyData={deleteDummyDataAction}
-      kycToolbarControl={kycToolbarControl}
+      kycToolbarControl={isOrganizationSettingsRoute ? null : (
+        <Suspense fallback={null}>
+          <OrganizationKycToolbarSlot
+            userId={user.id}
+            workspaceId={workspaceId}
+            organizationId={organizationId}
+            organization={organization}
+          />
+        </Suspense>
+      )}
       dummyDataStatus={dummyDataStatus}
       businessTypes={businessTypes}
       restrictions={scopedRestrictions}

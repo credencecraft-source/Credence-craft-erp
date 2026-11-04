@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
+  class StorageNodeError extends Error {
+    constructor(message: string, readonly status: number = 400) {
+      super(message);
+    }
+  }
   const transaction = {
     masterRawMaterial: { findFirst: vi.fn() },
     masterLocation: { findFirst: vi.fn() },
@@ -10,11 +15,17 @@ const mocks = vi.hoisted(() => {
     transaction,
     prismaTransaction: vi.fn((callback: (database: typeof transaction) => unknown) => callback(transaction)),
     createAuditEvent: vi.fn(),
+    getActiveBinPlacement: vi.fn(),
+    StorageNodeError,
   };
 });
 
 vi.mock("@/lib/database/prisma-client", () => ({ prisma: { $transaction: mocks.prismaTransaction } }));
 vi.mock("@/lib/services/organizations/audit-event-service", () => ({ createAuditEvent: mocks.createAuditEvent }));
+vi.mock("@/lib/services/inventory/storage-node-service", () => ({
+  getActiveBinPlacement: mocks.getActiveBinPlacement,
+  StorageNodeError: mocks.StorageNodeError,
+}));
 
 import { addRawMaterialStockManually, ManualStockError } from "./rm-manual-stock-service";
 
@@ -23,6 +34,7 @@ describe("manual raw-material stock addition", () => {
     vi.clearAllMocks();
     mocks.transaction.masterRawMaterial.findFirst.mockResolvedValue({ id: "material-1", raw_material_name: "Cotton", is_asset: false });
     mocks.transaction.masterLocation.findFirst.mockResolvedValue({ id: "location-1", entity_id: "entity-1", location_name: "Store" });
+    mocks.getActiveBinPlacement.mockResolvedValue({ id: "bin-1", node_code: "BIN-01" });
     mocks.transaction.rawMaterialStock.create.mockResolvedValue({ id: "stock-1" });
     mocks.createAuditEvent.mockResolvedValue({});
   });
@@ -33,6 +45,7 @@ describe("manual raw-material stock addition", () => {
       userId: "user-1",
       rawMaterialId: "material-1",
       locationId: "location-1",
+      storageNodeId: "bin-1",
       quantity: "12.50",
       reason: "Opening balance",
     });
@@ -44,11 +57,18 @@ describe("manual raw-material stock addition", () => {
     expect(mocks.transaction.masterLocation.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "location-1", organization_id: "internal-org-1", is_active: true, entity: { is_active: true } },
     }));
+    expect(mocks.getActiveBinPlacement).toHaveBeenCalledWith(
+      mocks.transaction,
+      "internal-org-1",
+      "bin-1",
+      "entity-1",
+    );
     expect(mocks.transaction.rawMaterialStock.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         organization_id: "internal-org-1",
         entity_id: "entity-1",
         location_id: "location-1",
+        storage_node_id: "bin-1",
         raw_material: "Cotton",
         source_type: "MANUAL",
       }),
@@ -73,6 +93,7 @@ describe("manual raw-material stock addition", () => {
       userId: "user-1",
       rawMaterialId: "foreign-material",
       locationId: "location-1",
+      storageNodeId: "bin-1",
       quantity: "1",
       reason: "Opening balance",
     })).rejects.toBeInstanceOf(ManualStockError);
@@ -93,6 +114,7 @@ describe("manual raw-material stock addition", () => {
       userId: "user-1",
       rawMaterialId: "material-1",
       locationId: "location-1",
+      storageNodeId: "bin-1",
       quantity: "1",
       reason: "Opening balance",
     })).rejects.toThrow("Asset-classified materials can only be added through Assets Stock.");
@@ -112,6 +134,7 @@ describe("manual raw-material stock addition", () => {
       userId: "user-1",
       rawMaterialId: "material-1",
       locationId: "location-1",
+      storageNodeId: "bin-1",
       quantity: "1",
       reason: "Opening balance",
       isAssetStock: true,
@@ -122,12 +145,32 @@ describe("manual raw-material stock addition", () => {
     }));
   });
 
+  it("does not post stock when the selected Bin is not a legal active placement", async () => {
+    mocks.getActiveBinPlacement.mockRejectedValue(new mocks.StorageNodeError(
+      "Select a Bin under a Location/Site associated with the selected Entity.",
+    ));
+
+    await expect(addRawMaterialStockManually({
+      organizationId: "internal-org-1",
+      userId: "user-1",
+      rawMaterialId: "material-1",
+      locationId: "location-1",
+      storageNodeId: "bin-1",
+      quantity: "1",
+      reason: "Opening balance",
+    })).rejects.toThrow("Select a Bin under a Location/Site associated with the selected Entity.");
+
+    expect(mocks.transaction.rawMaterialStock.create).not.toHaveBeenCalled();
+    expect(mocks.createAuditEvent).not.toHaveBeenCalled();
+  });
+
   it("rejects zero and excessive precision before opening a transaction", async () => {
     await expect(addRawMaterialStockManually({
       organizationId: "internal-org-1",
       userId: "user-1",
       rawMaterialId: "material-1",
       locationId: "location-1",
+      storageNodeId: "bin-1",
       quantity: "0",
       reason: "Opening balance",
     })).rejects.toThrow("Quantity must be greater than zero.");
@@ -136,6 +179,7 @@ describe("manual raw-material stock addition", () => {
       userId: "user-1",
       rawMaterialId: "material-1",
       locationId: "location-1",
+      storageNodeId: "bin-1",
       quantity: "1.001",
       reason: "Opening balance",
     })).rejects.toThrow("Quantity must be a positive number with up to two decimal places.");

@@ -12,12 +12,29 @@ export async function GET(
     const user = await requireSessionUser();
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId);
-    const stockId = new URL(request.url).searchParams.get("stockId")?.trim();
+    const searchParams = new URL(request.url).searchParams;
+    const stockId = searchParams.get("stockId")?.trim();
+    const search = searchParams.get("search")?.trim() ?? "";
+    if (search && (search.length < 2 || search.length > 100)) {
+      return NextResponse.json({ error: "Stock search must contain between 2 and 100 characters." }, { status: 400 });
+    }
+    const resultLimit = stockId ? 1 : 50;
     const stockRecords = await prisma.finishedGoodsGeneralStockReceipt.findMany({
       where: {
         organization_id: organization.id,
         current_stock: { gt: 0 },
         ...(stockId ? { id: stockId } : {}),
+        ...(search ? {
+          OR: [
+            { style_name: { contains: search, mode: "insensitive" } },
+            { order_no: { contains: search, mode: "insensitive" } },
+            { article_no: { contains: search, mode: "insensitive" } },
+            { brand: { contains: search, mode: "insensitive" } },
+            { size: { contains: search, mode: "insensitive" } },
+            { colour: { contains: search, mode: "insensitive" } },
+            { product_category: { contains: search, mode: "insensitive" } },
+          ],
+        } : {}),
       },
       select: {
         id: true,
@@ -36,14 +53,16 @@ export async function GET(
         location: { select: { location_name: true } },
       },
       orderBy: [{ posted_at: "desc" }, { id: "desc" }],
+      take: resultLimit + 1,
     });
 
     if (stockId && stockRecords.length === 0) {
       return NextResponse.json({ error: "No available General finished-goods stock found for this record." }, { status: 404 });
     }
+    const hasMore = stockRecords.length > resultLimit;
 
     return NextResponse.json({
-      records: stockRecords.map((record) => ({
+      records: stockRecords.slice(0, resultLimit).map((record) => ({
         id: record.id,
         style_name: record.style_name,
         order_no: record.order_no,
@@ -69,6 +88,7 @@ export async function GET(
         mrp: null,
         inventory_bucket: "GENERAL" as const,
       })),
+      hasMore,
     });
   } catch (error) {
     return NextResponse.json(

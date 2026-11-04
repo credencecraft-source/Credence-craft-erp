@@ -56,10 +56,39 @@ describe("order QR template API", () => {
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
       "user-1",
       "public-org",
-      ["OWNER", "ADMIN", "MERCHANDISING"],
+      ["OWNER", "ADMIN", "MERCHANDISING", "FINANCE", "INVENTORY"],
     );
-    expect(mocks.listOrderQrTemplates).toHaveBeenCalledWith("internal-org-1");
+    expect(mocks.listOrderQrTemplates).toHaveBeenCalledWith("internal-org-1", null);
     await expect(response.json()).resolves.toEqual({ templates: [] });
+  });
+
+  it("filters template lists by the requested template type", async () => {
+    const response = await GET(new Request(`${requestUrl}&type=POS_ITEM_BARCODE`));
+
+    expect(response.status).toBe(200);
+    expect(mocks.listOrderQrTemplates).toHaveBeenCalledWith(
+      "internal-org-1",
+      "POS_ITEM_BARCODE",
+    );
+  });
+
+  it("rejects unknown template type filters", async () => {
+    const response = await GET(new Request(`${requestUrl}&type=UNKNOWN`));
+
+    expect(response.status).toBe(400);
+    expect(mocks.listOrderQrTemplates).not.toHaveBeenCalled();
+  });
+
+  it("allows finance and inventory roles to read templates for POS bill requests", async () => {
+    const response = await GET(new Request(requestUrl));
+
+    expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
+      "user-1",
+      "public-org",
+      ["OWNER", "ADMIN", "MERCHANDISING", "FINANCE", "INVENTORY"],
+    );
+    expect(mocks.createOrderQrTemplate).not.toHaveBeenCalled();
   });
 
   it("blocks workspace mismatch before organization authorization", async () => {
@@ -120,6 +149,7 @@ describe("order QR template API", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: "Order tags",
+          type: "ORDER_TAGS",
           pageSetupTemplateId: "setup-1",
           fieldKeys: ["orderNo", "styleName"],
           qrSize: 192,
@@ -133,6 +163,7 @@ describe("order QR template API", () => {
       "user-1",
       {
         name: "ORDER TAGS",
+        type: "ORDER_TAGS",
         pageSetupTemplateId: "setup-1",
         qrFieldKey: "orderNo",
         displayFields: ["orderNo", "styleName"],
@@ -165,6 +196,7 @@ describe("order QR template API", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: "Order tags",
+        type: "ORDER_TAGS",
         pageSetupTemplateId: "foreign-setup",
         fieldKeys: ["orderNo"],
         qrSize: 192,

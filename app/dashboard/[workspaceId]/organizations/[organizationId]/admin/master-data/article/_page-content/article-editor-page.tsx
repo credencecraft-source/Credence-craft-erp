@@ -3,9 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import ArticleRecordEditor from "./article-record-editor";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import {
-  getActiveOrganizationDummyDataBatch,
   getMasterValuesForOrganization,
-  getSizeGroupSizesForOrganization,
 } from "@/lib/master-data/master-data-constants";
 import { getOrganizationForUserWithPermission } from "@/lib/services/organizations/organization-service";
 import { createMasterValueAction, updateMasterValueAction } from "@/app/dashboard/[workspaceId]/organizations/[organizationId]/settings/master-data/[moduleKey]/master-data-editor-page";
@@ -53,31 +51,6 @@ export default async function ArticleEditorPage({ params, searchParams }: PagePr
     : null;
   if (recordCode && !record) notFound();
 
-  const lookupKeys = ["brand", "product-master", "category", "sub-category", "size-group", "color"];
-  const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organization.id);
-  const [lookupEntries, sizeLinks] = editMode
-    ? await Promise.all([
-        Promise.all(lookupKeys.map(async (key) => {
-          const values = await getMasterValuesForOrganization(organization.id, key, true, { limit: 500, activeDummyDataBatch });
-          return [key, values.map((item) => ({
-            id: item.id,
-            value_id: item.value_id,
-            label: item.label,
-            parent_id: item.parent_id,
-            fields: {
-              Product_Master: item.fields.Product_Master ?? null,
-              category: item.fields.category ?? null,
-            },
-          }))] as const;
-        })),
-        getSizeGroupSizesForOrganization(organization.id),
-      ])
-    : [[], []] as const;
-  const sizeGroupSizes = sizeLinks.reduce<Record<string, string[]>>((groups, item) => {
-    (groups[item.groupId] ??= []).push(item.size.label);
-    return groups;
-  }, {});
-
   return (
     <ArticleRecordEditor
       workspaceId={workspaceId}
@@ -89,8 +62,8 @@ export default async function ArticleEditorPage({ params, searchParams }: PagePr
         fields: record.fields,
       } : null}
       readOnly={editing && !editMode}
-      lookupOptions={Object.fromEntries(lookupEntries)}
-      sizeGroupSizes={sizeGroupSizes}
+      lookupOptions={{}}
+      sizeGroupSizes={{}}
       createAction={createMasterValueAction}
       updateAction={updateMasterValueAction}
       error={firstSearchParam(query.error)}

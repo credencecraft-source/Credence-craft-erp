@@ -14,8 +14,13 @@ type Option = { id: string; label: string; fields?: Record<string, unknown> };
 type LocationOption = { id: string; label: string };
 type StockRecord = {
   id: string;
+  entity_id: string;
   location_id: string;
-  location: { location_name: string } | null;
+  purchase_bill_line_id: string | null;
+  location: {
+    location_name: string;
+    entity?: { entity_name: string };
+  } | null;
   sku_code: string | null;
   barcode: string | null;
   style_name: string;
@@ -74,8 +79,11 @@ const numberFields: Array<[keyof FormState, string]> = [
   ["qtyOut", "Qty Out"],
 ];
 const readOnlyFields: Array<[keyof StockRecord, string]> = [
+  ["id", "Stock Record ID"],
   ["sku_code", "SKU Code"],
   ["barcode", "Customer Barcode"],
+  ["entity_id", "Site"],
+  ["location_id", "Location Record ID"],
   ["location", "Location"],
   ["style_name", "Style Name"],
   ["order_no", "Order No"],
@@ -96,6 +104,7 @@ const readOnlyFields: Array<[keyof StockRecord, string]> = [
   ["mrp", "MRP"],
   ["added_time", "Added Time"],
   ["added_user", "Added By"],
+  ["purchase_bill_line_id", "Purchase Bill Line ID"],
 ];
 
 function toForm(record: StockRecord): FormState {
@@ -123,6 +132,7 @@ function toForm(record: StockRecord): FormState {
 
 function displayValue(record: StockRecord, key: keyof StockRecord) {
   const value = record[key];
+  if (key === "entity_id") return record.location?.entity?.entity_name ?? "-";
   if (key === "location") return record.location?.location_name ?? "-";
   if (key === "added_time") return new Date(record.added_time).toLocaleString("en-IN");
   return value === null || value === undefined || value === "" ? "-" : String(value);
@@ -166,6 +176,9 @@ export default function FgSkuDetailPage({
   const returnTo = requestedReturnTo && allowedReturnPaths.includes(requestedReturnTo)
     ? requestedReturnTo
     : `${basePath}/sku`;
+  const usesPosIdentifiers = ["DIRECT_FROM_POS", "POS", "POS_PURCHASE_BILL"].includes(
+    record?.source ?? "",
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -199,7 +212,7 @@ export default function FgSkuDetailPage({
     setLookupsLoading(true);
     setError("");
     lookupRequest.current = Promise.all([
-      fetch(`/api/masters?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" }),
+      fetch(`/api/masters?organizationId=${encodeURIComponent(organizationId)}&moduleKeys=gst,hsn`, { cache: "no-store" }),
       fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/location?includeInactive=false`, { cache: "no-store" }),
     ])
       .then(async ([masterResponse, locationResponse]) => {
@@ -344,23 +357,52 @@ export default function FgSkuDetailPage({
         {message ? <p role="status" className="text-sm font-medium text-[var(--erp-success-text)]">{message}</p> : null}
 
         {record && !editing ? (
-          <Card>
-            <dl className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {readOnlyFields.map(([key, label]) => (
-                <div key={key} className="min-w-0">
-                  <dt className="text-xs font-semibold text-[var(--erp-muted)]">{label}</dt>
-                  <dd className="mt-1 break-words text-sm text-[var(--erp-text)]">{displayValue(record, key) || "-"}</dd>
-                </div>
-              ))}
-            </dl>
-          </Card>
+          <>
+            <Card className="space-y-4">
+              <h2 className="text-base font-semibold text-[var(--erp-text)]">
+                Location/Site → Warehouse → Sub-store → Rack → Bin
+              </h2>
+              <p className="text-sm text-[var(--erp-text-muted)]">
+                Only the site and location are linked to this stock record. Warehouse, sub-store, rack, and bin are not assigned.
+              </p>
+              <dl className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                {[
+                  ["Location/Site", record.location?.entity?.entity_name ?? "-"],
+                  ["Warehouse", "Not assigned to this stock record"],
+                  ["Sub-store", "Not assigned to this stock record"],
+                  ["Rack", "Not assigned to this stock record"],
+                  ["Bin", "Not assigned to this stock record"],
+                ].map(([label, value]) => (
+                  <div key={label} className="min-w-0">
+                    <dt className="text-xs font-semibold text-[var(--erp-muted)]">{label}</dt>
+                    <dd className="mt-1 break-words text-sm text-[var(--erp-text)]">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </Card>
+            <Card>
+              <dl className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {readOnlyFields.map(([key, label]) => (
+                  <div key={key} className="min-w-0">
+                    <dt className="text-xs font-semibold text-[var(--erp-muted)]">{label}</dt>
+                    <dd className="mt-1 break-words text-sm text-[var(--erp-text)]">{displayValue(record, key) || "-"}</dd>
+                  </div>
+                ))}
+              </dl>
+            </Card>
+          </>
         ) : null}
 
         {record && editing && form ? (
           <Card>
             <form id="fg-sku-edit-form" onSubmit={save} className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Input label="SKU Code" disabled value={record.sku_code || "-"} />
-              <Input label="Customer Barcode" value={form.barcode} onChange={(event) => update("barcode", event.target.value)} />
+              <Input
+                label={usesPosIdentifiers ? "Generated Barcode" : "Customer Barcode"}
+                disabled={usesPosIdentifiers}
+                value={form.barcode}
+                onChange={(event) => update("barcode", event.target.value)}
+              />
               <Select
                 label="Location"
                 required
@@ -417,8 +459,11 @@ export default function FgSkuDetailPage({
                 value={form.source}
                 onChange={(event) => update("source", event.target.value)}
                 options={[
-                  { value: "DIRECT", label: "Direct" },
+                  { value: "DIRECT", label: "Direct from Inventory" },
+                  { value: "DIRECT_FROM_INVENTORY", label: "Direct from Inventory" },
+                  { value: "DIRECT_FROM_POS", label: "Direct from POS" },
                   { value: "PACKING_LIST_GRN", label: "Packing List GRN" },
+                  { value: "POS_PURCHASE_BILL", label: "POS" },
                 ]}
               />
             </form>

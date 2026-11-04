@@ -19,6 +19,13 @@ const GENERAL_MASTER_DEFINITIONS: MasterDefinition[] = [
     text("location_name", "Location", { required: true, unique: true }),
     lookup("entity_id", "Entity Master", "entity", { required: true }),
   ], { moduleGroup: "settings", moduleSubGroup: "general", moduleOrder: 2 }),
+  createMaster("storage-node", "Inventory Storage Hierarchy", "Organization-owned Location/Site, Warehouse, Sub-store, Rack, and Bin records.", [
+    text("node_type", "Hierarchy Level", { type: "picklist", required: true, options: ["LOCATION_SITE", "WAREHOUSE", "SUB_STORE", "RACK", "BIN"] }),
+    text("node_code", "Storage Code", { required: true, unique: true }),
+    text("node_name", "Name", { required: true, unique: true }),
+    lookup("entity_id", "Legal Entity (Location/Site only)", "entity"),
+    lookup("parent_node_id", "Parent Storage Node", "storage-node"),
+  ], { labelField: "node_name", moduleGroup: "settings", moduleSubGroup: "general", moduleOrder: 3 }),
 ];
 
 export const MASTER_DEFINITIONS: MasterDefinition[] = [

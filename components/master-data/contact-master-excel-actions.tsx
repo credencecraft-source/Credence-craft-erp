@@ -1,14 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Download, FileSpreadsheet, Upload } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import Modal from "@/components/ui/Modal";
 import type { ContactWorkbookRecord } from "@/lib/master-data/contact-records-workbook-parser";
 import { uploadMasterWorkbookToHistory } from "@/lib/master-data/master-import-client";
+
+const Modal = dynamic(() => import("@/components/ui/Modal"), { ssr: false });
 
 type ContactMasterExcelActionsProps = {
   contacts: ContactWorkbookRecord[];
@@ -118,8 +120,8 @@ export default function ContactMasterExcelActions({
         {error ? <p className="text-sm text-[var(--erp-danger)]" role="alert">{error}</p> : null}
       </div>
 
-      <Modal
-        open={isOpen}
+      {isOpen ? <Modal
+        open
         onClose={() => setIsOpen(false)}
         closeOnBackdrop={false}
         ariaLabel="Save Unified Contact Master workbook"
@@ -173,7 +175,7 @@ export default function ContactMasterExcelActions({
             </Button>
           </div>
         </div>
-      </Modal>
+      </Modal> : null}
     </>
   );
 }

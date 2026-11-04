@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getOrganizationForUser: vi.fn(),
   getOrganizationShellContext: vi.fn(),
   requireOrganizationAccess: vi.fn(),
+  requireOrganizationPermission: vi.fn(),
   createMasterValueForOrganization: vi.fn(),
   getActiveOrganizationDummyDataBatch: vi.fn(),
   getMasterDefinition: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
   getOrganizationForUser: mocks.getOrganizationForUser,
   getOrganizationShellContext: mocks.getOrganizationShellContext,
   requireOrganizationAccess: mocks.requireOrganizationAccess,
+  requireOrganizationPermission: mocks.requireOrganizationPermission,
 }));
 vi.mock("@/lib/master-data/master-data-constants", () => ({
   createMasterValueForOrganization: mocks.createMasterValueForOrganization,
@@ -51,6 +53,7 @@ describe("organization master-data lookup route", () => {
     mocks.getOrganizationForUser.mockResolvedValue({ id: "internal-org-1" });
     mocks.getOrganizationShellContext.mockResolvedValue({ id: "internal-org-1" });
     mocks.requireOrganizationAccess.mockResolvedValue(undefined);
+    mocks.requireOrganizationPermission.mockResolvedValue({ id: "internal-org-1" });
     mocks.getActiveOrganizationDummyDataBatch.mockResolvedValue({ id: "active-batch-id" });
     mocks.getMasterValuesForOrganization.mockImplementation(async (
       _organizationId: string,
@@ -121,6 +124,45 @@ describe("organization master-data lookup route", () => {
     );
   });
 
+  it("returns a bounded cursor page for generic master reports", async () => {
+    mocks.getMasterValuesForOrganization.mockResolvedValueOnce([
+      { id: "record-1", value_id: "value-1", label: "Alpha", fields: {} },
+      { id: "record-2", value_id: "value-2", label: "Beta", fields: {} },
+      { id: "record-3", value_id: "value-3", label: "Gamma", fields: {} },
+    ]);
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/master-data/category?page=true&limit=2&cursor=record-0&search=alp"),
+      contextFor("category"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      items: [
+        { id: "record-1", value_id: "value-1", label: "Alpha", fields: {} },
+        { id: "record-2", value_id: "value-2", label: "Beta", fields: {} },
+      ],
+      hasMore: true,
+      nextCursor: "record-2",
+    });
+    expect(mocks.getMasterValuesForOrganization).toHaveBeenCalledWith(
+      "internal-org-1",
+      "category",
+      true,
+      expect.objectContaining({ limit: 3, cursor: "record-0", search: "alp" }),
+    );
+  });
+
+  it("rejects malformed or oversized report filters", async () => {
+    const response = await GET(
+      new Request(`http://localhost/api/organizations/public-org/master-data/category?page=true&filters=${encodeURIComponent('{"label":{"operator":"unknown","value":"x"}}')}`),
+      contextFor("category"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.getMasterValuesForOrganization).not.toHaveBeenCalled();
+  });
+
   it("uses the compact tenant-scoped vendor select query when requested", async () => {
     mocks.listVendorSelectOptionsForOrganization.mockResolvedValue([
       { id: "vendor-id", label: "Vendor One" },
@@ -155,7 +197,7 @@ describe("organization master-data lookup route", () => {
       { id: "size-id", value_id: "size-value-id", label: "M", fields: {} },
     ]);
     expect(mocks.getSizeGroupSizesForOrganization).toHaveBeenCalledWith("internal-org-1", ["group-id"], true);
-    expect(mocks.getMasterValuesForOrganization).toHaveBeenCalledTimes(14);
+    expect(mocks.getMasterValuesForOrganization).toHaveBeenCalledTimes(15);
   });
 
   it("loads Size Group links while other order lookups are still pending", async () => {
@@ -259,6 +301,34 @@ describe("organization master-data lookup route", () => {
     expect(batchPromises.every((batchPromise) => batchPromise === batchPromises[0])).toBe(true);
     expect(mocks.getActiveOrganizationDummyDataBatch).toHaveBeenCalledExactlyOnceWith("internal-org-1");
     expect(mocks.getSizeGroupSizesForOrganization).toHaveBeenCalledWith("internal-org-1", ["group-id"], true);
+  });
+
+  it("supports bounded Article lookups without unnecessary label hydration or dummy rows", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/master-data/order-lookups?keys=brand,product-master,category,sub-category,size-group,color&limit=500&includeDummyData=false&includeArticleDetails=false&skipLookupLabels=brand,product-master,size-group,color&shape=compact"),
+      contextFor("order-lookups"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(Object.keys(body.masterOptions).sort()).toEqual([
+      "brand",
+      "category",
+      "color",
+      "product-master",
+      "size-group",
+      "sub-category",
+    ]);
+    expect(mocks.getMasterValuesForOrganization).toHaveBeenCalledTimes(6);
+    for (const [, moduleKey, , options] of mocks.getMasterValuesForOrganization.mock.calls) {
+      expect(options.includeDummyData).toBe(false);
+      expect(options.includeLookupLabels).toBe(!["brand", "product-master", "size-group", "color"].includes(moduleKey));
+    }
+    expect(mocks.getSizeGroupSizesForOrganization).toHaveBeenCalledWith(
+      "internal-org-1",
+      ["group-id"],
+      true,
+    );
   });
 
   it("skips Size Group size-link loading when only Brand data is needed", async () => {
@@ -429,5 +499,41 @@ describe("organization master-data lookup route", () => {
       }),
     );
     expect(mocks.syncSizeGroupSizes).not.toHaveBeenCalled();
+  });
+
+  it("uses the master-data permission for storage hierarchy creation", async () => {
+    mocks.getMasterDefinition.mockReturnValue({
+      label: "Inventory Storage Hierarchy",
+      fields: [
+        { key: "node_type", required: true },
+        { key: "node_code", required: true },
+        { key: "node_name", required: true },
+      ],
+    });
+    mocks.createMasterValueForOrganization.mockResolvedValue({ id: "bin-id" });
+
+    const response = await POST(new Request("http://localhost/api/organizations/public-org/master-data/storage-node", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        label: "BIN 01",
+        fields: { node_type: "BIN", node_code: "BIN-01", node_name: "BIN 01", parent_node_id: "rack-1" },
+      }),
+    }), {
+      params: Promise.resolve({ organizationId: "public-org", moduleKey: "storage-node" }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(mocks.requireOrganizationPermission).toHaveBeenCalledWith(
+      "user-1",
+      "internal-org-1",
+      "MANAGE_MASTER_DATA",
+    );
+    expect(mocks.requireOrganizationAccess).not.toHaveBeenCalled();
+    expect(mocks.createMasterValueForOrganization).toHaveBeenCalledWith(
+      "internal-org-1",
+      "storage-node",
+      expect.objectContaining({ actorUserId: "user-1" }),
+    );
   });
 });

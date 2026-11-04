@@ -47,6 +47,7 @@ model Contact {
   bank_accounts          ContactBankAccount[]
   purchase_orders        PurchaseOrder[]
   sales_orders           MerchandisingOrder[]
+  distributionQuotations DistributionQuotation[]
   legacy_vendors         MasterVendor[]
   legacy_buyers          MasterBuyer[]
   price_list_assignments PriceListContactAssignment[]

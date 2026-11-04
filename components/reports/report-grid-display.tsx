@@ -1,11 +1,11 @@
 "use client";
 
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
-import Modal from "@/components/ui/Modal";
 import Skeleton from "@/components/ui/Skeleton";
 import Table from "@/components/ui/Table";
 import Tabs from "@/components/ui/Tabs";
@@ -20,6 +20,8 @@ import {
   type IndexedReportRow,
 } from "./report-grid-filtering";
 import { migrateReportGridVisibleFields } from "./report-grid-column-preferences";
+
+const Modal = dynamic(() => import("@/components/ui/Modal"), { ssr: false });
 
 export type { FilterOperator } from "./report-grid-filtering";
 
@@ -722,7 +724,7 @@ function ReportGridImplementation<T>({
       )}
 
       {/* ADVANCED MULTI-FIELD FILTER MODAL */}
-      <Modal open={showFilterModal} onClose={() => setShowFilterModal(false)} ariaLabelledBy="report-filter-title" size="lg">
+      {showFilterModal ? <Modal open onClose={() => setShowFilterModal(false)} ariaLabelledBy="report-filter-title" size="lg">
           <div className="space-y-3 p-3.5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
               <h3 id="report-filter-title" className="text-xs font-bold text-slate-900">Advanced Field Filters</h3>
@@ -824,10 +826,10 @@ function ReportGridImplementation<T>({
               </div>
             </div>
           </div>
-      </Modal>
+      </Modal> : null}
 
       {/* COLUMN MODAL POPUP */}
-      <Modal open={showColumnModal} onClose={() => setShowColumnModal(false)} ariaLabelledBy="report-columns-title" size="sm">
+      {showColumnModal ? <Modal open onClose={() => setShowColumnModal(false)} ariaLabelledBy="report-columns-title" size="sm">
           <div className="space-y-2 p-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
               <h3 id="report-columns-title" className="text-[11px] font-bold text-slate-900">Toggle Columns</h3>
@@ -873,7 +875,7 @@ function ReportGridImplementation<T>({
               </Button>
             </div>
           </div>
-      </Modal>
+      </Modal> : null}
     </div>
   );
 }

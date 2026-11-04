@@ -26,7 +26,6 @@
     "@tanstack/react-virtual": "^3.14.13",
     "clsx": "^2.1.1",
     "framer-motion": "^13.1.1",
-    "jsbarcode": "^3.12.3",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "jszip": "^3.10.2",

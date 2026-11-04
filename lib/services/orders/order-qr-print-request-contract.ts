@@ -1,7 +1,6 @@
 import {
-  ORDER_QR_TEMPLATE_FIELDS,
   buildOrderQrPayload,
-  type OrderQrTemplateFieldKey,
+  type QrTemplateFieldKey,
 } from "./order-qr-template-contract";
 
 export const ORDER_QR_PRINT_REQUEST_TYPES = ["PRINT", "DOWNLOAD"] as const;
@@ -33,6 +32,8 @@ export function getOrderQrPrintPreviewMode(
 export type CreateOrderQrPrintRequestInput = {
   orderId?: string;
   bulkOrders?: Array<{ orderId: string; quantity: number }>;
+  purchaseBillId?: string;
+  billLines?: Array<{ billLineId: string; quantity: number }>;
   templateId: string;
   requestType: OrderQrPrintRequestType;
   quantityMode?: OrderQrQuantityMode;
@@ -49,6 +50,10 @@ export function parseCreateOrderQrPrintRequestInput(
   }
   const orderId = typeof value.orderId === "string" ? value.orderId.trim() : "";
   let bulkOrders: Array<{ orderId: string; quantity: number }> | undefined;
+  const purchaseBillId = typeof value.purchaseBillId === "string"
+    ? value.purchaseBillId.trim()
+    : "";
+  let billLines: Array<{ billLineId: string; quantity: number }> | undefined;
   if (value.bulkOrders !== undefined) {
     if (
       !Array.isArray(value.bulkOrders)
@@ -91,11 +96,62 @@ export function parseCreateOrderQrPrintRequestInput(
     }
     bulkOrders = parsedBulkOrders;
   }
-  if (!orderId && !bulkOrders) {
+  if (value.billLines !== undefined) {
+    if (
+      !Array.isArray(value.billLines)
+      || value.billLines.length === 0
+      || value.billLines.length > MAX_ORDER_QR_PRINT_REQUEST_ORDERS
+    ) {
+      return {
+        success: false,
+        error: `Select between 1 and ${MAX_ORDER_QR_PRINT_REQUEST_ORDERS} purchase bill lines for a QR request.`,
+      };
+    }
+    const parsedBillLines: Array<{ billLineId: string; quantity: number }> = [];
+    const seenBillLineIds = new Set<string>();
+    for (const entry of value.billLines) {
+      if (
+        !isRecord(entry)
+        || typeof entry.billLineId !== "string"
+        || !entry.billLineId.trim()
+      ) {
+        return { success: false, error: "Every purchase bill line must have a valid ID." };
+      }
+      const billLineId = entry.billLineId.trim();
+      if (seenBillLineIds.has(billLineId)) {
+        return { success: false, error: "QR requests cannot contain duplicate purchase bill lines." };
+      }
+      if (
+        typeof entry.quantity !== "number"
+        || !Number.isSafeInteger(entry.quantity)
+        || entry.quantity < 1
+      ) {
+        return { success: false, error: "Every purchase bill line quantity must be a positive whole number." };
+      }
+      seenBillLineIds.add(billLineId);
+      parsedBillLines.push({ billLineId, quantity: entry.quantity });
+    }
+    if (
+      parsedBillLines.reduce((total, item) => total + item.quantity, 0)
+      > MAX_ORDER_QR_PRINT_REQUEST_LABELS
+    ) {
+      return {
+        success: false,
+        error: `A QR request cannot exceed ${MAX_ORDER_QR_PRINT_REQUEST_LABELS.toLocaleString()} labels.`,
+      };
+    }
+    billLines = parsedBillLines;
+  }
+  const hasOrderSource = Boolean(orderId || bulkOrders);
+  const hasPurchaseBillSource = Boolean(purchaseBillId || billLines);
+  if (hasPurchaseBillSource && (!purchaseBillId || !billLines)) {
+    return { success: false, error: "A purchase bill and at least one of its lines are required." };
+  }
+  if (!hasOrderSource && !hasPurchaseBillSource) {
     return { success: false, error: "A valid order is required." };
   }
-  if (orderId && bulkOrders) {
-    return { success: false, error: "Submit either one order or a bulk order list, not both." };
+  if ((orderId && bulkOrders) || (hasOrderSource && hasPurchaseBillSource)) {
+    return { success: false, error: "Submit either an order request or a purchase bill request, not both." };
   }
   if (
     typeof value.requestType !== "string"
@@ -121,6 +177,13 @@ export function parseCreateOrderQrPrintRequestInput(
     return { success: false, error: "PCS requests must use quantity 1 for every selected order." };
   }
   if (
+    billLines
+    && value.quantityMode === "PCS"
+    && billLines.some((item) => item.quantity !== 1)
+  ) {
+    return { success: false, error: "PCS requests must use quantity 1 for every selected purchase bill line." };
+  }
+  if (
     value.bulkQuantity !== undefined
     && (typeof value.bulkQuantity !== "number"
       || !Number.isSafeInteger(value.bulkQuantity)
@@ -138,6 +201,8 @@ export function parseCreateOrderQrPrintRequestInput(
     data: {
       ...(orderId ? { orderId } : {}),
       ...(bulkOrders ? { bulkOrders } : {}),
+      ...(purchaseBillId ? { purchaseBillId } : {}),
+      ...(billLines ? { billLines } : {}),
       templateId: value.templateId.trim(),
       requestType: value.requestType as OrderQrPrintRequestType,
       quantityMode: value.quantityMode === "PCS" ? "PCS" : "BULK_QTY",
@@ -159,14 +224,9 @@ export function getNextOrderQrPrintRequestStatus(
   return null;
 }
 
-export function isOrderQrTemplateFieldKey(value: unknown): value is OrderQrTemplateFieldKey {
-  return typeof value === "string"
-    && ORDER_QR_TEMPLATE_FIELDS.some((field) => field.key === value);
-}
-
 export function buildRequestQrPayload(
-  fieldKeys: readonly OrderQrTemplateFieldKey[],
-  orderFields: Partial<Record<OrderQrTemplateFieldKey, string | number | null>>,
+  fieldKeys: readonly QrTemplateFieldKey[],
+  orderFields: Partial<Record<QrTemplateFieldKey, string | number | null>>,
 ) {
   return buildOrderQrPayload(fieldKeys, orderFields);
 }

@@ -50,6 +50,35 @@ describe("distribution Order Form API", () => {
     expect(mocks.listDistributionOrderForms).toHaveBeenCalledWith("internal-org-1", "cursor-token");
   });
 
+  it("filters Order Forms without a quotation after organization authorization", async () => {
+    const response = await GET(getRequest("&quotationStatus=not-created"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.listDistributionOrderForms).toHaveBeenCalledWith(
+      "internal-org-1",
+      undefined,
+      "not-created",
+    );
+  });
+
+  it("filters Order Forms with a quotation after organization authorization", async () => {
+    await GET(getRequest("&quotationStatus=created"));
+
+    expect(mocks.listDistributionOrderForms).toHaveBeenCalledWith(
+      "internal-org-1",
+      undefined,
+      "created",
+    );
+  });
+
+  it("rejects unsupported Order Form quotation filters", async () => {
+    const response = await GET(getRequest("&quotationStatus=invalid"));
+
+    expect(response.status).toBe(400);
+    expect(mocks.requireSessionUser).not.toHaveBeenCalled();
+    expect(mocks.listDistributionOrderForms).not.toHaveBeenCalled();
+  });
+
   it("deletes selected Order Forms only for authorized merchandising roles", async () => {
     const response = await DELETE(deleteRequest({
       organizationId: "public-org",

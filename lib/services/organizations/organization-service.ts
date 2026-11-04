@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ERP_MODULES } from "@/components/erp/erp-config-registry";
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/database/prisma-client";
@@ -292,13 +293,22 @@ export async function createOrganization(input: OrganizationCreateInput) {
         },
       });
 
-      await transaction.eRPSoftware.create({
+      const erpSoftware = await transaction.eRPSoftware.create({
         data: {
           software_id: randomUUID(),
           organization_id: organization.id,
           software_name: "ERP Software",
           status: "active",
         },
+        select: { id: true },
+      });
+      await transaction.eRPModule.createMany({
+        data: ERP_MODULES.map(({ key, label }) => ({
+          software_id: erpSoftware.id,
+          module_key: key,
+          module_name: label,
+          status: "disabled",
+        })),
       });
 
       await transaction.organizationRoleDefinition.createMany({
@@ -458,6 +468,15 @@ export async function getOrganizationShellContext(workspaceUserId: string, organ
       trial_started_at: true,
       trial_ends_at: true,
       ai_enabled: true,
+      erpSoftware: {
+        orderBy: { created_at: "asc" },
+        take: 1,
+        select: {
+          modules: {
+            select: { module_key: true, module_name: true, status: true, settings: true },
+          },
+        },
+      },
     },
   });
 }

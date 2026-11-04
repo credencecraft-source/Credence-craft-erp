@@ -146,6 +146,75 @@ describe("order QR print request API", () => {
     );
   });
 
+  it("creates a purchase bill QR request for an authorized POS role", async () => {
+    const body = {
+      purchaseBillId: "bill-1",
+      billLines: [{ billLineId: "bill-line-1", quantity: 12 }],
+      templateId: "template-1",
+      requestType: "PRINT",
+      quantityMode: "BULK_QTY",
+    };
+    const response = await POST(new Request(
+      `${requestUrl}&sourceType=POS_PURCHASE_BILL`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ));
+
+    expect(response.status).toBe(201);
+    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
+      "user-1",
+      "public-org",
+      ["OWNER", "ADMIN", "FINANCE", "INVENTORY"],
+    );
+    expect(mocks.requireOrganizationPermission).not.toHaveBeenCalled();
+    expect(mocks.createOrderQrPrintRequest).toHaveBeenCalledWith(
+      "internal-org-1",
+      "user-1",
+      body,
+    );
+  });
+
+  it("rejects purchase bill requests from organization roles without POS access", async () => {
+    mocks.requireOrganizationContext.mockRejectedValue(
+      new Error("Access denied: insufficient organization permissions."),
+    );
+    const response = await POST(new Request(
+      `${requestUrl}&sourceType=POS_PURCHASE_BILL`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          purchaseBillId: "bill-1",
+          billLines: [{ billLineId: "bill-line-1", quantity: 1 }],
+          templateId: "template-1",
+          requestType: "PRINT",
+        }),
+      },
+    ));
+
+    expect(response.status).toBe(403);
+    expect(mocks.createOrderQrPrintRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not allow a purchase bill request through the order authorization path", async () => {
+    const response = await POST(new Request(requestUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        purchaseBillId: "bill-1",
+        billLines: [{ billLineId: "line-1", quantity: 1 }],
+        templateId: "template-1",
+        requestType: "PRINT",
+      }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.createOrderQrPrintRequest).not.toHaveBeenCalled();
+  });
+
   it("requires a template-assigned Page Setup before creating a request", async () => {
     mocks.createOrderQrPrintRequest.mockResolvedValue({
       success: false,

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   stockFindMany: vi.fn(),
   receiptLineFindMany: vi.fn(),
   rawMaterialFindMany: vi.fn(),
+  storageNodeFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/database/prisma-client", () => ({
@@ -12,6 +13,7 @@ vi.mock("@/lib/database/prisma-client", () => ({
     rawMaterialStock: { findMany: mocks.stockFindMany },
     inventoryReceiptLine: { findMany: mocks.receiptLineFindMany },
     masterRawMaterial: { findMany: mocks.rawMaterialFindMany },
+    storageNode: { findMany: mocks.storageNodeFindMany },
   },
 }));
 
@@ -21,6 +23,7 @@ describe("raw-material General Inventory GRN totals", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.rawMaterialFindMany.mockResolvedValue([]);
+    mocks.storageNodeFindMany.mockResolvedValue([]);
   });
 
   it("aggregates GRN verification quantities by item and location, including rejected-only materials", async () => {

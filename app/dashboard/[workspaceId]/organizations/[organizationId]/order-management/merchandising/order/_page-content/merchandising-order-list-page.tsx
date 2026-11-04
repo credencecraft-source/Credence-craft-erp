@@ -419,7 +419,11 @@ export default function MerchandisingOrdersPage({
   useEffect(() => {
     if (!showBulkQrRequest) return;
     const controller = new AbortController();
-    const query = new URLSearchParams({ organizationId, workspaceId });
+    const query = new URLSearchParams({
+      organizationId,
+      workspaceId,
+      type: "ORDER_TAGS",
+    });
     void (async () => {
       setIsLoadingQrTemplates(true);
       setQrTemplateError("");

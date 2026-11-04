@@ -61,6 +61,8 @@ type SalesOrderPdfLine = {
   quantity: number;
   unitPrice: string;
   lineTotal: string;
+  totalAmount: string;
+  taxAmount: string;
   sizes: Array<{ size: string; bookedQuantity: number }>;
 };
 type SalesOrderPdfChild = {
@@ -71,6 +73,14 @@ type SalesOrderPdfChild = {
   status: string;
   totalQuantity: number;
   subtotal: string;
+  deliveryCharge: string;
+  cgstAmount: string;
+  sgstAmount: string;
+  igstAmount: string;
+  vatAmount: string;
+  salesTaxAmount: string;
+  taxAmount: string;
+  grandTotal: string;
   notes: string;
   lines: SalesOrderPdfLine[];
   quotationParty: SalesOrderPdfParty;
@@ -97,6 +107,14 @@ type SalesOrderPdfPayload = {
     status: string;
     totalQuantity: number;
     subtotal: string;
+    deliveryCharge: string;
+    cgstAmount: string;
+    sgstAmount: string;
+    igstAmount: string;
+    vatAmount: string;
+    salesTaxAmount: string;
+    taxAmount: string;
+    grandTotal: string;
   };
   children: SalesOrderPdfChild[];
   salesOrderDocument: {
@@ -133,6 +151,22 @@ function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
 
+function addMoneyAmounts(...values: string[]) {
+  const amounts = values.map((value) => {
+    if (!/^\d{1,16}\.\d{2}$/.test(value)) {
+      throw new Error("Sales Order tax totals contained invalid monetary data.");
+    }
+    const [whole, fraction = ""] = value.split(".");
+    return BigInt(whole) * BigInt(100) + BigInt(fraction);
+  });
+  const total = amounts.reduce((sum, amount) => sum + amount, BigInt(0));
+  return `${total / BigInt(100)}.${String(total % BigInt(100)).padStart(2, "0")}`;
+}
+
+function isMoneyAmount(value: unknown): value is string {
+  return typeof value === "string" && /^\d{1,16}\.\d{2}$/.test(value);
+}
+
 function isSalesOrderPdfAddress(value: unknown): value is SalesOrderPdfAddress {
   return value === null || (
     isRecord(value) &&
@@ -146,8 +180,14 @@ function isSalesOrderPdfPayload(value: unknown): value is SalesOrderPdfPayload {
   if (!isRecord(value) || !isRecord(value.quotation) || !isRecord(value.salesOrderDocument)) return false;
   const { quotation, salesOrderDocument } = value;
   if (!isRecord(salesOrderDocument.seller) || !isRecord(salesOrderDocument.buyer) || !Array.isArray(value.children)) return false;
-  const requiredQuotationStrings = ["id", "quotationNo", "quotationDate", "validUntil", "orderNo", "customer", "notes", "status", "subtotal"];
+  const requiredQuotationStrings = [
+    "id", "quotationNo", "quotationDate", "validUntil", "orderNo", "customer", "notes", "status",
+    "subtotal", "deliveryCharge", "cgstAmount", "sgstAmount", "igstAmount", "vatAmount",
+    "salesTaxAmount", "taxAmount", "grandTotal",
+  ];
   if (requiredQuotationStrings.some((key) => typeof quotation[key] !== "string") ||
+      ["subtotal", "deliveryCharge", "cgstAmount", "sgstAmount", "igstAmount", "vatAmount", "salesTaxAmount", "taxAmount", "grandTotal"]
+        .some((key) => !isMoneyAmount(quotation[key])) ||
       typeof quotation.totalQuantity !== "number" ||
       typeof salesOrderDocument.seller.name !== "string" ||
       typeof salesOrderDocument.seller.gstin !== "string" ||
@@ -170,6 +210,22 @@ function isSalesOrderPdfPayload(value: unknown): value is SalesOrderPdfPayload {
     typeof child.status === "string" &&
     typeof child.totalQuantity === "number" &&
     typeof child.subtotal === "string" &&
+    typeof child.deliveryCharge === "string" &&
+    typeof child.cgstAmount === "string" &&
+    typeof child.sgstAmount === "string" &&
+    typeof child.igstAmount === "string" &&
+    typeof child.vatAmount === "string" &&
+    typeof child.salesTaxAmount === "string" &&
+    typeof child.taxAmount === "string" &&
+    isMoneyAmount(child.subtotal) &&
+    isMoneyAmount(child.deliveryCharge) &&
+    isMoneyAmount(child.cgstAmount) &&
+    isMoneyAmount(child.sgstAmount) &&
+    isMoneyAmount(child.igstAmount) &&
+    isMoneyAmount(child.vatAmount) &&
+    isMoneyAmount(child.salesTaxAmount) &&
+    isMoneyAmount(child.taxAmount) &&
+    isMoneyAmount(child.grandTotal) &&
     typeof child.notes === "string" &&
     isRecord(child.quotationParty) &&
     typeof child.quotationParty.name === "string" &&
@@ -190,6 +246,9 @@ function isSalesOrderPdfPayload(value: unknown): value is SalesOrderPdfPayload {
       typeof line.quantity === "number" &&
       typeof line.unitPrice === "string" &&
       typeof line.lineTotal === "string" &&
+      isMoneyAmount(line.lineTotal) &&
+      isMoneyAmount(line.totalAmount) &&
+      isMoneyAmount(line.taxAmount) &&
       Array.isArray(line.sizes) &&
       line.sizes.every((size) => isRecord(size) && typeof size.size === "string" && typeof size.bookedQuantity === "number")));
 }
@@ -480,6 +539,8 @@ export default function SalesOrderListPage() {
       const contentWidth = pageWidth - margin * 2;
       const { quotation, children, salesOrderDocument } = responseData;
       const { seller } = salesOrderDocument;
+      const partyAddressLines = (party: SalesOrderPdfParty, type: "billingAddress" | "shippingAddress") =>
+        party[type]?.lines ?? party.billingAddress?.lines ?? party.shippingAddress?.lines ?? [];
       const display = (value: string | number | null | undefined) => {
         const clean = String(value ?? "").trim();
         return clean || "Not provided";
@@ -490,38 +551,61 @@ export default function SalesOrderListPage() {
         return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString("en-IN");
       };
       const money = (value: string) => {
-        const amount = Number(value);
-        return Number.isFinite(amount)
-          ? new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(amount)
-          : value;
+        if (!isMoneyAmount(value)) return value;
+        const [whole, fraction = ""] = value.split(".");
+        const wholeNumber = BigInt(whole);
+        const groupedWhole = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(wholeNumber);
+        const currencyParts = new Intl.NumberFormat("en-IN", {
+          style: "currency",
+          currency: "INR",
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).formatToParts(0);
+        return currencyParts.map((part) => {
+          if (part.type === "integer") return groupedWhole;
+          if (part.type === "fraction") return fraction;
+          return part.value;
+        }).join("");
       };
       const safeFilename = quotation.quotationNo.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "sales-order";
 
       document.setProperties({ title: `Sales Order ${quotation.quotationNo}`, subject: "Sales Order and linked quotations" });
       const partyGap = 6;
       const partyWidth = (contentWidth - partyGap) / 2;
-      const partyHeight = 39;
-      const renderDocumentHeader = (title: string, number: string, dateText: string, statusText: string) => {
+      const partyHeight = 48;
+      const renderDocumentHeader = (
+        title: string,
+        number: string,
+        dateText: string,
+        statusText: string,
+        headerParty = {
+          name: seller.name,
+          email: seller.email,
+          phone: seller.phone,
+          gstin: seller.gstin || null,
+          address: seller.address,
+        },
+      ) => {
         document.setFillColor(79, 70, 229);
         document.rect(0, 0, pageWidth, 8, "F");
         document.setFont("helvetica", "bold");
         document.setFontSize(15);
         document.setTextColor(15, 23, 42);
-        document.text(display(seller.name), margin, 19, { maxWidth: 95 });
+        document.text(display(headerParty.name), margin, 19, { maxWidth: 95 });
         document.setFont("helvetica", "normal");
         document.setFontSize(8);
         document.setTextColor(71, 85, 105);
         const sellerMeta = [
-          seller.address,
-          seller.email,
-          seller.phone ? `Phone: ${seller.phone}` : "",
-          seller.gstin ? `GSTIN: ${seller.gstin}` : "",
+          headerParty.address,
+          headerParty.email,
+          headerParty.phone ? `Phone: ${headerParty.phone}` : "",
+          headerParty.gstin ? `GSTIN: ${headerParty.gstin}` : "",
         ].filter((line): line is string => Boolean(line));
         document.text(sellerMeta, margin, 25, { maxWidth: 95 });
         document.setFont("helvetica", "bold");
         document.setFontSize(17);
         document.setTextColor(79, 70, 229);
-        document.text(title, pageWidth - margin, 18, { align: "right" });
+        document.text(title, pageWidth - margin, 18, { align: "right", maxWidth: 95 });
         document.setFontSize(9);
         document.setTextColor(15, 23, 42);
         document.text(`No. ${display(number)}`, pageWidth - margin, 25, { align: "right" });
@@ -554,19 +638,19 @@ export default function SalesOrderListPage() {
         document.setFontSize(10);
         document.text(display(name), x + 4, y + 12, { maxWidth: partyWidth - 8 });
         document.setFont("helvetica", "normal");
-        document.setFontSize(7.5);
+        document.setFontSize(6.5);
         document.setTextColor(71, 85, 105);
         const lines = [
           ...(legalName && legalName !== name ? [legalName] : []),
           ...addressLines,
-          ...(email ? [email] : []),
-          ...(phone ? [`Phone: ${phone}`] : []),
           ...(gstin ? [`GSTIN: ${gstin}`] : []),
           ...(state ? [`State: ${state}`] : []),
-        ].slice(0, 4);
+          ...(email ? [email] : []),
+          ...(phone ? [`Phone: ${phone}`] : []),
+        ];
         document.text(lines.length ? lines : ["Address and tax details not provided"], x + 4, y + 17, {
           maxWidth: partyWidth - 8,
-          lineHeightFactor: 1.2,
+          lineHeightFactor: 1.05,
         });
       };
       const renderPartyPair = (
@@ -579,17 +663,6 @@ export default function SalesOrderListPage() {
         renderParty(margin, y, leftTitle, left.name, left.legalName, left.gstin, left.email, left.phone, left.addressLines, left.state);
         renderParty(margin + partyWidth + partyGap, y, rightTitle, right.name, right.legalName, right.gstin, right.email, right.phone, right.addressLines, right.state);
       };
-      const companyParty = {
-        name: seller.name,
-        legalName: null,
-        email: seller.email,
-        phone: seller.phone,
-        gstin: seller.gstin || null,
-        addressLines: seller.address ? [seller.address] : [],
-        state: null,
-      };
-      const partyAddressLines = (party: SalesOrderPdfParty, type: "billingAddress" | "shippingAddress") =>
-        party[type]?.lines ?? party.billingAddress?.lines ?? party.shippingAddress?.lines ?? [];
       const renderSectionTitle = (title: string, y: number) => {
         document.setFont("helvetica", "bold");
         document.setFontSize(10);
@@ -604,57 +677,97 @@ export default function SalesOrderListPage() {
         styles: { lineColor: [226, 232, 240] as [number, number, number], lineWidth: 0.2, overflow: "linebreak" as const },
       };
 
-      const quotationSummaryRows = children.map((child, index) => {
-        const styles = new Set(child.lines.map((line) => {
-          const style = line.styleName.trim() || line.description.trim();
-          return `${line.brand.trim().toLocaleLowerCase()}|${style.toLocaleLowerCase()}`;
-        }).filter((style) => style !== "|"));
-        return [
-          String(index + 1),
-          child.quotationNo,
-          child.quotationParty.name,
-          String(child.totalQuantity),
-          String(styles.size),
-          money(child.subtotal),
-          "Not recorded",
-          "Not stored",
-        ];
-      });
+      const quotationSummaryRows = children.map((child, index) => [
+        String(index + 1),
+        "READY GARMENTS",
+        child.quotationNo,
+        child.quotationParty.name,
+        String(child.totalQuantity),
+        money(child.subtotal),
+        money(child.taxAmount),
+        money(child.grandTotal),
+      ]);
       renderDocumentHeader("SALES ORDER", quotation.quotationNo, quotation.quotationDate, `Status: ${display(quotation.status)}`);
-      const estimatedSummaryTableHeight = 11 + quotationSummaryRows.length * 8.5;
+      const salesOrderBuyer = salesOrderDocument.buyer;
+      const billToParty = {
+        name: salesOrderBuyer.name,
+        legalName: salesOrderBuyer.legalName,
+        email: salesOrderBuyer.email,
+        phone: salesOrderBuyer.phone,
+        gstin: salesOrderBuyer.billingAddress?.gstin ?? salesOrderBuyer.gstin,
+        addressLines: partyAddressLines(salesOrderBuyer, "billingAddress"),
+        state: salesOrderBuyer.registeredState,
+      };
+      const shipToParty = {
+        ...billToParty,
+        gstin: salesOrderBuyer.shippingAddress?.gstin ?? salesOrderBuyer.gstin,
+        addressLines: partyAddressLines(salesOrderBuyer, "shippingAddress"),
+      };
+      renderPartyPair(42, "Bill To", billToParty, "Ship To", shipToParty);
+      renderSectionTitle("Sales Order Tax & Totals", 97);
       autoTable(document, {
-        startY: Math.max(42, (pageHeight - estimatedSummaryTableHeight) / 2),
-        margin: { left: margin, right: margin, bottom: margin },
+        startY: 100,
+        margin: { left: margin, right: margin, bottom: 18 },
         tableWidth: contentWidth,
-        head: [["SL", "Quotation No.", "Quotation Vendor", "No. of Pcs", "No. of Styles", "Total Value", "IGST", "GST Value"]],
+        body: [
+          ["Before Tax", money(quotation.subtotal), "Delivery Charge", money(quotation.deliveryCharge)],
+          ["CGST", money(quotation.cgstAmount), "SGST", money(quotation.sgstAmount)],
+          ["IGST", money(quotation.igstAmount), "VAT / Sales Tax", money(addMoneyAmounts(quotation.vatAmount, quotation.salesTaxAmount))],
+          ["Total Tax", money(quotation.taxAmount), "Grand Total", money(quotation.grandTotal)],
+        ],
+        ...tableStyles,
+        theme: "grid",
+        bodyStyles: { ...tableStyles.bodyStyles, fontSize: 7, cellPadding: 1.5 },
+        columnStyles: {
+          0: { cellWidth: 43, fontStyle: "bold" },
+          1: { cellWidth: 50, halign: "right" },
+          2: { cellWidth: 43, fontStyle: "bold" },
+          3: { cellWidth: 50, halign: "right" },
+        },
+      });
+      const nextSummaryY = (document as typeof document & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 132;
+      renderSectionTitle("Linked Quotations", nextSummaryY + 9);
+      autoTable(document, {
+        startY: nextSummaryY + 12,
+        margin: { left: margin, right: margin, bottom: 18 },
+        tableWidth: contentWidth,
+        head: [["SL", "Account Item", "Quotation No.", "Distributor", "Qty (PCS)", "Before Tax", "Total Tax", "Grand Total"]],
         body: quotationSummaryRows.length
           ? quotationSummaryRows
-          : [["-", "No linked quotations", "-", "-", "-", "-", "-", "-"]],
+          : [["-", "-", "No linked quotations", "-", "-", "-", "-", "-"]],
         ...tableStyles,
         headStyles: { ...tableStyles.headStyles, fontSize: 6.5, cellPadding: 1.5 },
         bodyStyles: { ...tableStyles.bodyStyles, fontSize: 6.5, cellPadding: 1.5 },
         columnStyles: {
-          0: { cellWidth: 8, halign: "center" },
-          1: { cellWidth: 28 },
-          2: { cellWidth: 36 },
-          3: { cellWidth: 19, halign: "right" },
-          4: { cellWidth: 20, halign: "right" },
-          5: { cellWidth: 27, halign: "right" },
-          6: { cellWidth: 23 },
-          7: { cellWidth: 25 },
+          0: { cellWidth: 7, halign: "center" },
+          1: { cellWidth: 31 },
+          2: { cellWidth: 25 },
+          3: { cellWidth: 34 },
+          4: { cellWidth: 13, halign: "right" },
+          5: { cellWidth: 26, halign: "right" },
+          6: { cellWidth: 24, halign: "right" },
+          7: { cellWidth: 26, halign: "right" },
         },
       });
 
       for (const child of children) {
         document.addPage();
+        const quotationTo = child.quotationParty;
+        const quotationHeader = {
+          name: quotationTo.name,
+          email: quotationTo.email,
+          phone: quotationTo.phone,
+          gstin: quotationTo.gstin,
+          address: partyAddressLines(quotationTo, "billingAddress").join(", "),
+        };
         renderDocumentHeader(
           "QUOTATION",
           child.quotationNo,
           child.quotationDate,
           `Valid until: ${date(child.validUntil)}   |   ${display(child.status)}`,
+          quotationHeader,
         );
-        const quotationTo = child.quotationParty;
-        const quotationToAddress = {
+        const billingParty = {
           name: quotationTo.name,
           legalName: quotationTo.legalName,
           email: quotationTo.email,
@@ -663,8 +776,13 @@ export default function SalesOrderListPage() {
           addressLines: partyAddressLines(quotationTo, "billingAddress"),
           state: quotationTo.registeredState,
         };
-        renderPartyPair(43, "Quotation From", companyParty, "Quotation To", quotationToAddress);
-        renderSectionTitle("Quotation Items", 91);
+        const shippingParty = {
+          ...billingParty,
+          gstin: quotationTo.shippingAddress?.gstin ?? quotationTo.gstin,
+          addressLines: partyAddressLines(quotationTo, "shippingAddress"),
+        };
+        renderPartyPair(42, "Bill To", billingParty, "Ship To", shippingParty);
+        renderSectionTitle("Quotation Items", 97);
         const itemRows = child.lines.map((line) => [
           line.description + (line.brand || line.styleName ? `\n${[line.brand, line.styleName].filter(Boolean).join(" / ")}` : ""),
           line.bookingNo,
@@ -673,52 +791,53 @@ export default function SalesOrderListPage() {
           String(line.quantity),
           money(line.unitPrice),
           money(line.lineTotal),
+          money(line.taxAmount),
+          money(line.totalAmount),
         ]);
         autoTable(document, {
-          startY: 94,
+          startY: 100,
           margin: { left: margin, right: margin, bottom: 18 },
           tableWidth: contentWidth,
-          head: [["Item / Description", "Booking", "Order", "Size Breakdown", "Qty", "Unit Price", "Amount"]],
-          body: itemRows.length ? itemRows : [["No item lines recorded", "-", "-", "-", "-", "-", "-"]],
+          head: [["Item / Description", "Booking", "Order", "Size Breakdown", "Qty", "Unit Price", "Before Tax", "Tax", "Amount"]],
+          body: itemRows.length ? itemRows : [["No item lines recorded", "-", "-", "-", "-", "-", "-", "-", "-"]],
           ...tableStyles,
           columnStyles: {
-            0: { cellWidth: 48 },
-            1: { cellWidth: 18 },
-            2: { cellWidth: 18 },
-            3: { cellWidth: 34 },
-            4: { cellWidth: 12, halign: "right" },
-            5: { cellWidth: 27, halign: "right" },
-            6: { cellWidth: 29, halign: "right" },
+            0: { cellWidth: 38 },
+            1: { cellWidth: 16 },
+            2: { cellWidth: 16 },
+            3: { cellWidth: 31 },
+            4: { cellWidth: 10, halign: "right" },
+            5: { cellWidth: 19, halign: "right" },
+            6: { cellWidth: 21, halign: "right" },
+            7: { cellWidth: 17, halign: "right" },
+            8: { cellWidth: 18, halign: "right" },
           },
         });
         let nextY = (document as typeof document & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 112;
         autoTable(document, {
           startY: nextY + 4,
-          margin: { left: pageWidth - margin - 72, right: margin, bottom: 18 },
-          tableWidth: 72,
+          margin: { left: pageWidth - margin - 82, right: margin, bottom: 18 },
+          tableWidth: 82,
           body: [
             ["Total Quantity", String(child.totalQuantity)],
-            ["Subtotal", money(child.subtotal)],
+            ["Before Tax", money(child.subtotal)],
+            ["Delivery Charge", money(child.deliveryCharge)],
+            ["CGST", money(child.cgstAmount)],
+            ["SGST", money(child.sgstAmount)],
+            ["IGST", money(child.igstAmount)],
+            ["VAT / Sales Tax", money(addMoneyAmounts(child.vatAmount, child.salesTaxAmount))],
+            ["Total Tax", money(child.taxAmount)],
+            ["Grand Total", money(child.grandTotal)],
           ],
           theme: "plain",
-          styles: { fontSize: 8, cellPadding: 2, textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.2 },
-          columnStyles: { 0: { fontStyle: "bold", cellWidth: 44 }, 1: { halign: "right", cellWidth: 28 } },
+          styles: { fontSize: 7.5, cellPadding: 1.5, textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.2 },
+          columnStyles: { 0: { fontStyle: "bold", cellWidth: 50 }, 1: { halign: "right", cellWidth: 32 } },
         });
         nextY = (document as typeof document & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? nextY + 22;
-        renderSectionTitle("Tax Details", nextY + 8);
-        document.setFont("helvetica", "normal");
-        document.setFontSize(7.5);
-        document.setTextColor(100, 116, 139);
-        document.text(
-          `GSTIN: ${display(quotationTo.billingAddress?.gstin ?? quotationTo.gstin)}. GST rates and amounts are not stored on this quotation and have not been calculated.`,
-          margin,
-          nextY + 14,
-          { maxWidth: contentWidth },
-        );
         if (child.notes.trim()) {
-          renderSectionTitle("Terms & Conditions", nextY + 24);
+          renderSectionTitle("Terms & Conditions", nextY + 8);
           autoTable(document, {
-            startY: nextY + 27,
+            startY: nextY + 11,
             margin: { left: margin, right: margin, bottom: 18 },
             tableWidth: contentWidth,
             body: [[child.notes]],

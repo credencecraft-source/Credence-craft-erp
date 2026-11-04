@@ -36,6 +36,10 @@ function quotationErrorResponse(error: unknown, fallback: string) {
 export async function GET(request: Request) {
   try {
     const search = new URL(request.url).searchParams;
+    const salesOrderStatus = search.get("salesOrderStatus");
+    if (salesOrderStatus && salesOrderStatus !== "created" && salesOrderStatus !== "not-created") {
+      return NextResponse.json({ error: "Select a valid quotation Sales Order status." }, { status: 400 });
+    }
     const authorization = await measureDatabaseQueries(async () => {
       const user = await requireSessionUser();
       const organization = await requireOrganizationContext(user.id, search.get("organizationId") ?? "");
@@ -45,6 +49,7 @@ export async function GET(request: Request) {
     const list = await measureDatabaseQueries(() => listDistributionQuotations(authorization.value, {
       includeContactRole: search.get("view") !== "sales-order",
       ...(cursor ? { cursor } : {}),
+      ...(salesOrderStatus ? { salesOrderCreated: salesOrderStatus === "created" } : {}),
     }));
     const response = NextResponse.json(list.value);
     if (process.env.NODE_ENV === "development") {

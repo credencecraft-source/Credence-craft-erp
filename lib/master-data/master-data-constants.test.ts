@@ -62,7 +62,22 @@ import {
 import { getOrganizationMasterSetupDefinitions } from "./organization-master-setup-stages";
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
+  for (const model of Object.values(models)) {
+    model.count.mockResolvedValue(0);
+    model.create.mockResolvedValue({ id: "created-id" });
+    model.createMany.mockResolvedValue({ count: 0 });
+    model.createManyAndReturn.mockResolvedValue([]);
+    model.delete.mockResolvedValue({ id: "deleted-id" });
+    model.deleteMany.mockResolvedValue({ count: 0 });
+    model.findFirst.mockResolvedValue(null);
+    model.findMany.mockResolvedValue([]);
+    model.findUnique.mockResolvedValue(null);
+    model.update.mockResolvedValue({ id: "updated-id" });
+    model.updateMany.mockResolvedValue({ count: 1 });
+    model.upsert.mockResolvedValue({ id: "upserted-id" });
+  }
+  (prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> }).findFirst.mockResolvedValue(null);
   (prismaMock.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
     (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback(prismaMock as Record<string, unknown>),
   );
@@ -88,6 +103,69 @@ describe("organization master record queries", () => {
         organization_id: "org-id",
         process_template_id: "process-template-id",
       }),
+    }));
+  });
+
+  it("uses a stable organization-scoped cursor for master report pages", async () => {
+    await getMasterValuesForOrganization("org-id", "state", false, {
+      cursor: "state-cursor-id",
+      limit: 25,
+      search: "north",
+    });
+
+    expect(models.masterState.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "org-id",
+        OR: expect.arrayContaining([
+          { state: { contains: "north", mode: "insensitive" } },
+        ]),
+      }),
+      orderBy: [{ sort_order: "asc" }, { state: "asc" }, { id: "asc" }],
+      cursor: { id: "state-cursor-id" },
+      skip: 1,
+      take: 25,
+    }));
+  });
+
+  it("applies allowlisted report filters in the tenant-scoped database query", async () => {
+    await getMasterValuesForOrganization("org-id", "state", false, {
+      filters: {
+        State: { operator: "is", value: "North" },
+        status: { operator: "is", value: "active" },
+      },
+    });
+
+    expect(models.masterState.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "org-id",
+        AND: expect.arrayContaining([
+          { state: { equals: "North", mode: "insensitive" } },
+          { is_active: true },
+        ]),
+      }),
+    }));
+  });
+
+  it("excludes active dummy-batch data before applying the report cursor and limit", async () => {
+    (prismaMock.organizationDummyDataBatch as { findFirst: ReturnType<typeof vi.fn> })
+      .findFirst.mockResolvedValueOnce({ id: "active-batch" });
+
+    await getMasterValuesForOrganization("org-id", "category", false, {
+      limit: 25,
+      cursor: "visible-record-id",
+    });
+
+    expect(models.masterCategory.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "org-id",
+        NOT: {
+          legacy_metadata: {
+            path: ["dummyDataBatchId"],
+            equals: "active-batch",
+          },
+        },
+      }),
+      take: 25,
     }));
   });
 
@@ -298,6 +376,7 @@ describe("raw-material type asset classification", () => {
     models.masterRawMaterialCategory.findMany.mockResolvedValue([{ id: "category-id" }] as never);
 
     await updateMasterValue("org-id", "type-id", {
+      moduleKey: "raw-material-type",
       label: "Equipment",
       fields: {
         Raw_Material_Type: "Equipment",
@@ -348,6 +427,7 @@ describe("raw-material type asset classification", () => {
     } as never);
 
     await expect(updateMasterValue("org-id", "type-id", {
+      moduleKey: "raw-material-type",
       label: "Equipment",
       fields: {
         Raw_Material_Type: "Equipment",
@@ -924,7 +1004,7 @@ describe("article creation", () => {
     await getMasterValuesForOrganization("org-id", "article", true, { articleCode: "AR-7BA58SCH-01" });
 
     expect(models.masterArticle.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { organization_id: "org-id", article_code: "AR-7BA58SCH-01" },
+      where: expect.objectContaining({ organization_id: "org-id", article_code: "AR-7BA58SCH-01" }),
     }));
   });
 
@@ -1271,7 +1351,7 @@ describe("article creation", () => {
     models.masterArticle.update.mockReset().mockResolvedValueOnce({ id: "style-id", size_group_id: "size-group-id" } as never);
     models.masterSizeGroup.findFirst.mockReset().mockResolvedValue({ id: "size-group-id", legacy_metadata: null } as never);
 
-    await updateMasterValue("org-id", "style-id", { articleSizes: [] });
+    await updateMasterValue("org-id", "style-id", { moduleKey: "article", articleSizes: [] });
 
     expect(models.masterArticle.findFirst).toHaveBeenCalled();
     expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 15_000 });
@@ -1459,7 +1539,7 @@ describe("master lookup query concurrency", () => {
         OR: [{ id: { in: ["entity-id"] } }, { value_id: { in: ["entity-id"] } }],
       }),
       select: { id: true, value_id: true, entity_name: true },
-      take: 500,
+      take: 1,
     }));
   });
 
@@ -1848,9 +1928,9 @@ describe("dummy master isolation", () => {
       legacy_metadata: { dummyDataBatchId: "demo-batch-id" },
     });
 
-    await expect(updateMasterValue("org-id", "demo-category-id", { label: "Changed" }))
+    await expect(updateMasterValue("org-id", "demo-category-id", { moduleKey: "category", label: "Changed" }))
       .rejects.toThrow("Demo master values are managed by the Dummy Data batch");
-    await expect(deleteMasterValue("org-id", "demo-category-id"))
+    await expect(deleteMasterValue("org-id", "demo-category-id", "category"))
       .resolves.toMatchObject({ record: null, error: "Demo master values can only be removed by deleting the complete Dummy Data batch." });
 
     expect(models.masterCategory.update).not.toHaveBeenCalled();

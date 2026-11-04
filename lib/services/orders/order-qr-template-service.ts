@@ -6,6 +6,7 @@ import {
 } from "@/lib/services/design-development/page-setup-template-contract";
 import {
   ORDER_QR_TEMPLATE_SIZES,
+  type OrderQrTemplateType,
   isOrderQrTemplateFieldKey,
   parseStoredOrderQrTemplateDesign,
   serializeOrderQrTemplateDesign,
@@ -152,9 +153,12 @@ function mapOrderQrTemplate(template: {
   };
 }
 
-export async function listOrderQrTemplates(organizationId: string) {
+export async function listOrderQrTemplates(
+  organizationId: string,
+  type?: OrderQrTemplateType,
+) {
   const templates = await prisma.merchandisingOrderQrTemplate.findMany({
-    where: { organization_id: organizationId },
+    where: { organization_id: organizationId, ...(type ? { type } : {}) },
     orderBy: [{ updated_at: "desc" }, { name: "asc" }],
     take: 100,
     select: {
@@ -213,7 +217,7 @@ export async function createOrderQrTemplate(
       data: {
         organization_id: organizationId,
         name: input.name,
-        type: "ORDER_TAGS",
+        type: input.type,
         field_keys: [...new Set([input.qrFieldKey, ...input.displayFields])],
         qr_field_key: input.qrFieldKey,
         display_fields: input.displayFields,
@@ -270,6 +274,7 @@ export async function updateOrderQrTemplate(
       where: { organization_id: organizationId, id: templateId },
       data: {
         name: input.name,
+        type: input.type,
         field_keys: [...new Set([input.qrFieldKey, ...input.displayFields])],
         qr_field_key: input.qrFieldKey,
         display_fields: input.displayFields,

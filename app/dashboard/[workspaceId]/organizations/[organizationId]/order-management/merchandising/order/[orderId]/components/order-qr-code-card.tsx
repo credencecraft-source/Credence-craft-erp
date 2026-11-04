@@ -131,7 +131,11 @@ export default function OrderQrCodeCard({
       return;
     }
     setRequestState({ type: requestType, status: "submitting", message: "" });
-    const query = new URLSearchParams({ organizationId, workspaceId });
+    const query = new URLSearchParams({
+      organizationId,
+      workspaceId,
+      type: "ORDER_TAGS",
+    });
     try {
       const response = await fetch(`/api/orders/qr-print-requests?${query}`, {
         method: "POST",

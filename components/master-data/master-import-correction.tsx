@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import Modal from "@/components/ui/Modal";
 import Textarea from "@/components/ui/Textarea";
+
+const Modal = dynamic(() => import("@/components/ui/Modal"), { ssr: false });
 
 export type MasterImportCorrectionField = {
   key: string;
@@ -70,9 +72,9 @@ export function MasterImportCorrection({
   ) : 0;
   const rowErrorCount = open ? rows.reduce((count, row) => count + (row.errors._row?.length ?? 0), 0) : 0;
 
-  return (
+  return open ? (
     <Modal
-      open={open}
+      open
       onClose={onClose}
       closeOnBackdrop={false}
       ariaLabel={title}
@@ -206,5 +208,5 @@ export function MasterImportCorrection({
         </div>
       </div>
     </Modal>
-  );
+  ) : null;
 }

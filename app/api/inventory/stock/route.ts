@@ -69,6 +69,7 @@ export async function POST(request: Request) {
       userId: user.id,
       rawMaterialId: readText(input.rawMaterialId),
       locationId: readText(input.locationId),
+      storageNodeId: readText(input.storageNodeId),
       quantity: readText(input.quantity),
       reason: readText(input.reason),
       isAssetStock: input.isAssetStock === true,

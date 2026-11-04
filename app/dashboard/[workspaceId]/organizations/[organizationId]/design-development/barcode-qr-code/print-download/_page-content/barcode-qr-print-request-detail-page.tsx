@@ -15,7 +15,10 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Table from "@/components/ui/Table";
-import { getA4StickerGrid, ORDER_QR_TEMPLATE_FIELDS } from "@/lib/services/orders/order-qr-template-contract";
+import {
+  getA4StickerGrid,
+  getQrTemplateFieldLabel,
+} from "@/lib/services/orders/order-qr-template-contract";
 import { getOrderQrPrintPreviewMode } from "@/lib/services/orders/order-qr-print-request-contract";
 import type { OrderQrPrintRequestRecord } from "@/lib/services/orders/order-qr-print-request-service";
 
@@ -104,14 +107,15 @@ export default function BarcodeQrPrintRequestDetailPage({
   const previewDisplayValues = activeBulkItem?.displayValues ?? request.displayValues;
   const previewFields = request.displayFields.map((fieldKey) => ({
     key: fieldKey,
-    label: ORDER_QR_TEMPLATE_FIELDS.find(({ key }) => key === fieldKey)?.label ?? fieldKey,
+    label: getQrTemplateFieldLabel(fieldKey),
     value: previewDisplayValues[fieldKey] ?? "",
     style: request.displayFieldStyles[fieldKey],
   }));
   const requestListHref =
     `/dashboard/${workspaceId}/organizations/${organizationId}/design-development/barcode-qr-code/print-download`;
-  const orderHref =
-    `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/${encodeURIComponent(request.orderId)}`;
+  const sourceHref = request.sourceType === "POS_PURCHASE_BILL" && request.purchaseBillId
+    ? `/dashboard/${workspaceId}/organizations/${organizationId}/pos/purchase-bill/${encodeURIComponent(request.purchaseBillId)}`
+    : `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order/${encodeURIComponent(request.orderId)}`;
 
   const createOutput = async (type: "print" | "download") => {
     const printWindow = type === "print" ? window.open("", "_blank") : null;
@@ -135,9 +139,10 @@ export default function BarcodeQrPrintRequestDetailPage({
       } else {
         const download = document.createElement("a");
         download.href = pdfUrl;
+        const sourcePrefix = request.sourceType === "POS_PURCHASE_BILL" ? "purchase-bill" : "order";
         download.download = usesPageSetupSheet
-          ? `order-${request.orderNo}-${request.pageSetup?.paperSize.toLowerCase() ?? "a4"}-stickers.pdf`
-          : `order-${request.orderNo}-sticker-labels.pdf`;
+          ? `${sourcePrefix}-${request.orderNo}-${request.pageSetup?.paperSize.toLowerCase() ?? "a4"}-stickers.pdf`
+          : `${sourcePrefix}-${request.orderNo}-sticker-labels.pdf`;
         download.click();
         window.setTimeout(() => URL.revokeObjectURL(pdfUrl), 60_000);
       }
@@ -170,7 +175,9 @@ export default function BarcodeQrPrintRequestDetailPage({
             QR Print Request · {request.orderNo}
           </h1>
           <p className="text-sm text-[var(--erp-text-muted)]">
-            Saved request design and print-ready preview.
+            {request.sourceType === "POS_PURCHASE_BILL"
+              ? "Purchase bill QR labels routed through Design & Development."
+              : "Saved request design and print-ready preview."}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -178,9 +185,9 @@ export default function BarcodeQrPrintRequestDetailPage({
             type="button"
             variant="secondary"
             size="sm"
-            onClick={() => router.push(orderHref)}
+            onClick={() => router.push(sourceHref)}
           >
-            Open Order
+            {request.sourceType === "POS_PURCHASE_BILL" ? "Open Purchase Bill" : "Open Order"}
           </Button>
           <Button
             type="button"
@@ -363,7 +370,7 @@ export default function BarcodeQrPrintRequestDetailPage({
                 layout={request.layout}
                 stickerWidthMm={request.stickerWidthMm}
                 stickerLengthMm={request.stickerLengthMm}
-                qrAlt={`QR code for order ${activeBulkItem?.orderNo ?? request.orderNo}`}
+                qrAlt={`QR code for ${request.sourceType === "POS_PURCHASE_BILL" ? "purchase bill item" : "order"} ${activeBulkItem?.orderNo ?? request.orderNo}`}
               />
               <p className="text-center text-xs text-[var(--erp-text-muted)]">
                 Actual label size: {request.stickerWidthMm} × {request.stickerLengthMm} mm ·
@@ -380,7 +387,11 @@ export default function BarcodeQrPrintRequestDetailPage({
             <dd className="font-medium text-slate-900">{request.templateName ?? "Unavailable"}</dd>
             <dt className="text-[var(--erp-text-muted)]">Request</dt>
             <dd className="font-medium text-slate-900">
-              {request.bulkItems.length ? "Bulk QR request · output choice by Design & Development" : request.requestType}
+              {request.sourceType === "POS_PURCHASE_BILL"
+                ? "Purchase bill QR request · output choice by Design & Development"
+                : request.bulkItems.length
+                  ? "Bulk QR request · output choice by Design & Development"
+                  : request.requestType}
             </dd>
             <dt className="text-[var(--erp-text-muted)]">Printer</dt>
             <dd className="font-medium text-slate-900">
@@ -410,8 +421,7 @@ export default function BarcodeQrPrintRequestDetailPage({
             <dd className="font-medium text-slate-900">{request.printQuantity}</dd>
             <dt className="text-[var(--erp-text-muted)]">QR field</dt>
             <dd className="font-medium text-slate-900">
-              {ORDER_QR_TEMPLATE_FIELDS.find(({ key }) => key === request.qrFieldKey)?.label
-                ?? request.qrFieldKey}
+              {getQrTemplateFieldLabel(request.qrFieldKey)}
             </dd>
             <dt className="text-[var(--erp-text-muted)]">Requested</dt>
             <dd className="font-medium text-slate-900">
@@ -444,13 +454,13 @@ export default function BarcodeQrPrintRequestDetailPage({
           {request.bulkItems.length > 0 && (
             <div className="space-y-2">
               <h3 className="text-sm font-semibold text-slate-900">
-                Orders in this request ({request.bulkItems.length})
+                {request.sourceType === "POS_PURCHASE_BILL" ? "Bill lines" : "Orders"} in this request ({request.bulkItems.length})
               </h3>
               <Table className="max-h-72 overflow-y-auto">
                 <thead className="sticky top-0 bg-[var(--erp-surface-soft)] text-xs uppercase text-[var(--erp-text-muted)]">
                   <tr>
-                    <th scope="col" className="px-3 py-2">Order No</th>
-                    <th scope="col" className="px-3 py-2">Style</th>
+                    <th scope="col" className="px-3 py-2">{request.sourceType === "POS_PURCHASE_BILL" ? "Item Code" : "Order No"}</th>
+                    <th scope="col" className="px-3 py-2">{request.sourceType === "POS_PURCHASE_BILL" ? "Item / Style" : "Style"}</th>
                     <th scope="col" className="px-3 py-2 text-right">Qty</th>
                   </tr>
                 </thead>

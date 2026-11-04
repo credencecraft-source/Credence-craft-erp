@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useFormStatus } from "react-dom";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
@@ -66,6 +66,8 @@ type MasterRecordsTableProps = {
   importAction: MasterRecordsImportAction;
   fields: MasterFieldDefinition[];
   lookupOptions: Record<string, MasterLookupOption[]>;
+  initialHasMore?: boolean;
+  initialNextCursor?: string | null;
   childRecords?: ChildRecord[];
   formMode?: "create" | "edit" | "view";
   initialRecord?: MasterRecord;
@@ -317,6 +319,8 @@ export function MasterRecordsTable({
   deleteSelectedAction,
   fields,
   lookupOptions,
+  initialHasMore = false,
+  initialNextCursor = null,
   childRecords = [],
   formMode,
   initialRecord,
@@ -324,6 +328,17 @@ export function MasterRecordsTable({
   saved,
 }: MasterRecordsTableProps) {
   const router = useRouter();
+  const [reportRecords, setReportRecords] = useState(records);
+  const [reportHasMore, setReportHasMore] = useState(initialHasMore);
+  const [reportNextCursor, setReportNextCursor] = useState(initialNextCursor);
+  const [reportSearchQuery, setReportSearchQuery] = useState("");
+  const [debouncedReportSearchQuery, setDebouncedReportSearchQuery] = useState("");
+  const [reportColumnFilters, setReportColumnFilters] = useState<Record<string, { operator: string; value: string }>>({});
+  const [reportSearchRetry, setReportSearchRetry] = useState(0);
+  const [isLoadingReportPage, setIsLoadingReportPage] = useState(false);
+  const [reportLoadError, setReportLoadError] = useState("");
+  const reportRequestController = useRef<AbortController | null>(null);
+  const reportSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
   const [deleteDialog, setDeleteDialog] = useState<{ kind: "single"; record: MasterRecord } | { kind: "selected" } | null>(null);
   const [createFields, setCreateFields] = useState<Record<string, unknown>>(() => Object.fromEntries(fields.map((field) => [
@@ -365,6 +380,158 @@ export function MasterRecordsTable({
   const quickMasterOptionsRequest = useRef<AbortController | null>(null);
   const quickMasterSaveInProgress = useRef(false);
   const requestedDependentLookups = useRef(new Set<string>());
+
+  useEffect(() => {
+    startTransition(() => {
+      setReportRecords(records);
+      setReportHasMore(initialHasMore);
+      setReportNextCursor(initialNextCursor);
+      setReportSearchQuery("");
+      setDebouncedReportSearchQuery("");
+      setReportColumnFilters({});
+    });
+  }, [initialHasMore, initialNextCursor, records]);
+
+  useEffect(() => () => {
+    if (reportSearchTimer.current) clearTimeout(reportSearchTimer.current);
+    reportRequestController.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    if (reportSearchTimer.current) clearTimeout(reportSearchTimer.current);
+    reportSearchTimer.current = setTimeout(
+      () => setDebouncedReportSearchQuery(reportSearchQuery),
+      300,
+    );
+    return () => {
+      if (reportSearchTimer.current) clearTimeout(reportSearchTimer.current);
+    };
+  }, [reportSearchQuery]);
+
+  useEffect(() => {
+    const activeFilters = Object.keys(reportColumnFilters).length > 0;
+    if (!debouncedReportSearchQuery && !activeFilters) {
+      startTransition(() => {
+        setReportRecords(records);
+        setReportHasMore(initialHasMore);
+        setReportNextCursor(initialNextCursor);
+        setIsLoadingReportPage(false);
+      });
+      return;
+    }
+
+    reportRequestController.current?.abort();
+    const controller = new AbortController();
+    reportRequestController.current = controller;
+    const query = new URLSearchParams({
+      page: "true",
+      limit: "100",
+      includeInactive: "true",
+      ...(debouncedReportSearchQuery ? { search: debouncedReportSearchQuery } : {}),
+      ...(activeFilters ? { filters: JSON.stringify(reportColumnFilters) } : {}),
+    });
+    void fetch(
+      `/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(moduleKey)}?${query}`,
+      { cache: "no-store", signal: controller.signal },
+    ).then(async (response) => {
+      const result: unknown = await response.json();
+      if (!response.ok || typeof result !== "object" || result === null || !("items" in result) || !Array.isArray(result.items)) {
+        const message = typeof result === "object" && result !== null && "error" in result
+          ? String(result.error)
+          : "Unable to search master records.";
+        throw new Error(message);
+      }
+      if (controller.signal.aborted) return;
+      const page = result as { items: Array<Record<string, unknown>>; hasMore?: boolean; nextCursor?: string | null };
+      setReportRecords(page.items.map((item) => ({
+        id: String(item.id),
+        value_id: String(item.value_id),
+        label: String(item.label),
+        code: typeof item.code === "string" ? item.code : null,
+        description: typeof item.description === "string" ? item.description : null,
+        is_active: item.is_active === true,
+        metadata: { fields: item.fields && typeof item.fields === "object" ? item.fields : {} },
+      })));
+      setReportHasMore(page.hasMore === true);
+      setReportNextCursor(page.nextCursor ?? null);
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        setReportLoadError(error instanceof Error ? error.message : "Unable to search master records.");
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) setIsLoadingReportPage(false);
+    });
+    return () => controller.abort();
+  }, [debouncedReportSearchQuery, initialHasMore, initialNextCursor, moduleKey, organizationId, records, reportColumnFilters, reportSearchRetry]);
+
+  const handleReportSearchChange = useCallback((query: string) => {
+    setReportSearchQuery(query);
+    setIsLoadingReportPage(Boolean(query));
+    setReportLoadError("");
+    if (query) {
+      setReportHasMore(false);
+      setReportNextCursor(null);
+    }
+  }, []);
+  const handleReportColumnFiltersChange = useCallback(
+    (filters: Record<string, { operator: string; value: string }>) => {
+      setReportColumnFilters(filters);
+      setReportLoadError("");
+      setReportHasMore(false);
+      setReportNextCursor(null);
+      setIsLoadingReportPage(Boolean(debouncedReportSearchQuery || Object.keys(filters).length > 0));
+    },
+    [debouncedReportSearchQuery],
+  );
+
+  const loadMoreReportRecords = useCallback(async () => {
+    if (!reportHasMore || !reportNextCursor || isLoadingReportPage
+      || reportSearchQuery !== debouncedReportSearchQuery) return;
+    reportRequestController.current?.abort();
+    const controller = new AbortController();
+    reportRequestController.current = controller;
+    setIsLoadingReportPage(true);
+    setReportLoadError("");
+    const query = new URLSearchParams({
+      page: "true",
+      limit: "100",
+      includeInactive: "true",
+      cursor: reportNextCursor,
+      ...(debouncedReportSearchQuery ? { search: debouncedReportSearchQuery } : {}),
+      ...(Object.keys(reportColumnFilters).length > 0 ? { filters: JSON.stringify(reportColumnFilters) } : {}),
+    });
+    try {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/${encodeURIComponent(moduleKey)}?${query}`,
+        { cache: "no-store", signal: controller.signal },
+      );
+      const result: unknown = await response.json();
+      if (!response.ok || typeof result !== "object" || result === null || !("items" in result) || !Array.isArray(result.items)) {
+        const message = typeof result === "object" && result !== null && "error" in result
+          ? String(result.error)
+          : "Unable to load more master records.";
+        throw new Error(message);
+      }
+      const page = result as { items: Array<Record<string, unknown>>; hasMore?: boolean; nextCursor?: string | null };
+      setReportRecords((current) => [...current, ...page.items.map((item) => ({
+        id: String(item.id),
+        value_id: String(item.value_id),
+        label: String(item.label),
+        code: typeof item.code === "string" ? item.code : null,
+        description: typeof item.description === "string" ? item.description : null,
+        is_active: item.is_active === true,
+        metadata: { fields: item.fields && typeof item.fields === "object" ? item.fields : {} },
+      }))]);
+      setReportHasMore(page.hasMore === true);
+      setReportNextCursor(page.nextCursor ?? null);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setReportLoadError(error instanceof Error ? error.message : "Unable to load more master records.");
+      }
+    } finally {
+      if (!controller.signal.aborted) setIsLoadingReportPage(false);
+    }
+  }, [debouncedReportSearchQuery, isLoadingReportPage, moduleKey, organizationId, reportColumnFilters, reportHasMore, reportNextCursor, reportSearchQuery]);
 
   useEffect(() => () => {
     const request = quickMasterOptionsRequest.current;
@@ -597,6 +764,38 @@ export function MasterRecordsTable({
       .map((field) => field.lookupModuleKey as string))];
     setIsLoadingQuickMasterOptions(true);
     try {
+      const options = await loadQuickCreateLookupOptions(
+        organizationId,
+        lookupKeys,
+        requestController.signal,
+      );
+      if (quickMasterOptionsRequest.current === requestController) {
+        setQuickMasterLookupOptions(options);
+      }
+    } catch (error) {
+      if (!requestController.signal.aborted) {
+        setQuickMasterError(error instanceof Error ? error.message : "Unable to load quick-create options.");
+      }
+    } finally {
+      if (quickMasterOptionsRequest.current === requestController) {
+        quickMasterOptionsRequest.current = null;
+        setIsLoadingQuickMasterOptions(false);
+      }
+    }
+  };
+
+  const retryQuickMasterOptions = async () => {
+    const definition = getMasterDefinition(currentQuickMaster ?? "");
+    if (!currentQuickMaster || !definition) return;
+    quickMasterOptionsRequest.current?.abort();
+    const requestController = new AbortController();
+    quickMasterOptionsRequest.current = requestController;
+    setIsLoadingQuickMasterOptions(true);
+    setQuickMasterError("");
+    try {
+      const lookupKeys = [...new Set(definition.fields
+        .filter((field) => field.type === "lookup" && field.lookupModuleKey)
+        .map((field) => field.lookupModuleKey as string))];
       const options = await loadQuickCreateLookupOptions(
         organizationId,
         lookupKeys,
@@ -876,6 +1075,33 @@ export function MasterRecordsTable({
     setValues: SetMasterFormValues,
     allowQuickCreate = false,
   ) => {
+    const storageNodeLevel = String(values.node_type ?? "");
+    const storageParentType: Record<string, string> = {
+      WAREHOUSE: "LOCATION_SITE",
+      SUB_STORE: "WAREHOUSE",
+      RACK: "SUB_STORE",
+      BIN: "RACK",
+    };
+    if (moduleKey === "storage-node" && formMode === "create"
+      && ((field.key === "entity_id" && storageNodeLevel !== "LOCATION_SITE")
+        || (field.key === "parent_node_id" && storageNodeLevel === "LOCATION_SITE"))) {
+      return <input key={field.key} type="hidden" name={`field_${field.key}`} value="" />;
+    }
+    if (moduleKey === "storage-node" && formMode !== "create"
+      && ["node_type", "entity_id", "parent_node_id"].includes(field.key)) {
+      const currentValue = String(values[field.key] ?? "");
+      const fieldOptions = field.type === "lookup" ? getLookupOptions(field, values) : [];
+      const displayValue = field.type === "lookup"
+        ? getMasterSelectionLabel(fieldOptions, currentValue) || currentValue || "—"
+        : currentValue.replaceAll("_", " ");
+      return (
+        <div key={field.key} className="min-w-0 space-y-1">
+          <p className="text-sm font-medium text-slate-700">{field.label}</p>
+          <p className="min-h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{displayValue}</p>
+          <input type="hidden" name={`field_${field.key}`} value={currentValue} />
+        </div>
+      );
+    }
     if (field.readOnly && !(moduleKey === "raw-material" && field.key === "Asset_Purchase")) return null;
 
     if (moduleKey === "raw-material" && field.key === "Asset_Purchase") {
@@ -937,7 +1163,13 @@ export function MasterRecordsTable({
             onChange={(event) => {
               if (field.readOnly) return;
               const nextValue = event.target.value;
-              setValues((current) => ({ ...current, [field.key]: nextValue }));
+              setValues((current) => ({
+                ...current,
+                [field.key]: nextValue,
+                ...(moduleKey === "storage-node" && field.key === "node_type"
+                  ? { parent_node_id: "", entity_id: "" }
+                  : {}),
+              }));
             }}
             disabled={field.readOnly}
             options={[
@@ -951,7 +1183,11 @@ export function MasterRecordsTable({
       const selectedValue = field.multiple && value === undefined && initialRecord
         ? childRecords.filter((item) => item.parentId === initialRecord.id || item.parentId === initialRecord.value_id).map((item) => item.label)
         : value;
-      const options = getLookupOptions(field, values);
+      let options = getLookupOptions(field, values);
+      if (moduleKey === "storage-node" && field.key === "parent_node_id") {
+        const requiredParentType = storageParentType[storageNodeLevel];
+        options = options.filter((option) => option.fields?.node_type === requiredParentType);
+      }
       if (field.multiple) {
         const rawSelectedValues = Array.isArray(selectedValue)
           ? selectedValue.map(String)
@@ -1152,6 +1388,11 @@ export function MasterRecordsTable({
       const linkedType = options.find((option) => [option.label, option.id, option.value_id].some((candidate) => String(candidate ?? "") === linkedTypeValue));
       const autoSelectedType = linkedType?.label;
       const isLoadingLookup = loadingMasterLookupKeys.has(field.lookupModuleKey ?? "");
+      const lookupField = moduleKey === "storage-node"
+        && ((field.key === "entity_id" && storageNodeLevel === "LOCATION_SITE")
+          || (field.key === "parent_node_id" && storageNodeLevel !== "LOCATION_SITE"))
+        ? { ...field, required: true }
+        : field;
 
       return (
         <div key={field.key}>
@@ -1174,7 +1415,7 @@ export function MasterRecordsTable({
             articleLookupOptions={articleLookupOptions}
             className="rounded-lg p-2 text-sm"
             disabled={field.readOnly || Boolean(autoSelectedType) || isLoadingLookup}
-            field={field}
+            field={lookupField}
             fields={fields}
             moduleKey={moduleKey}
             name={`field_${field.key}`}
@@ -1358,8 +1599,8 @@ export function MasterRecordsTable({
       ]).filter((field, index, allFields) => allFields.findIndex((item) => item.key === field.key) === index), [fields, moduleKey]);
 
   const defaultVisibleReportFields = useMemo(() => reportFields
-    .filter((field) => field.key !== "description" || records.some((record) => record.description))
-    .map((field) => field.key), [records, reportFields]);
+    .filter((field) => field.key !== "description" || reportRecords.some((record) => record.description))
+    .map((field) => field.key), [reportFields, reportRecords]);
 
   const activeVisibleReportFields = useMemo(() => visibleReportFields.length > 0
     ? visibleReportFields
@@ -1428,8 +1669,13 @@ export function MasterRecordsTable({
               Edit
             </Button>
           ) : null}
-          <Button type="button" size="sm" variant="destructive" onClick={() => setDeleteDialog({ kind: "single", record })}>
-            Delete
+          <Button
+            type="button"
+            size="sm"
+            variant={moduleKey === "storage-node" && !record.is_active ? "secondary" : "destructive"}
+            onClick={() => setDeleteDialog({ kind: "single", record })}
+          >
+            {moduleKey === "storage-node" ? record.is_active ? "Deactivate" : "Activate" : "Delete"}
           </Button>
         </div>
       );
@@ -1610,17 +1856,17 @@ export function MasterRecordsTable({
     <div className="space-y-4">
       <ReportGrid
         title={`${moduleLabel} Report`}
-        records={records}
+        records={reportRecords}
         fields={reportFields}
         visibleFields={activeVisibleReportFields}
         onVisibleFieldsChange={setVisibleReportFields}
         storageKey={`master-report-columns-${moduleKey}`}
         rowIdSelector={getMasterRecordId}
         selectedIds={selectedRecordIds}
-        selectable={moduleKey !== "price-list"}
-        onToggleSelectAll={moduleKey === "price-list" ? undefined : handleToggleSelectAll}
-        onToggleRowSelection={moduleKey === "price-list" ? undefined : handleToggleRowSelection}
-        onBulkDeleteSelected={moduleKey === "price-list" ? undefined : handleBulkDeleteSelected}
+        selectable={!["price-list", "storage-node"].includes(moduleKey)}
+        onToggleSelectAll={["price-list", "storage-node"].includes(moduleKey) ? undefined : handleToggleSelectAll}
+        onToggleRowSelection={["price-list", "storage-node"].includes(moduleKey) ? undefined : handleToggleRowSelection}
+        onBulkDeleteSelected={["price-list", "storage-node"].includes(moduleKey) ? undefined : handleBulkDeleteSelected}
         bulkDeleteSelectedLabel={`Delete selected ${moduleLabel} records`}
         onRecordClick={handleRecordClick}
         onNewOrder={handleNewOrder}
@@ -1628,12 +1874,42 @@ export function MasterRecordsTable({
         renderCell={renderReportCell}
         getSearchValue={getReportSearchValue}
         searchMinLength={3}
+        serverSideSearch
+        serverSideFilters
+        onSearchQueryChange={handleReportSearchChange}
+        onColumnFiltersChange={handleReportColumnFiltersChange}
         displayMode={moduleKey === "price-list" ? "cards" : "table"}
         emptyMessage={`No ${moduleLabel.toLowerCase()} records found.`}
       />
+      {reportLoadError ? (
+        <div className="flex items-center justify-between gap-3 rounded border border-[var(--erp-error-border)] bg-[var(--erp-error-bg)] px-3 py-2 text-sm text-[var(--erp-error-text)]" role="alert">
+          <p>{reportLoadError}</p>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => debouncedReportSearchQuery
+              ? setReportSearchRetry((attempt) => attempt + 1)
+              : void loadMoreReportRecords()}
+            disabled={isLoadingReportPage}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : null}
+      {isLoadingReportPage && !reportHasMore ? (
+        <p className="text-center text-sm text-[var(--erp-muted)]" role="status">Loading master records...</p>
+      ) : null}
+      {reportHasMore ? (
+        <div className="flex justify-center">
+          <Button type="button" variant="secondary" size="sm" onClick={loadMoreReportRecords} disabled={isLoadingReportPage || reportSearchQuery !== debouncedReportSearchQuery}>
+            {isLoadingReportPage ? "Loading records..." : "Load more records"}
+          </Button>
+        </div>
+      ) : null}
 
-      <Modal
-        open={deleteDialog !== null}
+      {deleteDialog ? <Modal
+        open
         onClose={() => setDeleteDialog(null)}
         ariaLabelledBy="master-delete-confirmation-title"
         ariaDescribedBy="master-delete-confirmation-description"
@@ -1645,10 +1921,16 @@ export function MasterRecordsTable({
             <h2 id="master-delete-confirmation-title" className="text-lg font-semibold text-[var(--erp-text)]">
               {deleteDialog?.kind === "selected"
                 ? `Delete ${selectedRecordIds.length} selected ${moduleLabel} records?`
-                : `Delete this ${moduleLabel.toLowerCase()} record?`}
+                : moduleKey === "storage-node"
+                  ? `${deleteDialog.record.is_active ? "Deactivate" : "Activate"} this ${moduleLabel.toLowerCase()} record?`
+                  : `Delete this ${moduleLabel.toLowerCase()} record?`}
             </h2>
             <p id="master-delete-confirmation-description" className="mt-2 text-sm text-[var(--erp-muted)]">
-              This cannot be undone. Records referenced by other data, or protected demo records, cannot be deleted.
+              {moduleKey === "storage-node"
+                ? deleteDialog?.kind === "single" && deleteDialog.record.is_active
+                  ? "The node and its history will be retained. Active child nodes must be deactivated first."
+                  : "The node can receive new stock only when all of its ancestors are active."
+                : "This cannot be undone. Records referenced by other data, or protected demo records, cannot be deleted."}
               {deleteDialog?.kind === "selected" ? " The selected batch is all-or-nothing." : ""}
             </p>
           </div>
@@ -1658,8 +1940,15 @@ export function MasterRecordsTable({
               <input type="hidden" name="organizationId" value={organizationId} />
               <input type="hidden" name="moduleKey" value={moduleKey} />
               <input type="hidden" name="valueId" value={deleteDialog.record.value_id} />
+              {moduleKey === "storage-node" ? (
+                <input type="hidden" name="setActive" value={String(!deleteDialog.record.is_active)} />
+              ) : null}
               <Button type="button" variant="secondary" onClick={() => setDeleteDialog(null)}>Cancel</Button>
-              <DeleteConfirmButton>Delete record</DeleteConfirmButton>
+              {moduleKey === "storage-node" ? (
+                <Button type="submit" variant={deleteDialog.record.is_active ? "destructive" : "primary"}>
+                  {deleteDialog.record.is_active ? "Deactivate node" : "Activate node"}
+                </Button>
+              ) : <DeleteConfirmButton>Delete record</DeleteConfirmButton>}
             </form>
           ) : deleteDialog?.kind === "selected" ? (
             <form action={deleteSelectedAction} className="flex justify-end gap-2">
@@ -1672,7 +1961,7 @@ export function MasterRecordsTable({
             </form>
           ) : null}
         </div>
-      </Modal>
+      </Modal> : null}
 
       {currentQuickMaster && (
         <Modal
@@ -1689,16 +1978,18 @@ export function MasterRecordsTable({
               <Button type="button" variant="ghost" size="sm" onClick={closeQuickMaster}>✕</Button>
             </div>
             {isLoadingQuickMasterOptions ? (
-              <p role="status" className="text-sm text-slate-600">Loading master options...</p>
-            ) : (
-              <div className="grid min-h-0 grid-cols-1 gap-4 overflow-y-auto pr-1 sm:grid-cols-2">
-                {definitionFields.map(renderQuickMasterField)}
-              </div>
-            )}
+              <p role="status" className="text-sm text-[var(--erp-muted)]">Loading lookup choices. You can enter the other fields now.</p>
+            ) : null}
+            <div className="grid min-h-0 grid-cols-1 gap-4 overflow-y-auto pr-1 sm:grid-cols-2">
+              {definitionFields.map(renderQuickMasterField)}
+            </div>
             {quickMasterError && (
-              <p role="alert" className="rounded-lg border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">
-                {quickMasterError}
-              </p>
+              <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]" role="alert">
+                <p>{quickMasterError}</p>
+                <Button type="button" variant="secondary" size="sm" onClick={() => void retryQuickMasterOptions()} disabled={isLoadingQuickMasterOptions}>
+                  Retry lookups
+                </Button>
+              </div>
             )}
             <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
               <Button type="button" variant="secondary" size="sm" onClick={closeQuickMaster} disabled={isSavingQuickMaster}>

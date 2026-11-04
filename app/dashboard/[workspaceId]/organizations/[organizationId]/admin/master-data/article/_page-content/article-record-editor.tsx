@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import Button from "@/components/ui/Button";
@@ -96,6 +96,9 @@ export default function ArticleRecordEditor({
   const [activeTab, setActiveTab] = useState<ArticleTab>("general");
   const [articleLookupOptions, setArticleLookupOptions] = useState(lookupOptions);
   const [articleSizeGroupSizes, setArticleSizeGroupSizes] = useState(sizeGroupSizes);
+  const [isLoadingLookups, setIsLoadingLookups] = useState(!readOnly);
+  const [lookupError, setLookupError] = useState("");
+  const [lookupRetry, setLookupRetry] = useState(0);
   const [quickCreateTarget, setQuickCreateTarget] = useState<QuickCreateTarget | null>(null);
   const [fields, setFields] = useState(() => ({
     article: asText(record?.fields.article ?? record?.label),
@@ -134,6 +137,79 @@ export default function ArticleRecordEditor({
         : [];
     }));
   });
+
+  useEffect(() => {
+    if (readOnly) return;
+    const controller = new AbortController();
+
+    void fetch(
+      `/api/organizations/${encodeURIComponent(organizationId)}/master-data/order-lookups?keys=brand,product-master,category,sub-category,size-group,color&limit=500&includeDummyData=false&includeArticleDetails=false&skipLookupLabels=brand,product-master,size-group,color&shape=compact`,
+      { signal: controller.signal },
+    )
+      .then(async (response) => {
+        const data = await response.json() as {
+          error?: unknown;
+          masterOptions?: unknown;
+        };
+        if (!response.ok) {
+          throw new Error(typeof data.error === "string" ? data.error : "Unable to load Article lookup options.");
+        }
+        if (!data.masterOptions || typeof data.masterOptions !== "object" || Array.isArray(data.masterOptions)) {
+          throw new Error("The Article lookup response was invalid.");
+        }
+
+        const masterOptions = data.masterOptions as Record<string, unknown>;
+        const lookupKeys = ["brand", "product-master", "category", "sub-category", "size-group", "color"] as const;
+        const parsedOptions = Object.fromEntries(lookupKeys.map((key) => {
+          const options = masterOptions[key];
+          if (!Array.isArray(options) || options.some((option) =>
+            !option || typeof option !== "object"
+            || typeof (option as Record<string, unknown>).id !== "string"
+            || typeof (option as Record<string, unknown>).value_id !== "string"
+            || typeof (option as Record<string, unknown>).label !== "string",
+          )) {
+            throw new Error(`The ${key} lookup response was invalid.`);
+          }
+          return [key, options.map((option) => {
+            const item = option as Record<string, unknown>;
+            return {
+              id: item.id as string,
+              value_id: item.value_id as string,
+              label: item.label as string,
+              parent_id: typeof item.parent_id === "string" ? item.parent_id : null,
+              fields: item.fields && typeof item.fields === "object" && !Array.isArray(item.fields)
+                ? item.fields as Record<string, unknown>
+                : {},
+            } satisfies ArticleOption;
+          })];
+        }));
+        const sizeGroups = masterOptions["size-group"] as Array<Record<string, unknown>>;
+        const sizesByGroup = Object.fromEntries(sizeGroups.map((group) => {
+          const sizes = Array.isArray(group.sizes) ? group.sizes : [];
+          if (sizes.some((size) =>
+            !size || typeof size !== "object" || typeof (size as Record<string, unknown>).label !== "string",
+          )) {
+            throw new Error("The Size Group size options were invalid.");
+          }
+          return [group.id as string, sizes.map((size) => (size as Record<string, unknown>).label as string)];
+        }));
+
+        if (!controller.signal.aborted) {
+          setArticleLookupOptions(parsedOptions);
+          setArticleSizeGroupSizes(sizesByGroup);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setLookupError(error instanceof Error ? error.message : "Unable to load Article lookup options.");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoadingLookups(false);
+      });
+
+    return () => controller.abort();
+  }, [organizationId, readOnly, lookupRetry]);
 
   const setField = (key: string, value: string | string[]) => {
     setFields((current) => ({ ...current, [key]: value }));
@@ -340,6 +416,24 @@ export default function ArticleRecordEditor({
         </div>
         {error ? <p role="alert" className="rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">{error}</p> : null}
         {saved ? <p role="status" className="rounded-xl border border-[var(--erp-success)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-success)]">Article saved successfully.</p> : null}
+        {isLoadingLookups ? <p role="status" className="text-sm text-[var(--erp-muted)]">Loading lookup options…</p> : null}
+        {lookupError ? (
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]" role="alert">
+            <span>{lookupError}</span>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setIsLoadingLookups(true);
+                setLookupError("");
+                setLookupRetry((current) => current + 1);
+              }}
+            >
+              Retry lookups
+            </Button>
+          </div>
+        ) : null}
 
         <form action={formAction}>
           <input type="hidden" name="workspaceId" value={workspaceId} />
@@ -373,6 +467,7 @@ export default function ArticleRecordEditor({
                   label="Brand"
                   name="field_Brand"
                   required
+                  disabled={isLoadingLookups || Boolean(lookupError)}
                   value={fields.Brand}
                   onChange={(event) => setField("Brand", event.target.value)}
                   options={[
@@ -388,6 +483,7 @@ export default function ArticleRecordEditor({
                 <Select
                   label="Finished Goods Type"
                   name="field_Product_Master"
+                  disabled={isLoadingLookups || Boolean(lookupError)}
                   value={fields.Product_Master}
                   onChange={(event) => {
                     const productMaster = event.target.value;
@@ -411,6 +507,7 @@ export default function ArticleRecordEditor({
                 <Select
                   label="Finished Goods Category"
                   name="field_Category"
+                  disabled={isLoadingLookups || Boolean(lookupError)}
                   value={fields.Category}
                   onChange={(event) => {
                     const category = event.target.value;
@@ -441,6 +538,7 @@ export default function ArticleRecordEditor({
                 <Select
                   label="Finished Goods Subcategory"
                   name="field_Subcategory"
+                  disabled={isLoadingLookups || Boolean(lookupError)}
                   value={fields.Subcategory}
                   onChange={(event) => setField("Subcategory", event.target.value)}
                   options={[
@@ -498,6 +596,7 @@ export default function ArticleRecordEditor({
                   <Select
                     label="Color"
                     required
+                    disabled={isLoadingLookups || Boolean(lookupError)}
                     value={variant.color}
                     onChange={(event) => setVariants((current) => current.map((row, rowIndex) =>
                       rowIndex === index ? { ...row, color: event.target.value } : row))}
@@ -540,6 +639,7 @@ export default function ArticleRecordEditor({
                   <Select
                     label="Size Group"
                     name="field_Size_Group"
+                    disabled={isLoadingLookups || Boolean(lookupError)}
                     value={fields.Size_Group}
                     onChange={(event) => {
                       setField("Size_Group", event.target.value);

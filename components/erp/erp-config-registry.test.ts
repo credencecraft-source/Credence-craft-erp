@@ -51,6 +51,18 @@ describe("Admin module navigation", () => {
   });
 });
 
+describe("POS contact navigation", () => {
+  it("opens the centralized contacts report within POS", () => {
+    const pos = ERP_MODULES.find((module) => module.key === "pos");
+    const contacts = pos?.children.find((child) => child.key === "vendor-customer");
+
+    expect(contacts).toMatchObject({
+      label: "Vendor/Customer",
+      href: "/pos/vendor-customer",
+    });
+  });
+});
+
 describe("Asset Management module navigation", () => {
   it("registers Asset PO as a separate module and resolves its business type", () => {
     const assetManagement = ERP_MODULES.find((module) => module.key === "asset-management");

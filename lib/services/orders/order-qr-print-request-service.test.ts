@@ -4,6 +4,9 @@ const mocks = vi.hoisted(() => {
   const transaction = {
     $executeRaw: vi.fn(),
     merchandisingOrder: { findFirst: vi.fn(), findMany: vi.fn() },
+    posPurchaseBill: { findFirst: vi.fn() },
+    posPurchaseBillLine: { findMany: vi.fn() },
+    masterVendor: { findFirst: vi.fn() },
     merchandisingOrderQrTemplate: { findFirst: vi.fn() },
     designDevelopmentPageSetupTemplate: { findFirst: vi.fn() },
     merchandisingOrderQrPrintRequest: {
@@ -75,6 +78,28 @@ describe("order QR print request service", () => {
       orderQty: 20,
       deliveryDate: null,
     });
+    mocks.transaction.posPurchaseBill.findFirst.mockResolvedValue({
+      id: "bill-1",
+      document_number: "PB-0001",
+      bill_number: "SUPPLIER-BILL-1",
+      bill_date: new Date("2026-10-27T00:00:00.000Z"),
+      status: "POSTED",
+      vendor_id: "vendor-1",
+      lines: [{
+        id: "bill-line-1",
+        item_name: "STYLE-1",
+        size: "M",
+        quantity: "6.00",
+        sourceRecord: {
+          record_number: "GPR-0001",
+          item_type: "FINISHED_GOODS",
+          style_name: "STYLE-1",
+        },
+        finished_goods_stock: null,
+      }],
+    });
+    mocks.transaction.posPurchaseBillLine.findMany.mockResolvedValue([{ id: "bill-line-1" }]);
+    mocks.transaction.masterVendor.findFirst.mockResolvedValue({ vendor: "SUPPLIER-1" });
     mocks.transaction.merchandisingOrderQrTemplate.findFirst.mockResolvedValue({
       name: "BASIC",
       field_keys: ["orderNo", "buyer"],
@@ -102,7 +127,9 @@ describe("order QR print request service", () => {
     });
     mocks.transaction.merchandisingOrderQrPrintRequest.create.mockResolvedValue({
       id: "request-1",
+      source_type: "ORDER",
       order_id: "order-1",
+      purchase_bill_id: null,
       order_no: "ORD-1",
       request_type: "PRINT",
       status: "PENDING",
@@ -180,7 +207,11 @@ describe("order QR print request service", () => {
     );
     expect(mocks.transaction.merchandisingOrderQrTemplate.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { organization_id: "internal-org-1", id: "template-1" },
+        where: {
+          organization_id: "internal-org-1",
+          id: "template-1",
+          type: "ORDER_TAGS",
+        },
       }),
     );
     expect(mocks.transaction.merchandisingOrderQrPrintRequest.create).toHaveBeenCalledWith(
@@ -301,6 +332,219 @@ describe("order QR print request service", () => {
         }),
       }),
     );
+  });
+
+  it("creates a centrally queued request with per-line QR snapshots for a tenant purchase bill", async () => {
+    mocks.transaction.merchandisingOrderQrTemplate.findFirst.mockResolvedValue({
+      name: "POS BARCODE",
+      type: "POS_ITEM_BARCODE",
+      field_keys: ["posItemCode", "posItemName"],
+      qr_field_key: "posItemCode",
+      display_fields: ["posItemCode", "posItemName"],
+      display_field_styles: {
+        styles: {},
+        layout: {
+          qr: { x: 3, y: 25 },
+          fields: {
+            posItemCode: { x: 44, y: 16 },
+            posItemName: { x: 44, y: 36 },
+          },
+          printerType: "LASER",
+          pdfPaperSize: "A4_LANDSCAPE",
+        },
+        pageSetup: pageSetupSnapshot,
+      },
+      qr_size: 320,
+      sticker_width_mm: 50,
+      sticker_length_mm: 30,
+    });
+    mocks.transaction.merchandisingOrderQrPrintRequest.create.mockImplementation(
+      async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "request-pos-1",
+        ...data,
+        status: "PENDING",
+        qr_size: 320,
+        requested_at: new Date("2026-10-27T00:00:00.000Z"),
+        updated_at: new Date("2026-10-27T00:00:00.000Z"),
+      }),
+    );
+
+    const result = await createOrderQrPrintRequest("internal-org-1", "user-1", {
+      purchaseBillId: "bill-1",
+      billLines: [{ billLineId: "bill-line-1", quantity: 1 }],
+      templateId: "template-1",
+      requestType: "PRINT",
+      quantityMode: "BULK_QTY",
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      request: {
+        id: "request-pos-1",
+        sourceType: "POS_PURCHASE_BILL",
+        orderId: "",
+        purchaseBillId: "bill-1",
+        orderNo: "PB-0001",
+        printQuantity: 6,
+        bulkItems: [{
+          orderId: "bill-line-1",
+          orderNo: "PB-0001-L001",
+          quantity: 6,
+          displayValues: {
+            posItemCode: "PB-0001-L001",
+            posItemName: "STYLE-1",
+          },
+        }],
+      },
+    });
+    expect(mocks.transaction.posPurchaseBill.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { organization_id: "internal-org-1", id: "bill-1" },
+      }),
+    );
+    expect(mocks.transaction.masterVendor.findFirst).toHaveBeenCalledWith({
+      where: { id: "vendor-1", organization_id: "internal-org-1" },
+      select: { vendor: true },
+    });
+    expect(mocks.transaction.merchandisingOrderQrTemplate.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          organization_id: "internal-org-1",
+          id: "template-1",
+          type: "POS_ITEM_BARCODE",
+        },
+      }),
+    );
+    expect(mocks.transaction.merchandisingOrderQrPrintRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          organization_id: "internal-org-1",
+          source_type: "POS_PURCHASE_BILL",
+          order_id: null,
+          purchase_bill_id: "bill-1",
+          order_no: "PB-0001",
+          display_values: expect.objectContaining({
+            __printQuantity: 6,
+            __bulkItems: [expect.objectContaining({
+              orderId: "bill-line-1",
+              orderNo: "PB-0001-L001",
+              quantity: 6,
+            })],
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("uses one label per selected purchase bill line in PCS mode", async () => {
+    mocks.transaction.merchandisingOrderQrTemplate.findFirst.mockResolvedValue({
+      name: "POS BARCODE",
+      type: "POS_ITEM_BARCODE",
+      field_keys: ["posItemCode", "posItemName"],
+      qr_field_key: "posItemCode",
+      display_fields: ["posItemCode", "posItemName"],
+      display_field_styles: {
+        styles: {},
+        layout: {
+          qr: { x: 3, y: 25 },
+          fields: {
+            posItemCode: { x: 44, y: 16 },
+            posItemName: { x: 44, y: 36 },
+          },
+          printerType: "LASER",
+          pdfPaperSize: "A4_LANDSCAPE",
+        },
+        pageSetup: pageSetupSnapshot,
+      },
+      qr_size: 320,
+      sticker_width_mm: 50,
+      sticker_length_mm: 30,
+    });
+    mocks.transaction.merchandisingOrderQrPrintRequest.create.mockImplementation(
+      async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "request-pos-pcs-1",
+        ...data,
+        status: "PENDING",
+        qr_size: 320,
+        requested_at: new Date("2026-10-27T00:00:00.000Z"),
+        updated_at: new Date("2026-10-27T00:00:00.000Z"),
+      }),
+    );
+    const result = await createOrderQrPrintRequest("internal-org-1", "user-1", {
+      purchaseBillId: "bill-1",
+      billLines: [{ billLineId: "bill-line-1", quantity: 1 }],
+      templateId: "template-1",
+      requestType: "PRINT",
+      quantityMode: "PCS",
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      request: {
+        sourceType: "POS_PURCHASE_BILL",
+        printQuantity: 1,
+        bulkItems: [{ orderId: "bill-line-1", quantity: 1 }],
+      },
+    });
+    expect(mocks.transaction.merchandisingOrderQrPrintRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          display_values: expect.objectContaining({
+            __printQuantity: 1,
+            __bulkItems: [expect.objectContaining({ quantity: 1 })],
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("rejects fractional bill quantities in Bulk Qty mode", async () => {
+    mocks.transaction.posPurchaseBill.findFirst.mockResolvedValue({
+      id: "bill-1",
+      document_number: "PB-0001",
+      bill_number: "SUPPLIER-BILL-1",
+      bill_date: new Date("2026-10-27T00:00:00.000Z"),
+      status: "POSTED",
+      vendor_id: "vendor-1",
+      lines: [{
+        id: "bill-line-1",
+        item_name: "STYLE-1",
+        size: "M",
+        quantity: "6.50",
+        sourceRecord: {
+          record_number: "GPR-0001",
+          item_type: "FINISHED_GOODS",
+          style_name: "STYLE-1",
+        },
+        finished_goods_stock: null,
+      }],
+    });
+
+    const result = await createOrderQrPrintRequest("internal-org-1", "user-1", {
+      purchaseBillId: "bill-1",
+      billLines: [{ billLineId: "bill-line-1", quantity: 6 }],
+      templateId: "template-1",
+      requestType: "PRINT",
+      quantityMode: "BULK_QTY",
+    });
+
+    expect(result).toEqual({ success: false, reason: "INVALID_QUANTITY" });
+    expect(mocks.transaction.merchandisingOrderQrPrintRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects purchase bill lines outside the authorized organization scope", async () => {
+    mocks.transaction.posPurchaseBill.findFirst.mockResolvedValue(null);
+
+    const result = await createOrderQrPrintRequest("internal-org-1", "user-1", {
+      purchaseBillId: "bill-from-another-org",
+      billLines: [{ billLineId: "line-1", quantity: 1 }],
+      templateId: "template-1",
+      requestType: "PRINT",
+      quantityMode: "PCS",
+    });
+
+    expect(result).toEqual({ success: false, reason: "PURCHASE_BILL_NOT_FOUND" });
+    expect(mocks.transaction.merchandisingOrderQrPrintRequest.create).not.toHaveBeenCalled();
   });
 
   it("rejects a bulk request if any selected order is missing from the authorized organization", async () => {

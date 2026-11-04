@@ -11,12 +11,12 @@ import Button from "@/components/ui/Button";
 import {
   DEFAULT_QR_FIELD_STYLE,
   type OrderQrDisplayFieldStyle,
-  type OrderQrTemplateFieldKey,
+  type QrTemplateFieldKey,
   type OrderQrTemplateLayout,
 } from "@/lib/services/orders/order-qr-template-contract";
 
 export type OrderQrStickerPreviewField = {
-  key: OrderQrTemplateFieldKey;
+  key: QrTemplateFieldKey;
   label: string;
   value: string;
   style?: OrderQrDisplayFieldStyle;
@@ -38,11 +38,11 @@ type Props = {
   onPointerCancel?: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onItemPointerDown?: (
     event: ReactPointerEvent<HTMLButtonElement>,
-    key: "qr" | OrderQrTemplateFieldKey,
+    key: "qr" | QrTemplateFieldKey,
   ) => void;
   onItemKeyDown?: (
     event: ReactKeyboardEvent<HTMLButtonElement>,
-    key: "qr" | OrderQrTemplateFieldKey,
+    key: "qr" | QrTemplateFieldKey,
   ) => void;
   onRetry?: () => void;
 };

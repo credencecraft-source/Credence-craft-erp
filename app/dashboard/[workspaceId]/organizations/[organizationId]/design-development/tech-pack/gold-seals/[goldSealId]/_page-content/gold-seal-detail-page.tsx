@@ -61,7 +61,7 @@ async function deleteGoldSealVariant(formData: FormData) {
   const organization = await getOrganizationForUser(user.id, organizationId);
   if (!organization) notFound();
   await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
-  await deleteMasterValue(organization.id, variantValueId);
+  await deleteMasterValue(organization.id, variantValueId, "gold-seal-variant");
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/design-development/tech-pack/gold-seals/${encodeURIComponent(goldSealValueId)}`);
 }
 

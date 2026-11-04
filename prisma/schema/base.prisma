@@ -78,6 +78,7 @@ model Organization {
   approvalRequests                        ApprovalRequest[]
   masterEntities                          MasterEntity[]
   masterLocations                         MasterLocation[]
+  storageNodes                            StorageNode[]
   masterCategoryTypes                     MasterCategoryType[]
   masterCategories                        MasterCategory[]
   masterSubCategories                     MasterSubCategory[]
@@ -981,6 +982,7 @@ model MasterEntity {
   updated_at                   DateTime                      @updatedAt
   organization                 Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   locations                    MasterLocation[]
+  storageNodes                 StorageNode[]
   merchandisingOrders          MerchandisingOrder[]          @relation("MerchandisingOrderEntity")
   groupedPurchaseOrders        GroupedPurchaseOrder[]        @relation("GroupedPurchaseOrderEntity")
   masterPurchaseOrders         MasterPurchaseOrder[]         @relation("MasterPurchaseOrderEntity")
@@ -993,6 +995,45 @@ model MasterEntity {
   @@unique([organization_id, id])
   @@index([organization_id, is_active])
   @@map("master_entities")
+}
+
+enum StorageNodeType {
+  LOCATION_SITE
+  WAREHOUSE
+  SUB_STORE
+  RACK
+  BIN
+
+  @@map("storage_node_type")
+}
+
+model StorageNode {
+  id                    String          @id @default(cuid())
+  value_id              String          @unique @default(uuid())
+  organization_id       String
+  node_type             StorageNodeType
+  node_code             String          @db.VarChar(100)
+  node_name             String          @db.VarChar(255)
+  parent_node_id        String?
+  parent_node_type      StorageNodeType?
+  entity_id             String?
+  is_active             Boolean         @default(true)
+  sort_order            Int             @default(0)
+  created_at            DateTime        @default(now())
+  updated_at            DateTime        @updatedAt
+  organization          Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity                MasterEntity?   @relation(fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
+  parent                StorageNode?    @relation("StorageNodeHierarchy", fields: [organization_id, parent_node_id, parent_node_type], references: [organization_id, id, node_type], onDelete: Restrict)
+  children              StorageNode[]   @relation("StorageNodeHierarchy")
+  rawMaterialStocks     RawMaterialStock[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, id, node_type])
+  @@unique([organization_id, node_code])
+  @@index([organization_id, node_type, is_active])
+  @@index([organization_id, parent_node_id])
+  @@index([organization_id, entity_id])
+  @@map("storage_nodes")
 }
 
 model MasterLocation {

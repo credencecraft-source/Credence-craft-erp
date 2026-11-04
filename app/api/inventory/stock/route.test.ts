@@ -24,7 +24,7 @@ import { POST } from "./route";
 const request = () => new Request("http://localhost/api/inventory/stock", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ organizationId: "public-org", rawMaterialId: "material-1", locationId: "location-1", quantity: "2", reason: "Opening balance" }),
+  body: JSON.stringify({ organizationId: "public-org", rawMaterialId: "material-1", locationId: "location-1", storageNodeId: "bin-1", quantity: "2", reason: "Opening balance" }),
 });
 
 describe("manual raw-material stock endpoint", () => {
@@ -45,6 +45,7 @@ describe("manual raw-material stock endpoint", () => {
       userId: "user-1",
       rawMaterialId: "material-1",
       locationId: "location-1",
+      storageNodeId: "bin-1",
       quantity: "2",
       reason: "Opening balance",
       isAssetStock: false,

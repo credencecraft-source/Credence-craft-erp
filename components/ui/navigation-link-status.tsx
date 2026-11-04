@@ -1,8 +1,13 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useLinkStatus } from "next/link";
 import { LoaderCircle } from "lucide-react";
-import NavigationLoadingOverlay from "@/components/ui/NavigationLoadingOverlay";
+
+const NavigationLoadingOverlay = dynamic(
+  () => import("@/components/ui/NavigationLoadingOverlay"),
+  { ssr: false },
+);
 
 export default function NavigationLinkStatus({
   expanded,

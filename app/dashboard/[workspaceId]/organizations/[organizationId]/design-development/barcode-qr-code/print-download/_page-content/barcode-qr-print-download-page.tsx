@@ -19,20 +19,22 @@ import type {
 import {
   type OrderQrDisplayFieldStyle,
   type OrderQrTemplateLayout,
-  type OrderQrTemplateFieldKey,
+  type QrTemplateFieldKey,
 } from "@/lib/services/orders/order-qr-template-contract";
 
 type RequestRecord = {
   id: string;
+  sourceType: "ORDER" | "POS_PURCHASE_BILL";
   orderId: string;
+  purchaseBillId: string | null;
   orderNo: string;
   requestType: OrderQrPrintRequestType;
   status: OrderQrPrintRequestStatus;
   templateName: string | null;
-  qrFieldKey: OrderQrTemplateFieldKey;
-  displayFields: OrderQrTemplateFieldKey[];
-  displayValues: Partial<Record<OrderQrTemplateFieldKey, string>>;
-  displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
+  qrFieldKey: QrTemplateFieldKey;
+  displayFields: QrTemplateFieldKey[];
+  displayValues: Partial<Record<QrTemplateFieldKey, string>>;
+  displayFieldStyles: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
   layout: OrderQrTemplateLayout;
   printerType: OrderQrTemplateLayout["printerType"];
   pdfPaperSize: OrderQrTemplateLayout["pdfPaperSize"];
@@ -47,14 +49,16 @@ type RequestRecord = {
     styleName: string;
     quantity: number;
     qrPayload: string;
-    displayValues: Partial<Record<OrderQrTemplateFieldKey, string>>;
+    displayValues: Partial<Record<QrTemplateFieldKey, string>>;
   }>;
   requestedAt: string;
 };
 
 type ReportRow = {
   id: string;
+  sourceType: RequestRecord["sourceType"];
   orderId: string;
+  purchaseBillId: string | null;
   orderNo: string;
   requestType: string;
   templateName: string;
@@ -62,10 +66,10 @@ type ReportRow = {
   qrSize: string;
   stickerWidthMm: number;
   stickerLengthMm: number;
-  qrFieldKey: OrderQrTemplateFieldKey;
-  displayFields: OrderQrTemplateFieldKey[];
-  displayValues: Partial<Record<OrderQrTemplateFieldKey, string>>;
-  displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
+  qrFieldKey: QrTemplateFieldKey;
+  displayFields: QrTemplateFieldKey[];
+  displayValues: Partial<Record<QrTemplateFieldKey, string>>;
+  displayFieldStyles: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
   layout: OrderQrTemplateLayout;
   printerType: OrderQrTemplateLayout["printerType"];
   pdfPaperSize: OrderQrTemplateLayout["pdfPaperSize"];
@@ -76,7 +80,7 @@ type ReportRow = {
 };
 
 const fields: Array<{ key: keyof ReportRow; label: string }> = [
-  { key: "orderNo", label: "Order Number" },
+  { key: "orderNo", label: "Source Document" },
   { key: "requestType", label: "Request" },
   { key: "templateName", label: "Template" },
   { key: "status", label: "Status" },
@@ -155,9 +159,13 @@ export default function BarcodeQrPrintDownloadPage({
       .filter((request) => selectedStatus === "ALL" || request.status === selectedStatus)
       .map((request) => ({
         id: request.id,
+        sourceType: request.sourceType,
         orderId: request.orderId,
+        purchaseBillId: request.purchaseBillId,
         orderNo: request.orderNo,
-        requestType: request.bulkItems.length > 0
+        requestType: request.sourceType === "POS_PURCHASE_BILL"
+          ? "Purchase Bill QR Request"
+          : request.bulkItems.length > 0
           ? "Bulk QR Request"
           : request.requestType === "PRINT" ? "Print" : "Download",
         templateName: request.templateName ?? "Saved template unavailable",
@@ -233,9 +241,10 @@ export default function BarcodeQrPrintDownloadPage({
       } else {
         const download = document.createElement("a");
         download.href = URL.createObjectURL(pdfBlob);
+        const sourcePrefix = record.sourceType === "POS_PURCHASE_BILL" ? "purchase-bill" : "order";
         download.download = record.printerType === "LASER"
-          ? `order-${record.orderNo}-a4-stickers.pdf`
-          : `order-${record.orderNo}-sticker-labels.pdf`;
+          ? `${sourcePrefix}-${record.orderNo}-a4-stickers.pdf`
+          : `${sourcePrefix}-${record.orderNo}-sticker-labels.pdf`;
         download.click();
       }
     } catch (error) {
@@ -289,7 +298,7 @@ export default function BarcodeQrPrintDownloadPage({
       <header className="space-y-1">
         <h1 className="text-xl font-semibold text-slate-900">Print/Download</h1>
         <p className="text-sm text-slate-600">
-          Review QR print and download requests submitted from merchandising orders.
+          Review QR print and download requests from purchase bills and merchandising orders.
         </p>
       </header>
 
@@ -371,7 +380,9 @@ export default function BarcodeQrPrintDownloadPage({
                 size="sm"
                 onClick={() => router.push(`${requestBaseHref}/${encodeURIComponent(record.id)}`)}
               >
-                Review bulk request
+                {record.sourceType === "POS_PURCHASE_BILL"
+                  ? "Review purchase bill request"
+                  : "Review bulk request"}
               </Button>
             ) : (
               <>

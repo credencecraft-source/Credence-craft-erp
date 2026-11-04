@@ -21,6 +21,19 @@ export const ORDER_QR_TEMPLATE_FIELDS = [
   { key: "deliveryDate", label: "Delivery Date" },
 ] as const;
 
+export const POS_ITEM_BARCODE_TEMPLATE_FIELDS = [
+  { key: "posItemCode", label: "Item Barcode" },
+  { key: "posItemName", label: "Item Name" },
+  { key: "posSize", label: "Size" },
+  { key: "posItemType", label: "Item Type" },
+  { key: "posRecordNumber", label: "POS Item Record" },
+  { key: "posVendor", label: "Vendor" },
+  { key: "posBillNumber", label: "Purchase Bill Number" },
+  { key: "posBillDate", label: "Purchase Bill Date" },
+  { key: "posBillQuantity", label: "Bill Quantity" },
+  { key: "posSkuCode", label: "Stock SKU" },
+] as const;
+
 export const ORDER_QR_TEMPLATE_SAMPLE_VALUES: Record<
   (typeof ORDER_QR_TEMPLATE_FIELDS)[number]["key"],
   string
@@ -40,8 +53,48 @@ export const ORDER_QR_TEMPLATE_SAMPLE_VALUES: Record<
   deliveryDate: "2026-12-15",
 };
 
+export const POS_ITEM_BARCODE_TEMPLATE_SAMPLE_VALUES: Record<
+  (typeof POS_ITEM_BARCODE_TEMPLATE_FIELDS)[number]["key"],
+  string
+> = {
+  posItemCode: "PB-2026-001-L001",
+  posItemName: "CLASSIC TEE",
+  posSize: "M",
+  posItemType: "FINISHED GOODS",
+  posRecordNumber: "GPR-0001",
+  posVendor: "SAMPLE SUPPLIER",
+  posBillNumber: "SUPPLIER-BILL-001",
+  posBillDate: "2026-11-04",
+  posBillQuantity: "120",
+  posSkuCode: "SKU-0001",
+};
+
+export const ORDER_QR_TEMPLATE_TYPES = ["ORDER_TAGS", "POS_ITEM_BARCODE"] as const;
+export type OrderQrTemplateType = (typeof ORDER_QR_TEMPLATE_TYPES)[number];
 export type OrderQrTemplateFieldKey =
   (typeof ORDER_QR_TEMPLATE_FIELDS)[number]["key"];
+export type PosItemBarcodeTemplateFieldKey =
+  (typeof POS_ITEM_BARCODE_TEMPLATE_FIELDS)[number]["key"];
+export type QrTemplateFieldKey = OrderQrTemplateFieldKey | PosItemBarcodeTemplateFieldKey;
+
+export function getQrTemplateFields(type: OrderQrTemplateType) {
+  return type === "POS_ITEM_BARCODE"
+    ? POS_ITEM_BARCODE_TEMPLATE_FIELDS
+    : ORDER_QR_TEMPLATE_FIELDS;
+}
+
+export function getQrTemplateSampleValues(
+  type: OrderQrTemplateType,
+): Partial<Record<QrTemplateFieldKey, string>> {
+  return type === "POS_ITEM_BARCODE"
+    ? POS_ITEM_BARCODE_TEMPLATE_SAMPLE_VALUES
+    : ORDER_QR_TEMPLATE_SAMPLE_VALUES;
+}
+
+export function getQrTemplateFieldLabel(key: QrTemplateFieldKey): string {
+  return [...ORDER_QR_TEMPLATE_FIELDS, ...POS_ITEM_BARCODE_TEMPLATE_FIELDS]
+    .find((field) => field.key === key)?.label ?? key;
+}
 
 export const ORDER_QR_TEMPLATE_SIZES = [128, 192, 256, 320] as const;
 export const DEFAULT_QR_FIELD_STYLE: OrderQrDisplayFieldStyle = {
@@ -63,17 +116,18 @@ export type OrderQrPrinterType = "BARCODE" | "LASER";
 export type OrderQrPdfPaperSize = "A4_PORTRAIT" | "A4_LANDSCAPE" | "A4_AUTO";
 export type OrderQrTemplateLayout = {
   qr: OrderQrTemplatePosition;
-  fields: Partial<Record<OrderQrTemplateFieldKey, OrderQrTemplatePosition>>;
+  fields: Partial<Record<QrTemplateFieldKey, OrderQrTemplatePosition>>;
   printerType: OrderQrPrinterType;
   pdfPaperSize: OrderQrPdfPaperSize;
 };
 
 export type OrderQrTemplateInput = {
   name: string;
+  type: OrderQrTemplateType;
   pageSetupTemplateId: string;
-  qrFieldKey: OrderQrTemplateFieldKey;
-  displayFields: OrderQrTemplateFieldKey[];
-  displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
+  qrFieldKey: QrTemplateFieldKey;
+  displayFields: QrTemplateFieldKey[];
+  displayFieldStyles: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
   layout: OrderQrTemplateLayout;
   qrSize: (typeof ORDER_QR_TEMPLATE_SIZES)[number];
   stickerWidthMm: number;
@@ -81,7 +135,7 @@ export type OrderQrTemplateInput = {
 };
 
 export function createDefaultOrderQrTemplateLayout(
-  displayFields: readonly OrderQrTemplateFieldKey[],
+  displayFields: readonly QrTemplateFieldKey[],
 ): OrderQrTemplateLayout {
   const fieldStep = Math.min(20, 66 / Math.max(displayFields.length, 1));
   return {
@@ -167,7 +221,7 @@ function isPosition(value: unknown): value is OrderQrTemplatePosition {
 
 export function parseOrderQrTemplateLayout(
   value: unknown,
-  displayFields: readonly OrderQrTemplateFieldKey[],
+  displayFields: readonly QrTemplateFieldKey[],
 ): { success: true; data: OrderQrTemplateLayout } | { success: false; error: string } {
   const fallback = createDefaultOrderQrTemplateLayout(displayFields);
   if (value === undefined) return { success: true, data: fallback };
@@ -212,16 +266,16 @@ export function parseOrderQrTemplateLayout(
 }
 
 export function buildOrderQrPayload(
-  fieldKeys: readonly OrderQrTemplateFieldKey[],
-  orderFields: Partial<Record<OrderQrTemplateFieldKey, string | number | null>>,
+  fieldKeys: readonly QrTemplateFieldKey[],
+  orderFields: Partial<Record<QrTemplateFieldKey, string | number | null>>,
 ) {
   const entries = fieldKeys.flatMap((key) => {
-    const field = ORDER_QR_TEMPLATE_FIELDS.find((option) => option.key === key);
+    const label = getQrTemplateFieldLabel(key);
     const value = orderFields[key];
-    if (!field || value === null || value === undefined || String(value).trim() === "") {
+    if (value === null || value === undefined || String(value).trim() === "") {
       return [];
     }
-    return [{ label: field.label, value: String(value) }];
+    return [{ label, value: String(value) }];
   });
 
   return {
@@ -237,14 +291,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 function parseDisplayFieldStyles(
   value: unknown,
-  displayFields: OrderQrTemplateFieldKey[],
+  displayFields: QrTemplateFieldKey[],
 ):
-  | { success: true; data: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>> }
+  | { success: true; data: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>> }
   | { success: false; error: string } {
   if (value !== undefined && !isRecord(value)) {
     return { success: false, error: "Display field styles are invalid." };
   }
-  const styles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>> = {};
+  const styles: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>> = {};
   for (const key of displayFields) {
     const rawStyle = value && isRecord(value) ? value[key] : undefined;
     if (rawStyle === undefined) {
@@ -293,6 +347,14 @@ export function parseOrderQrTemplateInput(
     return { success: false, error: "Template name must be 100 characters or fewer." };
   }
 
+  const type = value.type === undefined ? "ORDER_TAGS" : value.type;
+  if (!ORDER_QR_TEMPLATE_TYPES.includes(type as OrderQrTemplateType)) {
+    return { success: false, error: "Select a supported QR template type." };
+  }
+  const templateType = type as OrderQrTemplateType;
+  const allowedFields = getQrTemplateFields(templateType);
+  const allowedFieldKeys = new Set<string>(allowedFields.map(({ key }) => key));
+
   if (
     typeof value.pageSetupTemplateId !== "string"
     || !value.pageSetupTemplateId.trim()
@@ -308,19 +370,19 @@ export function parseOrderQrTemplateInput(
     return { success: false, error: "Select one valid QR code field." };
   }
   const qrFieldKey = value.qrFieldKey ?? legacyFields[0] ?? "orderNo";
-  if (!isOrderQrTemplateFieldKey(qrFieldKey)) {
+  if (typeof qrFieldKey !== "string" || !allowedFieldKeys.has(qrFieldKey)) {
     return { success: false, error: "Select one valid QR code field." };
   }
 
   const rawDisplayFields = value.displayFields ?? legacyFields;
   if (
     !Array.isArray(rawDisplayFields)
-    || rawDisplayFields.length > ORDER_QR_TEMPLATE_FIELDS.length
-    || rawDisplayFields.some((field) => !isOrderQrTemplateFieldKey(field))
+    || rawDisplayFields.length > allowedFields.length
+    || rawDisplayFields.some((field) => typeof field !== "string" || !allowedFieldKeys.has(field))
   ) {
     return { success: false, error: "Select valid display fields." };
   }
-  const displayFields = rawDisplayFields as OrderQrTemplateFieldKey[];
+  const displayFields = rawDisplayFields as QrTemplateFieldKey[];
   if (new Set(displayFields).size !== displayFields.length) {
     return { success: false, error: "Display fields cannot be selected more than once." };
   }
@@ -362,8 +424,9 @@ export function parseOrderQrTemplateInput(
     success: true,
     data: {
       name,
+      type: templateType,
       pageSetupTemplateId: value.pageSetupTemplateId.trim(),
-      qrFieldKey,
+      qrFieldKey: qrFieldKey as QrTemplateFieldKey,
       displayFields,
       displayFieldStyles: parsedStyles.data,
       layout: parsedLayout.data,
@@ -374,16 +437,17 @@ export function parseOrderQrTemplateInput(
   };
 }
 
-export function isOrderQrTemplateFieldKey(value: unknown): value is OrderQrTemplateFieldKey {
+export function isOrderQrTemplateFieldKey(value: unknown): value is QrTemplateFieldKey {
   return typeof value === "string"
-    && ORDER_QR_TEMPLATE_FIELDS.some((option) => option.key === value);
+    && [...ORDER_QR_TEMPLATE_FIELDS, ...POS_ITEM_BARCODE_TEMPLATE_FIELDS]
+      .some((option) => option.key === value);
 }
 
 export function parseStoredOrderQrTemplateDesign(
   value: unknown,
-  displayFields: readonly OrderQrTemplateFieldKey[],
+  displayFields: readonly QrTemplateFieldKey[],
 ): {
-  displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
+  displayFieldStyles: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
   layout: OrderQrTemplateLayout;
   pageSetup: PageSetupPrintSnapshot | null;
 } {
@@ -405,7 +469,7 @@ export function parseStoredOrderQrTemplateDesign(
 }
 
 export function serializeOrderQrTemplateDesign(
-  displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>,
+  displayFieldStyles: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>>,
   layout: OrderQrTemplateLayout,
   pageSetup?: PageSetupPrintSnapshot | null,
 ) {

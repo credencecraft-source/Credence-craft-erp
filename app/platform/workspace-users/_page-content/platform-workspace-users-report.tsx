@@ -1,10 +1,13 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import Badge from "@/components/ui/Badge";
+import Tabs from "@/components/ui/Tabs";
 import { ReportGrid } from "@/components/reports/report-grid-display";
+
+type OrganizationFilter = "all" | "created" | "not-created";
 
 type WorkspaceUserReportRow = {
   id: string;
@@ -56,6 +59,17 @@ export default function PlatformWorkspaceUsersReport({
   const [visibleFields, setVisibleFields] = useState<string[]>(
     defaultVisibleFields,
   );
+  const [organizationFilter, setOrganizationFilter] = useState<OrganizationFilter>("all");
+  const filteredUsers = useMemo(() => users.filter((user) => {
+    if (organizationFilter === "created") return user.organisationCount > 0;
+    if (organizationFilter === "not-created") return user.organisationCount === 0;
+    return true;
+  }), [organizationFilter, users]);
+  const organizationCreatedCount = useMemo(
+    () => users.filter((user) => user.organisationCount > 0).length,
+    [users],
+  );
+  const organizationNotCreatedCount = users.length - organizationCreatedCount;
   const changeVisibleFields = useCallback((next: string[]) => {
     setVisibleFields(sanitizeVisibleFields(next));
   }, []);
@@ -67,86 +81,107 @@ export default function PlatformWorkspaceUsersReport({
   );
 
   return (
-    <ReportGrid
-      title="Workspace user accounts"
-      records={users}
-      fields={fields}
-      visibleFields={visibleFields}
-      onVisibleFieldsChange={changeVisibleFields}
-      storageKey="platform-workspace-users-report-columns-v5"
-      rowIdSelector={(user) => user.id}
-      selectedIds={[]}
-      selectable={false}
-      onRowClick={openUser}
-      onRowAction={openUser}
-      rowActionLabel="Open"
-      emptyMessage="No workspace users found."
-      renderCell={(fieldKey, user) => {
-        if (fieldKey === "email") {
-          return user.email || <span className="text-slate-400">Not provided</span>;
-        }
-        if (fieldKey === "emailVerified") {
-          return (
-            <Badge
-              className={
-                user.emailVerified === "Verified"
-                  ? "bg-emerald-100 text-emerald-800"
-                  : user.emailVerified === "Pending"
-                    ? "bg-amber-100 text-amber-800"
-                    : "bg-slate-100 text-slate-600"
-              }
-            >
-              {user.emailVerified}
-            </Badge>
-          );
-        }
-        if (fieldKey === "mobileNumber") {
-          if (!user.mobileNumber) {
-            return <span className="text-slate-400">Not provided</span>;
+    <div className="space-y-4">
+      <Tabs
+        compact
+        value={organizationFilter}
+        onChange={setOrganizationFilter}
+        ariaLabel="Filter workspace users by organization"
+        tabs={[
+          { value: "all", label: `All users (${users.length.toLocaleString("en-IN")})`, panelId: "workspace-users-report-panel" },
+          { value: "created", label: `Organization created (${organizationCreatedCount.toLocaleString("en-IN")})`, panelId: "workspace-users-report-panel" },
+          { value: "not-created", label: `Organization not created (${organizationNotCreatedCount.toLocaleString("en-IN")})`, panelId: "workspace-users-report-panel" },
+        ]}
+      />
+      <div id="workspace-users-report-panel" role="tabpanel">
+        <ReportGrid
+          title="Workspace user accounts"
+          records={filteredUsers}
+          fields={fields}
+          visibleFields={visibleFields}
+          onVisibleFieldsChange={changeVisibleFields}
+          storageKey="platform-workspace-users-report-columns-v5"
+          rowIdSelector={(user) => user.id}
+          selectedIds={[]}
+          selectable={false}
+          onRowClick={openUser}
+          onRowAction={openUser}
+          rowActionLabel="Open"
+          emptyMessage={
+            organizationFilter === "created"
+              ? "No workspace users have created an organization."
+              : organizationFilter === "not-created"
+                ? "All workspace users have an organization."
+                : "No workspace users found."
           }
-          return user.mobileNumber;
-        }
-        if (fieldKey === "mobileVerification") {
-          return (
-            <Badge
-              className={
-                user.mobileVerification === "Verified"
-                  ? "bg-emerald-100 text-emerald-800"
-                  : user.mobileVerification === "Pending"
-                    ? "bg-amber-100 text-amber-800"
-                    : "bg-slate-100 text-slate-600"
+          renderCell={(fieldKey, user) => {
+            if (fieldKey === "email") {
+              return user.email || <span className="text-slate-400">Not provided</span>;
+            }
+            if (fieldKey === "emailVerified") {
+              return (
+                <Badge
+                  className={
+                    user.emailVerified === "Verified"
+                      ? "bg-emerald-100 text-emerald-800"
+                      : user.emailVerified === "Pending"
+                        ? "bg-amber-100 text-amber-800"
+                        : "bg-slate-100 text-slate-600"
+                  }
+                >
+                  {user.emailVerified}
+                </Badge>
+              );
+            }
+            if (fieldKey === "mobileNumber") {
+              if (!user.mobileNumber) {
+                return <span className="text-slate-400">Not provided</span>;
               }
-            >
-              {user.mobileVerification}
-            </Badge>
-          );
-        }
-        if (fieldKey === "organisations") {
-          return (
-            <span title={user.organisations}>
-              {user.organisationCount}
-              {user.organisations ? ` · ${user.organisations}` : ""}
-            </span>
-          );
-        }
-        if (fieldKey === "totalRecords") {
-          return user.totalRecords.toLocaleString("en-IN");
-        }
-        if (fieldKey === "status") {
-          return (
-            <Badge
-              className={
-                user.status === "Active"
-                  ? "bg-emerald-100 text-emerald-800"
-                  : "bg-amber-100 text-amber-800"
-              }
-            >
-              {user.status}
-            </Badge>
-          );
-        }
-        return user[fieldKey as keyof WorkspaceUserReportRow] ?? "—";
-      }}
-    />
+              return user.mobileNumber;
+            }
+            if (fieldKey === "mobileVerification") {
+              return (
+                <Badge
+                  className={
+                    user.mobileVerification === "Verified"
+                      ? "bg-emerald-100 text-emerald-800"
+                      : user.mobileVerification === "Pending"
+                        ? "bg-amber-100 text-amber-800"
+                        : "bg-slate-100 text-slate-600"
+                  }
+                >
+                  {user.mobileVerification}
+                </Badge>
+              );
+            }
+            if (fieldKey === "organisations") {
+              return (
+                <span title={user.organisations}>
+                  {user.organisationCount}
+                  {user.organisations ? ` · ${user.organisations}` : ""}
+                </span>
+              );
+            }
+            if (fieldKey === "totalRecords") {
+              return user.totalRecords.toLocaleString("en-IN");
+            }
+            if (fieldKey === "status") {
+              return (
+                <Badge
+                  className={
+                    user.status === "Active"
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-amber-100 text-amber-800"
+                  }
+                >
+                  {user.status}
+                </Badge>
+              );
+            }
+            return user[fieldKey as keyof WorkspaceUserReportRow] ?? "—";
+          }}
+        />
+      </div>
+    </div>
   );
 }

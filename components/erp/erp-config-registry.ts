@@ -50,7 +50,7 @@ export const ERP_MODULES: ErpModule[] = [
       { key: "purchase-bill", label: "Purchase Bill", pathSegment: "purchase-bill" },
       { key: "invoice", label: "Invoice", pathSegment: "invoice" },
       { key: "stock", label: "Stock", pathSegment: "stock" },
-      { key: "vendor-customer", label: "Vendor/Customer", href: "/admin/master-data/vendor" },
+      { key: "vendor-customer", label: "Vendor/Customer", href: "/pos/vendor-customer" },
     ],
   },
   {

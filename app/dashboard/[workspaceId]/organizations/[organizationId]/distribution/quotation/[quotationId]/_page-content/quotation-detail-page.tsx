@@ -10,8 +10,13 @@ import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
+import Select from "@/components/ui/Select";
 import Table from "@/components/ui/Table";
-import type { DistributionQuotation, DistributionQuotationSummary } from "../../_page-content/quotation-types";
+import type {
+  DistributionQuotation,
+  DistributionQuotationSummary,
+  DistributionQuotationTaxOptions,
+} from "../../_page-content/quotation-types";
 
 type BookingFulfillment = {
   id: string;
@@ -33,6 +38,45 @@ function formatCents(cents: bigint) {
   const whole = cents / BigInt(100);
   const fraction = String(cents % BigInt(100)).padStart(2, "0");
   return `${whole}.${fraction}`;
+}
+
+function amountInCents(value: string) {
+  if (!/^\d{1,12}(?:\.\d{1,2})?$/.test(value)) return null;
+  const [whole, fraction = ""] = value.split(".");
+  return BigInt(whole) * BigInt(100) + BigInt(fraction.padEnd(2, "0"));
+}
+
+function percentageOfCents(amountCents: bigint, rate: string) {
+  if (!/^\d{1,3}(?:\.\d{1,2})?$/.test(rate)) return BigInt(0);
+  const [whole, fraction = ""] = rate.split(".");
+  const basisPoints = BigInt(whole) * BigInt(100) + BigInt(fraction.padEnd(2, "0"));
+  return (amountCents * basisPoints + BigInt(5000)) / BigInt(10000);
+}
+
+function taxAmountsForCents(
+  amountCents: bigint,
+  rate: string,
+  option: DistributionQuotationTaxOptions["options"][number] | undefined,
+) {
+  const amounts = {
+    cgstCents: BigInt(0),
+    sgstCents: BigInt(0),
+    igstCents: BigInt(0),
+    vatCents: BigInt(0),
+    salesTaxCents: BigInt(0),
+  };
+  if (!option) return amounts;
+  if (option.taxType === "CGST_SGST") {
+    amounts.cgstCents = percentageOfCents(amountCents, option.cgstRate);
+    amounts.sgstCents = percentageOfCents(amountCents, rate) - amounts.cgstCents;
+  } else if (option.taxType === "IGST") {
+    amounts.igstCents = percentageOfCents(amountCents, option.igstRate);
+  } else if (option.taxType === "VAT") {
+    amounts.vatCents = percentageOfCents(amountCents, option.vatRate);
+  } else if (option.taxType === "SALES_TAX") {
+    amounts.salesTaxCents = percentageOfCents(amountCents, option.salesTaxRate);
+  }
+  return amounts;
 }
 
 function formatQuotationDate(value: string) {
@@ -58,6 +102,10 @@ export default function QuotationDetailPage() {
   const [validUntil, setValidUntil] = useState("");
   const [notes, setNotes] = useState("");
   const [unitPrices, setUnitPrices] = useState<Record<string, string>>({});
+  const [lineTaxRates, setLineTaxRates] = useState<Record<string, string>>({});
+  const [deliveryCharge, setDeliveryCharge] = useState("0.00");
+  const [deliveryTaxRate, setDeliveryTaxRate] = useState("0.00");
+  const [taxOptions, setTaxOptions] = useState<DistributionQuotationTaxOptions | null>(null);
   const [error, setError] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -88,6 +136,10 @@ export default function QuotationDetailPage() {
       setValidUntil(loaded.validUntil);
       setNotes(loaded.notes);
       setUnitPrices(Object.fromEntries(loaded.lines.map((line) => [line.id, line.unitPrice])));
+      setLineTaxRates(Object.fromEntries(loaded.lines.map((line) => [line.id, line.taxRate])));
+      setDeliveryCharge(loaded.deliveryCharge);
+      setDeliveryTaxRate(loaded.deliveryTaxRate);
+      setTaxOptions(data.taxOptions as DistributionQuotationTaxOptions);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load quotation.");
     } finally {
@@ -136,6 +188,65 @@ export default function QuotationDetailPage() {
     return formatCents(totalCents);
   }, [quotation, unitPrices]);
 
+  const displayedTaxTotals = useMemo(() => {
+    const totals = {
+      subtotalCents: BigInt(0),
+      deliveryCents: BigInt(0),
+      cgstCents: BigInt(0),
+      sgstCents: BigInt(0),
+      igstCents: BigInt(0),
+      vatCents: BigInt(0),
+      salesTaxCents: BigInt(0),
+    };
+    if (!quotation) return totals;
+    for (const line of quotation.lines) {
+      const taxableCents = amountForLine(unitPrices[line.id] ?? line.unitPrice, line.quantity);
+      if (taxableCents === null) continue;
+      totals.subtotalCents += taxableCents;
+      const rate = lineTaxRates[line.id] ?? line.taxRate;
+      const option = taxOptions?.options.find((candidate) => candidate.value === rate);
+      const lineTax = taxAmountsForCents(taxableCents, rate, option);
+      totals.cgstCents += lineTax.cgstCents;
+      totals.sgstCents += lineTax.sgstCents;
+      totals.igstCents += lineTax.igstCents;
+      totals.vatCents += lineTax.vatCents;
+      totals.salesTaxCents += lineTax.salesTaxCents;
+    }
+    const deliveryCents = amountInCents(deliveryCharge);
+    if (deliveryCents !== null) {
+      totals.deliveryCents = deliveryCents;
+      const option = taxOptions?.options.find((candidate) => candidate.value === deliveryTaxRate);
+      const deliveryTax = taxAmountsForCents(deliveryCents, deliveryTaxRate, option);
+      totals.cgstCents += deliveryTax.cgstCents;
+      totals.sgstCents += deliveryTax.sgstCents;
+      totals.igstCents += deliveryTax.igstCents;
+      totals.vatCents += deliveryTax.vatCents;
+      totals.salesTaxCents += deliveryTax.salesTaxCents;
+    }
+    return totals;
+  }, [deliveryCharge, deliveryTaxRate, lineTaxRates, quotation, taxOptions, unitPrices]);
+
+  const taxAmountCents = displayedTaxTotals.cgstCents
+    + displayedTaxTotals.sgstCents
+    + displayedTaxTotals.igstCents
+    + displayedTaxTotals.vatCents
+    + displayedTaxTotals.salesTaxCents;
+  const hasValidAmounts = Boolean(
+    quotation &&
+    amountInCents(deliveryCharge) !== null &&
+    quotation.lines.every((line) => amountForLine(unitPrices[line.id] ?? line.unitPrice, line.quantity) !== null),
+  );
+  const previewAmount = (amount: bigint) => hasValidAmounts ? formatCents(amount) : "—";
+  const masterOtherTaxCents = quotation
+    ? [amountInCents(quotation.vatAmount), amountInCents(quotation.salesTaxAmount)]
+    : [];
+  const masterOtherTax = masterOtherTaxCents.every((amount): amount is bigint => amount !== null)
+    ? formatCents(masterOtherTaxCents.reduce((sum, amount) => sum + amount, BigInt(0)))
+    : "—";
+  const displayedGrandTotal = hasValidAmounts
+    ? formatCents(displayedTaxTotals.subtotalCents + displayedTaxTotals.deliveryCents + taxAmountCents)
+    : "—";
+
   async function saveDraft() {
     if (!quotation) return;
     setIsSaving(true);
@@ -149,7 +260,13 @@ export default function QuotationDetailPage() {
           quotationDate,
           validUntil,
           notes,
-          lines: quotation.lines.map((line) => ({ id: line.id, unitPrice: unitPrices[line.id] ?? "0" })),
+          deliveryCharge,
+          deliveryTaxRate,
+          lines: quotation.lines.map((line) => ({
+            id: line.id,
+            unitPrice: unitPrices[line.id] ?? "0",
+            taxRate: lineTaxRates[line.id] ?? line.taxRate,
+          })),
         }),
       });
       const data = await response.json().catch(() => null);
@@ -167,7 +284,9 @@ export default function QuotationDetailPage() {
   }
 
   const detailPath = `/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/${isMasterOrder ? "sales-order" : "quotation"}/${encodeURIComponent(quotationId)}`;
-  const canEditDraft = Boolean(quotation && quotation.mode !== "MASTER" && quotation.status === "DRAFT");
+  const canEditDraft = Boolean(
+    quotation && quotation.mode !== "MASTER" && quotation.status === "DRAFT" && !quotation.parentQuotationId,
+  );
 
   async function cancelEditing() {
     await loadQuotation();
@@ -304,7 +423,28 @@ export default function QuotationDetailPage() {
               <Input label={quotation.mode === "MASTER" ? "Sales Order Date" : "Quotation Date"} type="date" value={quotationDate} onChange={(event) => setQuotationDate(event.target.value)} disabled={!isEditing || quotation.mode === "MASTER" || quotation.status !== "DRAFT"} />
               <Input label="Valid Until" type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} disabled={!isEditing || quotation.mode === "MASTER" || quotation.status !== "DRAFT"} />
               <Input label="Total Quantity" value={String(quotation.totalQuantity)} readOnly />
-              <Input label="Subtotal" value={displayedTotal} readOnly />
+              <Input label="Subtotal" value={quotation.mode === "MASTER" ? quotation.subtotal : displayedTotal} readOnly />
+              {quotation.mode !== "MASTER" ? (
+                <>
+                  <Input
+                    label="Delivery Charge"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={deliveryCharge}
+                    onChange={(event) => setDeliveryCharge(event.target.value)}
+                    disabled={!isEditing || quotation.status !== "DRAFT"}
+                  />
+                  <Select
+                    label="Delivery Charge Tax"
+                    value={deliveryTaxRate}
+                    options={taxOptions?.options.map((option) => ({ value: option.value, label: option.label })) ?? []}
+                    onChange={(event) => setDeliveryTaxRate(event.target.value)}
+                    disabled={!isEditing || quotation.status !== "DRAFT"}
+                    hint="GST is calculated on the delivery charge using the selected rate."
+                  />
+                </>
+              ) : null}
             </div>
             <Input
               label="Notes and Terms"
@@ -376,17 +516,25 @@ export default function QuotationDetailPage() {
             <Card className="space-y-3 p-4 shadow-none">
               <div>
                 <h2 className="text-base font-semibold text-slate-900">Quotation Subform</h2>
-                <p className="mt-1 text-sm text-slate-600">Each selected Advance Booking is one quotation line. The booking quantity is the sum of its booked sizes.</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Each selected Advance Booking is one quotation line. Select the configured tax rate for each line; the tax type is determined from the organization and contact states.
+                </p>
               </div>
-              <Table tableClassName="min-w-[72rem]">
+              <Table tableClassName="min-w-[92rem]">
                 <thead className="bg-[var(--erp-surface-soft)] text-left text-xs font-semibold uppercase text-slate-600">
                   <tr>
-                    <th className="px-3 py-2">Advance Booking</th><th className="px-3 py-2">End Customer</th><th className="px-3 py-2">Order</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Size-wise Qty</th><th className="px-3 py-2">Booking Qty</th><th className="px-3 py-2">Unit Price</th><th className="px-3 py-2">Line Total</th>
+                    <th className="px-3 py-2">Advance Booking</th><th className="px-3 py-2">End Customer</th><th className="px-3 py-2">Order</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Size-wise Qty</th><th className="px-3 py-2">Booking Qty</th><th className="px-3 py-2">Unit Price</th><th className="px-3 py-2">Before Tax</th><th className="px-3 py-2">Tax Rate</th><th className="px-3 py-2">Tax</th><th className="px-3 py-2">Line Total</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--erp-border)] text-sm text-slate-700">
                   {quotation.lines.map((line) => {
                     const amount = amountForLine(unitPrices[line.id] ?? line.unitPrice, line.quantity);
+                    const selectedRate = lineTaxRates[line.id] ?? line.taxRate;
+                    const selectedOption = taxOptions?.options.find((option) => option.value === selectedRate);
+                    const lineTax = amount === null ? null : taxAmountsForCents(amount, selectedRate, selectedOption);
+                    const lineTaxCents = lineTax
+                      ? lineTax.cgstCents + lineTax.sgstCents + lineTax.igstCents + lineTax.vatCents + lineTax.salesTaxCents
+                      : null;
                     return (
                       <tr key={line.id}>
                         <td className="px-3 py-2">{line.bookingNo}</td>
@@ -411,6 +559,21 @@ export default function QuotationDetailPage() {
                           />
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums">{amount === null ? "—" : formatCents(amount)}</td>
+                        <td className="w-48 px-3 py-2">
+                          <Select
+                            aria-label={`Tax rate for advance booking ${line.bookingNo}`}
+                            value={lineTaxRates[line.id] ?? line.taxRate}
+                            options={taxOptions?.options.map((option) => ({ value: option.value, label: option.label })) ?? []}
+                            onChange={(event) => setLineTaxRates((current) => ({ ...current, [line.id]: event.target.value }))}
+                            disabled={!isEditing || quotation.status !== "DRAFT"}
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {lineTaxCents === null ? "—" : formatCents(lineTaxCents)}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {amount === null || lineTaxCents === null ? "—" : formatCents(amount + lineTaxCents)}
+                        </td>
                       </tr>
                     );
                   })}
@@ -418,6 +581,24 @@ export default function QuotationDetailPage() {
               </Table>
             </Card>
           )}
+
+          <Card className="space-y-3 p-6 shadow-none">
+            <h2 className="text-base font-semibold text-slate-900">
+              {quotation.mode === "MASTER" ? "Sales Order Totals" : "Quotation Totals"}
+            </h2>
+            <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+              <p>Before Tax: <strong>{quotation.mode === "MASTER" ? quotation.subtotal : displayedTotal}</strong></p>
+              <p>Delivery Charge: <strong>{quotation.mode === "MASTER" ? quotation.deliveryCharge : previewAmount(displayedTaxTotals.deliveryCents)}</strong></p>
+              <p>CGST: <strong>{quotation.mode === "MASTER" ? quotation.cgstAmount : previewAmount(displayedTaxTotals.cgstCents)}</strong></p>
+              <p>SGST: <strong>{quotation.mode === "MASTER" ? quotation.sgstAmount : previewAmount(displayedTaxTotals.sgstCents)}</strong></p>
+              <p>IGST: <strong>{quotation.mode === "MASTER" ? quotation.igstAmount : previewAmount(displayedTaxTotals.igstCents)}</strong></p>
+              <p>VAT / Sales Tax: <strong>{quotation.mode === "MASTER"
+                ? masterOtherTax
+                : previewAmount(displayedTaxTotals.vatCents + displayedTaxTotals.salesTaxCents)}</strong></p>
+              <p>Total Tax: <strong>{quotation.mode === "MASTER" ? quotation.taxAmount : previewAmount(taxAmountCents)}</strong></p>
+              <p>Grand Total: <strong>{quotation.mode === "MASTER" ? quotation.grandTotal : displayedGrandTotal}</strong></p>
+            </div>
+          </Card>
         </>
       ) : null}
       <Modal

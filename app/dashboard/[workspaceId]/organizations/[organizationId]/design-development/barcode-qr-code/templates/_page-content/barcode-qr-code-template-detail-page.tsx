@@ -11,11 +11,11 @@ import Card from "@/components/ui/Card";
 import OrderQrStickerPreview from "@/components/erp/order-qr-sticker-preview";
 import {
   buildOrderQrPayload,
-  ORDER_QR_TEMPLATE_FIELDS,
-  ORDER_QR_TEMPLATE_SAMPLE_VALUES,
+  getQrTemplateFieldLabel,
+  getQrTemplateSampleValues,
   type OrderQrDisplayFieldStyle,
   type OrderQrTemplateLayout,
-  type OrderQrTemplateFieldKey,
+  type QrTemplateFieldKey,
 } from "@/lib/services/orders/order-qr-template-contract";
 
 type TemplateDetail = {
@@ -23,9 +23,9 @@ type TemplateDetail = {
   name: string;
   type: string;
   fieldKeys: string[];
-  qrFieldKey: OrderQrTemplateFieldKey;
-  displayFields: OrderQrTemplateFieldKey[];
-  displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
+  qrFieldKey: QrTemplateFieldKey;
+  displayFields: QrTemplateFieldKey[];
+  displayFieldStyles: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
   layout: OrderQrTemplateLayout;
   qrSize: number;
   stickerWidthMm: number;
@@ -92,16 +92,17 @@ export default function BarcodeQrCodeTemplateDetailPage({
     };
   }, [loadAttempt, query, templateId]);
 
-  const qrFieldLabel = ORDER_QR_TEMPLATE_FIELDS.find(
-    (field) => field.key === template?.qrFieldKey,
-  )?.label ?? template?.qrFieldKey;
+  const sampleValues = getQrTemplateSampleValues(
+    template?.type === "POS_ITEM_BARCODE" ? "POS_ITEM_BARCODE" : "ORDER_TAGS",
+  );
+  const qrFieldLabel = template ? getQrTemplateFieldLabel(template.qrFieldKey) : undefined;
   const displayFieldLabels = template?.displayFields.map(
-    (key) => ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === key)?.label ?? key,
+    (key) => getQrTemplateFieldLabel(key),
   ) ?? [];
   const qrPayload = template
     ? buildOrderQrPayload(
       [template.qrFieldKey],
-      ORDER_QR_TEMPLATE_SAMPLE_VALUES,
+      sampleValues,
     ).payload
     : "";
   const qrDataUrl = qrPreview.payload === qrPayload ? qrPreview.dataUrl : undefined;
@@ -182,7 +183,7 @@ export default function BarcodeQrCodeTemplateDetailPage({
           <div className="space-y-1">
             <h2 className="text-base font-semibold text-slate-900">Saved QR Sticker Preview</h2>
             <p className="text-sm text-slate-600">
-              This is the saved template layout with sample order values.
+              This is the saved template layout with sample {template.type === "POS_ITEM_BARCODE" ? "POS item" : "order"} values.
             </p>
           </div>
           <OrderQrStickerPreview
@@ -191,8 +192,8 @@ export default function BarcodeQrCodeTemplateDetailPage({
             qrAlt={`Saved QR code preview for ${template.name}`}
             fields={template.displayFields.map((key) => ({
               key,
-              label: ORDER_QR_TEMPLATE_FIELDS.find(({ key: fieldKey }) => fieldKey === key)?.label ?? key,
-              value: ORDER_QR_TEMPLATE_SAMPLE_VALUES[key],
+              label: getQrTemplateFieldLabel(key),
+              value: sampleValues[key] ?? "",
               style: template.displayFieldStyles[key],
             }))}
             layout={template.layout}

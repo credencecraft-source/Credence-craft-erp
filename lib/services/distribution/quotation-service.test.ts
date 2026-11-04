@@ -5,8 +5,10 @@ const mocks = vi.hoisted(() => ({
   prisma: {
     $transaction: vi.fn(),
     distributionQuotation: { findFirst: vi.fn(), findMany: vi.fn() },
-    distributionOrderForm: { findMany: vi.fn() },
-    masterVendor: { findMany: vi.fn() },
+    distributionOrderForm: { findFirst: vi.fn(), findMany: vi.fn() },
+    masterVendor: { findFirst: vi.fn(), findMany: vi.fn() },
+    contact: { findFirst: vi.fn() },
+    organization: { findUnique: vi.fn() },
     contactRoleAssignment: { findMany: vi.fn() },
   },
   transaction: {
@@ -20,6 +22,9 @@ const mocks = vi.hoisted(() => ({
     contactRoleSetting: { findMany: vi.fn() },
     distributionQuotationLine: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     distributionQuotation: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
+    organization: { findUnique: vi.fn() },
+    organizationTaxProfile: { findFirst: vi.fn() },
+    masterGst: { findMany: vi.fn() },
   },
   createAuditEvent: vi.fn(),
   reserveProcurementDocumentNumber: vi.fn(),
@@ -37,6 +42,7 @@ import {
   deleteDistributionQuotation,
   deleteDistributionOrderForms,
   deleteDistributionQuotations,
+  getDistributionOrderFormForPdf,
   getDistributionQuotation,
   listDistributionOrderForms,
   listDistributionQuotations,
@@ -67,6 +73,17 @@ const createdQuotation = {
   id: "quotation-1",
   organization_id: "internal-org-1",
   vendor_id: "vendor-1",
+  contact_id: null,
+  vendor: {
+    id: "vendor-1",
+    vendor: "Master Vendor A",
+    contact_id: null,
+    gst_number: null,
+    registered_state: "KARNATAKA",
+    registeredState: { state: "KARNATAKA" },
+    contact: null,
+  },
+  contact: null,
   customer: "Master Vendor A",
   quotation_no: "QT-1",
   quotation_date: new Date("2026-10-07T00:00:00.000Z"),
@@ -77,6 +94,15 @@ const createdQuotation = {
   status: "DRAFT",
   total_quantity: 50,
   subtotal: new Prisma.Decimal(0),
+  delivery_charge: new Prisma.Decimal(0),
+  delivery_tax_rate: new Prisma.Decimal(0),
+  cgst_amount: new Prisma.Decimal(0),
+  sgst_amount: new Prisma.Decimal(0),
+  igst_amount: new Prisma.Decimal(0),
+  vat_amount: new Prisma.Decimal(0),
+  sales_tax_amount: new Prisma.Decimal(0),
+  tax_amount: new Prisma.Decimal(0),
+  grand_total: new Prisma.Decimal(0),
   parent_quotation_id: null,
   created_at: new Date("2026-10-07T00:00:00.000Z"),
   lines: [{
@@ -97,6 +123,20 @@ const createdQuotation = {
     quantity: 30,
     unit_price: new Prisma.Decimal(0),
     line_total: new Prisma.Decimal(0),
+    tax_rate: new Prisma.Decimal(0),
+    tax_type: "NONE",
+    cgst_rate: new Prisma.Decimal(0),
+    sgst_rate: new Prisma.Decimal(0),
+    igst_rate: new Prisma.Decimal(0),
+    vat_rate: new Prisma.Decimal(0),
+    sales_tax_rate: new Prisma.Decimal(0),
+    cgst_amount: new Prisma.Decimal(0),
+    sgst_amount: new Prisma.Decimal(0),
+    igst_amount: new Prisma.Decimal(0),
+    vat_amount: new Prisma.Decimal(0),
+    sales_tax_amount: new Prisma.Decimal(0),
+    tax_amount: new Prisma.Decimal(0),
+    total_amount: new Prisma.Decimal(0),
     created_at: new Date("2026-10-07T00:00:00.000Z"),
   }],
 };
@@ -126,6 +166,18 @@ describe("distribution quotation persistence", () => {
     mocks.transaction.distributionQuotation.create.mockResolvedValue(createdQuotation);
     mocks.transaction.distributionQuotation.deleteMany.mockResolvedValue({ count: 1 });
     mocks.transaction.distributionQuotation.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.organization.findUnique.mockResolvedValue({
+      state: "KARNATAKA",
+      gst_number: "ORG-GST",
+      country: "IN",
+    });
+    mocks.transaction.organizationTaxProfile.findFirst.mockResolvedValue(null);
+    mocks.transaction.masterGst.findMany.mockResolvedValue([{
+      gst: new Prisma.Decimal("5"),
+      cgst_rate: new Prisma.Decimal("2.5"),
+      sgst_rate: new Prisma.Decimal("2.5"),
+      igst_rate: new Prisma.Decimal("5"),
+    }]);
     mocks.reserveProcurementDocumentNumber.mockResolvedValue("QT-1");
     mocks.createAuditEvent.mockResolvedValue({});
   });
@@ -205,7 +257,7 @@ describe("distribution quotation persistence", () => {
     expect(result.orderForms.map((form) => form.contactRole)).toEqual(["Customer", "Dealer"]);
     expect(result.nextCursor).toBeNull();
     expect(mocks.prisma.distributionOrderForm.findMany.mock.calls[0][0]).toMatchObject({
-      where: { organization_id: "internal-org-1", status: "DRAFT" },
+      where: { organization_id: "internal-org-1", status: "DRAFT", quotation_id: null },
       take: 101,
       orderBy: [{ order_form_date: "desc" }, { created_at: "desc" }, { id: "desc" }],
     });
@@ -254,6 +306,7 @@ describe("distribution quotation persistence", () => {
     expect(mocks.prisma.distributionOrderForm.findMany.mock.calls[0][0].where).toEqual({
       organization_id: "internal-org-1",
       status: "DRAFT",
+      quotation_id: null,
       OR: [
         { order_form_date: { lt: new Date("2026-10-07T00:00:00.000Z") } },
         {
@@ -266,6 +319,117 @@ describe("distribution quotation persistence", () => {
           id: { lt: "form-previous" },
         },
       ],
+    });
+  });
+
+  it("lists Order Forms converted to a Quotation separately from drafts", async () => {
+    mocks.prisma.distributionOrderForm.findMany.mockResolvedValue([]);
+
+    await listDistributionOrderForms("internal-org-1", undefined, "created");
+
+    expect(mocks.prisma.distributionOrderForm.findMany.mock.calls[0][0].where).toEqual({
+      organization_id: "internal-org-1",
+      status: "CONVERTED",
+      quotation_id: { not: null },
+    });
+  });
+
+  it("lists only unconverted draft Order Forms in the not-created report", async () => {
+    mocks.prisma.distributionOrderForm.findMany.mockResolvedValue([]);
+
+    await listDistributionOrderForms("internal-org-1", undefined, "not-created");
+
+    expect(mocks.prisma.distributionOrderForm.findMany.mock.calls[0][0].where).toEqual({
+      organization_id: "internal-org-1",
+      status: "DRAFT",
+      quotation_id: null,
+    });
+  });
+
+  it("loads Order Form PDF details and contact data within the authorized organization", async () => {
+    mocks.prisma.distributionOrderForm.findFirst.mockResolvedValue({
+        id: "form-1",
+        order_form_no: "OF-1",
+        order_form_date: new Date("2026-10-07T00:00:00.000Z"),
+        customer: "Contact A",
+        status: "DRAFT",
+        total_quantity: 30,
+        quotation_id: null,
+        created_at: new Date("2026-10-07T00:00:00.000Z"),
+        vendor_id: null,
+        contact_id: "contact-1",
+        lines: [{
+          booking_no: "BK-1",
+          order_no: "ORD-1",
+          brand: "Brand",
+          style_name: "Style",
+          quantity: 30,
+          sourceBooking: {
+            order: null,
+            sizeLines: [
+              { size: "M", booked_quantity: 20 },
+              { size: "S", booked_quantity: 10 },
+            ],
+          },
+        }],
+      });
+    mocks.prisma.contact.findFirst.mockResolvedValue({
+        legal_name: "Contact A Legal",
+        display_name: "Contact A",
+        email: "contact@example.com",
+        phone: "9876543210",
+        addresses: [{
+          usage: "BILLING",
+          address_line_1: "10 Market Road",
+          address_line_2: null,
+          city: "Bengaluru",
+          state_name: "Karnataka",
+          state_code: "29",
+          postal_code: "560001",
+          country_code: "IN",
+          is_default_billing: true,
+          is_default_shipping: false,
+          tax_registration: { gstin: "29ABCDE1234F1Z5" },
+        }],
+      });
+    mocks.prisma.organization.findUnique.mockResolvedValue({
+        organization_name: "Seller Ltd",
+        organization_email: "seller@example.com",
+        gst_number: "SELLER-GST",
+        mobile_number: "1234567890",
+        address_line_1: "1 Main Street",
+        address_line_2: null,
+        city: "Bengaluru",
+        state: "Karnataka",
+        country: "India",
+        pin_code: "560001",
+      });
+
+    const result = await getDistributionOrderFormForPdf("internal-org-1", "form-1");
+
+    expect(mocks.prisma.distributionOrderForm.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "internal-org-1", id: "form-1" },
+      select: expect.objectContaining({ lines: expect.anything() }),
+    }));
+    expect(mocks.prisma.contact.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "internal-org-1", id: "contact-1" },
+    }));
+    expect(mocks.prisma.organization.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "internal-org-1" },
+    }));
+    expect(result.orderForm).toMatchObject({
+      id: "form-1",
+      orderFormNo: "OF-1",
+      hasQuotation: false,
+      lines: [{
+        bookingNo: "BK-1",
+        sizes: [{ size: "M", bookedQuantity: 20 }, { size: "S", bookedQuantity: 10 }],
+      }],
+    });
+    expect(result.buyer).toMatchObject({
+      name: "Contact A",
+      gstin: "29ABCDE1234F1Z5",
+      billingAddress: { lines: ["10 Market Road", "Bengaluru", "Karnataka", "560001", "IN"] },
     });
   });
 
@@ -394,6 +558,54 @@ describe("distribution quotation persistence", () => {
     expect(result.children).toEqual([]);
   });
 
+  it("loads one tenant-scoped quotation with its distributor contact details for printing", async () => {
+    mocks.prisma.distributionQuotation.findFirst.mockResolvedValueOnce({
+      ...createdQuotation,
+      vendor: {
+        ...createdQuotation.vendor,
+        vendor: "Distributor A",
+        contact: {
+          legal_name: "Distributor A Legal",
+          display_name: "Distributor A",
+          email: "distributor@example.com",
+          phone: "9876543210",
+          addresses: [{
+            usage: "BILLING",
+            address_line_1: "10 Market Road",
+            address_line_2: null,
+            city: "Bengaluru",
+            state_name: "Karnataka",
+            state_code: "29",
+            postal_code: "560001",
+            country_code: "IN",
+            is_default_billing: true,
+            is_default_shipping: false,
+            tax_registration: { gstin: "29ABCDE1234F1Z5" },
+          }],
+        },
+      },
+    });
+
+    const result = await getDistributionQuotation("internal-org-1", "quotation-1", {
+      quotationDocument: true,
+    });
+
+    expect(mocks.prisma.distributionQuotation.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "internal-org-1",
+        id: "quotation-1",
+        mode: { not: "MASTER" },
+      },
+      include: expect.objectContaining({ vendor: expect.anything(), contact: expect.anything(), lines: expect.anything() }),
+    }));
+    expect(result.quotationParty).toMatchObject({
+      name: "Distributor A",
+      legalName: "Distributor A Legal",
+      gstin: "29ABCDE1234F1Z5",
+      billingAddress: { lines: ["10 Market Road", "Bengaluru", "Karnataka", "560001", "IN"] },
+    });
+  });
+
   it("loads quotation registers from summary fields without fetching detail lines", async () => {
     mocks.prisma.distributionQuotation.findMany.mockResolvedValue([{
       id: "quotation-1",
@@ -405,6 +617,14 @@ describe("distribution quotation persistence", () => {
       status: "DRAFT",
       total_quantity: 30,
       subtotal: new Prisma.Decimal("12.50"),
+      delivery_charge: new Prisma.Decimal("0"),
+      cgst_amount: new Prisma.Decimal("0"),
+      sgst_amount: new Prisma.Decimal("0"),
+      igst_amount: new Prisma.Decimal("0"),
+      vat_amount: new Prisma.Decimal("0"),
+      sales_tax_amount: new Prisma.Decimal("0"),
+      tax_amount: new Prisma.Decimal("0"),
+      grand_total: new Prisma.Decimal("12.50"),
       parent_quotation_id: null,
       created_at: new Date("2026-10-07T00:00:00.000Z"),
       vendor_id: "vendor-1",
@@ -419,6 +639,14 @@ describe("distribution quotation persistence", () => {
       status: "DRAFT",
       total_quantity: 10,
       subtotal: new Prisma.Decimal("5.00"),
+      delivery_charge: new Prisma.Decimal("0"),
+      cgst_amount: new Prisma.Decimal("0"),
+      sgst_amount: new Prisma.Decimal("0"),
+      igst_amount: new Prisma.Decimal("0"),
+      vat_amount: new Prisma.Decimal("0"),
+      sales_tax_amount: new Prisma.Decimal("0"),
+      tax_amount: new Prisma.Decimal("0"),
+      grand_total: new Prisma.Decimal("5.00"),
       parent_quotation_id: null,
       created_at: new Date("2026-10-06T00:00:00.000Z"),
       vendor_id: null,
@@ -445,11 +673,19 @@ describe("distribution quotation persistence", () => {
         quotation_no: true,
         subtotal: true,
         vendor_id: true,
-        orderForms: expect.anything(),
+        orderForms: {
+          select: {
+            contact_id: true,
+            vendor_id: true,
+          },
+        },
       }),
       take: 101,
     }));
-    expect(mocks.prisma.distributionQuotation.findMany.mock.calls[0][0].select).not.toHaveProperty("lines");
+    const registerSelect = mocks.prisma.distributionQuotation.findMany.mock.calls[0][0].select;
+    expect(registerSelect).not.toHaveProperty("lines");
+    expect(registerSelect).not.toHaveProperty("vendor");
+    expect(registerSelect).not.toHaveProperty("updated_at");
     expect(mocks.prisma.masterVendor.findMany).toHaveBeenCalledWith({
       where: { organization_id: "internal-org-1", id: { in: ["vendor-1"] } },
       select: { id: true, contact_id: true },
@@ -496,6 +732,34 @@ describe("distribution quotation persistence", () => {
     expect(mocks.prisma.contactRoleAssignment.findMany).not.toHaveBeenCalled();
     expect(result.quotations[0]).toMatchObject({ id: "quotation-1", quotationNo: "QT-1", childCount: 2 });
     expect(result.quotations[0].contactRole).toBe("");
+  });
+
+  it("filters the quotation register to records linked to Sales Orders", async () => {
+    mocks.prisma.distributionQuotation.findMany.mockResolvedValue([]);
+
+    await listDistributionQuotations("internal-org-1", { salesOrderCreated: true });
+
+    expect(mocks.prisma.distributionQuotation.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "internal-org-1",
+        mode: { not: "MASTER" },
+        parent_quotation_id: { not: null },
+      },
+    }));
+  });
+
+  it("filters the quotation register to records not linked to Sales Orders", async () => {
+    mocks.prisma.distributionQuotation.findMany.mockResolvedValue([]);
+
+    await listDistributionQuotations("internal-org-1", { salesOrderCreated: false });
+
+    expect(mocks.prisma.distributionQuotation.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "internal-org-1",
+        mode: { not: "MASTER" },
+        parent_quotation_id: null,
+      },
+    }));
   });
 
   it("creates a quotation transactionally and returns only fields needed by the creation screen", async () => {
@@ -580,7 +844,7 @@ describe("distribution quotation persistence", () => {
     });
     expect(mocks.transaction.masterVendor.findFirst).toHaveBeenCalledWith({
       where: { organization_id: "internal-org-1", id: "vendor-1", is_active: true },
-      select: { id: true, vendor: true },
+      select: { id: true, vendor: true, contact_id: true },
     });
     expect(mocks.transaction.distributionQuotation.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -634,7 +898,7 @@ describe("distribution quotation persistence", () => {
     expect(mocks.transaction.distributionQuotation.create).not.toHaveBeenCalled();
   });
 
-  it("persists header and subform prices with server-calculated decimal totals", async () => {
+  it("persists quotation and delivery GST with server-calculated decimal totals", async () => {
     const current = {
       ...createdQuotation,
       lines: [{ ...createdQuotation.lines[0], quantity: 3 }],
@@ -645,10 +909,24 @@ describe("distribution quotation persistence", () => {
       valid_until: new Date("2026-11-01T00:00:00.000Z"),
       notes: "Net 30",
       subtotal: new Prisma.Decimal("3.75"),
+      delivery_charge: new Prisma.Decimal("10.00"),
+      delivery_tax_rate: new Prisma.Decimal("5.00"),
+      cgst_amount: new Prisma.Decimal("0.34"),
+      sgst_amount: new Prisma.Decimal("0.35"),
+      tax_amount: new Prisma.Decimal("0.69"),
+      grand_total: new Prisma.Decimal("14.44"),
       lines: [{
         ...current.lines[0],
         unit_price: new Prisma.Decimal("1.25"),
         line_total: new Prisma.Decimal("3.75"),
+        tax_rate: new Prisma.Decimal("5.00"),
+        tax_type: "CGST_SGST",
+        cgst_rate: new Prisma.Decimal("2.50"),
+        sgst_rate: new Prisma.Decimal("2.50"),
+        cgst_amount: new Prisma.Decimal("0.09"),
+        sgst_amount: new Prisma.Decimal("0.10"),
+        tax_amount: new Prisma.Decimal("0.19"),
+        total_amount: new Prisma.Decimal("3.94"),
       }],
     };
     mocks.transaction.distributionQuotation.findFirst
@@ -661,17 +939,36 @@ describe("distribution quotation persistence", () => {
       quotationDate: "2026-10-07",
       validUntil: "2026-11-01",
       notes: "Net 30",
-      lines: [{ id: "quotation-line-1", unitPrice: "1.25" }],
+      deliveryCharge: "10.00",
+      deliveryTaxRate: "5.00",
+      lines: [{ id: "quotation-line-1", unitPrice: "1.25", taxRate: "5.00" }],
     });
 
     expect(result.subtotal).toBe("3.75");
     expect(mocks.transaction.distributionQuotationLine.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: "internal-org-1", quotation_id: "quotation-1", id: "quotation-line-1" },
-      data: expect.objectContaining({ unit_price: new Prisma.Decimal("1.25"), line_total: new Prisma.Decimal("3.75") }),
+      data: expect.objectContaining({
+        unit_price: new Prisma.Decimal("1.25"),
+        line_total: new Prisma.Decimal("3.75"),
+        tax_rate: new Prisma.Decimal("5.00"),
+        tax_type: "CGST_SGST",
+        cgst_amount: new Prisma.Decimal("0.09"),
+        sgst_amount: new Prisma.Decimal("0.10"),
+        total_amount: new Prisma.Decimal("3.94"),
+      }),
     }));
     expect(mocks.transaction.distributionQuotation.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: "internal-org-1", id: "quotation-1", status: "DRAFT" },
-      data: expect.objectContaining({ notes: "Net 30", subtotal: new Prisma.Decimal("3.75") }),
+      data: expect.objectContaining({
+        notes: "Net 30",
+        subtotal: new Prisma.Decimal("3.75"),
+        delivery_charge: new Prisma.Decimal("10.00"),
+        delivery_tax_rate: new Prisma.Decimal("5.00"),
+        cgst_amount: new Prisma.Decimal("0.34"),
+        sgst_amount: new Prisma.Decimal("0.35"),
+        tax_amount: new Prisma.Decimal("0.69"),
+        grand_total: new Prisma.Decimal("14.44"),
+      }),
     }));
   });
 
@@ -718,6 +1015,8 @@ describe("distribution quotation persistence", () => {
 
   it("creates a sales order from a single quotation", async () => {
     const child = {
+      ...createdQuotation,
+      ...createdQuotation,
       id: "quote-1",
       quotation_no: "QT-1",
       order_no: "ORD-1",
@@ -753,6 +1052,8 @@ describe("distribution quotation persistence", () => {
 
   it("creates a sales order for any organization Contact Master contact", async () => {
     const child = {
+      ...createdQuotation,
+      ...createdQuotation,
       id: "quote-1",
       quotation_no: "QT-1",
       order_no: "ORD-1",
@@ -805,6 +1106,8 @@ describe("distribution quotation persistence", () => {
 
   it("uses the mapped Distributor as bill-to when the Dealer setting is enabled", async () => {
     const child = {
+      ...createdQuotation,
+      ...createdQuotation,
       id: "quote-1",
       quotation_no: "QT-1",
       order_no: "ORD-1",
@@ -904,6 +1207,8 @@ describe("distribution quotation persistence", () => {
 
   it("automatically creates against the mapped Distributor when the Dealer role and setting are active", async () => {
     const child = {
+      ...createdQuotation,
+      ...createdQuotation,
       id: "quote-auto",
       quotation_no: "QT-AUTO",
       order_no: "ORD-AUTO",
@@ -966,6 +1271,8 @@ describe("distribution quotation persistence", () => {
 
   it("uses a source order-form Dealer when the quotation Vendor has no Contact link", async () => {
     const child = {
+      ...createdQuotation,
+      ...createdQuotation,
       id: "quote-source-dealer",
       quotation_no: "QT-SOURCE-DEALER",
       order_no: "ORD-SOURCE-DEALER",
@@ -1026,6 +1333,8 @@ describe("distribution quotation persistence", () => {
 
   it("requires counterparty selection when the Distributor setting is disabled", async () => {
     mocks.transaction.distributionQuotation.findMany.mockResolvedValue([{
+      ...createdQuotation,
+      ...createdQuotation,
       id: "quote-disabled",
       quotation_no: "QT-DISABLED",
       order_no: "ORD-DISABLED",
@@ -1056,6 +1365,8 @@ describe("distribution quotation persistence", () => {
 
   it("requires counterparty selection when the Dealer has no mapped Distributor", async () => {
     mocks.transaction.distributionQuotation.findMany.mockResolvedValue([{
+      ...createdQuotation,
+      ...createdQuotation,
       id: "quote-unmapped",
       quotation_no: "QT-UNMAPPED",
       order_no: "ORD-UNMAPPED",
@@ -1077,6 +1388,8 @@ describe("distribution quotation persistence", () => {
 
   it("does not automatically bill a non-Dealer contact through a matching assignment", async () => {
     mocks.transaction.distributionQuotation.findMany.mockResolvedValue([{
+      ...createdQuotation,
+      ...createdQuotation,
       id: "quote-non-dealer",
       quotation_no: "QT-NON-DEALER",
       order_no: "ORD-NON-DEALER",
@@ -1098,6 +1411,8 @@ describe("distribution quotation persistence", () => {
 
   it("does not use a cross-organization Dealer mapping for automatic billing", async () => {
     mocks.transaction.distributionQuotation.findMany.mockResolvedValue([{
+      ...createdQuotation,
+      ...createdQuotation,
       id: "quote-tenant",
       quotation_no: "QT-TENANT",
       order_no: "ORD-TENANT",
@@ -1124,6 +1439,8 @@ describe("distribution quotation persistence", () => {
   it("creates separate sales orders for quotations billed to different Distributors", async () => {
     const children = [
       {
+        ...createdQuotation,
+        ...createdQuotation,
         id: "quote-a",
         quotation_no: "QT-A",
         order_no: "ORD-A",
@@ -1132,6 +1449,8 @@ describe("distribution quotation persistence", () => {
         vendor: { contact_id: "dealer-a" },
       },
       {
+        ...createdQuotation,
+        ...createdQuotation,
         id: "quote-b",
         quotation_no: "QT-B",
         order_no: "ORD-B",
@@ -1224,6 +1543,8 @@ describe("distribution quotation persistence", () => {
       contact_id: "customer-contact",
     });
     mocks.transaction.distributionQuotation.findMany.mockResolvedValue([{
+      ...createdQuotation,
+      ...createdQuotation,
       id: "quote-non-dealer-selected",
       quotation_no: "QT-NON-DEALER-SELECTED",
       order_no: "ORD-NON-DEALER-SELECTED",

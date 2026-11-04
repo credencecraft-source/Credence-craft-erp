@@ -52,6 +52,7 @@ describe("POS General FG stock route", () => {
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
     expect(mocks.generalStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: "internal-org-1", current_stock: { gt: 0 } },
+      take: 51,
     }));
     expect(body.records).toHaveLength(1);
     expect(body.records[0]).toMatchObject({
@@ -60,6 +61,7 @@ describe("POS General FG stock route", () => {
       inventory_bucket: "GENERAL",
       source: "WORK_ORDER_GRN",
     });
+    expect(body.hasMore).toBe(false);
   });
 
   it("resolves a scanned record only from General stock", async () => {
@@ -71,7 +73,38 @@ describe("POS General FG stock route", () => {
     expect(response.status).toBe(200);
     expect(mocks.generalStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: "internal-org-1", current_stock: { gt: 0 }, id: "general-stock-1" },
+      take: 2,
     }));
+  });
+
+  it("searches tenant stock fields with a bounded result set", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock?search=shirt"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.generalStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "internal-org-1",
+        current_stock: { gt: 0 },
+        OR: expect.arrayContaining([
+          { style_name: { contains: "shirt", mode: "insensitive" } },
+          { order_no: { contains: "shirt", mode: "insensitive" } },
+        ]),
+      }),
+      take: 51,
+    }));
+  });
+
+  it("rejects unbounded or underspecified search terms before querying stock", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock?search=a"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.generalStockFindMany).not.toHaveBeenCalled();
   });
 
   it("returns not found when scanned stock is unavailable", async () => {

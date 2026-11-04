@@ -116,6 +116,7 @@ describe("order QR template record API", () => {
       "template-1",
       {
         name: "BASIC UPDATED",
+        type: "ORDER_TAGS",
         pageSetupTemplateId: "setup-1",
         qrFieldKey: "orderNo",
         displayFields: ["orderNo", "buyer"],

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseUnavailableError } from "@/lib/database/database-errors";
-import { getOrganizationForUser, getOrganizationShellContext, requireOrganizationAccess } from "@/lib/services/organizations/organization-service";
+import { getOrganizationForUser, getOrganizationShellContext, requireOrganizationAccess, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import { createMasterValueForOrganization, getActiveOrganizationDummyDataBatch, getMasterDefinition, getMasterValuesForOrganization, getSizeGroupSizesForOrganization } from "@/lib/master-data/master-data-constants";
 import { listVendorSelectOptionsForOrganization } from "@/lib/services/master-data/vendor-select-lookup-service";
 import { ORDER_LOOKUP_FIELDS } from "@/lib/master-data/master-data-registry";
@@ -73,10 +73,48 @@ export async function GET(
     const parentId = searchParams.get("parentId") || undefined;
     const search = searchParams.get("search") || undefined;
     const exactSearch = searchParams.get("exact") === "true";
+    const paginated = searchParams.get("page") === "true";
+    const cursor = searchParams.get("cursor") || undefined;
+    const rawFilters = searchParams.get("filters");
+    let filters: Record<string, { operator: string; value: string }> | undefined;
+    if (rawFilters) {
+      try {
+        const parsedFilters: unknown = JSON.parse(rawFilters);
+        if (typeof parsedFilters !== "object" || parsedFilters === null || Array.isArray(parsedFilters)) {
+          return respond({ error: "Master report filters are invalid." }, { status: 400 });
+        }
+        const entries = Object.entries(parsedFilters);
+        if (entries.length > 20 || entries.some(([, filter]) =>
+          typeof filter !== "object" || filter === null || Array.isArray(filter)
+          || !("operator" in filter) || !["contains", "is", "notContains", "empty"].includes(String(filter.operator))
+          || !("value" in filter) || typeof filter.value !== "string" || filter.value.length > 200,
+        )) {
+          return respond({ error: "Master report filters are invalid." }, { status: 400 });
+        }
+        filters = Object.fromEntries(entries) as Record<string, { operator: string; value: string }>;
+      } catch {
+        return respond({ error: "Master report filters are invalid." }, { status: 400 });
+      }
+    }
     const compactOrderLookups = searchParams.get("shape") === "compact";
     const requestedLimit = Number(searchParams.get("limit") || 100);
     const maximumLimit = moduleKey === "order-lookups" ? 500 : 200;
     const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), maximumLimit) : 100;
+    if (cursor && (!paginated || cursor.length > 128)) {
+      return respond({ error: "The master record cursor is invalid." }, { status: 400 });
+    }
+    const respondWithPage = (items: unknown[]) => {
+      if (!paginated) return respond(items);
+      const pageItems = items.slice(0, limit);
+      const hasMore = items.length > limit;
+      return respond({
+        items: pageItems,
+        hasMore,
+        nextCursor: hasMore && pageItems.length > 0
+          ? (pageItems[pageItems.length - 1] as { id?: string }).id ?? null
+          : null,
+      });
+    };
 
     if (!organizationId) {
       return respond({ error: "Organization ID is required" }, { status: 400 });
@@ -107,7 +145,7 @@ export async function GET(
     }
 
     if (moduleKey === "order-lookups") {
-      const allLookupKeys = ["article", "entity", "category", "sub-category", "season", "color", "buyer", "brand", "size-group", "size", "raw-material-type", "raw-material-category", "raw-material-sub-category", "raw-material"];
+      const allLookupKeys = ["article", "entity", "category", "sub-category", "season", "color", "buyer", "brand", "size-group", "size", "raw-material-type", "raw-material-category", "raw-material-sub-category", "raw-material", "product-master"];
       const requestedKeys = searchParams.get("keys")?.split(",").map((key) => key.trim()).filter(Boolean);
       const invalidKeys = requestedKeys?.filter((key) => !allLookupKeys.includes(key));
       if (invalidKeys?.length) {
@@ -118,13 +156,21 @@ export async function GET(
         ? allLookupKeys.filter((key) => requestedKeys.includes(key))
         : allLookupKeys;
       const includeSizeGroupSizes = searchParams.get("includeSizeGroupSizes") !== "false";
+      const includeLookupDummyData = searchParams.get("includeDummyData") !== "false";
+      const skippedLookupLabels = new Set(
+        (searchParams.get("skipLookupLabels") ?? "")
+          .split(",")
+          .map((key) => key.trim())
+          .filter((key) => lookupKeys.includes(key)),
+      );
       const activeDummyDataBatch = getActiveOrganizationDummyDataBatch(organization.id);
       const lookupValues = await Promise.all(
         lookupKeys.map(async (key) => {
           let sizeLinksPromise: ReturnType<typeof getSizeGroupSizesForOrganization> | undefined;
           const values = await getMasterValuesForOrganization(organization.id, key, includeInactive, {
             limit,
-            includeDummyData: true,
+            includeDummyData: includeLookupDummyData,
+            includeLookupLabels: !skippedLookupLabels.has(key),
             activeDummyDataBatch,
             ...(key === "size-group" && includeSizeGroupSizes ? {
               onRowsFetched: (rowIds) => {
@@ -192,7 +238,9 @@ export async function GET(
     let sizeLinksPromise: ReturnType<typeof getSizeGroupSizesForOrganization> | undefined;
     const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, {
       search,
-      limit,
+      filters,
+      limit: paginated ? limit + 1 : limit,
+      cursor,
       exactSearch,
       includeDummyData,
       entityId,
@@ -223,7 +271,7 @@ export async function GET(
       if (profile && lookupStartedAt !== undefined) {
         profile.lookupMs = performance.now() - lookupStartedAt;
       }
-      return respond(values.map((group) => ({
+      return respondWithPage(values.map((group) => ({
         ...group,
         sizes: (sizesByGroup.get(group.id) ?? []).map((link) => link.size),
       })));
@@ -275,7 +323,7 @@ export async function GET(
       if (profile && lookupStartedAt !== undefined) {
         profile.lookupMs = performance.now() - lookupStartedAt;
       }
-      return respond(values.map((template) => ({
+      return respondWithPage(values.map((template) => ({
         ...template,
         steps: (stepsByTemplate.get(template.id) ?? []).map((step) => {
           const processName = String(step.fields?.Process ?? step.label).trim();
@@ -310,7 +358,7 @@ export async function GET(
     if (profile && lookupStartedAt !== undefined) {
       profile.lookupMs = performance.now() - lookupStartedAt;
     }
-    return respond(values);
+    return respondWithPage(values);
   } catch (error: unknown) {
     console.error("Error fetching master data:", error);
     if (profile && lookupStartedAt !== undefined) {
@@ -347,8 +395,12 @@ export async function POST(
     }
 
     const body = await request.json();
-    await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
     const masterKey = routeModuleKey || body.masterKey || body.moduleKey || body.masterId || body.key;
+    if (masterKey === "storage-node") {
+      await requireOrganizationPermission(user.id, organization.id, "MANAGE_MASTER_DATA");
+    } else {
+      await requireOrganizationAccess(user.id, organization.id, ["OWNER", "ADMIN", "MERCHANDISING"]);
+    }
     const label = body.label || body.name;
     const code = body.code;
     const description = body.description;
@@ -380,6 +432,7 @@ export async function POST(
       parentValueId: parentId || null,
       fields,
       createOnly: body.createOnly === true,
+      actorUserId: user.id,
       ...(masterKey === "size" && typeof body.sizeGroupId === "string" && body.sizeGroupId.trim()
         ? { sizeGroupId: body.sizeGroupId.trim() }
         : {}),

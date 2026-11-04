@@ -22,12 +22,14 @@ import { createOrderQrStickerDataUrl } from "@/components/erp/order-qr-print-out
 import {
   DEFAULT_QR_FIELD_STYLE,
   createDefaultOrderQrTemplateLayout,
-  ORDER_QR_TEMPLATE_FIELDS,
-  ORDER_QR_TEMPLATE_SAMPLE_VALUES,
+  getQrTemplateFieldLabel,
+  getQrTemplateFields,
+  getQrTemplateSampleValues,
   ORDER_QR_TEMPLATE_SIZES,
+  type OrderQrTemplateType,
+  type QrTemplateFieldKey,
   type OrderQrDisplayFieldStyle,
   type OrderQrTemplateLayout,
-  type OrderQrTemplateFieldKey,
 } from "@/lib/services/orders/order-qr-template-contract";
 import type { PageSetupPrintSnapshot } from "@/lib/services/design-development/page-setup-template-contract";
 
@@ -44,25 +46,28 @@ export default function BarcodeQrCodeTemplateCreatePage({
   const templatesHref = `/dashboard/${workspaceId}/organizations/${organizationId}/design-development/barcode-qr-code/templates`;
   const detailHref = templateId ? `${templatesHref}/${encodeURIComponent(templateId)}` : templatesHref;
   const [name, setName] = useState("");
-  const [qrFieldKey, setQrFieldKey] = useState<OrderQrTemplateFieldKey>("orderNo");
-  const [displayFields, setDisplayFields] = useState<OrderQrTemplateFieldKey[]>([
+  const [templateType, setTemplateType] = useState<OrderQrTemplateType>("ORDER_TAGS");
+  const [qrFieldKey, setQrFieldKey] = useState<QrTemplateFieldKey>("orderNo");
+  const [displayFields, setDisplayFields] = useState<QrTemplateFieldKey[]>([
     "orderNo",
     "styleName",
     "buyer",
   ]);
   const [selectedStyleField, setSelectedStyleField] =
-    useState<OrderQrTemplateFieldKey>("orderNo");
+    useState<QrTemplateFieldKey>("orderNo");
   const [displayFieldStyles, setDisplayFieldStyles] = useState<
-    Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>
+    Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>>
   >({});
   const savedPageSetupRef = useRef<PageSetupPrintSnapshot | null>(null);
   const [layout, setLayout] = useState<OrderQrTemplateLayout>(() => ({
     ...createDefaultOrderQrTemplateLayout(["orderNo", "styleName", "buyer"]),
     printerType: "LASER",
   }));
+  const templateFields = getQrTemplateFields(templateType);
+  const sampleValues = getQrTemplateSampleValues(templateType);
   const previewRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
-    key: "qr" | OrderQrTemplateFieldKey;
+    key: "qr" | QrTemplateFieldKey;
     pointerId: number;
     offsetX: number;
     offsetY: number;
@@ -134,10 +139,10 @@ export default function BarcodeQrCodeTemplateCreatePage({
 
   const previewEntries = useMemo(
     () => displayFields.map((key) => ({
-        label: ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === key)!.label,
-        value: ORDER_QR_TEMPLATE_SAMPLE_VALUES[key],
+        label: getQrTemplateFieldLabel(key),
+        value: sampleValues[key] ?? "",
       })),
-    [displayFields],
+    [displayFields, sampleValues],
   );
   const printPreviewDisplayValues = useMemo(
     () => Object.fromEntries(previewEntries.map(({ value }, index) => [
@@ -157,10 +162,10 @@ export default function BarcodeQrCodeTemplateCreatePage({
     : DEFAULT_QR_FIELD_STYLE;
   const qrPayload = useMemo(
     () => JSON.stringify({
-      [ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === qrFieldKey)!.label]:
-        ORDER_QR_TEMPLATE_SAMPLE_VALUES[qrFieldKey],
+      [getQrTemplateFieldLabel(qrFieldKey)]:
+        sampleValues[qrFieldKey] ?? "",
     }),
-    [qrFieldKey],
+    [qrFieldKey, sampleValues],
   );
   const qrDataUrl = qrPreview.payload === qrPayload && qrPreview.size === qrSize
     ? qrPreview.dataUrl
@@ -169,7 +174,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
     ? qrPreview.error
     : undefined;
   const printPreviewRecord = useMemo(() => ({
-    orderNo: ORDER_QR_TEMPLATE_SAMPLE_VALUES.orderNo,
+    orderNo: sampleValues[qrFieldKey] ?? "",
     qrSize,
     qrPayload,
     stickerWidthMm,
@@ -183,6 +188,8 @@ export default function BarcodeQrCodeTemplateCreatePage({
   }), [
     displayFields,
     displayFieldStyles,
+    qrFieldKey,
+    sampleValues,
     layout,
     printPreviewDisplayValues,
     qrPayload,
@@ -211,10 +218,11 @@ export default function BarcodeQrCodeTemplateCreatePage({
         return data as {
           template: {
             name: string;
+            type: string;
             qrFieldKey: string;
             fieldKeys: string[];
             displayFields: string[];
-            displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
+            displayFieldStyles: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
             layout: OrderQrTemplateLayout;
             qrSize: number;
             stickerWidthMm: number;
@@ -226,17 +234,24 @@ export default function BarcodeQrCodeTemplateCreatePage({
       .then(({ template }) => {
         if (!active) return;
         setName(template.name);
+        const loadedType: OrderQrTemplateType = template.type === "POS_ITEM_BARCODE"
+          ? "POS_ITEM_BARCODE"
+          : "ORDER_TAGS";
+        const loadedFields = getQrTemplateFields(loadedType);
+        setTemplateType(loadedType);
         const validFields = template.fieldKeys.filter(
-          (key): key is OrderQrTemplateFieldKey =>
-            ORDER_QR_TEMPLATE_FIELDS.some((field) => field.key === key),
+          (key): key is QrTemplateFieldKey =>
+            loadedFields.some((field) => field.key === key),
         );
-        setQrFieldKey(ORDER_QR_TEMPLATE_FIELDS.some((field) => field.key === template.qrFieldKey)
-          ? template.qrFieldKey as OrderQrTemplateFieldKey
-          : validFields[0] ?? "orderNo");
-        setDisplayFields(template.displayFields.filter(
-          (key): key is OrderQrTemplateFieldKey =>
-            ORDER_QR_TEMPLATE_FIELDS.some((field) => field.key === key),
-        ));
+        setQrFieldKey(loadedFields.some((field) => field.key === template.qrFieldKey)
+          ? template.qrFieldKey as QrTemplateFieldKey
+          : validFields[0] ?? loadedFields[0].key);
+        const loadedDisplayFields = template.displayFields.filter(
+          (key): key is QrTemplateFieldKey =>
+            loadedFields.some((field) => field.key === key),
+        );
+        setDisplayFields(loadedDisplayFields);
+        setSelectedStyleField(loadedDisplayFields[0] ?? loadedFields[0].key);
         setDisplayFieldStyles(template.displayFieldStyles);
         setLayout({ ...template.layout, printerType: "LASER" });
         setPageSetupTemplateId(template.pageSetup?.id ?? "");
@@ -325,7 +340,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
     };
   }, [printPreviewKey, printPreviewRecord, selectedPageSetup]);
 
-  const toggleDisplayField = (fieldKey: OrderQrTemplateFieldKey, checked: boolean) => {
+  const toggleDisplayField = (fieldKey: QrTemplateFieldKey, checked: boolean) => {
     setDisplayFields((current) => checked
       ? [...current, fieldKey]
       : current.filter((key) => key !== fieldKey));
@@ -344,7 +359,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
   };
 
   const updateDisplayStyle = (
-    fieldKey: OrderQrTemplateFieldKey,
+    fieldKey: QrTemplateFieldKey,
     patch: Partial<OrderQrDisplayFieldStyle>,
   ) => {
     setDisplayFieldStyles((current) => ({
@@ -359,7 +374,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
   };
 
   const updateLayoutPosition = (
-    key: "qr" | OrderQrTemplateFieldKey,
+    key: "qr" | QrTemplateFieldKey,
     x: number,
     y: number,
   ) => {
@@ -387,7 +402,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
 
   const startPreviewDrag = (
     event: ReactPointerEvent<HTMLButtonElement>,
-    key: "qr" | OrderQrTemplateFieldKey,
+    key: "qr" | QrTemplateFieldKey,
   ) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     const previewBounds = previewRef.current?.getBoundingClientRect();
@@ -405,7 +420,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
 
   const handlePreviewKeyDown = (
     event: React.KeyboardEvent<HTMLButtonElement>,
-    key: "qr" | OrderQrTemplateFieldKey,
+    key: "qr" | QrTemplateFieldKey,
   ) => {
     const currentPosition = key === "qr" ? layout.qr : layout.fields[key];
     if (!currentPosition) return;
@@ -449,6 +464,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name,
+            type: templateType,
             qrFieldKey,
             displayFields,
             displayFieldStyles,
@@ -487,7 +503,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
             {templateId ? "Edit Template" : "Create Template"}
           </h1>
           <p className="text-sm text-slate-600">
-            Select order fields and preview the QR tag before saving.
+            Select order or POS item fields and preview the barcode template before saving.
           </p>
         </div>
       </header>
@@ -535,9 +551,28 @@ export default function BarcodeQrCodeTemplateCreatePage({
             <Select
               label="Type"
               name="type"
-              value="Order Tags"
-              disabled
-              options={[{ value: "Order Tags", label: "Order Tags" }]}
+              value={templateType}
+              onChange={(event) => {
+                const nextType = event.target.value as OrderQrTemplateType;
+                const nextFields = getQrTemplateFields(nextType);
+                const nextDisplayFields = nextType === "POS_ITEM_BARCODE"
+                  ? ["posItemCode", "posItemName", "posSize"] as QrTemplateFieldKey[]
+                  : ["orderNo", "styleName", "buyer"] as QrTemplateFieldKey[];
+                setTemplateType(nextType);
+                setQrFieldKey(nextFields[0].key);
+                setDisplayFields(nextDisplayFields);
+                setSelectedStyleField(nextDisplayFields[0]);
+                setDisplayFieldStyles({});
+                setLayout({
+                  ...createDefaultOrderQrTemplateLayout(nextDisplayFields),
+                  printerType: "LASER",
+                });
+                setSaveError("");
+              }}
+              options={[
+                { value: "ORDER_TAGS", label: "Order Tags" },
+                { value: "POS_ITEM_BARCODE", label: "POS Item Barcode" },
+              ]}
             />
             <Select
               label="QR Code Size"
@@ -617,11 +652,11 @@ export default function BarcodeQrCodeTemplateCreatePage({
             <div className="space-y-1">
               <h2 className="text-base font-semibold text-slate-900">QR Code Field</h2>
               <p className="text-sm text-slate-600">
-                Choose exactly one order field to encode in the QR code.
+                Choose exactly one {templateType === "POS_ITEM_BARCODE" ? "POS item" : "order"} field to encode in the QR code.
               </p>
             </div>
             <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-              {ORDER_QR_TEMPLATE_FIELDS.map((field) => (
+              {templateFields.map((field) => (
                 <Checkbox
                   key={field.key}
                   label={field.label}
@@ -641,11 +676,11 @@ export default function BarcodeQrCodeTemplateCreatePage({
               <div className="space-y-1">
                 <h2 className="text-base font-semibold text-slate-900">Display Fields</h2>
                 <p className="text-sm text-slate-600">
-                  Select the order details to print beside the QR code and customize each field.
+                  Select the {templateType === "POS_ITEM_BARCODE" ? "POS item" : "order"} details to print beside the QR code and customize each field.
                 </p>
               </div>
               <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-                {ORDER_QR_TEMPLATE_FIELDS.map((field) => (
+                {templateFields.map((field) => (
                   <Checkbox
                     key={field.key}
                     label={field.label}
@@ -687,7 +722,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
           <div className="space-y-1">
             <h2 className="text-base font-semibold text-slate-900">QR Preview</h2>
             <p className="text-sm text-slate-600">
-              Sample order values show how your selected fields will be encoded.
+              Sample {templateType === "POS_ITEM_BARCODE" ? "POS item" : "order"} values show how your selected fields will be encoded.
             </p>
           </div>
           {displayFields.length > 0 && (
@@ -699,14 +734,14 @@ export default function BarcodeQrCodeTemplateCreatePage({
                   value={activeStyleFieldKey}
                   onChange={(event) => {
                     const fieldKey = event.target.value;
-                    if (displayFields.includes(fieldKey as OrderQrTemplateFieldKey)) {
-                      setSelectedStyleField(fieldKey as OrderQrTemplateFieldKey);
+                    if (displayFields.includes(fieldKey as QrTemplateFieldKey)) {
+                      setSelectedStyleField(fieldKey as QrTemplateFieldKey);
                     }
                   }}
                 >
                   {displayFields.map((fieldKey) => (
                     <option key={fieldKey} value={fieldKey}>
-                      {ORDER_QR_TEMPLATE_FIELDS.find(({ key }) => key === fieldKey)?.label ?? fieldKey}
+                      {getQrTemplateFieldLabel(fieldKey)}
                     </option>
                   ))}
                 </Select>
@@ -786,7 +821,7 @@ export default function BarcodeQrCodeTemplateCreatePage({
             {" "}Sticker: {stickerWidthMm} × {stickerLengthMm} mm · {selectedPageSetup
               ? `${selectedPageSetup.paperSize} ${selectedPageSetup.orientation.toLowerCase()} sheet`
               : "Select Page Setup"}
-            {" "}· QR field: {ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === qrFieldKey)?.label}
+            {" "}· QR field: {getQrTemplateFieldLabel(qrFieldKey)}
           </p>
           </Card>
           <Card className="h-fit space-y-4">

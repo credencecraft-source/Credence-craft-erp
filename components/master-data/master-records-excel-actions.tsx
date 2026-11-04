@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Download, FileSpreadsheet, Upload } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import Modal from "@/components/ui/Modal";
 import type {
   MasterWorkbookChildRecord,
   MasterWorkbookLookupOption,
@@ -17,6 +17,8 @@ import { uploadMasterWorkbookToHistory } from "@/lib/master-data/master-import-c
 import type {
   MasterRecordsImportResult,
 } from "@/lib/master-data/master-records-workbook";
+
+const Modal = dynamic(() => import("@/components/ui/Modal"), { ssr: false });
 
 type MasterRecord = MasterWorkbookRecord & { label: string; value_id: string };
 type ChildRecord = MasterWorkbookChildRecord & { id?: string };
@@ -135,8 +137,8 @@ export function MasterRecordsExcelActions({
         </Button>
         {error ? <p className="text-sm text-[var(--erp-danger)]" role="alert">{error}</p> : null}
       </div>
-      <Modal
-        open={isOpen}
+      {isOpen ? <Modal
+        open
         onClose={() => setIsOpen(false)}
         closeOnBackdrop={false}
         ariaLabel={`Save ${moduleLabel} workbook`}
@@ -190,7 +192,7 @@ export function MasterRecordsExcelActions({
             </Button>
           </div>
         </div>
-      </Modal>
+      </Modal> : null}
     </>
   );
 }

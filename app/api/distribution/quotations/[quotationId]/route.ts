@@ -22,13 +22,16 @@ export async function GET(request: Request, context: RouteContext) {
     );
     const { quotationId } = await context.params;
     const mode = url.searchParams.get("mode");
+    const quotationDocument = mode === "QUOTATION_PDF";
     const salesOrderDocument = mode === "MASTER_PDF";
     const masterOrder = mode === "MASTER" || salesOrderDocument;
-    const includeChildren = url.searchParams.get("mode") !== "QUOTATION";
+    const includeChildren = mode !== "QUOTATION" && !quotationDocument;
     return NextResponse.json(await getDistributionQuotation(organization.id, quotationId, {
       masterOrder,
       includeChildren,
       salesOrderDocument,
+      includeTaxOptions: mode === "QUOTATION",
+      quotationDocument,
     }));
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2021", "P2022"].includes(error.code)) {
@@ -57,22 +60,26 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (!Array.isArray(body.lines)) throw new Error("Submit quotation detail lines.");
     if (typeof body.quotationDate !== "string" ||
         typeof body.validUntil !== "string" ||
-        typeof body.notes !== "string") {
-      throw new Error("Submit a quotation date, validity date, and notes as text values.");
+        typeof body.notes !== "string" ||
+        typeof body.deliveryCharge !== "string" ||
+        typeof body.deliveryTaxRate !== "string") {
+      throw new Error("Submit quotation dates, notes, delivery charge, and delivery tax rate as text values.");
     }
     const lines = body.lines.map((value) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Each quotation detail line must be valid.");
       const line = value as Record<string, unknown>;
-      if (typeof line.id !== "string" || typeof line.unitPrice !== "string") {
-        throw new Error("Each quotation detail line needs its ID and unit price.");
+      if (typeof line.id !== "string" || typeof line.unitPrice !== "string" || typeof line.taxRate !== "string") {
+        throw new Error("Each quotation detail line needs its ID, unit price, and tax rate.");
       }
-      return { id: line.id, unitPrice: line.unitPrice };
+      return { id: line.id, unitPrice: line.unitPrice, taxRate: line.taxRate };
     });
     const { quotationId } = await context.params;
     const quotation = await saveDistributionQuotationDraft(organization.id, user.id, quotationId, {
       quotationDate: body.quotationDate,
       validUntil: body.validUntil,
       notes: body.notes,
+      deliveryCharge: body.deliveryCharge,
+      deliveryTaxRate: body.deliveryTaxRate,
       lines,
     });
     return NextResponse.json({ quotation });

@@ -98,6 +98,22 @@ describe("master data categories", () => {
     );
   });
 
+  it("exposes one canonical storage hierarchy master instead of duplicate level masters", () => {
+    const storageHierarchy = visibleMasters.find((master) => master.key === "storage-node");
+
+    expect(storageHierarchy?.label).toBe("Inventory Storage Hierarchy");
+    expect(storageHierarchy?.fields.map((field) => field.key)).toEqual([
+      "node_type",
+      "node_code",
+      "node_name",
+      "entity_id",
+      "parent_node_id",
+    ]);
+    expect(visibleMasters.map((master) => master.key)).not.toEqual(
+      expect.arrayContaining(["warehouse", "sub-store", "rack", "bin"]),
+    );
+  });
+
   it("labels the product master and its entry field as Finished Goods Type", () => {
     const productType = MASTER_DEFINITIONS.find((master) => master.key === "product-master");
 

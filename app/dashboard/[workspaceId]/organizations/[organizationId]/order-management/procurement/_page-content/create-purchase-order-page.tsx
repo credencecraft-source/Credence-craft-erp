@@ -174,7 +174,7 @@ function MaterialReport({ group, onBack }: { group: MaterialGroup; onBack: () =>
 
   useEffect(() => {
     let mounted = true;
-    fetch(`/api/masters?organizationId=${encodeURIComponent(organizationId)}`, { cache: "no-store" })
+    fetch(`/api/masters?organizationId=${encodeURIComponent(organizationId)}&moduleKeys=vendor`, { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error("Failed to load vendor master");
         const data = await response.json() as { masters?: Array<{ module_key?: string; values?: Array<{ label?: string | null }> }> };

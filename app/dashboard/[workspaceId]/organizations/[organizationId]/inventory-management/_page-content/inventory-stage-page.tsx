@@ -31,6 +31,7 @@ type StockRow = {
   style_name?: string;
   size?: string | null;
   location: { location_name: string };
+  storage_path?: string | null;
   quantity_on_hand: number | string;
   quantity_reserved: number | string;
   quantity_issued: number | string;
@@ -60,11 +61,13 @@ type BookedStockRow = {
 };
 
 type StockMasterOption = { id: string; label: string; isAsset: boolean };
-type StockLocationOption = { id: string; label: string };
+type StockLocationOption = { id: string; label: string; entityId: string };
+type StockStorageOption = { id: string; label: string; entityId: string };
 
 type ManualStockForm = {
   rawMaterialId: string;
   locationId: string;
+  storageNodeId: string;
   quantity: string;
   reason: string;
 };
@@ -87,6 +90,7 @@ type AssetStockReportRow = {
 const assetStockReportFields = [
   { key: "asset", label: "Asset" },
   { key: "location", label: "Location" },
+  { key: "storagePath", label: "Storage Path" },
   { key: "source", label: "Source" },
   { key: "receiptNo", label: "GRN No." },
   { key: "entryDate", label: "Entry Date" },
@@ -98,7 +102,7 @@ const assetStockReportFields = [
   { key: "available", label: "Available" },
 ];
 
-const emptyManualStockForm = (): ManualStockForm => ({ rawMaterialId: "", locationId: "", quantity: "", reason: "" });
+const emptyManualStockForm = (): ManualStockForm => ({ rawMaterialId: "", locationId: "", storageNodeId: "", quantity: "", reason: "" });
 
 const bookedStockFields = [
   { key: "id", label: "Booking ID" },
@@ -178,6 +182,12 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
   const [manualStockForm, setManualStockForm] = useState<ManualStockForm>(emptyManualStockForm);
   const [rawMaterialOptions, setRawMaterialOptions] = useState<StockMasterOption[]>([]);
   const [locationOptions, setLocationOptions] = useState<StockLocationOption[]>([]);
+  const [storageOptions, setStorageOptions] = useState<StockStorageOption[]>([]);
+  const [storageSearch, setStorageSearch] = useState("");
+  const [storageSearchLoading, setStorageSearchLoading] = useState(false);
+  const [storageSearchError, setStorageSearchError] = useState("");
+  const [storageSearchRetry, setStorageSearchRetry] = useState(0);
+  const [hasMoreStorageOptions, setHasMoreStorageOptions] = useState(false);
   const [manualOptionsLoading, setManualOptionsLoading] = useState(false);
   const [manualStockSaving, setManualStockSaving] = useState(false);
   const [manualStockError, setManualStockError] = useState("");
@@ -242,6 +252,7 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
         id: row.id,
         asset: row.raw_material ?? row.style_name ?? "—",
         location: row.location.location_name,
+        storagePath: row.storage_path ?? "Legacy / not assigned",
         source: row.source_type === "GRN" ? "GRN" : row.source_type === "MANUAL" ? "Manual Entry" : "Legacy Balance",
         receiptNo: row.receipt_no ?? "—",
         entryDate: row.received_at || row.created_at
@@ -255,6 +266,59 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
         available: onHand - reserved,
       };
     }), [selectedAssetCategory, stock]);
+  const selectedStockLocation = locationOptions.find((option) => option.id === manualStockForm.locationId);
+  const availableStorageOptions = storageOptions.filter((option) =>
+    option.entityId === selectedStockLocation?.entityId,
+  );
+
+  useEffect(() => {
+    const siteEntityId = selectedStockLocation?.entityId;
+    const search = storageSearch.trim();
+    if (!manualStockOpen || !siteEntityId || search.length < 2) return;
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(async () => {
+      setStorageSearchLoading(true);
+      setStorageSearchError("");
+      try {
+        const query = new URLSearchParams({
+          nodeType: "BIN",
+          siteEntityId,
+          search,
+          limit: "50",
+        });
+        const response = await fetch(
+          `/api/organizations/${encodeURIComponent(organizationId)}/storage-nodes?${query.toString()}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error || "Unable to search storage Bins.");
+        if (!controller.signal.aborted) {
+          setStorageOptions(Array.isArray(payload?.nodes) ? payload.nodes
+            .filter((item: { is_active?: boolean; fields?: Record<string, unknown> }) => item.is_active !== false && Boolean(item.fields?.site_entity_id))
+            .map((item: { id: string; fields?: Record<string, unknown>; label: string }) => ({
+              id: item.id,
+              label: String(item.fields?.path ?? item.label),
+              entityId: String(item.fields?.site_entity_id ?? ""),
+            })) : []);
+          setHasMoreStorageOptions(payload?.hasMore === true);
+        }
+      } catch (searchError) {
+        if (!controller.signal.aborted) {
+          setStorageSearchError(searchError instanceof Error ? searchError.message : "Unable to search storage Bins.");
+          setStorageOptions([]);
+          setHasMoreStorageOptions(false);
+        }
+      } finally {
+        if (!controller.signal.aborted) setStorageSearchLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [manualStockOpen, organizationId, selectedStockLocation?.entityId, storageSearch, storageSearchRetry]);
 
   async function loadManualStockOptions() {
     const requestId = ++manualOptionsRequestId.current;
@@ -265,7 +329,10 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
         fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/raw-material?includeInactive=false&limit=200`, { cache: "no-store" }),
         fetch(`/api/organizations/${encodeURIComponent(organizationId)}/master-data/location?includeInactive=false&limit=200`, { cache: "no-store" }),
       ]);
-      const [materialsPayload, locationsPayload] = await Promise.all([materialsResponse.json(), locationsResponse.json()]);
+      const [materialsPayload, locationsPayload] = await Promise.all([
+        materialsResponse.json(),
+        locationsResponse.json(),
+      ]);
       if (!materialsResponse.ok) throw new Error(materialsPayload?.error || "Unable to load raw materials.");
       if (!locationsResponse.ok) throw new Error(locationsPayload?.error || "Unable to load locations.");
       if (requestId !== manualOptionsRequestId.current) return;
@@ -277,7 +344,13 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
           isAsset: item.fields?.Asset_Purchase === true || item.fields?.is_asset === true,
         }))
         .filter((item: StockMasterOption) => item.isAsset === (stage === "assets-stock")));
-      setLocationOptions(Array.isArray(locationsPayload) ? locationsPayload.map((item: { id: string; label: string }) => ({ id: item.id, label: item.label })) : []);
+      setLocationOptions(Array.isArray(locationsPayload) ? locationsPayload
+        .map((item: { id: string; label: string; fields?: Record<string, unknown> }) => ({
+          id: item.id,
+          label: item.label,
+          entityId: String(item.fields?.entity_id ?? ""),
+        }))
+        .filter((item: StockLocationOption) => item.entityId) : []);
     } catch (loadError) {
       if (requestId === manualOptionsRequestId.current) {
         setManualOptionsError(loadError instanceof Error ? loadError.message : "Unable to load stock form options.");
@@ -293,6 +366,10 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
     setManualOptionsError("");
     setRawMaterialOptions([]);
     setLocationOptions([]);
+    setStorageOptions([]);
+    setStorageSearch("");
+    setStorageSearchError("");
+    setHasMoreStorageOptions(false);
     setManualStockOpen(true);
     await loadManualStockOptions();
   }
@@ -300,6 +377,9 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
   function closeManualStockForm() {
     manualOptionsRequestId.current += 1;
     setManualStockOpen(false);
+    setStorageSearch("");
+    setStorageOptions([]);
+    setHasMoreStorageOptions(false);
   }
 
   async function submitManualStock(event: FormEvent<HTMLFormElement>) {
@@ -515,7 +595,8 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
                     <tr>
                       <th className="px-3 py-3">Raw Material</th>
                       <th className="px-3 py-3">Size</th>
-                      <th className="px-3 py-3">Location</th>
+                      <th className="px-3 py-3">Legacy Location</th>
+                      <th className="px-3 py-3">Storage Path</th>
                       <th className="px-3 py-3">Source</th>
                       <th className="px-3 py-3">GRN No.</th>
                       <th className="px-3 py-3">Entry Date</th>
@@ -536,6 +617,7 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
                           <td className="px-3 py-3 font-semibold text-slate-900">{row.raw_material ?? row.style_name}</td>
                           <td className="px-3 py-3">{row.size ?? "-"}</td>
                           <td className="px-3 py-3">{row.location.location_name}</td>
+                          <td className="px-3 py-3">{row.storage_path ?? "Legacy / not assigned"}</td>
                           <td className="px-3 py-3">{row.source_type === "GRN" ? "GRN" : row.source_type === "MANUAL" ? "Manual Entry" : "Legacy Balance"}</td>
                           <td className="px-3 py-3">{row.receipt_no ?? "-"}</td>
                           <td className="px-3 py-3">{row.received_at || row.created_at ? new Date(row.received_at ?? row.created_at!).toLocaleDateString("en-IN") : "-"}</td>
@@ -571,7 +653,7 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
       >
         <div className="border-b border-slate-200 px-6 py-4">
           <h2 id="manual-stock-dialog-title" className="text-base font-bold text-slate-950">{stage === "assets-stock" ? "Add Asset Stock" : "Add Raw Material Stock"}</h2>
-          <p className="mt-1 text-xs text-slate-500">Stock will be added to the selected location.</p>
+          <p className="mt-1 text-xs text-slate-500">Select the existing stock location and a Bin under a Site for the same Entity.</p>
         </div>
         <form onSubmit={submitManualStock} className="grid gap-4 p-6 sm:grid-cols-2">
           <>
@@ -586,14 +668,51 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
                 {rawMaterialOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
               </Select>
               <Select
-                label="Location"
+                label="Stock Location"
                 value={manualStockForm.locationId}
-                onChange={(event) => setManualStockForm((current) => ({ ...current, locationId: event.target.value }))}
+                onChange={(event) => {
+                  setManualStockForm((current) => ({ ...current, locationId: event.target.value, storageNodeId: "" }));
+                  setStorageSearch("");
+                  setStorageOptions([]);
+                  setStorageSearchError("");
+                  setHasMoreStorageOptions(false);
+                }}
                 required
                 disabled={manualOptionsLoading || locationOptions.length === 0}
               >
-                <option value="">Select a location</option>
+                <option value="">Select a stock location</option>
                 {locationOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </Select>
+              <Input
+                label="Search Storage Bins"
+                value={storageSearch}
+                onChange={(event) => {
+                  setStorageSearch(event.target.value);
+                  setStorageOptions([]);
+                  setStorageSearchError("");
+                  setHasMoreStorageOptions(false);
+                }}
+                placeholder={selectedStockLocation ? "Enter at least 2 characters" : "Select a stock location first"}
+                disabled={manualOptionsLoading || !selectedStockLocation}
+                autoComplete="off"
+              />
+              <Select
+                label="Storage Bin"
+                value={manualStockForm.storageNodeId}
+                onChange={(event) => setManualStockForm((current) => ({ ...current, storageNodeId: event.target.value }))}
+                required
+                disabled={manualOptionsLoading || storageSearchLoading || !selectedStockLocation || availableStorageOptions.length === 0}
+              >
+                <option value="">
+                  {storageSearchLoading
+                    ? "Searching Bins..."
+                    : storageSearch.trim().length < 2
+                      ? "Search for a Bin"
+                      : availableStorageOptions.length
+                        ? "Select a matching Bin"
+                        : "No matching active Bins"}
+                </option>
+                {availableStorageOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
               </Select>
               <Input
                 label="Quantity to Add"
@@ -624,14 +743,36 @@ export default function InventoryStagePage({ stage }: { stage: InventoryStage })
               Retry loading options
             </Button>
           )}
+          {storageSearchError && (
+            <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 sm:col-span-2">
+              {storageSearchError}
+            </p>
+          )}
+          {storageSearchError && (
+            <Button type="button" variant="secondary" onClick={() => setStorageSearchRetry((value) => value + 1)} className="sm:col-span-2">
+              Retry Bin search
+            </Button>
+          )}
           {!manualOptionsLoading && (rawMaterialOptions.length === 0 || locationOptions.length === 0) && !manualStockError && (
             <p className="text-sm text-slate-500 sm:col-span-2">
-              {stage === "assets-stock" ? "An active asset raw material and location are required before stock can be added." : "An active raw material and location are required before stock can be added."}
+              {stage === "assets-stock"
+                ? "An active asset raw material and stock location are required before stock can be added."
+                : "An active raw material and stock location are required before stock can be added."}
+            </p>
+          )}
+          {selectedStockLocation && storageSearch.trim().length < 2 && (
+            <p className="text-sm text-slate-500 sm:col-span-2">
+              Search for at least 2 characters to find active Bins beneath a Site associated with this location&apos;s Entity.
+            </p>
+          )}
+          {selectedStockLocation && hasMoreStorageOptions && (
+            <p className="text-sm text-slate-500 sm:col-span-2">
+              Showing the first 50 matching Bins. Refine your search to narrow the results.
             </p>
           )}
           <div className="flex justify-end gap-2 border-t border-slate-200 pt-4 sm:col-span-2">
             <Button type="button" variant="secondary" onClick={closeManualStockForm} disabled={manualStockSaving}>Cancel</Button>
-            <Button type="submit" disabled={manualStockSaving || manualOptionsLoading || rawMaterialOptions.length === 0 || locationOptions.length === 0}>
+            <Button type="submit" disabled={manualStockSaving || manualOptionsLoading || rawMaterialOptions.length === 0 || locationOptions.length === 0 || availableStorageOptions.length === 0}>
               {manualStockSaving ? "Adding..." : stage === "assets-stock" ? "Add Asset Stock" : "Add Stock"}
             </Button>
           </div>

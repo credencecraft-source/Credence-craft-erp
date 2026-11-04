@@ -7,6 +7,12 @@ import { syncFinishedGoodsSizes, type FinishedGoodsSizePriceInput } from "@/lib/
 import { parseFinishedGoodsPrice, syncFinishedGoodsVariants, type FinishedGoodsVariantInput } from "@/lib/services/master-data/finished-goods-variant-service";
 import { getMasterDefinition, type MasterFieldDefinition } from "@/lib/master-data/master-data-registry";
 import { normalizeUppercase } from "@/lib/utilities/text-case";
+import {
+  createStorageNode,
+  deactivateStorageNode,
+  listStorageNodesForOrganization,
+  updateStorageNode,
+} from "@/lib/services/inventory/storage-node-service";
 export { getMasterDefinition, MASTER_DEFINITIONS } from "@/lib/master-data/master-data-registry";
 
 export type MasterFieldValues = Record<string, string | number | boolean | null | string[] | number[] | Record<string, unknown>[]>;
@@ -37,8 +43,12 @@ function belongsToDummyBatch(record: Record<string, unknown>, batchId: string) {
     && (metadata as Record<string, unknown>).dummyDataBatchId === batchId;
 }
 
-async function isActiveDummyMaster(organizationId: string, record: MasterRow) {
-  const batch = await prisma.organizationDummyDataBatch.findFirst({
+async function isActiveDummyMaster(
+  organizationId: string,
+  record: MasterRow,
+  database: typeof prisma | Prisma.TransactionClient = prisma,
+) {
+  const batch = await database.organizationDummyDataBatch.findFirst({
     where: { organization_id: organizationId, status: "ACTIVE" },
     select: { id: true },
   });
@@ -58,8 +68,35 @@ const delegates = {
 
 const masterModulesWithoutLegacyMetadata = new Set(["article-variant", "state"]);
 
-async function findOrganizationPriceListModule(organizationId: string) {
-  return prisma.masterModule.findUnique({
+function getMasterDelegateForDatabase(
+  database: typeof prisma | Prisma.TransactionClient,
+  moduleKey: string,
+) {
+  if (database === prisma) return delegates[moduleKey];
+  const delegateName = moduleKey === "product-master"
+    ? "masterProduct"
+    : moduleKey === "process-master"
+      ? "masterProcess"
+      : `master${moduleKey.split("-").map((part) => part[0].toUpperCase() + part.slice(1)).join("")}`;
+  return (database as unknown as Record<string, MasterDelegate>)[delegateName];
+}
+
+function runInMasterTransaction<T>(
+  database: typeof prisma | Prisma.TransactionClient,
+  operation: (transaction: Prisma.TransactionClient) => Promise<T>,
+  options: { maxWait?: number; timeout?: number } = { maxWait: 10_000, timeout: 30_000 },
+) {
+  if ("$transaction" in database) {
+    return database.$transaction(operation, options);
+  }
+  return operation(database);
+}
+
+async function findOrganizationPriceListModule(
+  organizationId: string,
+  database: typeof prisma | Prisma.TransactionClient = prisma,
+) {
+  return database.masterModule.findUnique({
     where: {
       organization_id_module_key: {
         organization_id: organizationId,
@@ -609,6 +646,8 @@ export async function getMasterValuesForOrganization(
   options: {
     search?: string;
     limit?: number;
+    cursor?: string;
+    filters?: Record<string, { operator: string; value: string }>;
     exactSearch?: boolean;
     includeDummyData?: boolean;
     entityId?: string;
@@ -616,14 +655,38 @@ export async function getMasterValuesForOrganization(
     articleCode?: string;
     includeArticleMetrics?: boolean;
     includeArticleDetails?: boolean;
+    includeLookupLabels?: boolean;
     activeDummyDataBatch?: { id: string } | null | Promise<{ id: string } | null>;
+    database?: typeof prisma | Prisma.TransactionClient;
     onRowsFetched?: (rowIds: string[]) => void | Promise<void>;
   } = {},
 ) {
+  const database = options.database ?? prisma;
   const definition = getMasterDefinition(moduleKey);
+  if (moduleKey === "storage-node") {
+    const nodes = await listStorageNodesForOrganization(organizationId, {
+      includeInactive,
+      search: options.search,
+      exactSearch: options.exactSearch,
+      limit: options.limit,
+      cursor: options.cursor,
+    });
+    const filteredNodes = options.exactSearch && options.search
+      ? nodes.filter((node) =>
+          node.label.toLocaleLowerCase() === options.search?.toLocaleLowerCase()
+          || node.code?.toLocaleLowerCase() === options.search?.toLocaleLowerCase()
+          || node.id === options.search
+          || node.value_id === options.search,
+        )
+      : nodes;
+    return filteredNodes.map((node) => ({
+      ...node,
+      fields: node.fields as MasterFieldValues,
+    }));
+  }
   if (moduleKey === "price-list") {
     if (!definition) return [];
-    const masterModule = await findOrganizationPriceListModule(organizationId);
+    const masterModule = await findOrganizationPriceListModule(organizationId, database);
     if (!masterModule) return [];
     const search = options.search?.trim();
     const limit = Math.min(Math.max(options.limit ?? 500, 1), 500);
@@ -640,7 +703,7 @@ export async function getMasterValuesForOrganization(
             { code: { contains: search, mode: "insensitive" } },
           ]
       : [];
-    const rows = await prisma.masterModuleValue.findMany({
+    const rows = await database.masterModuleValue.findMany({
       where: {
         module_id: masterModule.id,
         ...(includeInactive ? {} : { is_active: true }),
@@ -656,7 +719,8 @@ export async function getMasterValuesForOrganization(
         metadata: true,
         parent_id: true,
       },
-      orderBy: [{ sort_order: "asc" }, { label: "asc" }],
+      orderBy: [{ sort_order: "asc" }, { label: "asc" }, { id: "asc" }],
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
       take: limit,
     });
     const additionalRead = options.onRowsFetched?.(rows.map((row) => row.id));
@@ -683,7 +747,7 @@ export async function getMasterValuesForOrganization(
       };
     });
   }
-  const delegate = delegates[moduleKey];
+  const delegate = getMasterDelegateForDatabase(database, moduleKey);
   if (!definition || !delegate) return [];
   const search = options.search?.trim();
   const limit = Math.min(Math.max(options.limit ?? 500, 1), 500);
@@ -697,49 +761,127 @@ export async function getMasterValuesForOrganization(
     labelFields[moduleKey],
     parentColumns[moduleKey],
   ]);
+  const searchColumns = new Set([
+    labelFields[moduleKey],
+    ...definition.fields
+      .filter((field) => ["text", "url", "picklist"].includes(field.type))
+      .map((field) => fieldColumns[moduleKey]?.[field.key])
+      .filter((column): column is string => Boolean(column) && !column.startsWith("legacy_metadata.")),
+  ].filter((column): column is string => Boolean(column)));
+  const searchConditions = search
+    ? [
+        ...[...searchColumns].map((column) => ({
+          [column]: options.exactSearch
+            ? { equals: search, mode: "insensitive" }
+            : { contains: search, mode: "insensitive" },
+        })),
+        ...(options.exactSearch ? [{ id: search }, { value_id: search }] : []),
+      ]
+    : [];
+  const filterConditions: Record<string, unknown>[] = [];
+  for (const [fieldKey, filter] of Object.entries(options.filters ?? {}).slice(0, 20)) {
+    const value = filter.value.trim();
+    if (!value && filter.operator !== "empty") continue;
+    if (fieldKey === "status") {
+      if (filter.operator === "is" && ["active", "pending"].includes(value.toLowerCase())) {
+        filterConditions.push({ is_active: value.toLowerCase() === "active" });
+      }
+      continue;
+    }
+
+    const field = definition.fields.find((candidate) => candidate.key === fieldKey);
+    const column = fieldKey === "label"
+      ? labelFields[moduleKey]
+      : fieldKey === "code"
+        ? ({ article: "article_code", "gold-seal": "gold_seal_code" } as Record<string, string>)[moduleKey]
+        : field && ["text", "url", "picklist", "number", "percentage", "decimal", "date", "checkbox"].includes(field.type)
+          ? fieldColumns[moduleKey]?.[fieldKey]
+          : undefined;
+    if (!column || column.startsWith("legacy_metadata.")) continue;
+
+    if (filter.operator === "empty") {
+      if (field && !["text", "url", "picklist"].includes(field.type)) {
+        filterConditions.push({ [column]: null });
+      } else {
+        filterConditions.push({ OR: [{ [column]: null }, { [column]: "" }] });
+      }
+      continue;
+    }
+    if (filter.operator === "contains" && (!field || ["text", "url", "picklist"].includes(field.type) || fieldKey === "label" || fieldKey === "code")) {
+      filterConditions.push({ [column]: { contains: value, mode: "insensitive" } });
+      continue;
+    }
+    if (filter.operator === "notContains" && (!field || ["text", "url", "picklist"].includes(field.type) || fieldKey === "label" || fieldKey === "code")) {
+      filterConditions.push({ [column]: { not: { contains: value, mode: "insensitive" } } });
+      continue;
+    }
+    if (filter.operator !== "is") continue;
+
+    if (field?.type === "checkbox") {
+      if (["true", "false"].includes(value.toLowerCase())) {
+        filterConditions.push({ [column]: value.toLowerCase() === "true" });
+      }
+    } else if (["number", "percentage", "decimal"].includes(field?.type ?? "")) {
+      const numericValue = Number(value);
+      if (Number.isFinite(numericValue)) filterConditions.push({ [column]: numericValue });
+    } else {
+      filterConditions.push({ [column]: { equals: value, mode: "insensitive" } });
+    }
+  }
   if (moduleKey === "raw-material-category") selectedColumns.add("is_asset");
   for (const field of definition.fields) {
     const column = fieldColumns[moduleKey]?.[field.key];
     if (column && !column.startsWith("legacy_metadata.")) selectedColumns.add(column);
   }
-  const dummyBatchQuery = Object.prototype.hasOwnProperty.call(options, "activeDummyDataBatch")
-    ? Promise.resolve(options.activeDummyDataBatch)
-    : prisma.organizationDummyDataBatch.findFirst({
-        where: { organization_id: organizationId, status: "ACTIVE" },
-        select: { id: true },
-      });
-  const [dummyBatch, fetchedRows] = await Promise.all([
-    dummyBatchQuery,
-    delegate.findMany({
+  const canHaveDummyMetadata = !masterModulesWithoutLegacyMetadata.has(moduleKey);
+  const hasBoundedPagination = options.limit !== undefined || Boolean(options.cursor);
+  const dummyBatchQuery = !canHaveDummyMetadata
+    ? Promise.resolve(null)
+    : Object.prototype.hasOwnProperty.call(options, "activeDummyDataBatch")
+      ? Promise.resolve(options.activeDummyDataBatch ?? null)
+      : database.organizationDummyDataBatch.findFirst({
+          where: { organization_id: organizationId, status: "ACTIVE" },
+          select: { id: true },
+        });
+  const fetchRows = (dummyBatchId?: string | null) => delegate.findMany({
       where: {
         organization_id: organizationId,
         ...(moduleKey === "article" && options.articleCode ? { article_code: options.articleCode } : {}),
         ...(moduleKey === "location" && options.entityId ? { entity_id: options.entityId } : {}),
         ...(options.parentId && parentColumns[moduleKey] ? { [parentColumns[moduleKey]]: options.parentId } : {}),
         ...(includeInactive ? {} : { is_active: true }),
-        ...(search && labelFields[moduleKey]
-          ? options.exactSearch
-            ? {
-                OR: [
-                  { [labelFields[moduleKey]]: { equals: search, mode: "insensitive" } },
-                  { id: search },
-                  { value_id: search },
-                ],
-              }
-            : { [labelFields[moduleKey]]: { contains: search, mode: "insensitive" } }
-          : {}),
+        ...(searchConditions.length ? { OR: searchConditions } : {}),
+        ...(filterConditions.length ? { AND: filterConditions } : {}),
+        ...(dummyBatchId && !options.includeDummyData && canHaveDummyMetadata ? {
+          NOT: {
+            legacy_metadata: {
+              path: ["dummyDataBatchId"],
+              equals: dummyBatchId,
+            },
+          },
+        } : {}),
       },
-      orderBy: [{ sort_order: "asc" }, { [labelFields[moduleKey]]: "asc" }],
+      orderBy: [{ sort_order: "asc" }, { [labelFields[moduleKey]]: "asc" }, { id: "asc" }],
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
       select: Object.fromEntries([...selectedColumns].filter(Boolean).map((column) => [column, true])),
-      take: limit + (options.includeDummyData ? 0 : 20),
-    }),
-  ]);
+      take: limit,
+    });
+  let dummyBatch: { id: string } | null;
+  let fetchedRows: Awaited<ReturnType<typeof fetchRows>>;
+  if (hasBoundedPagination) {
+    dummyBatch = await dummyBatchQuery;
+    fetchedRows = await fetchRows(dummyBatch?.id);
+  } else {
+    [dummyBatch, fetchedRows] = await Promise.all([dummyBatchQuery, fetchRows()]);
+  }
   const rows = fetchedRows
     .filter((row) => options.includeDummyData || !dummyBatch || !belongsToDummyBatch(row, dummyBatch.id))
     .slice(0, limit);
   const additionalRead = options.onRowsFetched?.(rows.map((row) => row.id));
   const lookupFieldsByModuleKey = new Map<string, MasterFieldDefinition[]>();
-  const lookupFields = definition.fields.filter((field) => field.type === "lookup");
+  const lookupFields = options.includeLookupLabels === false
+    ? []
+    : definition.fields.filter((field) => field.type === "lookup");
   for (const field of lookupFields) {
     const lookupModuleKey = field.lookupModuleKey;
     if (!lookupModuleKey) continue;
@@ -755,10 +897,12 @@ export async function getMasterValuesForOrganization(
       .filter(Boolean)))];
     if (ids.length === 0) return;
     const lookupLabelField = labelFields[lookupModuleKey];
-    const lookupRows = await delegates[lookupModuleKey].findMany({
+    const lookupDelegate = getMasterDelegateForDatabase(database, lookupModuleKey);
+    if (!lookupDelegate) throw new Error(`Master lookup "${lookupModuleKey}" is not available.`);
+    const lookupRows = await lookupDelegate.findMany({
       where: { organization_id: organizationId, OR: [{ id: { in: ids } }, { value_id: { in: ids } }] },
       select: { id: true, value_id: true, [lookupLabelField]: true },
-      take: 500,
+      take: ids.length,
     });
     const labels = new Map<string, string>();
     for (const lookupRow of lookupRows) {
@@ -773,7 +917,7 @@ export async function getMasterValuesForOrganization(
     && options.includeArticleDetails !== false
     && rows.length > 0
     ? Promise.all([
-        prisma.masterArticleVariant.findMany({
+        database.masterArticleVariant.findMany({
           where: {
             organization_id: organizationId,
             article_id: { in: rows.map((row) => row.id) },
@@ -791,7 +935,7 @@ export async function getMasterValuesForOrganization(
           },
           orderBy: [{ sort_order: "asc" }, { variant: "asc" }],
         }),
-        prisma.masterArticleSize.findMany({
+        database.masterArticleSize.findMany({
           where: {
             organization_id: organizationId,
             article_id: { in: rows.map((row) => row.id) },
@@ -1089,15 +1233,20 @@ export function sortBySizeGroupOrder<T>(
     .map(({ value }) => value);
 }
 
-export async function syncSizeGroupSizes(organizationId: string, sizeGroupId: string, selectedValues: unknown[]) {
+export async function syncSizeGroupSizes(
+  organizationId: string,
+  sizeGroupId: string,
+  selectedValues: unknown[],
+  database: typeof prisma | Prisma.TransactionClient = prisma,
+) {
   const selectedLabels = [...new Set(selectedValues.map((value) => String(value).trim()).filter(Boolean))];
-  const sizes = await prisma.masterSize.findMany({
+  const sizes = await database.masterSize.findMany({
     where: {
       organization_id: organizationId,
       OR: selectedLabels.flatMap((label) => [{ id: label }, { value_id: label }, { size: label }]),
     },
   });
-  const dummyBatch = await prisma.organizationDummyDataBatch.findFirst({
+  const dummyBatch = await database.organizationDummyDataBatch.findFirst({
     where: { organization_id: organizationId, status: "ACTIVE" },
     select: { id: true },
   });
@@ -1111,7 +1260,7 @@ export async function syncSizeGroupSizes(organizationId: string, sizeGroupId: st
     throw new Error("Every selected size must already exist in the Size master.");
   }
 
-  await prisma.$transaction(async (transaction) => {
+  const saveSizes = async (transaction: Prisma.TransactionClient) => {
     await transaction.masterSizeGroupSize.deleteMany({
       where: { organization_id: organizationId, size_group_id: sizeGroupId },
     });
@@ -1126,7 +1275,8 @@ export async function syncSizeGroupSizes(organizationId: string, sizeGroupId: st
         })),
       });
     }
-  });
+  };
+  await runInMasterTransaction(database, saveSizes);
 }
 
 export async function createMasterValueForOrganization(
@@ -1136,6 +1286,16 @@ export async function createMasterValueForOrganization(
   database: typeof prisma | Prisma.TransactionClient = prisma,
 ) {
   const definition = getMasterDefinition(moduleKey);
+  if (moduleKey === "storage-node") {
+    const fields = input.fields ?? {};
+    return createStorageNode(organizationId, input.actorUserId ?? "", {
+      nodeType: fields.node_type,
+      code: fields.node_code ?? input.code,
+      name: fields.node_name ?? input.label,
+      parentId: fields.parent_node_id,
+      entityId: fields.entity_id,
+    }, database);
+  }
   const delegate = delegates[moduleKey];
   if (!definition) throw new Error("Master module is not available.");
   if (moduleKey === "price-list") {
@@ -1482,10 +1642,24 @@ export async function createMasterValueForOrganization(
   return createWithinTransaction(database);
 }
 
-export async function updateMasterValue(organizationId: string, valueId: string, input: { label?: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; is_active?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; articleSizePrices?: FinishedGoodsSizePriceInput[]; actorUserId?: string }) {
-  const priceListModule = await findOrganizationPriceListModule(organizationId);
-  if (priceListModule) {
-    const existing = await prisma.masterModuleValue.findFirst({
+export async function updateMasterValue(
+  organizationId: string,
+  valueId: string,
+  input: { moduleKey: string; label?: string; code?: string | null; description?: string | null; fields?: MasterFieldValues; is_active?: boolean; articleVariants?: FinishedGoodsVariantInput[]; articleSizes?: string[]; articleSizePrices?: FinishedGoodsSizePriceInput[]; actorUserId?: string },
+  database: typeof prisma | Prisma.TransactionClient = prisma,
+) {
+  const moduleKey = input.moduleKey;
+  if (moduleKey === "storage-node") {
+    return updateStorageNode(organizationId, input.actorUserId ?? "", valueId, {
+      fields: input.fields,
+      label: input.label,
+      isActive: input.is_active,
+    }, database);
+  }
+  if (moduleKey === "price-list") {
+    const priceListModule = await findOrganizationPriceListModule(organizationId, database);
+    if (!priceListModule) return null;
+    const existing = await database.masterModuleValue.findFirst({
       where: {
         module_id: priceListModule.id,
         OR: [{ id: valueId }, { value_id: valueId }],
@@ -1511,7 +1685,7 @@ export async function updateMasterValue(organizationId: string, valueId: string,
         throw new Error("Select a valid Price List Type.");
       }
 
-      return prisma.$transaction(async (transaction) => {
+      return runInMasterTransaction(database, async (transaction) => {
         const duplicate = await transaction.masterModuleValue.findFirst({
           where: {
             module_id: priceListModule.id,
@@ -1546,21 +1720,24 @@ export async function updateMasterValue(organizationId: string, valueId: string,
           }, transaction);
         }
         return updated;
-      });
+      }, { timeout: 15_000 });
     }
   }
 
-  for (const [moduleKey, delegate] of Object.entries(delegates)) {
-    const existing = await delegate.findFirst({ where: { organization_id: organizationId, OR: [{ id: valueId }, { value_id: valueId }] } });
-    if (existing) {
-      if (await isActiveDummyMaster(organizationId, existing)) {
+  const delegate = getMasterDelegateForDatabase(database, moduleKey);
+  if (!delegate) throw new Error("Master module is not available.");
+  const existing = await delegate.findFirst({
+    where: { organization_id: organizationId, OR: [{ id: valueId }, { value_id: valueId }] },
+  });
+  if (existing) {
+      if (await isActiveDummyMaster(organizationId, existing, database)) {
         throw new Error("Demo master values are managed by the Dummy Data batch and cannot be edited individually.");
       }
       if (moduleKey === "article" && (input.articleVariants || input.articleSizes || input.articleSizePrices)) {
         const articleVariants = input.articleVariants;
         const articleSizes = input.articleSizes;
         const articleSizePrices = input.articleSizePrices;
-        return prisma.$transaction(async (transaction) => {
+        return runInMasterTransaction(database, async (transaction) => {
           const currentArticle = await transaction.masterArticle.findFirst({
             where: { organization_id: organizationId, id: existing.id },
           });
@@ -1610,7 +1787,7 @@ export async function updateMasterValue(organizationId: string, valueId: string,
           throw new Error("Set whether this Raw Material Type is for assets.");
         }
         const isAsset = data.is_asset;
-        return prisma.$transaction(async (transaction) => {
+        return runInMasterTransaction(database, async (transaction) => {
           const rawMaterialType = await transaction.masterRawMaterialType.findFirst({
             where: { id: existing.id, organization_id: organizationId },
             select: { id: true, is_asset: true },
@@ -1652,7 +1829,7 @@ export async function updateMasterValue(organizationId: string, valueId: string,
       }
       if (moduleKey === "raw-material-category" && typeof data.raw_material_type_id === "string") {
         const rawMaterialTypeId = data.raw_material_type_id;
-        return prisma.$transaction(async (transaction) => {
+        return runInMasterTransaction(database, async (transaction) => {
           const rawMaterialType = await transaction.masterRawMaterialType.findFirst({
             where: { id: rawMaterialTypeId, organization_id: organizationId },
             select: { id: true, is_asset: true },
@@ -1680,22 +1857,34 @@ export async function updateMasterValue(organizationId: string, valueId: string,
         });
       }
       return delegate.update({ where: { id: existing.id }, data });
-    }
   }
   return null;
 }
 
-export async function deleteMasterValue(organizationId: string, valueId: string, userId?: string) {
-  const priceListModule = await findOrganizationPriceListModule(organizationId);
-  if (priceListModule) {
-    const existing = await prisma.masterModuleValue.findFirst({
+export async function deleteMasterValue(
+  organizationId: string,
+  valueId: string,
+  moduleKey: string,
+  userId?: string,
+  database: typeof prisma | Prisma.TransactionClient = prisma,
+) {
+  if (moduleKey === "storage-node") {
+    return {
+      ...(await deactivateStorageNode(organizationId, userId, valueId, database)),
+      error: undefined,
+    };
+  }
+  if (moduleKey === "price-list") {
+    const priceListModule = await findOrganizationPriceListModule(organizationId, database);
+    if (!priceListModule) return { record: null };
+    const existing = await database.masterModuleValue.findFirst({
       where: {
         module_id: priceListModule.id,
         OR: [{ id: valueId }, { value_id: valueId }],
       },
     });
     if (existing) {
-      await prisma.$transaction(async (transaction) => {
+      await runInMasterTransaction(database, async (transaction) => {
         await transaction.approvalRequest.deleteMany({
           where: { organization_id: organizationId, entity_ref_id: existing.value_id },
         });
@@ -1716,14 +1905,17 @@ export async function deleteMasterValue(organizationId: string, valueId: string,
     }
   }
 
-  for (const [moduleKey, delegate] of Object.entries(delegates)) {
-    const existing = await delegate.findFirst({ where: { organization_id: organizationId, OR: [{ id: valueId }, { value_id: valueId }] } });
-    if (existing) {
-      if (await isActiveDummyMaster(organizationId, existing)) {
+  const delegate = getMasterDelegateForDatabase(database, moduleKey);
+  if (!delegate) throw new Error("Master module is not available.");
+  const existing = await delegate.findFirst({
+    where: { organization_id: organizationId, OR: [{ id: valueId }, { value_id: valueId }] },
+  });
+  if (existing) {
+      if (await isActiveDummyMaster(organizationId, existing, database)) {
         return { record: null, error: "Demo master values can only be removed by deleting the complete Dummy Data batch." };
       }
       try {
-        await prisma.$transaction(async (transaction) => {
+        await runInMasterTransaction(database, async (transaction) => {
           await transaction.approvalRequest.deleteMany({ where: { organization_id: organizationId, entity_ref_id: existing.value_id } });
           await delegate.delete({ where: { id: existing.id } });
         });
@@ -1741,10 +1933,8 @@ export async function deleteMasterValue(organizationId: string, valueId: string,
             error: `This ${getMasterDefinition(moduleKey)?.label.toLowerCase() ?? "master value"} cannot be deleted because it is used by other records.`,
           };
         }
-
         throw error;
       }
-    }
   }
   return { record: null };
 }

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
-import { ORDER_QR_TEMPLATE_FIELDS } from "@/lib/services/orders/order-qr-template-contract";
+import { getQrTemplateFieldLabel } from "@/lib/services/orders/order-qr-template-contract";
 
 type TemplateReportRow = {
   id: string;
@@ -20,7 +20,7 @@ type TemplateReportRow = {
 const fields: Array<{ key: keyof TemplateReportRow; label: string }> = [
   { key: "name", label: "Template Name" },
   { key: "type", label: "Type" },
-  { key: "fields", label: "Order Fields" },
+  { key: "fields", label: "Template Fields" },
   { key: "qrSize", label: "QR Size" },
   { key: "updatedAt", label: "Last Updated" },
 ];
@@ -78,9 +78,11 @@ export default function BarcodeQrCodeTemplatesPage({
         setRecords(templates.map((template) => ({
           id: template.id,
           name: template.name,
-          type: template.type === "ORDER_TAGS" ? "Order Tags" : template.type,
+          type: template.type === "ORDER_TAGS"
+            ? "Order Tags"
+            : template.type === "POS_ITEM_BARCODE" ? "POS Item Barcode" : template.type,
           fields: template.fieldKeys
-            .map((key) => ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === key)?.label ?? key)
+            .map((key) => getQrTemplateFieldLabel(key as Parameters<typeof getQrTemplateFieldLabel>[0]))
             .join(", "),
           qrSize: `${template.qrSize} px`,
           updatedAt: new Date(template.updatedAt).toLocaleDateString(),

@@ -1,6 +1,11 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/database/prisma-client";
+import {
+  buildPosStockSkuCode,
+  reserveNextPosBarcode,
+} from "@/lib/services/pos/pos-stock-identifiers";
+import { normalizeUppercase } from "@/lib/utilities/text-case";
 import { reserveChallanNumber } from "@/lib/services/organizations/challan-number-configuration-service";
 
 const SAVED_STATUS = "SAVED";
@@ -558,17 +563,31 @@ export async function createPurchaseBillFinishedGoodsStock(organizationId: strin
     const created = [];
     for (const line of bill.lines) {
       const record = line.sourceRecord!;
+      const styleName = normalizeUppercase(
+        record.style_name?.trim() || line.item_name?.trim() || record.record_number,
+      );
+      const colour = normalizeUppercase(record.color_id ? colorById.get(record.color_id) ?? "" : "");
+      const size = normalizeUppercase(line.size ?? "");
+      const skuCode = buildPosStockSkuCode(styleName, colour, size);
+      if (!skuCode) {
+        throw new Error(
+          `Purchase bill line ${line.item_name || record.record_number} needs a style, colour, and size to generate its POS SKU.`,
+        );
+      }
+      const barcode = await reserveNextPosBarcode(transaction, organizationId);
       const stock = await transaction.finishedGoodsSkuStock.create({
         data: {
           organization_id: organizationId,
           entity_id: stockLocation.entity_id,
           location_id: stockLocation.id,
-          style_name: record.style_name?.trim() || line.item_name?.trim() || record.record_number,
+          sku_code: skuCode,
+          barcode,
+          style_name: styleName,
           order_no: bill.document_number,
           article_no: line.item_name?.trim() || record.record_number,
           brand: record.brand_id ? brandById.get(record.brand_id) ?? null : null,
-          size: line.size,
-          colour: record.color_id ? colorById.get(record.color_id) ?? null : null,
+          size: size || null,
+          colour: colour || null,
           product_category: record.category_id ? categoryById.get(record.category_id) ?? null : null,
           sub_product_category: record.sub_category_id ? subCategoryById.get(record.sub_category_id) ?? null : null,
           gst_rate: line.gst_rate,
@@ -598,6 +617,6 @@ export async function createPurchaseBillFinishedGoodsStock(organizationId: strin
       },
     });
     return { bill: approvedBill, created, vendor };
-  });
+  }, { maxWait: 10_000, timeout: 30_000 });
   return { bill: serializePurchaseBillDetail(result.bill, result.vendor), stock: result.created };
 }

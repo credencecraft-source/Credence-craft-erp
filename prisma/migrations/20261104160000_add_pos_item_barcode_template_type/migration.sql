@@ -1,0 +1,1 @@
+ALTER TYPE "OrderQrTemplateType" ADD VALUE 'POS_ITEM_BARCODE';

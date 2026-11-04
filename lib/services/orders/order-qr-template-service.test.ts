@@ -153,6 +153,7 @@ describe("order QR template service", () => {
     await expect(
       createOrderQrTemplate("internal-org-1", "user-1", {
         name: "ORDER TAG",
+        type: "ORDER_TAGS",
         pageSetupTemplateId: "setup-1",
         qrFieldKey: "orderNo",
         displayFields: ["orderNo", "styleName"],
@@ -224,6 +225,7 @@ describe("order QR template service", () => {
 
     await expect(createOrderQrTemplate("internal-org-1", "user-1", {
       name: "ORDER TAG",
+      type: "ORDER_TAGS",
       pageSetupTemplateId: "foreign-setup",
       qrFieldKey: "orderNo",
       displayFields: ["orderNo"],
@@ -326,6 +328,7 @@ describe("order QR template service", () => {
 
     await expect(updateOrderQrTemplate("internal-org-1", "user-1", "template-1", {
       name: "UPDATED TAG",
+      type: "ORDER_TAGS",
       pageSetupTemplateId: "setup-1",
       qrFieldKey: "orderNo",
       displayFields: ["orderNo", "buyer"],
@@ -353,6 +356,7 @@ describe("order QR template service", () => {
         where: { organization_id: "internal-org-1", id: "template-1" },
         data: {
           name: "UPDATED TAG",
+          type: "ORDER_TAGS",
           field_keys: ["orderNo", "buyer"],
           qr_field_key: "orderNo",
           display_fields: ["orderNo", "buyer"],

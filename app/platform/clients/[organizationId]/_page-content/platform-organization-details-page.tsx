@@ -2,6 +2,18 @@ import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 import { after } from "next/server";
+import {
+  Boxes,
+  BriefcaseBusiness,
+  ClipboardList,
+  Factory,
+  Gauge,
+  Landmark,
+  LayoutGrid,
+  Lock,
+  Package,
+  Truck,
+} from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Checkbox from "@/components/ui/Checkbox";
@@ -29,6 +41,28 @@ import OrganizationTrialControls from "../../_page-content/organization-trial-co
 import OrganizationDeleteControl from "./organization-delete-control";
 import { countActiveOrganizationMembers, getPlatformPricingSettings, setOrganizationPricingMode, type PricingMode } from "@/lib/services/platform/pricing-mode-service";
 import { setOrganizationAuthOtpCopySetting } from "@/lib/services/platform/organization-auth-otp-setting-service";
+import {
+  getOrganizationModuleVisibility,
+  OrganizationModuleVisibilityError,
+  setOrganizationModuleVisibility,
+} from "@/lib/services/platform/organization-module-visibility-service";
+
+const moduleVisibilityIcons = {
+  online: Gauge,
+  pos: Landmark,
+  "order-management": ClipboardList,
+  "asset-management": Package,
+  "design-development": BriefcaseBusiness,
+  "factory-management": Factory,
+  "quality-management-system": Boxes,
+  "finance-management": Landmark,
+  "inventory-management": Package,
+  distribution: Truck,
+  "security-management": Lock,
+  approvals: ClipboardList,
+  settings: LayoutGrid,
+  admin: LayoutGrid,
+} as const;
 
 function Detail({ label, value }: { label: string; value: string }) {
   return (
@@ -69,12 +103,13 @@ export default async function PlatformOrganizationDetailsPage({
     notFound();
   }
   const internalOrganizationId = organization.id;
-  const [pricing, trialHistory, pricingSettings, activeUserCount, kycProfile] = await Promise.all([
+  const [pricing, trialHistory, pricingSettings, activeUserCount, kycProfile, moduleVisibility] = await Promise.all([
     listOrganizationSegmentPricing(organizationId),
     listOrganizationTrialHistory(organizationId),
     getPlatformPricingSettings(),
     countActiveOrganizationMembers(organization.id),
     getOrganizationKycProfileForPlatform(organization.id),
+    getOrganizationModuleVisibility(internalOrganizationId),
   ]);
   const trialExtensionRequests = trialHistory.requests;
   const kycDetails = readOrganizationKycDetails(kycProfile?.kyc_details);
@@ -336,6 +371,34 @@ export default async function PlatformOrganizationDetailsPage({
     redirect(`/platform/organisations/${organizationId}?tab=overview&success=${encodeURIComponent("Organization OTP email setting updated.")}`);
   }
 
+  async function updateOrganizationModuleVisibilityAction(formData: FormData) {
+    "use server";
+    const moduleKey = formData.get("moduleKey");
+    const enabledValue = formData.get("enabled");
+    if (typeof moduleKey !== "string" || (enabledValue !== "true" && enabledValue !== "false")) {
+      redirect(`/platform/organisations/${organizationId}?tab=module-visibility&error=${encodeURIComponent("Select a valid module visibility setting.")}`);
+    }
+
+    try {
+      await setOrganizationModuleVisibility(
+        internalOrganizationId,
+        moduleKey,
+        enabledValue === "true",
+      );
+    } catch (error) {
+      const message = error instanceof OrganizationModuleVisibilityError
+        ? error.message
+        : "Unable to update module visibility. Please try again.";
+      if (!(error instanceof OrganizationModuleVisibilityError)) {
+        console.error("Organization module visibility update failed.");
+      }
+      redirect(`/platform/organisations/${organizationId}?tab=module-visibility&error=${encodeURIComponent(message)}`);
+    }
+
+    revalidatePath(`/platform/organisations/${organizationId}`);
+    redirect(`/platform/organisations/${organizationId}?tab=module-visibility&success=${encodeURIComponent("Organization module visibility updated for all users.")}`);
+  }
+
   async function extendTrial(formData: FormData) {
     "use server";
     await requirePlatformSessionAdmin();
@@ -385,7 +448,7 @@ export default async function PlatformOrganizationDetailsPage({
           </header>
         </div>
 
-        <OrganizationDetailTabs initialValue={["overview", "database", "pricing-type", "pricing", "subscriptions", "trial", "users", "activity", "delete", "kyc"].includes(query.tab ?? "") ? query.tab : undefined} panels={[
+        <OrganizationDetailTabs initialValue={["overview", "database", "pricing-type", "module-visibility", "pricing", "subscriptions", "trial", "users", "activity", "delete", "kyc"].includes(query.tab ?? "") ? query.tab : undefined} panels={[
           {
             label: "Pricing Type",
             value: "pricing-type",
@@ -409,6 +472,59 @@ export default async function PlatformOrganizationDetailsPage({
                   <Button type="submit" size="sm">Save pricing type</Button>
                 </form>
                 <p className="text-xs text-slate-500">Current type: {organization.pricing_mode === "USER_BASED" ? "User Based Pricing" : "Module Based Pricing"}</p>
+              </section>
+            ),
+          },
+          {
+            label: "Module Visibility",
+            value: "module-visibility",
+            content: (
+              <section className="space-y-4 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-surface)] p-4">
+                <div>
+                  <h2 className="text-sm font-bold text-[var(--erp-text)]">Platform-enabled modules</h2>
+                  <p className="mt-1 text-xs text-[var(--erp-muted)]">
+                    Enable modules for this organisation. Organization users with settings permission can then choose which enabled modules appear in their workspace. This does not change pricing or user permissions.
+                  </p>
+                </div>
+                {moduleVisibility.length > 0 ? (
+                  <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {moduleVisibility.map((module) => {
+                      const Icon = moduleVisibilityIcons[module.key as keyof typeof moduleVisibilityIcons] ?? LayoutGrid;
+                      return (
+                        <form key={module.key} action={updateOrganizationModuleVisibilityAction}>
+                          <input type="hidden" name="moduleKey" value={module.key} />
+                          <input type="hidden" name="enabled" value={String(!module.isEnabled)} />
+                          <Button
+                            type="submit"
+                            variant="card"
+                            aria-pressed={module.isEnabled}
+                            aria-label={`${module.isEnabled ? "Disable" : "Enable"} ${module.label} for this organisation`}
+                            className={`min-h-28 w-full items-start justify-between gap-4 p-4 ${
+                              module.isEnabled
+                                ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)] text-[var(--erp-brand)]"
+                                : "text-[var(--erp-muted)]"
+                            }`}
+                          >
+                            <span className="flex w-full items-center justify-between gap-3">
+                              <span className="rounded-md border border-[var(--erp-border)] bg-[var(--erp-surface)] p-2 text-[var(--erp-brand)]">
+                                <Icon className="h-4 w-4" aria-hidden="true" />
+                              </span>
+                              <span className="flex items-center gap-2">
+                                <span className={`h-2 w-2 rounded-full ${module.isEnabled ? "bg-[var(--erp-brand)]" : "bg-[var(--erp-muted)]"}`} />
+                                <Badge className={module.isEnabled ? "" : "border-[var(--erp-border)] bg-[var(--erp-surface-soft)] text-[var(--erp-muted)]"}>
+                                  {module.isEnabled ? "Enabled" : "Disabled"}
+                                </Badge>
+                              </span>
+                            </span>
+                            <span className="text-sm font-semibold">{module.label}</span>
+                          </Button>
+                        </form>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-[var(--erp-muted)]">No active ERP modules are available to configure.</p>
+                )}
               </section>
             ),
           },

@@ -7,12 +7,12 @@ import {
 import {
   parseStoredOrderQrTemplateDesign,
   serializeOrderQrTemplateDesign,
-  type OrderQrTemplateFieldKey,
+  isOrderQrTemplateFieldKey,
+  type QrTemplateFieldKey,
 } from "./order-qr-template-contract";
 import {
   buildRequestQrPayload,
   getNextOrderQrPrintRequestStatus,
-  isOrderQrTemplateFieldKey,
   MAX_ORDER_QR_PRINT_REQUEST_LABELS,
   type CreateOrderQrPrintRequestInput,
   type OrderQrPrintRequestStatus,
@@ -25,7 +25,9 @@ function normalizeTemplateFields(value: unknown) {
 
 function mapRequest(request: {
   id: string;
-  order_id: string;
+  source_type?: string;
+  order_id: string | null;
+  purchase_bill_id?: string | null;
   order_no: string;
   request_type: string;
   status: string;
@@ -49,12 +51,18 @@ function mapRequest(request: {
   const pageSetup = parsePageSetupPrintSnapshot(savedValues.__pageSetup) ?? design.pageSetup;
   return {
     id: request.id,
-    orderId: request.order_id,
+    sourceType: request.source_type === "POS_PURCHASE_BILL" || request.purchase_bill_id
+      ? "POS_PURCHASE_BILL" as const
+      : "ORDER" as const,
+    orderId: request.order_id ?? "",
+    purchaseBillId: request.purchase_bill_id ?? null,
     orderNo: request.order_no,
     requestType: request.request_type,
     status: request.status,
     templateName: request.template_name,
-    qrFieldKey: request.qr_field_key ?? "orderNo",
+    qrFieldKey: isOrderQrTemplateFieldKey(request.qr_field_key)
+      ? request.qr_field_key
+      : "orderNo",
     displayFields: normalizeTemplateFields(request.display_fields),
     displayValues: normalizeDisplayValues(
       request.display_values,
@@ -97,11 +105,11 @@ function getJsonObject(value: unknown): Prisma.JsonObject {
 function normalizeDisplayValues(
   value: unknown,
   displayFields: ReturnType<typeof normalizeTemplateFields>,
-): Partial<Record<OrderQrTemplateFieldKey, string>> {
+): Partial<Record<QrTemplateFieldKey, string>> {
   const saved = typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
-  const values: Partial<Record<OrderQrTemplateFieldKey, string>> = {};
+  const values: Partial<Record<QrTemplateFieldKey, string>> = {};
   for (const key of displayFields) {
     if (typeof saved[key] === "string") values[key] = saved[key] as string;
   }
@@ -152,7 +160,9 @@ export async function listOrderQrPrintRequests(organizationId: string) {
     take: 200,
     select: {
       id: true,
+      source_type: true,
       order_id: true,
+      purchase_bill_id: true,
       order_no: true,
       request_type: true,
       status: true,
@@ -180,7 +190,9 @@ export async function getOrderQrPrintRequest(
     where: { organization_id: organizationId, id: requestId },
     select: {
       id: true,
+      source_type: true,
       order_id: true,
+      purchase_bill_id: true,
       order_no: true,
       request_type: true,
       status: true,
@@ -243,58 +255,185 @@ export async function createOrderQrPrintRequest(
   return prisma.$transaction(async (transaction) => {
     await transaction.$executeRaw`SELECT set_config('app.user_id', ${userId}, true)`;
 
-    const orderSelect = {
-      id: true,
-      orderNo: true,
-      entityName: true,
-      category: true,
-      subCategory: true,
-      season: true,
-      article: true,
-      styleName: true,
-      colors: true,
-      buyer: true,
-      brand: true,
-      sizeGroup: true,
-      orderQty: true,
-      deliveryDate: true,
+    type RequestItem = {
+      id: string;
+      orderNo: string;
+      styleName: string;
+      quantity: number;
+      fields: Partial<Record<QrTemplateFieldKey, string | number | null>>;
     };
-    const orders = input.bulkOrders
-      ? await transaction.merchandisingOrder.findMany({
-        where: {
-          organization_id: organizationId,
-          id: { in: input.bulkOrders.map(({ orderId }) => orderId) },
+    let requestItems: RequestItem[];
+    let sourceType: "ORDER" | "POS_PURCHASE_BILL";
+    let requestOrderId: string | null = null;
+    let requestPurchaseBillId: string | null = null;
+    let requestOrderNo: string;
+
+    if (input.purchaseBillId && input.billLines) {
+      sourceType = "POS_PURCHASE_BILL";
+      const selectedLineIds = input.billLines.map(({ billLineId }) => billLineId);
+      const bill = await transaction.posPurchaseBill.findFirst({
+        where: { organization_id: organizationId, id: input.purchaseBillId },
+        select: {
+          id: true,
+          document_number: true,
+          bill_number: true,
+          bill_date: true,
+          status: true,
+          vendor_id: true,
+          lines: {
+            where: { id: { in: selectedLineIds } },
+            orderBy: [{ created_at: "asc" }, { id: "asc" }],
+            select: {
+              id: true,
+              item_name: true,
+              size: true,
+              quantity: true,
+              sourceRecord: {
+                select: {
+                  record_number: true,
+                  item_type: true,
+                  style_name: true,
+                },
+              },
+              finished_goods_stock: {
+                select: { id: true, sku_code: true },
+              },
+            },
+          },
         },
-        select: orderSelect,
-      })
-      : await transaction.merchandisingOrder.findFirst({
-        where: { organization_id: organizationId, id: input.orderId },
-        select: orderSelect,
       });
-    const scopedOrders = Array.isArray(orders) ? orders : orders ? [orders] : [];
-    if (
-      scopedOrders.length === 0
-      || (input.bulkOrders && scopedOrders.length !== input.bulkOrders.length)
-    ) {
-      return { success: false as const, reason: "ORDER_NOT_FOUND" as const };
+      if (!bill || bill.lines.length !== selectedLineIds.length) {
+        return { success: false as const, reason: "PURCHASE_BILL_NOT_FOUND" as const };
+      }
+      if (!["POSTED", "APPROVED"].includes(bill.status)) {
+        return { success: false as const, reason: "PURCHASE_BILL_NOT_READY" as const };
+      }
+      const vendor = await transaction.masterVendor.findFirst({
+        where: { id: bill.vendor_id, organization_id: organizationId },
+        select: { vendor: true },
+      });
+      if (!vendor) {
+        return { success: false as const, reason: "PURCHASE_BILL_NOT_FOUND" as const };
+      }
+      const lineOrder = await transaction.posPurchaseBillLine.findMany({
+        where: { purchase_bill_id: bill.id },
+        orderBy: [{ created_at: "asc" }, { id: "asc" }],
+        select: { id: true },
+      });
+      const lineNumberById = new Map(
+        lineOrder.map((line, index) => [line.id, String(index + 1).padStart(3, "0")]),
+      );
+      const linesById = new Map(bill.lines.map((line) => [line.id, line]));
+      requestItems = input.billLines.flatMap(({ billLineId }) => {
+        const line = linesById.get(billLineId);
+        if (!line) return [];
+        const quantity = input.quantityMode === "PCS" ? 1 : Number(line.quantity.toString());
+        const lineCode = line.finished_goods_stock?.sku_code
+          || line.finished_goods_stock?.id
+          || `${bill.document_number}-L${lineNumberById.get(line.id) ?? "000"}`;
+        const source = line.sourceRecord;
+        const fields: Partial<Record<QrTemplateFieldKey, string | number | null>> = {
+          posItemCode: lineCode,
+          posItemName: line.item_name ?? source?.style_name ?? source?.record_number ?? null,
+          posSize: line.size,
+          posItemType: source?.item_type?.replaceAll("_", " ") ?? null,
+          posRecordNumber: source?.record_number ?? null,
+          posVendor: vendor.vendor,
+          posBillNumber: bill.bill_number,
+          posBillDate: bill.bill_date.toISOString().slice(0, 10),
+          posBillQuantity: line.quantity.toString(),
+          posSkuCode: line.finished_goods_stock?.sku_code ?? line.finished_goods_stock?.id ?? null,
+        };
+        return [{
+          id: line.id,
+          orderNo: lineCode,
+          styleName: source?.style_name ?? line.item_name ?? source?.record_number ?? "",
+          quantity,
+          fields,
+        }];
+      });
+      if (requestItems.length !== input.billLines.length) {
+        return { success: false as const, reason: "PURCHASE_BILL_NOT_FOUND" as const };
+      }
+      requestPurchaseBillId = bill.id;
+      requestOrderNo = bill.document_number;
+    } else {
+      sourceType = "ORDER";
+      const orderSelect = {
+        id: true,
+        orderNo: true,
+        entityName: true,
+        category: true,
+        subCategory: true,
+        season: true,
+        article: true,
+        styleName: true,
+        colors: true,
+        buyer: true,
+        brand: true,
+        sizeGroup: true,
+        orderQty: true,
+        deliveryDate: true,
+      };
+      const orders = input.bulkOrders
+        ? await transaction.merchandisingOrder.findMany({
+          where: {
+            organization_id: organizationId,
+            id: { in: input.bulkOrders.map(({ orderId }) => orderId) },
+          },
+          select: orderSelect,
+        })
+        : await transaction.merchandisingOrder.findFirst({
+          where: { organization_id: organizationId, id: input.orderId },
+          select: orderSelect,
+        });
+      const scopedOrders = Array.isArray(orders) ? orders : orders ? [orders] : [];
+      if (
+        scopedOrders.length === 0
+        || (input.bulkOrders && scopedOrders.length !== input.bulkOrders.length)
+      ) {
+        return { success: false as const, reason: "ORDER_NOT_FOUND" as const };
+      }
+      const ordersById = new Map(scopedOrders.map((order) => [order.id, order]));
+      const selectedOrders = input.bulkOrders
+        ? input.bulkOrders.flatMap((item) => {
+          const order = ordersById.get(item.orderId);
+          return order ? [{ order, quantity: item.quantity }] : [];
+        })
+        : [{ order: scopedOrders[0], quantity: input.quantityMode === "PCS"
+          ? 1
+          : input.bulkQuantity ?? scopedOrders[0].orderQty ?? 0 }];
+      requestItems = selectedOrders.map(({ order, quantity }) => ({
+        id: order.id,
+        orderNo: order.orderNo,
+        styleName: order.styleName ?? "",
+        quantity: Number(quantity),
+        fields: {
+          orderNo: order.orderNo,
+          entityName: order.entityName,
+          category: order.category,
+          subCategory: order.subCategory,
+          season: order.season,
+          article: order.article,
+          styleName: order.styleName,
+          colors: order.colors,
+          buyer: order.buyer,
+          brand: order.brand,
+          sizeGroup: order.sizeGroup,
+          orderQty: quantity,
+          deliveryDate: order.deliveryDate?.toISOString().slice(0, 10) ?? null,
+        },
+      }));
+      requestOrderId = selectedOrders[0].order.id;
+      requestOrderNo = input.bulkOrders
+        ? `BULK: ${selectedOrders.length} ORDERS`
+        : selectedOrders[0].order.orderNo;
     }
-    const ordersById = new Map(scopedOrders.map((order) => [order.id, order]));
-    const selectedOrders = input.bulkOrders
-      ? input.bulkOrders.flatMap((item) => {
-        const order = ordersById.get(item.orderId);
-        return order ? [{ order, quantity: item.quantity }] : [];
-      })
-      : [{ order: scopedOrders[0], quantity: input.quantityMode === "PCS"
-        ? 1
-        : input.bulkQuantity ?? scopedOrders[0].orderQty ?? 0 }];
-    const requestedLabelCount = selectedOrders.reduce(
-      (total, item) => total + Number(item.quantity),
-      0,
-    );
+
+    const requestedLabelCount = requestItems.reduce((total, item) => total + item.quantity, 0);
     if (
-      selectedOrders.some(({ quantity }) =>
-        !Number.isSafeInteger(Number(quantity)) || Number(quantity) < 1,
-      )
+      requestItems.length === 0
+      || requestItems.some(({ quantity }) => !Number.isSafeInteger(quantity) || quantity < 1)
       || !Number.isSafeInteger(requestedLabelCount)
       || requestedLabelCount > MAX_ORDER_QR_PRINT_REQUEST_LABELS
     ) {
@@ -302,9 +441,14 @@ export async function createOrderQrPrintRequest(
     }
 
     const template = await transaction.merchandisingOrderQrTemplate.findFirst({
-      where: { organization_id: organizationId, id: input.templateId },
+      where: {
+        organization_id: organizationId,
+        id: input.templateId,
+        type: sourceType === "POS_PURCHASE_BILL" ? "POS_ITEM_BARCODE" : "ORDER_TAGS",
+      },
       select: {
         name: true,
+        type: true,
         field_keys: true,
         qr_field_key: true,
         display_fields: true,
@@ -318,71 +462,52 @@ export async function createOrderQrPrintRequest(
       return { success: false as const, reason: "TEMPLATE_NOT_FOUND" as const };
     }
 
-    const legacyFieldKeys = normalizeTemplateFields(template?.field_keys);
-    const qrFieldKey = template && isOrderQrTemplateFieldKey(template.qr_field_key)
+    const legacyFieldKeys = normalizeTemplateFields(template.field_keys);
+    const qrFieldKey = isOrderQrTemplateFieldKey(template.qr_field_key)
       ? template.qr_field_key
       : legacyFieldKeys[0] ?? "orderNo";
-    const displayFields = template
-      ? normalizeTemplateFields(template.display_fields ?? legacyFieldKeys)
-      : [];
+    const displayFields = normalizeTemplateFields(template.display_fields ?? legacyFieldKeys);
     const design = parseStoredOrderQrTemplateDesign(
-      template?.display_field_styles,
+      template.display_field_styles,
       displayFields,
     );
     if (!design.pageSetup) {
       return { success: false as const, reason: "PAGE_SETUP_REQUIRED" as const };
     }
     const { displayFieldStyles, layout } = design;
-    const orderFieldsFor = (order: (typeof scopedOrders)[number], quantity: number) => ({
-      orderNo: order.orderNo,
-      entityName: order.entityName,
-      category: order.category,
-      subCategory: order.subCategory,
-      season: order.season,
-      article: order.article,
-      styleName: order.styleName,
-      colors: order.colors,
-      buyer: order.buyer,
-      brand: order.brand,
-      sizeGroup: order.sizeGroup,
-      orderQty: quantity,
-      deliveryDate: order.deliveryDate?.toISOString().slice(0, 10) ?? null,
-    });
-    const bulkSnapshots = selectedOrders.map(({ order, quantity }) => {
-      const fields = orderFieldsFor(order, quantity);
+    const bulkSnapshots = requestItems.map((item) => {
       const displayValues = Object.fromEntries(displayFields.flatMap((key) => {
-        const value = fields[key];
+        const value = item.fields[key];
         return value === null || value === undefined || String(value).trim() === ""
           ? []
           : [[key, String(value)]];
       }));
-      const qrContent = buildRequestQrPayload([qrFieldKey], fields);
+      const qrContent = buildRequestQrPayload([qrFieldKey], item.fields);
       return {
-        orderId: order.id,
-        orderNo: order.orderNo,
-        styleName: order.styleName ?? "",
-        quantity: Number(quantity),
+        orderId: item.id,
+        orderNo: item.orderNo,
+        styleName: item.styleName,
+        quantity: item.quantity,
         qrPayload: qrContent.payload,
         displayValues,
       };
     });
-    const primaryOrder = selectedOrders[0].order;
     const displayValues = bulkSnapshots[0].displayValues;
-    const printQuantity = requestedLabelCount;
     if (bulkSnapshots.some((item) => !item.qrPayload)) {
       return { success: false as const, reason: "QR_FIELD_VALUE_MISSING" as const };
     }
     const qrPayload = bulkSnapshots.length > 1
       ? JSON.stringify(bulkSnapshots.map(({ orderNo, qrPayload }) => ({ orderNo, qrPayload })))
       : bulkSnapshots[0].qrPayload;
+    const shouldStoreBulkItems = sourceType === "POS_PURCHASE_BILL" || bulkSnapshots.length > 1;
 
     const request = await transaction.merchandisingOrderQrPrintRequest.create({
       data: {
         organization_id: organizationId,
-        order_id: primaryOrder.id,
-        order_no: bulkSnapshots.length > 1
-          ? `BULK: ${bulkSnapshots.length} ORDERS`
-          : primaryOrder.orderNo,
+        source_type: sourceType,
+        order_id: requestOrderId,
+        purchase_bill_id: requestPurchaseBillId,
+        order_no: requestOrderNo,
         request_type: input.requestType,
         template_name: template?.name ?? null,
         field_keys: [...new Set([qrFieldKey, ...displayFields])],
@@ -390,9 +515,9 @@ export async function createOrderQrPrintRequest(
         display_fields: displayFields,
         display_values: {
           ...displayValues,
-          __printQuantity: printQuantity,
+          __printQuantity: requestedLabelCount,
           __pageSetup: design.pageSetup,
-          ...(bulkSnapshots.length > 1
+          ...(shouldStoreBulkItems
             ? { __displayFields: displayFields, __bulkItems: bulkSnapshots }
             : {}),
         },
@@ -409,7 +534,9 @@ export async function createOrderQrPrintRequest(
       },
       select: {
         id: true,
+        source_type: true,
         order_id: true,
+        purchase_bill_id: true,
         order_no: true,
         request_type: true,
         status: true,
@@ -464,7 +591,9 @@ export async function advanceOrderQrPrintRequestStatus(
       where: { organization_id: organizationId, id: requestId },
       select: {
         id: true,
+        source_type: true,
         order_id: true,
+        purchase_bill_id: true,
         order_no: true,
         request_type: true,
         status: true,

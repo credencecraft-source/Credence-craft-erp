@@ -11,7 +11,10 @@ import {
   OrderQrTemplateDeleteConflictError,
   OrderQrTemplatePageSetupNotFoundError,
 } from "@/lib/services/orders/order-qr-template-service";
-import { parseOrderQrTemplateInput } from "@/lib/services/orders/order-qr-template-contract";
+import {
+  ORDER_QR_TEMPLATE_TYPES,
+  parseOrderQrTemplateInput,
+} from "@/lib/services/orders/order-qr-template-contract";
 
 const ALLOWED_ROLES = ["OWNER", "ADMIN", "MERCHANDISING"];
 const SCHEMA_NOT_READY_MESSAGE =
@@ -39,7 +42,10 @@ type AuthorizationResult =
     }
   | { authorized: false; response: NextResponse };
 
-async function getAuthorizedOrganization(request: Request): Promise<AuthorizationResult> {
+async function getAuthorizedOrganization(
+  request: Request,
+  allowedRoles: string[] = ALLOWED_ROLES,
+): Promise<AuthorizationResult> {
   const user = await requireSessionUser();
   const url = new URL(request.url);
   const organizationId = url.searchParams.get("organizationId");
@@ -62,7 +68,7 @@ async function getAuthorizedOrganization(request: Request): Promise<Authorizatio
     const organization = await requireOrganizationContext(
       user.id,
       organizationId,
-      ALLOWED_ROLES,
+      allowedRoles,
     );
     return { authorized: true, user, organization };
   } catch (error) {
@@ -81,10 +87,20 @@ async function getAuthorizedOrganization(request: Request): Promise<Authorizatio
 
 export async function GET(request: Request): Promise<NextResponse> {
   try {
-    const authorization = await getAuthorizedOrganization(request);
+    const authorization = await getAuthorizedOrganization(
+      request,
+      [...ALLOWED_ROLES, "FINANCE", "INVENTORY"],
+    );
     if (!authorization.authorized) return authorization.response;
 
-    const templates = await listOrderQrTemplates(authorization.organization.id);
+    const type = new URL(request.url).searchParams.get("type");
+    if (type && !ORDER_QR_TEMPLATE_TYPES.includes(type as (typeof ORDER_QR_TEMPLATE_TYPES)[number])) {
+      return NextResponse.json({ error: "QR template type is invalid." }, { status: 400 });
+    }
+    const templates = await listOrderQrTemplates(
+      authorization.organization.id,
+      type as (typeof ORDER_QR_TEMPLATE_TYPES)[number] | undefined,
+    );
     return NextResponse.json({ templates });
   } catch (error) {
     const schemaResponse = getSchemaNotReadyResponse(error);

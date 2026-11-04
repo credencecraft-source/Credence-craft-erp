@@ -54,6 +54,7 @@ model MerchandisingOrder {
 
 enum OrderQrTemplateType {
   ORDER_TAGS
+  POS_ITEM_BARCODE
 }
 
 model MerchandisingOrderQrTemplate {
@@ -91,7 +92,9 @@ enum OrderQrPrintRequestStatus {
 model MerchandisingOrderQrPrintRequest {
   id                   String                    @id @default(cuid())
   organization_id      String
-  order_id             String
+  source_type          String                    @default("ORDER") @db.VarChar(30)
+  order_id             String?
+  purchase_bill_id     String?
   order_no             String                    @db.VarChar(100)
   request_type         OrderQrPrintRequestType
   status               OrderQrPrintRequestStatus @default(PENDING)
@@ -109,11 +112,13 @@ model MerchandisingOrderQrPrintRequest {
   requested_at         DateTime                  @default(now())
   updated_at           DateTime                  @updatedAt
   organization         Organization              @relation(fields: [organization_id], references: [id], onDelete: Cascade, map: "qr_print_requests_organization_fkey")
-  order                MerchandisingOrder        @relation(fields: [organization_id, order_id], references: [organization_id, id], onDelete: Restrict, map: "qr_print_requests_order_fkey")
+  order                MerchandisingOrder?       @relation(fields: [organization_id, order_id], references: [organization_id, id], onDelete: Restrict, map: "qr_print_requests_order_fkey")
+  purchase_bill        PosPurchaseBill?           @relation(fields: [organization_id, purchase_bill_id], references: [organization_id, id], onDelete: Restrict, map: "qr_print_requests_purchase_bill_fkey")
 
   @@unique([organization_id, id], map: "qr_print_requests_org_id_key")
   @@index([organization_id, status, requested_at], map: "qr_print_requests_org_status_date_idx")
   @@index([organization_id, order_id, requested_at], map: "qr_print_requests_org_order_date_idx")
+  @@index([organization_id, purchase_bill_id, requested_at], map: "qr_print_requests_org_purchase_bill_date_idx")
   @@map("merchandising_order_qr_print_requests")
 }
 
@@ -637,9 +642,11 @@ model PosPurchaseBill {
   organization    Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   records         PosPurchaseRecord[]
   lines           PosPurchaseBillLine[]
+  qr_print_requests MerchandisingOrderQrPrintRequest[]
 
   @@unique([organization_id, bill_number])
   @@unique([organization_id, document_number])
+  @@unique([organization_id, id], map: "pos_purchase_bills_organization_id_id_key")
   @@index([organization_id, status, bill_date])
   @@index([organization_id, vendor_id])
   @@map("pos_purchase_bills")
@@ -861,6 +868,7 @@ model RawMaterialStock {
   organization_id           String
   entity_id                 String
   location_id               String
+  storage_node_id           String?
   raw_material              String                    @db.VarChar(255)
   source_type               String                    @default("LEGACY") @db.VarChar(20)
   inventory_receipt_line_id String?                   @unique
@@ -871,12 +879,14 @@ model RawMaterialStock {
   updated_at                DateTime                  @updatedAt
   organization              Organization              @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   location                  MasterLocation            @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
+  storageNode               StorageNode?              @relation(fields: [organization_id, storage_node_id], references: [organization_id, id], onDelete: Restrict)
   receiptLine               InventoryReceiptLine?     @relation(fields: [inventory_receipt_line_id], references: [id], onDelete: SetNull)
   bookings                  RawMaterialStockBooking[]
 
   @@unique([organization_id, id])
   @@index([organization_id, raw_material, location_id, created_at])
   @@index([organization_id, location_id])
+  @@index([organization_id, storage_node_id])
   @@map("raw_material_stocks")
 }
 
@@ -1534,6 +1544,7 @@ model DistributionQuotation {
   id                  String                      @id @default(cuid())
   organization_id     String
   vendor_id           String?
+  contact_id          String?
   parent_quotation_id String?
   quotation_no        String                      @db.VarChar(100)
   quotation_date      DateTime                    @db.Date
@@ -1545,11 +1556,21 @@ model DistributionQuotation {
   status              String                      @default("DRAFT") @db.VarChar(30)
   total_quantity      Int                         @default(0)
   subtotal            Decimal                     @default(0) @db.Decimal(18, 2)
+  delivery_charge     Decimal                     @default(0) @db.Decimal(14, 2)
+  delivery_tax_rate   Decimal                     @default(0) @db.Decimal(8, 2)
+  cgst_amount         Decimal                     @default(0) @db.Decimal(14, 2)
+  sgst_amount         Decimal                     @default(0) @db.Decimal(14, 2)
+  igst_amount         Decimal                     @default(0) @db.Decimal(14, 2)
+  vat_amount          Decimal                     @default(0) @db.Decimal(14, 2)
+  sales_tax_amount    Decimal                     @default(0) @db.Decimal(14, 2)
+  tax_amount          Decimal                     @default(0) @db.Decimal(14, 2)
+  grand_total         Decimal                     @default(0) @db.Decimal(18, 2)
   created_by          String                      @db.VarChar(255)
   created_at          DateTime                    @default(now())
   updated_at          DateTime                    @updatedAt
   organization        Organization                @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   vendor              MasterVendor?               @relation(fields: [organization_id, vendor_id], references: [organization_id, id], onDelete: Restrict)
+  contact             Contact?                    @relation(fields: [organization_id, contact_id], references: [organization_id, id], onDelete: Restrict)
   parentQuotation     DistributionQuotation?      @relation("DistributionQuotationHierarchy", fields: [organization_id, parent_quotation_id], references: [organization_id, id], onDelete: Restrict)
   childQuotations     DistributionQuotation[]     @relation("DistributionQuotationHierarchy")
   orderForms          DistributionOrderForm[]
@@ -1557,6 +1578,7 @@ model DistributionQuotation {
 
   @@unique([organization_id, id])
   @@unique([organization_id, quotation_no])
+  @@index([organization_id, created_at(sort: Desc), id(sort: Desc)])
   @@index([organization_id, quotation_date, created_at])
   @@index([organization_id, parent_quotation_id])
   @@index([organization_id, vendor_id])
@@ -1576,6 +1598,20 @@ model DistributionQuotationLine {
   quantity          Int
   unit_price        Decimal               @db.Decimal(14, 4)
   line_total        Decimal               @db.Decimal(18, 2)
+  tax_rate          Decimal               @default(0) @db.Decimal(8, 2)
+  tax_type          String                @default("NONE") @db.VarChar(20)
+  cgst_rate         Decimal               @default(0) @db.Decimal(8, 2)
+  sgst_rate         Decimal               @default(0) @db.Decimal(8, 2)
+  igst_rate         Decimal               @default(0) @db.Decimal(8, 2)
+  vat_rate          Decimal               @default(0) @db.Decimal(8, 2)
+  sales_tax_rate    Decimal               @default(0) @db.Decimal(8, 2)
+  cgst_amount       Decimal               @default(0) @db.Decimal(14, 2)
+  sgst_amount       Decimal               @default(0) @db.Decimal(14, 2)
+  igst_amount       Decimal               @default(0) @db.Decimal(14, 2)
+  vat_amount        Decimal               @default(0) @db.Decimal(14, 2)
+  sales_tax_amount  Decimal               @default(0) @db.Decimal(14, 2)
+  tax_amount        Decimal               @default(0) @db.Decimal(14, 2)
+  total_amount      Decimal               @default(0) @db.Decimal(18, 2)
   created_at        DateTime              @default(now())
   organization      Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   quotation         DistributionQuotation @relation(fields: [organization_id, quotation_id], references: [organization_id, id], onDelete: Cascade)
@@ -1583,6 +1619,7 @@ model DistributionQuotationLine {
 
   @@unique([organization_id, id])
   @@unique([organization_id, source_booking_id])
+  @@index([organization_id, created_at(sort: Desc), id(sort: Desc)])
   @@index([organization_id, quotation_id])
   @@map("distribution_quotation_lines")
 }

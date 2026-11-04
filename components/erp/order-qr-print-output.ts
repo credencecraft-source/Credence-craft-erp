@@ -3,8 +3,8 @@ import QRCode from "qrcode";
 import {
   DEFAULT_QR_FIELD_STYLE,
   getA4StickerGrid,
-  ORDER_QR_TEMPLATE_FIELDS,
-  type OrderQrTemplateFieldKey,
+  getQrTemplateFieldLabel,
+  type QrTemplateFieldKey,
   type OrderQrTemplateLayout,
   type OrderQrDisplayFieldStyle,
 } from "@/lib/services/orders/order-qr-template-contract";
@@ -18,9 +18,9 @@ export type OrderQrPrintOutputRecord = {
   stickerLengthMm: number;
   pageSetup?: PageSetupPrintSnapshot | null;
   layout: OrderQrTemplateLayout;
-  displayFields: OrderQrTemplateFieldKey[];
-  displayValues: Partial<Record<OrderQrTemplateFieldKey, string>>;
-  displayFieldStyles: Partial<Record<OrderQrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
+  displayFields: QrTemplateFieldKey[];
+  displayValues: Partial<Record<QrTemplateFieldKey, string>>;
+  displayFieldStyles: Partial<Record<QrTemplateFieldKey, OrderQrDisplayFieldStyle>>;
   printQuantity: number;
   bulkItems?: Array<{
     orderId: string;
@@ -28,7 +28,7 @@ export type OrderQrPrintOutputRecord = {
     styleName: string;
     quantity: number;
     qrPayload: string;
-    displayValues: Partial<Record<OrderQrTemplateFieldKey, string>>;
+    displayValues: Partial<Record<QrTemplateFieldKey, string>>;
   }>;
 };
 
@@ -67,7 +67,7 @@ export async function createOrderQrStickerDataUrl(
   context.drawImage(qrImage, qrX, qrY, qrExtent, qrExtent);
 
   record.displayFields.forEach((fieldKey, index) => {
-    const label = ORDER_QR_TEMPLATE_FIELDS.find((field) => field.key === fieldKey)?.label ?? fieldKey;
+    const label = getQrTemplateFieldLabel(fieldKey);
     const value = displayValues[fieldKey] ?? "";
     const style = {
       ...DEFAULT_QR_FIELD_STYLE,

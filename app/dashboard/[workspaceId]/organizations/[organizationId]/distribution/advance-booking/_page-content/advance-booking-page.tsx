@@ -169,7 +169,6 @@ const shipmentTrackingReportFields = [
     key !== "assignmentStatus",
   ),
 ];
-
 function orderBookingReportFields(fields: BookingReportField[]) {
   const selected = new Set(fields);
   return [...bookingReportFields.map(({ key }) => key), "totalAllocated" as const]
@@ -410,7 +409,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
       const selectedIds = new Set(selectedBookingIds);
       return shipmentTrackingRows.filter((booking) => selectedIds.has(booking.bookingId));
     },
-    [shipmentTrackingRows, selectedBookingIds],
+    [selectedBookingIds, shipmentTrackingRows],
   );
   const quotationSelectionError = validateBookingQuotationSelection(selectedReportBookings);
   const selectedAssignmentWorkOrder = assignableWorkOrders.find(
@@ -1264,7 +1263,7 @@ export default function AdvanceBookingPage({ view = "booking" }: { view?: "booki
                 ? "Loading shipment tracking..."
                 : isSearchBelowThreshold
                   ? "Enter at least 3 characters to search bookings."
-                : "No quoted bookings have fulfilled quantities or fully assigned quantities yet."}
+                  : "No quoted bookings have fulfilled quantities or fully assigned quantities yet."}
               renderCell={renderShipmentBookingCell}
             />
           </Card>

@@ -26,6 +26,7 @@ describe("parseOrderQrTemplateInput", () => {
       success: true,
       data: {
         name: "ORDER TAG - SAMPLE",
+        type: "ORDER_TAGS",
         pageSetupTemplateId: "setup-1",
         qrFieldKey: "orderNo",
         displayFields: ["orderNo", "styleName", "buyer"],
@@ -73,6 +74,43 @@ describe("parseOrderQrTemplateInput", () => {
         },
       },
     });
+  });
+
+  it("accepts POS item barcode templates with POS-only fields", () => {
+      expect(parseOrderQrTemplateInput({
+        name: "POS ITEM",
+        type: "POS_ITEM_BARCODE",
+        pageSetupTemplateId: "setup-1",
+        qrFieldKey: "posItemCode",
+        displayFields: ["posItemCode", "posItemName", "posSize"],
+        qrSize: 192,
+      })).toMatchObject({
+        success: true,
+        data: {
+          type: "POS_ITEM_BARCODE",
+          qrFieldKey: "posItemCode",
+          displayFields: ["posItemCode", "posItemName", "posSize"],
+        },
+      });
+  });
+
+  it("rejects order fields in POS templates and POS fields in order templates", () => {
+      expect(parseOrderQrTemplateInput({
+        name: "INVALID POS",
+        type: "POS_ITEM_BARCODE",
+        pageSetupTemplateId: "setup-1",
+        qrFieldKey: "orderNo",
+        displayFields: ["orderNo"],
+        qrSize: 192,
+      })).toMatchObject({ success: false });
+      expect(parseOrderQrTemplateInput({
+        name: "INVALID ORDER",
+        type: "ORDER_TAGS",
+        pageSetupTemplateId: "setup-1",
+        qrFieldKey: "posItemCode",
+        displayFields: ["posItemCode"],
+        qrSize: 192,
+      })).toMatchObject({ success: false });
   });
 
   it("validates and preserves user-defined sticker positions", () => {

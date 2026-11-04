@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 
@@ -159,26 +160,32 @@ async function saveChildValues(
   parentId: string,
   definition: { key?: string; fields: MasterFieldDefinition[] },
   formData: FormData,
+  database: typeof prisma | Prisma.TransactionClient = prisma,
+  replaceExisting = true,
 ) {
   const childField = definition.fields.find((field) => (field.type === "child-list" && field.childModuleKey) || (field.type === "lookup" && field.multiple && field.lookupModuleKey));
   if (!childField) return;
   if (definition.key === "size-group") {
-    await syncSizeGroupSizes(organizationId, parentId, readChildValues(formData, childField));
+    await syncSizeGroupSizes(organizationId, parentId, readChildValues(formData, childField), database);
     return;
   }
   const { childModuleKey, validatedRows } = validateChildValues(childField, formData);
   if (!childModuleKey) return;
 
-  const existingChildren = await getMasterValuesForOrganization(organizationId, childModuleKey, true);
+  const existingChildren = replaceExisting
+    ? await getMasterValuesForOrganization(organizationId, childModuleKey, true, { database })
+    : [];
   const existingForParent = existingChildren.filter((child) => child.parent_id === parentId);
-  await Promise.all(existingForParent.map((child) => deleteMasterValue(organizationId, child.value_id)));
+  await Promise.all(existingForParent.map((child) =>
+    deleteMasterValue(organizationId, child.value_id, childModuleKey, undefined, database),
+  ));
 
   for (const row of validatedRows) {
     await createMasterValueForOrganization(organizationId, childModuleKey, {
       label: row.label,
       fields: row.fields as Parameters<typeof createMasterValueForOrganization>[2]["fields"],
       parentValueId: parentId,
-    });
+    }, database);
   }
 }
 
@@ -339,31 +346,28 @@ export async function createMasterValueAction(formData: FormData) {
     masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, "", false, "", returnToMasterRecord);
   }
 
-  let created;
+  let created: Awaited<ReturnType<typeof createMasterValueForOrganization>>;
   try {
-    created = await createMasterValueForOrganization(organization.id, moduleKey, {
-      label,
-      code: code || null,
-      description: description || null,
-      fields,
-      actorUserId: user.id,
-      ...(articleVariants ? { articleVariants } : {}),
-      ...(moduleKey === "article" ? {
-        articleSizes: Array.isArray(fields.Sizes) ? fields.Sizes.map(String) : [],
-        articleSizePrices: readArticleSizePrices(formData),
-      } : {}),
-    });
+    created = await prisma.$transaction(async (transaction) => {
+      const parent = await createMasterValueForOrganization(organization.id, moduleKey, {
+        label,
+        code: code || null,
+        description: description || null,
+        fields,
+        actorUserId: user.id,
+        ...(articleVariants ? { articleVariants } : {}),
+        ...(moduleKey === "article" ? {
+          articleSizes: Array.isArray(fields.Sizes) ? fields.Sizes.map(String) : [],
+          articleSizePrices: readArticleSizePrices(formData),
+        } : {}),
+      }, transaction);
+      if (moduleKey !== "article" && moduleKey !== "size-group") {
+        await saveChildValues(organization.id, parent.id, definition, formData, transaction, false);
+      }
+      return parent;
+    }, { maxWait: 10_000, timeout: 30_000 });
   } catch (error) {
     masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, "", false, "", returnToMasterRecord);
-  }
-
-  if (moduleKey !== "article") {
-    try {
-      await saveChildValues(organization.id, created.id, definition, formData);
-    } catch (error) {
-      await deleteMasterValue(organization.id, created.id);
-      masterDataErrorRedirect(workspaceId, organizationId, moduleKey, error, returnToArticleDetail, "", false, "", returnToMasterRecord);
-    }
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
@@ -485,20 +489,26 @@ export async function updateMasterValueAction(formData: FormData) {
     );
   }
 
-  let updated;
   try {
-    updated = await updateMasterValue(organization.id, valueId, {
-      label,
-      code: code || null,
-      description: description || null,
-      fields,
-      actorUserId: user.id,
-      ...(articleVariants ? { articleVariants } : {}),
-      ...(moduleKey === "article" ? {
-        articleSizes: Array.isArray(fields.Sizes) ? fields.Sizes.map(String) : [],
-        articleSizePrices: readArticleSizePrices(formData),
-      } : {}),
-    });
+    await prisma.$transaction(async (transaction) => {
+      const parent = await updateMasterValue(organization.id, valueId, {
+        moduleKey,
+        label,
+        code: code || null,
+        description: description || null,
+        fields,
+        actorUserId: user.id,
+        ...(articleVariants ? { articleVariants } : {}),
+        ...(moduleKey === "article" ? {
+          articleSizes: Array.isArray(fields.Sizes) ? fields.Sizes.map(String) : [],
+          articleSizePrices: readArticleSizePrices(formData),
+        } : {}),
+      }, transaction);
+      if (parent && moduleKey !== "article") {
+        await saveChildValues(organization.id, parent.id, definition, formData, transaction);
+      }
+      return parent;
+    }, { maxWait: 10_000, timeout: 30_000 });
   } catch (error) {
     masterDataErrorRedirect(
       workspaceId,
@@ -512,25 +522,6 @@ export async function updateMasterValueAction(formData: FormData) {
       returnToMasterRecord,
       masterRecordCode,
     );
-  }
-
-  if (updated && moduleKey !== "article") {
-    try {
-      await saveChildValues(organization.id, updated.id, definition, formData);
-    } catch (error) {
-      masterDataErrorRedirect(
-        workspaceId,
-        organizationId,
-        moduleKey,
-        error,
-        returnToArticleDetail,
-        returnRecordCode,
-        returnToSizeGroupDetail,
-        valueId,
-        returnToMasterRecord,
-        masterRecordCode,
-      );
-    }
   }
 
   revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
@@ -587,7 +578,23 @@ async function deleteMasterValueAction(formData: FormData) {
     redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent("Price List records cannot be deleted.")}`);
   }
 
-  const deletionResult = await deleteMasterValue(organization.id, valueId, user.id);
+  if (moduleKey === "storage-node") {
+    const isActive = formData.get("setActive") === "true";
+    try {
+      await updateMasterValue(organization.id, valueId, {
+        moduleKey,
+        is_active: isActive,
+        actorUserId: user.id,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to update storage node status.";
+      redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent(message)}`);
+    }
+    revalidatePath(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}`);
+    redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?saved=${isActive ? "activated" : "deactivated"}`);
+  }
+
+  const deletionResult = await deleteMasterValue(organization.id, valueId, moduleKey, user.id);
   if (deletionResult.error) {
     redirect(`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/${moduleKey}?error=${encodeURIComponent(deletionResult.error)}`);
   }
@@ -791,7 +798,6 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
 
   let createdCount = 0;
   for (const row of rows) {
-    let created: Awaited<ReturnType<typeof createMasterValueForOrganization>> | null = null;
     try {
       const fields = Object.fromEntries(Object.entries(row.fields).filter(([key]) =>
         definition.fields.find((field) => field.key === key)?.type !== "child-list",
@@ -810,7 +816,7 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
           key,
           Array.isArray(value) ? value : [],
         ]));
-        created = await prisma.$transaction(async (transaction) => {
+        await prisma.$transaction(async (transaction) => {
           const dependencies = await validateArticleImportSupportingMasters(
             transaction,
             organization.id,
@@ -861,31 +867,23 @@ async function importMasterValuesAction(formData: FormData): Promise<MasterRecor
 
       const label = getRecordLabel(fields, definition);
       if (!label) throw new Error("The required record name is missing.");
-      created = await createMasterValueForOrganization(organization.id, moduleKey, {
-        label,
-        code: row.code,
-        description: row.description,
-        fields: fields as MasterFieldValues,
-        createOnly: true,
-      });
-
-      if (moduleKey !== "article") {
-        await saveChildValues(organization.id, created.id, definition, childFormData);
-      }
+      await prisma.$transaction(async (transaction) => {
+        const parent = await createMasterValueForOrganization(organization.id, moduleKey, {
+          label,
+          code: row.code,
+          description: row.description,
+          fields: fields as MasterFieldValues,
+          createOnly: true,
+          actorUserId: user.id,
+        }, transaction);
+        if (moduleKey !== "article") {
+          await saveChildValues(organization.id, parent.id, definition, childFormData, transaction, false);
+        }
+        return parent;
+      }, { maxWait: 10_000, timeout: 30_000 });
       createdCount += 1;
     } catch (error) {
-      let message = error instanceof Error ? error.message : "Unable to create this record.";
-      if (created) {
-        try {
-          const cleanup = await deleteMasterValue(organization.id, created.value_id);
-          if (cleanup.error) {
-            message = `${message} The parent record may remain because cleanup was blocked: ${cleanup.error}`;
-          }
-        } catch (cleanupError) {
-          const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error.";
-          message = `${message} The parent record may remain because cleanup failed: ${cleanupMessage}`;
-        }
-      }
+      const message = error instanceof Error ? error.message : "Unable to create this record.";
       failures.push({ rowNumber: row.rowNumber, message, row: sourceRows.get(row.rowNumber) });
     }
   }
@@ -958,7 +956,15 @@ export default async function MasterDataEditorPage({
       })
     : formMode
       ? []
-      : await getMasterValuesForOrganization(organization.id, moduleKey, true, { includeDummyData: true, activeDummyDataBatch });
+      : await getMasterValuesForOrganization(organization.id, moduleKey, true, {
+          includeDummyData: true,
+          activeDummyDataBatch,
+          ...(moduleKey === "price-list" ? {} : { limit: 101 }),
+        });
+  const hasPaginatedReport = !formMode && moduleKey !== "price-list";
+  const reportValues = hasPaginatedReport ? values.slice(0, 100) : values;
+  const reportHasMore = hasPaginatedReport && values.length > 100;
+  const reportNextCursor = reportHasMore ? reportValues[reportValues.length - 1]?.id ?? null : null;
   if (moduleKey === "price-list" && formMode === "view" && values[0]) {
     return (
       <PriceListContactReport
@@ -1023,6 +1029,10 @@ export default async function MasterDataEditorPage({
             ? `${definition.label} created successfully.`
             : saved === "update"
               ? `${definition.label} updated successfully.`
+              : saved === "deactivated"
+                ? `${definition.label} deactivated successfully.`
+                : saved === "activated"
+                  ? `${definition.label} activated successfully.`
               : saved === "bulk-delete"
                 ? `${String(parsedDeletedCount)} ${definition.label} record${parsedDeletedCount === 1 ? "" : "s"} deleted successfully.`
                 : `${definition.label} deleted successfully.`}
@@ -1030,7 +1040,7 @@ export default async function MasterDataEditorPage({
       ) : null}
 
       <MasterRecordsTable
-        records={values.map((item) => ({
+        records={reportValues.map((item) => ({
           id: item.id,
           value_id: item.value_id,
           label: item.label,
@@ -1046,6 +1056,8 @@ export default async function MasterDataEditorPage({
         workspaceId={workspaceId}
         organizationId={organizationId}
         moduleKey={moduleKey}
+        initialHasMore={reportHasMore}
+        initialNextCursor={reportNextCursor}
         createAction={createMasterValueAction}
         updateAction={updateMasterValueAction}
         deleteAction={deleteMasterValueAction}

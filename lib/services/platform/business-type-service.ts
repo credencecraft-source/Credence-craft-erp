@@ -101,11 +101,10 @@ export async function createBusinessTypeSidebarModule(id: string) {
             software_id: software.id,
             module_key: erpModule.key,
             module_name: erpModule.label,
-            status: "enabled",
+            status: "disabled",
           },
           update: {
             module_name: erpModule.label,
-            status: "enabled",
           },
         }),
       ),
