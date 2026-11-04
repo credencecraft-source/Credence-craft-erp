@@ -427,12 +427,26 @@ export function MasterModuleWrapper({
   }, [allModuleOptions, moduleStatusByKey]);
 
   const activeModule = useMemo(() => {
-    return (
-      moduleOptions.find(({ pathSegment }) => {
-        const modulePath = `${organizationPath}/${pathSegment}`;
-        return pathname === modulePath || pathname.startsWith(`${modulePath}/`);
-      }) ?? moduleOptions[0]
-    );
+    const matchesPath = (basePath: string) =>
+      pathname === basePath || pathname.startsWith(`${basePath}/`);
+    const hasMatchingNavigationPath = (
+      children: SubModuleOption[],
+      basePath: string,
+    ): boolean => children.some((child) => {
+      const childPath = child.href
+        ? `${organizationPath}${child.href}`
+        : `${basePath}/${child.pathSegment || child.key}`;
+      return matchesPath(childPath)
+        || (child.children
+          ? hasMatchingNavigationPath(child.children, childPath)
+          : false);
+    });
+
+    return moduleOptions.find(({ pathSegment, children }) =>
+      hasMatchingNavigationPath(children, `${organizationPath}/${pathSegment}`),
+    ) ?? moduleOptions.find(({ pathSegment }) =>
+      matchesPath(`${organizationPath}/${pathSegment}`),
+    ) ?? moduleOptions[0];
   }, [moduleOptions, organizationPath, pathname]);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);

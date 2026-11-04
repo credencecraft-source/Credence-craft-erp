@@ -85,6 +85,7 @@ model Organization {
   merchandisingOrderQrTemplates           MerchandisingOrderQrTemplate[]
   merchandisingOrderQrPrintRequests       MerchandisingOrderQrPrintRequest[]
   designDevelopmentPageSetupTemplates     DesignDevelopmentPageSetupTemplate[]
+  organizationPrintTemplates              OrganizationPrintTemplate[]
   masterBrands                            MasterBrand[]
   masterPreOrderChecklists                MasterPreOrderChecklist[]
   masterCurrencyTypes                     MasterCurrencyType[]

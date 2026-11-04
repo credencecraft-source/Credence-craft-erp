@@ -123,16 +123,6 @@ export const ERP_MODULES: ErpModule[] = [
           { key: "gold-seals", label: "Gold Seal", pathSegment: "gold-seals" },
         ],
       },
-      {
-        key: "barcode-qr-code",
-        label: "Barcode / QR Code",
-        pathSegment: "barcode-qr-code",
-        children: [
-          { key: "templates", label: "Templates", pathSegment: "templates" },
-          { key: "page-setup", label: "Page Setup", pathSegment: "page-setup" },
-          { key: "print-download", label: "Print/Download", pathSegment: "print-download" },
-        ],
-      },
     ],
   },
   {
@@ -361,6 +351,37 @@ export const ERP_MODULES: ErpModule[] = [
     label: "Admin",
     pathSegment: "admin",
     children: [
+      {
+        key: "barcode-qr-code",
+        label: "Barcode / QR Code",
+        pathSegment: "barcode-qr-code",
+        href: "/design-development/barcode-qr-code",
+        children: [
+          {
+            key: "page-setup",
+            label: "Page Setup",
+            pathSegment: "page-setup",
+            href: "/design-development/barcode-qr-code/page-setup",
+          },
+          {
+            key: "templates",
+            label: "Templates",
+            pathSegment: "templates",
+            href: "/design-development/barcode-qr-code/templates",
+          },
+          {
+            key: "print-download",
+            label: "Print/Download",
+            pathSegment: "print-download",
+            href: "/design-development/barcode-qr-code/print-download",
+          },
+        ],
+      },
+      {
+        key: "challan-print-out",
+        label: "Challan Print Out",
+        pathSegment: "challan-print-out",
+      },
       { key: "master-data", label: "Masters", pathSegment: "master-data" },
       { key: "integrations", label: "Integrations", pathSegment: "integrations" },
       {

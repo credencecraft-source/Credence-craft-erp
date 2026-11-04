@@ -1,3 +1,8 @@
+import {
+  DEFAULT_ORGANIZATION_PRINT_TEMPLATE_DESIGN,
+  type OrganizationPrintTemplateDesign,
+} from "./organization-print-template-contract";
+
 export type DistributionQuotationPdfAddress = { lines: string[]; gstin: string | null } | null;
 
 export type DistributionQuotationPdfParty = {
@@ -124,17 +129,46 @@ function addMoneyAmounts(...values: string[]) {
   return `${total / BigInt(100)}.${String(total % BigInt(100)).padStart(2, "0")}`;
 }
 
-export async function downloadDistributionQuotationPdf(data: DistributionQuotationPdfData) {
+function hexToRgb(hexColor: string): [number, number, number] {
+  const value = hexColor.slice(1);
+  return [
+    Number.parseInt(value.slice(0, 2), 16),
+    Number.parseInt(value.slice(2, 4), 16),
+    Number.parseInt(value.slice(4, 6), 16),
+  ];
+}
+
+export async function createDistributionQuotationPdf(
+  data: DistributionQuotationPdfData,
+  templateDesign: OrganizationPrintTemplateDesign = DEFAULT_ORGANIZATION_PRINT_TEMPLATE_DESIGN,
+) {
   const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
     import("jspdf"),
     import("jspdf-autotable"),
   ]);
   const { quotation, quotationParty } = data;
-  const document = new jsPDF({ unit: "mm", format: "a4" });
+  const document = new jsPDF({
+    orientation: templateDesign.orientation.toLowerCase() as "portrait" | "landscape",
+    unit: "mm",
+    format: templateDesign.pageSize.toLowerCase(),
+  });
   const pageWidth = document.internal.pageSize.getWidth();
   const pageHeight = document.internal.pageSize.getHeight();
-  const margin = 12;
-  const contentWidth = pageWidth - margin * 2;
+  const margin = templateDesign.margins.left;
+  const rightMargin = templateDesign.margins.right;
+  const bottomMargin = templateDesign.margins.bottom;
+  const topOffset = templateDesign.margins.top - 12;
+  const contentWidth = pageWidth - margin - rightMargin;
+  const fontFamily = templateDesign.fontFamily;
+  const accentColor = hexToRgb(templateDesign.accentColor);
+  const textColor = hexToRgb(templateDesign.textColor);
+  const tableHeaderColor = hexToRgb(templateDesign.tableHeaderColor);
+  const tableHeaderTextColor = hexToRgb(templateDesign.tableHeaderTextColor);
+  const headerFields = new Set(templateDesign.sections.headerFields);
+  const headerLines = templateDesign.headerText
+    ? document.splitTextToSize(templateDesign.headerText, contentWidth)
+    : [];
+  const headerOffset = Math.min(headerLines.length * 3, 24);
   const partyGap = 6;
   const partyWidth = (contentWidth - partyGap) / 2;
   const partyHeight = 48;
@@ -167,53 +201,86 @@ export async function downloadDistributionQuotationPdf(data: DistributionQuotati
     quotationParty[type]?.lines ?? quotationParty.billingAddress?.lines ?? quotationParty.shippingAddress?.lines ?? [];
 
   document.setProperties({ title: `Quotation ${quotation.quotationNo}`, subject: "Quotation" });
-  document.setFillColor(79, 70, 229);
+  document.setFillColor(...accentColor);
   document.rect(0, 0, pageWidth, 8, "F");
-  document.setFont("helvetica", "bold");
-  document.setFontSize(15);
-  document.setTextColor(15, 23, 42);
-  document.text(display(quotationParty.name), margin, 19, { maxWidth: 95 });
-  document.setFont("helvetica", "normal");
-  document.setFontSize(8);
-  document.setTextColor(71, 85, 105);
-  const sellerMeta = [
-    addressLines("billingAddress").join(", "),
-    quotationParty.email,
-    quotationParty.phone ? `Phone: ${quotationParty.phone}` : "",
-    quotationParty.gstin ? `GSTIN: ${quotationParty.gstin}` : "",
-  ].filter((line): line is string => Boolean(line));
-  document.text(sellerMeta, margin, 25, { maxWidth: 95 });
-  document.setFont("helvetica", "bold");
-  document.setFontSize(17);
-  document.setTextColor(79, 70, 229);
-  document.text("QUOTATION", pageWidth - margin, 18, { align: "right", maxWidth: 95 });
-  document.setFontSize(9);
-  document.setTextColor(15, 23, 42);
-  document.text(`No. ${display(quotation.quotationNo)}`, pageWidth - margin, 25, { align: "right" });
-  document.setFont("helvetica", "normal");
-  document.setFontSize(8);
-  document.setTextColor(71, 85, 105);
-  document.text(`Date: ${date(quotation.quotationDate)}`, pageWidth - margin, 30, { align: "right" });
-  document.text(`Valid until: ${date(quotation.validUntil)}   |   ${display(quotation.status)}`, pageWidth - margin, 35, { align: "right" });
+  const hasLogo = headerFields.has("companyLogo") && Boolean(templateDesign.logoDataUrl);
+  if (hasLogo) {
+    document.addImage(
+      templateDesign.logoDataUrl,
+      templateDesign.logoDataUrl.startsWith("data:image/png") ? "PNG" : "JPEG",
+      margin,
+      10,
+      16,
+      12,
+    );
+  }
+  const companyX = margin + (hasLogo ? 20 : 0);
+  if (headerFields.has("companyName")) {
+    document.setFont(fontFamily, "bold");
+    document.setFontSize(templateDesign.headingFontSize);
+    document.setTextColor(...textColor);
+    document.text(display(quotationParty.name), companyX, 19, { maxWidth: 75 });
+    document.setFont(fontFamily, "normal");
+    document.setFontSize(templateDesign.bodyFontSize);
+    document.setTextColor(71, 85, 105);
+    const sellerMeta = [
+      addressLines("billingAddress").join(", "),
+      quotationParty.email,
+      quotationParty.phone ? `Phone: ${quotationParty.phone}` : "",
+      quotationParty.gstin ? `GSTIN: ${quotationParty.gstin}` : "",
+    ].filter((line): line is string => Boolean(line));
+    document.text(sellerMeta, companyX, 25, { maxWidth: 75 });
+  }
+  document.setFont(fontFamily, "bold");
+  document.setFontSize(templateDesign.headingFontSize + 2);
+  document.setTextColor(...accentColor);
+  document.text("QUOTATION", pageWidth - rightMargin, 18, { align: "right", maxWidth: 95 });
+  if (headerFields.has("documentNumber")) {
+    document.setFontSize(templateDesign.bodyFontSize + 1);
+    document.setTextColor(...textColor);
+    document.text(`No. ${display(quotation.quotationNo)}`, pageWidth - rightMargin, 25, { align: "right" });
+  }
+  if (headerFields.has("documentDate") || headerFields.has("status")) {
+    document.setFont(fontFamily, "normal");
+    document.setFontSize(templateDesign.bodyFontSize);
+    document.setTextColor(71, 85, 105);
+    if (headerFields.has("documentDate")) {
+      document.text(`Date: ${date(quotation.quotationDate)}`, pageWidth - rightMargin, 30, { align: "right" });
+    }
+    if (headerFields.has("status")) {
+      document.text(
+        `Valid until: ${date(quotation.validUntil)}   |   ${display(quotation.status)}`,
+        pageWidth - rightMargin,
+        headerFields.has("documentDate") ? 35 : 30,
+        { align: "right" },
+      );
+    }
+  }
+  if (headerLines.length) {
+    document.setTextColor(...textColor);
+    document.text(headerLines, pageWidth / 2, 40, { align: "center", maxWidth: contentWidth });
+  }
 
   const renderParty = (
     x: number,
     title: string,
     gstin: string | null,
     lines: string[],
+    width = partyWidth,
   ) => {
     document.setDrawColor(226, 232, 240);
     document.setFillColor(248, 250, 252);
-    document.roundedRect(x, 42, partyWidth, partyHeight, 1.5, 1.5, "FD");
-    document.setFont("helvetica", "bold");
-    document.setFontSize(8);
-    document.setTextColor(79, 70, 229);
-    document.text(title.toUpperCase(), x + 4, 48);
-    document.setTextColor(15, 23, 42);
-    document.setFontSize(10);
-    document.text(display(quotationParty.name), x + 4, 54, { maxWidth: partyWidth - 8 });
-    document.setFont("helvetica", "normal");
-    document.setFontSize(6.5);
+    const partyY = 42 + topOffset + headerOffset;
+    document.roundedRect(x, partyY, width, partyHeight, 1.5, 1.5, "FD");
+    document.setFont(fontFamily, "bold");
+    document.setFontSize(Math.max(templateDesign.bodyFontSize, 6));
+    document.setTextColor(...accentColor);
+    document.text(title.toUpperCase(), x + 4, partyY + 6);
+    document.setTextColor(...textColor);
+    document.setFontSize(templateDesign.bodyFontSize + 2);
+    document.text(display(quotationParty.name), x + 4, partyY + 12, { maxWidth: width - 8 });
+    document.setFont(fontFamily, "normal");
+    document.setFontSize(Math.max(templateDesign.bodyFontSize - 1.5, 6));
     document.setTextColor(71, 85, 105);
     const details = [
       ...(quotationParty.legalName && quotationParty.legalName !== quotationParty.name ? [quotationParty.legalName] : []),
@@ -223,99 +290,136 @@ export async function downloadDistributionQuotationPdf(data: DistributionQuotati
       ...(quotationParty.email ? [quotationParty.email] : []),
       ...(quotationParty.phone ? [`Phone: ${quotationParty.phone}`] : []),
     ];
-    document.text(details.length ? details : ["Address and tax details not provided"], x + 4, 59, {
-      maxWidth: partyWidth - 8,
+    document.text(details.length ? details : ["Address and tax details not provided"], x + 4, partyY + 17, {
+      maxWidth: width - 8,
       lineHeightFactor: 1.05,
     });
   };
 
-  renderParty(
-    margin,
-    "Bill To",
-    quotationParty.billingAddress?.gstin ?? quotationParty.gstin,
-    addressLines("billingAddress"),
-  );
-  renderParty(
-    margin + partyWidth + partyGap,
-    "Ship To",
-    quotationParty.shippingAddress?.gstin ?? quotationParty.gstin,
-    addressLines("shippingAddress"),
-  );
+  const showBillTo = headerFields.has("billTo");
+  const showShipTo = headerFields.has("shipTo");
+  if (showBillTo && showShipTo) {
+    renderParty(
+      margin,
+      "Bill To",
+      quotationParty.billingAddress?.gstin ?? quotationParty.gstin,
+      addressLines("billingAddress"),
+    );
+    renderParty(
+      margin + partyWidth + partyGap,
+      "Ship To",
+      quotationParty.shippingAddress?.gstin ?? quotationParty.gstin,
+      addressLines("shippingAddress"),
+    );
+  } else if (showBillTo) {
+    renderParty(
+      margin,
+      "Bill To",
+      quotationParty.billingAddress?.gstin ?? quotationParty.gstin,
+      addressLines("billingAddress"),
+      contentWidth,
+    );
+  } else if (showShipTo) {
+    renderParty(
+      margin,
+      "Ship To",
+      quotationParty.shippingAddress?.gstin ?? quotationParty.gstin,
+      addressLines("shippingAddress"),
+      contentWidth,
+    );
+  }
 
   const tableStyles = {
     theme: "grid" as const,
-    headStyles: { fillColor: [79, 70, 229] as [number, number, number], textColor: 255 as const, fontStyle: "bold" as const, fontSize: 7, cellPadding: 2 },
-    bodyStyles: { fontSize: 7, cellPadding: 2, textColor: [30, 41, 59] as [number, number, number], valign: "middle" as const },
+    headStyles: { fillColor: tableHeaderColor, textColor: tableHeaderTextColor, fontStyle: "bold" as const, fontSize: templateDesign.bodyFontSize, cellPadding: 2 },
+    bodyStyles: { fontSize: templateDesign.bodyFontSize, cellPadding: 2, textColor, valign: "middle" as const },
     alternateRowStyles: { fillColor: [248, 250, 252] as [number, number, number] },
-    styles: { lineColor: [226, 232, 240] as [number, number, number], lineWidth: 0.2, overflow: "linebreak" as const },
+    styles: { font: fontFamily, lineColor: [226, 232, 240] as [number, number, number], lineWidth: 0.2, overflow: "linebreak" as const },
   };
-  document.setFont("helvetica", "bold");
-  document.setFontSize(10);
-  document.setTextColor(15, 23, 42);
-  document.text("Quotation Items", margin, 97);
-  const itemRows = quotation.lines.map((line) => [
-    line.description + (line.brand || line.styleName ? `\n${[line.brand, line.styleName].filter(Boolean).join(" / ")}` : ""),
-    line.bookingNo,
-    line.orderNo,
-    line.sizes.map((size) => `${size.size}: ${size.bookedQuantity}`).join(", ") || "-",
-    String(line.quantity),
-    money(line.unitPrice),
-    money(line.lineTotal),
-    money(line.taxAmount),
-    money(line.totalAmount),
-  ]);
+  document.setFont(fontFamily, "bold");
+  document.setFontSize(templateDesign.bodyFontSize + 2);
+  document.setTextColor(...textColor);
+  const itemTableY = 100 + topOffset + headerOffset;
+  document.text("Quotation Items", margin, itemTableY - 3);
+  const itemColumns = [
+    { key: "description", label: "Item / Description", value: (line: DistributionQuotationPdfData["quotation"]["lines"][number]) => line.description + (line.brand || line.styleName ? `\n${[line.brand, line.styleName].filter(Boolean).join(" / ")}` : "") },
+    { key: "booking", label: "Booking", value: (line: DistributionQuotationPdfData["quotation"]["lines"][number]) => line.bookingNo },
+    { key: "order", label: "Order", value: (line: DistributionQuotationPdfData["quotation"]["lines"][number]) => line.orderNo },
+    { key: "sizeBreakdown", label: "Size Breakdown", value: (line: DistributionQuotationPdfData["quotation"]["lines"][number]) => line.sizes.map((size) => `${size.size}: ${size.bookedQuantity}`).join(", ") || "-" },
+    { key: "quantity", label: "Qty", value: (line: DistributionQuotationPdfData["quotation"]["lines"][number]) => String(line.quantity) },
+    { key: "unitPrice", label: "Unit Price", value: (line: DistributionQuotationPdfData["quotation"]["lines"][number]) => money(line.unitPrice) },
+    { key: "beforeTax", label: "Before Tax", value: (line: DistributionQuotationPdfData["quotation"]["lines"][number]) => money(line.lineTotal) },
+    { key: "tax", label: "Tax", value: (line: DistributionQuotationPdfData["quotation"]["lines"][number]) => money(line.taxAmount) },
+    { key: "amount", label: "Amount", value: (line: DistributionQuotationPdfData["quotation"]["lines"][number]) => money(line.totalAmount) },
+  ].filter((column) => templateDesign.sections.itemFields.includes(column.key));
+  const itemRows = quotation.lines.map((line) => itemColumns.map((column) => column.value(line)));
   autoTable(document, {
-    startY: 100,
-    margin: { left: margin, right: margin, bottom: 18 },
+    startY: itemTableY,
+    margin: { left: margin, right: rightMargin, bottom: bottomMargin },
     tableWidth: contentWidth,
-    head: [["Item / Description", "Booking", "Order", "Size Breakdown", "Qty", "Unit Price", "Before Tax", "Tax", "Amount"]],
-    body: itemRows.length ? itemRows : [["No item lines recorded", "-", "-", "-", "-", "-", "-", "-", "-"]],
+    head: [itemColumns.map((column) => column.label)],
+    body: itemRows.length ? itemRows : [itemColumns.map((_, index) => index === 0 ? "No item lines recorded" : "-")],
     ...tableStyles,
-    columnStyles: {
-      0: { cellWidth: 38 },
-      1: { cellWidth: 16 },
-      2: { cellWidth: 16 },
-      3: { cellWidth: 31 },
-      4: { cellWidth: 10, halign: "right" },
-      5: { cellWidth: 19, halign: "right" },
-      6: { cellWidth: 21, halign: "right" },
-      7: { cellWidth: 17, halign: "right" },
-      8: { cellWidth: 18, halign: "right" },
-    },
   });
   let nextY = (document as typeof document & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 112;
-  autoTable(document, {
+  const summaryRows: Array<[string, string]> = [
+    ["totalQuantity", "Total Quantity", String(quotation.totalQuantity)],
+    ["beforeTax", "Before Tax", money(quotation.subtotal)],
+    ["deliveryCharge", "Delivery Charge", money(quotation.deliveryCharge)],
+    ["cgst", "CGST", money(quotation.cgstAmount)],
+    ["sgst", "SGST", money(quotation.sgstAmount)],
+    ["igst", "IGST", money(quotation.igstAmount)],
+    ["vatSalesTax", "VAT / Sales Tax", money(addMoneyAmounts(quotation.vatAmount, quotation.salesTaxAmount))],
+    ["totalTax", "Total Tax", money(quotation.taxAmount)],
+    ["grandTotal", "Grand Total", money(quotation.grandTotal)],
+  ].filter(([key]) => templateDesign.sections.summaryFields.includes(key))
+    .map(([, label, amount]) => [label, amount]);
+  if (summaryRows.length > 0) {
+    autoTable(document, {
     startY: nextY + 4,
-    margin: { left: pageWidth - margin - 82, right: margin, bottom: 18 },
-    tableWidth: 82,
-    body: [
-      ["Total Quantity", String(quotation.totalQuantity)],
-      ["Before Tax", money(quotation.subtotal)],
-      ["Delivery Charge", money(quotation.deliveryCharge)],
-      ["CGST", money(quotation.cgstAmount)],
-      ["SGST", money(quotation.sgstAmount)],
-      ["IGST", money(quotation.igstAmount)],
-      ["VAT / Sales Tax", money(addMoneyAmounts(quotation.vatAmount, quotation.salesTaxAmount))],
-      ["Total Tax", money(quotation.taxAmount)],
-      ["Grand Total", money(quotation.grandTotal)],
-    ],
+    margin: { left: pageWidth - rightMargin - Math.min(82, contentWidth), right: rightMargin, bottom: bottomMargin },
+    tableWidth: Math.min(82, contentWidth),
+    body: summaryRows,
     theme: "plain",
-    styles: { fontSize: 7.5, cellPadding: 1.5, textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.2 },
-    columnStyles: { 0: { fontStyle: "bold", cellWidth: 50 }, 1: { halign: "right", cellWidth: 32 } },
-  });
-  nextY = (document as typeof document & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? nextY + 22;
-  if (quotation.notes.trim()) {
-    document.setFont("helvetica", "bold");
-    document.setFontSize(10);
-    document.setTextColor(15, 23, 42);
-    document.text("Terms & Conditions", margin, nextY + 8);
+    styles: { font: fontFamily, fontSize: templateDesign.bodyFontSize, cellPadding: 1.5, textColor, lineColor: [226, 232, 240], lineWidth: 0.2 },
+    columnStyles: {
+      0: { fontStyle: "bold", cellWidth: Math.min(50, contentWidth * 50 / 82) },
+      1: { halign: "right", cellWidth: Math.min(32, contentWidth * 32 / 82) },
+    },
+    });
+    nextY = (document as typeof document & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? nextY + 22;
+  }
+  if (templateDesign.sections.showPaymentTerms && templateDesign.sections.paymentTermsText.trim()) {
+    document.setFont(fontFamily, "bold");
+    document.setFontSize(templateDesign.bodyFontSize + 2);
+    document.setTextColor(...textColor);
+    document.text("Payment Terms", margin, nextY + 8);
     autoTable(document, {
       startY: nextY + 11,
-      margin: { left: margin, right: margin, bottom: 18 },
+      margin: { left: margin, right: rightMargin, bottom: bottomMargin },
       tableWidth: contentWidth,
-      body: [[quotation.notes]],
+      body: [[templateDesign.sections.paymentTermsText]],
       theme: "plain",
-      styles: { fontSize: 8, cellPadding: 1, textColor: [71, 85, 105], overflow: "linebreak" },
+      styles: { font: fontFamily, fontSize: templateDesign.bodyFontSize, cellPadding: 1, textColor, overflow: "linebreak" },
+    });
+    nextY = (document as typeof document & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? nextY + 18;
+  }
+  const specialNotes = [
+    ...(templateDesign.sections.showSpecialNotes && quotation.notes.trim() ? [quotation.notes] : []),
+    ...(templateDesign.sections.showSpecialNotes && templateDesign.footerText.trim() ? [templateDesign.footerText] : []),
+  ];
+  if (specialNotes.length > 0) {
+    document.setFont(fontFamily, "bold");
+    document.setFontSize(templateDesign.bodyFontSize + 2);
+    document.setTextColor(...textColor);
+    document.text("Special Notes", margin, nextY + 8);
+    autoTable(document, {
+      startY: nextY + 11,
+      margin: { left: margin, right: rightMargin, bottom: bottomMargin },
+      tableWidth: contentWidth,
+      body: [[specialNotes.join("\n\n")]],
+      theme: "plain",
+      styles: { font: fontFamily, fontSize: templateDesign.bodyFontSize, cellPadding: 1, textColor, overflow: "linebreak" },
     });
   }
 
@@ -323,13 +427,19 @@ export async function downloadDistributionQuotationPdf(data: DistributionQuotati
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
     document.setPage(pageNumber);
     document.setDrawColor(226, 232, 240);
-    document.line(margin, pageHeight - 13, pageWidth - margin, pageHeight - 13);
-    document.setFont("helvetica", "normal");
-    document.setFontSize(7);
+    const footerY = pageHeight - Math.max(bottomMargin / 2, 5);
+    document.line(margin, footerY - 4, pageWidth - rightMargin, footerY - 4);
+    document.setFont(fontFamily, "normal");
+    document.setFontSize(Math.max(templateDesign.bodyFontSize - 1, 6));
     document.setTextColor(100, 116, 139);
-    document.text(`Generated from Quotation ${quotation.quotationNo}`, margin, pageHeight - 8);
-    document.text(`Page ${pageNumber} of ${pageCount}`, pageWidth - margin, pageHeight - 8, { align: "right" });
+    document.text(
+      `Generated from Quotation ${quotation.quotationNo}`,
+      margin,
+      footerY,
+    );
+    if (templateDesign.showPageNumbers) {
+      document.text(`Page ${pageNumber} of ${pageCount}`, pageWidth - rightMargin, footerY, { align: "right" });
+    }
   }
-  const safeFilename = quotation.quotationNo.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "quotation";
-  document.save(`Quotation-${safeFilename}.pdf`);
+  return document.output("blob");
 }

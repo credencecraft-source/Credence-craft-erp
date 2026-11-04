@@ -3,11 +3,9 @@ import { describe, expect, it } from "vitest";
 import { ERP_MODULES } from "./erp-config-registry";
 
 describe("Barcode / QR Code module navigation", () => {
-  it("places Templates, Page Setup, and Print/Download under Barcode / QR Code", () => {
-    const designDevelopment = ERP_MODULES.find(
-      (module) => module.key === "design-development",
-    );
-    const barcodeQrCode = designDevelopment?.children.find(
+  it("places Page Setup, Templates, and Print/Download under Admin > Barcode / QR Code", () => {
+    const admin = ERP_MODULES.find((module) => module.key === "admin");
+    const barcodeQrCode = admin?.children.find(
       (child) => child.key === "barcode-qr-code",
     );
 
@@ -15,8 +13,8 @@ describe("Barcode / QR Code module navigation", () => {
       label: "Barcode / QR Code",
       pathSegment: "barcode-qr-code",
       children: [
-        { key: "templates", label: "Templates", pathSegment: "templates" },
         { key: "page-setup", label: "Page Setup", pathSegment: "page-setup" },
+        { key: "templates", label: "Templates", pathSegment: "templates" },
         { key: "print-download", label: "Print/Download", pathSegment: "print-download" },
       ],
     });

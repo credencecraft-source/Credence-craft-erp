@@ -1,0 +1,12 @@
+import { redirect } from "next/navigation";
+
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ workspaceId: string; organizationId: string }>;
+}) {
+  const { workspaceId, organizationId } = await params;
+  redirect(
+    `/dashboard/${workspaceId}/organizations/${organizationId}/design-development/barcode-qr-code/page-setup`,
+  );
+}

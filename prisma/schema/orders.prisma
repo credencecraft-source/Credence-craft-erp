@@ -89,6 +89,30 @@ enum OrderQrPrintRequestStatus {
   COMPLETED
 }
 
+enum OrganizationPrintDocumentType {
+  SALES_ORDER
+  QUOTATION
+}
+
+model OrganizationPrintTemplate {
+  id              String                        @id @default(cuid())
+  organization_id String
+  document_type   OrganizationPrintDocumentType
+  name            String                        @db.VarChar(100)
+  is_active       Boolean                       @default(true)
+  is_default      Boolean                       @default(false)
+  design_config   Json
+  created_by      String                        @db.VarChar(255)
+  created_at      DateTime                      @default(now())
+  updated_at      DateTime                      @updatedAt
+  organization    Organization                  @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, id], map: "organization_print_templates_org_id_key")
+  @@unique([organization_id, document_type, name], map: "organization_print_templates_org_type_name_key")
+  @@index([organization_id, document_type, is_active, updated_at(sort: Desc)], map: "organization_print_templates_org_type_active_updated_idx")
+  @@map("organization_print_templates")
+}
+
 model MerchandisingOrderQrPrintRequest {
   id                   String                    @id @default(cuid())
   organization_id      String

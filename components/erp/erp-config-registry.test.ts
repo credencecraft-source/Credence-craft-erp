@@ -35,6 +35,20 @@ describe("Advance Booking module naming", () => {
 });
 
 describe("Admin module navigation", () => {
+  it("places Barcode / QR Code under Admin while retaining its current routes", () => {
+    const admin = ERP_MODULES.find((module) => module.key === "admin");
+    const barcodeQrCode = admin?.children.find((child) => child.key === "barcode-qr-code");
+
+    expect(ERP_MODULES.find((module) => module.key === "design-development")?.children)
+      .not.toContainEqual(expect.objectContaining({ key: "barcode-qr-code" }));
+    expect(barcodeQrCode?.href).toBe("/design-development/barcode-qr-code");
+    expect(barcodeQrCode?.children?.map(({ label, href }) => [label, href])).toEqual([
+      ["Page Setup", "/design-development/barcode-qr-code/page-setup"],
+      ["Templates", "/design-development/barcode-qr-code/templates"],
+      ["Print/Download", "/design-development/barcode-qr-code/print-download"],
+    ]);
+  });
+
   it("places Excel, Direct, and Import History beneath Admin > Migration", () => {
     const admin = ERP_MODULES.find((module) => module.key === "admin");
     const migration = admin?.children.find((child) => child.key === "migration");

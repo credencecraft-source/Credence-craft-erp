@@ -195,8 +195,8 @@ describe("order QR print request contract", () => {
     }).success).toBe(false);
   });
 
-  it("enforces the pending-to-progress-to-completed lifecycle", () => {
-    expect(getNextOrderQrPrintRequestStatus("PENDING")).toBe("IN_PROGRESS");
+  it("allows pending and legacy in-progress requests to be completed directly", () => {
+    expect(getNextOrderQrPrintRequestStatus("PENDING")).toBe("COMPLETED");
     expect(getNextOrderQrPrintRequestStatus("IN_PROGRESS")).toBe("COMPLETED");
     expect(getNextOrderQrPrintRequestStatus("COMPLETED")).toBeNull();
   });

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -8,10 +7,6 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Modal from "@/components/ui/Modal";
-import {
-  createOrderQrPrintPdf,
-  createOrderQrStickerDataUrls,
-} from "@/components/erp/order-qr-print-output";
 import type {
   OrderQrPrintRequestStatus,
   OrderQrPrintRequestType,
@@ -87,12 +82,9 @@ const fields: Array<{ key: keyof ReportRow; label: string }> = [
   { key: "printQuantity", label: "Print Quantity" },
   { key: "printerType", label: "Printer" },
   { key: "pdfPaperSize", label: "PDF Paper" },
-  { key: "qrSize", label: "QR Size" },
-  { key: "stickerWidthMm", label: "Sticker Width (mm)" },
-  { key: "stickerLengthMm", label: "Sticker Length (mm)" },
   { key: "requestedAt", label: "Requested At" },
 ];
-const statuses = ["ALL", "PENDING", "IN_PROGRESS", "COMPLETED"] as const;
+const statuses = ["PENDING", "COMPLETED"] as const;
 
 export default function BarcodeQrPrintDownloadPage({
   workspaceId,
@@ -107,7 +99,7 @@ export default function BarcodeQrPrintDownloadPage({
   const [visibleFields, setVisibleFields] = useState<Array<keyof ReportRow>>(
     fields.map(({ key }) => key),
   );
-  const [selectedStatus, setSelectedStatus] = useState<string>("ALL");
+  const [selectedStatus, setSelectedStatus] = useState<string>("PENDING");
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -156,7 +148,9 @@ export default function BarcodeQrPrintDownloadPage({
 
   const rows = useMemo<ReportRow[]>(
     () => requests
-      .filter((request) => selectedStatus === "ALL" || request.status === selectedStatus)
+      .filter((request) => selectedStatus === "COMPLETED"
+        ? request.status === "COMPLETED"
+        : request.status !== "COMPLETED")
       .map((request) => ({
         id: request.id,
         sourceType: request.sourceType,
@@ -189,7 +183,7 @@ export default function BarcodeQrPrintDownloadPage({
   );
 
   const advanceStatus = async (record: ReportRow) => {
-    const targetStatus = record.status === "PENDING" ? "IN_PROGRESS" : "COMPLETED";
+    const targetStatus = "COMPLETED";
     setUpdatingId(record.id);
     setActionError("");
     try {
@@ -210,49 +204,13 @@ export default function BarcodeQrPrintDownloadPage({
           ? { ...request, status: targetStatus }
           : request,
       ));
+      setSelectedIds((current) => current.filter((id) => id !== record.id));
     } catch (error) {
       setActionError(
         error instanceof Error ? error.message : "Unable to update the request status.",
       );
     } finally {
       setUpdatingId("");
-    }
-  };
-
-  const processOutputRequest = async (record: ReportRow) => {
-    let printWindow: Window | null = null;
-    if (record.requestType === "Print") {
-      printWindow = window.open("", "_blank");
-      if (!printWindow) {
-        setActionError("Allow pop-ups to open the QR print view.");
-        return;
-      }
-      printWindow.opener = null;
-      printWindow.document.title = `QR - ${record.orderNo}`;
-      printWindow.document.body.textContent = "Preparing QR code...";
-    }
-
-    setActionError("");
-    try {
-      const stickerDataUrls = await createOrderQrStickerDataUrls(record);
-      const pdfBlob = await createOrderQrPrintPdf(record, stickerDataUrls);
-      if (printWindow) {
-        printWindow.location.assign(URL.createObjectURL(pdfBlob));
-      } else {
-        const download = document.createElement("a");
-        download.href = URL.createObjectURL(pdfBlob);
-        const sourcePrefix = record.sourceType === "POS_PURCHASE_BILL" ? "purchase-bill" : "order";
-        download.download = record.printerType === "LASER"
-          ? `${sourcePrefix}-${record.orderNo}-a4-stickers.pdf`
-          : `${sourcePrefix}-${record.orderNo}-sticker-labels.pdf`;
-        download.click();
-      }
-    } catch (error) {
-      printWindow?.close();
-      console.error("Unable to process QR print/download request.", {
-        errorName: error instanceof Error ? error.name : "UnknownError",
-      });
-      setActionError("Unable to prepare the QR output. Try again or contact support.");
     }
   };
 
@@ -289,8 +247,6 @@ export default function BarcodeQrPrintDownloadPage({
   };
 
   const visibleRows = rows;
-  const orderBaseHref =
-    `/dashboard/${workspaceId}/organizations/${organizationId}/order-management/merchandising/order`;
   const requestBaseHref =
     `/dashboard/${workspaceId}/organizations/${organizationId}/design-development/barcode-qr-code/print-download`;
   return (
@@ -373,37 +329,6 @@ export default function BarcodeQrPrintDownloadPage({
         )}
         rowActions={(record) => (
           <div className="flex flex-wrap items-center gap-2">
-            {record.bulkItems.length > 0 ? (
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => router.push(`${requestBaseHref}/${encodeURIComponent(record.id)}`)}
-              >
-                {record.sourceType === "POS_PURCHASE_BILL"
-                  ? "Review purchase bill request"
-                  : "Review bulk request"}
-              </Button>
-            ) : (
-              <>
-                <Link
-                  href={`${orderBaseHref}/${encodeURIComponent(record.orderId)}`}
-                  className="text-sm font-medium text-[var(--erp-brand)] hover:underline"
-                >
-                  Open Order
-                </Link>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void processOutputRequest(record)}
-                >
-                  {record.printerType === "LASER"
-                    ? record.requestType === "Print" ? "Open A4 PDF" : "Download A4 PDF"
-                    : record.requestType === "Print" ? "Print Sticker" : "Download Sticker"}
-                </Button>
-              </>
-            )}
             {record.status !== "COMPLETED" && (
               <Button
                 type="button"
@@ -414,17 +339,7 @@ export default function BarcodeQrPrintDownloadPage({
               >
                 {updatingId === record.id
                   ? "Saving..."
-                  : record.status === "PENDING" ? "Start" : "Complete"}
-              </Button>
-            )}
-            {canManage && record.status === "PENDING" && (
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                onClick={() => requestDelete([record.id])}
-              >
-                Delete
+                  : "Mark as Completed"}
               </Button>
             )}
           </div>
@@ -445,9 +360,9 @@ export default function BarcodeQrPrintDownloadPage({
           }
           return String(record[fieldKey as keyof ReportRow] ?? "");
         }}
-        emptyMessage={selectedStatus === "ALL"
-          ? "No print/download requests have been submitted."
-          : `No ${selectedStatus.replaceAll("_", " ").toLowerCase()} requests found.`}
+        emptyMessage={selectedStatus === "PENDING"
+          ? "No pending print/download requests."
+          : "No completed print/download requests found."}
         isLoading={isLoading}
       />
       {deleteIds.length > 0 && (

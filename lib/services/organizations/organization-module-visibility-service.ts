@@ -9,9 +9,9 @@ export class OrganizationModuleVisibilityError extends Error {}
 
 export function isOrganizationModuleVisible(settings: Prisma.JsonValue | null) {
   if (typeof settings !== "object" || settings === null || Array.isArray(settings)) {
-    return false;
+    return true;
   }
-  return settings[ORGANIZATION_VISIBLE_SETTING] === true;
+  return settings[ORGANIZATION_VISIBLE_SETTING] !== false;
 }
 
 export function isOrganizationModuleAvailable(status: string, isVisible: boolean) {

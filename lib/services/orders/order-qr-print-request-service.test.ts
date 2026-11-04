@@ -816,7 +816,7 @@ describe("order QR print request service", () => {
     ]);
   });
 
-  it("uses a tenant-scoped compare-and-set for legal status progression", async () => {
+  it("uses a tenant-scoped compare-and-set to complete a pending request directly", async () => {
     mocks.transaction.merchandisingOrderQrPrintRequest.findFirst
       .mockResolvedValueOnce({ status: "PENDING" })
       .mockResolvedValueOnce({
@@ -824,7 +824,7 @@ describe("order QR print request service", () => {
         order_id: "order-1",
         order_no: "ORD-1",
         request_type: "PRINT",
-        status: "IN_PROGRESS",
+        status: "COMPLETED",
         template_name: "BASIC",
         qr_field_key: "orderNo",
         display_fields: ["orderNo", "buyer"],
@@ -843,12 +843,12 @@ describe("order QR print request service", () => {
       "internal-org-1",
       "user-2",
       "request-1",
-      "IN_PROGRESS",
+      "COMPLETED",
     )).resolves.toMatchObject({
       success: true,
       request: {
         id: "request-1",
-        status: "IN_PROGRESS",
+        status: "COMPLETED",
         displayFields: ["orderNo", "buyer"],
         displayValues: {},
         layout: {
@@ -871,7 +871,7 @@ describe("order QR print request service", () => {
           id: "request-1",
           status: "PENDING",
         },
-        data: { status: "IN_PROGRESS" },
+        data: { status: "COMPLETED" },
       }),
     );
   });

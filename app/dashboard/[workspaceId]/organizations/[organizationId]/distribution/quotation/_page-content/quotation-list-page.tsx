@@ -14,9 +14,11 @@ import { ReportGrid } from "@/components/reports/report-grid-display";
 import { toggleVisibleReportSelection } from "@/components/reports/report-grid-filtering";
 import { validateMasterQuotationChildSelection } from "@/lib/services/distribution/quotation-selection-service";
 import {
-  downloadDistributionQuotationPdf,
+  createDistributionQuotationPdf,
   isDistributionQuotationPdfData,
 } from "@/lib/services/distribution/quotation-pdf-generator";
+import { fetchDefaultOrganizationPrintTemplateDesign } from "@/lib/services/distribution/organization-print-template-client";
+import { openPdfPrintPreviewWindow } from "@/lib/services/distribution/print-preview-window";
 import type { DistributionQuotationSummary } from "./quotation-types";
 
 type VendorOption = { id: string; label: string };
@@ -355,30 +357,46 @@ export default function QuotationListPage() {
     router.push(`/dashboard/${params.workspaceId}/organizations/${organizationId}/advance-booking/quotation/${encodeURIComponent(id)}`);
   }
 
-  async function downloadQuotationPdf(quotationId: string) {
+  async function openQuotationPrintView(quotation: DistributionQuotationSummary) {
+    const quotationId = quotation.id;
     if (pdfLoadingQuotationId) return;
+    const printPreview = openPdfPrintPreviewWindow(`Quotation ${quotation.quotationNo}`);
+    if (!printPreview) {
+      setError("Allow pop-ups to open the quotation print view.");
+      return;
+    }
     setPdfLoadingQuotationId(quotationId);
     setError("");
     try {
+      const workspaceId = String(params.workspaceId);
       const query = new URLSearchParams({ organizationId, mode: "QUOTATION_PDF" });
-      const response = await fetch(
-        `/api/distribution/quotations/${encodeURIComponent(quotationId)}?${query}`,
-        { cache: "no-store" },
-      );
+      const [response, designConfig] = await Promise.all([
+        fetch(
+          `/api/distribution/quotations/${encodeURIComponent(quotationId)}?${query}`,
+          { cache: "no-store" },
+        ),
+        fetchDefaultOrganizationPrintTemplateDesign(workspaceId, organizationId, "QUOTATION"),
+      ]);
       const responseData: unknown = await response.json().catch(() => null);
       if (!response.ok) {
         const message = responseData && typeof responseData === "object" && "error" in responseData &&
           typeof responseData.error === "string"
           ? responseData.error
-          : "Unable to load quotation details for the PDF.";
+          : "Unable to load quotation details for printing.";
         throw new Error(message);
       }
       if (!isDistributionQuotationPdfData(responseData)) {
-        throw new Error("The quotation details returned an incomplete PDF document.");
+        throw new Error("The quotation details returned an incomplete print document.");
       }
-      await downloadDistributionQuotationPdf(responseData);
+      const pdf = await createDistributionQuotationPdf(responseData, designConfig ?? undefined);
+      const safeFilename = quotation.quotationNo.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "quotation";
+      printPreview.show(pdf, `Quotation-${safeFilename}.pdf`);
     } catch (pdfError) {
-      setError(pdfError instanceof Error ? pdfError.message : "Unable to create the quotation PDF.");
+      const message = pdfError instanceof Error
+        ? pdfError.message
+        : "Unable to create the quotation print view.";
+      printPreview.showError(message);
+      setError(message);
     } finally {
       setPdfLoadingQuotationId(null);
     }
@@ -444,13 +462,16 @@ export default function QuotationListPage() {
           onRowClick={(id) => openQuotation(id)}
           onRowAction={(id) => openQuotation(id)}
           rowActionLabel="Open Quotation"
-          onSecondaryRowAction={(id) => void downloadQuotationPdf(id)}
-          secondaryRowActionLabel="Quotation PDF"
+          onSecondaryRowAction={(id) => {
+            const quotation = quotations.find((record) => record.id === id);
+            if (quotation) void openQuotationPrintView(quotation);
+          }}
+          secondaryRowActionLabel="Print"
           secondaryRowActionDisabledSelector={(quotation) =>
             isLoading || pdfLoadingQuotationId !== null || quotation.mode === "MASTER"
           }
           secondaryRowActionLabelSelector={(quotation) =>
-            pdfLoadingQuotationId === quotation.id ? "Preparing PDF..." : "Quotation PDF"
+            pdfLoadingQuotationId === quotation.id ? "Preparing print view..." : "Print"
           }
           onBulkDeleteSelected={requestBulkDelete}
           bulkDeleteSelectedLabel="Delete Quotations"

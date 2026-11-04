@@ -219,8 +219,7 @@ export function isOrderQrPrintRequestStatus(value: unknown): value is OrderQrPri
 export function getNextOrderQrPrintRequestStatus(
   current: OrderQrPrintRequestStatus,
 ): OrderQrPrintRequestStatus | null {
-  if (current === "PENDING") return "IN_PROGRESS";
-  if (current === "IN_PROGRESS") return "COMPLETED";
+  if (current === "PENDING" || current === "IN_PROGRESS") return "COMPLETED";
   return null;
 }
 

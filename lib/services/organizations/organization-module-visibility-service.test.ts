@@ -40,16 +40,22 @@ beforeEach(() => {
 });
 
 describe("organization module visibility", () => {
-  it("defaults unset organization visibility to hidden", () => {
-    expect(isOrganizationModuleVisible(null)).toBe(false);
-    expect(isOrganizationModuleVisible({ legacySetting: true })).toBe(false);
+  it("defaults unset organization visibility to visible while respecting explicit hidden settings", () => {
+    expect(isOrganizationModuleVisible(null)).toBe(true);
+    expect(isOrganizationModuleVisible({ legacySetting: true })).toBe(true);
     expect(isOrganizationModuleVisible({ organization_visible: true })).toBe(true);
+    expect(isOrganizationModuleVisible({ organization_visible: false })).toBe(false);
   });
 
-  it("allows module routes only when the platform enabled and the organization selected the module", () => {
+  it("allows platform-enabled modules by default unless the organization explicitly hides them", () => {
     expect(isOrganizationModuleAvailable(" enabled ", true)).toBe(true);
     expect(isOrganizationModuleAvailable("disabled", true)).toBe(false);
     expect(isOrganizationModuleAvailable("enabled", false)).toBe(false);
+    expect(isOrganizationModuleAvailable("enabled", isOrganizationModuleVisible(null))).toBe(true);
+    expect(isOrganizationModuleAvailable(
+      "enabled",
+      isOrganizationModuleVisible({ organization_visible: false }),
+    )).toBe(false);
   });
 
   it("persists only the organization setting and audits it against the authorized tenant", async () => {
