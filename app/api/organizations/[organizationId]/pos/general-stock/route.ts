@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { prisma } from "@/lib/database/prisma-client";
+import { GENERAL_FINISHED_GOODS_SKU_SOURCES } from "@/lib/services/inventory/finished-goods-stock-overview";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 export async function GET(
@@ -14,12 +15,65 @@ export async function GET(
     const organization = await requireOrganizationContext(user.id, organizationId);
     const searchParams = new URL(request.url).searchParams;
     const stockId = searchParams.get("stockId")?.trim();
+    const stockType = searchParams.get("stockType");
     const search = searchParams.get("search")?.trim() ?? "";
+    if (stockType && stockType !== "SKU" && stockType !== "GENERAL_GRN") {
+      return NextResponse.json({ error: "Select a valid General stock record type." }, { status: 400 });
+    }
     if (search && (search.length < 2 || search.length > 100)) {
       return NextResponse.json({ error: "Stock search must contain between 2 and 100 characters." }, { status: 400 });
     }
-    const resultLimit = stockId ? 1 : 50;
-    const stockRecords = await prisma.finishedGoodsGeneralStockReceipt.findMany({
+    const resultLimit = stockId ? 1 : 10;
+    const take = resultLimit + 1;
+    const [skuRecords, generalReceiptRecords] = await Promise.all([
+      stockType === "GENERAL_GRN" ? Promise.resolve([]) : prisma.finishedGoodsSkuStock.findMany({
+        where: {
+          organization_id: organization.id,
+          source: { in: [...GENERAL_FINISHED_GOODS_SKU_SOURCES] },
+          current_stock: { gt: 0 },
+          ...(stockId ? { id: stockId } : {}),
+          ...(search ? {
+            OR: [
+              { style_name: { contains: search, mode: "insensitive" } },
+              { order_no: { contains: search, mode: "insensitive" } },
+              { article_no: { contains: search, mode: "insensitive" } },
+              { brand: { contains: search, mode: "insensitive" } },
+              { size: { contains: search, mode: "insensitive" } },
+              { colour: { contains: search, mode: "insensitive" } },
+              { product_category: { contains: search, mode: "insensitive" } },
+              { sub_product_category: { contains: search, mode: "insensitive" } },
+            ],
+          } : {}),
+        },
+        select: {
+          id: true,
+          style_name: true,
+          order_no: true,
+          article_no: true,
+          brand: true,
+          size: true,
+          colour: true,
+          product_category: true,
+          sub_product_category: true,
+          current_stock: true,
+          qty_in: true,
+          qty_out: true,
+          gst_rate: true,
+          hsn_code: true,
+          purchase_price: true,
+          sales_price: true,
+          mrp: true,
+          sku_code: true,
+          barcode: true,
+          source: true,
+          added_time: true,
+          added_user: true,
+          location: { select: { location_name: true } },
+        },
+        orderBy: [{ style_name: "asc" }, { order_no: "asc" }, { id: "asc" }],
+        take,
+      }),
+      stockType === "SKU" ? Promise.resolve([]) : prisma.finishedGoodsGeneralStockReceipt.findMany({
       where: {
         organization_id: organization.id,
         current_stock: { gt: 0 },
@@ -52,18 +106,49 @@ export async function GET(
         created_by: true,
         location: { select: { location_name: true } },
       },
-      orderBy: [{ posted_at: "desc" }, { id: "desc" }],
-      take: resultLimit + 1,
-    });
+        orderBy: [{ style_name: "asc" }, { order_no: "asc" }, { id: "asc" }],
+        take,
+      }),
+    ]);
 
-    if (stockId && stockRecords.length === 0) {
+    if (stockId && skuRecords.length + generalReceiptRecords.length === 0) {
       return NextResponse.json({ error: "No available General finished-goods stock found for this record." }, { status: 404 });
     }
-    const hasMore = stockRecords.length > resultLimit;
+    if (stockId && skuRecords.length + generalReceiptRecords.length > 1) {
+      return NextResponse.json({ error: "This stock ID is ambiguous. Select its General stock record type." }, { status: 409 });
+    }
 
-    return NextResponse.json({
-      records: stockRecords.slice(0, resultLimit).map((record) => ({
+    const records = [
+      ...skuRecords.map((record) => ({
         id: record.id,
+        stock_type: "SKU" as const,
+        style_name: record.style_name,
+        order_no: record.order_no,
+        article_no: record.article_no,
+        sku_code: record.sku_code,
+        barcode: record.barcode,
+        brand: record.brand,
+        size: record.size,
+        colour: record.colour,
+        product_category: record.product_category,
+        sub_product_category: record.sub_product_category,
+        current_stock: record.current_stock,
+        location_name: record.location.location_name,
+        added_time: record.added_time,
+        added_user: record.added_user,
+        source: record.source,
+        qty_in: record.qty_in,
+        qty_out: record.qty_out,
+        gst_rate: record.gst_rate,
+        hsn_code: record.hsn_code,
+        purchase_price: record.purchase_price,
+        sales_price: record.sales_price,
+        mrp: record.mrp,
+        inventory_bucket: "GENERAL" as const,
+      })),
+      ...generalReceiptRecords.map((record) => ({
+        id: record.id,
+        stock_type: "GENERAL_GRN" as const,
         style_name: record.style_name,
         order_no: record.order_no,
         article_no: record.article_no ?? "",
@@ -88,8 +173,16 @@ export async function GET(
         mrp: null,
         inventory_bucket: "GENERAL" as const,
       })),
-      hasMore,
-    });
+    ].sort((left, right) =>
+      left.style_name.localeCompare(right.style_name, undefined, { sensitivity: "base" })
+      || left.order_no.localeCompare(right.order_no, undefined, { sensitivity: "base" })
+      || (left.size ?? "").localeCompare(right.size ?? "", undefined, { sensitivity: "base" })
+      || left.id.localeCompare(right.id)
+      || left.stock_type.localeCompare(right.stock_type),
+    );
+    const hasMore = records.length > resultLimit;
+
+    return NextResponse.json({ records: records.slice(0, resultLimit), hasMore });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to load General finished-goods stock." },

@@ -161,7 +161,6 @@ describe("listFgIssued", () => {
           idempotency_key: "pos-invoice:invoice-1:issue",
           lines: {
             create: [expect.objectContaining({
-              organization_id: "internal-org-1",
               general_receipt_id: "receipt-1",
               line_no: 1,
               quantity: new Prisma.Decimal("2"),
@@ -171,6 +170,52 @@ describe("listFgIssued", () => {
           },
         }),
       }));
+      const createData = mocks.create.mock.calls[0][0].data;
+      expect(createData.organization_id).toBe("internal-org-1");
+      expect(createData.lines.create[0]).not.toHaveProperty("organization_id");
+    });
+
+    it("creates SKU issue lines without duplicating the parent organization relation key", async () => {
+      await createFgMaterialIssue(prisma, {
+        organizationId: "internal-org-1",
+        sourceType: FGMaterialIssueSource.POS_INVOICE,
+        movement: FGMaterialIssueMovement.ISSUE,
+        posInvoiceId: "invoice-1",
+        idempotencyKey: "pos-invoice:invoice-1:issue",
+        sourceReference: "POS-1",
+        issuedBy: "user-1",
+        lines: [{
+          stockType: FGMaterialIssueStockType.SKU,
+          skuStockId: "sku-stock-1",
+          posInvoiceLineId: "invoice-line-1",
+          styleName: "APPLE PRINTED",
+          articleNo: "GPR-0001",
+          size: "M",
+          colour: "BLACK",
+          quantity: new Prisma.Decimal("2"),
+          uomCode: "PCS",
+          stockBefore: new Prisma.Decimal("100"),
+          stockAfter: new Prisma.Decimal("98"),
+        }],
+      });
+
+      expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          organization_id: "internal-org-1",
+          pos_invoice_id: "invoice-1",
+          lines: {
+            create: [expect.objectContaining({
+              line_no: 1,
+              stock_type: FGMaterialIssueStockType.SKU,
+              sku_stock_id: "sku-stock-1",
+              general_receipt_id: null,
+              pos_invoice_line_id: "invoice-line-1",
+            })],
+          },
+        }),
+      }));
+      const createData = mocks.create.mock.calls[0][0].data;
+      expect(createData.lines.create[0]).not.toHaveProperty("organization_id");
     });
 
     it("returns an existing issue before reserving another reference", async () => {

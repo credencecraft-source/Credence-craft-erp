@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   requireSessionUser: vi.fn(),
   requireOrganizationContext: vi.fn(),
   generalStockFindMany: vi.fn(),
+  skuStockFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({
@@ -13,7 +14,10 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
   requireOrganizationContext: mocks.requireOrganizationContext,
 }));
 vi.mock("@/lib/database/prisma-client", () => ({
-  prisma: { finishedGoodsGeneralStockReceipt: { findMany: mocks.generalStockFindMany } },
+  prisma: {
+    finishedGoodsGeneralStockReceipt: { findMany: mocks.generalStockFindMany },
+    finishedGoodsSkuStock: { findMany: mocks.skuStockFindMany },
+  },
 }));
 
 import { GET } from "./route";
@@ -23,6 +27,7 @@ describe("POS General FG stock route", () => {
     vi.clearAllMocks();
     mocks.requireSessionUser.mockResolvedValue({ id: "user-1" });
     mocks.requireOrganizationContext.mockResolvedValue({ id: "internal-org-1" });
+    mocks.skuStockFindMany.mockResolvedValue([]);
     mocks.generalStockFindMany.mockResolvedValue([{
       id: "general-stock-1",
       style_name: "Classic Shirt",
@@ -52,7 +57,17 @@ describe("POS General FG stock route", () => {
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org");
     expect(mocks.generalStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: "internal-org-1", current_stock: { gt: 0 } },
-      take: 51,
+      orderBy: [{ style_name: "asc" }, { order_no: "asc" }, { id: "asc" }],
+      take: 11,
+    }));
+    expect(mocks.skuStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "internal-org-1",
+        source: { in: expect.arrayContaining(["DIRECT", "DIRECT_FROM_INVENTORY"]) },
+        current_stock: { gt: 0 },
+      }),
+      orderBy: [{ style_name: "asc" }, { order_no: "asc" }, { id: "asc" }],
+      take: 11,
     }));
     expect(body.records).toHaveLength(1);
     expect(body.records[0]).toMatchObject({
@@ -79,7 +94,7 @@ describe("POS General FG stock route", () => {
 
   it("searches tenant stock fields with a bounded result set", async () => {
     const response = await GET(
-      new Request("http://localhost/api/organizations/public-org/pos/general-stock?search=shirt"),
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock?search=sh"),
       { params: Promise.resolve({ organizationId: "public-org" }) },
     );
 
@@ -89,12 +104,217 @@ describe("POS General FG stock route", () => {
         organization_id: "internal-org-1",
         current_stock: { gt: 0 },
         OR: expect.arrayContaining([
-          { style_name: { contains: "shirt", mode: "insensitive" } },
-          { order_no: { contains: "shirt", mode: "insensitive" } },
+          { style_name: { contains: "sh", mode: "insensitive" } },
+          { order_no: { contains: "sh", mode: "insensitive" } },
         ]),
       }),
-      take: 51,
+      orderBy: [{ style_name: "asc" }, { order_no: "asc" }, { id: "asc" }],
+      take: 11,
     }));
+  });
+
+  it("returns only the first 10 General stock records in alphabetical order", async () => {
+    mocks.generalStockFindMany.mockResolvedValue([]);
+    mocks.skuStockFindMany.mockResolvedValue(
+      Array.from({ length: 11 }, (_, index) => ({
+        id: `sku-stock-${index + 1}`,
+        style_name: `Style ${String.fromCharCode(65 + index)}`,
+        order_no: `ORDER-${index + 1}`,
+        article_no: `ARTICLE-${index + 1}`,
+        brand: "Brand",
+        size: "M",
+        colour: "Navy",
+        product_category: "Garment",
+        sub_product_category: null,
+        current_stock: 10,
+        qty_in: 12,
+        qty_out: 2,
+        gst_rate: 5,
+        hsn_code: "6105",
+        purchase_price: 50,
+        sales_price: 100,
+        mrp: 120,
+        sku_code: `SKU-${index + 1}`,
+        barcode: `BARCODE-${index + 1}`,
+        source: "DIRECT_FROM_INVENTORY",
+        added_time: new Date("2026-10-07T12:00:00Z"),
+        added_user: "user@example.test",
+        location: { location_name: "Finished Goods" },
+      })),
+    );
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.records).toHaveLength(10);
+    expect(body.hasMore).toBe(true);
+    expect(body.records.map((record: { style_name: string }) => record.style_name)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `Style ${String.fromCharCode(65 + index)}`),
+    );
+  });
+
+  it("merges SKU and GRN inventory before applying the first 10 alphabetical limit", async () => {
+    const postedAt = new Date("2026-10-07T12:00:00Z");
+    mocks.skuStockFindMany.mockResolvedValue(
+      ["A", "C", "E", "G", "I", "K"].map((letter) => ({
+        id: `sku-${letter}`,
+        style_name: letter,
+        order_no: "DIRECT",
+        article_no: "DIRECT",
+        brand: null,
+        size: "M",
+        colour: null,
+        product_category: "Garment",
+        sub_product_category: null,
+        current_stock: 1,
+        qty_in: 1,
+        qty_out: 0,
+        gst_rate: null,
+        hsn_code: null,
+        purchase_price: null,
+        sales_price: null,
+        mrp: null,
+        sku_code: null,
+        barcode: null,
+        source: "DIRECT",
+        added_time: postedAt,
+        added_user: "user@example.test",
+        location: { location_name: "Finished Goods" },
+      })),
+    );
+    mocks.generalStockFindMany.mockResolvedValue(
+      ["B", "D", "F", "H", "J", "L"].map((letter) => ({
+        id: `grn-${letter}`,
+        style_name: letter,
+        order_no: `ORDER-${letter}`,
+        article_no: `ARTICLE-${letter}`,
+        brand: null,
+        size: "M",
+        colour: null,
+        product_category: "Garment",
+        current_stock: 1,
+        quantity_in: 1,
+        quantity_out: 0,
+        posted_at: postedAt,
+        created_by: "user-1",
+        location: { location_name: "Finished Goods" },
+      })),
+    );
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.records.map((record: { style_name: string }) => record.style_name)).toEqual(
+      ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
+    );
+    expect(body.hasMore).toBe(true);
+  });
+
+  it("includes direct General SKU stock such as Rascal in the alphabetical results", async () => {
+    mocks.generalStockFindMany.mockResolvedValue([]);
+    mocks.skuStockFindMany.mockResolvedValue([{
+      id: "rascal-stock-1",
+      style_name: "Rascal",
+      order_no: "DIRECT",
+      article_no: "DIRECT",
+      brand: "Brand",
+      size: "M",
+      colour: "Black",
+      product_category: "Garment",
+      sub_product_category: null,
+      current_stock: 8,
+      qty_in: 10,
+      qty_out: 2,
+      gst_rate: 5,
+      hsn_code: "6105",
+      purchase_price: 50,
+      sales_price: 100,
+      mrp: 120,
+      sku_code: "RASCAL-M-BLACK",
+      barcode: "RASCAL-BARCODE",
+      source: "DIRECT_FROM_INVENTORY",
+      added_time: new Date("2026-10-07T12:00:00Z"),
+      added_user: "user@example.test",
+      location: { location_name: "Finished Goods" },
+    }]);
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock?search=ra"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.records).toHaveLength(1);
+    expect(body.records[0]).toMatchObject({
+      id: "rascal-stock-1",
+      stock_type: "SKU",
+      style_name: "Rascal",
+      current_stock: 8,
+      inventory_bucket: "GENERAL",
+    });
+    expect(mocks.skuStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "internal-org-1",
+        current_stock: { gt: 0 },
+        OR: expect.arrayContaining([
+          { style_name: { contains: "ra", mode: "insensitive" } },
+          { article_no: { contains: "ra", mode: "insensitive" } },
+        ]),
+      }),
+    }));
+  });
+
+  it("resolves scanned SKU stock only from its authorized organization", async () => {
+    mocks.generalStockFindMany.mockResolvedValue([]);
+    mocks.skuStockFindMany.mockResolvedValue([{
+      id: "sku-stock-1",
+      style_name: "Rascal",
+      order_no: "DIRECT",
+      article_no: "DIRECT",
+      brand: null,
+      size: "M",
+      colour: "Black",
+      product_category: "Garment",
+      sub_product_category: null,
+      current_stock: 2,
+      qty_in: 2,
+      qty_out: 0,
+      gst_rate: null,
+      hsn_code: null,
+      purchase_price: null,
+      sales_price: null,
+      mrp: null,
+      sku_code: null,
+      barcode: null,
+      source: "DIRECT",
+      added_time: new Date("2026-10-07T12:00:00Z"),
+      added_user: "user@example.test",
+      location: { location_name: "Finished Goods" },
+    }]);
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock?stockId=sku-stock-1&stockType=SKU"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.skuStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "internal-org-1",
+        id: "sku-stock-1",
+      }),
+      take: 2,
+    }));
+    expect(mocks.generalStockFindMany).not.toHaveBeenCalled();
   });
 
   it("rejects unbounded or underspecified search terms before querying stock", async () => {

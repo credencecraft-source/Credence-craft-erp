@@ -14,6 +14,7 @@ import Section from "@/components/ui/Section";
 
 type StockRecord = {
   id: string;
+  stock_type: "SKU" | "GENERAL_GRN";
   style_name: string;
   order_no: string;
   article_no: string;
@@ -43,20 +44,19 @@ type BillLine = {
   hsnCode: string;
   discountPercent: number;
 };
+
+function stockRecordKey(record: Pick<StockRecord, "id" | "stock_type">) {
+  return `${record.stock_type}:${record.id}`;
+}
 type GstOption = {
   id: string;
   label: string;
   fields?: Record<string, unknown>;
 };
-type MasterLookupOption = {
+type CustomerContactOption = {
   id: string;
-  value_id?: string;
-  label: string;
-};
-type MasterStateOption = {
-  id?: string;
-  value_id?: string;
-  label?: string | null;
+  legal_name: string;
+  display_name: string | null;
 };
 type StoredFinanceDocument = {
   id: string;
@@ -93,21 +93,17 @@ export default function PosBarcodeBillingPage({
     null,
   );
   const [billLines, setBillLines] = useState<BillLine[]>([]);
-  const [customer, setCustomer] = useState("");
+  const [customerContactId, setCustomerContactId] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
   const [taxMode] = useState<"LOCAL" | "INTERSTATE">("LOCAL");
   const otherCharges = "0";
   const [gstOptions, setGstOptions] = useState<GstOption[]>([]);
-  const [vendorOptions, setVendorOptions] = useState<string[]>([]);
-  const [vendorQuickCreate, setVendorQuickCreate] = useState("");
-  const [stateOptions, setStateOptions] = useState<MasterLookupOption[]>([]);
-  const [stateOptionsLoading, setStateOptionsLoading] = useState(false);
-  const [stateOptionsLoaded, setStateOptionsLoaded] = useState(false);
-  const [stateOptionsError, setStateOptionsError] = useState("");
-  const [vendorState, setVendorState] = useState("");
-  const [vendorSubmitting, setVendorSubmitting] = useState(false);
+  const [customerOptions, setCustomerOptions] = useState<CustomerContactOption[]>([]);
+  const [customerLoading, setCustomerLoading] = useState(true);
+  const [customerQuickCreate, setCustomerQuickCreate] = useState("");
+  const [customerSubmitting, setCustomerSubmitting] = useState(false);
   const [taxProfile, setTaxProfile] = useState<{
     cgstRate?: number | null;
     sgstRate?: number | null;
@@ -130,33 +126,33 @@ export default function PosBarcodeBillingPage({
         { cache: "no-store" },
       ).then((response) => response.json()),
       fetch(
-        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/vendor?includeInactive=false`,
+        `/api/organizations/${encodeURIComponent(organizationId)}/contacts?limit=200&roleCode=CUSTOMER`,
         { cache: "no-store" },
-      ).then((response) => response.json()),
+      ).then(async (response) => {
+        const data = await response.json() as {
+          error?: string;
+          records?: CustomerContactOption[];
+        };
+        if (!response.ok || !Array.isArray(data.records)) {
+          throw new Error(data.error || "Unable to load customer contacts.");
+        }
+        return data.records;
+      }),
     ])
-      .then(([gstData, taxData, vendorData]) => {
+      .then(([gstData, taxData, customerData]) => {
         setGstOptions(Array.isArray(gstData) ? gstData : []);
         setTaxProfile(taxData.profile ?? null);
-        setVendorOptions(
-          Array.isArray(vendorData)
-            ? Array.from(
-                new Set(
-                  vendorData
-                    .map((item) => String(item.label ?? "").trim())
-                    .filter(Boolean),
-                ),
-              ).sort((left, right) => left.localeCompare(right))
-            : [],
-        );
+        setCustomerOptions(customerData);
       })
       .catch((loadError: unknown) => setError(
-        loadError instanceof Error ? loadError.message : "Unable to load POS tax and vendor data.",
-      ));
+        loadError instanceof Error ? loadError.message : "Unable to load POS tax and customer data.",
+      ))
+      .finally(() => setCustomerLoading(false));
   }, [organizationId]);
 
   useEffect(() => {
     const search = stockSearch.trim();
-    if (search.length < 2) return;
+    if (search.length === 1) return;
 
     const controller = new AbortController();
     const timeoutId = window.setTimeout(async () => {
@@ -164,7 +160,7 @@ export default function PosBarcodeBillingPage({
       setStockSearchError("");
       try {
         const response = await fetch(
-          `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock?search=${encodeURIComponent(search)}`,
+          `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock${search ? `?search=${encodeURIComponent(search)}` : ""}`,
           { cache: "no-store", signal: controller.signal },
         );
         const data = (await response.json()) as {
@@ -186,7 +182,7 @@ export default function PosBarcodeBillingPage({
       } finally {
         if (!controller.signal.aborted) setStockSearchLoading(false);
       }
-    }, 250);
+    }, search ? 250 : 0);
 
     return () => {
       window.clearTimeout(timeoutId);
@@ -194,75 +190,56 @@ export default function PosBarcodeBillingPage({
     };
   }, [organizationId, stockSearch]);
 
-  const loadStateOptions = async () => {
-    if (stateOptionsLoaded || stateOptionsLoading) return;
-    setStateOptionsLoading(true);
-    setStateOptionsError("");
-    try {
-      const response = await fetch(
-        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/state?includeInactive=false`,
-        { cache: "no-store" },
-      );
-      const data = (await response.json()) as MasterStateOption[] | { error?: string };
-      if (!response.ok || !Array.isArray(data)) {
-        throw new Error(!Array.isArray(data) && data.error ? data.error : "Unable to load registered states.");
-      }
-      setStateOptions(data
-        .map((item) => ({
-          id: String(item.id ?? item.value_id ?? ""),
-          value_id: item.value_id,
-          label: String(item.label ?? "").trim(),
-        }))
-        .filter((item) => item.id && item.label)
-        .sort((left, right) => left.label.localeCompare(right.label)));
-      setStateOptionsLoaded(true);
-    } catch (stateError) {
-      setStateOptionsError(stateError instanceof Error ? stateError.message : "Unable to load registered states.");
-    } finally {
-      setStateOptionsLoading(false);
-    }
-  };
-
-  const createVendor = async () => {
-    const name = vendorQuickCreate.trim();
-    if (!name || !vendorState || vendorSubmitting) return;
-    setVendorSubmitting(true);
+  const createCustomer = async () => {
+    const name = customerQuickCreate.trim();
+    if (!name || customerSubmitting) return;
+    setCustomerSubmitting(true);
     setError("");
     try {
-      const response = await fetch("/api/masters", {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/contacts`,
+        {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          organizationId,
-          moduleKey: "vendor",
-          label: name,
-          fields: { vendor: name, Registered_State: vendorState },
+          legalName: name,
+          displayName: name,
+          isActive: true,
+          roles: ["CUSTOMER"],
+          taxRegistrations: [],
+          addresses: [],
+          bankAccounts: [],
         }),
-      });
+        },
+      );
       const data = (await response.json()) as {
         error?: string;
-        value?: { label?: string | null };
+        id?: string;
+        legal_name?: string;
+        display_name?: string | null;
       };
-      if (!response.ok) {
-        throw new Error(data?.error || "Unable to create vendor.");
+      if (!response.ok || !data.id || !data.legal_name) {
+        throw new Error(data.error || "Unable to create customer contact.");
       }
-      const createdName = String(data?.value?.label ?? name).trim();
-      setVendorOptions((current) =>
-        Array.from(new Set([...current, createdName])).sort((left, right) =>
-          left.localeCompare(right),
-        ),
-      );
-      setCustomer(createdName);
-      setVendorQuickCreate("");
-      setVendorState("");
+      const createdContact: CustomerContactOption = {
+        id: data.id,
+        legal_name: data.legal_name,
+        display_name: data.display_name ?? null,
+      };
+      setCustomerOptions((current) => [...current, createdContact]
+        .sort((left, right) =>
+          (left.display_name || left.legal_name).localeCompare(right.display_name || right.legal_name),
+        ));
+      setCustomerContactId(createdContact.id);
+      setCustomerQuickCreate("");
     } catch (createError) {
       setError(
         createError instanceof Error
           ? createError.message
-          : "Unable to create vendor.",
+          : "Unable to create customer contact.",
       );
     } finally {
-      setVendorSubmitting(false);
+      setCustomerSubmitting(false);
     }
   };
 
@@ -270,11 +247,16 @@ export default function PosBarcodeBillingPage({
     event.preventDefault();
     const barcode = scanValue.trim();
     if (!barcode || loading) return;
+    const [referenceType, referenceId] = barcode.split(":", 2);
+    const stockType = referenceType === "SKU" || referenceType === "GENERAL_GRN"
+      ? referenceType
+      : null;
+    const stockId = stockType ? referenceId : barcode;
     setLoading(true);
     setError("");
     try {
       const response = await fetch(
-        `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock?stockId=${encodeURIComponent(barcode)}`,
+        `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock?stockId=${encodeURIComponent(stockId)}${stockType ? `&stockType=${stockType}` : ""}`,
         { cache: "no-store" },
       );
       const data = (await response.json()) as {
@@ -300,7 +282,7 @@ export default function PosBarcodeBillingPage({
   };
 
   const chooseRecord = (value: string) => {
-    const record = records.find((item) => item.id === value);
+    const record = records.find((item) => stockRecordKey(item) === value);
     if (record) setSelectedRecord(record);
   };
 
@@ -314,11 +296,11 @@ export default function PosBarcodeBillingPage({
     }
     setBillLines((current) => {
       const existing = current.find(
-        (line) => line.record.id === selectedRecord.id,
+        (line) => stockRecordKey(line.record) === stockRecordKey(selectedRecord),
       );
       if (existing)
         return current.map((line) =>
-          line.record.id === selectedRecord.id
+          stockRecordKey(line.record) === stockRecordKey(selectedRecord)
             ? { ...line, quantity: Math.min(line.quantity + 1, available) }
             : line,
         );
@@ -345,7 +327,7 @@ export default function PosBarcodeBillingPage({
   ) => {
     setBillLines((current) =>
       current.map((line) => {
-        if (line.record.id !== id) return line;
+        if (stockRecordKey(line.record) !== id) return line;
 
         if (key === "quantity") {
           return {
@@ -437,6 +419,10 @@ export default function PosBarcodeBillingPage({
     };
   }, [billLines, gstOptions, otherCharges, taxMode, taxProfile]);
   const base = `/dashboard/${workspaceId}/organizations/${organizationId}/pos`;
+  const selectedCustomerName = customerOptions.find((option) => option.id === customerContactId);
+  const customerName = selectedCustomerName
+    ? selectedCustomerName.display_name || selectedCustomerName.legal_name
+    : "";
   const saveInvoice = async () => {
     setSavingInvoice(true);
     setError("");
@@ -446,11 +432,12 @@ export default function PosBarcodeBillingPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           invoiceDate,
-          customer,
+          customerContactId: customerContactId || null,
           taxMode,
           requestKey: saleRequestKey.current || (saleRequestKey.current = crypto.randomUUID()),
           lines: billLines.map((line) => ({
             stockId: line.record.id,
+            stockType: line.record.stock_type,
             quantity: String(line.quantity),
             rate: String(line.rate),
             gstRate: String(line.gstRate),
@@ -478,7 +465,7 @@ export default function PosBarcodeBillingPage({
           sourceModule: "POS",
           sourceRecordId: data.invoice.id ?? "",
           date: invoiceDate,
-          party: customer || "Walk-in customer",
+          party: customerName || "Walk-in customer",
           amount: Number(data.invoice.subtotal ?? subtotal),
           tax: Number(data.invoice.taxAmount ?? taxAmount),
           net: Number(data.invoice.totalAmount ?? grandTotal),
@@ -607,20 +594,24 @@ export default function PosBarcodeBillingPage({
                   {stockSearchLoading
                     ? "Searching..."
                     : stockSearch.trim().length < 2
-                      ? "Enter at least 2 characters to search"
+                      ? stockSearch.trim()
+                        ? "Enter at least 2 characters to search"
+                        : records.length
+                          ? "Select from the first 10 items (A-Z)"
+                          : "No General stock items available"
                       : records.length
                         ? "Select matching General stock"
                         : "No matching General stock"}
                 </option>
                 {records.map((record) => (
-                  <option key={record.id} value={record.id}>
-                    {record.style_name} | {record.order_no} | {record.size || "-"}{" "}
+                  <option key={stockRecordKey(record)} value={stockRecordKey(record)}>
+                    [{record.stock_type === "SKU" ? "SKU" : "GRN"}] {record.style_name} | {record.order_no} | {record.size || "-"}{" "}
                     | ID: {record.id}
                   </option>
                 ))}
               </Select>
               {stockSearchError && <p className="mt-2 text-xs font-medium text-red-700" role="alert">{stockSearchError}</p>}
-              {hasMoreStockResults && <p className="mt-2 text-xs text-slate-500">Showing the first 50 matches. Refine your search to narrow the results.</p>}
+              {hasMoreStockResults && <p className="mt-2 text-xs text-slate-500">Showing the first 10 matches in alphabetical order. Refine your search to narrow the results.</p>}
             </div>
           </div>
           <div className="flex min-h-[32rem] flex-1">
@@ -630,68 +621,46 @@ export default function PosBarcodeBillingPage({
                   <label htmlFor="customer-select">Customer</label>
                   <Select
                     id="customer-select"
-                    value={customer}
-                    onChange={(event) => setCustomer(event.target.value)}
+                    value={customerContactId}
+                    onChange={(event) => setCustomerContactId(event.target.value)}
                     className="mt-2 rounded-md px-3 py-2 text-sm"
                   >
-                    <option value="">Walk-in customer</option>
-                    {vendorOptions.map((vendor) => (
-                      <option key={vendor} value={vendor}>
-                        {vendor}
+                    <option value="">
+                      {customerLoading ? "Loading customers..." : "Walk-in customer"}
+                    </option>
+                    {customerOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.display_name || option.legal_name}
                       </option>
                     ))}
                   </Select>
                   <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_12rem_auto]">
                     <Input
-                      value={vendorQuickCreate}
-                      onChange={(event) => setVendorQuickCreate(event.target.value)}
+                      value={customerQuickCreate}
+                      onChange={(event) => setCustomerQuickCreate(event.target.value)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
                           event.preventDefault();
-                          void createVendor();
+                          void createCustomer();
                         }
                       }}
                       className="min-w-0 flex-1 rounded-md border-dashed border-slate-300 px-3 py-2 text-xs"
-                      placeholder="New vendor name"
-                      aria-label="New vendor name"
+                      placeholder="New customer name"
+                      aria-label="New customer name"
                     />
-                    <Select
-                      value={vendorState}
-                      onChange={(event) => setVendorState(event.target.value)}
-                      onFocus={() => void loadStateOptions()}
-                      className="rounded-md px-3 py-2 text-xs text-slate-700"
-                      aria-label="Registered state"
-                    >
-                      <option value="">
-                        {stateOptionsLoading ? "Loading states..." : "Registered state *"}
-                      </option>
-                      {stateOptions.map((state) => (
-                        <option key={state.id} value={state.id}>
-                          {state.label}
-                        </option>
-                      ))}
-                    </Select>
                     <Button
                       type="button"
                       variant="secondary"
                       size="sm"
-                      onClick={() => void createVendor()}
+                      onClick={() => void createCustomer()}
                       disabled={
-                        !vendorQuickCreate.trim() || !vendorState || vendorSubmitting
+                        !customerQuickCreate.trim() || customerSubmitting
                       }
                       className="min-h-0 rounded-md border-emerald-300 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:border-slate-200 disabled:text-slate-400"
                     >
-                      {vendorSubmitting ? "Adding..." : "Add vendor"}
+                      {customerSubmitting ? "Adding..." : "Add customer"}
                     </Button>
                   </div>
-                  {stateOptionsError && (
-                    <div className="mt-2 flex items-center gap-2 text-xs text-red-700" role="alert">
-                      <span>{stateOptionsError}</span>
-                      <Button type="button" variant="secondary" size="sm" onClick={() => void loadStateOptions()}>
-                        Retry
-                      </Button>
-                    </div>
-                  )}
                 </div>
                 <label className="text-sm font-medium text-slate-700">
                   Invoice date
@@ -722,7 +691,7 @@ export default function PosBarcodeBillingPage({
                   <div className="divide-y divide-slate-100">
                     {billLines.map((line) => (
                       <div
-                        key={line.record.id}
+                        key={stockRecordKey(line.record)}
                         className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1.7fr)_5.5rem_7rem_7.5rem_6.5rem_7rem_5.5rem] md:items-end"
                       >
                         <div className="min-w-0">
@@ -743,7 +712,7 @@ export default function PosBarcodeBillingPage({
                             value={line.quantity}
                             onChange={(event) =>
                               updateLine(
-                                line.record.id,
+                                stockRecordKey(line.record),
                                 "quantity",
                                 event.target.value,
                               )
@@ -761,7 +730,7 @@ export default function PosBarcodeBillingPage({
                             value={line.rate}
                             onChange={(event) =>
                               updateLine(
-                                line.record.id,
+                                stockRecordKey(line.record),
                                 "rate",
                                 event.target.value,
                               )
@@ -776,7 +745,7 @@ export default function PosBarcodeBillingPage({
                             value={String(line.gstRate)}
                             onChange={(event) =>
                               updateLine(
-                                line.record.id,
+                                stockRecordKey(line.record),
                                 "gstRate",
                                 event.target.value,
                               )
@@ -810,7 +779,7 @@ export default function PosBarcodeBillingPage({
                             value={line.discountPercent}
                             onChange={(event) =>
                               updateLine(
-                                line.record.id,
+                                stockRecordKey(line.record),
                                 "discountPercent",
                                 event.target.value,
                               )
@@ -825,7 +794,7 @@ export default function PosBarcodeBillingPage({
                             value={line.hsnCode}
                             onChange={(event) =>
                               updateLine(
-                                line.record.id,
+                                stockRecordKey(line.record),
                                 "hsnCode",
                                 event.target.value,
                               )
@@ -854,7 +823,7 @@ export default function PosBarcodeBillingPage({
         <SalesInvoicePrint
           invoiceNumber={invoiceNumber}
           invoiceDate={invoiceDate}
-          customer={customer}
+          customer={customerName}
           lines={billLines}
           subtotal={subtotal}
           onPrint={() => window.print()}
@@ -983,7 +952,7 @@ function SalesInvoicePrint({
           </thead>
           <tbody className="divide-y divide-slate-100">
             {lines.map((line) => (
-              <tr key={line.record.id}>
+              <tr key={stockRecordKey(line.record)}>
                 <td className="py-3">
                   <p className="font-bold text-slate-900">
                     {line.record.style_name}

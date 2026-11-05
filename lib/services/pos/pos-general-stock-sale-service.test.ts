@@ -3,7 +3,9 @@ import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   transaction: {
+    contact: { findFirst: vi.fn() },
     finishedGoodsGeneralStockReceipt: { findMany: vi.fn(), updateMany: vi.fn() },
+    finishedGoodsSkuStock: { findMany: vi.fn(), updateMany: vi.fn() },
     finishedGoodsStock: { updateMany: vi.fn() },
     masterGst: { findMany: vi.fn() },
     posSalesInvoice: { findFirst: vi.fn(), create: vi.fn() },
@@ -63,6 +65,7 @@ describe("createPosGeneralStockSale", () => {
     vi.clearAllMocks();
     mocks.prismaTransaction.mockImplementation(async (callback) => callback(mocks.transaction));
     mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([stockRecord]);
+    mocks.transaction.finishedGoodsSkuStock.findMany.mockResolvedValue([]);
     mocks.transaction.masterGst.findMany.mockResolvedValue([{
       gst: new Prisma.Decimal("5"),
       cgst_rate: new Prisma.Decimal("2.5"),
@@ -70,12 +73,14 @@ describe("createPosGeneralStockSale", () => {
       igst_rate: new Prisma.Decimal("5"),
     }]);
     mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.finishedGoodsSkuStock.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.finishedGoodsStock.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.posSalesInvoice.findFirst.mockResolvedValue(null);
     mocks.transaction.posSalesInvoice.create.mockResolvedValue({ id: "invoice-1" });
     mocks.transaction.posSalesInvoiceLine.createManyAndReturn.mockResolvedValue([{
       id: "invoice-line-1",
       general_stock_receipt_id: "general-stock-1",
+      sku_stock_id: null,
     }]);
     mocks.reserveNumber.mockResolvedValue("POS-1");
   });
@@ -83,6 +88,14 @@ describe("createPosGeneralStockSale", () => {
   it("posts against General GRN stock, updates balances, and audits", async () => {
     const result = await createPosGeneralStockSale(saleInput);
 
+    expect(mocks.prismaTransaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 30_000,
+      },
+    );
     expect(result).toMatchObject({
       invoiceNo: "POS-1",
       subtotal: "180.00",
@@ -110,10 +123,11 @@ describe("createPosGeneralStockSale", () => {
         organization_id: "organization-1",
         invoice_id: "invoice-1",
         general_stock_receipt_id: "general-stock-1",
+        sku_stock_id: null,
         quantity: 2,
         taxable_amount: new Prisma.Decimal("180.00"),
       })],
-      select: { id: true, general_stock_receipt_id: true },
+      select: { id: true, general_stock_receipt_id: true, sku_stock_id: true },
     });
     expect(mocks.createFgMaterialIssue).toHaveBeenCalledWith(mocks.transaction, expect.objectContaining({
       organizationId: "organization-1",
@@ -137,6 +151,50 @@ describe("createPosGeneralStockSale", () => {
     }), mocks.transaction);
   });
 
+  it("links an invoice to an active tenant customer contact", async () => {
+    mocks.transaction.contact.findFirst.mockResolvedValue({
+      id: "customer-contact-1",
+      legal_name: "Acme Retail",
+      display_name: "ACME RETAIL",
+    });
+
+    const result = await createPosGeneralStockSale({
+      ...saleInput,
+      customer: "Untrusted submitted name",
+      customerContactId: "customer-contact-1",
+    });
+
+    expect(mocks.transaction.contact.findFirst).toHaveBeenCalledWith({
+      where: {
+        organization_id: "organization-1",
+        id: "customer-contact-1",
+        is_active: true,
+        roles: { some: { role_code: "CUSTOMER", is_active: true } },
+      },
+      select: { id: true, legal_name: true, display_name: true },
+    });
+    expect(mocks.transaction.posSalesInvoice.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        organization_id: "organization-1",
+        customer: "ACME RETAIL",
+        customer_contact_id: "customer-contact-1",
+      }),
+    }));
+    expect(result.customer).toBe("ACME RETAIL");
+  });
+
+  it("rejects inactive, cross-organization, or non-customer contacts before stock changes", async () => {
+    mocks.transaction.contact.findFirst.mockResolvedValue(null);
+
+    await expect(createPosGeneralStockSale({
+      ...saleInput,
+      customerContactId: "other-contact",
+    })).rejects.toThrow("Select an active contact with the Customer role.");
+
+    expect(mocks.transaction.posSalesInvoice.create).not.toHaveBeenCalled();
+    expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).not.toHaveBeenCalled();
+  });
+
   it("rejects quantity above General stock without posting", async () => {
     await expect(createPosGeneralStockSale({
       ...saleInput,
@@ -145,6 +203,71 @@ describe("createPosGeneralStockSale", () => {
 
     expect(mocks.transaction.posSalesInvoice.create).not.toHaveBeenCalled();
     expect(mocks.transaction.finishedGoodsGeneralStockReceipt.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("posts direct General SKU stock, updates its balance, and records the SKU issue", async () => {
+    const skuStock = {
+      ...stockRecord,
+      id: "sku-stock-1",
+      current_stock: new Prisma.Decimal(8),
+      size: "M",
+    };
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
+    mocks.transaction.finishedGoodsSkuStock.findMany.mockResolvedValue([skuStock]);
+    mocks.transaction.posSalesInvoiceLine.createManyAndReturn.mockResolvedValue([{
+      id: "invoice-line-1",
+      general_stock_receipt_id: null,
+      sku_stock_id: "sku-stock-1",
+    }]);
+
+    await createPosGeneralStockSale({
+      ...saleInput,
+      lines: [{ ...saleInput.lines[0], stockId: "sku-stock-1", stockType: "SKU" }],
+    });
+
+    expect(mocks.transaction.finishedGoodsSkuStock.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        organization_id: "organization-1",
+        id: { in: ["sku-stock-1"] },
+      }),
+    }));
+    expect(mocks.transaction.finishedGoodsSkuStock.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "sku-stock-1",
+        organization_id: "organization-1",
+        current_stock: { gte: 2 },
+      },
+      data: {
+        current_stock: { decrement: 2 },
+        qty_out: { increment: 2 },
+      },
+    });
+    expect(mocks.transaction.finishedGoodsStock.updateMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.posSalesInvoiceLine.createManyAndReturn).toHaveBeenCalledWith(expect.objectContaining({
+      data: [expect.objectContaining({
+        general_stock_receipt_id: null,
+        sku_stock_id: "sku-stock-1",
+      })],
+    }));
+    expect(mocks.createFgMaterialIssue).toHaveBeenCalledWith(mocks.transaction, expect.objectContaining({
+      lines: [expect.objectContaining({
+        stockType: "SKU",
+        skuStockId: "sku-stock-1",
+        generalReceiptId: null,
+      })],
+    }));
+  });
+
+  it("rejects SKU IDs that are outside the authorized organization", async () => {
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
+    mocks.transaction.finishedGoodsSkuStock.findMany.mockResolvedValue([]);
+
+    await expect(createPosGeneralStockSale({
+      ...saleInput,
+      lines: [{ ...saleInput.lines[0], stockType: "SKU" }],
+    })).rejects.toThrow("not General stock in this organization");
+    expect(mocks.transaction.finishedGoodsSkuStock.updateMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.posSalesInvoice.create).not.toHaveBeenCalled();
   });
 
   it("rejects stock IDs not found in General receipts", async () => {

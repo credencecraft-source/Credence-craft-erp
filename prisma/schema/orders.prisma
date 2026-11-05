@@ -92,6 +92,7 @@ enum OrderQrPrintRequestStatus {
 enum OrganizationPrintDocumentType {
   SALES_ORDER
   QUOTATION
+  POS_INVOICE
 }
 
 model OrganizationPrintTemplate {
@@ -707,6 +708,7 @@ model PosSalesInvoice {
   request_key     String                @db.VarChar(100)
   invoice_date    DateTime              @db.Date
   customer        String?               @db.VarChar(255)
+  customer_contact_id String?
   tax_mode        String                @default("LOCAL") @db.VarChar(20)
   status          String                @default("POSTED") @db.VarChar(30)
   subtotal        Decimal               @db.Decimal(14, 2)
@@ -719,6 +721,7 @@ model PosSalesInvoice {
   posted_at       DateTime              @default(now())
   created_at      DateTime              @default(now())
   organization    Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  customer_contact Contact?             @relation(fields: [organization_id, customer_contact_id], references: [organization_id, id], onDelete: Restrict)
   lines           PosSalesInvoiceLine[]
   fgMaterialIssues FGMaterialIssue[]     @relation("FGIssuePosInvoice")
 
@@ -726,6 +729,7 @@ model PosSalesInvoice {
   @@unique([organization_id, id])
   @@unique([organization_id, request_key], map: "pos_sales_invoice_request_key")
   @@index([organization_id, invoice_date, status])
+  @@index([organization_id, customer_contact_id])
   @@map("pos_sales_invoices")
 }
 
@@ -733,7 +737,8 @@ model PosSalesInvoiceLine {
   id                       String                           @id @default(cuid())
   organization_id          String
   invoice_id               String
-  general_stock_receipt_id String
+  general_stock_receipt_id String?
+  sku_stock_id             String?
   style_name               String                           @db.VarChar(255)
   order_no                 String                           @db.VarChar(100)
   article_no               String                           @db.VarChar(255)
@@ -751,10 +756,13 @@ model PosSalesInvoiceLine {
   total_amount             Decimal                          @db.Decimal(14, 2)
   created_at               DateTime                         @default(now())
   invoice                  PosSalesInvoice                  @relation(fields: [organization_id, invoice_id], references: [organization_id, id], onDelete: Restrict)
-  generalStockReceipt      FinishedGoodsGeneralStockReceipt @relation(fields: [organization_id, general_stock_receipt_id], references: [organization_id, id], onDelete: Restrict)
+  generalStockReceipt      FinishedGoodsGeneralStockReceipt? @relation(fields: [organization_id, general_stock_receipt_id], references: [organization_id, id], onDelete: Restrict)
+  skuStock                 FinishedGoodsSkuStock?            @relation(fields: [organization_id, sku_stock_id], references: [organization_id, id], onDelete: Restrict)
 
   @@unique([organization_id, invoice_id, general_stock_receipt_id], map: "pos_sales_lines_invoice_stock_key")
-  @@index([organization_id, general_stock_receipt_id, created_at])
+  @@unique([organization_id, invoice_id, sku_stock_id], map: "pos_sales_lines_invoice_sku_stock_key")
+  @@index([organization_id, general_stock_receipt_id, created_at], map: "pos_sales_invoice_lines_stock_created_idx")
+  @@index([organization_id, sku_stock_id, created_at], map: "pos_sales_invoice_lines_sku_stock_created_idx")
   @@map("pos_sales_invoice_lines")
 }
 
@@ -1105,6 +1113,7 @@ model FinishedGoodsSkuStock {
   organization          Organization         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   location              MasterLocation       @relation(fields: [organization_id, entity_id, location_id], references: [organization_id, entity_id, id], onDelete: Restrict)
   purchase_bill_line    PosPurchaseBillLine? @relation(fields: [purchase_bill_line_id], references: [id], onDelete: SetNull)
+  posSalesLines         PosSalesInvoiceLine[]
   fgMaterialIssueLines  FGMaterialIssueLine[]
 
   @@unique([organization_id, id])

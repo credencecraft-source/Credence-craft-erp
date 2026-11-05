@@ -40,6 +40,15 @@ export type FinishedGoodsStockOverview = {
   pos: number;
 };
 
+export const GENERAL_FINISHED_GOODS_SKU_SOURCES = [
+  "DIRECT",
+  "DIRECT_FROM_INVENTORY",
+  "DIRECT_FROM_POS",
+  "PACKING_LIST_GRN",
+  "POS",
+  "POS_PURCHASE_BILL",
+] as const;
+
 const sourceLabels: Record<string, string> = {
   DIRECT: "Direct from Inventory",
   DIRECT_FROM_INVENTORY: "Direct from Inventory",
