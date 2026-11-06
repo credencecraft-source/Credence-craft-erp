@@ -15,7 +15,7 @@ import {
   type OrganizationPrintTemplateDesign,
 } from "@/lib/services/distribution/organization-print-template-contract";
 
-type DocumentType = "SALES_ORDER" | "QUOTATION";
+type DocumentType = "SALES_ORDER" | "QUOTATION" | "POS_INVOICE";
 type EditorSection = "PAGE" | "HEADER" | "PARTIES" | "TABLE" | "FOOTER" | "MARGIN";
 type PrintTemplate = {
   id: string;

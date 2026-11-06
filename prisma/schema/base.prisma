@@ -1,10 +1,12 @@
 generator client {
   provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pg_trgm]
 }
 
 model WorkspaceUser {
@@ -1262,6 +1264,7 @@ model MasterArticle {
   sizes             MasterArticleSize[]
 
   @@unique([organization_id, article])
+  @@index([article_code(ops: raw("gin_trgm_ops"))], type: Gin, map: "master_articles_article_code_trgm_idx")
   @@unique([organization_id, article_code])
   @@index([organization_id, is_active])
   @@index([organization_id, product_master_id])
@@ -1290,6 +1293,7 @@ model MasterArticleVariant {
   article         MasterArticle @relation(fields: [article_id], references: [id], onDelete: Cascade)
   color           MasterColor   @relation(fields: [color_id], references: [id], onDelete: Restrict)
 
+  @@index([variant_code(ops: raw("gin_trgm_ops"))], type: Gin, map: "master_article_variants_variant_code_trgm_idx")
   @@unique([organization_id, article_id, color_id])
   @@unique([organization_id, variant_code])
   @@unique([organization_id, sku])

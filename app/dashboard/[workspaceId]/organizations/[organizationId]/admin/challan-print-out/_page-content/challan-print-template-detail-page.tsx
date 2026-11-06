@@ -5,7 +5,7 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import type { OrganizationPrintTemplateDesign } from "@/lib/services/distribution/organization-print-template-contract";
 
-type DocumentType = "SALES_ORDER" | "QUOTATION";
+type DocumentType = "SALES_ORDER" | "QUOTATION" | "POS_INVOICE";
 
 export default function ChallanPrintTemplateDetailPage({
   workspaceId,

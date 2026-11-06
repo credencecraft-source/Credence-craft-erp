@@ -7,7 +7,7 @@ import Button from "@/components/ui/Button";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Tabs from "@/components/ui/Tabs";
 
-type DocumentType = "SALES_ORDER" | "QUOTATION";
+type DocumentType = "SALES_ORDER" | "QUOTATION" | "POS_INVOICE";
 type PrintTemplate = {
   id: string;
   documentType: DocumentType;

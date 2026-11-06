@@ -49,6 +49,9 @@ model MerchandisingOrder {
   @@index([organization_id, created_at])
   @@index([organization_id, finalStatus, created_at(sort: Desc), id(sort: Desc)], map: "merch_orders_org_status_created_id_idx")
   @@index([organization_id, contact_id])
+  @@index([orderNo(ops: raw("gin_trgm_ops"))], type: Gin, map: "merch_orders_order_no_trgm_idx")
+  @@index([article(ops: raw("gin_trgm_ops"))], type: Gin, map: "merch_orders_article_trgm_idx")
+  @@index([styleName(ops: raw("gin_trgm_ops"))], type: Gin, map: "merch_orders_style_name_trgm_idx")
   @@map("merchandising_orders")
 }
 

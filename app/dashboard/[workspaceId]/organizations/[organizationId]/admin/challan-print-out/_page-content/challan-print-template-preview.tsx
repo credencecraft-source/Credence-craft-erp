@@ -1,7 +1,7 @@
 import Card from "@/components/ui/Card";
 import type { OrganizationPrintTemplateDesign } from "@/lib/services/distribution/organization-print-template-contract";
 
-type DocumentType = "SALES_ORDER" | "QUOTATION";
+type DocumentType = "SALES_ORDER" | "QUOTATION" | "POS_INVOICE";
 
 const itemFieldLabels: Record<string, string> = {
   description: "Item / Description",
