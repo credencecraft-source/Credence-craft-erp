@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 
 import OrderQrStickerPreview from "@/components/erp/order-qr-sticker-preview";
 import Button from "@/components/ui/Button";
@@ -135,7 +135,7 @@ function getBillLineFields(
   } satisfies Partial<Record<QrTemplateFieldKey, string | number | null>>;
 }
 
-export default function PurchaseBillQrRequestModal({
+function PurchaseBillQrRequestModal({
   open,
   workspaceId,
   organizationId,
@@ -227,6 +227,7 @@ export default function PurchaseBillQrRequestModal({
             ? data.error
             : "Unable to load QR templates.");
         }
+
         return isRecord(data) ? parseTemplates(data.templates) : parseTemplates(undefined);
       })
       .then((loadedTemplates) => {
@@ -578,3 +579,5 @@ export default function PurchaseBillQrRequestModal({
     </Modal>
   );
 }
+
+export default memo(PurchaseBillQrRequestModal);

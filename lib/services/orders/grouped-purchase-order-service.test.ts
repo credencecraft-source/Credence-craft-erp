@@ -414,6 +414,30 @@ describe("stock-origin grouped price approval", () => {
     }));
   });
 
+  it("hard-clamps grouped purchase order pages to 100 records", async () => {
+    mocks.groupedPurchaseOrderFindMany.mockResolvedValue([]);
+
+    await listGroupedPurchaseOrdersPage("org-1", undefined, { limit: 5000 });
+
+    expect(mocks.groupedPurchaseOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-1" },
+      take: 101,
+    }));
+  });
+
+  it("verifies grouped cursors belong to the authorized organization before paging", async () => {
+    mocks.groupedPurchaseOrderFindFirst.mockResolvedValue(null);
+
+    await expect(listGroupedPurchaseOrdersPage("org-1", undefined, { cursor: "foreign-cursor" }))
+      .rejects.toThrow("The grouped purchase order cursor is invalid.");
+
+    expect(mocks.groupedPurchaseOrderFindFirst).toHaveBeenCalledWith({
+      where: { id: "foreign-cursor", organization_id: "org-1" },
+      select: { id: true },
+    });
+    expect(mocks.groupedPurchaseOrderFindMany).not.toHaveBeenCalled();
+  });
+
   it("keeps grouped quantities, price totals, and tax material summaries on compact rows", async () => {
     mocks.groupedPurchaseOrderFindMany.mockResolvedValue([{
       id: "group-1",

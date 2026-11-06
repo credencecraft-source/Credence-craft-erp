@@ -140,13 +140,80 @@ async function findStock(database: Database, organizationId: string, stockType: 
   } : null;
 }
 
-async function refreshRequestStatuses(database: Database, organizationId: string, requestIds: string[]) {
-  for (const requestId of [...new Set(requestIds)]) {
-    const request = await database.finishedGoodsOutwardRequest.findFirst({
-      where: { id: requestId, organization_id: organizationId },
-      select: { status: true, lines: { select: { status: true } } },
+async function findStocks(
+  database: Database,
+  organizationId: string,
+  selected: Array<{ stockType: StockType; stockId: string }>,
+) {
+  const idsByType: Record<StockType, string[]> = { SKU: [], GENERAL: [], ALLOCATED: [] };
+  for (const { stockType, stockId } of selected) {
+    const ids = idsByType[stockType];
+    if (!ids.includes(stockId)) ids.push(stockId);
+  }
+  const stocks = new Map<string, StockSnapshot>();
+
+  if (idsByType.SKU.length) {
+    const records = await database.finishedGoodsSkuStock.findMany({
+      where: { organization_id: organizationId, id: { in: idsByType.SKU } },
+      select: {
+        id: true, sku_code: true, style_name: true, order_no: true, article_no: true,
+        brand: true, size: true, colour: true, current_stock: true,
+        location: { select: { location_name: true } },
+      },
     });
-    if (!request || request.status === "REQUESTED" || request.status === "CANCELLED" || request.lines.length === 0) continue;
+    for (const record of records) stocks.set(`SKU:${record.id}`, {
+      stockType: "SKU", stockBucket: "GENERAL", id: record.id,
+      locationName: record.location.location_name, skuCode: record.sku_code,
+      styleName: record.style_name, orderNo: record.order_no, articleNo: record.article_no,
+      brand: record.brand, size: record.size, colour: record.colour,
+      currentStock: new Prisma.Decimal(record.current_stock),
+    });
+  }
+
+  if (idsByType.GENERAL.length) {
+    const records = await database.finishedGoodsGeneralStockReceipt.findMany({
+      where: { organization_id: organizationId, id: { in: idsByType.GENERAL } },
+      select: {
+        id: true, style_name: true, order_no: true, article_no: true, brand: true, size: true,
+        colour: true, current_stock: true, location: { select: { location_name: true } },
+      },
+    });
+    for (const record of records) stocks.set(`GENERAL:${record.id}`, {
+      stockType: "GENERAL", stockBucket: "GENERAL", id: record.id,
+      locationName: record.location.location_name, skuCode: null, styleName: record.style_name,
+      orderNo: record.order_no, articleNo: record.article_no ?? "", brand: record.brand,
+      size: record.size, colour: record.colour, currentStock: new Prisma.Decimal(record.current_stock),
+    });
+  }
+
+  if (idsByType.ALLOCATED.length) {
+    const records = await database.finishedGoodsAllocatedStockReceipt.findMany({
+      where: { organization_id: organizationId, id: { in: idsByType.ALLOCATED } },
+      select: {
+        id: true, style_name: true, order_no: true, article_no: true, brand: true, size: true,
+        colour: true, current_stock: true, location: { select: { location_name: true } },
+      },
+    });
+    for (const record of records) stocks.set(`ALLOCATED:${record.id}`, {
+      stockType: "ALLOCATED", stockBucket: "ALLOCATED", id: record.id,
+      locationName: record.location.location_name, skuCode: null, styleName: record.style_name,
+      orderNo: record.order_no, articleNo: record.article_no ?? "", brand: record.brand,
+      size: record.size, colour: record.colour, currentStock: new Prisma.Decimal(record.current_stock),
+    });
+  }
+  return stocks;
+}
+
+async function refreshRequestStatuses(database: Database, organizationId: string, requestIds: string[]) {
+  const ids = [...new Set(requestIds)];
+  if (!ids.length) return;
+  const requests = await database.finishedGoodsOutwardRequest.findMany({
+    where: { id: { in: ids }, organization_id: organizationId },
+    select: { id: true, status: true, lines: { select: { status: true } } },
+  });
+  const groupedUpdates = new Map<string, { fromStatus: string; toStatus: string; ids: string[] }>();
+  for (const request of requests) {
+    if (request.status === "REQUESTED" || request.status === "CANCELLED" || request.lines.length === 0) continue;
     const statuses = request.lines.map((line) => line.status);
     const status = statuses.every((item) => item === "SHIPPED")
       ? "SHIPPED"
@@ -155,13 +222,18 @@ async function refreshRequestStatuses(database: Database, organizationId: string
         : statuses.every((item) => item === "PICKED" || item === "PACKED" || item === "SHIPPED")
           ? "PICKED"
           : "ACCEPTED";
-    if (status !== request.status) {
-      await database.finishedGoodsOutwardRequest.updateMany({
-        where: { id: requestId, organization_id: organizationId, status: request.status },
-        data: { status },
-      });
-    }
+    if (status === request.status) continue;
+    const key = `${request.status}\u0000${status}`;
+    const group = groupedUpdates.get(key) ?? { fromStatus: request.status, toStatus: status, ids: [] };
+    group.ids.push(request.id);
+    groupedUpdates.set(key, group);
   }
+  await Promise.all([...groupedUpdates.values()].map(({ fromStatus, toStatus, ids: requestIdsToUpdate }) =>
+    database.finishedGoodsOutwardRequest.updateMany({
+      where: { id: { in: requestIdsToUpdate }, organization_id: organizationId, status: fromStatus },
+      data: { status: toStatus },
+    }),
+  ));
 }
 
 type OutwardRequestInput = {
@@ -184,15 +256,17 @@ async function createOutwardRequestInTransaction(
     throw new Error("Each finished-goods stock record can only be selected once.");
   }
 
-  const selected = await Promise.all(input.lines.map(async (line) => {
-    const stock = await findStock(transaction, input.organizationId, line.stockType, line.stockId.trim());
+  const normalizedLines = input.lines.map((line) => ({ ...line, stockId: line.stockId.trim() }));
+  const stocks = await findStocks(transaction, input.organizationId, normalizedLines);
+  const selected = normalizedLines.map((line) => {
+    const stock = stocks.get(`${line.stockType}:${line.stockId}`);
     if (!stock) throw new Error("A selected finished-goods stock record was not found in this organization.");
     const quantity = parseQuantity(line.quantity, stock.stockType === "SKU");
     if (quantity.gt(stock.currentStock)) {
       throw new Error(`${stock.styleName} has only ${stock.currentStock.toString()} available in this stock record.`);
     }
     return { stock, quantity, sourceBookingId: line.sourceBookingId };
-  }));
+  });
 
   const existingLines = await transaction.finishedGoodsOutwardRequestLine.findMany({
     where: {

@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   tx: {
     factoryWorkOrder: { findFirst: vi.fn() },
     rawMaterialOutwardRequestLine: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
-    rawMaterialOutwardRequest: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
+    rawMaterialOutwardRequest: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
     rawMaterialOutwardBox: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
     rawMaterialOutwardBoxLine: { findFirst: vi.fn(), findMany: vi.fn(), createMany: vi.fn(), deleteMany: vi.fn() },
     rawMaterialOutwardShipment: { create: vi.fn(), findFirst: vi.fn(), deleteMany: vi.fn() },
@@ -51,11 +51,12 @@ import {
 
 describe("raw-material-outward-service", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mocks.prisma.$transaction.mockImplementation(async (callback) => callback(mocks.tx));
     mocks.reserveNumber.mockResolvedValue("RMR-1");
     mocks.createAuditEvent.mockResolvedValue({});
     mocks.requireOrganizationAccess.mockResolvedValue({ organization_id: "org-1", role: "INVENTORY" });
+    mocks.tx.rawMaterialOutwardRequest.findMany.mockResolvedValue([]);
   });
 
   it("requests only the newly allocated balance for a work-order BOM", async () => {
@@ -334,11 +335,15 @@ describe("raw-material-outward-service", () => {
         requested_quantity: new Prisma.Decimal("4"),
         picked_quantity: new Prisma.Decimal("4"),
         status: "PACKED",
-      }])
-      .mockResolvedValueOnce([{ status: "PICKED" }]);
+      }]);
     mocks.tx.rawMaterialOutwardBoxLine.findMany.mockResolvedValue([]);
     mocks.tx.rawMaterialOutwardRequestLine.updateMany.mockResolvedValue({ count: 1 });
     mocks.tx.rawMaterialOutwardRequest.updateMany.mockResolvedValue({ count: 1 });
+    mocks.tx.rawMaterialOutwardRequest.findMany.mockResolvedValue([{
+      id: "request-1",
+      status: "PACKED",
+      lines: [{ status: "PICKED" }],
+    }]);
 
     const result = await deleteRawMaterialOutwardBox({
       organizationId: "org-1",
@@ -403,10 +408,14 @@ describe("raw-material-outward-service", () => {
         id: "line-1",
         request_id: "request-1",
         requested_quantity: new Prisma.Decimal("4"),
-      }])
-      .mockResolvedValueOnce([{ status: "SHIPPED" }]);
+      }]);
     mocks.tx.rawMaterialOutwardRequestLine.updateMany.mockResolvedValue({ count: 1 });
     mocks.tx.rawMaterialOutwardRequest.updateMany.mockResolvedValue({ count: 1 });
+    mocks.tx.rawMaterialOutwardRequest.findMany.mockResolvedValue([{
+      id: "request-1",
+      status: "PACKED",
+      lines: [{ status: "SHIPPED" }],
+    }]);
 
     const result = await createRawMaterialOutwardShipment({
       organizationId: "org-1",
@@ -455,8 +464,7 @@ describe("raw-material-outward-service", () => {
         requested_quantity: new Prisma.Decimal("4"),
         picked_quantity: new Prisma.Decimal("4"),
         status: "SHIPPED",
-      }])
-      .mockResolvedValueOnce([{ status: "PACKED" }]);
+      }]);
     mocks.tx.rawMaterialOutwardBoxLine.findMany.mockResolvedValue([{
       request_line_id: "line-1",
       quantity: new Prisma.Decimal("4"),
@@ -464,6 +472,11 @@ describe("raw-material-outward-service", () => {
     }]);
     mocks.tx.rawMaterialOutwardRequestLine.updateMany.mockResolvedValue({ count: 1 });
     mocks.tx.rawMaterialOutwardRequest.updateMany.mockResolvedValue({ count: 1 });
+    mocks.tx.rawMaterialOutwardRequest.findMany.mockResolvedValue([{
+      id: "request-1",
+      status: "SHIPPED",
+      lines: [{ status: "PACKED" }],
+    }]);
 
     const result = await deleteRawMaterialOutwardShipment({
       organizationId: "org-1",

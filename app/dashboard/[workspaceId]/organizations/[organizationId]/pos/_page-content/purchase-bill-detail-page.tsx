@@ -55,6 +55,12 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
     if (!response.ok) throw new Error(data.error || "Unable to load purchase bill.");
     setBill(data.bill);
   }, [billId, organizationId]);
+  const closeQrRequest = useCallback(() => setShowQrRequest(false), []);
+  const submitQrRequest = useCallback((successMessage: string) => {
+    setShowQrRequest(false);
+    setError("");
+    setMessage(successMessage);
+  }, []);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -104,12 +110,8 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
         workspaceId={workspaceId}
         organizationId={organizationId}
         bill={bill}
-        onClose={() => setShowQrRequest(false)}
-        onSubmitted={(successMessage) => {
-          setShowQrRequest(false);
-          setError("");
-          setMessage(successMessage);
-        }}
+        onClose={closeQrRequest}
+        onSubmitted={submitQrRequest}
       />
     )}
   </Section></Page>;

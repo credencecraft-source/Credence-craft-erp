@@ -6,11 +6,11 @@ const mocks = vi.hoisted(() => ({
   createFgMaterialIssue: vi.fn(),
   requireOrganizationAccess: vi.fn(),
   tx: {
-    finishedGoodsSkuStock: { findFirst: vi.fn(), updateMany: vi.fn() },
-    finishedGoodsGeneralStockReceipt: { findFirst: vi.fn(), updateMany: vi.fn() },
+    finishedGoodsSkuStock: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
+    finishedGoodsGeneralStockReceipt: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     finishedGoodsAllocatedStockReceipt: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     advanceBooking: { findMany: vi.fn() },
-    finishedGoodsOutwardRequest: { create: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
+    finishedGoodsOutwardRequest: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     finishedGoodsOutwardRequestLine: { findMany: vi.fn(), findFirst: vi.fn(), createMany: vi.fn(), updateMany: vi.fn() },
     finishedGoodsOutwardBox: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
     finishedGoodsOutwardBoxLine: { findMany: vi.fn(), createMany: vi.fn(), deleteMany: vi.fn(), aggregate: vi.fn() },
@@ -73,7 +73,7 @@ const requiredVendorChain = {
 
 describe("finished-goods-outward-service", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mocks.prisma.$transaction.mockImplementation(async (callback) => callback(mocks.tx));
     mocks.reserveNumber.mockResolvedValue("FGR-1");
     mocks.createAuditEvent.mockResolvedValue({});
@@ -81,6 +81,10 @@ describe("finished-goods-outward-service", () => {
     mocks.requireOrganizationAccess.mockResolvedValue({ organization_id: "org-1", role: "INVENTORY" });
     mocks.tx.finishedGoodsOutwardRequestLine.findMany.mockResolvedValue([]);
     mocks.tx.fGMaterialIssue.findFirst.mockResolvedValue(null);
+    mocks.tx.finishedGoodsSkuStock.findMany.mockResolvedValue([]);
+    mocks.tx.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
+    mocks.tx.finishedGoodsAllocatedStockReceipt.findMany.mockResolvedValue([]);
+    mocks.tx.finishedGoodsOutwardRequest.findMany.mockResolvedValue([]);
     mocks.prisma.finishedGoodsSkuStock.findMany.mockResolvedValue([]);
     mocks.prisma.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
     mocks.prisma.finishedGoodsAllocatedStockReceipt.findMany.mockResolvedValue([]);
@@ -92,7 +96,7 @@ describe("finished-goods-outward-service", () => {
   });
 
   it("creates a request against an exact SKU stock record in the authorized organization", async () => {
-    mocks.tx.finishedGoodsSkuStock.findFirst.mockResolvedValue({
+    mocks.tx.finishedGoodsSkuStock.findMany.mockResolvedValue([{
       id: "sku-1",
       sku_code: "FG-001",
       style_name: "Jacket",
@@ -103,7 +107,7 @@ describe("finished-goods-outward-service", () => {
       colour: "Navy",
       current_stock: new Prisma.Decimal("12.5"),
       location: { location_name: "Main Store" },
-    });
+    }]);
     mocks.tx.finishedGoodsOutwardRequest.create.mockResolvedValue({
       id: "request-1",
       request_no: "FGR-1",
@@ -118,8 +122,8 @@ describe("finished-goods-outward-service", () => {
     });
 
     expect(result.request_no).toBe("FGR-1");
-    expect(mocks.tx.finishedGoodsSkuStock.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "sku-1", organization_id: "org-internal-1" },
+    expect(mocks.tx.finishedGoodsSkuStock.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-internal-1", id: { in: ["sku-1"] } },
     }));
     const createRequestCall = mocks.tx.finishedGoodsOutwardRequest.create.mock.calls[0][0];
     expect(createRequestCall.data).toMatchObject({
@@ -139,8 +143,47 @@ describe("finished-goods-outward-service", () => {
     }), mocks.tx);
   });
 
+  it("loads same-type stock selections with one tenant-scoped batch query", async () => {
+    mocks.tx.finishedGoodsSkuStock.findMany.mockResolvedValue([
+      {
+        id: "sku-1", sku_code: "FG-001", style_name: "Jacket", order_no: "ORD-1",
+        article_no: "ART-1", brand: "Brand", size: "M", colour: "Navy",
+        current_stock: new Prisma.Decimal("12.50"), location: { location_name: "Main Store" },
+      },
+      {
+        id: "sku-2", sku_code: "FG-002", style_name: "Shirt", order_no: "ORD-2",
+        article_no: "ART-2", brand: "Brand", size: "L", colour: "Blue",
+        current_stock: new Prisma.Decimal("6.25"), location: { location_name: "Main Store" },
+      },
+    ]);
+    mocks.tx.finishedGoodsOutwardRequest.create.mockResolvedValue({
+      id: "request-1",
+      request_no: "FGR-1",
+      status: "REQUESTED",
+    });
+
+    await createFinishedGoodsOutwardRequest({
+      organizationId: "org-1",
+      actorId: "user-1",
+      actorName: "Inventory User",
+      lines: [
+        { stockType: "SKU", stockId: "sku-1", quantity: "2.25" },
+        { stockType: "SKU", stockId: "sku-2", quantity: "1.5" },
+      ],
+    });
+
+    expect(mocks.tx.finishedGoodsSkuStock.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.finishedGoodsSkuStock.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-1", id: { in: ["sku-1", "sku-2"] } },
+    }));
+    expect(mocks.tx.finishedGoodsSkuStock.findFirst).not.toHaveBeenCalled();
+    expect(mocks.tx.finishedGoodsOutwardRequest.create.mock.calls[0][0].data.lines.create.map(
+      (line: { requested_quantity: Prisma.Decimal }) => line.requested_quantity.toString(),
+    )).toEqual(["2.25", "1.5"]);
+  });
+
   it("rejects quantities already reserved by another non-cancelled request", async () => {
-    mocks.tx.finishedGoodsGeneralStockReceipt.findFirst.mockResolvedValue({
+    mocks.tx.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([{
       id: "receipt-1",
       style_name: "Tee",
       order_no: "ORD-2",
@@ -150,7 +193,7 @@ describe("finished-goods-outward-service", () => {
       colour: "White",
       current_stock: 10,
       location: { location_name: "Main Store" },
-    });
+    }]);
     mocks.tx.finishedGoodsOutwardRequestLine.findMany.mockResolvedValue([{
       source_stock_type: "GENERAL",
       source_stock_id: "receipt-1",
@@ -169,7 +212,7 @@ describe("finished-goods-outward-service", () => {
   });
 
   it("does not resolve a stock record outside the authorized organization", async () => {
-    mocks.tx.finishedGoodsAllocatedStockReceipt.findFirst.mockResolvedValue(null);
+    mocks.tx.finishedGoodsAllocatedStockReceipt.findMany.mockResolvedValue([]);
 
     await expect(createFinishedGoodsOutwardRequest({
       organizationId: "org-1",
@@ -178,13 +221,13 @@ describe("finished-goods-outward-service", () => {
       lines: [{ stockType: "ALLOCATED", stockId: "foreign-receipt", quantity: "1" }],
     })).rejects.toThrow("not found in this organization");
 
-    expect(mocks.tx.finishedGoodsAllocatedStockReceipt.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "foreign-receipt", organization_id: "org-1" },
+    expect(mocks.tx.finishedGoodsAllocatedStockReceipt.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id: "org-1", id: { in: ["foreign-receipt"] } },
     }));
   });
 
   it("requires whole quantities for General and Allocated GRN stock", async () => {
-    mocks.tx.finishedGoodsGeneralStockReceipt.findFirst.mockResolvedValue({
+    mocks.tx.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([{
       id: "receipt-2",
       style_name: "Tee",
       order_no: "ORD-2",
@@ -194,7 +237,7 @@ describe("finished-goods-outward-service", () => {
       colour: "White",
       current_stock: 10,
       location: { location_name: "Main Store" },
-    });
+    }]);
 
     await expect(createFinishedGoodsOutwardRequest({
       organizationId: "org-1",
@@ -230,9 +273,12 @@ describe("finished-goods-outward-service", () => {
         }],
       },
     ]);
-    mocks.tx.finishedGoodsAllocatedStockReceipt.findMany.mockResolvedValue([
+    mocks.tx.finishedGoodsAllocatedStockReceipt.findMany.mockResolvedValueOnce([
       { id: "receipt-1", booking_id: "booking-1", booking_size_line_id: "size-line-1", current_stock: 10 },
       { id: "receipt-2", booking_id: "booking-2", booking_size_line_id: "size-line-2", current_stock: 5 },
+    ]).mockResolvedValueOnce([
+      { id: "receipt-1", style_name: "Jacket", order_no: "ORD-1", article_no: "ART-1", brand: "Brand", size: "M", colour: "Navy", current_stock: new Prisma.Decimal(10), location: { location_name: "Main Store" } },
+      { id: "receipt-2", style_name: "Shirt", order_no: "ORD-2", article_no: "ART-2", brand: "Brand", size: "L", colour: "Navy", current_stock: new Prisma.Decimal(5), location: { location_name: "Main Store" } },
     ]);
     mocks.tx.finishedGoodsOutwardRequestLine.findMany
       .mockResolvedValueOnce([{
@@ -246,17 +292,6 @@ describe("finished-goods-outward-service", () => {
         requested_quantity: new Prisma.Decimal(7),
         shipped_quantity: new Prisma.Decimal(2),
       }]);
-    mocks.tx.finishedGoodsAllocatedStockReceipt.findFirst.mockImplementation(async ({ where }) => ({
-      id: where.id,
-      style_name: where.id === "receipt-1" ? "Jacket" : "Shirt",
-      order_no: where.id === "receipt-1" ? "ORD-1" : "ORD-2",
-      article_no: where.id === "receipt-1" ? "ART-1" : "ART-2",
-      brand: "Brand",
-      size: "M",
-      colour: "Navy",
-      current_stock: where.id === "receipt-1" ? new Prisma.Decimal(10) : new Prisma.Decimal(5),
-      location: { location_name: "Main Store" },
-    }));
     mocks.tx.finishedGoodsOutwardRequest.create.mockResolvedValue({
       id: "request-1",
       request_no: "FGR-2",
@@ -349,8 +384,10 @@ describe("finished-goods-outward-service", () => {
         assignments: [{ assigned_quantity: 10, grnAllocations: [{ allocated_quantity: 10 }] }],
       }],
     }]);
-    mocks.tx.finishedGoodsAllocatedStockReceipt.findMany.mockResolvedValue([
+    mocks.tx.finishedGoodsAllocatedStockReceipt.findMany.mockResolvedValueOnce([
       { id: "receipt-1", booking_id: "booking-1", booking_size_line_id: "size-line-1", current_stock: 10 },
+    ]).mockResolvedValueOnce([
+      { id: "receipt-1", style_name: "Jacket", order_no: "ORD-1", article_no: "ART-1", brand: "Brand", size: "M", colour: "Navy", current_stock: new Prisma.Decimal(10), location: { location_name: "Main Store" } },
     ]);
     mocks.tx.finishedGoodsOutwardRequestLine.findMany.mockResolvedValue([{
       source_stock_type: "ALLOCATED",
@@ -389,21 +426,13 @@ describe("finished-goods-outward-service", () => {
         },
       ],
     }]);
-    mocks.tx.finishedGoodsAllocatedStockReceipt.findMany.mockResolvedValue([
+    mocks.tx.finishedGoodsAllocatedStockReceipt.findMany.mockResolvedValueOnce([
       { id: "receipt-s", booking_id: "booking-1", booking_size_line_id: "size-s", current_stock: 4 },
       { id: "receipt-m", booking_id: "booking-1", booking_size_line_id: "size-m", current_stock: 6 },
+    ]).mockResolvedValueOnce([
+      { id: "receipt-s", style_name: "Tee", order_no: "ORD-1", article_no: "ART-1", brand: "Brand", size: "S", colour: "Navy", current_stock: new Prisma.Decimal(4), location: { location_name: "Main Store" } },
+      { id: "receipt-m", style_name: "Tee", order_no: "ORD-1", article_no: "ART-1", brand: "Brand", size: "M", colour: "Navy", current_stock: new Prisma.Decimal(6), location: { location_name: "Main Store" } },
     ]);
-    mocks.tx.finishedGoodsAllocatedStockReceipt.findFirst.mockImplementation(async ({ where }) => ({
-      id: where.id,
-      style_name: "Tee",
-      order_no: "ORD-1",
-      article_no: "ART-1",
-      brand: "Brand",
-      size: where.id === "receipt-s" ? "S" : "M",
-      colour: "Navy",
-      current_stock: where.id === "receipt-s" ? 4 : 6,
-      location: { location_name: "Main Store" },
-    }));
     mocks.tx.finishedGoodsOutwardRequest.create.mockResolvedValue({
       id: "request-1",
       request_no: "FGR-SIZE",
@@ -649,10 +678,11 @@ describe("finished-goods-outward-service", () => {
     });
     mocks.tx.finishedGoodsOutwardBoxLine.createMany.mockResolvedValue({ count: 1 });
     mocks.tx.finishedGoodsOutwardRequestLine.updateMany.mockResolvedValue({ count: 1 });
-    mocks.tx.finishedGoodsOutwardRequest.findFirst.mockResolvedValue({
+    mocks.tx.finishedGoodsOutwardRequest.findMany.mockResolvedValue([{
+      id: "request-1",
       status: "PICKED",
       lines: [{ status: "PACKED" }],
-    });
+    }]);
     mocks.tx.finishedGoodsOutwardRequest.updateMany.mockResolvedValue({ count: 1 });
 
     await expect(createFinishedGoodsOutwardBox({
@@ -667,6 +697,44 @@ describe("finished-goods-outward-service", () => {
     expect(mocks.tx.finishedGoodsOutwardBox.create).toHaveBeenCalledWith(expect.objectContaining({
       data: { organization_id: "org-1", box_no: "CARTON-042", packed_by: "Inventory User" },
     }));
+  });
+
+  it("refreshes multiple request statuses with one tenant-scoped read and grouped update", async () => {
+    mocks.tx.finishedGoodsOutwardRequestLine.findMany.mockResolvedValue([
+      { id: "line-1", request_id: "request-1", picked_quantity: new Prisma.Decimal(2) },
+      { id: "line-2", request_id: "request-2", picked_quantity: new Prisma.Decimal(3) },
+    ]);
+    mocks.tx.finishedGoodsOutwardBoxLine.findMany.mockResolvedValue([]);
+    mocks.tx.finishedGoodsOutwardBox.create.mockResolvedValue({
+      id: "box-1",
+      box_no: "BOX-1",
+      packed_at: new Date("2026-10-08T00:00:00Z"),
+    });
+    mocks.tx.finishedGoodsOutwardBoxLine.createMany.mockResolvedValue({ count: 2 });
+    mocks.tx.finishedGoodsOutwardRequestLine.updateMany.mockResolvedValue({ count: 1 });
+    mocks.tx.finishedGoodsOutwardRequest.findMany.mockResolvedValue([
+      { id: "request-1", status: "PICKED", lines: [{ status: "PACKED" }] },
+      { id: "request-2", status: "PICKED", lines: [{ status: "PACKED" }] },
+    ]);
+    mocks.tx.finishedGoodsOutwardRequest.updateMany.mockResolvedValue({ count: 2 });
+
+    await createFinishedGoodsOutwardBox({
+      organizationId: "org-1",
+      requestLineIds: ["line-1", "line-2"],
+      boxNo: "BOX-1",
+      actorId: "user-1",
+      actorName: "Inventory User",
+    });
+
+    expect(mocks.tx.finishedGoodsOutwardRequest.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ["request-1", "request-2"] }, organization_id: "org-1" },
+      select: { id: true, status: true, lines: { select: { status: true } } },
+    });
+    expect(mocks.tx.finishedGoodsOutwardRequest.updateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.finishedGoodsOutwardRequest.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["request-1", "request-2"] }, organization_id: "org-1", status: "PICKED" },
+      data: { status: "PACKED" },
+    });
   });
 
   it("does not mark a packing list shipped when available source stock is insufficient", async () => {
@@ -763,10 +831,11 @@ describe("finished-goods-outward-service", () => {
     });
     mocks.tx.finishedGoodsAllocatedStockReceipt.updateMany.mockResolvedValue({ count: 1 });
     mocks.tx.finishedGoodsOutwardRequestLine.updateMany.mockResolvedValue({ count: 1 });
-    mocks.tx.finishedGoodsOutwardRequest.findFirst.mockResolvedValue({
+    mocks.tx.finishedGoodsOutwardRequest.findMany.mockResolvedValue([{
+      id: "request-1",
       status: "PACKED",
       lines: [{ status: "SHIPPED" }],
-    });
+    }]);
     mocks.tx.finishedGoodsOutwardRequest.updateMany.mockResolvedValue({ count: 1 });
     mocks.tx.finishedGoodsOutwardShipment.updateMany.mockResolvedValue({ count: 1 });
 
@@ -917,10 +986,11 @@ describe("finished-goods-outward-service", () => {
       boxLines: [],
     });
     mocks.tx.finishedGoodsOutwardRequestLine.updateMany.mockResolvedValue({ count: 1 });
-    mocks.tx.finishedGoodsOutwardRequest.findFirst.mockResolvedValue({
+    mocks.tx.finishedGoodsOutwardRequest.findMany.mockResolvedValue([{
+      id: "request-1",
       status: "ACCEPTED",
       lines: [{ status: "ACCEPTED" }],
-    });
+    }]);
 
     await expect(unpickFinishedGoodsOutwardLine({
       organizationId: "org-1",
@@ -989,10 +1059,11 @@ describe("finished-goods-outward-service", () => {
       _sum: { quantity: new Prisma.Decimal(4) },
     });
     mocks.tx.finishedGoodsOutwardRequestLine.updateMany.mockResolvedValue({ count: 1 });
-    mocks.tx.finishedGoodsOutwardRequest.findFirst.mockResolvedValue({
+    mocks.tx.finishedGoodsOutwardRequest.findMany.mockResolvedValue([{
+      id: "request-1",
       status: "SHIPPED",
       lines: [{ status: "PACKED" }],
-    });
+    }]);
     mocks.tx.finishedGoodsOutwardRequest.updateMany.mockResolvedValue({ count: 1 });
 
     await expect(reverseFinishedGoodsOutwardShipment({

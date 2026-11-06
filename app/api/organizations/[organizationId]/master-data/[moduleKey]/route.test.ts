@@ -153,6 +153,34 @@ describe("organization master-data lookup route", () => {
     );
   });
 
+  it("returns only bounded id/label pairs for searchable lookup selects", async () => {
+    mocks.getMasterValuesForOrganization.mockResolvedValueOnce([
+      { id: "record-1", value_id: "value-1", label: "Cotton", fields: { private: "excluded" } },
+      { id: "record-2", value_id: "value-2", label: "Cotton Blend", fields: { private: "excluded" } },
+    ]);
+
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/master-data/raw-material?page=true&limit=20&shape=select&search=cotton"),
+      contextFor("raw-material"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      items: [
+        { id: "record-1", label: "Cotton" },
+        { id: "record-2", label: "Cotton Blend" },
+      ],
+      hasMore: false,
+      nextCursor: null,
+    });
+    expect(mocks.getMasterValuesForOrganization).toHaveBeenCalledWith(
+      "internal-org-1",
+      "raw-material",
+      true,
+      expect.objectContaining({ limit: 21, search: "cotton" }),
+    );
+  });
+
   it("rejects malformed or oversized report filters", async () => {
     const response = await GET(
       new Request(`http://localhost/api/organizations/public-org/master-data/category?page=true&filters=${encodeURIComponent('{"label":{"operator":"unknown","value":"x"}}')}`),

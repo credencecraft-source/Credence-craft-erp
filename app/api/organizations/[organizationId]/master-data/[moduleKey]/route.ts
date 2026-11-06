@@ -235,6 +235,7 @@ export async function GET(
     const activeDummyDataBatch = ["size-group", "process-template"].includes(moduleKey)
       ? getActiveOrganizationDummyDataBatch(organization.id)
       : undefined;
+    const selectShape = searchParams.get("shape") === "select";
     let sizeLinksPromise: ReturnType<typeof getSizeGroupSizesForOrganization> | undefined;
     const values = await getMasterValuesForOrganization(organization.id, moduleKey, includeInactive, {
       search,
@@ -246,7 +247,7 @@ export async function GET(
       entityId,
       parentId,
       ...(activeDummyDataBatch ? { activeDummyDataBatch } : {}),
-      ...(moduleKey === "size-group" ? {
+      ...(moduleKey === "size-group" && !selectShape ? {
         onRowsFetched: (rowIds) => {
           sizeLinksPromise = getSizeGroupSizesForOrganization(
             organization.id,
@@ -258,6 +259,12 @@ export async function GET(
         },
       } : {}),
     });
+    if (selectShape) {
+      if (profile && lookupStartedAt !== undefined) {
+        profile.lookupMs = performance.now() - lookupStartedAt;
+      }
+      return respondWithPage(values.map(({ id, label }) => ({ id, label })));
+    }
     if (moduleKey === "size-group") {
       const sizeLinks = sizeLinksPromise ? await sizeLinksPromise : [];
       const sizesByGroup = new Map<string, typeof sizeLinks[number][]>();

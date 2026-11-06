@@ -735,27 +735,27 @@ export async function createGroupedPurchaseOrder(input: CreateGroupedPurchaseOrd
   return created;
 }
 
-export async function listGroupedPurchaseOrders(organizationId: string, status?: string | string[]) {
-  const orders = await prisma.groupedPurchaseOrder.findMany({
-    where: { organization_id: organizationId, ...(status ? { status: Array.isArray(status) ? { in: status } : status } : {}) },
-    include: groupedPurchaseOrderInclude,
-    orderBy: { created_at: "desc" },
-  });
-  return enrichPurchaseOrderTaxFields(organizationId, orders.map(serializePurchaseOrder));
-}
-
 export async function listGroupedPurchaseOrdersPage(
   organizationId: string,
   status: string | string[] | undefined,
   input: { cursor?: string; limit?: number } = {},
 ) {
-  const limit = Math.min(100, Math.max(1, Math.trunc(input.limit ?? 50)));
+  const requestedLimit = input.limit ?? 50;
+  const limit = Math.min(100, Math.max(1, Math.trunc(Number.isFinite(requestedLimit) ? requestedLimit : 50)));
+  const cursor = input.cursor?.trim();
+  if (cursor) {
+    const cursorRecord = await prisma.groupedPurchaseOrder.findFirst({
+      where: { id: cursor, organization_id: organizationId },
+      select: { id: true },
+    });
+    if (!cursorRecord) throw new Error("The grouped purchase order cursor is invalid.");
+  }
   const rows = await prisma.groupedPurchaseOrder.findMany({
     where: { organization_id: organizationId, ...(status ? { status: Array.isArray(status) ? { in: status } : status } : {}) },
     include: groupedPurchaseOrderPageInclude,
     orderBy: [{ created_at: "desc" }, { id: "desc" }],
     take: limit + 1,
-    ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
   const hasNextPage = rows.length > limit;
   const pageRows = hasNextPage ? rows.slice(0, limit) : rows;

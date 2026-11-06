@@ -18,13 +18,15 @@ function uniqueIds(ids: string[], label: string) {
 
 async function refreshRequestStatuses(database: Database, organizationId: string, requestIds: string[]) {
   const ids = [...new Set(requestIds)];
-  for (const requestId of ids) {
-    const lines = await database.rawMaterialOutwardRequestLine.findMany({
-      where: { organization_id: organizationId, request_id: requestId },
-      select: { status: true },
-    });
-    if (lines.length === 0) continue;
-    const statuses = lines.map((line) => line.status);
+  if (!ids.length) return;
+  const requests = await database.rawMaterialOutwardRequest.findMany({
+    where: { organization_id: organizationId, id: { in: ids } },
+    select: { id: true, status: true, lines: { select: { status: true } } },
+  });
+  const groupedUpdates = new Map<string, { fromStatus: string; toStatus: string; ids: string[] }>();
+  for (const request of requests) {
+    if (request.status === "REQUESTED" || request.status === "CANCELLED" || request.lines.length === 0) continue;
+    const statuses = request.lines.map((line) => line.status);
     const status = statuses.every((item) => item === "SHIPPED")
       ? "SHIPPED"
       : statuses.every((item) => item === "PACKED" || item === "SHIPPED")
@@ -32,11 +34,18 @@ async function refreshRequestStatuses(database: Database, organizationId: string
         : statuses.every((item) => item === "PICKED" || item === "PACKED" || item === "SHIPPED")
           ? "PICKED"
           : "ACCEPTED";
-    await database.rawMaterialOutwardRequest.updateMany({
-      where: { id: requestId, organization_id: organizationId, status: { not: "REQUESTED" } },
-      data: { status },
-    });
+    if (status === request.status) continue;
+    const key = `${request.status}\u0000${status}`;
+    const group = groupedUpdates.get(key) ?? { fromStatus: request.status, toStatus: status, ids: [] };
+    group.ids.push(request.id);
+    groupedUpdates.set(key, group);
   }
+  await Promise.all([...groupedUpdates.values()].map(({ fromStatus, toStatus, ids: requestIdsToUpdate }) =>
+    database.rawMaterialOutwardRequest.updateMany({
+      where: { organization_id: organizationId, id: { in: requestIdsToUpdate }, status: fromStatus },
+      data: { status: toStatus },
+    }),
+  ));
 }
 
 export async function createWorkOrderMaterialRequest(input: {

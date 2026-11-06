@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
+import { apiErrorResponse } from "@/lib/api/api-error-response";
 import {
   approveGeneralPurchaseOrderPrice,
   createGeneralPurchaseOrderFromGroups,
@@ -14,11 +15,27 @@ import {
   createGroupedPurchaseOrder,
   getProcurementSummary,
   listAllocatableBomRowsPage,
-  listGroupedPurchaseOrders,
   listGroupedPurchaseOrdersPage,
 } from "@/lib/services/orders/grouped-purchase-order-service";
 import { createMasterPurchaseOrder, listMasterPurchaseOrdersPage } from "@/lib/services/orders/master-purchase-order-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
+
+function parsePageParameters(url: URL, defaultLimit = 50, cursorParameter = "cursor") {
+  const limitValues = url.searchParams.getAll("limit");
+  const cursorValues = url.searchParams.getAll(cursorParameter);
+  if (limitValues.length > 1 || cursorValues.length > 1) return null;
+
+  const limitValue = limitValues[0];
+  if (limitValue !== undefined && !/^[1-9]\d*$/.test(limitValue)) return null;
+
+  const cursor = cursorValues[0]?.trim();
+  if (cursorValues[0] !== undefined && (!cursor || cursor.length > 128)) return null;
+
+  return {
+    limit: Math.min(Number(limitValue ?? defaultLimit), 100),
+    ...(cursor ? { cursor } : {}),
+  };
+}
 
 export async function GET(request: Request) {
   try {
@@ -56,11 +73,11 @@ export async function GET(request: Request) {
       if (requestedStatuses && (!requestedStatuses.length || requestedStatuses.some((status) => !allowedStatuses.includes(status)))) {
         return NextResponse.json({ error: "One or more General PO statuses are invalid." }, { status: 400 });
       }
-      const requestedLimit = Number(url.searchParams.get("limit") ?? 50);
+      const page = parsePageParameters(url);
+      if (!page) return NextResponse.json({ error: "Pagination parameters are invalid." }, { status: 400 });
       return NextResponse.json({
         ...await listGeneralPurchaseOrderRequests(organization.id, requestedStatuses, {
-          cursor: url.searchParams.get("cursor") ?? undefined,
-          limit: Number.isFinite(requestedLimit) ? requestedLimit : 50,
+          ...page,
           unGroupedOnly: url.searchParams.get("unGroupedOnly") === "true",
           ...(assetClassification === undefined ? {} : { isAsset: assetClassification }),
         }),
@@ -73,10 +90,10 @@ export async function GET(request: Request) {
       if (requestedStatuses && (!requestedStatuses.length || requestedStatuses.some((status) => !allowedStatuses.includes(status)))) {
         return NextResponse.json({ error: "One or more General PO group statuses are invalid." }, { status: 400 });
       }
-      const requestedLimit = Number(url.searchParams.get("limit") ?? 50);
+      const page = parsePageParameters(url);
+      if (!page) return NextResponse.json({ error: "Pagination parameters are invalid." }, { status: 400 });
       return NextResponse.json(await listGeneralPurchaseOrderGroups(organization.id, requestedStatuses, {
-        cursor: url.searchParams.get("cursor") ?? undefined,
-        limit: Number.isFinite(requestedLimit) ? requestedLimit : 50,
+        ...page,
         ...(assetClassification === undefined ? {} : { isAsset: assetClassification }),
       }));
     }
@@ -84,31 +101,37 @@ export async function GET(request: Request) {
       return NextResponse.json(await getProcurementSummary(organization.id));
     }
     if (view === "allocatable") {
-      const limitValue = Number(url.searchParams.get("limit") ?? 100);
+      const page = parsePageParameters(url, 100);
+      if (!page) return NextResponse.json({ error: "Pagination parameters are invalid." }, { status: 400 });
       return NextResponse.json(await listAllocatableBomRowsPage(organization.id, {
-        cursor: url.searchParams.get("cursor") ?? undefined,
-        limit: Number.isFinite(limitValue) ? limitValue : 100,
+        ...page,
       }));
     }
 
     if (view === "all") {
-      return NextResponse.json({ groupedPurchaseOrders: await listGroupedPurchaseOrders(organization.id) });
+      const page = parsePageParameters(url);
+      if (!page) return NextResponse.json({ error: "Pagination parameters are invalid." }, { status: 400 });
+      const result = await listGroupedPurchaseOrdersPage(organization.id, undefined, page);
+      return NextResponse.json({
+        groupedPurchaseOrders: result.groupedPurchaseOrders,
+        nextGroupedCursor: result.nextCursor,
+      });
     }
     const status = ["PENDING_PRICE_APPROVAL", "PRICE_APPROVED"];
-    const limitValue = Number(url.searchParams.get("limit") ?? 50);
-    const pageInput = {
-      cursor: url.searchParams.get("cursor") ?? undefined,
-      limit: Number.isFinite(limitValue) ? limitValue : 50,
-    };
+    const pageInput = parsePageParameters(url);
+    if (!pageInput) return NextResponse.json({ error: "Pagination parameters are invalid." }, { status: 400 });
     const include = url.searchParams.get("include") ?? "both";
+    const masterPageInput = view === "create" && include !== "grouped"
+      ? parsePageParameters(url, 50, "masterCursor")
+      : null;
+    if (view === "create" && include !== "grouped" && !masterPageInput) {
+      return NextResponse.json({ error: "Master purchase order pagination parameters are invalid." }, { status: 400 });
+    }
     const groupedPagePromise = include !== "master"
       ? listGroupedPurchaseOrdersPage(organization.id, status, pageInput)
       : Promise.resolve(null);
-    const masterPagePromise = view === "create" && include !== "grouped"
-      ? listMasterPurchaseOrdersPage(organization.id, {
-          cursor: url.searchParams.get("masterCursor") ?? undefined,
-          limit: Number.isFinite(limitValue) ? limitValue : 50,
-        })
+    const masterPagePromise = masterPageInput
+      ? listMasterPurchaseOrdersPage(organization.id, masterPageInput)
       : Promise.resolve(null);
     const [groupedPage, masterPage] = await Promise.all([groupedPagePromise, masterPagePromise]);
     return NextResponse.json({
@@ -116,7 +139,7 @@ export async function GET(request: Request) {
       ...(masterPage ? { ...masterPage, nextMasterCursor: masterPage.nextCursor } : {}),
     });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load procurement records." }, { status: 400 });
+    return apiErrorResponse(error, { context: "procurement.GET" });
   }
 }
 
@@ -220,6 +243,6 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true, groupedPurchaseOrder }, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to create grouped purchase order." }, { status: 400 });
+    return apiErrorResponse(error, { context: "procurement.POST" });
   }
 }
