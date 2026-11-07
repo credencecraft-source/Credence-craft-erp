@@ -9,7 +9,7 @@ import {
 } from "@/lib/services/distribution/organization-print-template-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
-const DOCUMENT_TYPES: readonly OrganizationPrintDocumentType[] = ["SALES_ORDER", "QUOTATION"];
+const DOCUMENT_TYPES: readonly OrganizationPrintDocumentType[] = ["SALES_ORDER", "QUOTATION", "POS_INVOICE"];
 
 type AuthorizationResult =
   | { authorized: true; user: Awaited<ReturnType<typeof requireSessionUser>>; organization: Awaited<ReturnType<typeof requireOrganizationContext>> }
@@ -68,7 +68,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     const defaultFor = url.searchParams.get("defaultFor");
     if (defaultFor !== null) {
       if (!isDocumentType(defaultFor)) {
-        return NextResponse.json({ error: "Select Sales Order or Quotation." }, { status: 400 });
+        return NextResponse.json({ error: "Select Sales Order, Quotation, or POS Invoice." }, { status: 400 });
       }
       const designConfig = await getOrganizationPrintTemplateForDocument(
         authorization.user.id,
@@ -79,7 +79,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
     const documentType = url.searchParams.get("documentType");
     if (documentType !== null && !isDocumentType(documentType)) {
-      return NextResponse.json({ error: "Select Sales Order or Quotation." }, { status: 400 });
+      return NextResponse.json({ error: "Select Sales Order, Quotation, or POS Invoice." }, { status: 400 });
     }
     const templates = await listOrganizationPrintTemplates(
       authorization.user.id,

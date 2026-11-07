@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_ORGANIZATION_PRINT_TEMPLATE_DESIGN,
+  getDefaultOrganizationPrintTemplateDesign,
   parseOrganizationPrintTemplateDesign,
   parseOrganizationPrintTemplateInput,
 } from "./organization-print-template-contract";
@@ -38,7 +39,7 @@ describe("organization print-template contract", () => {
       isActive: true,
       isDefault: false,
       designConfig: DEFAULT_ORGANIZATION_PRINT_TEMPLATE_DESIGN,
-    })).toThrow("Choose Sales Order or Quotation");
+    })).toThrow("Choose Sales Order, Quotation, or POS Invoice");
 
     expect(() => parseOrganizationPrintTemplateInput({
       name: "STANDARD",
@@ -47,6 +48,26 @@ describe("organization print-template contract", () => {
       isDefault: true,
       designConfig: DEFAULT_ORGANIZATION_PRINT_TEMPLATE_DESIGN,
     })).toThrow("An inactive template cannot be the default");
+  });
+
+  it("provides POS invoice defaults without Sales Order-only fields", () => {
+    const design = getDefaultOrganizationPrintTemplateDesign("POS_INVOICE");
+    expect(design.sections.headerFields).toContain("billTo");
+    expect(design.sections.headerFields).not.toContain("shipTo");
+    expect(design.sections.itemFields).toContain("hsnCode");
+    expect(design.sections.itemFields).toContain("gstRate");
+    expect(design.sections.itemFields).not.toContain("booking");
+    expect(design.sections.summaryFields).not.toContain("deliveryCharge");
+    expect(parseOrganizationPrintTemplateInput({
+      name: "POS Standard",
+      documentType: "POS_INVOICE",
+      isActive: true,
+      isDefault: true,
+      designConfig: design,
+    })).toMatchObject({
+      name: "POS STANDARD",
+      documentType: "POS_INVOICE",
+    });
   });
 
   it("rejects out-of-range margins, invalid colors, and oversized footer content", () => {

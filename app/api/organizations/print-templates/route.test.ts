@@ -79,13 +79,28 @@ describe("organization print-template collection route", () => {
     );
   });
 
+  it("loads an authorized POS invoice default template", async () => {
+    const response = await GET(request(
+      "?workspaceId=workspace-1&organizationId=public-org-1&defaultFor=POS_INVOICE",
+    ));
+
+    expect(response.status).toBe(200);
+    expect(mocks.getOrganizationPrintTemplateForDocument).toHaveBeenCalledWith(
+      "user-1",
+      "public-org-1",
+      "POS_INVOICE",
+    );
+  });
+
   it("rejects unsupported document types and invalid template input", async () => {
     const invalidType = await GET(request(
       "?workspaceId=workspace-1&organizationId=public-org-1&defaultFor=PURCHASE_ORDER",
     ));
     expect(invalidType.status).toBe(400);
 
-    mocks.createOrganizationPrintTemplate.mockRejectedValue(new Error("Choose Sales Order or Quotation as the document type."));
+    mocks.createOrganizationPrintTemplate.mockRejectedValue(
+      new Error("Choose Sales Order, Quotation, or POS Invoice as the document type."),
+    );
     const invalidTemplate = await POST(request("?workspaceId=workspace-1&organizationId=public-org-1", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

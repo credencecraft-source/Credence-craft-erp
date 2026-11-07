@@ -65,13 +65,30 @@ export const DEFAULT_ORGANIZATION_PRINT_TEMPLATE_DESIGN: OrganizationPrintTempla
   },
 };
 
-const DOCUMENT_TYPES: readonly OrganizationPrintDocumentType[] = ["SALES_ORDER", "QUOTATION"];
+export function getDefaultOrganizationPrintTemplateDesign(
+  documentType: OrganizationPrintDocumentType,
+): OrganizationPrintTemplateDesign {
+  if (documentType !== "POS_INVOICE") return DEFAULT_ORGANIZATION_PRINT_TEMPLATE_DESIGN;
+  return {
+    ...DEFAULT_ORGANIZATION_PRINT_TEMPLATE_DESIGN,
+    sections: {
+      ...DEFAULT_ORGANIZATION_PRINT_TEMPLATE_DESIGN.sections,
+      headerFields: ["companyLogo", "companyName", "documentNumber", "documentDate", "billTo", "status"],
+        itemFields: [
+          "description", "hsnCode", "order", "sizeBreakdown", "quantity", "unitPrice", "beforeTax", "gstRate", "tax", "amount",
+        ],
+        summaryFields: ["totalQuantity", "beforeTax", "cgst", "sgst", "igst", "totalTax", "grandTotal"],
+    },
+  };
+}
+
+const DOCUMENT_TYPES: readonly OrganizationPrintDocumentType[] = ["SALES_ORDER", "QUOTATION", "POS_INVOICE"];
 const FONT_FAMILIES = ["helvetica", "times", "courier"] as const;
 const HEX_COLOR = /^#[\da-fA-F]{6}$/;
 const HEADER_FIELDS = ["companyLogo", "companyName", "documentNumber", "documentDate", "billTo", "shipTo", "status"] as const;
 const ITEM_FIELDS = [
-  "description", "booking", "order", "sizeBreakdown", "quantity",
-  "unitPrice", "beforeTax", "tax", "amount",
+  "description", "hsnCode", "booking", "order", "sizeBreakdown", "quantity",
+  "unitPrice", "beforeTax", "gstRate", "tax", "amount",
 ] as const;
 const SUMMARY_FIELDS = [
   "totalQuantity", "beforeTax", "deliveryCharge", "cgst", "sgst",
@@ -228,7 +245,7 @@ export function parseOrganizationPrintTemplateInput(
   if (!isRecord(value)) throw new Error("Submit a valid print template.");
   if (typeof value.documentType !== "string"
     || !DOCUMENT_TYPES.includes(value.documentType as OrganizationPrintDocumentType)) {
-    throw new Error("Choose Sales Order or Quotation as the document type.");
+    throw new Error("Choose Sales Order, Quotation, or POS Invoice as the document type.");
   }
   if (typeof value.name !== "string") throw new Error("Enter a template name.");
   const name = normalizeUppercase(value.name.trim());
