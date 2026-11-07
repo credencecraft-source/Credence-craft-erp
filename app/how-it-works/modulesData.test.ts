@@ -42,7 +42,7 @@ describe("How It Works module data", () => {
     const inventoryInward = HOW_IT_WORKS_MODULES.find((area) => area.key === "inventory-management-inward");
 
     expect(procurement?.masterGroups.flatMap((group) => group.masters.map((master) => master.label)))
-      .toEqual(expect.arrayContaining(["Vendor", "GST", "HSN Code"]));
+      .toEqual(expect.arrayContaining(["Supplier", "GST", "HSN Code"]));
     expect(inventoryInward?.masterGroups.flatMap((group) => group.masters.map((master) => master.label)))
       .toEqual(expect.arrayContaining(["Stock UOM", "Raw Material"]));
   });
