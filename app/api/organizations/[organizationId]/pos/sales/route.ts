@@ -2,11 +2,31 @@ import { NextResponse } from "next/server";
 
 import { requireSessionUser } from "@/lib/auth/session-manager";
 import { prisma } from "@/lib/database/prisma-client";
-import { createPosGeneralStockSale } from "@/lib/services/pos/pos-general-stock-sale-service";
+import {
+  createPosGeneralStockSale,
+  isPosPurchaseRewardAvailable,
+} from "@/lib/services/pos/pos-general-stock-sale-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
+
+function offerSnapshot(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.code !== "string"
+    || typeof record.name !== "string"
+    || typeof record.discountAmount !== "string"
+  ) {
+    return null;
+  }
+  return {
+    code: record.code,
+    name: record.name,
+    discountAmount: record.discountAmount,
+  };
+}
 
 function encodeInvoiceCursor(invoice: { id: string; posted_at: Date }) {
   return Buffer.from(JSON.stringify({
@@ -48,12 +68,51 @@ export async function GET(
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "FINANCE", "INVENTORY"]);
     const searchParams = new URL(request.url).searchParams;
+    const rewardEligibility = searchParams.get("rewardEligibility");
+    if (rewardEligibility !== null) {
+      if (rewardEligibility !== "true") {
+        return NextResponse.json({ error: "Invalid purchase-reward eligibility request." }, { status: 400 });
+      }
+      const invoiceDate = searchParams.get("invoiceDate") ?? "";
+      const subtotal = searchParams.get("subtotal") ?? "";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) || !/^\d{1,10}(?:\.\d{1,2})?$/.test(subtotal)) {
+        return NextResponse.json({ error: "Purchase-reward eligibility details are invalid." }, { status: 400 });
+      }
+      const available = await isPosPurchaseRewardAvailable({
+        organizationId: organization.id,
+        invoiceDate,
+        subtotal,
+      });
+      return NextResponse.json({ available });
+    }
+
     const invoiceNumber = searchParams.get("invoiceNumber")?.trim();
     if (invoiceNumber) {
       const [invoice, issuer] = await Promise.all([
         prisma.posSalesInvoice.findFirst({
           where: { organization_id: organization.id, invoice_no: invoiceNumber },
-          include: { lines: true },
+          include: {
+            lines: true,
+            entity: { select: { entity_name: true } },
+            couponRedemption: {
+              select: {
+                coupon_code: true,
+                discount_amount: true,
+                coupon: {
+                  select: { name: true, discount_type: true, discount_value: true },
+                },
+              },
+            },
+            issuedCoupon: {
+              select: {
+                coupon_code: true,
+                expires_at: true,
+                coupon: {
+                  select: { name: true, discount_type: true, discount_value: true },
+                },
+              },
+            },
+          },
         }),
         prisma.organization.findFirst({
           where: { id: organization.id },
@@ -79,7 +138,25 @@ export async function GET(
           invoiceNumber: invoice.invoice_no,
           invoiceDate: invoice.invoice_date.toISOString().slice(0, 10),
           customer: invoice.customer ?? "",
+          entityName: invoice.entity?.entity_name ?? "",
           status: invoice.status,
+          appliedCouponCode: invoice.couponRedemption?.coupon_code ?? null,
+          appliedCouponName: invoice.couponRedemption?.coupon.name ?? null,
+          appliedCouponDiscountType: invoice.couponRedemption?.coupon.discount_type ?? null,
+          appliedCouponDiscountValue: invoice.couponRedemption
+            ? Number(invoice.couponRedemption.coupon.discount_value)
+            : null,
+          appliedCouponDiscountAmount: invoice.couponRedemption
+            ? Number(invoice.couponRedemption.discount_amount)
+            : null,
+          couponDiscountAmount: Number(invoice.coupon_discount_amount),
+          issuedCouponCode: invoice.issuedCoupon?.coupon_code ?? null,
+          issuedCouponExpiresAt: invoice.issuedCoupon?.expires_at?.toISOString().slice(0, 10) ?? null,
+          issuedCouponName: invoice.issuedCoupon?.coupon.name ?? null,
+          issuedCouponDiscountType: invoice.issuedCoupon?.coupon.discount_type ?? null,
+          issuedCouponDiscountValue: invoice.issuedCoupon
+            ? Number(invoice.issuedCoupon.coupon.discount_value)
+            : null,
           issuer: {
             name: issuer.organization_name,
             gstNumber: issuer.gst_number,
@@ -102,6 +179,7 @@ export async function GET(
             rate: Number(line.unit_rate),
             gstRate: Number(line.gst_rate),
             discountPercent: Number(line.discount_percent),
+            appliedOffer: offerSnapshot(line.offer_snapshot),
             amount: Number(line.taxable_amount),
             taxAmount: Number(line.cgst_amount) + Number(line.sgst_amount) + Number(line.igst_amount),
             totalAmount: Number(line.total_amount),
@@ -156,7 +234,11 @@ export async function GET(
         invoice_no: true,
         invoice_date: true,
         customer: true,
+        entity: { select: { entity_name: true } },
+        couponRedemption: { select: { id: true } },
+        issuedCoupon: { select: { id: true } },
         subtotal: true,
+        coupon_discount_amount: true,
         cgst_amount: true,
         sgst_amount: true,
         igst_amount: true,
@@ -174,8 +256,11 @@ export async function GET(
         invoiceNumber: invoice.invoice_no,
         invoiceDate: invoice.invoice_date.toISOString().slice(0, 10),
         customer: invoice.customer ?? "",
+        entityName: invoice.entity?.entity_name ?? "",
+        hasCouponCode: Boolean(invoice.issuedCoupon || invoice.couponRedemption),
         lines: [],
         subtotal: Number(invoice.subtotal),
+        couponDiscountAmount: Number(invoice.coupon_discount_amount),
         cgstAmount: Number(invoice.cgst_amount),
         sgstAmount: Number(invoice.sgst_amount),
         igstAmount: Number(invoice.igst_amount),
@@ -217,6 +302,9 @@ export async function POST(
         throw new Error("Every invoice item must reference a supported General stock type.");
       }
       const stockType: "SKU" | "GENERAL_GRN" = line.stockType === "SKU" ? "SKU" : "GENERAL_GRN";
+      if (line.offerId !== undefined && line.offerId !== null && typeof line.offerId !== "string") {
+        throw new Error("Select a valid offer for this invoice item.");
+      }
       return {
         stockId: typeof line.stockId === "string" ? line.stockId : "",
         stockType,
@@ -225,6 +313,7 @@ export async function POST(
         gstRate: String(line.gstRate ?? ""),
         discountPercent: String(line.discountPercent ?? ""),
         hsnCode: typeof line.hsnCode === "string" ? line.hsnCode : null,
+        offerId: typeof line.offerId === "string" ? line.offerId : null,
       };
     });
     const taxMode = body.taxMode === "INTERSTATE" ? "INTERSTATE" : body.taxMode === "LOCAL" ? "LOCAL" : null;
@@ -233,14 +322,22 @@ export async function POST(
       && typeof body.customerContactId !== "string") {
       return NextResponse.json({ error: "Select a valid customer contact." }, { status: 400 });
     }
+    if (typeof body.entityId !== "string" || !body.entityId.trim()) {
+      return NextResponse.json({ error: "Select an Entity before posting the invoice." }, { status: 400 });
+    }
+    if (body.couponCode !== undefined && body.couponCode !== null && typeof body.couponCode !== "string") {
+      return NextResponse.json({ error: "Enter a valid coupon code." }, { status: 400 });
+    }
 
     const invoice = await createPosGeneralStockSale({
       organizationId: organization.id,
       actorId: user.id,
       requestKey: typeof body.requestKey === "string" ? body.requestKey : "",
+      entityId: body.entityId,
       invoiceDate: String(body.invoiceDate ?? ""),
       customer: typeof body.customer === "string" ? body.customer : null,
       customerContactId: typeof body.customerContactId === "string" ? body.customerContactId : null,
+      couponCode: typeof body.couponCode === "string" ? body.couponCode : null,
       taxMode,
       lines,
     });

@@ -15,6 +15,7 @@ export async function GET(
     const organization = await requireOrganizationContext(user.id, organizationId);
     const searchParams = new URL(request.url).searchParams;
     const stockId = searchParams.get("stockId")?.trim();
+    const entityId = searchParams.get("entityId")?.trim();
     const stockType = searchParams.get("stockType");
     const search = searchParams.get("search")?.trim() ?? "";
     if (stockType && stockType !== "SKU" && stockType !== "GENERAL_GRN") {
@@ -22,6 +23,13 @@ export async function GET(
     }
     if (search && (search.length < 2 || search.length > 100)) {
       return NextResponse.json({ error: "Stock search must contain between 2 and 100 characters." }, { status: 400 });
+    }
+    if (entityId) {
+      const entity = await prisma.masterEntity.findFirst({
+        where: { id: entityId, organization_id: organization.id, is_active: true },
+        select: { id: true },
+      });
+      if (!entity) return NextResponse.json({ error: "Select an active Entity belonging to this organization." }, { status: 400 });
     }
     const resultLimit = stockId ? 1 : 10;
     const take = resultLimit + 1;
@@ -31,6 +39,7 @@ export async function GET(
           organization_id: organization.id,
           source: { in: [...GENERAL_FINISHED_GOODS_SKU_SOURCES] },
           current_stock: { gt: 0 },
+          ...(entityId ? { entity_id: entityId } : {}),
           ...(stockId ? { id: stockId } : {}),
           ...(search ? {
             OR: [
@@ -47,6 +56,7 @@ export async function GET(
         },
         select: {
           id: true,
+          entity_id: true,
           style_name: true,
           order_no: true,
           article_no: true,
@@ -77,6 +87,7 @@ export async function GET(
       where: {
         organization_id: organization.id,
         current_stock: { gt: 0 },
+        ...(entityId ? { entity_id: entityId } : {}),
         ...(stockId ? { id: stockId } : {}),
         ...(search ? {
           OR: [
@@ -92,6 +103,7 @@ export async function GET(
       },
       select: {
         id: true,
+        entity_id: true,
         style_name: true,
         order_no: true,
         article_no: true,
@@ -121,6 +133,7 @@ export async function GET(
     const records = [
       ...skuRecords.map((record) => ({
         id: record.id,
+        entity_id: record.entity_id,
         stock_type: "SKU" as const,
         style_name: record.style_name,
         order_no: record.order_no,
@@ -148,6 +161,7 @@ export async function GET(
       })),
       ...generalReceiptRecords.map((record) => ({
         id: record.id,
+        entity_id: record.entity_id,
         stock_type: "GENERAL_GRN" as const,
         style_name: record.style_name,
         order_no: record.order_no,

@@ -48,6 +48,7 @@ model Contact {
   purchase_orders        PurchaseOrder[]
   sales_orders           MerchandisingOrder[]
   pos_sales_invoices     PosSalesInvoice[]
+  pos_coupon_issues      PosCouponIssue[]
   distributionQuotations DistributionQuotation[]
   legacy_vendors         MasterVendor[]
   legacy_buyers          MasterBuyer[]

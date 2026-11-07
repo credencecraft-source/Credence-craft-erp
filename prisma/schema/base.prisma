@@ -74,6 +74,11 @@ model Organization {
   masterModules                           MasterModule[]
   priceListContactAssignments             PriceListContactAssignment[]
   merchandisingOrders                     MerchandisingOrder[]
+  posOffers                               PosOffer[]
+  posOfferTargets                         PosOfferTarget[]
+  posCoupons                              PosCoupon[]
+  posCouponIssues                         PosCouponIssue[]
+  posCouponRedemptions                    PosCouponRedemption[]
   outgoingOrderShares                     OrderShare[]                              @relation("OrderShareSourceOrganization")
   incomingOrderShares                     OrderShare[]                              @relation("OrderShareTargetOrganization")
   destinationOrderShares                  OrderShare[]                              @relation("OrderShareDestinationOrganization")
@@ -993,6 +998,8 @@ model MasterEntity {
   inventoryReceipts            InventoryReceipt[]            @relation("InventoryReceiptEntity")
   generalPurchaseOrderRequests GeneralPurchaseOrderRequest[] @relation("GeneralPurchaseOrderRequestEntity")
   generalPurchaseOrderGroups   GeneralPurchaseOrderGroup[]
+  posPurchaseBills             PosPurchaseBill[]
+  posSalesInvoices             PosSalesInvoice[]
 
   @@unique([organization_id, entity_name])
   @@unique([organization_id, id])
@@ -1106,7 +1113,9 @@ model MasterCategory {
   category_type          MasterCategoryType? @relation(fields: [category_type_id], references: [id])
   subcategories          MasterSubCategory[]
   articles               MasterArticle[]
+  posOfferTargets        PosOfferTarget[]
 
+  @@unique([organization_id, id])
   @@unique([organization_id, category_name])
   @@index([organization_id, is_active])
   @@index([organization_id, product_master_id])
@@ -1380,7 +1389,9 @@ model MasterColor {
   organization     Organization           @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   raw_materials    MasterRawMaterial[]
   article_variants MasterArticleVariant[]
+  posOfferTargets  PosOfferTarget[]
 
+  @@unique([organization_id, id])
   @@unique([organization_id, colors])
   @@index([organization_id, is_active])
   @@map("master_colors")
@@ -1427,7 +1438,9 @@ model MasterSize {
   size_group      MasterSizeGroup?      @relation(fields: [size_group_id], references: [id])
   group_links     MasterSizeGroupSize[]
   article_sizes   MasterArticleSize[]
+  posOfferTargets PosOfferTarget[]
 
+  @@unique([organization_id, id])
   @@unique([organization_id, size])
   @@index([organization_id, is_active])
   @@map("master_sizes")

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   requireOrganizationContext: vi.fn(),
   generalStockFindMany: vi.fn(),
   skuStockFindMany: vi.fn(),
+  entityFindFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({
@@ -15,6 +16,7 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 }));
 vi.mock("@/lib/database/prisma-client", () => ({
   prisma: {
+    masterEntity: { findFirst: mocks.entityFindFirst },
     finishedGoodsGeneralStockReceipt: { findMany: mocks.generalStockFindMany },
     finishedGoodsSkuStock: { findMany: mocks.skuStockFindMany },
   },
@@ -30,6 +32,7 @@ describe("POS General FG stock route", () => {
     mocks.skuStockFindMany.mockResolvedValue([]);
     mocks.generalStockFindMany.mockResolvedValue([{
       id: "general-stock-1",
+      entity_id: "entity-1",
       style_name: "Classic Shirt",
       order_no: "ORDER-1",
       article_no: "ARTICLE-1",
@@ -44,6 +47,7 @@ describe("POS General FG stock route", () => {
       created_by: "user-1",
       location: { location_name: "Finished Goods" },
     }]);
+    mocks.entityFindFirst.mockResolvedValue({ id: "entity-1" });
   });
 
   it("lists only positive General GRN stock scoped to authorized organization", async () => {
@@ -110,6 +114,29 @@ describe("POS General FG stock route", () => {
       }),
       orderBy: [{ style_name: "asc" }, { order_no: "asc" }, { id: "asc" }],
       take: 11,
+    }));
+  });
+
+  it("limits stock lookups to an active Entity in the authorized organization", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/organizations/public-org/pos/general-stock?entityId=entity-1"),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.entityFindFirst).toHaveBeenCalledWith({
+      where: { id: "entity-1", organization_id: "internal-org-1", is_active: true },
+      select: { id: true },
+    });
+    expect(mocks.generalStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organization_id: "internal-org-1",
+        current_stock: { gt: 0 },
+        entity_id: "entity-1",
+      },
+    }));
+    expect(mocks.skuStockFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ entity_id: "entity-1" }),
     }));
   });
 

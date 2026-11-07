@@ -653,6 +653,7 @@ model PosPurchaseRecordLine {
 model PosPurchaseBill {
   id              String                @id @default(cuid())
   organization_id String
+  entity_id       String?
   document_number String                @db.VarChar(30)
   vendor_id       String
   bill_number     String                @db.VarChar(100)
@@ -668,6 +669,7 @@ model PosPurchaseBill {
   created_at      DateTime              @default(now())
   updated_at      DateTime              @updatedAt
   organization    Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity          MasterEntity?          @relation(fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
   records         PosPurchaseRecord[]
   lines           PosPurchaseBillLine[]
   qr_print_requests MerchandisingOrderQrPrintRequest[]
@@ -675,6 +677,7 @@ model PosPurchaseBill {
   @@unique([organization_id, bill_number])
   @@unique([organization_id, document_number])
   @@unique([organization_id, id], map: "pos_purchase_bills_organization_id_id_key")
+  @@index([organization_id, entity_id, bill_date])
   @@index([organization_id, status, bill_date])
   @@index([organization_id, vendor_id])
   @@map("pos_purchase_bills")
@@ -704,9 +707,105 @@ model PosPurchaseBillLine {
   @@map("pos_purchase_bill_lines")
 }
 
+enum PosOfferType {
+  FLAT_AMOUNT
+  PERCENTAGE
+  BUY_ONE_GET_ONE
+  COMBO
+}
+
+enum PosOfferScope {
+  CATEGORY
+  COLOUR
+  SIZE
+  ALL
+}
+
+enum PosOfferStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+}
+
+enum PosCouponType {
+  GENERAL
+  PURCHASE_REWARD
+}
+
+enum PosCouponStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PosCouponDiscountType {
+  FLAT_AMOUNT
+  PERCENTAGE
+}
+
+enum PosCouponIssueStatus {
+  AVAILABLE
+  REDEEMED
+  CANCELLED
+}
+
+model PosOffer {
+  id                       String              @id @default(cuid())
+  organization_id          String
+  request_key              String              @db.VarChar(100)
+  offer_code               String              @db.VarChar(60)
+  name                     String              @db.VarChar(150)
+  description              String?             @db.VarChar(500)
+  offer_type               PosOfferType
+  scope                    PosOfferScope
+  status                   PosOfferStatus      @default(DRAFT)
+  discount_amount          Decimal?             @db.Decimal(14, 2)
+  discount_percentage      Decimal?             @db.Decimal(5, 2)
+  buy_quantity             Int?
+  get_quantity             Int?
+  get_discount_percentage  Decimal?             @db.Decimal(5, 2)
+  combo_price              Decimal?             @db.Decimal(14, 2)
+  starts_at                DateTime             @db.Date
+  ends_at                  DateTime?            @db.Date
+  created_by               String               @db.VarChar(255)
+  created_at               DateTime             @default(now())
+  updated_at               DateTime             @updatedAt
+  organization             Organization         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  targets                  PosOfferTarget[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, request_key], map: "pos_offers_request_key")
+  @@unique([organization_id, offer_code], map: "pos_offers_org_offer_code")
+  @@index([organization_id, status, starts_at, id])
+  @@index([organization_id, offer_type, scope])
+  @@map("pos_offers")
+}
+
+model PosOfferTarget {
+  id              String         @id @default(cuid())
+  organization_id String
+  offer_id        String
+  category_id     String?
+  color_id        String?
+  size_id         String?
+  created_at      DateTime       @default(now())
+  organization    Organization   @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  offer           PosOffer       @relation(fields: [organization_id, offer_id], references: [organization_id, id], onDelete: Cascade)
+  category        MasterCategory? @relation(fields: [organization_id, category_id], references: [organization_id, id], onDelete: Restrict)
+  color           MasterColor?   @relation(fields: [organization_id, color_id], references: [organization_id, id], onDelete: Restrict)
+  size            MasterSize?    @relation(fields: [organization_id, size_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, offer_id, category_id])
+  @@unique([organization_id, offer_id, color_id])
+  @@unique([organization_id, offer_id, size_id])
+  @@index([organization_id, offer_id])
+  @@map("pos_offer_targets")
+}
+
 model PosSalesInvoice {
   id              String                @id @default(cuid())
   organization_id String
+  entity_id       String?
   invoice_no      String                @db.VarChar(100)
   request_key     String                @db.VarChar(100)
   invoice_date    DateTime              @db.Date
@@ -719,21 +818,103 @@ model PosSalesInvoice {
   sgst_amount     Decimal               @db.Decimal(14, 2)
   igst_amount     Decimal               @db.Decimal(14, 2)
   tax_amount      Decimal               @db.Decimal(14, 2)
+  coupon_discount_amount Decimal        @default(0) @db.Decimal(14, 2)
   total_amount    Decimal               @db.Decimal(14, 2)
   created_by      String                @db.VarChar(255)
   posted_at       DateTime              @default(now())
   created_at      DateTime              @default(now())
   organization    Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  entity          MasterEntity?          @relation(fields: [organization_id, entity_id], references: [organization_id, id], onDelete: Restrict)
   customer_contact Contact?             @relation(fields: [organization_id, customer_contact_id], references: [organization_id, id], onDelete: Restrict)
   lines           PosSalesInvoiceLine[]
   fgMaterialIssues FGMaterialIssue[]     @relation("FGIssuePosInvoice")
+  couponRedemption PosCouponRedemption?
+  issuedCoupon     PosCouponIssue?       @relation("PosCouponIssueOriginInvoice")
+  redeemedCouponIssues PosCouponIssue[]  @relation("PosCouponIssueRedemptionInvoice")
 
   @@unique([organization_id, invoice_no])
   @@unique([organization_id, id])
   @@unique([organization_id, request_key], map: "pos_sales_invoice_request_key")
   @@index([organization_id, invoice_date, status])
   @@index([organization_id, customer_contact_id])
+  @@index([organization_id, entity_id, invoice_date])
   @@map("pos_sales_invoices")
+}
+
+model PosCoupon {
+  id                 String                @id @default(cuid())
+  organization_id    String
+  coupon_code        String?               @db.VarChar(60)
+  name               String                @db.VarChar(150)
+  description        String?               @db.VarChar(500)
+  coupon_type        PosCouponType
+  status             PosCouponStatus       @default(ACTIVE)
+  discount_type      PosCouponDiscountType
+  discount_value     Decimal               @db.Decimal(14, 2)
+  minimum_purchase   Decimal               @default(0) @db.Decimal(14, 2)
+  starts_at          DateTime              @db.Date
+  ends_at            DateTime?             @db.Date
+  max_redemptions    Int?
+  validity_days      Int?
+  created_by         String                @db.VarChar(255)
+  created_at         DateTime              @default(now())
+  updated_at         DateTime              @updatedAt
+  organization       Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  issuedCodes        PosCouponIssue[]
+  redemptions        PosCouponRedemption[]
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, coupon_code])
+  @@index([organization_id, coupon_type, status, starts_at, id])
+  @@map("pos_coupons")
+}
+
+model PosCouponIssue {
+  id                   String                @id @default(cuid())
+  organization_id      String
+  coupon_id            String
+  customer_contact_id  String
+  issued_invoice_id    String
+  redeemed_invoice_id  String?
+  coupon_code          String                @db.VarChar(60)
+  status               PosCouponIssueStatus  @default(AVAILABLE)
+  expires_at           DateTime?             @db.Date
+  redeemed_at          DateTime?
+  created_at           DateTime              @default(now())
+  organization         Organization          @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  coupon               PosCoupon             @relation(fields: [organization_id, coupon_id], references: [organization_id, id], onDelete: Restrict)
+  customerContact      Contact               @relation(fields: [organization_id, customer_contact_id], references: [organization_id, id], onDelete: Restrict)
+  issuedInvoice        PosSalesInvoice       @relation("PosCouponIssueOriginInvoice", fields: [organization_id, issued_invoice_id], references: [organization_id, id], onDelete: Restrict)
+  redeemedInvoice      PosSalesInvoice?      @relation("PosCouponIssueRedemptionInvoice", fields: [organization_id, redeemed_invoice_id], references: [organization_id, id], onDelete: Restrict)
+  redemption           PosCouponRedemption?
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, coupon_code])
+  @@unique([organization_id, issued_invoice_id])
+  @@unique([organization_id, redeemed_invoice_id])
+  @@index([organization_id, customer_contact_id, status, expires_at])
+  @@map("pos_coupon_issues")
+}
+
+model PosCouponRedemption {
+  id                 String          @id @default(cuid())
+  organization_id    String
+  coupon_id          String
+  coupon_issue_id    String?
+  invoice_id         String
+  coupon_code        String          @db.VarChar(60)
+  discount_amount    Decimal         @db.Decimal(14, 2)
+  created_at         DateTime        @default(now())
+  organization       Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  coupon             PosCoupon       @relation(fields: [organization_id, coupon_id], references: [organization_id, id], onDelete: Restrict)
+  couponIssue        PosCouponIssue? @relation(fields: [organization_id, coupon_issue_id], references: [organization_id, id], onDelete: Restrict)
+  invoice            PosSalesInvoice @relation(fields: [organization_id, invoice_id], references: [organization_id, id], onDelete: Restrict)
+
+  @@unique([organization_id, id])
+  @@unique([organization_id, coupon_issue_id])
+  @@unique([organization_id, invoice_id])
+  @@index([organization_id, coupon_id, created_at])
+  @@map("pos_coupon_redemptions")
 }
 
 model PosSalesInvoiceLine {
@@ -751,6 +932,8 @@ model PosSalesInvoiceLine {
   unit_rate                Decimal                          @db.Decimal(14, 4)
   gst_rate                 Decimal                          @db.Decimal(8, 2)
   discount_percent         Decimal                          @db.Decimal(8, 2)
+  offer_discount_amount   Decimal                          @default(0) @db.Decimal(14, 2)
+  offer_snapshot          Json?
   hsn_code                 String?                          @db.VarChar(100)
   taxable_amount           Decimal                          @db.Decimal(14, 2)
   cgst_amount              Decimal                          @db.Decimal(14, 2)

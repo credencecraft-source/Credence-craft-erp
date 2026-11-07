@@ -1,7 +1,15 @@
+import { randomBytes } from "node:crypto";
 import {
   FGMaterialIssueMovement,
   FGMaterialIssueSource,
   FGMaterialIssueStockType,
+  PosCouponDiscountType,
+  PosCouponIssueStatus,
+  PosCouponStatus,
+  PosCouponType,
+  PosOfferScope,
+  PosOfferStatus,
+  PosOfferType,
   Prisma,
 } from "@prisma/client";
 
@@ -19,33 +27,131 @@ type PosSaleLineInput = {
   gstRate: string;
   discountPercent: string;
   hsnCode?: string | null;
+  offerId?: string | null;
 };
 
 type CreatePosSaleInput = {
   organizationId: string;
   actorId: string;
   requestKey: string;
+  entityId: string;
   invoiceDate: string;
   customer?: string | null;
   customerContactId?: string | null;
+  couponCode?: string | null;
   taxMode: "LOCAL" | "INTERSTATE";
   lines: PosSaleLineInput[];
 };
 
 type PosSaleStockRecord = {
   id: string;
+  entity_id: string;
   stockType: "SKU" | "GENERAL_GRN";
   style_name: string;
   order_no: string;
   article_no: string | null;
   size: string | null;
   colour: string | null;
+  product_category: string | null;
+  sub_product_category: string | null;
   location_id: string;
   current_stock: number | Prisma.Decimal;
 };
 
+const POS_SALE_OFFER_INCLUDE = {
+  targets: {
+    select: {
+      category: { select: { category_name: true } },
+      color: { select: { colors: true } },
+      size: { select: { size: true } },
+    },
+  },
+} satisfies Prisma.PosOfferInclude;
+
+type PosSaleOffer = Prisma.PosOfferGetPayload<{ include: typeof POS_SALE_OFFER_INCLUDE }>;
+
 function stockKey(stockType: "SKU" | "GENERAL_GRN", stockId: string) {
   return `${stockType}:${stockId}`;
+}
+
+function normalizedLabel(value: string | null | undefined) {
+  return value?.trim().toLocaleUpperCase() ?? "";
+}
+
+function offerMatchesStock(offer: PosSaleOffer, stock: PosSaleStockRecord) {
+  if (offer.scope === PosOfferScope.ALL) return true;
+  const targets = offer.targets;
+  if (offer.scope === PosOfferScope.CATEGORY) {
+    const categories = new Set(
+      [stock.product_category, stock.sub_product_category]
+        .map(normalizedLabel)
+        .filter(Boolean),
+    );
+    return targets.some((target) =>
+      target.category && categories.has(normalizedLabel(target.category.category_name)),
+    );
+  }
+  if (offer.scope === PosOfferScope.COLOUR) {
+    const colour = normalizedLabel(stock.colour);
+    return Boolean(colour) && targets.some((target) =>
+      target.color && normalizedLabel(target.color.colors) === colour,
+    );
+  }
+  const size = normalizedLabel(stock.size);
+  return Boolean(size) && targets.some((target) =>
+    target.size && normalizedLabel(target.size.size) === size,
+  );
+}
+
+function calculateOfferDiscount(
+  offer: PosSaleOffer | null,
+  line: { quantity: number; rate: Prisma.Decimal; discountPercent: Prisma.Decimal },
+  amountAfterManualDiscount: Prisma.Decimal,
+) {
+  if (!offer) return new Prisma.Decimal(0);
+  let discount = new Prisma.Decimal(0);
+  switch (offer.offer_type) {
+    case PosOfferType.FLAT_AMOUNT:
+      discount = new Prisma.Decimal(line.quantity).mul(offer.discount_amount ?? 0);
+      break;
+    case PosOfferType.PERCENTAGE:
+      discount = amountAfterManualDiscount.mul(offer.discount_percentage ?? 0).div(100);
+      break;
+    case PosOfferType.BUY_ONE_GET_ONE: {
+      const requiredQuantity = (offer.buy_quantity ?? 0) + (offer.get_quantity ?? 0);
+      if (requiredQuantity < 1 || line.quantity < requiredQuantity) {
+        throw new Error(`${offer.offer_code} requires at least ${requiredQuantity} units on this invoice line.`);
+      }
+      const discountedQuantity = Math.floor(line.quantity / requiredQuantity) * (offer.get_quantity ?? 0);
+      discount = amountAfterManualDiscount
+        .mul(discountedQuantity)
+        .div(line.quantity)
+        .mul(offer.get_discount_percentage ?? 0)
+        .div(100);
+      break;
+    }
+    case PosOfferType.COMBO:
+      throw new Error("Combo offers cannot be applied to a single invoice line.");
+  }
+  return money(Prisma.Decimal.min(amountAfterManualDiscount, discount));
+}
+
+function serializeOfferSnapshot(offer: PosSaleOffer, discountAmount: Prisma.Decimal) {
+  return {
+    id: offer.id,
+    code: offer.offer_code,
+    name: offer.name,
+    type: offer.offer_type,
+    scope: offer.scope,
+    discountAmount: discountAmount.toFixed(2),
+    discountValue: {
+      amount: offer.discount_amount?.toFixed(2) ?? null,
+      percentage: offer.discount_percentage?.toFixed(2) ?? null,
+      buyQuantity: offer.buy_quantity,
+      getQuantity: offer.get_quantity,
+      getDiscountPercentage: offer.get_discount_percentage?.toFixed(2) ?? null,
+    },
+  } satisfies Prisma.InputJsonObject;
 }
 
 function parseDecimal(value: string, field: string, scale: number, maximum?: number) {
@@ -81,12 +187,19 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
   if (!Array.isArray(input.lines) || input.lines.length < 1 || input.lines.length > 100) {
     throw new Error("A POS invoice must contain between 1 and 100 items.");
   }
+
   if (input.taxMode !== "LOCAL" && input.taxMode !== "INTERSTATE") {
     throw new Error("Select a valid tax mode.");
   }
   const requestKey = input.requestKey.trim();
   if (!requestKey || requestKey.length > 100) throw new Error("A valid POS sale request key is required.");
   const invoiceDate = parseInvoiceDate(input.invoiceDate);
+  const entityId = input.entityId.trim();
+  if (!entityId || entityId.length > 100) throw new Error("Select an active Entity before posting the invoice.");
+  const requestedCouponCode = input.couponCode?.trim().toUpperCase() || null;
+  if (requestedCouponCode && (requestedCouponCode.length > 60 || !/^[A-Z0-9][A-Z0-9-]*$/.test(requestedCouponCode))) {
+    throw new Error("Enter a valid coupon code.");
+  }
   const requestedCustomerContactId = input.customerContactId?.trim() || null;
   if (input.customerContactId !== undefined && input.customerContactId !== null
     && (!requestedCustomerContactId || requestedCustomerContactId.length > 100)) {
@@ -108,6 +221,8 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
     if (quantityDecimal.isZero()) throw new Error("Quantity must be greater than zero.");
     const hsnCode = line.hsnCode?.trim() || null;
     if (hsnCode && hsnCode.length > 100) throw new Error("HSN code must be 100 characters or fewer.");
+    const offerId = line.offerId?.trim() || null;
+    if (offerId && offerId.length > 100) throw new Error("Select a valid POS offer.");
     return {
       stockId,
       stockType,
@@ -116,6 +231,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       gstRate: parseDecimal(line.gstRate, "GST rate", 2, 100),
       discountPercent: parseDecimal(line.discountPercent, "Discount", 2, 100),
       hsnCode,
+      offerId,
     };
   });
   if (new Set(normalizedLines.map((line) => stockKey(line.stockType, line.stockId))).size !== normalizedLines.length) {
@@ -125,7 +241,23 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
   return prisma.$transaction(async (transaction) => {
     const existingInvoice = await transaction.posSalesInvoice.findFirst({
       where: { organization_id: input.organizationId, request_key: requestKey },
-      select: { id: true, invoice_no: true, invoice_date: true, customer: true, tax_mode: true, subtotal: true, cgst_amount: true, sgst_amount: true, igst_amount: true, tax_amount: true, total_amount: true },
+      select: {
+        id: true,
+        invoice_no: true,
+        invoice_date: true,
+        customer: true,
+        tax_mode: true,
+        subtotal: true,
+        cgst_amount: true,
+        sgst_amount: true,
+        igst_amount: true,
+        tax_amount: true,
+        total_amount: true,
+        coupon_discount_amount: true,
+        entity: { select: { entity_name: true } },
+        couponRedemption: { select: { coupon_code: true } },
+        issuedCoupon: { select: { coupon_code: true } },
+      },
     });
     if (existingInvoice) {
       return {
@@ -133,6 +265,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         invoiceNo: existingInvoice.invoice_no,
         invoiceDate: existingInvoice.invoice_date,
         customer: existingInvoice.customer,
+        entityName: existingInvoice.entity?.entity_name ?? "",
         taxMode: existingInvoice.tax_mode as "LOCAL" | "INTERSTATE",
         subtotal: existingInvoice.subtotal.toFixed(2),
         cgstAmount: existingInvoice.cgst_amount.toFixed(2),
@@ -140,8 +273,16 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         igstAmount: existingInvoice.igst_amount.toFixed(2),
         taxAmount: existingInvoice.tax_amount.toFixed(2),
         totalAmount: existingInvoice.total_amount.toFixed(2),
+        couponDiscountAmount: existingInvoice.coupon_discount_amount.toFixed(2),
+        appliedCouponCode: existingInvoice.couponRedemption?.coupon_code ?? null,
+        issuedCouponCode: existingInvoice.issuedCoupon?.coupon_code ?? null,
       };
     }
+    const entity = await transaction.masterEntity.findFirst({
+      where: { id: entityId, organization_id: input.organizationId, is_active: true },
+      select: { id: true, entity_name: true },
+    });
+    if (!entity) throw new Error("Select an active Entity belonging to this organization.");
     const customerContact = requestedCustomerContactId
       ? await transaction.contact.findFirst({
           where: {
@@ -171,11 +312,13 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
             where: { organization_id: input.organizationId, id: { in: generalReceiptIds } },
             select: {
               id: true,
+              entity_id: true,
               style_name: true,
               order_no: true,
               article_no: true,
               size: true,
               colour: true,
+              product_category: true,
               location_id: true,
               current_stock: true,
             },
@@ -190,11 +333,14 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
             },
             select: {
               id: true,
+              entity_id: true,
               style_name: true,
               order_no: true,
               article_no: true,
               size: true,
               colour: true,
+              product_category: true,
+              sub_product_category: true,
               location_id: true,
               current_stock: true,
             },
@@ -202,7 +348,11 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         : Promise.resolve([]),
     ]);
     const stockRecords: PosSaleStockRecord[] = [
-      ...generalReceiptRecords.map((record) => ({ ...record, stockType: "GENERAL_GRN" as const })),
+      ...generalReceiptRecords.map((record) => ({
+        ...record,
+        sub_product_category: null,
+        stockType: "GENERAL_GRN" as const,
+      })),
       ...skuStockRecords.map((record) => ({ ...record, stockType: "SKU" as const })),
     ];
     const requestedGstRates = [...new Set(normalizedLines.map((line) => line.gstRate.toFixed(2)))];
@@ -221,30 +371,45 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
     if (stockRecords.length !== normalizedLines.length) {
       throw new Error("One or more selected items are not General stock in this organization.");
     }
+    if (stockRecords.some((stock) => stock.entity_id !== entity.id)) {
+      throw new Error("Every selected stock item must belong to the selected Entity.");
+    }
     const stockByKey = new Map(stockRecords.map((stock) => [stockKey(stock.stockType, stock.id), stock]));
-    const subtotal = new Prisma.Decimal(0);
-    const totals = {
-      subtotal,
-      cgst: new Prisma.Decimal(0),
-      sgst: new Prisma.Decimal(0),
-      igst: new Prisma.Decimal(0),
-    };
-
-    const invoiceLines = normalizedLines.map((line) => {
+    const requestedOfferIds = [...new Set(normalizedLines.flatMap((line) => line.offerId ? [line.offerId] : []))];
+    const selectedOffers = requestedOfferIds.length
+      ? await transaction.posOffer.findMany({
+          where: {
+            organization_id: input.organizationId,
+            id: { in: requestedOfferIds },
+            status: PosOfferStatus.ACTIVE,
+            starts_at: { lte: invoiceDate },
+            OR: [{ ends_at: null }, { ends_at: { gte: invoiceDate } }],
+          },
+          include: POS_SALE_OFFER_INCLUDE,
+        })
+      : [];
+    const offerById = new Map(selectedOffers.map((offer) => [offer.id, offer]));
+    if (selectedOffers.length !== requestedOfferIds.length) {
+      throw new Error("One or more selected offers are inactive or not available on the invoice date.");
+    }
+    const pricingLines = normalizedLines.map((line) => {
       const stock = stockByKey.get(stockKey(line.stockType, line.stockId));
       if (!stock) throw new Error("A selected General stock record was not found.");
       const availableStock = new Prisma.Decimal(stock.current_stock);
       if (availableStock.lt(line.quantity)) {
         throw new Error(`${stock.style_name} has only ${stock.current_stock} General units available.`);
       }
-      const taxableAmount = money(
+      const baseTaxableAmount = money(
         new Prisma.Decimal(line.quantity)
           .mul(line.rate)
           .mul(new Prisma.Decimal(100).minus(line.discountPercent).div(100)),
       );
-      const taxAmount = money(taxableAmount.mul(line.gstRate).div(100));
-      assertMoneyRange(taxableAmount, "Line amount");
-      assertMoneyRange(taxAmount, "Line tax");
+      const selectedOffer = line.offerId ? offerById.get(line.offerId) ?? null : null;
+      if (selectedOffer && !offerMatchesStock(selectedOffer, stock)) {
+        throw new Error(`${selectedOffer.offer_code} is not eligible for ${stock.style_name}.`);
+      }
+      const offerDiscountAmount = calculateOfferDiscount(selectedOffer, line, baseTaxableAmount);
+      const taxableAmountBeforeCoupon = baseTaxableAmount.minus(offerDiscountAmount);
       const configuredRate = gstByRate.get(line.gstRate.toFixed(2));
       if (!configuredRate && !line.gstRate.isZero()) {
         throw new Error(`GST ${line.gstRate.toFixed(2)}% is not configured as active for this organization.`);
@@ -257,6 +422,157 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       if (!line.gstRate.isZero() && !componentRate.equals(line.gstRate)) {
         throw new Error(`GST component rates for ${line.gstRate.toFixed(2)}% are not configured correctly.`);
       }
+      return {
+        line,
+        stock,
+        baseTaxableAmount: taxableAmountBeforeCoupon,
+        offerDiscountAmount,
+        selectedOffer,
+        configuredRate,
+      };
+    });
+    const subtotalBeforeCoupon = pricingLines.reduce(
+      (total, item) => total.plus(item.baseTaxableAmount),
+      new Prisma.Decimal(0),
+    );
+
+    let redemption: {
+      couponId: string;
+      couponIssueId: string | null;
+      couponCode: string;
+      discountType: PosCouponDiscountType;
+      discountValue: Prisma.Decimal;
+      minimumPurchase: Prisma.Decimal;
+      maxRedemptions: number | null;
+    } | null = null;
+    if (requestedCouponCode) {
+      const generalCoupon = await transaction.posCoupon.findFirst({
+        where: {
+          organization_id: input.organizationId,
+          coupon_code: requestedCouponCode,
+        },
+        select: {
+          id: true,
+          coupon_code: true,
+          coupon_type: true,
+          status: true,
+          discount_type: true,
+          discount_value: true,
+          minimum_purchase: true,
+          starts_at: true,
+          ends_at: true,
+          max_redemptions: true,
+        },
+      });
+      if (generalCoupon) {
+        if (generalCoupon.coupon_type !== PosCouponType.GENERAL) {
+          throw new Error("This code is not a redeemable general coupon.");
+        }
+        if (generalCoupon.status !== PosCouponStatus.ACTIVE
+          || invoiceDate < generalCoupon.starts_at
+          || (generalCoupon.ends_at && invoiceDate > generalCoupon.ends_at)) {
+          throw new Error("This coupon is not active on the invoice date.");
+        }
+        redemption = {
+          couponId: generalCoupon.id,
+          couponIssueId: null,
+          couponCode: generalCoupon.coupon_code ?? requestedCouponCode,
+          discountType: generalCoupon.discount_type,
+          discountValue: generalCoupon.discount_value,
+          minimumPurchase: generalCoupon.minimum_purchase,
+          maxRedemptions: generalCoupon.max_redemptions,
+        };
+      } else {
+        const couponIssue = await transaction.posCouponIssue.findFirst({
+          where: {
+            organization_id: input.organizationId,
+            coupon_code: requestedCouponCode,
+            status: PosCouponIssueStatus.AVAILABLE,
+            OR: [{ expires_at: null }, { expires_at: { gte: invoiceDate } }],
+            coupon: { status: PosCouponStatus.ACTIVE },
+          },
+          include: {
+            coupon: {
+              select: {
+                id: true,
+                status: true,
+                discount_type: true,
+                discount_value: true,
+                max_redemptions: true,
+              },
+            },
+          },
+        });
+        if (!couponIssue) throw new Error("Coupon code was not found, is expired, or has already been used.");
+        if (!customerContact || couponIssue.customer_contact_id !== customerContact.id) {
+          throw new Error("This reward coupon is assigned to a different customer.");
+        }
+        redemption = {
+          couponId: couponIssue.coupon.id,
+          couponIssueId: couponIssue.id,
+          couponCode: couponIssue.coupon_code,
+          discountType: couponIssue.coupon.discount_type,
+          discountValue: couponIssue.coupon.discount_value,
+          minimumPurchase: new Prisma.Decimal(0),
+          maxRedemptions: couponIssue.coupon.max_redemptions,
+        };
+      }
+
+      if (subtotalBeforeCoupon.lt(redemption.minimumPurchase)) {
+        throw new Error("The sale does not meet this coupon's minimum purchase amount.");
+      }
+      if (redemption.maxRedemptions !== null) {
+        const redemptionCount = await transaction.posCouponRedemption.count({
+          where: { organization_id: input.organizationId, coupon_id: redemption.couponId },
+        });
+        if (redemptionCount >= redemption.maxRedemptions) {
+          throw new Error("This coupon campaign has reached its redemption limit.");
+        }
+      }
+    }
+
+    const couponDiscountAmount = redemption
+      ? money(redemption.discountType === PosCouponDiscountType.PERCENTAGE
+        ? subtotalBeforeCoupon.mul(redemption.discountValue).div(100)
+        : Prisma.Decimal.min(subtotalBeforeCoupon, redemption.discountValue))
+      : new Prisma.Decimal(0);
+    if (requestedCouponCode && couponDiscountAmount.isZero()) {
+      throw new Error("This coupon cannot be applied to a zero-value sale.");
+    }
+    const totals = {
+      subtotal: new Prisma.Decimal(0),
+      cgst: new Prisma.Decimal(0),
+      sgst: new Prisma.Decimal(0),
+      igst: new Prisma.Decimal(0),
+    };
+    const couponAllocations = pricingLines.map(({ baseTaxableAmount }) =>
+      !redemption || subtotalBeforeCoupon.isZero()
+        ? new Prisma.Decimal(0)
+        : couponDiscountAmount.mul(baseTaxableAmount).div(subtotalBeforeCoupon)
+          .toDecimalPlaces(2, Prisma.Decimal.ROUND_DOWN),
+    );
+    let remainingCouponDiscount = couponDiscountAmount.minus(
+      couponAllocations.reduce((total, allocation) => total.plus(allocation), new Prisma.Decimal(0)),
+    );
+    for (let index = 0; index < couponAllocations.length && remainingCouponDiscount.gt(0); index += 1) {
+      const available = pricingLines[index].baseTaxableAmount.minus(couponAllocations[index]);
+      if (available.isZero()) continue;
+      const penny = new Prisma.Decimal("0.01");
+      const allocation = remainingCouponDiscount.lt(penny) ? remainingCouponDiscount : penny;
+      const added = available.lt(allocation) ? available : allocation;
+      couponAllocations[index] = couponAllocations[index].plus(added);
+      remainingCouponDiscount = remainingCouponDiscount.minus(added);
+    }
+    if (!remainingCouponDiscount.isZero()) {
+      throw new Error("Unable to allocate coupon discount across invoice lines.");
+    }
+    const invoiceLines = pricingLines.map((item, index) => {
+      const { line, stock, baseTaxableAmount, offerDiscountAmount, selectedOffer, configuredRate } = item;
+      const allocatedDiscount = couponAllocations[index];
+      const taxableAmount = baseTaxableAmount.minus(allocatedDiscount);
+      const taxAmount = money(taxableAmount.mul(line.gstRate).div(100));
+      assertMoneyRange(taxableAmount, "Line amount");
+      assertMoneyRange(taxAmount, "Line tax");
       const cgstAmount = input.taxMode === "LOCAL"
         ? money(taxableAmount.mul(configuredRate?.cgst_rate ?? 0).div(100))
         : new Prisma.Decimal(0);
@@ -286,6 +602,8 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         unit_rate: line.rate,
         gst_rate: line.gstRate,
         discount_percent: line.discountPercent,
+        offer_discount_amount: offerDiscountAmount,
+        offer_snapshot: selectedOffer ? serializeOfferSnapshot(selectedOffer, offerDiscountAmount) : Prisma.DbNull,
         hsn_code: line.hsnCode,
         taxable_amount: taxableAmount,
         cgst_amount: cgstAmount,
@@ -304,6 +622,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
     const invoice = await transaction.posSalesInvoice.create({
       data: {
         organization_id: input.organizationId,
+        entity_id: entity.id,
         invoice_no: invoiceNo,
         request_key: requestKey,
         invoice_date: invoiceDate,
@@ -316,11 +635,90 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         sgst_amount: totals.sgst,
         igst_amount: totals.igst,
         tax_amount: totals.cgst.plus(totals.sgst).plus(totals.igst),
+        coupon_discount_amount: couponDiscountAmount,
         total_amount: totals.subtotal.plus(totals.cgst).plus(totals.sgst).plus(totals.igst),
         created_by: input.actorId,
       },
       select: { id: true },
     });
+
+    if (redemption) {
+      if (redemption.couponIssueId) {
+        const markedRedeemed = await transaction.posCouponIssue.updateMany({
+          where: {
+            id: redemption.couponIssueId,
+            organization_id: input.organizationId,
+            status: PosCouponIssueStatus.AVAILABLE,
+          },
+          data: {
+            status: PosCouponIssueStatus.REDEEMED,
+            redeemed_invoice_id: invoice.id,
+            redeemed_at: new Date(),
+          },
+        });
+        if (markedRedeemed.count !== 1) {
+          throw new Error("This reward coupon was already redeemed. Refresh and retry.");
+        }
+      }
+      await transaction.posCouponRedemption.create({
+        data: {
+          organization_id: input.organizationId,
+          coupon_id: redemption.couponId,
+          coupon_issue_id: redemption.couponIssueId,
+          invoice_id: invoice.id,
+          coupon_code: redemption.couponCode,
+          discount_amount: couponDiscountAmount,
+        },
+      });
+    }
+
+    let issuedCouponCode: string | null = null;
+    const rewardCampaign = await transaction.posCoupon.findFirst({
+      where: {
+        organization_id: input.organizationId,
+        coupon_type: PosCouponType.PURCHASE_REWARD,
+        status: PosCouponStatus.ACTIVE,
+        starts_at: { lte: invoiceDate },
+        minimum_purchase: { lte: totals.subtotal },
+        OR: [{ ends_at: null }, { ends_at: { gte: invoiceDate } }],
+      },
+      select: {
+        id: true,
+        discount_value: true,
+        validity_days: true,
+        max_redemptions: true,
+      },
+    });
+    if (rewardCampaign) {
+      if (!customerContact) {
+        throw new Error("Select a registered customer to issue the purchase reward for this qualifying sale.");
+      }
+      const campaignRedemptions = rewardCampaign.max_redemptions === null
+        ? 0
+        : await transaction.posCouponRedemption.count({
+            where: { organization_id: input.organizationId, coupon_id: rewardCampaign.id },
+          });
+      if (rewardCampaign.max_redemptions === null || campaignRedemptions < rewardCampaign.max_redemptions) {
+        const validityDays = rewardCampaign.validity_days;
+        if (!validityDays || validityDays < 1) {
+          throw new Error("The purchase-reward campaign has invalid reward validity settings.");
+        }
+        issuedCouponCode = `CC-${randomBytes(8).toString("hex").toUpperCase()}`;
+        const expiresAt = new Date(invoiceDate);
+        expiresAt.setUTCDate(expiresAt.getUTCDate() + validityDays);
+        await transaction.posCouponIssue.create({
+          data: {
+            organization_id: input.organizationId,
+            coupon_id: rewardCampaign.id,
+            customer_contact_id: customerContact.id,
+            issued_invoice_id: invoice.id,
+            coupon_code: issuedCouponCode,
+            status: PosCouponIssueStatus.AVAILABLE,
+            expires_at: expiresAt,
+          },
+        });
+      }
+    }
 
     for (const line of normalizedLines) {
       const stock = stockByKey.get(stockKey(line.stockType, line.stockId));
@@ -421,8 +819,16 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       entityId: invoice.id,
       details: {
         invoiceNo,
+        entityId: entity.id,
         lineCount: invoiceLines.length,
         totalAmount: totals.subtotal.plus(totals.cgst).plus(totals.sgst).plus(totals.igst).toFixed(2),
+        couponCode: redemption?.couponCode ?? null,
+        couponDiscountAmount: couponDiscountAmount.toFixed(2),
+        issuedCouponCode,
+        offers: pricingLines.flatMap(({ selectedOffer, offerDiscountAmount }) => selectedOffer ? [{
+          offerCode: selectedOffer.offer_code,
+          offerDiscountAmount: offerDiscountAmount.toFixed(2),
+        }] : []),
         stockMovements: normalizedLines.map((line) => {
           const stock = stockByKey.get(stockKey(line.stockType, line.stockId));
           return {
@@ -441,6 +847,8 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       invoiceNo,
       invoiceDate,
       customer,
+      entityId: entity.id,
+      entityName: entity.entity_name,
       taxMode: input.taxMode,
       subtotal: totals.subtotal.toFixed(2),
       cgstAmount: totals.cgst.toFixed(2),
@@ -448,10 +856,45 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       igstAmount: totals.igst.toFixed(2),
       taxAmount: totals.cgst.plus(totals.sgst).plus(totals.igst).toFixed(2),
       totalAmount: totals.subtotal.plus(totals.cgst).plus(totals.sgst).plus(totals.igst).toFixed(2),
+      couponDiscountAmount: couponDiscountAmount.toFixed(2),
+      appliedCouponCode: redemption?.couponCode ?? null,
+      issuedCouponCode,
     };
   }, {
     isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     maxWait: 10_000,
     timeout: 30_000,
   });
+}
+
+export async function isPosPurchaseRewardAvailable(input: {
+  organizationId: string;
+  invoiceDate: string;
+  subtotal: string;
+}) {
+  const invoiceDate = parseInvoiceDate(input.invoiceDate);
+  const subtotal = money(parseDecimal(input.subtotal, "Sale subtotal", 2));
+  if (subtotal.isZero()) return false;
+
+  const rewardCampaign = await prisma.posCoupon.findFirst({
+    where: {
+      organization_id: input.organizationId,
+      coupon_type: PosCouponType.PURCHASE_REWARD,
+      status: PosCouponStatus.ACTIVE,
+      starts_at: { lte: invoiceDate },
+      minimum_purchase: { lte: subtotal },
+      OR: [{ ends_at: null }, { ends_at: { gte: invoiceDate } }],
+    },
+    select: {
+      id: true,
+      max_redemptions: true,
+    },
+  });
+  if (!rewardCampaign) return false;
+  if (rewardCampaign.max_redemptions === null) return true;
+
+  const redemptionCount = await prisma.posCouponRedemption.count({
+    where: { organization_id: input.organizationId, coupon_id: rewardCampaign.id },
+  });
+  return redemptionCount < rewardCampaign.max_redemptions;
 }

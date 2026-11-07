@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   invoiceFindFirst: vi.fn(),
   organizationFindFirst: vi.fn(),
   createPosGeneralStockSale: vi.fn(),
+  isPosPurchaseRewardAvailable: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session-manager", () => ({
@@ -28,6 +29,7 @@ vi.mock("@/lib/database/prisma-client", () => ({
 }));
 vi.mock("@/lib/services/pos/pos-general-stock-sale-service", () => ({
   createPosGeneralStockSale: mocks.createPosGeneralStockSale,
+  isPosPurchaseRewardAvailable: mocks.isPosPurchaseRewardAvailable,
 }));
 
 import { GET, POST } from "./route";
@@ -59,12 +61,33 @@ describe("POS sales invoice detail route", () => {
       taxAmount: "0.00",
       totalAmount: "100.00",
     });
+    mocks.isPosPurchaseRewardAvailable.mockResolvedValue(true);
     mocks.invoiceFindFirst.mockResolvedValue({
       id: "invoice-record-1",
       invoice_no: "POS-0001",
       invoice_date: new Date("2026-10-17T00:00:00Z"),
       customer: "Customer",
+      entity: { entity_name: "Store A" },
+      couponRedemption: {
+        coupon_code: "REDEEMED-CODE",
+        discount_amount: 15,
+        coupon: {
+          name: "WELCOME OFFER",
+          discount_type: "PERCENTAGE",
+          discount_value: 15,
+        },
+      },
+      issuedCoupon: {
+        coupon_code: "REWARD-CODE",
+        expires_at: new Date("2026-12-17T00:00:00Z"),
+        coupon: {
+          name: "NEXT VISIT REWARD",
+          discount_type: "FLAT_AMOUNT",
+          discount_value: 100,
+        },
+      },
       subtotal: 100,
+      coupon_discount_amount: 0,
       cgst_amount: 0,
       sgst_amount: 0,
       igst_amount: 0,
@@ -85,7 +108,24 @@ describe("POS sales invoice detail route", () => {
     expect(mocks.requireOrganizationContext).toHaveBeenCalledWith("user-1", "public-org", ["OWNER", "ADMIN", "FINANCE", "INVENTORY"]);
     expect(mocks.invoiceFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { organization_id: "internal-org-1", invoice_no: "POS-0001" },
-      include: { lines: true },
+      include: {
+        lines: true,
+        entity: { select: { entity_name: true } },
+        couponRedemption: {
+          select: {
+            coupon_code: true,
+            discount_amount: true,
+            coupon: { select: { name: true, discount_type: true, discount_value: true } },
+          },
+        },
+        issuedCoupon: {
+          select: {
+            coupon_code: true,
+            expires_at: true,
+            coupon: { select: { name: true, discount_type: true, discount_value: true } },
+          },
+        },
+      },
     }));
     expect(mocks.organizationFindFirst).toHaveBeenCalledWith({
       where: { id: "internal-org-1" },
@@ -102,6 +142,16 @@ describe("POS sales invoice detail route", () => {
     expect((await response.json()).invoices[0]).toMatchObject({
       invoiceNumber: "POS-0001",
       issuer: { name: "Example Organization", gstNumber: "29ABCDE1234F1Z5" },
+      appliedCouponCode: "REDEEMED-CODE",
+      appliedCouponName: "WELCOME OFFER",
+      appliedCouponDiscountType: "PERCENTAGE",
+      appliedCouponDiscountValue: 15,
+      appliedCouponDiscountAmount: 15,
+      issuedCouponCode: "REWARD-CODE",
+      issuedCouponExpiresAt: "2026-12-17",
+      issuedCouponName: "NEXT VISIT REWARD",
+      issuedCouponDiscountType: "FLAT_AMOUNT",
+      issuedCouponDiscountValue: 100,
       cgstAmount: 0,
       sgstAmount: 0,
       igstAmount: 0,
@@ -169,6 +219,7 @@ describe("POS sales invoice detail route", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           requestKey: "sale-request-1",
+          entityId: "entity-1",
           invoiceDate: "2026-10-17",
           taxMode: "LOCAL",
           customerContactId: "customer-contact-1",
@@ -179,6 +230,7 @@ describe("POS sales invoice detail route", () => {
             rate: 100,
             gstRate: 0,
             discountPercent: 0,
+            offerId: "offer-1",
           }],
         }),
       }),
@@ -193,9 +245,29 @@ describe("POS sales invoice detail route", () => {
       lines: [expect.objectContaining({
         stockId: "sku-stock-1",
         stockType: "SKU",
+        offerId: "offer-1",
       })],
     }));
     expect(data.invoice.invoiceNo).toBe("POS-0001");
+  });
+
+  it("requires an Entity before creating a POS invoice", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/organizations/public-org/pos/sales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestKey: "sale-request-2",
+          invoiceDate: "2026-10-17",
+          taxMode: "LOCAL",
+          lines: [{ stockId: "sku-stock-1", quantity: 1, rate: 100, gstRate: 0, discountPercent: 0 }],
+        }),
+      }),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.createPosGeneralStockSale).not.toHaveBeenCalled();
   });
 
   it("returns a bounded summary page without loading invoice lines", async () => {
@@ -206,6 +278,7 @@ describe("POS sales invoice detail route", () => {
         invoice_no: "POS-0001",
         invoice_date: postedAt,
         customer: "Customer",
+        issuedCoupon: { id: "coupon-issue-1" },
         subtotal: 100,
         tax_amount: 5,
         total_amount: 105,
@@ -231,8 +304,15 @@ describe("POS sales invoice detail route", () => {
       select: expect.not.objectContaining({ lines: true }),
       take: 51,
     }));
+    expect(mocks.invoiceFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({
+        couponRedemption: { select: { id: true } },
+        issuedCoupon: { select: { id: true } },
+      }),
+    }));
     expect(data.invoices).toHaveLength(1);
     expect(data.invoices[0].lines).toEqual([]);
+    expect(data.invoices[0].hasCouponCode).toBe(true);
     expect(data.nextCursor).toBeNull();
   });
 
@@ -249,5 +329,27 @@ describe("POS sales invoice detail route", () => {
     expect(invalidCursorResponse.status).toBe(400);
     expect(invalidLimitResponse.status).toBe(400);
     expect(mocks.invoiceFindMany).not.toHaveBeenCalled();
+  });
+
+  it("checks purchase-reward availability within the authorized POS organization", async () => {
+    const response = await GET(
+      new Request(
+        "http://localhost/api/organizations/public-org/pos/sales?rewardEligibility=true&invoiceDate=2026-11-07&subtotal=1000.00",
+      ),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
+      "user-1",
+      "public-org",
+      ["OWNER", "ADMIN", "FINANCE", "INVENTORY"],
+    );
+    expect(mocks.isPosPurchaseRewardAvailable).toHaveBeenCalledWith({
+      organizationId: "internal-org-1",
+      invoiceDate: "2026-11-07",
+      subtotal: "1000.00",
+    });
+    expect(await response.json()).toEqual({ available: true });
   });
 });

@@ -4,6 +4,7 @@ import { Printer, ScanLine, Search, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
@@ -14,6 +15,7 @@ import Section from "@/components/ui/Section";
 
 type StockRecord = {
   id: string;
+  entity_id: string;
   stock_type: "SKU" | "GENERAL_GRN";
   style_name: string;
   order_no: string;
@@ -43,11 +45,78 @@ type BillLine = {
   gstRate: number;
   hsnCode: string;
   discountPercent: number;
+  selectedOfferId: string;
+};
+
+type PosOfferOption = {
+  id: string;
+  offerCode: string;
+  name: string;
+  offerType: "FLAT_AMOUNT" | "PERCENTAGE" | "BUY_ONE_GET_ONE" | "COMBO";
+  scope: "CATEGORY" | "COLOUR" | "SIZE" | "ALL";
+  discountAmount: string | null;
+  discountPercentage: string | null;
+  buyQuantity: number | null;
+  getQuantity: number | null;
+  getDiscountPercentage: string | null;
+  comboPrice: string | null;
+  targetLabels: string[];
 };
 
 function stockRecordKey(record: Pick<StockRecord, "id" | "stock_type">) {
   return `${record.stock_type}:${record.id}`;
 }
+
+function offerDiscountForLine(line: BillLine, offers: PosOfferOption[]) {
+  const offer = offers.find((candidate) => candidate.id === line.selectedOfferId);
+  if (!offer) return 0;
+  const amountAfterManualDiscount = line.quantity * line.rate * (1 - line.discountPercent / 100);
+  let discount = 0;
+  switch (offer.offerType) {
+    case "FLAT_AMOUNT":
+      discount = line.quantity * Number(offer.discountAmount ?? 0);
+      break;
+    case "PERCENTAGE":
+      discount = amountAfterManualDiscount * Number(offer.discountPercentage ?? 0) / 100;
+      break;
+    case "BUY_ONE_GET_ONE": {
+      const packQuantity = (offer.buyQuantity ?? 0) + (offer.getQuantity ?? 0);
+      const discountedQuantity = packQuantity > 0
+        ? Math.floor(line.quantity / packQuantity) * (offer.getQuantity ?? 0)
+        : 0;
+      discount = line.quantity > 0
+        ? amountAfterManualDiscount * discountedQuantity / line.quantity
+          * Number(offer.getDiscountPercentage ?? 0) / 100
+        : 0;
+      break;
+    }
+    case "COMBO":
+      return 0;
+  }
+  return Math.min(amountAfterManualDiscount, discount);
+}
+
+function lineTaxableAmount(line: BillLine, offers: PosOfferOption[]) {
+  return Math.max(
+    0,
+    line.quantity * line.rate * (1 - line.discountPercent / 100)
+      - offerDiscountForLine(line, offers),
+  );
+}
+
+function offerLabel(offer: PosOfferOption) {
+  switch (offer.offerType) {
+    case "FLAT_AMOUNT":
+      return `${offer.offerCode} — Rs ${offer.discountAmount} off per unit`;
+    case "PERCENTAGE":
+      return `${offer.offerCode} — ${offer.discountPercentage}% off`;
+    case "BUY_ONE_GET_ONE":
+      return `${offer.offerCode} — Buy ${offer.buyQuantity}, get ${offer.getQuantity} at ${offer.getDiscountPercentage}% off`;
+    case "COMBO":
+      return `${offer.offerCode} — Combo price Rs ${offer.comboPrice} (cart-level)`;
+  }
+}
+
 type GstOption = {
   id: string;
   label: string;
@@ -58,6 +127,7 @@ type CustomerContactOption = {
   legal_name: string;
   display_name: string | null;
 };
+type EntityOption = { id: string; label: string };
 type StoredFinanceDocument = {
   id: string;
   documentType: string;
@@ -93,7 +163,21 @@ export default function PosBarcodeBillingPage({
     null,
   );
   const [billLines, setBillLines] = useState<BillLine[]>([]);
+  const [offersByStock, setOffersByStock] = useState<Record<string, PosOfferOption[]>>({});
+  const [offerLookupLoading, setOfferLookupLoading] = useState(false);
+  const [offerLookupError, setOfferLookupError] = useState("");
+  const [offerLookupErrorKey, setOfferLookupErrorKey] = useState("");
+  const [offersLoadedForKey, setOffersLoadedForKey] = useState("");
+  const [offerLimitReached, setOfferLimitReached] = useState(false);
+  const [offerLookupRetry, setOfferLookupRetry] = useState(0);
+  const [entities, setEntities] = useState<EntityOption[]>([]);
+  const [entityId, setEntityId] = useState("");
   const [customerContactId, setCustomerContactId] = useState("");
+  const [couponCode, setCouponCode] = useState("");
+  const [purchaseRewardCheck, setPurchaseRewardCheck] = useState<{
+    key: string;
+    status: "available" | "unavailable" | "error";
+  } | null>(null);
   const [invoiceDate, setInvoiceDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
@@ -113,6 +197,19 @@ export default function PosBarcodeBillingPage({
   const [loading, setLoading] = useState(false);
   const [savingInvoice, setSavingInvoice] = useState(false);
   const [error, setError] = useState("");
+  const billLineKeys = useMemo(
+    () => billLines.map((line) => stockRecordKey(line.record)).join("|"),
+    [billLines],
+  );
+  const offerLookupKey = `${organizationId}|${entityId}|${invoiceDate}|${billLineKeys}`;
+  const visibleOffersByStock = useMemo(
+    () => offersLoadedForKey === offerLookupKey ? offersByStock : {},
+    [offersByStock, offersLoadedForKey, offerLookupKey],
+  );
+  const visibleOfferLookupLoading = offerLookupLoading
+    || Boolean(entityId && billLineKeys && offersLoadedForKey !== offerLookupKey && offerLookupErrorKey !== offerLookupKey);
+  const visibleOfferLookupError = offerLookupErrorKey === offerLookupKey ? offerLookupError : "";
+  const visibleOfferLimitReached = offersLoadedForKey === offerLookupKey && offerLimitReached;
 
   useEffect(() => {
     scannerRef.current?.focus();
@@ -138,11 +235,26 @@ export default function PosBarcodeBillingPage({
         }
         return data.records;
       }),
+      fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/entity?includeInactive=false&limit=200`,
+        { cache: "no-store" },
+      ).then(async (response) => {
+        const data: unknown = await response.json();
+        if (!response.ok || !Array.isArray(data)) {
+          throw new Error("Unable to load active organization Entities.");
+        }
+        return data.filter((value): value is EntityOption =>
+          typeof value === "object" && value !== null
+          && "id" in value && typeof value.id === "string"
+          && "label" in value && typeof value.label === "string",
+        );
+      }),
     ])
-      .then(([gstData, taxData, customerData]) => {
+      .then(([gstData, taxData, customerData, entityData]) => {
         setGstOptions(Array.isArray(gstData) ? gstData : []);
         setTaxProfile(taxData.profile ?? null);
         setCustomerOptions(customerData);
+        setEntities(entityData);
       })
       .catch((loadError: unknown) => setError(
         loadError instanceof Error ? loadError.message : "Unable to load POS tax and customer data.",
@@ -151,6 +263,64 @@ export default function PosBarcodeBillingPage({
   }, [organizationId]);
 
   useEffect(() => {
+    if (!entityId || !billLineKeys) return;
+    const controller = new AbortController();
+    const query = new URLSearchParams({
+      eligibleStock: "true",
+      entityId,
+      invoiceDate,
+    });
+    billLineKeys.split("|").forEach((key) => query.append("stock", key));
+    const lookupOffers = async () => {
+      setOfferLookupLoading(true);
+      setOfferLookupError("");
+      setOfferLookupErrorKey("");
+      try {
+        const response = await fetch(
+          `/api/organizations/${encodeURIComponent(organizationId)}/pos/offers?${query.toString()}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        const data = await response.json() as {
+          error?: string;
+          offersByStock?: Record<string, PosOfferOption[]>;
+          offerLimitReached?: boolean;
+        };
+        if (!response.ok || !data.offersByStock) {
+          throw new Error(data.error || "Unable to load eligible offers for invoice items.");
+        }
+        if (controller.signal.aborted) return;
+        setOffersByStock(data.offersByStock ?? {});
+        setOfferLimitReached(data.offerLimitReached === true);
+        setOffersLoadedForKey(offerLookupKey);
+        setBillLines((current) => current.map((line) => {
+          if (!line.selectedOfferId) return line;
+          const eligible = data.offersByStock?.[stockRecordKey(line.record)] ?? [];
+          return eligible.some((offer) => offer.id === line.selectedOfferId)
+            ? line
+            : { ...line, selectedOfferId: "" };
+        }));
+      } catch (lookupError: unknown) {
+        if (!controller.signal.aborted) {
+          setOfferLookupError(
+            lookupError instanceof Error
+              ? lookupError.message
+              : "Unable to load eligible offers for invoice items.",
+          );
+          setOfferLookupErrorKey(offerLookupKey);
+        }
+      } finally {
+        if (!controller.signal.aborted) setOfferLookupLoading(false);
+      }
+    };
+    void Promise.resolve().then(() => {
+      if (!controller.signal.aborted) return lookupOffers();
+      return undefined;
+    });
+    return () => controller.abort();
+  }, [billLineKeys, entityId, invoiceDate, offerLookupKey, offerLookupRetry, organizationId]);
+
+  useEffect(() => {
+    if (!entityId) return;
     const search = stockSearch.trim();
     if (search.length === 1) return;
 
@@ -160,7 +330,7 @@ export default function PosBarcodeBillingPage({
       setStockSearchError("");
       try {
         const response = await fetch(
-          `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock${search ? `?search=${encodeURIComponent(search)}` : ""}`,
+          `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock?entityId=${encodeURIComponent(entityId)}${search ? `&search=${encodeURIComponent(search)}` : ""}`,
           { cache: "no-store", signal: controller.signal },
         );
         const data = (await response.json()) as {
@@ -188,7 +358,7 @@ export default function PosBarcodeBillingPage({
       window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [organizationId, stockSearch]);
+  }, [entityId, organizationId, stockSearch]);
 
   const createCustomer = async () => {
     const name = customerQuickCreate.trim();
@@ -247,6 +417,10 @@ export default function PosBarcodeBillingPage({
     event.preventDefault();
     const barcode = scanValue.trim();
     if (!barcode || loading) return;
+    if (!entityId) {
+      setError("Select an Entity before scanning or finding stock.");
+      return;
+    }
     const [referenceType, referenceId] = barcode.split(":", 2);
     const stockType = referenceType === "SKU" || referenceType === "GENERAL_GRN"
       ? referenceType
@@ -256,7 +430,7 @@ export default function PosBarcodeBillingPage({
     setError("");
     try {
       const response = await fetch(
-        `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock?stockId=${encodeURIComponent(stockId)}${stockType ? `&stockType=${stockType}` : ""}`,
+        `/api/organizations/${encodeURIComponent(organizationId)}/pos/general-stock?entityId=${encodeURIComponent(entityId)}&stockId=${encodeURIComponent(stockId)}${stockType ? `&stockType=${stockType}` : ""}`,
         { cache: "no-store" },
       );
       const data = (await response.json()) as {
@@ -313,6 +487,7 @@ export default function PosBarcodeBillingPage({
           gstRate: Number(selectedRecord.gst_rate ?? 0),
           hsnCode: String(selectedRecord.hsn_code ?? ""),
           discountPercent: 0,
+          selectedOfferId: "",
         },
       ];
     });
@@ -322,7 +497,7 @@ export default function PosBarcodeBillingPage({
 
   const updateLine = (
     id: string,
-    key: "quantity" | "rate" | "gstRate" | "hsnCode" | "discountPercent",
+    key: "quantity" | "rate" | "gstRate" | "hsnCode" | "discountPercent" | "selectedOfferId",
     value: string,
   ) => {
     setBillLines((current) =>
@@ -330,13 +505,23 @@ export default function PosBarcodeBillingPage({
         if (stockRecordKey(line.record) !== id) return line;
 
         if (key === "quantity") {
+          const quantity = Math.min(
+            Math.max(0, Number(value) || 0),
+            Math.max(0, Number(line.record.current_stock)),
+          );
+          const selectedOffer = visibleOffersByStock[id]?.find((offer) => offer.id === line.selectedOfferId);
           return {
             ...line,
-            quantity: Math.min(
-              Math.max(0, Number(value) || 0),
-              Math.max(0, Number(line.record.current_stock)),
-            ),
+            quantity,
+            ...(selectedOffer?.offerType === "BUY_ONE_GET_ONE"
+              && quantity < (selectedOffer.buyQuantity ?? 0) + (selectedOffer.getQuantity ?? 0)
+              ? { selectedOfferId: "" }
+              : {}),
           };
+        }
+
+        if (key === "selectedOfferId") {
+          return { ...line, selectedOfferId: value };
         }
 
         if (key === "rate") {
@@ -396,8 +581,7 @@ export default function PosBarcodeBillingPage({
             taxProfile?.igstRate ??
             totalRate,
         );
-        const taxable =
-          line.quantity * line.rate * (1 - line.discountPercent / 100);
+        const taxable = lineTaxableAmount(line, visibleOffersByStock[stockRecordKey(line.record)] ?? []);
         summary.subtotal += taxable;
         if (taxMode === "INTERSTATE") summary.igst += (taxable * igstRate) / 100;
         else {
@@ -417,12 +601,67 @@ export default function PosBarcodeBillingPage({
       charges,
       grandTotal: totals.subtotal + taxAmount + charges,
     };
-  }, [billLines, gstOptions, otherCharges, taxMode, taxProfile]);
+  }, [billLines, gstOptions, otherCharges, taxMode, taxProfile, visibleOffersByStock]);
   const base = `/dashboard/${workspaceId}/organizations/${organizationId}/pos`;
   const selectedCustomerName = customerOptions.find((option) => option.id === customerContactId);
   const customerName = selectedCustomerName
     ? selectedCustomerName.display_name || selectedCustomerName.legal_name
     : "";
+  const purchaseRewardCheckKey = [
+    organizationId,
+    invoiceDate,
+    subtotal.toFixed(2),
+    couponCode.trim(),
+  ].join("|");
+  const purchaseRewardStatus = purchaseRewardCheck?.key === purchaseRewardCheckKey
+    ? purchaseRewardCheck.status
+    : null;
+
+  useEffect(() => {
+    if (billLines.length === 0 || subtotal <= 0 || couponCode.trim()) return;
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      const query = new URLSearchParams({
+        rewardEligibility: "true",
+        invoiceDate,
+        subtotal: subtotal.toFixed(2),
+      });
+      void fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/pos/sales?${query.toString()}`,
+        { cache: "no-store", signal: controller.signal },
+      )
+        .then(async (response) => {
+          const result = await response.json() as { error?: string; available?: boolean };
+          if (!response.ok || typeof result.available !== "boolean") {
+            throw new Error(result.error || "Unable to check purchase-reward availability.");
+          }
+          return result.available;
+        })
+        .then((available) => setPurchaseRewardCheck({
+          key: purchaseRewardCheckKey,
+          status: available ? "available" : "unavailable",
+        }))
+        .catch(() => {
+          if (controller.signal.aborted) return;
+          console.error("POS purchase-reward availability check failed", { organizationId });
+          setPurchaseRewardCheck({ key: purchaseRewardCheckKey, status: "error" });
+        });
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [
+    billLines.length,
+    couponCode,
+    invoiceDate,
+    organizationId,
+    purchaseRewardCheckKey,
+    subtotal,
+  ]);
+
   const saveInvoice = async () => {
     setSavingInvoice(true);
     setError("");
@@ -435,6 +674,8 @@ export default function PosBarcodeBillingPage({
           customerContactId: customerContactId || null,
           taxMode,
           requestKey: saleRequestKey.current || (saleRequestKey.current = crypto.randomUUID()),
+          entityId,
+          couponCode: couponCode.trim() || null,
           lines: billLines.map((line) => ({
             stockId: line.record.id,
             stockType: line.record.stock_type,
@@ -443,12 +684,21 @@ export default function PosBarcodeBillingPage({
             gstRate: String(line.gstRate),
             discountPercent: String(line.discountPercent),
             hsnCode: line.hsnCode,
+            offerId: line.selectedOfferId || null,
           })),
         }),
       });
       const data = (await response.json()) as {
         error?: string;
-        invoice?: { id?: string; invoiceNo?: string; subtotal?: string; taxAmount?: string; totalAmount?: string };
+        invoice?: {
+          id?: string;
+          invoiceNo?: string;
+          subtotal?: string;
+          taxAmount?: string;
+          totalAmount?: string;
+          appliedCouponCode?: string | null;
+          issuedCouponCode?: string | null;
+        };
       };
       if (!response.ok || !data.invoice?.invoiceNo) {
         throw new Error(data.error || "Unable to post POS invoice.");
@@ -484,7 +734,11 @@ export default function PosBarcodeBillingPage({
         setError("Invoice posted and stock deducted, but the local finance cache could not be updated.");
       }
       setInvoiceNumber(data.invoice.invoiceNo);
-      router.push(`${base}/invoice`);
+      router.push(
+        data.invoice.appliedCouponCode || data.invoice.issuedCouponCode
+          ? `${base}/invoice/${encodeURIComponent(data.invoice.invoiceNo)}`
+          : `${base}/invoice`,
+      );
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to post POS invoice.");
     } finally {
@@ -496,11 +750,9 @@ export default function PosBarcodeBillingPage({
     <Page as="div" className="min-w-0 max-w-[1600px]">
       <div className="print:hidden">
         <Section className="flex min-h-[calc(100vh-2rem)] flex-col gap-4">
-          <div className="sticky top-0 z-20 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 bg-white/95 pb-4 backdrop-blur">
-            <div>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+          <div className="sticky top-0 z-20 flex flex-wrap items-center border-b border-[var(--erp-border)] bg-[var(--erp-surface)]/95 pb-4 backdrop-blur">
+            <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-3 xl:flex-nowrap">
+              <div className="grid min-w-0 flex-1 grid-cols-2 gap-1 sm:grid-cols-3 xl:grid-cols-6">
                 <SummaryAmount label="Taxable value" value={subtotal} compact />
                 <SummaryAmount label="CGST" value={taxBreakdown.cgst} compact />
                 <SummaryAmount label="SGST" value={taxBreakdown.sgst} compact />
@@ -516,42 +768,147 @@ export default function PosBarcodeBillingPage({
               <Button
                 type="button"
                 onClick={() => void saveInvoice()}
-                disabled={billLines.length === 0 || billLines.some((line) => line.quantity < 1) || savingInvoice}
-                className="rounded-lg px-4 py-2 text-sm font-semibold"
+                disabled={
+                  billLines.length === 0
+                  || billLines.some((line) => line.quantity < 1)
+                  || savingInvoice
+                  || visibleOfferLookupLoading
+                  || Boolean(visibleOfferLookupError)
+                }
+                className="shrink-0 rounded-lg px-4 py-2 text-sm font-semibold"
               >
                   {savingInvoice ? "Posting..." : "Post Invoice"}
               </Button>
             </div>
           </div>
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(24rem,1fr)]">
+          <Card className="space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--erp-text)]">Invoice details</h2>
+            </div>
+            <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-[minmax(9rem,0.7fr)_minmax(26rem,2fr)_minmax(9rem,0.7fr)_minmax(12rem,1fr)]">
+              <Select
+                id="entity-select"
+                label="Entity / Store"
+                value={entityId}
+                onChange={(event) => {
+                  setEntityId(event.target.value);
+                  setSelectedRecord(null);
+                  setRecords([]);
+                  setHasMoreStockResults(false);
+                  setStockSearchError("");
+                  setStockSearchLoading(false);
+                  setStockSearch("");
+                  setScanValue("");
+                }}
+                disabled={billLines.length > 0}
+                required
+              >
+                <option value="">Select Entity</option>
+                {entities.map((entity) => (
+                  <option key={entity.id} value={entity.id}>{entity.label}</option>
+                ))}
+              </Select>
+              <div className="min-w-0 space-y-1">
+                <label htmlFor="customer-select" className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Customer
+                </label>
+                <div className="flex min-w-0 flex-col gap-2 xl:flex-row">
+                  <div className="min-w-0 xl:w-[42%] xl:shrink-0">
+                    <Select
+                      id="customer-select"
+                      value={customerContactId}
+                      onChange={(event) => setCustomerContactId(event.target.value)}
+                    >
+                      <option value="">
+                        {customerLoading ? "Loading customers..." : "Walk-in customer"}
+                      </option>
+                      {customerOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.display_name || option.legal_name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div className="flex min-w-0 flex-1 gap-2">
+                    <div className="min-w-0 flex-1">
+                      <Input
+                        value={customerQuickCreate}
+                        onChange={(event) => setCustomerQuickCreate(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void createCustomer();
+                          }
+                        }}
+                        className="w-full min-w-0"
+                        placeholder="New customer name"
+                        aria-label="New customer name"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void createCustomer()}
+                      disabled={!customerQuickCreate.trim() || customerSubmitting}
+                  >
+                    {customerSubmitting ? "Adding..." : "Add customer"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              <Input
+                id="invoice-date"
+                label="Invoice date"
+                type="date"
+                value={invoiceDate}
+                onChange={(event) => setInvoiceDate(event.target.value)}
+              />
+              <Input
+                id="invoice-coupon-code"
+                label="Coupon code (optional)"
+                value={couponCode}
+                onChange={(event) => setCouponCode(event.target.value)}
+                textCase="preserve"
+                placeholder="Enter coupon code"
+                maxLength={60}
+              />
+            </div>
+            {billLines.length > 0 && (
+              <p className="text-xs text-[var(--erp-muted)]">
+                Remove all bill items to change the Entity / Store.
+              </p>
+            )}
+          </Card>
+          <div className="grid gap-3 xl:grid-cols-[minmax(0,1.5fr)_minmax(24rem,1fr)]">
             <form
               onSubmit={lookupRecord}
-              className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm"
+              className="erp-surface-soft min-w-0 p-3"
             >
               <label
-                className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-800"
+                className="erp-eyebrow"
                 htmlFor="barcode-input"
               >
-                General Stock Record ID
+                Scan stock barcode
               </label>
               <div className="mt-2 flex gap-2">
                 <div className="relative min-w-0 flex-1">
-                  <ScanLine className="pointer-events-none absolute left-3 top-3 h-5 w-5 text-emerald-600" />
+                  <ScanLine className="pointer-events-none absolute left-3 top-3 h-5 w-5 text-[var(--erp-brand)]" />
                   <Input
                     ref={scannerRef}
                     id="barcode-input"
                     value={scanValue}
                     onChange={(event) => setScanValue(event.target.value)}
                     textCase="preserve"
-                    className="rounded-lg border-emerald-300 bg-white py-3 pl-10 pr-3 text-base outline-none focus:border-emerald-600 focus:ring-emerald-200"
-                    placeholder="Scan or enter a General stock record ID"
+                    className="py-3 pl-10 pr-3 text-base"
+                    placeholder="Scan or enter a stock record ID"
                     autoComplete="off"
                   />
                 </div>
                 <Button
                   type="submit"
-                  disabled={loading || !scanValue.trim()}
-                  className="rounded-lg px-5 py-3 text-sm font-bold"
+                  disabled={loading || !scanValue.trim() || !entityId}
+                  className="shrink-0"
                 >
                   <Search className="h-4 w-4" />
                   {loading ? "Finding..." : "Find"}
@@ -561,12 +918,12 @@ export default function PosBarcodeBillingPage({
                 <p className="mt-2 text-sm font-medium text-red-700">{error}</p>
               )}
             </form>
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="erp-surface min-w-0 p-3">
               <label
-                className="block text-xs font-bold uppercase tracking-[0.16em] text-slate-600"
-                htmlFor="stock-record-select"
+                className="erp-eyebrow block"
+                htmlFor="stock-search-input"
               >
-                Search General stock
+                Find stock by item
               </label>
               <Input
                 id="stock-search-input"
@@ -588,10 +945,13 @@ export default function PosBarcodeBillingPage({
                 aria-label="Select stock record manually"
                 value=""
                 onChange={(event) => chooseRecord(event.target.value)}
+                disabled={stockSearchLoading || !entityId}
                 className="mt-2 rounded-lg px-3 py-2 text-sm text-slate-800"
               >
                 <option value="">
-                  {stockSearchLoading
+                  {!entityId
+                    ? "Select an Entity before searching stock"
+                    : stockSearchLoading
                     ? "Searching..."
                     : stockSearch.trim().length < 2
                       ? stockSearch.trim()
@@ -614,77 +974,37 @@ export default function PosBarcodeBillingPage({
               {hasMoreStockResults && <p className="mt-2 text-xs text-slate-500">Showing the first 10 matches in alphabetical order. Refine your search to narrow the results.</p>}
             </div>
           </div>
-          <div className="flex min-h-[32rem] flex-1">
-            <Card className="flex h-full w-full flex-col border-slate-200 p-5">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="text-sm font-medium text-slate-700">
-                  <label htmlFor="customer-select">Customer</label>
-                  <Select
-                    id="customer-select"
-                    value={customerContactId}
-                    onChange={(event) => setCustomerContactId(event.target.value)}
-                    className="mt-2 rounded-md px-3 py-2 text-sm"
-                  >
-                    <option value="">
-                      {customerLoading ? "Loading customers..." : "Walk-in customer"}
-                    </option>
-                    {customerOptions.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.display_name || option.legal_name}
-                      </option>
-                    ))}
-                  </Select>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_12rem_auto]">
-                    <Input
-                      value={customerQuickCreate}
-                      onChange={(event) => setCustomerQuickCreate(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void createCustomer();
-                        }
-                      }}
-                      className="min-w-0 flex-1 rounded-md border-dashed border-slate-300 px-3 py-2 text-xs"
-                      placeholder="New customer name"
-                      aria-label="New customer name"
-                    />
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => void createCustomer()}
-                      disabled={
-                        !customerQuickCreate.trim() || customerSubmitting
-                      }
-                      className="min-h-0 rounded-md border-emerald-300 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:border-slate-200 disabled:text-slate-400"
-                    >
-                      {customerSubmitting ? "Adding..." : "Add customer"}
-                    </Button>
-                  </div>
+          <div className="min-w-0">
+            <Card className="flex h-full w-full min-w-0 flex-col">
+              <div className="flex flex-wrap items-center gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-[var(--erp-text)]">Bill items</h2>
+                  <p className="mt-1 text-xs text-[var(--erp-muted)]">
+                    Review quantities, pricing and tax before posting.
+                  </p>
                 </div>
-                <label className="text-sm font-medium text-slate-700">
-                  Invoice date
-                  <Input
-                    type="date"
-                    value={invoiceDate}
-                    onChange={(event) => setInvoiceDate(event.target.value)}
-                    className="mt-2 rounded-md px-3 py-2 text-sm"
-                  />
-                </label>
+                <span className="text-xs font-medium text-[var(--erp-muted)]">
+                  {billLines.length} {billLines.length === 1 ? "item" : "items"}
+                </span>
+                {purchaseRewardStatus === "error" && (
+                  <p className="text-xs text-[var(--erp-danger-text)]" role="status">
+                    Could not check coupon availability. The sale will still be validated when posted.
+                  </p>
+                )}
               </div>
-              <div className="mt-6 min-h-0 flex-1 overflow-x-hidden overflow-y-auto rounded-md border border-slate-200">
+              <div className="mt-3 min-h-0 overflow-x-hidden overflow-y-auto rounded-xl border border-[var(--erp-border)]">
                 <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-600">
-                    Bill items
+                  <p className="erp-eyebrow">
+                    Invoice lines
                   </p>
                 </div>
                 {billLines.length === 0 ? (
                   <div className="p-10 text-center">
-                    <p className="text-sm font-semibold text-slate-700">
-                          Scan or select General FG stock to start billing
+                    <p className="text-sm font-semibold text-[var(--erp-text)]">
+                      Scan or search for stock to start billing
                     </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      The stock record ID is accepted as the barcode.
+                    <p className="mt-1 text-xs text-[var(--erp-muted)]">
+                      You can scan the stock record ID or find an item by style, order, article, or brand.
                     </p>
                   </div>
                 ) : (
@@ -702,6 +1022,83 @@ export default function PosBarcodeBillingPage({
                             {line.record.order_no} | {line.record.article_no} |{" "}
                             {line.record.size || "-"}
                           </p>
+                          {purchaseRewardStatus === "available" && (
+                            <div className="mt-1">
+                              <Badge role="status" aria-live="polite">Coupon eligible</Badge>
+                            </div>
+                          )}
+                          <div className="mt-2">
+                            <label
+                              className="block text-[11px] font-medium text-slate-500"
+                              htmlFor={`offer-${line.record.stock_type}-${line.record.id}`}
+                            >
+                              Eligible offer
+                            </label>
+                            <Select
+                              id={`offer-${line.record.stock_type}-${line.record.id}`}
+                              aria-label={`${line.record.style_name} eligible offer`}
+                              value={line.selectedOfferId}
+                              onChange={(event) => updateLine(
+                                stockRecordKey(line.record),
+                                "selectedOfferId",
+                                event.target.value,
+                              )}
+                              disabled={visibleOfferLookupLoading || !visibleOffersByStock[stockRecordKey(line.record)]?.length}
+                              className="mt-1 w-full rounded border-slate-300 px-2 py-1 text-sm"
+                            >
+                              <option value="">
+                                {visibleOfferLookupLoading
+                                  ? "Loading eligible offers..."
+                                  : visibleOffersByStock[stockRecordKey(line.record)]?.length
+                                    ? "No offer selected"
+                                    : "No eligible offers"}
+                              </option>
+                              {(visibleOffersByStock[stockRecordKey(line.record)] ?? []).map((offer) => {
+                                const requiredQuantity = (offer.buyQuantity ?? 0) + (offer.getQuantity ?? 0);
+                                const quantityUnavailable = offer.offerType === "BUY_ONE_GET_ONE"
+                                  && line.quantity < requiredQuantity;
+                                const comboUnavailable = offer.offerType === "COMBO";
+                                return (
+                                  <option
+                                    key={offer.id}
+                                    value={offer.id}
+                                    disabled={quantityUnavailable || comboUnavailable}
+                                  >
+                                    {offerLabel(offer)}
+                                    {quantityUnavailable ? ` (requires ${requiredQuantity} units)` : ""}
+                                    {comboUnavailable ? " — select a bundle at cart level" : ""}
+                                  </option>
+                                );
+                              })}
+                            </Select>
+                            {visibleOfferLookupError && (
+                              <div className="mt-1 flex flex-wrap items-center gap-2">
+                                <p className="text-xs text-[var(--erp-danger-text)]" role="alert">
+                                  {visibleOfferLookupError}
+                                </p>
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  className="px-2 py-1 text-xs"
+                                  onClick={() => setOfferLookupRetry((current) => current + 1)}
+                                >
+                                  Retry offers
+                                </Button>
+                              </div>
+                            )}
+                            {visibleOfferLimitReached && (
+                              <p className="mt-1 text-xs text-[var(--erp-muted)]">
+                                Offer list is capped at 100. Refine the active offer catalog if one is missing.
+                              </p>
+                            )}
+                            {(visibleOffersByStock[stockRecordKey(line.record)] ?? []).some((offer) =>
+                              offer.offerType === "COMBO",
+                            ) && (
+                              <p className="mt-1 text-xs text-[var(--erp-muted)]">
+                                Combo offers need bundle rules before they can be applied to a single item.
+                              </p>
+                            )}
+                          </div>
                         </div>
                         <label className="block text-[11px] font-medium text-slate-500">
                           Qty
@@ -804,10 +1201,9 @@ export default function PosBarcodeBillingPage({
                           />
                         </label>
                         <p className="text-right text-sm font-bold text-slate-900">
-                          Rs {(
-                            line.quantity *
-                            line.rate *
-                            (1 - line.discountPercent / 100)
+                          Rs {lineTaxableAmount(
+                            line,
+                            visibleOffersByStock[stockRecordKey(line.record)] ?? [],
                           ).toFixed(2)}
                         </p>
                       </div>
@@ -853,15 +1249,15 @@ function SummaryAmount({
 }) {
   return (
     <div
-      className={`${compact ? "rounded-md border px-2 py-1.5" : "rounded-md border px-3 py-2"} ${strong ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"}`}
+      className={`min-w-0 rounded-xl border ${compact ? "px-2 py-1.5" : "px-3 py-2.5"} ${strong ? "border-[var(--erp-brand)] bg-[var(--erp-brand-soft)]" : "border-[var(--erp-border)] bg-[var(--erp-surface)]"}`}
     >
       <p
-        className={`${compact ? "text-[8px]" : "text-[10px]"} font-bold uppercase tracking-wide ${strong ? "text-emerald-700" : "text-slate-500"}`}
+        className="truncate text-[10px] font-semibold uppercase tracking-wide text-[var(--erp-muted)]"
       >
         {label}
       </p>
       <p
-        className={`${compact ? "mt-0.5 text-xs" : "mt-1 text-sm"} ${strong ? "font-black text-emerald-800" : "font-semibold text-slate-900"}`}
+        className={`${compact ? "mt-0.5 text-xs" : "mt-1 text-sm"} truncate ${strong ? "font-bold text-[var(--erp-brand)]" : "font-semibold text-[var(--erp-text)]"}`}
       >
         Rs {value.toFixed(2)}
       </p>
