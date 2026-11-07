@@ -75,6 +75,26 @@ describe("POS contact navigation", () => {
       href: "/pos/vendor-customer",
     });
   });
+
+  it("adds Offers to the POS sidebar at the offers route", () => {
+    const pos = ERP_MODULES.find((module) => module.key === "pos");
+    const offers = pos?.children.find((child) => child.key === "offers");
+
+    expect(offers).toMatchObject({
+      label: "Offers",
+      pathSegment: "offers",
+    });
+  });
+
+  it("adds Coupon Code to the POS sidebar at the coupon report route", () => {
+    const pos = ERP_MODULES.find((module) => module.key === "pos");
+    const coupons = pos?.children.find((child) => child.key === "coupon-code");
+
+    expect(coupons).toMatchObject({
+      label: "Coupon Code",
+      pathSegment: "cupencode",
+    });
+  });
 });
 
 describe("Asset Management module navigation", () => {
