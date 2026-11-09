@@ -5,24 +5,28 @@ type DocumentType = "SALES_ORDER" | "QUOTATION" | "POS_INVOICE";
 
 const itemFieldLabels: Record<string, string> = {
   description: "Item / Description",
+  hsnCode: "HSN Code",
   booking: "Booking",
   order: "Order",
   sizeBreakdown: "Size Breakdown",
   quantity: "Qty",
   unitPrice: "Unit Price",
   beforeTax: "Before Tax",
+  gstRate: "GST Rate",
   tax: "Tax",
   amount: "Amount",
 };
 
 const itemSamples: Record<string, string> = {
   description: "CLASSIC COTTON SHIRT",
+  hsnCode: "6205",
   booking: "BK-1048",
   order: "ORD-2084",
   sizeBreakdown: "M: 40, L: 60",
   quantity: "100",
   unitPrice: "₹ 850.00",
   beforeTax: "₹ 85,000.00",
+  gstRate: "18%",
   tax: "₹ 15,300.00",
   amount: "₹ 1,00,300.00",
 };
@@ -63,7 +67,11 @@ export default function ChallanPrintTemplatePreview({
   design: OrganizationPrintTemplateDesign;
 }) {
   const { sections } = design;
-  const pageTitle = documentType === "SALES_ORDER" ? "SALES ORDER" : "QUOTATION";
+  const pageTitle = documentType === "POS_INVOICE"
+    ? "TAX INVOICE"
+    : documentType === "SALES_ORDER"
+      ? "SALES ORDER"
+      : "QUOTATION";
   const pageSize = design.orientation === "LANDSCAPE" ? "landscape" : "portrait";
 
   return (
@@ -113,7 +121,11 @@ export default function ChallanPrintTemplatePreview({
                 </p>
                 {sections.headerFields.includes("documentNumber") ? (
                   <p className="mt-1 text-xs">
-                    {documentType === "SALES_ORDER" ? "Sales Order No." : "Quotation No."}: SO-2026-0104
+                    {documentType === "POS_INVOICE"
+                      ? "Invoice No."
+                      : documentType === "SALES_ORDER"
+                        ? "Sales Order No."
+                        : "Quotation No."}: SO-2026-0104
                   </p>
                 ) : null}
                 {sections.headerFields.includes("documentDate") ? (
@@ -150,7 +162,9 @@ export default function ChallanPrintTemplatePreview({
               <table className="w-full border-collapse text-left text-[0.55rem]">
                 <thead>
                   <tr style={{ backgroundColor: design.tableHeaderColor, color: design.tableHeaderTextColor }}>
-                    {sections.itemFields.map((field) => (
+                    {sections.itemFields
+                      .filter((field) => documentType !== "POS_INVOICE" || field !== "booking")
+                      .map((field) => (
                       <th key={field} className="whitespace-nowrap border px-1.5 py-1 font-semibold">
                         {itemFieldLabels[field]}
                       </th>
@@ -160,7 +174,9 @@ export default function ChallanPrintTemplatePreview({
                 <tbody>
                   {[0, 1].map((row) => (
                     <tr key={row} className={row === 1 ? "bg-[var(--erp-surface-soft)]" : ""}>
-                      {sections.itemFields.map((field) => (
+                      {sections.itemFields
+                        .filter((field) => documentType !== "POS_INVOICE" || field !== "booking")
+                        .map((field) => (
                         <td key={field} className="max-w-32 border border-[var(--erp-border)] px-1.5 py-1">
                           {row === 0 ? itemSamples[field] : field === "description" ? "LINEN TROUSER" : itemSamples[field]}
                         </td>
@@ -175,7 +191,9 @@ export default function ChallanPrintTemplatePreview({
           <section aria-label="Summary" className="mt-4">
             <h3 className="mb-2 text-xs font-bold">SUMMARY</h3>
             <dl className="ml-auto grid max-w-64 grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-xs">
-              {sections.summaryFields.map((field) => (
+              {sections.summaryFields
+                .filter((field) => documentType !== "POS_INVOICE" || field !== "deliveryCharge")
+                .map((field) => (
                 <div key={field} className="col-span-2 grid grid-cols-subgrid border-b border-[var(--erp-border)] py-1">
                   <dt className={field === "grandTotal" ? "font-bold" : ""}>{summaryLabels[field]}</dt>
                   <dd className={`text-right ${field === "grandTotal" ? "font-bold" : ""}`}>

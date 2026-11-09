@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
@@ -192,6 +193,26 @@ describe("organization contact master API", () => {
     expect(response.status).toBe(200);
     expect(mocks.deleteUnusedContacts).toHaveBeenCalledWith("internal-org-1", "workspace-user-1", ["contact-1"]);
     expect(mocks.deactivateContacts).not.toHaveBeenCalled();
+  });
+
+  it("reports transaction timeouts as a contact operation failure", async () => {
+    mocks.deleteUnusedContacts.mockRejectedValue(new Prisma.PrismaClientKnownRequestError(
+      "Transaction timed out.",
+      { code: "P2028", clientVersion: "test" },
+    ));
+    const response = await DELETE(
+      new Request("http://localhost/api/organizations/public-org/contacts", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactIds: ["contact-1"], operation: "delete-unused" }),
+      }),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "The contact operation took too long while data was being updated. Refresh and try again.",
+    });
   });
 
   it("rejects invalid bulk contact payloads without invoking the service", async () => {

@@ -107,12 +107,21 @@ export async function GET(request: Request) {
     if (movementValue && !movements.includes(movementValue as FGMaterialIssueMovement)) {
       throw new InvalidRequestError("Select a valid FG issue movement.");
     }
+    const skuStockIdValues = search.getAll("skuStockId");
+    const skuStockIdValue = skuStockIdValues[0]?.trim() ?? "";
+    if (skuStockIdValues.length > 1 || (skuStockIdValues.length === 1 && !skuStockIdValue)) {
+      throw new InvalidRequestError("Provide one non-empty SKU stock record ID.");
+    }
+    if (skuStockIdValue.length > 100) {
+      throw new InvalidRequestError("SKU stock record ID must contain 100 characters or fewer.");
+    }
 
     const result = await listFgIssued(organization.id, {
       dateFrom,
       dateTo,
       sourceType: sourceTypeValue ? sourceTypeValue as FGMaterialIssueSource : undefined,
       movement: movementValue ? movementValue as FGMaterialIssueMovement : undefined,
+      skuStockId: skuStockIdValue || undefined,
       page,
       pageSize,
     });

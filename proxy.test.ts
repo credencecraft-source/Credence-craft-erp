@@ -6,6 +6,8 @@ import {
   createSessionToken,
   PLATFORM_SESSION_COOKIE_NAME,
   SESSION_COOKIE_NAME,
+  WORKSPACE_SUPPORT_SESSION_COOKIE_NAME,
+  createWorkspaceSupportSessionToken,
 } from "@/lib/auth/session-token";
 import { proxy } from "./proxy";
 
@@ -192,5 +194,70 @@ describe("API authentication proxy", () => {
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ error: "Authentication required." });
+  });
+
+  it("allows read requests with a signed workspace support session", () => {
+    const response = proxy(createRequest(
+      "/dashboard/workspace-123/home",
+      WORKSPACE_SUPPORT_SESSION_COOKIE_NAME,
+      createWorkspaceSupportSessionToken(
+        "support-session-1",
+        Math.floor(Date.now() / 1000) + 60,
+      ),
+    ));
+
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("blocks write requests during workspace support access", async () => {
+    const request = createRequest(
+      "/api/orders",
+      WORKSPACE_SUPPORT_SESSION_COOKIE_NAME,
+      createWorkspaceSupportSessionToken(
+        "support-session-1",
+        Math.floor(Date.now() / 1000) + 60,
+      ),
+    );
+    Object.defineProperty(request, "method", { value: "POST" });
+
+    const response = proxy(request);
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "Workspace user support sessions are read-only.",
+    });
+  });
+
+  it("blocks server-action writes on workspace routes outside organization pages", async () => {
+    const request = createRequest(
+      "/dashboard/workspace-123/home",
+      WORKSPACE_SUPPORT_SESSION_COOKIE_NAME,
+      createWorkspaceSupportSessionToken(
+        "support-session-1",
+        Math.floor(Date.now() / 1000) + 60,
+      ),
+    );
+    Object.defineProperty(request, "method", { value: "POST" });
+
+    const response = proxy(request);
+
+    expect(response.status).toBe(403);
+    await expect(response.text()).resolves.toBe(
+      "Workspace user support sessions are read-only.",
+    );
+  });
+
+  it("allows only the support-session end endpoint to accept a write request", () => {
+    const request = createRequest(
+      "/dashboard/workspace-123/support-access/end",
+      WORKSPACE_SUPPORT_SESSION_COOKIE_NAME,
+      createWorkspaceSupportSessionToken(
+        "support-session-1",
+        Math.floor(Date.now() / 1000) + 60,
+      ),
+    );
+    Object.defineProperty(request, "method", { value: "POST" });
+
+    expect(proxy(request).headers.get("x-middleware-next")).toBe("1");
   });
 });

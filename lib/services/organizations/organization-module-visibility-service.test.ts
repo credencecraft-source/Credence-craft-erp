@@ -15,6 +15,7 @@ vi.mock("@/lib/services/organizations/organization-service", () => ({
 }));
 
 import {
+  getFirstAvailableOrganizationModulePath,
   isOrganizationModuleAvailable,
   isOrganizationModuleVisible,
   OrganizationModuleVisibilityError,
@@ -56,6 +57,28 @@ describe("organization module visibility", () => {
       "enabled",
       isOrganizationModuleVisible({ organization_visible: false }),
     )).toBe(false);
+  });
+
+  it("chooses a visible module's first navigation route in registry order", () => {
+    expect(getFirstAvailableOrganizationModulePath([
+      { moduleKey: "online", status: "disabled", isVisible: true },
+      { moduleKey: "pos", status: " ENABLED ", isVisible: true },
+      { moduleKey: "order-management", status: "enabled", isVisible: true },
+    ])).toBe("/pos/quick-invoice");
+  });
+
+  it("skips hidden modules and resolves nested navigation paths", () => {
+    expect(getFirstAvailableOrganizationModulePath([
+      { moduleKey: "online", status: "enabled", isVisible: false },
+      { moduleKey: "pos", status: "enabled", isVisible: false },
+      { moduleKey: "order-management", status: "enabled", isVisible: true },
+    ])).toBe("/order-management/merchandising/order");
+  });
+
+  it("returns no fallback when the organization has no available modules", () => {
+    expect(getFirstAvailableOrganizationModulePath([
+      { moduleKey: "pos", status: "disabled", isVisible: true },
+    ])).toBeNull();
   });
 
   it("persists only the organization setting and audits it against the authorized tenant", async () => {

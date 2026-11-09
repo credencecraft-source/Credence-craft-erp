@@ -9,6 +9,7 @@ import {
   requirePlatformSessionAdmin,
   requirePlatformSessionSuperAdmin,
 } from "@/lib/auth/platform-session-manager";
+import { getSessionUser } from "@/lib/auth/session-manager";
 import {
   hasOrganizationTrialAccess,
   startOrganizationTrialOnApproval,
@@ -758,7 +759,10 @@ export async function requireOrganizationContext(
     && organization.trial_enabled
     && !organization.trial_started_at
   ) {
-    trialSnapshot = await startOrganizationTrialOnFirstOpen(organization.id, workspaceUserId) ?? trialSnapshot;
+    const sessionUser = await getSessionUser();
+    if (!sessionUser?.supportAccess) {
+      trialSnapshot = await startOrganizationTrialOnFirstOpen(organization.id, workspaceUserId) ?? trialSnapshot;
+    }
   }
   if (!options.allowExpiredTrial && !await hasOrganizationTrialAccess(organization.id, new Date(), trialSnapshot)) {
     throw new Error("This organization's trial has ended. Activate a subscription or contact the platform administrator.");

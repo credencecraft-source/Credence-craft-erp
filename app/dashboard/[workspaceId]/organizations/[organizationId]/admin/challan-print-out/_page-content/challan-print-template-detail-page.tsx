@@ -51,7 +51,13 @@ export default function ChallanPrintTemplateDetailPage({
         <div className="space-y-2">
           <h1 className="text-xl font-semibold text-[var(--erp-text)]">{template.name}</h1>
           <div className="flex flex-wrap gap-2">
-            <Badge>{template.documentType === "SALES_ORDER" ? "Sales Order" : "Quotation"}</Badge>
+            <Badge>
+              {template.documentType === "SALES_ORDER"
+                ? "Sales Order"
+                : template.documentType === "QUOTATION"
+                  ? "Quotation"
+                  : "POS Invoice"}
+            </Badge>
             <Badge>{template.isActive ? "Active" : "Inactive"}</Badge>
             {template.isDefault ? <Badge>Default format</Badge> : null}
           </div>

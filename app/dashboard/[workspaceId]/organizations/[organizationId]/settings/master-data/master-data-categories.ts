@@ -21,9 +21,9 @@ export const MASTER_DATA_CATEGORIES = [
   },
   {
     id: "vendors-and-contacts",
-    title: "Vendors and Contacts",
+    title: "Suppliers and Contacts",
     routeSegment: "VENDORS",
-    description: "Vendor, buyer, and merchandiser contacts.",
+    description: "Supplier, buyer, and merchandiser contacts.",
   },
   {
     id: "tax-and-gst",

@@ -90,6 +90,7 @@ describe("listFgIssued", () => {
       dateTo: new Date("2026-10-31T23:59:59.999Z"),
       sourceType: "PACKING_LIST",
       movement: "ISSUE",
+      skuStockId: "sku-stock-1",
       page: 2,
       pageSize: 25,
     });
@@ -99,6 +100,13 @@ describe("listFgIssued", () => {
         organization_id: "internal-org-1",
         source_type: "PACKING_LIST",
         movement: "ISSUE",
+        lines: {
+          some: {
+            organization_id: "internal-org-1",
+            stock_type: FGMaterialIssueStockType.SKU,
+            sku_stock_id: "sku-stock-1",
+          },
+        },
         issued_at: {
           gte: new Date("2026-10-01T00:00:00.000Z"),
           lte: new Date("2026-10-31T23:59:59.999Z"),
@@ -106,9 +114,27 @@ describe("listFgIssued", () => {
       }),
       skip: 25,
       take: 25,
+      select: expect.objectContaining({
+        lines: expect.objectContaining({
+          where: {
+            organization_id: "internal-org-1",
+            stock_type: FGMaterialIssueStockType.SKU,
+            sku_stock_id: "sku-stock-1",
+          },
+        }),
+      }),
     }));
     expect(mocks.count).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ organization_id: "internal-org-1" }),
+      where: expect.objectContaining({
+        organization_id: "internal-org-1",
+        lines: {
+          some: {
+            organization_id: "internal-org-1",
+            stock_type: FGMaterialIssueStockType.SKU,
+            sku_stock_id: "sku-stock-1",
+          },
+        },
+      }),
     }));
     expect(result).toMatchObject({
       total: 1,

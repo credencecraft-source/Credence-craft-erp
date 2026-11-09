@@ -26,6 +26,7 @@ import {
 import {
   ERP_MODULES,
   getErpBusinessTypeDisplayName,
+  getErpModuleForOrganizationPath,
   getErpModuleForBusinessTypeName,
   type ErpModule,
   type SubModuleOption,
@@ -405,13 +406,34 @@ export function MasterModuleWrapper({
     ])),
     [moduleStatuses],
   );
+  const routeModuleOption = useMemo(() => {
+    const routeModule = getErpModuleForOrganizationPath(pathname, organizationPath);
+    if (!routeModule) return null;
+
+    const settings = moduleStatusByKey.get(routeModule.key);
+    if (settings?.status.trim().toLowerCase() !== "enabled" || !settings.isVisible) {
+      return null;
+    }
+
+    return { ...routeModule, moduleKey: routeModule.key };
+  }, [moduleStatusByKey, organizationPath, pathname]);
   const moduleOptions = useMemo(
-    () => allModuleOptions.filter((option) => {
-      const moduleKey = option.moduleKey ?? option.key;
-      const settings = moduleStatusByKey.get(moduleKey);
-      return settings?.status.trim().toLowerCase() === "enabled" && settings.isVisible;
-    }),
-    [allModuleOptions, moduleStatusByKey],
+    () => {
+      const availableOptions = allModuleOptions.filter((option) => {
+        const moduleKey = option.moduleKey ?? option.key;
+        const settings = moduleStatusByKey.get(moduleKey);
+        return settings?.status.trim().toLowerCase() === "enabled" && settings.isVisible;
+      });
+
+      if (!routeModuleOption || availableOptions.some(
+        (option) => (option.moduleKey ?? option.key) === routeModuleOption.key,
+      )) {
+        return availableOptions;
+      }
+
+      return [...availableOptions, routeModuleOption];
+    },
+    [allModuleOptions, moduleStatusByKey, routeModuleOption],
   );
   const moduleVisibilityOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -513,7 +535,7 @@ export function MasterModuleWrapper({
     const blockInfo = checkIsBlocked(item.href);
     const isBlocked = Boolean(blockInfo);
     const hasSubChildren = Boolean(item.children && item.children.length > 0);
-    const isExpanded = expanded[item.key] ?? true;
+    const isExpanded = expanded[item.key] ?? false;
 
     return (
       <div key={item.key} className="space-y-1">

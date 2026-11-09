@@ -4,6 +4,8 @@ import {
   SESSION_COOKIE_NAME,
   verifyPlatformSessionToken,
   verifySessionToken,
+  verifyWorkspaceSupportSessionToken,
+  WORKSPACE_SUPPORT_SESSION_COOKIE_NAME,
 } from "@/lib/auth/session-token";
 
 const apiCorsMethods = "GET, POST, PATCH, DELETE, OPTIONS";
@@ -52,6 +54,28 @@ export function proxy(request: NextRequest) {
     return addApiCorsHeaders(request, new NextResponse(null, { status: 204 }));
   }
 
+  const supportCookie = request.cookies.get(WORKSPACE_SUPPORT_SESSION_COOKIE_NAME)?.value;
+  const isSupportSession = Boolean(supportCookie);
+  const isEndingSupportSession =
+    /^\/dashboard\/[^/]+\/support-access\/end$/.test(pathname) &&
+    request.method === "POST";
+  if (
+    isSupportSession &&
+    !isEndingSupportSession &&
+    request.method !== "GET" &&
+    request.method !== "HEAD"
+  ) {
+    const response = pathname.startsWith("/api/")
+      ? NextResponse.json(
+          { error: "Workspace user support sessions are read-only." },
+          { status: 403 },
+        )
+      : new NextResponse("Workspace user support sessions are read-only.", {
+          status: 403,
+        });
+    return addApiCorsHeaders(request, response);
+  }
+
   const isPublicAuthRoute =
     pathname === "/api/auth" ||
     pathname.startsWith("/api/auth/") ||
@@ -87,7 +111,9 @@ export function proxy(request: NextRequest) {
     )?.value;
   const authenticatedUserId = isPlatformProtectedRoute
     ? verifyPlatformSessionToken(sessionToken)
-    : verifySessionToken(sessionToken);
+    : isSupportSession
+      ? verifyWorkspaceSupportSessionToken(supportCookie)
+      : verifySessionToken(sessionToken);
   if (!authenticatedUserId) {
     if (isPlatformLoginPage) {
       const requestHeaders = new Headers(request.headers);
@@ -155,7 +181,7 @@ export const config = {
   matcher: [
     "/platform",
     "/platform/:path*",
-    "/dashboard/:workspaceId/organizations/:organizationId/:path*",
+    "/dashboard/:path*",
     "/api/:path*",
   ],
 };

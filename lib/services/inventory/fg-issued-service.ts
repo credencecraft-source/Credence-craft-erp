@@ -15,6 +15,7 @@ export type FgIssuedFilters = {
   dateTo?: Date;
   sourceType?: FGMaterialIssueSource;
   movement?: FGMaterialIssueMovement;
+  skuStockId?: string;
   page: number;
   pageSize: number;
 };
@@ -177,7 +178,25 @@ export async function listFgIssued(
           },
         }
       : {}),
+    ...(filters.skuStockId
+      ? {
+          lines: {
+            some: {
+              organization_id: organizationId,
+              stock_type: FGMaterialIssueStockType.SKU,
+              sku_stock_id: filters.skuStockId,
+            },
+          },
+        }
+      : {}),
   };
+  const lineWhere: Prisma.FGMaterialIssueLineWhereInput = filters.skuStockId
+    ? {
+        organization_id: organizationId,
+        stock_type: FGMaterialIssueStockType.SKU,
+        sku_stock_id: filters.skuStockId,
+      }
+    : {};
   const skip = (filters.page - 1) * filters.pageSize;
   const [issues, total] = await Promise.all([
     prisma.fGMaterialIssue.findMany({
@@ -198,6 +217,7 @@ export async function listFgIssued(
         packingList: { select: { packing_list_no: true } },
         posInvoice: { select: { invoice_no: true } },
         lines: {
+          where: lineWhere,
           orderBy: [{ line_no: "asc" }, { id: "asc" }],
           take: 500,
           select: {

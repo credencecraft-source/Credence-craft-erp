@@ -57,7 +57,7 @@ function handleError(error: unknown, operation: string) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2002") return NextResponse.json({ error: "A contact code or GSTIN already exists in this organization." }, { status: 409 });
     if (error.code === "P2003" || error.code === "P2014") return NextResponse.json({ error: "This contact detail is still referenced and cannot be changed." }, { status: 409 });
-    if (error.code === "P2028") return NextResponse.json({ error: "The contact save took too long while data was being updated. Refresh and try again." }, { status: 409 });
+    if (error.code === "P2028") return NextResponse.json({ error: "The contact operation took too long while data was being updated. Refresh and try again." }, { status: 409 });
     if (error.code === "P2025") return NextResponse.json({ error: "Contact not found." }, { status: 404 });
     if (error.code === "P2021" || error.code === "P2022") {
       return NextResponse.json({ error: "Contact master database migration is pending. Apply the approved migration before using this module." }, { status: 503 });

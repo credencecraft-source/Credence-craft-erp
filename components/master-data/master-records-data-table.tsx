@@ -5,7 +5,7 @@ import { useFormStatus } from "react-dom";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Settings2 } from "lucide-react";
+import { Plus, Settings2 } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Checkbox from "@/components/ui/Checkbox";
@@ -380,6 +380,8 @@ export function MasterRecordsTable({
   const quickMasterOptionsRequest = useRef<AbortController | null>(null);
   const quickMasterSaveInProgress = useRef(false);
   const requestedDependentLookups = useRef(new Set<string>());
+  const sizeMasterTabOpened = useRef(false);
+  const sizeLookupRefreshInProgress = useRef(false);
 
   useEffect(() => {
     startTransition(() => {
@@ -591,6 +593,37 @@ export function MasterRecordsTable({
 
     return () => controller.abort();
   }, [fields, formMode, masterLookupRetry, organizationId]);
+
+  useEffect(() => {
+    if (moduleKey !== "size-group" || (formMode !== "create" && formMode !== "edit")) return;
+
+    const refreshSizeOptions = async () => {
+      if (!sizeMasterTabOpened.current || sizeLookupRefreshInProgress.current) return;
+      sizeMasterTabOpened.current = false;
+      sizeLookupRefreshInProgress.current = true;
+      try {
+        const response = await fetch(
+          `/api/organizations/${encodeURIComponent(organizationId)}/master-data/size?includeInactive=true&limit=200`,
+          { cache: "no-store" },
+        );
+        const result: unknown = await response.json();
+        if (!response.ok || !Array.isArray(result)) {
+          const message = typeof result === "object" && result !== null && "error" in result
+            ? String(result.error)
+            : "Unable to refresh Size options.";
+          throw new Error(message);
+        }
+        setArticleLookupOptions((current) => ({ ...current, size: result as MasterLookupOption[] }));
+      } catch (error) {
+        setMasterLookupLoadError(error instanceof Error ? error.message : "Unable to refresh Size options.");
+      } finally {
+        sizeLookupRefreshInProgress.current = false;
+      }
+    };
+
+    window.addEventListener("focus", refreshSizeOptions);
+    return () => window.removeEventListener("focus", refreshSizeOptions);
+  }, [formMode, moduleKey, organizationId]);
 
   const activeFormValues = formMode === "edit" ? editFields : createFields;
   useEffect(() => {
@@ -1203,6 +1236,24 @@ export function MasterRecordsTable({
               <legend className="px-1 text-sm font-semibold text-slate-800">{field.label}{field.required ? " *" : ""}</legend>
               {loadingMasterLookupKeys.has(field.lookupModuleKey ?? "") ? <p role="status" className="text-sm text-[var(--erp-muted)]">Loading {field.label.toLowerCase()} options...</p> : null}
               <div className="flex items-center justify-end border-b border-slate-200 pb-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="min-h-0 px-1.5 py-1.5"
+                  aria-label="Create Size master in a new tab"
+                  title="Create Size master in a new tab"
+                  onClick={() => {
+                    sizeMasterTabOpened.current = true;
+                    window.open(
+                      `/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/admin/master-data/size/create`,
+                      "_blank",
+                      "noopener,noreferrer",
+                    );
+                  }}
+                >
+                  <Plus aria-hidden="true" className="h-4 w-4" />
+                </Button>
                 <Button
                   type="button"
                   size="sm"

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Plus } from "lucide-react";
 
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
@@ -56,6 +57,13 @@ type PurchaseRecordReportRow = {
 };
 
 type PurchaseStage = 1 | 2 | 3;
+type PurchaseLookupMasterKey =
+  | "vendor"
+  | "brand"
+  | "size-group"
+  | "color"
+  | "category"
+  | "sub-category";
 
 function isLookupOption(value: unknown): value is LookupOption {
   if (typeof value !== "object" || value === null) return false;
@@ -124,6 +132,7 @@ export default function PurchaseBillEntryPage({
   const base = `/dashboard/${workspaceId}/organizations/${organizationId}`;
   const router = useRouter();
   const [vendors, setVendors] = useState<LookupOption[]>([]);
+  const [entities, setEntities] = useState<LookupOption[]>([]);
   const [gsts, setGsts] = useState<LookupOption[]>([]);
   const [hsns, setHsns] = useState<LookupOption[]>([]);
   const [brands, setBrands] = useState<LookupOption[]>([]);
@@ -132,6 +141,7 @@ export default function PurchaseBillEntryPage({
   const [categories, setCategories] = useState<LookupOption[]>([]);
   const [subCategories, setSubCategories] = useState<LookupOption[]>([]);
   const [vendorId, setVendorId] = useState("");
+  const [entityId, setEntityId] = useState("");
   const [billNumber, setBillNumber] = useState("");
   const [billDate, setBillDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
@@ -152,6 +162,7 @@ export default function PurchaseBillEntryPage({
   const [hasMoreSavedRecords, setHasMoreSavedRecords] = useState(false);
   const savedRecordsOffset = useRef(0);
   const savedRecordsRequestSequence = useRef(0);
+  const quickCreateMasterKey = useRef<PurchaseLookupMasterKey | null>(null);
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
   const [visibleReviewFields, setVisibleReviewFields] = useState<string[]>([
     "record",
@@ -168,6 +179,31 @@ export default function PurchaseBillEntryPage({
   const [recordSuccessNumber, setRecordSuccessNumber] = useState("");
   const [step, setStep] = useState<PurchaseStage>(1);
 
+  const openMasterQuickCreate = (masterKey: PurchaseLookupMasterKey) => {
+    quickCreateMasterKey.current = masterKey;
+    window.open(
+      `${base}/admin/master-data/${encodeURIComponent(masterKey)}/create`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  };
+  const renderMasterQuickCreateButton = (
+    masterKey: PurchaseLookupMasterKey,
+    label: string,
+  ) => (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="min-h-0 px-1 py-1"
+      aria-label={`Create ${label} master in a new tab`}
+      title={`Create ${label} master in a new tab`}
+      onClick={() => openMasterQuickCreate(masterKey)}
+    >
+      <Plus aria-hidden="true" className="h-3.5 w-3.5" />
+    </Button>
+  );
+
   useEffect(() => {
     const load = async (moduleKey: string) => {
       const response = await fetch(
@@ -178,8 +214,45 @@ export default function PurchaseBillEntryPage({
       const data: unknown = await response.json();
       return Array.isArray(data) ? data.filter(isLookupOption) : [];
     };
+    const refreshOpenedMaster = async () => {
+      const moduleKey = quickCreateMasterKey.current;
+      if (!moduleKey) return;
+
+      quickCreateMasterKey.current = null;
+      try {
+        const options = await load(moduleKey);
+        switch (moduleKey) {
+          case "vendor":
+            setVendors(options);
+            break;
+          case "brand":
+            setBrands(options);
+            break;
+          case "size-group":
+            setSizeGroups(options);
+            break;
+          case "color":
+            setColors(options);
+            break;
+          case "category":
+            setCategories(options);
+            break;
+          case "sub-category":
+            setSubCategories(options);
+            break;
+        }
+      } catch {
+        setMessage("Unable to refresh the new master lookup.");
+      }
+    };
+    const handleQuickCreateReturn = () => {
+      void refreshOpenedMaster();
+    };
+    window.addEventListener("focus", handleQuickCreateReturn);
+
     Promise.all([
       load("vendor"),
+      load("entity"),
       load("gst"),
       load("hsn"),
       load("brand"),
@@ -191,6 +264,7 @@ export default function PurchaseBillEntryPage({
       .then(
         ([
           vendorData,
+          entityData,
           gstData,
           hsnData,
           brandData,
@@ -200,6 +274,7 @@ export default function PurchaseBillEntryPage({
           subCategoryData,
         ]) => {
           setVendors(vendorData);
+          setEntities(entityData);
           setGsts(gstData);
           setHsns(hsnData);
           setBrands(brandData);
@@ -214,6 +289,7 @@ export default function PurchaseBillEntryPage({
           "Unable to load vendor, GST, HSN, product, or size masters.",
         ),
       );
+    return () => window.removeEventListener("focus", handleQuickCreateReturn);
   }, [organizationId]);
 
   const loadSavedRecords = useCallback(async (append = false, signal?: AbortSignal) => {
@@ -391,9 +467,9 @@ export default function PurchaseBillEntryPage({
 
   const saveBill = async () => {
     if (posting) return;
-    if (!vendorId || savedRecords.length === 0) {
+    if (!entityId || !vendorId || savedRecords.length === 0) {
       setMessage(
-        "Vendor and saved records are required before posting the bill.",
+        "Entity, vendor, and saved records are required before posting the bill.",
       );
       return;
     }
@@ -406,6 +482,7 @@ export default function PurchaseBillEntryPage({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             vendorId,
+            entityId,
             billNumber,
             billDate,
             taxMode,
@@ -653,9 +730,13 @@ export default function PurchaseBillEntryPage({
               </div>
               {itemType === "FINISHED_GOODS" ? (
                 <div className="grid gap-2 md:grid-cols-3">
-                  <label className="text-xs font-semibold text-slate-700">
-                    Brand lookup
+                  <div className="text-xs font-semibold text-slate-700">
+                    <div className="flex items-center gap-1">
+                      <label htmlFor="purchase-brand" className="cursor-pointer">Brand lookup</label>
+                      {renderMasterQuickCreateButton("brand", "brand")}
+                    </div>
                     <Select
+                      id="purchase-brand"
                       value={brandId}
                       onChange={(event) => setBrandId(event.target.value)}
                       className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
@@ -667,7 +748,7 @@ export default function PurchaseBillEntryPage({
                         </option>
                       ))}
                     </Select>
-                  </label>
+                  </div>
                   <label className="text-xs font-semibold text-slate-700">
                     Style name
                     <Input
@@ -677,9 +758,13 @@ export default function PurchaseBillEntryPage({
                       placeholder="Enter style name"
                     />
                   </label>
-                  <label className="text-xs font-semibold text-slate-700">
-                    Size group lookup
+                  <div className="text-xs font-semibold text-slate-700">
+                    <div className="flex items-center gap-1">
+                      <label htmlFor="purchase-size-group" className="cursor-pointer">Size group lookup</label>
+                      {renderMasterQuickCreateButton("size-group", "size group")}
+                    </div>
                     <Select
+                      id="purchase-size-group"
                       value={sizeGroupId}
                       onChange={(event) => selectSizeGroup(event.target.value)}
                       className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
@@ -691,7 +776,7 @@ export default function PurchaseBillEntryPage({
                         </option>
                       ))}
                     </Select>
-                  </label>
+                  </div>
                 </div>
               ) : (
                 <label className="block max-w-md text-xs font-semibold text-slate-700">
@@ -712,9 +797,13 @@ export default function PurchaseBillEntryPage({
               )}
               {itemType === "FINISHED_GOODS" && (
                 <div className="grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-2.5 md:grid-cols-3">
-                  <label className="text-xs font-semibold text-slate-700">
-                    Color lookup
+                  <div className="text-xs font-semibold text-slate-700">
+                    <div className="flex items-center gap-1">
+                      <label htmlFor="purchase-color" className="cursor-pointer">Color lookup</label>
+                      {renderMasterQuickCreateButton("color", "color")}
+                    </div>
                     <Select
+                      id="purchase-color"
                       value={colorId}
                       onChange={(event) => setColorId(event.target.value)}
                       className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
@@ -726,10 +815,14 @@ export default function PurchaseBillEntryPage({
                         </option>
                       ))}
                     </Select>
-                  </label>
-                  <label className="text-xs font-semibold text-slate-700">
-                    Product category
+                  </div>
+                  <div className="text-xs font-semibold text-slate-700">
+                    <div className="flex items-center gap-1">
+                      <label htmlFor="purchase-category" className="cursor-pointer">Product category</label>
+                      {renderMasterQuickCreateButton("category", "product category")}
+                    </div>
                     <Select
+                      id="purchase-category"
                       value={categoryId}
                       onChange={(event) => {
                         setCategoryId(event.target.value);
@@ -744,10 +837,14 @@ export default function PurchaseBillEntryPage({
                         </option>
                       ))}
                     </Select>
-                  </label>
-                  <label className="text-xs font-semibold text-slate-700">
-                    Product subcategory
+                  </div>
+                  <div className="text-xs font-semibold text-slate-700">
+                    <div className="flex items-center gap-1">
+                      <label htmlFor="purchase-subcategory" className="cursor-pointer">Product subcategory</label>
+                      {renderMasterQuickCreateButton("sub-category", "product subcategory")}
+                    </div>
                     <Select
+                      id="purchase-subcategory"
                       value={subCategoryId}
                       onChange={(event) => setSubCategoryId(event.target.value)}
                       disabled={!categoryId}
@@ -760,7 +857,7 @@ export default function PurchaseBillEntryPage({
                         </option>
                       ))}
                     </Select>
-                  </label>
+                  </div>
                 </div>
               )}
               <div className="max-h-[34vh] overflow-x-auto overflow-y-auto rounded-lg border border-slate-200">
@@ -975,10 +1072,28 @@ export default function PurchaseBillEntryPage({
             <div>
               <h2 className="mt-0.5 text-base font-bold text-slate-900">Purchase Bill</h2>
             </div>
-            <div className="grid gap-2 md:grid-cols-4">
+            <div className="grid gap-2 md:grid-cols-5">
               <label className="text-xs font-semibold text-slate-700">
-                Vendor lookup
+                Entity
                 <Select
+                  value={entityId}
+                  onChange={(event) => setEntityId(event.target.value)}
+                  className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
+                  required
+                >
+                  <option value="">Select Entity</option>
+                  {entities.map((entity) => (
+                    <option key={entity.id} value={entity.id}>{entity.label}</option>
+                  ))}
+                </Select>
+              </label>
+              <div className="text-xs font-semibold text-slate-700">
+                <div className="flex items-center gap-1">
+                  <label htmlFor="purchase-vendor" className="cursor-pointer">Vendor lookup</label>
+                  {renderMasterQuickCreateButton("vendor", "vendor")}
+                </div>
+                <Select
+                  id="purchase-vendor"
                   value={vendorId}
                   onChange={(event) => setVendorId(event.target.value)}
                   className="mt-1 rounded-md px-2.5 py-1.5 text-sm font-normal"
@@ -990,7 +1105,7 @@ export default function PurchaseBillEntryPage({
                     </option>
                   ))}
                 </Select>
-              </label>
+              </div>
               <label className="text-xs font-semibold text-slate-700">
                 Bill number
                 <Input

@@ -18,6 +18,37 @@ export function isOrganizationModuleAvailable(status: string, isVisible: boolean
   return status.trim().toLowerCase() === "enabled" && isVisible;
 }
 
+export function getFirstAvailableOrganizationModulePath(
+  moduleStatuses: Array<{ moduleKey: string; status: string; isVisible: boolean }>,
+) {
+  const availableModule = ERP_MODULES.find(({ key }) => {
+    const moduleStatus = moduleStatuses.find(({ moduleKey }) => moduleKey === key);
+    return moduleStatus
+      ? isOrganizationModuleAvailable(moduleStatus.status, moduleStatus.isVisible)
+      : false;
+  });
+  if (!availableModule) return null;
+
+  const firstNavigationPath = (
+    children: typeof availableModule.children,
+    parentPath: string,
+  ): string | null => {
+    for (const child of children) {
+      const childPath = child.href ?? `${parentPath}/${child.pathSegment || child.key}`;
+      if (child.children?.length) {
+        const nestedPath = firstNavigationPath(child.children, childPath);
+        if (nestedPath) return nestedPath;
+      } else {
+        return childPath;
+      }
+    }
+    return null;
+  };
+
+  return firstNavigationPath(availableModule.children, `/${availableModule.pathSegment}`)
+    ?? `/${availableModule.pathSegment}`;
+}
+
 export async function setOrganizationModuleVisibility(
   workspaceUserId: string,
   routeOrganizationId: string,

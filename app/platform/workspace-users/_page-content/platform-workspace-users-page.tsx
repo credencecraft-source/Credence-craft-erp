@@ -3,9 +3,13 @@ import Section from "@/components/ui/Section";
 import { getDisplayMobileNumber } from "@/lib/phone/mobile-country-code-options";
 import { listWorkspaceUsers } from "@/lib/services/platform/workspace-user-service";
 import PlatformWorkspaceUsersReport from "./platform-workspace-users-report";
+import { requirePlatformSessionAdmin } from "@/lib/auth/platform-session-manager";
 
 export default async function PlatformWorkspaceUsersPage() {
   const users = await listWorkspaceUsers();
+  const admin = await requirePlatformSessionAdmin();
+  const canOpenUserAccount = admin.actualRole === "SUPER_ADMIN";
+
   return (
     <Page className="max-w-7xl">
       <Section className="space-y-6">
@@ -40,6 +44,7 @@ export default async function PlatformWorkspaceUsersPage() {
               organisationCount: user.organisations.length,
               totalRecords: user.totalRecords,
               status: user.status,
+              canOpenUserAccount,
             };
           })}
         />

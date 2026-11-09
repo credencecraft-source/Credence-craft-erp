@@ -7,6 +7,7 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import Input from "@/components/ui/Input";
+import { GENERAL_FINISHED_GOODS_SKU_SOURCES } from "@/lib/services/inventory/finished-goods-stock-overview";
 import { buildPosStockSkuCode } from "@/lib/services/pos/pos-stock-identifiers";
 
 
@@ -83,19 +84,13 @@ type FormState = {
 };
 
 const DIRECT_SOURCES = ["DIRECT", "DIRECT_FROM_INVENTORY", "DIRECT_FROM_POS"] as const;
-const GENERAL_STOCK_SOURCES = [
-  ...DIRECT_SOURCES,
-  "PACKING_LIST_GRN",
-  "POS",
-  "POS_PURCHASE_BILL",
-] as const;
 
 function isDirectSource(source: string) {
   return DIRECT_SOURCES.includes(source as (typeof DIRECT_SOURCES)[number]);
 }
 
 function isGeneralStockSource(source: string) {
-  return GENERAL_STOCK_SOURCES.includes(source as (typeof GENERAL_STOCK_SOURCES)[number]);
+  return GENERAL_FINISHED_GOODS_SKU_SOURCES.includes(source as (typeof GENERAL_FINISHED_GOODS_SKU_SOURCES)[number]);
 }
 
 const fieldClass = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100";

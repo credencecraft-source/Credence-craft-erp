@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   organizationFindFirst: vi.fn(),
   organizationPermissionFindUnique: vi.fn(),
+  getSessionUser: vi.fn(),
   startOrganizationTrialOnFirstOpen: vi.fn(),
   hasOrganizationTrialAccess: vi.fn(),
 }));
@@ -16,6 +17,9 @@ vi.mock("@/lib/database/prisma-client", () => ({
 vi.mock("@/lib/auth/platform-session-manager", () => ({
   requirePlatformSessionAdmin: vi.fn(),
   requirePlatformSessionSuperAdmin: vi.fn(),
+}));
+vi.mock("@/lib/auth/session-manager", () => ({
+  getSessionUser: mocks.getSessionUser,
 }));
 vi.mock("@/lib/services/platform/organization-trial-service", () => ({
   hasOrganizationTrialAccess: mocks.hasOrganizationTrialAccess,
@@ -42,6 +46,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.organizationFindFirst.mockResolvedValue(activeTrialOrganization);
   mocks.hasOrganizationTrialAccess.mockResolvedValue(true);
+  mocks.getSessionUser.mockResolvedValue(null);
   mocks.startOrganizationTrialOnFirstOpen.mockResolvedValue({
     trial_started_at: new Date("2026-10-02T10:00:00.000Z"),
     trial_ends_at: new Date("2026-10-03T10:00:00.000Z"),
@@ -126,6 +131,7 @@ describe("organization access and trial performance", () => {
       trial_started_at: null,
       trial_ends_at: null,
     });
+
     const startedSnapshot = {
       trial_started_at: new Date("2026-10-02T12:00:00.000Z"),
       trial_ends_at: new Date("2026-10-03T12:00:00.000Z"),
@@ -143,6 +149,31 @@ describe("organization access and trial performance", () => {
       "internal-org-1",
       expect.any(Date),
       startedSnapshot,
+    );
+  });
+
+  it("does not start an organization's trial during read-only support access", async () => {
+    mocks.organizationFindFirst.mockResolvedValue({
+      ...activeTrialOrganization,
+      trial_started_at: null,
+      trial_ends_at: null,
+    });
+    mocks.getSessionUser.mockResolvedValue({
+      supportAccess: { platformAdminName: "Support Admin" },
+    });
+
+    await expect(requireOrganizationContext("user-1", "public-org-1"))
+      .resolves.toMatchObject({ id: "internal-org-1" });
+
+    expect(mocks.startOrganizationTrialOnFirstOpen).not.toHaveBeenCalled();
+    expect(mocks.hasOrganizationTrialAccess).toHaveBeenCalledWith(
+      "internal-org-1",
+      expect.any(Date),
+      {
+        trial_started_at: null,
+        trial_ends_at: null,
+        trial_enabled: true,
+      },
     );
   });
 

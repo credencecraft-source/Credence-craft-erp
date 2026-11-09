@@ -77,14 +77,16 @@ describe("master data categories", () => {
     ]);
   });
 
-  it("groups vendors, contacts, and tax masters separately", () => {
+  it("labels the supplier category and groups its masters separately from tax", () => {
     const vendorGroup = MASTER_DATA_CATEGORIES.find((entry) => entry.id === "vendors-and-contacts");
     const taxGroup = MASTER_DATA_CATEGORIES.find((entry) => entry.id === "tax-and-gst");
     const vendors = getMastersForCategory(visibleMasters, vendorGroup!);
     const taxMasters = getMastersForCategory(visibleMasters, taxGroup!);
 
+    expect(vendorGroup?.title).toBe("Suppliers and Contacts");
     expect(vendors.map((master) => master.key).sort()).toEqual(["buyer", "merchandiser", "vendor"]);
     const vendor = vendors.find((master) => master.key === "vendor");
+    expect(vendor?.label).toBe("Supplier");
     expect(vendor?.fields.map((field) => field.key)).toContain("Contact_Person");
     expect(vendor?.fields.map((field) => field.key)).toContain("Contact_Phone");
     expect(vendor?.fields.map((field) => field.key)).toContain("Contact_Email");

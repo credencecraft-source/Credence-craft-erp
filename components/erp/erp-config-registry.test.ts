@@ -4,6 +4,7 @@ import {
   ERP_MODULES,
   getErpBusinessTypeDisplayName,
   getErpBusinessTypeRouteSegment,
+  getErpModuleForOrganizationPath,
   getErpModuleForBusinessTypeName,
   isErpBusinessTypeRouteSegment,
 } from "./erp-config-registry";
@@ -35,6 +36,18 @@ describe("Advance Booking module naming", () => {
 });
 
 describe("Admin module navigation", () => {
+  it("orders the Admin modules as Masters, Challan Print Out, Barcode, Integrations, and Migration", () => {
+    const admin = ERP_MODULES.find((module) => module.key === "admin");
+
+    expect(admin?.children.map(({ label }) => label)).toEqual([
+      "Masters",
+      "Challan Print Out",
+      "Barcode / QR Code",
+      "Integrations",
+      "Migration",
+    ]);
+  });
+
   it("places Barcode / QR Code under Admin while retaining its current routes", () => {
     const admin = ERP_MODULES.find((module) => module.key === "admin");
     const barcodeQrCode = admin?.children.find((child) => child.key === "barcode-qr-code");
@@ -94,6 +107,28 @@ describe("POS contact navigation", () => {
       label: "Coupon Code",
       pathSegment: "cupencode",
     });
+  });
+});
+
+describe("organization route module resolution", () => {
+  const organizationPath = "/dashboard/workspace/organizations/organization";
+
+  it("resolves the ERP module from the open route instead of an unrelated business-type fallback", () => {
+    expect(getErpModuleForOrganizationPath(
+      `${organizationPath}/order-management/merchandising/order`,
+      organizationPath,
+    )?.key).toBe("order-management");
+    expect(getErpModuleForOrganizationPath(
+      `${organizationPath}/pos/quick-invoice`,
+      organizationPath,
+    )?.key).toBe("pos");
+  });
+
+  it("does not resolve routes outside an ERP module", () => {
+    expect(getErpModuleForOrganizationPath(
+      `${organizationPath}/support-tickets`,
+      organizationPath,
+    )).toBeNull();
   });
 });
 

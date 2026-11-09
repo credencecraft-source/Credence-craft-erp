@@ -316,6 +316,17 @@ export default function FgSkuDetailPage({
             <Button type="button" variant="secondary" onClick={() => router.push(returnTo)}>
               Back to Stock Register
             </Button>
+            {record && !editing ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => router.push(
+                  `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/outward/fg-issued?skuStockId=${encodeURIComponent(record.id)}`,
+                )}
+              >
+                View Stock History
+              </Button>
+            ) : null}
             {record && canEdit && !editing ? (
               <Button type="button" onClick={beginEdit}>Edit</Button>
             ) : null}

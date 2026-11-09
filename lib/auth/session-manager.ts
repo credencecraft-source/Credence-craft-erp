@@ -4,7 +4,14 @@ import { cache } from "react";
 
 import { getDevUserById } from "@/lib/dev/dev-user-store-mock";
 import { prisma } from "@/lib/database/prisma-client";
-import { createSessionToken, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS, verifySessionToken } from "@/lib/auth/session-token";
+import {
+  createSessionToken,
+  SESSION_COOKIE_NAME,
+  SESSION_TTL_SECONDS,
+  verifySessionToken,
+  verifyWorkspaceSupportSessionToken,
+  WORKSPACE_SUPPORT_SESSION_COOKIE_NAME,
+} from "@/lib/auth/session-token";
 
 export { createSessionToken, SESSION_COOKIE_NAME, signValue, verifySessionToken } from "@/lib/auth/session-token";
 
@@ -20,6 +27,12 @@ export type SessionUser = {
   created_at: Date;
   updated_at: Date;
   last_login_at: Date | null;
+  supportAccess?: {
+    platformAdminName: string;
+    platformAdminEmail: string;
+    reason: string;
+    expiresAt: Date;
+  };
 };
 
 const USE_DEV_USER_STORE = process.env.USE_DEV_USER_STORE === "true";
@@ -40,6 +53,73 @@ export async function setSessionCookie(userId: string) {
 
 export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   const cookieStore = await cookies();
+  const supportCookie = cookieStore.get(WORKSPACE_SUPPORT_SESSION_COOKIE_NAME);
+  if (supportCookie) {
+    const supportSessionId = verifyWorkspaceSupportSessionToken(supportCookie.value);
+    if (!supportSessionId) return null;
+
+    const supportSession =
+      await prisma.platformWorkspaceUserSupportSession.findUnique({
+        where: { id: supportSessionId },
+        include: {
+          platformAdmin: {
+            select: {
+              full_name: true,
+              email: true,
+              role: true,
+              is_active: true,
+            },
+          },
+          workspaceUser: {
+            select: {
+              id: true,
+              workspace_id: true,
+              profile_name: true,
+              full_name: true,
+              email: true,
+              email_verified: true,
+              mobile_number: true,
+              mobile_verified_at: true,
+              created_at: true,
+              updated_at: true,
+              last_login_at: true,
+            },
+          },
+        },
+      });
+    if (
+      !supportSession ||
+      supportSession.ended_at ||
+      supportSession.revoked_at ||
+      supportSession.expires_at <= new Date() ||
+      !supportSession.platformAdmin ||
+      !supportSession.platformAdmin.is_active ||
+      supportSession.platformAdmin.role !== "SUPER_ADMIN"
+    ) {
+      return null;
+    }
+
+    return {
+      id: supportSession.workspaceUser.id,
+      workspace_id: supportSession.workspaceUser.workspace_id,
+      profile_name: supportSession.workspaceUser.profile_name,
+      full_name: supportSession.workspaceUser.full_name,
+      email: supportSession.workspaceUser.email,
+      email_verified: supportSession.workspaceUser.email_verified,
+      mobile_number: supportSession.workspaceUser.mobile_number,
+      mobile_verified_at: supportSession.workspaceUser.mobile_verified_at,
+      created_at: supportSession.workspaceUser.created_at,
+      updated_at: supportSession.workspaceUser.updated_at,
+      last_login_at: supportSession.workspaceUser.last_login_at,
+      supportAccess: {
+        platformAdminName: supportSession.platformAdmin.full_name,
+        platformAdminEmail: supportSession.platformAdmin.email,
+        reason: supportSession.reason,
+        expiresAt: supportSession.expires_at,
+      },
+    };
+  }
+
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value ?? null;
   const userId = verifySessionToken(token);
 

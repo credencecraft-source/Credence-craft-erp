@@ -23,6 +23,7 @@ model WorkspaceUser {
   updated_at                     DateTime                 @updatedAt
   last_login_at                  DateTime?
   organizationMemberships        OrganizationMembership[]
+  platformSupportSessions       PlatformWorkspaceUserSupportSession[]
   organizationInvitations        OrganizationInvitation[] @relation("InvitationInvitee")
   createdOrganizationInvitations OrganizationInvitation[] @relation("InvitationCreator")
   notifications                  WorkspaceNotification[]
@@ -548,6 +549,7 @@ model PlatformAdmin {
   createdSupportTickets SupportTicket[]          @relation("SupportTicketPlatformCreator")
   auditEvents           PlatformAuditEvent[]
   reviewedKycProfiles   OrganizationKycProfile[]
+  workspaceUserSupportSessions PlatformWorkspaceUserSupportSession[]
 
   @@index([manager_id, team_role])
   @@index([manager_id, role, is_active])
@@ -567,6 +569,23 @@ model PlatformAuditEvent {
   @@index([platform_admin_id, created_at])
   @@index([entity_type, entity_id, created_at])
   @@map("platform_audit_events")
+}
+
+model PlatformWorkspaceUserSupportSession {
+  id                 String         @id
+  platform_admin_id  String?
+  workspace_user_id String
+  reason             String         @db.VarChar(500)
+  created_at         DateTime       @default(now())
+  expires_at         DateTime
+  ended_at           DateTime?
+  revoked_at         DateTime?
+  platformAdmin      PlatformAdmin? @relation(fields: [platform_admin_id], references: [id], onDelete: SetNull)
+  workspaceUser      WorkspaceUser  @relation(fields: [workspace_user_id], references: [id], onDelete: Cascade)
+
+  @@index([platform_admin_id, expires_at, ended_at, revoked_at])
+  @@index([workspace_user_id, created_at])
+  @@map("platform_workspace_user_support_sessions")
 }
 
 model PlatformPricingSettings {
@@ -1273,8 +1292,8 @@ model MasterArticle {
   sizes             MasterArticleSize[]
 
   @@unique([organization_id, article])
-  @@index([article_code(ops: raw("gin_trgm_ops"))], type: Gin, map: "master_articles_article_code_trgm_idx")
   @@unique([organization_id, article_code])
+  @@index([article_code(ops: raw("gin_trgm_ops"))], type: Gin, map: "master_articles_article_code_trgm_idx")
   @@index([organization_id, is_active])
   @@index([organization_id, product_master_id])
   @@index([organization_id, category_id])
@@ -1302,10 +1321,10 @@ model MasterArticleVariant {
   article         MasterArticle @relation(fields: [article_id], references: [id], onDelete: Cascade)
   color           MasterColor   @relation(fields: [color_id], references: [id], onDelete: Restrict)
 
-  @@index([variant_code(ops: raw("gin_trgm_ops"))], type: Gin, map: "master_article_variants_variant_code_trgm_idx")
   @@unique([organization_id, article_id, color_id])
   @@unique([organization_id, variant_code])
   @@unique([organization_id, sku])
+  @@index([variant_code(ops: raw("gin_trgm_ops"))], type: Gin, map: "master_article_variants_variant_code_trgm_idx")
   @@index([organization_id, article_id, is_active])
   @@map("master_article_variants")
 }

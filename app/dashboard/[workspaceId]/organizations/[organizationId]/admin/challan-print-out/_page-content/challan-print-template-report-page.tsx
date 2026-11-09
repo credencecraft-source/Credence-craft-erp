@@ -36,7 +36,14 @@ const fields: Array<{ key: keyof ReportRow; label: string }> = [
 const documentTabs = [
   { label: "Sales Order", value: "SALES_ORDER" },
   { label: "Quotation", value: "QUOTATION" },
+  { label: "POS Invoice", value: "POS_INVOICE" },
 ] as const;
+
+function documentLabel(documentType: DocumentType) {
+  if (documentType === "SALES_ORDER") return "Sales Order";
+  if (documentType === "QUOTATION") return "Quotation";
+  return "POS Invoice";
+}
 
 export default function ChallanPrintTemplateReportPage({
   workspaceId,
@@ -60,7 +67,7 @@ export default function ChallanPrintTemplateReportPage({
     .filter((template) => template.documentType === documentType)
     .map((template) => ({
       ...template,
-      documentLabel: template.documentType === "SALES_ORDER" ? "Sales Order" : "Quotation",
+      documentLabel: documentLabel(template.documentType),
       defaultLabel: template.isDefault ? "Default" : "—",
       statusLabel: template.isActive ? "Active" : "Inactive",
       updatedLabel: new Date(template.updatedAt).toLocaleString(),
@@ -74,14 +81,14 @@ export default function ChallanPrintTemplateReportPage({
         <div>
           <h1 className="text-xl font-semibold text-[var(--erp-text)]">Challan Print Out</h1>
           <p className="mt-1 text-sm text-[var(--erp-muted)]">
-            Create reusable Sales Order and Quotation print/PDF formats and choose each document&apos;s default.
+            Create reusable Sales Order, Quotation, and POS Invoice print formats and choose each document&apos;s default.
           </p>
         </div>
       </header>
 
       {confirmationName ? (
         <p className="rounded-lg border border-[var(--erp-brand-soft)] bg-[var(--erp-brand-soft)] p-3 text-sm text-[var(--erp-brand)]" role="status">
-          Saved {confirmationName}. It is now available in the {documentType === "SALES_ORDER" ? "Sales Order" : "Quotation"} template report.
+          Saved {confirmationName}. It is now available in the {documentLabel(documentType)} template report.
         </p>
       ) : null}
 
@@ -93,7 +100,7 @@ export default function ChallanPrintTemplateReportPage({
       />
 
       <ReportGrid
-        title={`${documentType === "SALES_ORDER" ? "Sales Order" : "Quotation"} Print Templates`}
+        title={`${documentLabel(documentType)} Print Templates`}
         records={records}
         fields={fields}
         visibleFields={visibleFields}
@@ -126,7 +133,7 @@ export default function ChallanPrintTemplateReportPage({
           }
           return String(record[fieldKey as keyof ReportRow] ?? "");
         }}
-        emptyMessage={`No ${documentType === "SALES_ORDER" ? "Sales Order" : "Quotation"} print templates yet. Create one to set the default PDF format.`}
+        emptyMessage={`No ${documentLabel(documentType)} print templates yet. Create one to set the default print format.`}
       />
     </section>
   );

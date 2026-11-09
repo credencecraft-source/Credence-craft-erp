@@ -45,7 +45,7 @@ type DistributorDealerRow = {
 
 const ROLE_OPTIONS: Array<{ code: RoleCode; label: string }> = [
   { code: "CUSTOMER", label: "Customer" },
-  { code: "VENDOR", label: "Vendor" },
+  { code: "VENDOR", label: "Supplier" },
   { code: "AGENT", label: "Agent" },
   { code: "DISTRIBUTOR", label: "Distributor" },
   { code: "DEALER", label: "Dealer" },

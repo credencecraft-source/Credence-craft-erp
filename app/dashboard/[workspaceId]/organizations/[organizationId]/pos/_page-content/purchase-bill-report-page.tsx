@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
@@ -17,18 +17,21 @@ type PurchaseBillRecord = {
   sourceModule: string;
   date: string;
   party: string;
+  entity: string;
   amount: number;
   tax: number;
   net: number;
   status: string;
   paymentStatus: string;
-  stockCreated: boolean;
 };
+
+const PURCHASE_BILL_PAGE_SIZE = 50;
 
 const reportFields: Array<{ key: keyof PurchaseBillRecord; label: string }> = [
   { key: "documentNumber", label: "Bill No." },
   { key: "date", label: "Date" },
   { key: "party", label: "Vendor" },
+  { key: "entity", label: "Entity" },
   { key: "amount", label: "Taxable Amount" },
   { key: "tax", label: "GST" },
   { key: "net", label: "Total Amount" },
@@ -45,6 +48,12 @@ export default function PurchaseBillReportPage({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [records, setRecords] = useState<PurchaseBillRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [search, setSearch] = useState("");
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const requestController = useRef<AbortController | null>(null);
   const [visibleReportFields, setVisibleReportFields] = useState<
     Array<string | keyof PurchaseBillRecord>
   >(reportFields.map((field) => field.key));
@@ -55,19 +64,91 @@ export default function PurchaseBillReportPage({
   const createPath = `${base}/purchase-bill/new`;
 
   useEffect(() => {
-    fetch(
-      `/api/organizations/${encodeURIComponent(organizationId)}/pos/purchase-bill`,
-      { cache: "no-store" },
-    )
-      .then(async (response) => {
-        const data = (await response.json()) as {
+    const controller = new AbortController();
+    requestController.current?.abort();
+    requestController.current = controller;
+    const timeoutId = window.setTimeout(async () => {
+      setLoading(true);
+      setLoadError("");
+      setRecords([]);
+      setNextCursor(null);
+      try {
+        const query = new URLSearchParams({ limit: String(PURCHASE_BILL_PAGE_SIZE) });
+        if (search) query.set("search", search);
+        const response = await fetch(
+          `/api/organizations/${encodeURIComponent(organizationId)}/pos/purchase-bill?${query}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        const data = await response.json() as {
           bills?: PurchaseBillRecord[];
+          nextCursor?: string | null;
+          error?: string;
         };
-        if (!response.ok) throw new Error("Unable to load purchase bills.");
-        setRecords(Array.isArray(data.bills) ? data.bills : []);
-      })
-      .catch(() => setRecords([]));
-  }, [organizationId]);
+        if (!response.ok) throw new Error(data.error || "Unable to load purchase bills.");
+        if (!Array.isArray(data.bills)) throw new Error("The purchase bill response was invalid.");
+        setRecords(data.bills);
+        setNextCursor(data.nextCursor ?? null);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setLoadError(error instanceof Error ? error.message : "Unable to load purchase bills.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }, search ? 200 : 0);
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+      if (requestController.current === controller) requestController.current = null;
+    };
+  }, [organizationId, search]);
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return;
+    const controller = new AbortController();
+    requestController.current?.abort();
+    requestController.current = controller;
+    setLoadingMore(true);
+    setLoadError("");
+    try {
+      const query = new URLSearchParams({
+        cursor: nextCursor,
+        limit: String(PURCHASE_BILL_PAGE_SIZE),
+      });
+      if (search) query.set("search", search);
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/pos/purchase-bill?${query}`,
+        { cache: "no-store", signal: controller.signal },
+      );
+      const data = await response.json() as {
+        bills?: PurchaseBillRecord[];
+        nextCursor?: string | null;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || "Unable to load more purchase bills.");
+      if (!Array.isArray(data.bills)) throw new Error("The purchase bill response was invalid.");
+      const pageBills = data.bills;
+      setRecords((current) => [...current, ...pageBills]);
+      setNextCursor(data.nextCursor ?? null);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setLoadError(error instanceof Error ? error.message : "Unable to load more purchase bills.");
+      }
+    } finally {
+      if (!controller.signal.aborted) setLoadingMore(false);
+    }
+  };
+
+  const handleSearchQueryChange = (query: string) => {
+    if (query === search) return;
+    requestController.current?.abort();
+    setRecords([]);
+    setNextCursor(null);
+    setLoading(true);
+    setLoadingMore(false);
+    setLoadError("");
+    setSearch(query);
+  };
 
   const renderCell = (fieldKey: string, record: PurchaseBillRecord) => {
     if (["amount", "tax", "net"].includes(fieldKey)) {
@@ -101,6 +182,7 @@ export default function PurchaseBillReportPage({
             + New Purchase Bill
           </Link>
         </div>
+        {loadError ? <p role="alert">{loadError}</p> : null}
         <ReportGrid
           title="Purchase Bill Report"
           records={records}
@@ -112,9 +194,20 @@ export default function PurchaseBillReportPage({
           onRowClick={(recordId) => router.push(`${base}/purchase-bill/${encodeURIComponent(recordId)}`)}
           onRowAction={(recordId) => router.push(`${base}/purchase-bill/${encodeURIComponent(recordId)}`)}
           rowActionLabel="Approve & Create Stock"
+          onSearchQueryChange={handleSearchQueryChange}
+          serverSideSearch
+          searchMinLength={2}
+          isLoading={loading}
           renderCell={renderCell}
           emptyMessage="No purchase bill records found."
         />
+        {nextCursor ? (
+          <div className="flex justify-center">
+            <Button type="button" variant="secondary" onClick={loadMore} disabled={loadingMore}>
+              {loadingMore ? "Loading bills..." : "Load more purchase bills"}
+            </Button>
+          </div>
+        ) : null}
       </Section>
       <Modal
         open={Boolean(successMessage)}

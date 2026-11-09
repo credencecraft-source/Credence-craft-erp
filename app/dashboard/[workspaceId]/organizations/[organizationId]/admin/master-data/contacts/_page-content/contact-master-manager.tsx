@@ -37,7 +37,7 @@ const CONTACT_REPORT_FIELDS = [
 
 const ROLE_LABELS: Record<string, string> = {
   CUSTOMER: "Customer",
-  VENDOR: "Vendor",
+  VENDOR: "Supplier",
   AGENT: "Agent",
   DISTRIBUTOR: "Distributor",
   DEALER: "Dealer",
@@ -323,7 +323,7 @@ export default function ContactMasterManager({ organizationId, workspaceId }: { 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <Link href={`/dashboard/${workspaceId}/organizations/${organizationId}/admin/master-data/VENDORS`} className="text-sm font-semibold text-[var(--erp-brand)] underline-offset-4 hover:underline">
-            Back to Vendors and Contacts
+            Back to Suppliers and Contacts
           </Link>
           <p className="mt-4 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--erp-brand)]">Master data</p>
           <h1 className="mt-2 text-2xl font-bold text-[var(--erp-text)]">Unified Contact Master</h1>

@@ -353,6 +353,12 @@ export const ERP_MODULES: ErpModule[] = [
     label: "Admin",
     pathSegment: "admin",
     children: [
+      { key: "master-data", label: "Masters", pathSegment: "master-data" },
+      {
+        key: "challan-print-out",
+        label: "Challan Print Out",
+        pathSegment: "challan-print-out",
+      },
       {
         key: "barcode-qr-code",
         label: "Barcode / QR Code",
@@ -379,12 +385,6 @@ export const ERP_MODULES: ErpModule[] = [
           },
         ],
       },
-      {
-        key: "challan-print-out",
-        label: "Challan Print Out",
-        pathSegment: "challan-print-out",
-      },
-      { key: "master-data", label: "Masters", pathSegment: "master-data" },
       { key: "integrations", label: "Integrations", pathSegment: "integrations" },
       {
         key: "migration",
@@ -445,6 +445,13 @@ export function getErpModuleForBusinessTypeName(name: string) {
   const normalizedName = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const moduleKey = BUSINESS_TYPE_MODULE_ALIASES[normalizedName];
   return ERP_MODULES.find((module) => module.key === moduleKey) ?? null;
+}
+
+export function getErpModuleForOrganizationPath(pathname: string, organizationPath: string) {
+  return ERP_MODULES.find(({ pathSegment }) => {
+    const modulePath = `${organizationPath}/${pathSegment}`;
+    return pathname === modulePath || pathname.startsWith(`${modulePath}/`);
+  }) ?? null;
 }
 
 export type ErpModuleType = (typeof ERP_MODULES)[number];

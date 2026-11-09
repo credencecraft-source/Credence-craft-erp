@@ -3,10 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createPlatformSessionToken,
   createSessionToken,
+  createWorkspaceSupportSessionToken,
   PLATFORM_SESSION_TTL_SECONDS,
   SESSION_TTL_SECONDS,
   verifyPlatformSessionToken,
   verifySessionToken,
+  verifyWorkspaceSupportSessionToken,
 } from "./session-token";
 
 let originalAuthSecret: string | undefined;
@@ -60,5 +62,17 @@ describe("session token verification", () => {
 
     vi.setSystemTime(Date.now() + (PLATFORM_SESSION_TTL_SECONDS + 1) * 1000);
     expect(verifyPlatformSessionToken(token)).toBeNull();
+  });
+
+  it("uses a separate signed token and the requested expiry for support sessions", () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 60;
+    const token = createWorkspaceSupportSessionToken("support-session-1", expiresAt);
+
+    expect(verifyWorkspaceSupportSessionToken(token)).toBe("support-session-1");
+    expect(verifySessionToken(token)).toBeNull();
+    expect(verifyPlatformSessionToken(token)).toBeNull();
+
+    vi.setSystemTime(new Date((expiresAt + 1) * 1000));
+    expect(verifyWorkspaceSupportSessionToken(token)).toBeNull();
   });
 });

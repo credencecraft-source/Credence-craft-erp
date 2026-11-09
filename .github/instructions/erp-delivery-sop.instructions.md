@@ -179,6 +179,8 @@ Current implementation facts to carry into the baseline (these are code-path ris
 - Never catch Prisma missing-table/missing-column errors and return empty data or success. Treat schema drift as a deployment/readiness failure with an actionable message.
 - Review the final diff for accidental scope expansion, secret exposure, missing tenant filters, unsafe deletes, inconsistent UI, and missing tests.
 - Run relevant regression tests with the configured test runner; distinguish automated tests from manual smoke checks and unverified workflows.
+- Before every explicitly requested push, commit the intended changes and run focused tests, lint, typecheck, and `npm run build` in a clean detached Git worktree at the exact candidate commit SHA. Restore dependencies from the lockfile and generate Prisma Client there as needed; never copy `.env` files or secrets. A build in a dirty working tree is not valid evidence because untracked or unstaged files may satisfy imports missing from the commit.
+- If any required check fails or cannot run against that exact commit, do not push. Fix the issue, create a new candidate commit, and rerun the gate. Before pushing, confirm the requested test remote/branch and candidate SHA; after pushing, verify the remote SHA and report CI/Vercel results only once observed. A push alone does not mean deployment succeeded.
 - Push only when explicitly requested and only to a confirmed test branch and remote. Never push directly to production, force-push, rewrite history, or include unrelated changes.
 
 ## 7. Completion Record

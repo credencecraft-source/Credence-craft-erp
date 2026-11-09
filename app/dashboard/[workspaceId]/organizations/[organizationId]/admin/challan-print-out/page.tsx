@@ -35,7 +35,11 @@ export default async function Page({
     throw error;
   }
   const templates = await listOrganizationPrintTemplates(user.id, organizationId);
-  const initialDocumentType = search.documentType === "QUOTATION" ? "QUOTATION" : "SALES_ORDER";
+  const initialDocumentType = search.documentType === "QUOTATION"
+    ? "QUOTATION"
+    : search.documentType === "POS_INVOICE"
+      ? "POS_INVOICE"
+      : "SALES_ORDER";
 
   return (
     <ChallanPrintTemplateReportPage

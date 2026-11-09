@@ -18,6 +18,7 @@ import {
 } from "./contact-master-validation";
 
 const MAX_CONTACT_BULK_SELECTION = 200;
+const CONTACT_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 30_000 } as const;
 
 type ContactDatabase = typeof prisma;
 type ContactTransaction = Prisma.TransactionClient;
@@ -703,7 +704,7 @@ export async function createContact(
   if ("$transaction" in database) {
     return database.$transaction((tx) =>
       createContactInTransaction(organizationId, actorId, value, tx),
-    { maxWait: 10000, timeout: 30000 });
+    CONTACT_TRANSACTION_OPTIONS);
   }
   return createContactInTransaction(organizationId, actorId, value, database);
 }
@@ -772,7 +773,7 @@ export async function updateContact(
         await syncContactRoleProjections(tx, organizationId, contactId, saved);
       }
       return publicContact(saved);
-    }, { maxWait: 10000, timeout: 30000 });
+    }, CONTACT_TRANSACTION_OPTIONS);
   } finally {
     if (profileSave) {
       console.info(`[Contact save timing] transaction ${(performance.now() - transactionStartedAt).toFixed(1)}ms`);
@@ -821,7 +822,7 @@ export async function deactivateContact(
     });
     if (!contact) return null;
     return { deactivated: await deactivateContactRecord(tx, organizationId, actorId, contact) };
-  });
+  }, CONTACT_TRANSACTION_OPTIONS);
 }
 
 export async function deactivateContacts(
@@ -844,7 +845,7 @@ export async function deactivateContacts(
       if (await deactivateContactRecord(tx, organizationId, actorId, contact)) deactivatedCount += 1;
     }
     return { deactivatedCount };
-  });
+  }, CONTACT_TRANSACTION_OPTIONS);
 }
 
 function parseContactIds(value: unknown) {
@@ -972,5 +973,5 @@ export async function deleteUnusedContacts(
       throw new Error("Not all selected unused contacts could be deleted.");
     }
     return { deletedCount: deleted.count, retainedContactCodes };
-  });
+  }, CONTACT_TRANSACTION_OPTIONS);
 }

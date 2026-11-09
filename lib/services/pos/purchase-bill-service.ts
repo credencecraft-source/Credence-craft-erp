@@ -33,6 +33,7 @@ export type CreatePurchaseRecordInput = {
 };
 
 export type CreatePurchaseBillInput = {
+  entityId: string;
   vendorId: string;
   billNumber: string;
   billDate: string;
@@ -313,6 +314,8 @@ export async function deletePurchaseRecords(organizationId: string, actorId: str
 
 export async function createPurchaseBill(organizationId: string, actorId: string, input: CreatePurchaseBillInput) {
   const billNumber = input.billNumber.trim();
+  const entityId = input.entityId.trim();
+  if (!entityId) throw new Error("Select an Entity before posting the purchase bill.");
   if (!input.recordIds.length) throw new Error("Save at least one purchase record before posting the bill.");
   const billDate = new Date(input.billDate);
   if (Number.isNaN(billDate.getTime())) throw new Error("Bill date is invalid.");
@@ -321,6 +324,11 @@ export async function createPurchaseBill(organizationId: string, actorId: string
   if (!vendor) throw new Error("Select a valid active vendor from this organization.");
 
   const result = await prisma.$transaction(async (transaction) => {
+    const entity = await transaction.masterEntity.findFirst({
+      where: { id: entityId, organization_id: organizationId, is_active: true },
+      select: { id: true, entity_name: true },
+    });
+    if (!entity) throw new Error("Select an active Entity belonging to this organization.");
     const documentNumber = await reservePosDocumentNumber(
       organizationId,
       "PURCHASE_BILL",
@@ -369,6 +377,7 @@ export async function createPurchaseBill(organizationId: string, actorId: string
     const bill = await transaction.posPurchaseBill.create({
       data: {
         organization_id: organizationId,
+        entity_id: entity.id,
         document_number: documentNumber,
         vendor_id: vendor.id,
         bill_number: billNumber || documentNumber,
@@ -399,15 +408,18 @@ export async function createPurchaseBill(organizationId: string, actorId: string
           lineCount: lineData.length,
           documentNumber,
           supplierInvoiceNumber: billNumber || null,
+          entityId: entity.id,
         },
       },
     });
-    return { bill, documentNumber };
+    return { bill, documentNumber, entityName: entity.entity_name };
   }, { maxWait: 10000, timeout: 30000 });
 
   return {
     id: result.bill.id,
     documentNumber: result.documentNumber,
+    entityId: result.bill.entity_id,
+    entityName: result.entityName,
     billNumber: result.bill.bill_number,
     status: result.bill.status,
     totalQuantity: result.bill.total_quantity.toString(),
@@ -417,16 +429,81 @@ export async function createPurchaseBill(organizationId: string, actorId: string
   };
 }
 
-export async function listPurchaseBills(organizationId: string) {
+export async function listPurchaseBills(
+  organizationId: string,
+  options: {
+    take: number;
+    cursor?: { id: string; createdAt: Date };
+    search?: string;
+  },
+) {
+  const search = options.search?.trim() ?? "";
+  const matchingVendors = search
+    ? await prisma.masterVendor.findMany({
+        where: {
+          organization_id: organizationId,
+          vendor: { contains: search, mode: "insensitive" },
+        },
+        select: { id: true },
+      })
+    : [];
+  const vendorIdsForSearch = matchingVendors.map(({ id }) => id);
   const bills = await prisma.posPurchaseBill.findMany({
-    where: { organization_id: organizationId },
-    include: { lines: { orderBy: { created_at: "asc" }, include: { finished_goods_stock: { select: { id: true, sku_code: true } } } } },
-    orderBy: { created_at: "desc" },
+    where: {
+      organization_id: organizationId,
+      ...(search ? {
+        OR: [
+          { document_number: { contains: search, mode: "insensitive" } },
+          { bill_number: { contains: search, mode: "insensitive" } },
+          ...(vendorIdsForSearch.length > 0 ? [{ vendor_id: { in: vendorIdsForSearch } }] : []),
+        ],
+      } : {}),
+      ...(options.cursor ? {
+        AND: [{
+          OR: [
+            { created_at: { lt: options.cursor.createdAt } },
+            { created_at: options.cursor.createdAt, id: { lt: options.cursor.id } },
+          ],
+        }],
+      } : {}),
+    },
+    select: {
+      id: true,
+      document_number: true,
+      vendor_id: true,
+      entity_id: true,
+      bill_number: true,
+      bill_date: true,
+      status: true,
+      total_quantity: true,
+      subtotal: true,
+      tax: true,
+      total: true,
+      created_at: true,
+    },
+    orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    take: options.take + 1,
   });
-  const vendorIds = [...new Set(bills.map((bill) => bill.vendor_id))];
-  const vendors = await prisma.masterVendor.findMany({ where: { organization_id: organizationId, id: { in: vendorIds } }, select: { id: true, vendor: true } });
+  const hasMore = bills.length > options.take;
+  const pageBills = bills.slice(0, options.take);
+  const vendorIds = [...new Set(pageBills.map((bill) => bill.vendor_id))];
+  const vendors = vendorIds.length
+    ? await prisma.masterVendor.findMany({
+        where: { organization_id: organizationId, id: { in: vendorIds } },
+        select: { id: true, vendor: true },
+      })
+    : [];
   const vendorById = new Map(vendors.map((vendor) => [vendor.id, vendor.vendor]));
-  return bills.map((bill) => ({
+  const entityIds = [...new Set(pageBills.map((bill) => bill.entity_id).filter((id): id is string => Boolean(id)))];
+  const entities = entityIds.length
+    ? await prisma.masterEntity.findMany({
+        where: { organization_id: organizationId, id: { in: entityIds } },
+        select: { id: true, entity_name: true },
+      })
+    : [];
+  const entityById = new Map(entities.map((entity) => [entity.id, entity.entity_name]));
+  return {
+    bills: pageBills.map((bill) => ({
     id: bill.id,
     documentType: "Purchase Invoice",
     documentNumber: bill.document_number,
@@ -434,29 +511,26 @@ export async function listPurchaseBills(organizationId: string) {
     sourceModule: "POS",
     date: bill.bill_date,
     party: vendorById.get(bill.vendor_id) ?? bill.vendor_id,
+    entity: bill.entity_id ? entityById.get(bill.entity_id) ?? "Entity unavailable" : "Unassigned",
     amount: Number(bill.subtotal),
     tax: Number(bill.tax),
     net: Number(bill.total),
     status: bill.status,
     paymentStatus: "Pending",
     totalQuantity: Number(bill.total_quantity),
-    lines: bill.lines.map((line) => ({
-      id: line.id,
-      size: line.size,
-      itemName: line.item_name,
-      quantity: Number(line.quantity),
-      purchasePrice: Number(line.purchase_price ?? 0),
-      salesPrice: Number(line.sales_price ?? 0),
-      gst: Number(line.gst_rate ?? 0),
-      hsnCode: line.hsn_code,
-      total: Number(line.total),
-      stock: line.finished_goods_stock,
     })),
-    stockCreated: bill.lines.length > 0 && bill.lines.every((line) => Boolean(line.finished_goods_stock)),
-  }));
+    hasMore,
+    nextCursor: hasMore
+      ? {
+          id: pageBills[pageBills.length - 1].id,
+          createdAt: pageBills[pageBills.length - 1].created_at,
+        }
+      : null,
+  };
 }
 
 const purchaseBillDetailInclude = {
+  entity: { select: { id: true, entity_name: true } },
   lines: {
     orderBy: { created_at: "asc" as const },
     include: {
@@ -472,6 +546,8 @@ function serializePurchaseBillDetail(bill: PurchaseBillDetail, vendor: { id: str
   return {
     id: bill.id,
     documentNumber: bill.document_number,
+    entityId: bill.entity_id,
+    entityName: bill.entity?.entity_name ?? null,
     billNumber: bill.bill_number,
     billDate: bill.bill_date,
     taxMode: bill.tax_mode,
@@ -520,7 +596,20 @@ export async function getPurchaseBill(organizationId: string, billId: string) {
   return serializePurchaseBillDetail(bill, vendor);
 }
 
-export async function createPurchaseBillFinishedGoodsStock(organizationId: string, actorId: string, billId: string) {
+export async function createPurchaseBillFinishedGoodsStock(
+  organizationId: string,
+  actorId: string,
+  billId: string,
+  locationId: string,
+) {
+  if (typeof locationId !== "string") {
+    throw new Error("Select an active location before approving this purchase bill.");
+  }
+  const selectedLocationId = locationId.trim();
+  if (!selectedLocationId || selectedLocationId !== locationId) {
+    throw new Error("Select an active location before approving this purchase bill.");
+  }
+
   const result = await prisma.$transaction(async (transaction) => {
     const bill = await transaction.posPurchaseBill.findFirst({ where: { id: billId, organization_id: organizationId }, include: purchaseBillDetailInclude });
     if (!bill) throw new Error("Purchase bill was not found in this organization.");
@@ -553,11 +642,32 @@ export async function createPurchaseBillFinishedGoodsStock(organizationId: strin
     const categoryById = new Map(categories.map((item) => [item.id, item.category_name]));
     const subCategoryById = new Map(subCategories.map((item) => [item.id, item.sub_category]));
     const stockLocation = await transaction.masterLocation.findFirst({
-      where: { organization_id: organizationId, is_active: true },
+      where: { id: selectedLocationId, organization_id: organizationId, is_active: true },
       select: { id: true, entity_id: true },
     });
     if (!stockLocation) {
-      throw new Error("At least one active location is required before creating finished goods stock.");
+      throw new Error("The selected location is inactive or unavailable in this organization.");
+    }
+    const stockEntity = await transaction.masterEntity.findFirst({
+      where: {
+        id: stockLocation.entity_id,
+        organization_id: organizationId,
+        is_active: true,
+      },
+      select: { id: true },
+    });
+    if (!stockEntity) throw new Error("The selected location belongs to an inactive Entity.");
+    if (bill.entity_id && bill.entity_id !== stockLocation.entity_id) {
+      throw new Error("The selected location belongs to a different Entity than this purchase bill.");
+    }
+    if (!bill.entity_id) {
+      const assigned = await transaction.posPurchaseBill.updateMany({
+        where: { id: bill.id, organization_id: organizationId, entity_id: null },
+        data: { entity_id: stockLocation.entity_id },
+      });
+      if (assigned.count !== 1) {
+        throw new Error("The purchase bill Entity changed while stock was being created. Refresh and retry.");
+      }
     }
 
     const created = [];
@@ -613,10 +723,20 @@ export async function createPurchaseBillFinishedGoodsStock(organizationId: strin
         action: "CREATE_FINISHED_GOODS_STOCK",
         entity_type: "pos_purchase_bill",
         entity_id: bill.id,
-        details: { documentNumber: bill.document_number, lineCount: created.length, source: "POS_PURCHASE_BILL" },
+        details: {
+          documentNumber: bill.document_number,
+          lineCount: created.length,
+          entityId: bill.entity_id ?? stockLocation.entity_id,
+          locationId: stockLocation.id,
+          source: "POS_PURCHASE_BILL",
+        },
       },
     });
     return { bill: approvedBill, created, vendor };
-  }, { maxWait: 10_000, timeout: 30_000 });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 10_000,
+    timeout: 30_000,
+  });
   return { bill: serializePurchaseBillDetail(result.bill, result.vendor), stock: result.created };
 }

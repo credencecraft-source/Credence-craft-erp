@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import { ReportGrid } from "@/components/reports/report-grid-display";
 import Button from "@/components/ui/Button";
@@ -95,8 +95,11 @@ function formatCell(field: string, record: FgIssuedRecord, workspaceId: string, 
 
 export default function FgIssuedReportPage() {
   const params = useParams<{ workspaceId: string; organizationId: string }>();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const workspaceId = params.workspaceId ?? "";
   const organizationId = params.organizationId ?? "";
+  const skuStockId = searchParams.get("skuStockId")?.trim() ?? "";
   const [records, setRecords] = useState<FgIssuedRecord[]>([]);
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState<Filters>(initialFilters);
@@ -107,7 +110,7 @@ export default function FgIssuedReportPage() {
   const [loadedKey, setLoadedKey] = useState("");
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
-  const requestKey = `${organizationId}:${JSON.stringify(appliedFilters)}`;
+  const requestKey = `${organizationId}:${skuStockId}:${JSON.stringify(appliedFilters)}`;
   const loading = Boolean(organizationId) && loadedKey !== requestKey;
   const visibleRecords = loading ? [] : records;
 
@@ -121,6 +124,7 @@ export default function FgIssuedReportPage() {
     if (appliedFilters.dateTo) query.set("dateTo", appliedFilters.dateTo);
     if (appliedFilters.sourceType) query.set("sourceType", appliedFilters.sourceType);
     if (appliedFilters.movement) query.set("movement", appliedFilters.movement);
+    if (skuStockId) query.set("skuStockId", skuStockId);
 
     const response = await fetch(`/api/inventory/fg-issued?${query.toString()}`, {
       cache: "no-store",
@@ -137,7 +141,7 @@ export default function FgIssuedReportPage() {
     }
     if (!response.ok) throw new Error(payload.error || "Unable to load FG Issued records.");
     return payload;
-  }, [appliedFilters, organizationId]);
+  }, [appliedFilters, organizationId, skuStockId]);
 
   useEffect(() => {
     if (!organizationId) return;
@@ -189,8 +193,25 @@ export default function FgIssuedReportPage() {
         <div>
           <h1 className="text-2xl font-bold text-[var(--erp-text)]">FG Issued</h1>
           <p className="mt-1 text-sm text-slate-600">
-            Finished-goods stock issues and reversals from packing lists and POS invoices.
+            Finished-goods stock issues and reversals from packing lists, POS invoices, and manual adjustments.
           </p>
+          {skuStockId ? (
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <p className="text-sm text-[var(--erp-muted)]">
+                Stock history for SKU record {skuStockId}
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => router.push(
+                  `/dashboard/${workspaceId}/organizations/${organizationId}/inventory-management/stock/fg-stock/sku/${encodeURIComponent(skuStockId)}`,
+                )}
+              >
+                Back to SKU
+              </Button>
+            </div>
+          ) : null}
         </div>
 
         <Card>

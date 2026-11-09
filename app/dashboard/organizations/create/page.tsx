@@ -1,6 +1,7 @@
 import { after } from "next/server";
 import { cookies } from "next/headers";
 import { requireSessionUser } from "@/lib/auth/session-manager";
+import WorkspaceUserSupportAccessBanner from "@/components/auth/workspace-user-support-access-banner";
 import { hasOrganizationsForUser } from "@/lib/services/organizations/organization-service";
 import { createOrganizationDummyDataForNewOrganization } from "@/lib/services/organizations/organization-dummy-data-service";
 import { GstVerificationError } from "@/lib/services/organizations/gst-verification-service";
@@ -73,14 +74,22 @@ export default async function CreateOrganizationPage({
   }
 
   return (
-    <CreateOrganizationForm 
-      workspaceId={user.workspace_id} 
-      userEmail={user.email ?? ""}
-      userMobileNumber={user.mobile_number ?? ""}
-      isOnboardingRequired={isOnboardingRequired}
-      error={params.error}
-      message={params.message}
-      action={createOrganizationAction}
-    />
+    <>
+      {user.supportAccess && (
+        <WorkspaceUserSupportAccessBanner
+          workspaceId={user.workspace_id}
+          supportAccess={user.supportAccess}
+        />
+      )}
+      <CreateOrganizationForm
+        workspaceId={user.workspace_id}
+        userEmail={user.email ?? ""}
+        userMobileNumber={user.mobile_number ?? ""}
+        isOnboardingRequired={isOnboardingRequired}
+        error={params.error}
+        message={params.message}
+        action={createOrganizationAction}
+      />
+    </>
   );
 }

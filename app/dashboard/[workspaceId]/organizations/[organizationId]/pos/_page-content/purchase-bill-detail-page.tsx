@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { QrCode } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, QrCode } from "lucide-react";
 
 import PurchaseBillQrRequestModal from "./purchase-bill-qr-request-modal";
 import Page from "@/components/ui/Page";
 import Section from "@/components/ui/Section";
 import Button from "@/components/ui/Button";
+import Modal from "@/components/ui/Modal";
+import Select from "@/components/ui/Select";
 
 
 type BillLine = {
@@ -26,6 +28,8 @@ type BillLine = {
 type Bill = {
   id: string;
   documentNumber: string;
+  entityId: string | null;
+  entityName: string | null;
   billNumber: string;
   billDate: string;
   taxMode: string;
@@ -40,6 +44,14 @@ type Bill = {
   lines: BillLine[];
 };
 
+type LocationLookupOption = { id: string; label: string };
+
+function isLocationLookupOption(value: unknown): value is LocationLookupOption {
+  return typeof value === "object" && value !== null
+    && "id" in value && typeof value.id === "string"
+    && "label" in value && typeof value.label === "string";
+}
+
 const money = (value: string | number | null | undefined) => `Rs ${Number(value ?? 0).toFixed(2)}`;
 const date = (value: string | null | undefined) => value ? new Date(value).toLocaleDateString() : "-";
 export default function PurchaseBillDetailPage({ workspaceId, organizationId, billId }: { workspaceId: string; organizationId: string; billId: string }) {
@@ -49,6 +61,13 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [showQrRequest, setShowQrRequest] = useState(false);
+  const [showLocationPrompt, setShowLocationPrompt] = useState(false);
+  const [locations, setLocations] = useState<LocationLookupOption[]>([]);
+  const [selectedLocationId, setSelectedLocationId] = useState("");
+  const [loadingLocations, setLoadingLocations] = useState(false);
+  const [locationLookupError, setLocationLookupError] = useState("");
+  const locationRequest = useRef<AbortController | null>(null);
+  const locationMasterTabOpened = useRef(false);
   const load = useCallback(async () => {
     const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/pos/purchase-bill/${encodeURIComponent(billId)}`, { cache: "no-store" });
     const data = await response.json();
@@ -71,6 +90,62 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
     return () => window.clearTimeout(timeoutId);
   }, [load]);
 
+  const billEntityId = bill?.entityId;
+  const loadActiveLocations = useCallback(async () => {
+    locationRequest.current?.abort();
+    const controller = new AbortController();
+    locationRequest.current = controller;
+    setLoadingLocations(true);
+    setLocationLookupError("");
+    try {
+      const response = await fetch(
+        `/api/organizations/${encodeURIComponent(organizationId)}/master-data/location?includeInactive=false&limit=200${billEntityId ? `&entityId=${encodeURIComponent(billEntityId)}` : ""}`,
+        { cache: "no-store", signal: controller.signal },
+      );
+      const result: unknown = await response.json();
+      if (!response.ok || !Array.isArray(result)) {
+        const apiError = typeof result === "object" && result !== null && "error" in result
+          ? String(result.error)
+          : "Unable to load active stock locations.";
+        throw new Error(apiError);
+      }
+      const activeLocations = result.filter(isLocationLookupOption);
+      setLocations(activeLocations);
+      setSelectedLocationId((current) =>
+        activeLocations.some((location) => location.id === current) ? current : "",
+      );
+    } catch (loadError) {
+      if (!controller.signal.aborted) {
+        setLocationLookupError(loadError instanceof Error ? loadError.message : "Unable to load active stock locations.");
+      }
+    } finally {
+      if (locationRequest.current === controller) {
+        locationRequest.current = null;
+        setLoadingLocations(false);
+      }
+    }
+  }, [billEntityId, organizationId]);
+
+  useEffect(() => () => locationRequest.current?.abort(), []);
+
+  useEffect(() => {
+    if (!showLocationPrompt) return;
+    const refreshAfterLocationCreate = () => {
+      if (!locationMasterTabOpened.current) return;
+      locationMasterTabOpened.current = false;
+      void loadActiveLocations();
+    };
+    window.addEventListener("focus", refreshAfterLocationCreate);
+    return () => window.removeEventListener("focus", refreshAfterLocationCreate);
+  }, [loadActiveLocations, showLocationPrompt]);
+
+  const openLocationPrompt = () => {
+    setError("");
+    setLocationLookupError("");
+    setShowLocationPrompt(true);
+    void loadActiveLocations();
+  };
+
   const groupedRecords = useMemo(() => {
     if (!bill) return [];
     const groups = new Map<string, { recordNumber: string; styleName: string; itemType: string; lines: BillLine[] }>();
@@ -85,13 +160,22 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
   }, [bill]);
 
   const createStock = async () => {
-    if (!bill || !window.confirm(`Approve ${bill.documentNumber} and create Finished Goods stock?`)) return;
+    if (!bill || !selectedLocationId) {
+      setLocationLookupError("Select an active location before approving this purchase bill.");
+      return;
+    }
     setWorking(true); setError(""); setMessage("");
     try {
-      const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/pos/purchase-bill/${encodeURIComponent(billId)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "create-stock" }) });
+      const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/pos/purchase-bill/${encodeURIComponent(billId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "create-stock", locationId: selectedLocationId }),
+      });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Unable to create Finished Goods stock.");
-      setBill(data.bill); setMessage("Approved and created Finished Goods stock from this POS purchase bill.");
+      setBill(data.bill);
+      setMessage("Approved and created Finished Goods stock from this POS purchase bill.");
+      setShowLocationPrompt(false);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Unable to create Finished Goods stock.");
     } finally { setWorking(false); }
@@ -99,9 +183,9 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
 
   return <Page as="div"><Section className="space-y-5">
     {loading ? <div className="rounded-lg border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">Loading purchase bill details...</div> : error && !bill ? <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : bill ? <>
-      <header className="erp-page-header items-start"><div><p className="erp-eyebrow">POS Purchase Bill</p><h1 className="erp-page-heading mt-0.5">{bill.documentNumber}</h1><p className="mt-0.5 text-xs text-slate-500">Supplier bill {bill.billNumber} · {date(bill.billDate)} · {bill.status}</p></div><div className="flex flex-wrap gap-2"><Button type="button" variant="secondary" size="sm" onClick={() => setShowQrRequest(true)} disabled={!bill.lines.length}><QrCode className="h-4 w-4" aria-hidden="true" /> Request item barcodes</Button><Button type="button" onClick={createStock} disabled={working || bill.lines.every((line) => Boolean(line.stock))} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300">{working ? "Creating stock..." : bill.lines.every((line) => Boolean(line.stock)) ? "Stock Created" : "Approve & Create Stock"}</Button></div></header>
+      <header className="erp-page-header items-start"><div><p className="erp-eyebrow">POS Purchase Bill</p><h1 className="erp-page-heading mt-0.5">{bill.documentNumber}</h1><p className="mt-0.5 text-xs text-slate-500">Supplier bill {bill.billNumber} · {date(bill.billDate)} · {bill.status}</p></div><div className="flex flex-wrap gap-2"><Button type="button" variant="secondary" size="sm" onClick={() => setShowQrRequest(true)} disabled={!bill.lines.length}><QrCode className="h-4 w-4" aria-hidden="true" /> Request item barcodes</Button><Button type="button" onClick={openLocationPrompt} disabled={working || bill.lines.every((line) => Boolean(line.stock))} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300">{working ? "Creating stock..." : bill.lines.every((line) => Boolean(line.stock)) ? "Stock Created" : "Approve & Create Stock"}</Button></div></header>
       {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}{message && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{message}</div>}
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><div className="rounded-lg border border-slate-200 bg-white p-4"><p className="text-[10px] font-bold uppercase text-slate-500">Vendor</p><p className="mt-2 font-bold text-slate-950">{bill.vendor.vendor}</p><p className="mt-1 text-xs text-slate-500">GSTIN {bill.vendor.gst_number || "-"}</p></div><div className="rounded-lg border border-slate-200 bg-white p-4"><p className="text-[10px] font-bold uppercase text-slate-500">Bill Date</p><p className="mt-2 font-bold text-slate-950">{date(bill.billDate)}</p><p className="mt-1 text-xs text-slate-500">Tax mode {bill.taxMode}</p></div><div className="rounded-lg border border-slate-200 bg-white p-4"><p className="text-[10px] font-bold uppercase text-slate-500">Quantity</p><p className="mt-2 font-bold text-slate-950">{bill.totalQuantity}</p><p className="mt-1 text-xs text-slate-500">{bill.lines.length} item lines</p></div><div className="rounded-lg border border-slate-200 bg-white p-4"><p className="text-[10px] font-bold uppercase text-slate-500">Taxable Amount</p><p className="mt-2 font-bold text-slate-950">{money(bill.subtotal)}</p></div><div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4"><p className="text-[10px] font-bold uppercase text-emerald-700">Bill Total</p><p className="mt-2 text-lg font-bold text-emerald-900">{money(bill.total)}</p><p className="mt-1 text-xs text-emerald-700">GST {money(bill.tax)}</p></div></section>
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><div className="rounded-lg border border-slate-200 bg-white p-4"><p className="text-[10px] font-bold uppercase text-slate-500">Vendor</p><p className="mt-2 font-bold text-slate-950">{bill.vendor.vendor}</p><p className="mt-1 text-xs text-slate-500">GSTIN {bill.vendor.gst_number || "-"}</p></div><div className="rounded-lg border border-slate-200 bg-white p-4"><p className="text-[10px] font-bold uppercase text-slate-500">Entity</p><p className="mt-2 font-bold text-slate-950">{bill.entityName || "Legacy bill — assigned when stock is created"}</p><p className="mt-1 text-xs text-slate-500">Bill date {date(bill.billDate)}</p></div><div className="rounded-lg border border-slate-200 bg-white p-4"><p className="text-[10px] font-bold uppercase text-slate-500">Quantity</p><p className="mt-2 font-bold text-slate-950">{bill.totalQuantity}</p><p className="mt-1 text-xs text-slate-500">{bill.lines.length} item lines</p></div><div className="rounded-lg border border-slate-200 bg-white p-4"><p className="text-[10px] font-bold uppercase text-slate-500">Taxable Amount</p><p className="mt-2 font-bold text-slate-950">{money(bill.subtotal)}</p><p className="mt-1 text-xs text-slate-500">Tax mode {bill.taxMode}</p></div><div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4"><p className="text-[10px] font-bold uppercase text-emerald-700">Bill Total</p><p className="mt-2 text-lg font-bold text-emerald-900">{money(bill.total)}</p><p className="mt-1 text-xs text-emerald-700">GST {money(bill.tax)}</p></div></section>
       <div className="space-y-4">{groupedRecords.map((group) => <section key={group.recordNumber} className="overflow-hidden rounded-lg border border-slate-200 bg-white"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700">Purchase Bill Item Group</p><h2 className="mt-1 font-bold text-slate-950">{group.recordNumber} · {group.styleName}</h2></div><span className="rounded-full bg-slate-200 px-2.5 py-1 text-[10px] font-bold text-slate-700">{group.itemType.replaceAll("_", " ")}</span></div><div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left text-xs"><thead className="border-b border-slate-200 text-[10px] font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Item</th><th className="px-4 py-3">Size</th><th className="px-4 py-3 text-right">Qty</th><th className="px-4 py-3 text-right">Purchase Price</th><th className="px-4 py-3 text-right">GST</th><th className="px-4 py-3">HSN</th><th className="px-4 py-3">Stock</th></tr></thead><tbody className="divide-y divide-slate-100">{group.lines.map((line) => <tr key={line.id}><td className="px-4 py-3 font-semibold text-slate-950">{line.itemName || group.styleName}</td><td className="px-4 py-3 text-slate-700">{line.size || "-"}</td><td className="px-4 py-3 text-right font-bold">{line.quantity}</td><td className="px-4 py-3 text-right">{money(line.purchasePrice)}</td><td className="px-4 py-3 text-right">{line.gstRate || "0"}%</td><td className="px-4 py-3">{line.hsnCode || "-"}</td><td className="px-4 py-3">{line.stock ? <span className="font-semibold text-emerald-700">Created · {line.stock.sku_code || line.stock.id}</span> : <span className="text-amber-700">Pending</span>}</td></tr>)}</tbody></table></div></section>)}</div>
     </> : null}
     {bill && showQrRequest && (
@@ -114,5 +198,77 @@ export default function PurchaseBillDetailPage({ workspaceId, organizationId, bi
         onSubmitted={submitQrRequest}
       />
     )}
+    <Modal
+      open={showLocationPrompt}
+      onClose={() => {
+        if (!working) setShowLocationPrompt(false);
+      }}
+      ariaLabelledBy="purchase-stock-location-title"
+      size="square"
+      closeOnBackdrop={!working}
+    >
+      <div className="space-y-6 p-6">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--erp-brand)]">Finished Goods stock</p>
+          <h2 id="purchase-stock-location-title" className="mt-1 text-xl font-bold text-[var(--erp-text)]">Choose stock location</h2>
+          <p className="mt-2 text-sm text-[var(--erp-muted)]">Select the active location where this purchase bill’s stock will be received.</p>
+        </div>
+        <div className="flex items-end gap-2">
+          <div className="min-w-0 flex-1">
+            <Select
+              id="purchase-stock-location"
+              label="Active stock location"
+              value={selectedLocationId}
+              disabled={loadingLocations || working}
+              onChange={(event) => {
+                setSelectedLocationId(event.target.value);
+                setLocationLookupError("");
+              }}
+            >
+              <option value="">
+                {loadingLocations ? "Loading locations..." : locations.length ? "Select location" : "No active locations"}
+              </option>
+              {locations.map((location) => (
+                <option key={location.id} value={location.id}>{location.label}</option>
+              ))}
+            </Select>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="min-h-10 px-2"
+            aria-label="Create stock location in a new tab"
+            title="Create stock location in a new tab"
+            disabled={working}
+            onClick={() => {
+              locationMasterTabOpened.current = true;
+              window.open(
+                `/dashboard/${encodeURIComponent(workspaceId)}/organizations/${encodeURIComponent(organizationId)}/admin/master-data/location/create`,
+                "_blank",
+                "noopener,noreferrer",
+              );
+            }}
+          >
+            <Plus aria-hidden="true" className="h-4 w-4" />
+          </Button>
+        </div>
+        {locationLookupError ? (
+          <p role="alert" className="rounded-lg border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">{locationLookupError}</p>
+        ) : null}
+        {!loadingLocations && !locationLookupError && locations.length === 0 ? (
+          <p className="text-sm text-[var(--erp-muted)]">No active locations are available. Create a location with +, then return here to refresh the list.</p>
+        ) : null}
+        {error ? (
+          <p role="alert" className="rounded-lg border border-[var(--erp-danger)] bg-[var(--erp-surface)] p-3 text-sm text-[var(--erp-danger)]">{error}</p>
+        ) : null}
+        <div className="flex justify-end gap-3 border-t border-[var(--erp-border)] pt-4">
+          <Button type="button" variant="secondary" disabled={working} onClick={() => setShowLocationPrompt(false)}>Cancel</Button>
+          <Button type="button" disabled={working || loadingLocations || !selectedLocationId} onClick={() => void createStock()}>
+            {working ? "Creating stock..." : "Approve & Create Stock"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   </Section></Page>;
 }

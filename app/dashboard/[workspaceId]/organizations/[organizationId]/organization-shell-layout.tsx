@@ -10,6 +10,7 @@ import { ERP_MODULES } from "@/components/erp/erp-config-registry";
 import { validateOrganizationAccess } from "@/lib/services/platform/restriction-guard";
 import { getOrganizationShellContext, requireOrganizationPermission } from "@/lib/services/organizations/organization-service";
 import {
+  getFirstAvailableOrganizationModulePath,
   OrganizationModuleVisibilityError,
   isOrganizationModuleAvailable,
   isOrganizationModuleVisible,
@@ -284,6 +285,10 @@ export default async function OrganizationShellLayout({
   if (routeModule) {
     const routeModuleStatus = moduleStatuses.find(({ moduleKey }) => moduleKey === routeModule.key);
     if (!routeModuleStatus || !isOrganizationModuleAvailable(routeModuleStatus.status, routeModuleStatus.isVisible)) {
+      const fallbackModulePath = getFirstAvailableOrganizationModulePath(moduleStatuses);
+      if (fallbackModulePath) {
+        redirect(`${organizationPath}${fallbackModulePath}`);
+      }
       redirect(`${organizationPath}/access-blocked?message=${encodeURIComponent("This module is not visible for your organization. Contact your organization administrator.")}`);
     }
   }

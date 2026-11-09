@@ -4,6 +4,8 @@ export const SESSION_COOKIE_NAME = "cc_session";
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 export const PLATFORM_SESSION_COOKIE_NAME = "cc_platform_session";
 export const PLATFORM_SESSION_TTL_SECONDS = 60 * 60 * 24;
+export const WORKSPACE_SUPPORT_SESSION_COOKIE_NAME = "cc_workspace_support_session";
+export const WORKSPACE_SUPPORT_SESSION_TTL_SECONDS = 60 * 30;
 
 export function signValue(value: string) {
   const secret = process.env.AUTH_SECRET;
@@ -25,6 +27,14 @@ export function createPlatformSessionToken(adminId: string) {
   const expiresAt = Math.floor(Date.now() / 1000) + PLATFORM_SESSION_TTL_SECONDS;
   const payload = `${adminId}.${expiresAt}`;
   return `${payload}.${signValue(`platform:${payload}`)}`;
+}
+
+export function createWorkspaceSupportSessionToken(
+  supportSessionId: string,
+  expiresAt: number,
+) {
+  const payload = `${supportSessionId}.${expiresAt}`;
+  return `${payload}.${signValue(`workspace-support:${payload}`)}`;
 }
 
 function verifyToken(token: string | null | undefined, signaturePrefix = "") {
@@ -76,4 +86,10 @@ export function verifySessionToken(token: string | null | undefined) {
 
 export function verifyPlatformSessionToken(token: string | null | undefined) {
   return verifyToken(token, "platform:");
+}
+
+export function verifyWorkspaceSupportSessionToken(
+  token: string | null | undefined,
+) {
+  return verifyToken(token, "workspace-support:");
 }

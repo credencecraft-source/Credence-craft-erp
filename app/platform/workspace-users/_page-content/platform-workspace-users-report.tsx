@@ -4,10 +4,11 @@ import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import Badge from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
 import Tabs from "@/components/ui/Tabs";
 import { ReportGrid } from "@/components/reports/report-grid-display";
 
-type OrganizationFilter = "all" | "created" | "not-created";
+type OrganizationFilter = "created" | "not-created";
 
 type WorkspaceUserReportRow = {
   id: string;
@@ -22,6 +23,7 @@ type WorkspaceUserReportRow = {
   organisationCount: number;
   totalRecords: number;
   status: string;
+  canOpenUserAccount: boolean;
 };
 
 const fields = [
@@ -59,11 +61,11 @@ export default function PlatformWorkspaceUsersReport({
   const [visibleFields, setVisibleFields] = useState<string[]>(
     defaultVisibleFields,
   );
-  const [organizationFilter, setOrganizationFilter] = useState<OrganizationFilter>("all");
+  const [organizationFilter, setOrganizationFilter] =
+    useState<OrganizationFilter>("not-created");
   const filteredUsers = useMemo(() => users.filter((user) => {
     if (organizationFilter === "created") return user.organisationCount > 0;
-    if (organizationFilter === "not-created") return user.organisationCount === 0;
-    return true;
+    return user.organisationCount === 0;
   }), [organizationFilter, users]);
   const organizationCreatedCount = useMemo(
     () => users.filter((user) => user.organisationCount > 0).length,
@@ -88,9 +90,8 @@ export default function PlatformWorkspaceUsersReport({
         onChange={setOrganizationFilter}
         ariaLabel="Filter workspace users by organization"
         tabs={[
-          { value: "all", label: `All users (${users.length.toLocaleString("en-IN")})`, panelId: "workspace-users-report-panel" },
-          { value: "created", label: `Organization created (${organizationCreatedCount.toLocaleString("en-IN")})`, panelId: "workspace-users-report-panel" },
           { value: "not-created", label: `Organization not created (${organizationNotCreatedCount.toLocaleString("en-IN")})`, panelId: "workspace-users-report-panel" },
+          { value: "created", label: `Organization created (${organizationCreatedCount.toLocaleString("en-IN")})`, panelId: "workspace-users-report-panel" },
         ]}
       />
       <div id="workspace-users-report-panel" role="tabpanel">
@@ -107,12 +108,24 @@ export default function PlatformWorkspaceUsersReport({
           onRowClick={openUser}
           onRowAction={openUser}
           rowActionLabel="Open"
+          rowActions={(user) =>
+            user.canOpenUserAccount ? (
+              <form
+                action={`/api/platform/workspace-users/${encodeURIComponent(user.id)}/support-access`}
+                method="post"
+                target="_blank"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <Button type="submit" variant="secondary" size="sm" className="text-[10px]">
+                  Open user account
+                </Button>
+              </form>
+            ) : null
+          }
           emptyMessage={
             organizationFilter === "created"
               ? "No workspace users have created an organization."
-              : organizationFilter === "not-created"
-                ? "All workspace users have an organization."
-                : "No workspace users found."
+              : "No workspace users without an organization."
           }
           renderCell={(fieldKey, user) => {
             if (fieldKey === "email") {

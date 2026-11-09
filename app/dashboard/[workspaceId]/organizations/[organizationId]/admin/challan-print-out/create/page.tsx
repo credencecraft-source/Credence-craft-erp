@@ -33,7 +33,13 @@ export default async function Page({
     <ChallanPrintTemplateFormPage
       workspaceId={workspaceId}
       organizationId={organizationId}
-      initialDocumentType={search.documentType === "QUOTATION" ? "QUOTATION" : "SALES_ORDER"}
+      initialDocumentType={
+        search.documentType === "QUOTATION"
+          ? "QUOTATION"
+          : search.documentType === "POS_INVOICE"
+            ? "POS_INVOICE"
+            : "SALES_ORDER"
+      }
     />
   );
 }

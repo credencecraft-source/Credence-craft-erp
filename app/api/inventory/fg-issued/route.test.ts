@@ -40,7 +40,7 @@ describe("FG Issued route", () => {
 
   it("queries only the authorized internal organization with validated report filters", async () => {
     const response = await GET(new Request(
-      "http://localhost/api/inventory/fg-issued?organizationId=public-org-1&dateFrom=2026-10-01&dateTo=2026-10-31&sourceType=POS_INVOICE&movement=REVERSAL&page=2&pageSize=25",
+      "http://localhost/api/inventory/fg-issued?organizationId=public-org-1&dateFrom=2026-10-01&dateTo=2026-10-31&sourceType=POS_INVOICE&movement=REVERSAL&skuStockId=sku-stock-1&page=2&pageSize=25",
     ));
 
     expect(response.status).toBe(200);
@@ -50,6 +50,7 @@ describe("FG Issued route", () => {
       dateTo: new Date("2026-10-31T23:59:59.999Z"),
       sourceType: "POS_INVOICE",
       movement: "REVERSAL",
+      skuStockId: "sku-stock-1",
       page: 2,
       pageSize: 25,
     });
@@ -63,6 +64,9 @@ describe("FG Issued route", () => {
       "movement=RETURN",
       "page=0",
       "pageSize=101",
+      `skuStockId=${"s".repeat(101)}`,
+      "skuStockId=%20%20",
+      "skuStockId=sku-1&skuStockId=sku-2",
     ];
 
     for (const query of invalidQueries) {

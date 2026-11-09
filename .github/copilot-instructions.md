@@ -74,6 +74,12 @@ These rules govern every feature, bug fix, refactor, migration, route, API, serv
 - Use the configured test branch and remote only when explicitly asked to push. Never push directly to production, force-push, rewrite history, or include unrelated work; ask for the target when branch or remote is unclear.
 - Run relevant regression tests with the configured Vitest runner (`npm test`); distinguish automated test coverage from lint, typecheck, build, and manual smoke checks.
 
+## Pre-Push Build Gate
+
+- Before every requested push, commit the intended changes, then run focused tests, lint, typecheck, and `npm run build` in a clean detached Git worktree checked out at the exact candidate commit SHA. Restore dependencies from the lockfile and generate Prisma Client there as needed; never copy `.env` files or secrets into the worktree.
+- A successful build in a dirty working tree is not evidence that the candidate commit builds: untracked or unstaged local files can satisfy imports that are absent from the commit. If the clean-commit build or any required check fails or cannot run, do not push. Fix the issue, create a new candidate commit, and rerun the gate.
+- Before pushing, verify the confirmed test remote/branch and candidate SHA. After pushing, verify the remote branch points to that SHA and report CI/Vercel results only when observed; a successful push alone does not mean deployment succeeded.
+
 ## Response Summary Format
 
 - For completed task summaries, use exactly two bullet points.

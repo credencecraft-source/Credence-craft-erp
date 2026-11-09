@@ -11,7 +11,7 @@ import Tabs from "@/components/ui/Tabs";
 import Textarea from "@/components/ui/Textarea";
 import ChallanPrintTemplatePreview from "./challan-print-template-preview";
 import {
-  DEFAULT_ORGANIZATION_PRINT_TEMPLATE_DESIGN,
+  getDefaultOrganizationPrintTemplateDesign,
   type OrganizationPrintTemplateDesign,
 } from "@/lib/services/distribution/organization-print-template-contract";
 
@@ -29,12 +29,13 @@ type PrintTemplate = {
 const documentOptions = [
   { label: "Sales Order", value: "SALES_ORDER" },
   { label: "Quotation", value: "QUOTATION" },
+  { label: "POS Invoice", value: "POS_INVOICE" },
 ];
 
 const headerFields = [
   { key: "companyLogo", label: "Company logo" },
   { key: "companyName", label: "Company name and GST details" },
-  { key: "documentNumber", label: "Sales Order / Quotation number" },
+  { key: "documentNumber", label: "Document number" },
   { key: "documentDate", label: "Document date" },
   { key: "status", label: "Document status" },
 ] as const;
@@ -46,12 +47,14 @@ const partyFields = [
 
 const itemFields = [
   { key: "description", label: "Item / Description" },
+  { key: "hsnCode", label: "HSN code" },
   { key: "booking", label: "Booking number" },
   { key: "order", label: "Order number" },
   { key: "sizeBreakdown", label: "Size breakdown" },
   { key: "quantity", label: "Quantity" },
   { key: "unitPrice", label: "Unit price" },
   { key: "beforeTax", label: "Before tax" },
+  { key: "gstRate", label: "GST rate" },
   { key: "tax", label: "Tax" },
   { key: "amount", label: "Line amount" },
 ] as const;
@@ -95,7 +98,7 @@ export default function ChallanPrintTemplateFormPage({
     template?.documentType ?? initialDocumentType,
   );
   const [design, setDesign] = useState<OrganizationPrintTemplateDesign>(
-    template?.designConfig ?? DEFAULT_ORGANIZATION_PRINT_TEMPLATE_DESIGN,
+    template?.designConfig ?? getDefaultOrganizationPrintTemplateDesign(initialDocumentType),
   );
   const [isActive, setIsActive] = useState(template?.isActive ?? true);
   const [isDefault, setIsDefault] = useState(template?.isDefault ?? true);
@@ -241,8 +244,12 @@ export default function ChallanPrintTemplateFormPage({
               value={documentType}
               options={documentOptions}
               disabled={Boolean(template)}
-              onChange={(event) => setDocumentType(event.currentTarget.value as DocumentType)}
-              hint={template ? "Document type is fixed after a template is created." : "Choose Sales Order or Quotation."}
+              onChange={(event) => {
+                const nextType = event.currentTarget.value as DocumentType;
+                setDocumentType(nextType);
+                setDesign(getDefaultOrganizationPrintTemplateDesign(nextType));
+              }}
+              hint={template ? "Document type is fixed after a template is created." : "Choose the document type this format will print."}
             />
             <div className="grid min-w-0 gap-4 sm:grid-cols-2">
               <Select
@@ -325,7 +332,9 @@ export default function ChallanPrintTemplateFormPage({
                 Choose which customer address blocks appear on the printed document.
               </p>
               <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-                {partyFields.map(({ key, label }) => (
+                {partyFields
+                  .filter(({ key }) => documentType !== "POS_INVOICE" || key === "billTo")
+                  .map(({ key, label }) => (
                   <Input
                     key={key}
                     type="checkbox"
@@ -349,7 +358,10 @@ export default function ChallanPrintTemplateFormPage({
                   type="checkbox"
                   label={label}
                   checked={design.sections.itemFields.includes(key)}
-                  disabled={design.sections.itemFields.includes(key) && design.sections.itemFields.length === 1}
+                  disabled={
+                    (documentType === "POS_INVOICE" && key === "booking")
+                    || (design.sections.itemFields.includes(key) && design.sections.itemFields.length === 1)
+                  }
                   onChange={(event) => updateSectionFields("itemFields", key, event.currentTarget.checked)}
                 />
               ))}
@@ -371,6 +383,7 @@ export default function ChallanPrintTemplateFormPage({
             <div className="grid min-w-0 gap-3 sm:grid-cols-2">
               {summaryFields
                 .filter(({ key }) => key !== "linkedQuotations" || documentType === "SALES_ORDER")
+                .filter(({ key }) => key !== "deliveryCharge" || documentType !== "POS_INVOICE")
                 .map(({ key, label }) => (
                 <Input
                   key={key}

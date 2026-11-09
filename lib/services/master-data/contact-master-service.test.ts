@@ -155,6 +155,14 @@ describe("contact master numbering", () => {
       select: { current_value: true },
     });
     expect(mocks.tx.contact.create.mock.calls.map(([args]) => args.data.code)).toEqual(["CT1", "CT2"]);
+    expect(mocks.tx.masterBuyer.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        organization_id: "org-1",
+        contact_id: "contact-CT1",
+        buyer_name: "ACME APPAREL",
+        is_active: true,
+      }),
+    }));
     expect(mocks.transaction).toHaveBeenNthCalledWith(
       1,
       expect.any(Function),
@@ -541,7 +549,10 @@ describe("contact master numbering", () => {
       where: { organization_id: "org-1", contact_id: "contact-1" },
       data: { is_active: false },
     });
-    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { maxWait: 10_000, timeout: 30_000 },
+    );
   });
 
   it("does not mutate contacts when any selected ID is outside the organization", async () => {
@@ -591,6 +602,10 @@ describe("contact master numbering", () => {
     expect(mocks.tx.contact.deleteMany).toHaveBeenCalledWith({
       where: { organization_id: "org-1", id: { in: contactIds } },
     });
+    expect(mocks.transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { maxWait: 10_000, timeout: 30_000 },
+    );
   });
 
   it("deletes unused contacts and their unreferenced projections while retaining contacts used by orders", async () => {
@@ -652,7 +667,10 @@ describe("contact master numbering", () => {
         details: { code: "CT1", reason: "UNUSED_CONTACT_BULK_DELETE" },
       }],
     });
-    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { maxWait: 10_000, timeout: 30_000 },
+    );
   });
 
   it("retains contacts referenced by sales orders and makes no changes when all are in use", async () => {
