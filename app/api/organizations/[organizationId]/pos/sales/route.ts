@@ -5,11 +5,52 @@ import { prisma } from "@/lib/database/prisma-client";
 import {
   createPosGeneralStockSale,
   isPosPurchaseRewardAvailable,
+  type PosInvoiceShippingAddress,
 } from "@/lib/services/pos/pos-general-stock-sale-service";
 import { requireOrganizationContext } from "@/lib/services/organizations/organization-service";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
+
+function parseShippingAddress(value: unknown): PosInvoiceShippingAddress | null {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Enter a valid shipping address.");
+  }
+  const record = value as Record<string, unknown>;
+  const fields = [
+    ["recipientName", 200],
+    ["phone", 40],
+    ["addressLine1", 200],
+    ["city", 100],
+    ["state", 100],
+    ["postalCode", 20],
+    ["countryCode", 2],
+  ] as const;
+  for (const [field, maximum] of fields) {
+    if (typeof record[field] !== "string"
+      || !record[field].trim()
+      || record[field].trim().length > maximum) {
+      throw new Error("Enter a valid shipping address.");
+    }
+  }
+  if (record.addressLine2 !== undefined && record.addressLine2 !== null
+    && (typeof record.addressLine2 !== "string" || record.addressLine2.trim().length > 200)) {
+    throw new Error("Enter a valid shipping address.");
+  }
+  const countryCode = String(record.countryCode).trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(countryCode)) throw new Error("Enter a valid shipping country code.");
+  return {
+    recipientName: String(record.recipientName).trim(),
+    phone: String(record.phone).trim(),
+    addressLine1: String(record.addressLine1).trim(),
+    addressLine2: typeof record.addressLine2 === "string" ? record.addressLine2.trim() || null : null,
+    city: String(record.city).trim(),
+    state: String(record.state).trim(),
+    postalCode: String(record.postalCode).trim(),
+    countryCode,
+  };
+}
 
 function offerSnapshot(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -140,6 +181,7 @@ export async function GET(
           customer: invoice.customer ?? "",
           entityName: invoice.entity?.entity_name ?? "",
           status: invoice.status,
+          shippingAddress: invoice.shipping_address ?? null,
           appliedCouponCode: invoice.couponRedemption?.coupon_code ?? null,
           appliedCouponName: invoice.couponRedemption?.coupon.name ?? null,
           appliedCouponDiscountType: invoice.couponRedemption?.coupon.discount_type ?? null,
@@ -290,6 +332,22 @@ export async function POST(
     const { organizationId } = await context.params;
     const organization = await requireOrganizationContext(user.id, organizationId, ["OWNER", "ADMIN", "FINANCE", "INVENTORY"]);
     const body = await request.json() as Record<string, unknown>;
+    const salesChannel = body.salesChannel === undefined ? "COUNTER" : body.salesChannel;
+    if (salesChannel !== "COUNTER" && salesChannel !== "ONLINE_STORE") {
+      return NextResponse.json({ error: "Select a valid POS sales channel." }, { status: 400 });
+    }
+    let shippingAddress: PosInvoiceShippingAddress | null = null;
+    try {
+      shippingAddress = parseShippingAddress(body.shippingAddress);
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : "Enter a valid shipping address." },
+        { status: 400 },
+      );
+    }
+    if (salesChannel === "ONLINE_STORE" && !shippingAddress) {
+      return NextResponse.json({ error: "A shipping address is required for an online-store sale." }, { status: 400 });
+    }
     if (!Array.isArray(body.lines)) {
       return NextResponse.json({ error: "Invoice lines are required." }, { status: 400 });
     }
@@ -338,6 +396,8 @@ export async function POST(
       customer: typeof body.customer === "string" ? body.customer : null,
       customerContactId: typeof body.customerContactId === "string" ? body.customerContactId : null,
       couponCode: typeof body.couponCode === "string" ? body.couponCode : null,
+      salesChannel,
+      shippingAddress,
       taxMode,
       lines,
     });

@@ -68,6 +68,16 @@ describe("POS sales invoice detail route", () => {
       invoice_date: new Date("2026-10-17T00:00:00Z"),
       customer: "Customer",
       entity: { entity_name: "Store A" },
+      shipping_address: {
+        recipientName: "Store Customer",
+        phone: "9876543210",
+        addressLine1: "12 Market Road",
+        addressLine2: null,
+        city: "Bengaluru",
+        state: "Karnataka",
+        postalCode: "560001",
+        countryCode: "IN",
+      },
       couponRedemption: {
         coupon_code: "REDEEMED-CODE",
         discount_amount: 15,
@@ -141,6 +151,11 @@ describe("POS sales invoice detail route", () => {
     });
     expect((await response.json()).invoices[0]).toMatchObject({
       invoiceNumber: "POS-0001",
+      shippingAddress: {
+        recipientName: "Store Customer",
+        addressLine1: "12 Market Road",
+        postalCode: "560001",
+      },
       issuer: { name: "Example Organization", gstNumber: "29ABCDE1234F1Z5" },
       appliedCouponCode: "REDEEMED-CODE",
       appliedCouponName: "WELCOME OFFER",
@@ -249,6 +264,77 @@ describe("POS sales invoice detail route", () => {
       })],
     }));
     expect(data.invoice.invoiceNo).toBe("POS-0001");
+  });
+
+  it("passes validated online shipping details to the authorized catalog-priced sale service", async () => {
+    const shippingAddress = {
+      recipientName: "Store Customer",
+      phone: "9876543210",
+      addressLine1: "12 Market Road",
+      addressLine2: null,
+      city: "Bengaluru",
+      state: "Karnataka",
+      postalCode: "560001",
+      countryCode: "IN",
+    };
+    const response = await POST(
+      new Request("http://localhost/api/organizations/public-org/pos/sales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          salesChannel: "ONLINE_STORE",
+          requestKey: "store-request-1",
+          entityId: "entity-1",
+          invoiceDate: "2026-10-17",
+          customer: shippingAddress.recipientName,
+          taxMode: "LOCAL",
+          shippingAddress,
+          lines: [{
+            stockId: "sku-stock-1",
+            stockType: "SKU",
+            quantity: 1,
+            rate: 1,
+            gstRate: 0,
+            discountPercent: 0,
+          }],
+        }),
+      }),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocks.requireOrganizationContext).toHaveBeenCalledWith(
+      "user-1",
+      "public-org",
+      ["OWNER", "ADMIN", "FINANCE", "INVENTORY"],
+    );
+    expect(mocks.createPosGeneralStockSale).toHaveBeenCalledWith(expect.objectContaining({
+      organizationId: "internal-org-1",
+      salesChannel: "ONLINE_STORE",
+      shippingAddress,
+      lines: [expect.objectContaining({ stockId: "sku-stock-1", stockType: "SKU" })],
+    }));
+  });
+
+  it("rejects online checkout without an address before calling the sale service", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/organizations/public-org/pos/sales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          salesChannel: "ONLINE_STORE",
+          requestKey: "store-request-missing-address",
+          entityId: "entity-1",
+          invoiceDate: "2026-10-17",
+          taxMode: "LOCAL",
+          lines: [{ stockId: "sku-stock-1", stockType: "SKU", quantity: 1, rate: 1, gstRate: 0, discountPercent: 0 }],
+        }),
+      }),
+      { params: Promise.resolve({ organizationId: "public-org" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.createPosGeneralStockSale).not.toHaveBeenCalled();
   });
 
   it("requires an Entity before creating a POS invoice", async () => {

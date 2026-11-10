@@ -18,6 +18,7 @@ import { createFgMaterialIssue } from "@/lib/services/inventory/fg-issued-servic
 import { GENERAL_FINISHED_GOODS_SKU_SOURCES } from "@/lib/services/inventory/finished-goods-stock-overview";
 import { createAuditEvent } from "@/lib/services/organizations/audit-event-service";
 import { reserveProcurementDocumentNumber } from "@/lib/services/orders/procurement-document-number-service";
+import { normalizeUppercase } from "@/lib/utilities/text-case";
 
 type PosSaleLineInput = {
   stockId: string;
@@ -30,15 +31,28 @@ type PosSaleLineInput = {
   offerId?: string | null;
 };
 
+export type PosInvoiceShippingAddress = {
+  recipientName: string;
+  phone: string;
+  addressLine1: string;
+  addressLine2: string | null;
+  city: string;
+  state: string;
+  postalCode: string;
+  countryCode: string;
+};
+
 type CreatePosSaleInput = {
   organizationId: string;
-  actorId: string;
+  actorId: string | null;
   requestKey: string;
   entityId: string;
   invoiceDate: string;
   customer?: string | null;
   customerContactId?: string | null;
   couponCode?: string | null;
+  salesChannel?: "COUNTER" | "ONLINE_STORE";
+  shippingAddress?: PosInvoiceShippingAddress | null;
   taxMode: "LOCAL" | "INTERSTATE";
   lines: PosSaleLineInput[];
 };
@@ -56,6 +70,10 @@ type PosSaleStockRecord = {
   sub_product_category: string | null;
   location_id: string;
   current_stock: number | Prisma.Decimal;
+  sales_price?: number | Prisma.Decimal | null;
+  mrp?: number | Prisma.Decimal | null;
+  gst_rate?: number | Prisma.Decimal | null;
+  hsn_code?: string | null;
 };
 
 const POS_SALE_OFFER_INCLUDE = {
@@ -191,6 +209,40 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
   if (input.taxMode !== "LOCAL" && input.taxMode !== "INTERSTATE") {
     throw new Error("Select a valid tax mode.");
   }
+  const salesChannel = input.salesChannel ?? "COUNTER";
+  if (salesChannel !== "COUNTER" && salesChannel !== "ONLINE_STORE") {
+    throw new Error("Select a valid POS sales channel.");
+  }
+  const shippingAddress = input.shippingAddress ?? null;
+  if (salesChannel === "ONLINE_STORE" && !shippingAddress) {
+    throw new Error("A shipping address is required for an online-store sale.");
+  }
+  if (salesChannel === "ONLINE_STORE" && shippingAddress?.countryCode.trim().toUpperCase() !== "IN") {
+    throw new Error("Online-store checkout currently supports shipping addresses within India.");
+  }
+  if (shippingAddress) {
+    const requiredAddressFields = [
+      shippingAddress.recipientName,
+      shippingAddress.phone,
+      shippingAddress.addressLine1,
+      shippingAddress.city,
+      shippingAddress.state,
+      shippingAddress.postalCode,
+      shippingAddress.countryCode,
+    ];
+    if (requiredAddressFields.some((value) => typeof value !== "string" || !value.trim())
+      || (shippingAddress.addressLine2 !== null && typeof shippingAddress.addressLine2 !== "string")
+      || shippingAddress.recipientName.trim().length > 200
+      || shippingAddress.phone.trim().length > 40
+      || shippingAddress.addressLine1.trim().length > 200
+      || (shippingAddress.addressLine2?.trim().length ?? 0) > 200
+      || shippingAddress.city.trim().length > 100
+      || shippingAddress.state.trim().length > 100
+      || shippingAddress.postalCode.trim().length > 20
+      || !/^[A-Z]{2}$/.test(shippingAddress.countryCode.trim().toUpperCase())) {
+      throw new Error("Enter a valid shipping address.");
+    }
+  }
   const requestKey = input.requestKey.trim();
   if (!requestKey || requestKey.length > 100) throw new Error("A valid POS sale request key is required.");
   const invoiceDate = parseInvoiceDate(input.invoiceDate);
@@ -205,7 +257,9 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
     && (!requestedCustomerContactId || requestedCustomerContactId.length > 100)) {
     throw new Error("Select a valid customer contact.");
   }
-  const requestedCustomer = input.customer?.trim() || null;
+  const requestedCustomer = input.customer?.trim()
+    ? normalizeUppercase(input.customer.trim())
+    : null;
   if (requestedCustomer && requestedCustomer.length > 255) {
     throw new Error("Customer name must be 255 characters or fewer.");
   }
@@ -234,6 +288,12 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       offerId,
     };
   });
+  if (salesChannel === "ONLINE_STORE"
+    && (requestedCouponCode || normalizedLines.some((line) =>
+      line.stockType !== "SKU" || line.offerId || !line.discountPercent.isZero(),
+    ))) {
+    throw new Error("Online-store sales require eligible SKU items without manual discounts or POS offers.");
+  }
   if (new Set(normalizedLines.map((line) => stockKey(line.stockType, line.stockId))).size !== normalizedLines.length) {
     throw new Error("A General stock record can only appear once per invoice.");
   }
@@ -254,6 +314,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         tax_amount: true,
         total_amount: true,
         coupon_discount_amount: true,
+        shipping_address: true,
         entity: { select: { entity_name: true } },
         couponRedemption: { select: { coupon_code: true } },
         issuedCoupon: { select: { coupon_code: true } },
@@ -283,6 +344,19 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       select: { id: true, entity_name: true },
     });
     if (!entity) throw new Error("Select an active Entity belonging to this organization.");
+    let invoiceTaxMode = input.taxMode;
+    if (salesChannel === "ONLINE_STORE" && shippingAddress) {
+      const organization = await transaction.organization.findFirst({
+        where: { id: input.organizationId },
+        select: { state: true },
+      });
+      const sellerState = normalizeUppercase(organization?.state?.trim() ?? "").replace(/[^A-Z0-9]/g, "");
+      const recipientState = normalizeUppercase(shippingAddress.state.trim()).replace(/[^A-Z0-9]/g, "");
+      if (!sellerState) {
+        throw new Error("Set the organization state before online-store checkout so GST can be calculated.");
+      }
+      invoiceTaxMode = sellerState === recipientState ? "LOCAL" : "INTERSTATE";
+    }
     const customerContact = requestedCustomerContactId
       ? await transaction.contact.findFirst({
           where: {
@@ -343,6 +417,10 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
               sub_product_category: true,
               location_id: true,
               current_stock: true,
+              sales_price: true,
+              mrp: true,
+              gst_rate: true,
+              hsn_code: true,
             },
           })
         : Promise.resolve([]),
@@ -355,6 +433,28 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       })),
       ...skuStockRecords.map((record) => ({ ...record, stockType: "SKU" as const })),
     ];
+    if (stockRecords.length !== normalizedLines.length) {
+      throw new Error("One or more selected items are not General stock in this organization.");
+    }
+    if (stockRecords.some((stock) => stock.entity_id !== entity.id)) {
+      throw new Error("Every selected stock item must belong to the selected Entity.");
+    }
+    const stockByKey = new Map(stockRecords.map((stock) => [stockKey(stock.stockType, stock.id), stock]));
+    if (salesChannel === "ONLINE_STORE") {
+      for (const line of normalizedLines) {
+        const stock = stockByKey.get(stockKey(line.stockType, line.stockId));
+        if (!stock || stock.stockType !== "SKU") {
+          throw new Error("Online-store items must be eligible POS SKU stock.");
+        }
+        const catalogPrice = stock.sales_price ?? stock.mrp;
+        if (catalogPrice === null || catalogPrice === undefined || new Prisma.Decimal(catalogPrice).lte(0)) {
+          throw new Error(`${stock.style_name} has no active catalog sales price.`);
+        }
+        line.rate = parseDecimal(String(catalogPrice), "Catalog price", 4);
+        line.gstRate = parseDecimal(String(stock.gst_rate ?? 0), "GST rate", 2, 100);
+        line.hsnCode = stock.hsn_code?.trim() || null;
+      }
+    }
     const requestedGstRates = [...new Set(normalizedLines.map((line) => line.gstRate.toFixed(2)))];
     const configuredGstRates = await transaction.masterGst.findMany({
       where: {
@@ -368,13 +468,6 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       rate.gst?.toFixed(2) ?? "0.00",
       rate,
     ]));
-    if (stockRecords.length !== normalizedLines.length) {
-      throw new Error("One or more selected items are not General stock in this organization.");
-    }
-    if (stockRecords.some((stock) => stock.entity_id !== entity.id)) {
-      throw new Error("Every selected stock item must belong to the selected Entity.");
-    }
-    const stockByKey = new Map(stockRecords.map((stock) => [stockKey(stock.stockType, stock.id), stock]));
     const requestedOfferIds = [...new Set(normalizedLines.flatMap((line) => line.offerId ? [line.offerId] : []))];
     const selectedOffers = requestedOfferIds.length
       ? await transaction.posOffer.findMany({
@@ -414,7 +507,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       if (!configuredRate && !line.gstRate.isZero()) {
         throw new Error(`GST ${line.gstRate.toFixed(2)}% is not configured as active for this organization.`);
       }
-      const componentRate = input.taxMode === "LOCAL"
+      const componentRate = invoiceTaxMode === "LOCAL"
         ? (configuredRate?.cgst_rate && configuredRate.sgst_rate
           ? configuredRate.cgst_rate.plus(configuredRate.sgst_rate)
           : new Prisma.Decimal(0))
@@ -573,13 +666,13 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       const taxAmount = money(taxableAmount.mul(line.gstRate).div(100));
       assertMoneyRange(taxableAmount, "Line amount");
       assertMoneyRange(taxAmount, "Line tax");
-      const cgstAmount = input.taxMode === "LOCAL"
+      const cgstAmount = invoiceTaxMode === "LOCAL"
         ? money(taxableAmount.mul(configuredRate?.cgst_rate ?? 0).div(100))
         : new Prisma.Decimal(0);
-      const sgstAmount = input.taxMode === "LOCAL"
+      const sgstAmount = invoiceTaxMode === "LOCAL"
         ? taxAmount.minus(cgstAmount)
         : new Prisma.Decimal(0);
-      const igstAmount = input.taxMode === "INTERSTATE" ? taxAmount : new Prisma.Decimal(0);
+      const igstAmount = invoiceTaxMode === "INTERSTATE" ? taxAmount : new Prisma.Decimal(0);
       const lineTotal = taxableAmount.plus(taxAmount);
       assertMoneyRange(lineTotal, "Line total");
       totals.subtotal = totals.subtotal.plus(taxableAmount);
@@ -628,7 +721,21 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         invoice_date: invoiceDate,
         customer,
         customer_contact_id: customerContact?.id ?? null,
-        tax_mode: input.taxMode,
+        shipping_address: shippingAddress
+          ? {
+              recipientName: normalizeUppercase(shippingAddress.recipientName.trim()),
+              phone: shippingAddress.phone.trim(),
+              addressLine1: normalizeUppercase(shippingAddress.addressLine1.trim()),
+              addressLine2: shippingAddress.addressLine2?.trim()
+                ? normalizeUppercase(shippingAddress.addressLine2.trim())
+                : null,
+              city: normalizeUppercase(shippingAddress.city.trim()),
+              state: normalizeUppercase(shippingAddress.state.trim()),
+              postalCode: normalizeUppercase(shippingAddress.postalCode.trim()),
+              countryCode: shippingAddress.countryCode.trim().toUpperCase(),
+            }
+          : Prisma.DbNull,
+        tax_mode: invoiceTaxMode,
         status: "POSTED",
         subtotal: totals.subtotal,
         cgst_amount: totals.cgst,
@@ -637,7 +744,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
         tax_amount: totals.cgst.plus(totals.sgst).plus(totals.igst),
         coupon_discount_amount: couponDiscountAmount,
         total_amount: totals.subtotal.plus(totals.cgst).plus(totals.sgst).plus(totals.igst),
-        created_by: input.actorId,
+        created_by: input.actorId ?? "PUBLIC_STORE",
       },
       select: { id: true },
     });
@@ -673,22 +780,24 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
     }
 
     let issuedCouponCode: string | null = null;
-    const rewardCampaign = await transaction.posCoupon.findFirst({
-      where: {
-        organization_id: input.organizationId,
-        coupon_type: PosCouponType.PURCHASE_REWARD,
-        status: PosCouponStatus.ACTIVE,
-        starts_at: { lte: invoiceDate },
-        minimum_purchase: { lte: totals.subtotal },
-        OR: [{ ends_at: null }, { ends_at: { gte: invoiceDate } }],
-      },
-      select: {
-        id: true,
-        discount_value: true,
-        validity_days: true,
-        max_redemptions: true,
-      },
-    });
+    const rewardCampaign = salesChannel === "ONLINE_STORE"
+      ? null
+      : await transaction.posCoupon.findFirst({
+          where: {
+            organization_id: input.organizationId,
+            coupon_type: PosCouponType.PURCHASE_REWARD,
+            status: PosCouponStatus.ACTIVE,
+            starts_at: { lte: invoiceDate },
+            minimum_purchase: { lte: totals.subtotal },
+            OR: [{ ends_at: null }, { ends_at: { gte: invoiceDate } }],
+          },
+          select: {
+            id: true,
+            discount_value: true,
+            validity_days: true,
+            max_redemptions: true,
+          },
+        });
     if (rewardCampaign) {
       if (!customerContact) {
         throw new Error("Select a registered customer to issue the purchase reward for this qualifying sale.");
@@ -783,7 +892,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       posInvoiceId: invoice.id,
       idempotencyKey: `pos-invoice:${invoice.id}:issue`,
       sourceReference: invoiceNo,
-      issuedBy: input.actorId,
+      issuedBy: input.actorId ?? "PUBLIC_STORE",
       lines: invoiceLines.map((line) => {
         const stockType = line.sku_stock_id ? "SKU" : "GENERAL_GRN";
         const sourceId = line.sku_stock_id ?? line.general_stock_receipt_id;
@@ -849,7 +958,7 @@ export async function createPosGeneralStockSale(input: CreatePosSaleInput) {
       customer,
       entityId: entity.id,
       entityName: entity.entity_name,
-      taxMode: input.taxMode,
+      taxMode: invoiceTaxMode,
       subtotal: totals.subtotal.toFixed(2),
       cgstAmount: totals.cgst.toFixed(2),
       sgstAmount: totals.sgst.toFixed(2),

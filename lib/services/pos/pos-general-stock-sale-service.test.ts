@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 const mocks = vi.hoisted(() => ({
   transaction: {
     contact: { findFirst: vi.fn() },
+    organization: { findFirst: vi.fn() },
     masterEntity: { findFirst: vi.fn() },
     finishedGoodsGeneralStockReceipt: { findMany: vi.fn(), updateMany: vi.fn() },
     finishedGoodsSkuStock: { findMany: vi.fn(), updateMany: vi.fn() },
@@ -97,6 +98,7 @@ describe("createPosGeneralStockSale", () => {
     mocks.transaction.finishedGoodsSkuStock.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.finishedGoodsStock.updateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.masterEntity.findFirst.mockResolvedValue({ id: "entity-1", entity_name: "Store A" });
+    mocks.transaction.organization.findFirst.mockResolvedValue({ state: "Karnataka" });
     mocks.transaction.posCoupon.findFirst.mockResolvedValue(null);
     mocks.transaction.posCouponIssue.findFirst.mockResolvedValue(null);
     mocks.transaction.posCouponRedemption.count.mockResolvedValue(0);
@@ -504,6 +506,229 @@ describe("createPosGeneralStockSale", () => {
         generalReceiptId: null,
       })],
     }));
+  });
+
+  it("uses catalog prices and snapshots shipping details for online-store invoices", async () => {
+    const skuStock = {
+      ...stockRecord,
+      id: "sku-store-stock-1",
+      current_stock: new Prisma.Decimal(8),
+      sales_price: new Prisma.Decimal("125.00"),
+      mrp: new Prisma.Decimal("150.00"),
+      gst_rate: new Prisma.Decimal("5.00"),
+      hsn_code: "6105",
+    };
+    const shippingAddress = {
+      recipientName: "Store Customer",
+      phone: "9876543210",
+      addressLine1: "12 Market Road",
+      addressLine2: null,
+      city: "Bengaluru",
+      state: "Karnataka",
+      postalCode: "560001",
+      countryCode: "IN",
+    };
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
+    mocks.transaction.finishedGoodsSkuStock.findMany.mockResolvedValue([skuStock]);
+    mocks.transaction.posSalesInvoiceLine.createManyAndReturn.mockResolvedValue([{
+      id: "invoice-line-1",
+      general_stock_receipt_id: null,
+      sku_stock_id: "sku-store-stock-1",
+    }]);
+
+    await createPosGeneralStockSale({
+      ...saleInput,
+      salesChannel: "ONLINE_STORE",
+      shippingAddress,
+      customer: "STORE CUSTOMER",
+      lines: [{
+        stockId: "sku-store-stock-1",
+        stockType: "SKU",
+        quantity: "1",
+        rate: "1",
+        gstRate: "0",
+        discountPercent: "0",
+      }],
+    });
+
+    expect(mocks.transaction.posSalesInvoice.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        customer: "STORE CUSTOMER",
+        tax_mode: "LOCAL",
+        shipping_address: {
+          ...shippingAddress,
+          recipientName: "STORE CUSTOMER",
+          addressLine1: "12 MARKET ROAD",
+          city: "BENGALURU",
+          state: "KARNATAKA",
+          postalCode: "560001",
+        },
+        subtotal: new Prisma.Decimal("125.00"),
+        tax_amount: new Prisma.Decimal("6.25"),
+      }),
+    }));
+    expect(mocks.transaction.posSalesInvoiceLine.createManyAndReturn).toHaveBeenCalledWith(expect.objectContaining({
+      data: [expect.objectContaining({
+        sku_stock_id: "sku-store-stock-1",
+        unit_rate: new Prisma.Decimal("125.00"),
+        gst_rate: new Prisma.Decimal("5.00"),
+        hsn_code: "6105",
+      })],
+    }));
+    expect(mocks.transaction.organization.findFirst).toHaveBeenCalledWith({
+      where: { id: "organization-1" },
+      select: { state: true },
+    });
+  });
+
+  it("uses interstate GST for an online shipping address outside the organization state", async () => {
+    mocks.transaction.organization.findFirst.mockResolvedValue({ state: "Karnataka" });
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
+    mocks.transaction.finishedGoodsSkuStock.findMany.mockResolvedValue([{
+      ...stockRecord,
+      id: "sku-store-stock-1",
+      current_stock: new Prisma.Decimal(8),
+      sales_price: new Prisma.Decimal("125.00"),
+      mrp: new Prisma.Decimal("150.00"),
+      gst_rate: new Prisma.Decimal("5.00"),
+      hsn_code: "6105",
+    }]);
+    mocks.transaction.posSalesInvoiceLine.createManyAndReturn.mockResolvedValue([{
+      id: "invoice-line-1",
+      general_stock_receipt_id: null,
+      sku_stock_id: "sku-store-stock-1",
+    }]);
+
+    await createPosGeneralStockSale({
+      ...saleInput,
+      salesChannel: "ONLINE_STORE",
+      shippingAddress: {
+        recipientName: "Store Customer",
+        phone: "9876543210",
+        addressLine1: "12 Market Road",
+        addressLine2: null,
+        city: "Pune",
+        state: "Maharashtra",
+        postalCode: "411001",
+        countryCode: "IN",
+      },
+      lines: [{
+        stockId: "sku-store-stock-1",
+        stockType: "SKU",
+        quantity: "1",
+        rate: "1",
+        gstRate: "0",
+        discountPercent: "0",
+      }],
+    });
+
+    expect(mocks.transaction.posSalesInvoice.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        tax_mode: "INTERSTATE",
+        igst_amount: new Prisma.Decimal("6.25"),
+        cgst_amount: new Prisma.Decimal("0"),
+        sgst_amount: new Prisma.Decimal("0"),
+      }),
+    }));
+  });
+
+  it("allows online checkout without a registered contact when a purchase-reward campaign is active", async () => {
+    mocks.transaction.posCoupon.findFirst.mockResolvedValue({
+      id: "reward-campaign-1",
+      discount_value: new Prisma.Decimal("10"),
+      validity_days: 30,
+      max_redemptions: null,
+    });
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
+    mocks.transaction.finishedGoodsSkuStock.findMany.mockResolvedValue([{
+      ...stockRecord,
+      id: "sku-store-stock-1",
+      current_stock: new Prisma.Decimal(8),
+      sales_price: new Prisma.Decimal("125.00"),
+      mrp: new Prisma.Decimal("150.00"),
+      gst_rate: new Prisma.Decimal("5.00"),
+      hsn_code: "6105",
+    }]);
+    mocks.transaction.posSalesInvoiceLine.createManyAndReturn.mockResolvedValue([{
+      id: "invoice-line-1",
+      general_stock_receipt_id: null,
+      sku_stock_id: "sku-store-stock-1",
+    }]);
+
+    await expect(createPosGeneralStockSale({
+      ...saleInput,
+      salesChannel: "ONLINE_STORE",
+      shippingAddress: {
+        recipientName: "Store Customer",
+        phone: "9876543210",
+        addressLine1: "12 Market Road",
+        addressLine2: null,
+        city: "Bengaluru",
+        state: "Karnataka",
+        postalCode: "560001",
+        countryCode: "IN",
+      },
+      lines: [{
+        stockId: "sku-store-stock-1",
+        stockType: "SKU",
+        quantity: "1",
+        rate: "1",
+        gstRate: "0",
+        discountPercent: "0",
+      }],
+    })).resolves.toMatchObject({ invoiceNo: "POS-1" });
+
+    expect(mocks.transaction.posCoupon.findFirst).not.toHaveBeenCalled();
+    expect(mocks.transaction.posCouponIssue.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects online-store sales without shipping details or a catalog price", async () => {
+    await expect(createPosGeneralStockSale({
+      ...saleInput,
+      salesChannel: "ONLINE_STORE",
+      lines: [{
+        stockId: "sku-store-stock-1",
+        stockType: "SKU",
+        quantity: "1",
+        rate: "100",
+        gstRate: "0",
+        discountPercent: "0",
+      }],
+    })).rejects.toThrow("A shipping address is required");
+
+    mocks.transaction.finishedGoodsGeneralStockReceipt.findMany.mockResolvedValue([]);
+    mocks.transaction.finishedGoodsSkuStock.findMany.mockResolvedValue([{
+      ...stockRecord,
+      id: "sku-store-stock-1",
+      current_stock: new Prisma.Decimal(8),
+      sales_price: null,
+      mrp: null,
+      gst_rate: null,
+      hsn_code: null,
+    }]);
+    await expect(createPosGeneralStockSale({
+      ...saleInput,
+      salesChannel: "ONLINE_STORE",
+      shippingAddress: {
+        recipientName: "Store Customer",
+        phone: "9876543210",
+        addressLine1: "12 Market Road",
+        addressLine2: null,
+        city: "Bengaluru",
+        state: "Karnataka",
+        postalCode: "560001",
+        countryCode: "IN",
+      },
+      lines: [{
+        stockId: "sku-store-stock-1",
+        stockType: "SKU",
+        quantity: "1",
+        rate: "100",
+        gstRate: "0",
+        discountPercent: "0",
+      }],
+    })).rejects.toThrow("no active catalog sales price");
+    expect(mocks.transaction.posSalesInvoice.create).not.toHaveBeenCalled();
   });
 
   it("revalidates and applies a percentage offer to the line before tax", async () => {

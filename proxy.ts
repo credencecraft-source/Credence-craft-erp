@@ -96,6 +96,31 @@ export function proxy(request: NextRequest) {
     );
   }
 
+  const isPublicOnlineStoreApiRoute =
+    /^\/api\/public\/stores\/[A-Za-z0-9_-]{43}\/(?:catalog|orders)$/.test(pathname) &&
+    ((pathname.endsWith("/catalog") && (request.method === "GET" || request.method === "HEAD")) ||
+      (pathname.endsWith("/orders") && request.method === "POST"));
+  if (isPublicOnlineStoreApiRoute) {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set("x-current-path", pathname);
+    return addApiCorsHeaders(
+      request,
+      NextResponse.next({ request: { headers: requestHeaders } }),
+    );
+  }
+
+  const isPublicOnlineStoreManagementRoute =
+    /^\/api\/organizations\/[^/]+\/pos\/online-store$/.test(pathname) &&
+    (request.method === "GET" || request.method === "PATCH");
+  if (isPublicOnlineStoreManagementRoute) {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set("x-current-path", pathname);
+    return addApiCorsHeaders(
+      request,
+      NextResponse.next({ request: { headers: requestHeaders } }),
+    );
+  }
+
   const isPlatformPageRoute =
     pathname === "/platform" || pathname.startsWith("/platform/");
   const isPlatformLoginPage = pathname === "/platform" || pathname === "/platform/";

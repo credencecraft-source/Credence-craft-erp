@@ -811,6 +811,7 @@ model PosSalesInvoice {
   invoice_date    DateTime              @db.Date
   customer        String?               @db.VarChar(255)
   customer_contact_id String?
+  shipping_address Json?
   tax_mode        String                @default("LOCAL") @db.VarChar(20)
   status          String                @default("POSTED") @db.VarChar(30)
   subtotal        Decimal               @db.Decimal(14, 2)

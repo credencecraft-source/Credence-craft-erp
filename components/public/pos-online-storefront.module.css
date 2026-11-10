@@ -1,0 +1,395 @@
+.storefront {
+  --store-ink: #271238;
+  --store-plum: #4a176c;
+  --store-berry: #e83e8c;
+  --store-coral: #ff765e;
+  --store-sun: #ffd166;
+  --store-cream: #fff7ec;
+  --store-paper: #fffdf9;
+  --store-muted: #74657c;
+  min-height: 100dvh;
+  background:
+    radial-gradient(ellipse at 92% 3%, color-mix(in srgb, var(--store-sun) 32%, transparent), transparent 22rem),
+    radial-gradient(ellipse at 4% 18%, color-mix(in srgb, var(--store-berry) 13%, transparent), transparent 26rem),
+    var(--store-cream);
+  color: var(--store-ink);
+}
+
+.storefront[data-theme="fashion-atelier"] {
+  --store-ink: #1d2925;
+  --store-plum: #30453c;
+  --store-berry: #9c7956;
+  --store-coral: #c8a77f;
+  --store-sun: #e8dcc5;
+  --store-cream: #f0eee7;
+  --store-paper: #fffefa;
+  --store-muted: #69736d;
+  background:
+    radial-gradient(ellipse at 92% 3%, color-mix(in srgb, var(--store-sun) 35%, transparent), transparent 22rem),
+    radial-gradient(ellipse at 4% 18%, color-mix(in srgb, var(--store-plum) 11%, transparent), transparent 26rem),
+    var(--store-cream);
+}
+
+.themePreview {
+  min-height: 12rem;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  padding: 1rem;
+}
+
+.themePreviewContent {
+  display: flex;
+  min-height: 10rem;
+  flex-direction: column;
+  justify-content: space-between;
+  border: 1px solid color-mix(in srgb, white 45%, transparent);
+  border-radius: 0.6rem;
+  padding: 1rem;
+  color: white;
+}
+
+.themePreviewLabel {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.themeVibrant {
+  background: linear-gradient(135deg, #4a176c, #e83e8c 56%, #ff765e);
+}
+
+.themeFashion {
+  background: linear-gradient(135deg, #1d2925, #30453c 58%, #9c7956);
+}
+
+.content {
+  width: min(100%, 112rem);
+  margin-inline: auto;
+  padding: 1.25rem clamp(1rem, 3vw, 2.5rem) 3rem;
+}
+
+.header {
+  position: relative;
+  z-index: 2;
+  padding: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--store-plum) 9%, transparent);
+  border-radius: 1.25rem;
+  background: color-mix(in srgb, var(--store-paper) 92%, transparent);
+  box-shadow: 0 0.75rem 2.5rem color-mix(in srgb, var(--store-plum) 8%, transparent);
+  backdrop-filter: blur(1rem);
+}
+
+.storeMark {
+  background: linear-gradient(145deg, var(--store-berry), var(--store-coral));
+  color: white;
+  box-shadow: 0 0.4rem 1rem color-mix(in srgb, var(--store-berry) 28%, transparent);
+}
+
+.eyebrow {
+  color: var(--store-plum);
+}
+
+.storeName {
+  color: var(--store-ink);
+}
+
+.headerField {
+  flex: 1 1 12rem;
+  max-width: 17rem;
+}
+
+.headerControl {
+  border-color: color-mix(in srgb, var(--store-plum) 18%, white);
+  background: var(--store-paper);
+  color: var(--store-ink);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--store-plum) 5%, transparent);
+}
+
+.headerControl:focus {
+  border-color: var(--store-berry);
+  --tw-ring-color: color-mix(in srgb, var(--store-berry) 20%, transparent);
+}
+
+.actionButton {
+  border-color: color-mix(in srgb, var(--store-plum) 15%, white) !important;
+  background: var(--store-paper) !important;
+  color: var(--store-plum) !important;
+  box-shadow: 0 0.25rem 0.6rem color-mix(in srgb, var(--store-plum) 9%, transparent) !important;
+}
+
+.actionButton:hover {
+  border-color: var(--store-berry) !important;
+  background: var(--store-cream) !important;
+  color: var(--store-plum) !important;
+}
+
+.hero {
+  position: relative;
+  isolation: isolate;
+  min-height: clamp(20rem, 40vw, 34rem);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--store-plum) 10%, transparent);
+  border-radius: 1.75rem;
+  background: linear-gradient(120deg, var(--store-plum), var(--store-berry) 58%, var(--store-coral));
+  box-shadow: 0 1.5rem 4rem color-mix(in srgb, var(--store-plum) 18%, transparent);
+}
+
+.heroImage {
+  position: absolute;
+  z-index: -2;
+  inset: -2%;
+  width: 104%;
+  height: 104%;
+  object-fit: cover;
+  transition: filter 0.4s ease, transform 0.6s ease;
+}
+
+.heroOverlay {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--store-plum) 90%, transparent), color-mix(in srgb, var(--store-plum) 58%, transparent) 55%, color-mix(in srgb, var(--store-plum) 12%, transparent)),
+    linear-gradient(0deg, color-mix(in srgb, var(--store-plum) 25%, transparent), transparent 70%);
+}
+
+.heroContent {
+  display: flex;
+  min-height: inherit;
+  max-width: 48rem;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1rem;
+  padding: clamp(2rem, 7vw, 5rem);
+  color: white;
+}
+
+.heroBadge {
+  border-color: color-mix(in srgb, var(--store-sun) 50%, transparent) !important;
+  background: color-mix(in srgb, var(--store-sun) 20%, transparent) !important;
+  color: var(--store-sun) !important;
+  backdrop-filter: blur(0.5rem);
+}
+
+.heroTitle {
+  max-width: 42rem;
+  margin: 0;
+  color: white;
+  font-size: clamp(2.6rem, 7vw, 5.75rem);
+  font-weight: 800;
+  line-height: 0.98;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+
+.heroCaption {
+  max-width: 34rem;
+  margin: 0;
+  color: color-mix(in srgb, white 88%, var(--store-sun));
+  font-size: clamp(1rem, 2vw, 1.25rem);
+  line-height: 1.6;
+}
+
+.heroLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+  border-radius: 9999px;
+  background: var(--store-sun);
+  padding: 0.8rem 1.2rem;
+  color: var(--store-ink);
+  font-size: 0.875rem;
+  font-weight: 800;
+  box-shadow: 0 0.6rem 1.5rem color-mix(in srgb, var(--store-ink) 20%, transparent);
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.heroLink:hover {
+  transform: translateY(-2px);
+  background: white;
+}
+
+.slideArrow {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  min-height: 2.75rem !important;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, white 55%, transparent) !important;
+  border-radius: 9999px !important;
+  background: color-mix(in srgb, white 88%, transparent) !important;
+  color: var(--store-plum) !important;
+  transform: translateY(-50%);
+}
+
+.slidePrevious {
+  left: 1rem;
+}
+
+.slideNext {
+  right: 1rem;
+}
+
+.slideIndicators {
+  position: absolute;
+  right: 0;
+  bottom: 1.25rem;
+  left: 0;
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.slideIndicator {
+  position: relative;
+  width: 2rem;
+  min-width: 2rem;
+  height: 2rem;
+  min-height: 2rem !important;
+  padding: 0 !important;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent !important;
+  cursor: pointer;
+}
+
+.slideIndicator::before {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 9999px;
+  background: color-mix(in srgb, white 65%, transparent);
+  content: "";
+  transition: width 180ms ease, background 180ms ease;
+}
+
+.slideIndicatorActive::before {
+  width: 1.75rem;
+  background: var(--store-sun);
+}
+
+.collectionTitle {
+  color: var(--store-ink) !important;
+  letter-spacing: -0.04em;
+}
+
+.surfaceCard {
+  border-color: color-mix(in srgb, var(--store-plum) 11%, white) !important;
+  background: var(--store-paper) !important;
+  box-shadow: 0 0.75rem 2rem color-mix(in srgb, var(--store-plum) 7%, transparent) !important;
+}
+
+.productCard {
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--store-plum) 12%, white) !important;
+  background: var(--store-paper) !important;
+  box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--store-plum) 7%, transparent) !important;
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.productCard:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 1rem 2.25rem color-mix(in srgb, var(--store-berry) 17%, transparent) !important;
+}
+
+.productArtwork {
+  border-color: color-mix(in srgb, var(--store-berry) 16%, white) !important;
+  background:
+    radial-gradient(circle at 75% 15%, color-mix(in srgb, var(--store-sun) 78%, white), transparent 32%),
+    linear-gradient(145deg, color-mix(in srgb, var(--store-berry) 9%, white), color-mix(in srgb, var(--store-coral) 14%, white)) !important;
+  color: var(--store-plum);
+}
+
+.productName {
+  color: var(--store-ink) !important;
+}
+
+.productPrice {
+  color: var(--store-plum) !important;
+}
+
+.primaryButton {
+  border-color: var(--store-plum) !important;
+  background: linear-gradient(120deg, var(--store-plum), var(--store-berry)) !important;
+  color: white !important;
+  box-shadow: 0 0.45rem 1rem color-mix(in srgb, var(--store-berry) 24%, transparent) !important;
+}
+
+.primaryButton:hover:not(:disabled) {
+  border-color: var(--store-berry) !important;
+  background: linear-gradient(120deg, var(--store-berry), var(--store-coral)) !important;
+}
+
+.secondaryButton {
+  border-color: color-mix(in srgb, var(--store-plum) 16%, white) !important;
+  background: var(--store-paper) !important;
+  color: var(--store-plum) !important;
+}
+
+.secondaryButton:hover:not(:disabled) {
+  border-color: var(--store-berry) !important;
+  background: var(--store-cream) !important;
+}
+
+.badge {
+  border-color: color-mix(in srgb, var(--store-berry) 17%, white) !important;
+  background: color-mix(in srgb, var(--store-berry) 9%, white) !important;
+  color: var(--store-plum) !important;
+}
+
+.error {
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--erp-danger) 9%, white);
+  padding: 0.75rem 1rem;
+}
+
+.footer {
+  border-color: color-mix(in srgb, var(--store-plum) 14%, white) !important;
+  color: var(--store-muted) !important;
+}
+
+@media (max-width: 640px) {
+  .content {
+    padding-top: 0.75rem;
+  }
+
+  .header {
+    align-items: stretch;
+    border-radius: 1rem;
+    padding: 0.75rem;
+  }
+
+  .headerField {
+    max-width: none;
+  }
+
+  .hero {
+    min-height: 25rem;
+    border-radius: 1.25rem;
+  }
+
+  .heroOverlay {
+    background:
+      linear-gradient(90deg, color-mix(in srgb, var(--store-plum) 78%, transparent), color-mix(in srgb, var(--store-plum) 35%, transparent)),
+      linear-gradient(0deg, color-mix(in srgb, var(--store-plum) 35%, transparent), transparent 80%);
+  }
+
+  .heroContent {
+    padding: 2rem 1.5rem 3.5rem;
+  }
+
+  .slideArrow {
+    top: auto;
+    bottom: 0.75rem;
+    transform: none;
+  }
+
+  .slideIndicators {
+    bottom: 1.75rem;
+  }
+}

@@ -39,6 +39,22 @@ function createRequest(path: string, cookieName: string, token: string) {
 }
 
 describe("API authentication proxy", () => {
+  it("allows only explicitly public storefront catalog and checkout endpoints without a session", () => {
+    const storeKey = "a".repeat(43);
+    const catalog = proxy(new NextRequest(
+      `http://localhost/api/public/stores/${storeKey}/catalog`,
+    ));
+    const checkout = proxy(new NextRequest(
+      `http://localhost/api/public/stores/${storeKey}/orders`,
+      { method: "POST" },
+    ));
+    const unrelated = proxy(new NextRequest("http://localhost/api/orders"));
+
+    expect(catalog.headers.get("x-middleware-next")).toBe("1");
+    expect(checkout.headers.get("x-middleware-next")).toBe("1");
+    expect(unrelated.status).toBe(401);
+  });
+
   it("allows credentialed CORS preflight from the configured Expo web origin", () => {
     const response = proxy(
       new NextRequest("http://localhost/api/auth/mobile-otp/email", {

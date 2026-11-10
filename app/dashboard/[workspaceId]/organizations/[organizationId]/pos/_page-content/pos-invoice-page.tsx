@@ -22,6 +22,16 @@ type SavedInvoice = PosInvoicePrintData & {
   invoiceDate: string;
   savedAt: string;
   hasCouponCode?: boolean;
+  shippingAddress?: {
+    recipientName: string;
+    phone: string;
+    addressLine1: string;
+    addressLine2: string | null;
+    city: string;
+    state: string;
+    postalCode: string;
+    countryCode: string;
+  } | null;
 };
 
 const reportFields: Array<{ key: keyof SavedInvoice; label: string }> = [
@@ -135,7 +145,7 @@ export default function PosInvoicePage({ workspaceId, organizationId }: { worksp
   };
 
   return <Page as="div"><Section className="space-y-6">
-    <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-4"><div><p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">POS Invoice</p><h1 className="mt-2 text-3xl font-bold text-slate-900">Saved Invoices</h1><p className="mt-2 text-sm text-slate-600">Review and print sales invoices saved from Quick Invoice.</p></div></div>
+    <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-4"><div><p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">POS Invoice</p><h1 className="mt-2 text-3xl font-bold text-slate-900">Saved Invoices</h1><p className="mt-2 text-sm text-slate-600">Review and print sales invoices from Quick Invoice and the Online Store.</p></div></div>
     {error && <p role="alert">{error}</p>}
     {loading ? <p role="status">Loading POS invoices...</p> : <>
       <ReportGrid
@@ -347,6 +357,26 @@ export function PosInvoiceDetailPage({
                 ) : null}
               </dl>
             </Card>
+
+            {invoice.shippingAddress ? (
+              <Card className="space-y-3">
+                <h2 className="text-base font-semibold text-[var(--erp-text)]">Shipping address</h2>
+                <address className="not-italic text-sm text-[var(--erp-text)]">
+                  <p className="font-semibold">{invoice.shippingAddress.recipientName}</p>
+                  <p>{invoice.shippingAddress.phone}</p>
+                  <p>{invoice.shippingAddress.addressLine1}</p>
+                  {invoice.shippingAddress.addressLine2 ? <p>{invoice.shippingAddress.addressLine2}</p> : null}
+                  <p>
+                    {[
+                      invoice.shippingAddress.city,
+                      invoice.shippingAddress.state,
+                      invoice.shippingAddress.postalCode,
+                      invoice.shippingAddress.countryCode,
+                    ].join(", ")}
+                  </p>
+                </address>
+              </Card>
+            ) : null}
 
             <Card className="space-y-4">
               <div>

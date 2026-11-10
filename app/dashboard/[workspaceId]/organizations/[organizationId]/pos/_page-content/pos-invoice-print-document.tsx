@@ -32,6 +32,16 @@ export type PosInvoicePrintData = {
   invoiceNumber: string;
   invoiceDate: string;
   customer: string;
+  shippingAddress?: {
+    recipientName: string;
+    phone: string;
+    addressLine1: string;
+    addressLine2: string | null;
+    city: string;
+    state: string;
+    postalCode: string;
+    countryCode: string;
+  } | null;
   entityName?: string;
   appliedCouponCode?: string | null;
   appliedCouponName?: string | null;
@@ -251,6 +261,22 @@ export default function PosInvoicePrintDocument({
             <section className="mt-4 border border-[var(--erp-border)] p-3">
               <h2 className="font-semibold" style={{ color: design.accentColor }}>BILL TO</h2>
               <p>{invoice.customer || "Walk-in customer"}</p>
+              {invoice.shippingAddress ? (
+                <address className="mt-1 whitespace-pre-line not-italic">
+                  {[
+                    invoice.shippingAddress.recipientName,
+                    invoice.shippingAddress.phone,
+                    invoice.shippingAddress.addressLine1,
+                    invoice.shippingAddress.addressLine2,
+                    [
+                      invoice.shippingAddress.city,
+                      invoice.shippingAddress.state,
+                      invoice.shippingAddress.postalCode,
+                      invoice.shippingAddress.countryCode,
+                    ].join(", "),
+                  ].filter(Boolean).join("\n")}
+                </address>
+              ) : null}
             </section>
           ) : null}
           <section className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
