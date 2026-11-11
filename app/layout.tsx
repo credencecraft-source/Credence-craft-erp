@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense, type ReactNode } from "react";
+import { Analytics } from "@vercel/analytics/next";
 import GlobalFormFieldState from "@/components/ui/global-form-field-state";
 import NavigationLoadingOverlay from "@/components/ui/NavigationLoadingOverlay";
 import "./globals.css";
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <Suspense fallback={<NavigationLoadingOverlay label="Loading application" />}>
           {children}
         </Suspense>
+        <Analytics />
       </body>
     </html>
   );
